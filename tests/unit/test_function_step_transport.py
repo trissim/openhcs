@@ -15,7 +15,11 @@ from openhcs.core.callable_contract import CallableContract, CallableMetadata
 from openhcs.core.artifact_materialization_policy import (
     NO_ARTIFACT_MATERIALIZATION,
 )
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+)
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.function_patterns import (
     CompiledFunctionGroup,
@@ -26,6 +30,12 @@ from openhcs.core.function_patterns import (
 from openhcs.core.config import LazyProcessingConfig
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
+from openhcs.core.module_artifact_contract import (
+    DeclaredArtifactOutputPartition,
+    RecordedArtifactOutputPartition,
+    RuntimeArtifactInputPartition,
+    SourceArtifactInputPartition,
+)
 from openhcs.core.function_reference import FunctionReference
 from openhcs.core.function_reference import FunctionReferenceTransportAuthority
 from openhcs.core.source_bindings import (
@@ -57,7 +67,7 @@ from openhcs.runtime.zmq_pipeline_transport import (
 
 
 def _declared_runtime_callable(func, contract):
-    metadata = cellprofiler_backend.cellprofiler_function_runtime_metadata(func)
+    metadata = cellprofiler_backend.CellProfilerFunctionCatalog.runtime_metadata(func)
     return cellprofiler_module_callable(
         func,
         contract,
@@ -84,7 +94,6 @@ def test_no_artifact_materialization_survives_pickle_by_identity():
 
 def test_transport_authority_normalizes_unstripped_pipeline_steps():
     crop = cellprofiler_backend.crop
-    cellprofiler_backend._cellprofiler_function_maps.cache_clear()
 
     normalized = FunctionStepTransportAuthority.normalize_pipeline(
         [FunctionStep(func=crop, name="Crop")]
@@ -99,7 +108,16 @@ def test_zmq_pipeline_transport_source_preserves_cellprofiler_contracts():
 
     contract = ModuleArtifactContract(
         module_name="Crop",
-        outputs=(ArtifactSpec("CropBlue", ArtifactKind.IMAGE),),
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (ArtifactSpec.output("CropBlue", ImageArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (ArtifactSpec.output("CropBlue", ImageArtifactType),),
+            ),
+        ),
     )
     runtime_callable = _declared_runtime_callable(
         cellprofiler_backend.crop,
@@ -141,8 +159,20 @@ def test_zmq_execution_submission_source_preserves_cellprofiler_runtime_callable
 
     contract = ModuleArtifactContract(
         module_name="IdentifySecondaryObjects",
-        inputs=(ArtifactSpec("Primary", ArtifactKind.OBJECT_LABELS),),
-        outputs=(ArtifactSpec("Secondary", ArtifactKind.OBJECT_LABELS),),
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                SourceArtifactInputPartition,
+                (ArtifactSpec.input("Primary", ObjectLabelsArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (ArtifactSpec.output("Secondary", ObjectLabelsArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (ArtifactSpec.output("Secondary", ObjectLabelsArtifactType),),
+            ),
+        ),
     )
     runtime_callable = _declared_runtime_callable(
         cellprofiler_backend.identify_secondary_objects,
@@ -191,12 +221,13 @@ def test_zmq_execution_submission_serializes_default_plate_config_on_client():
 
 
 def test_function_step_source_emits_source_bindings_once():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="OrigBlue",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                    ),
-                ),
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigBlue",
+                origin=SourceBindingOrigin.PIPELINE_START,
+            ),
+        ),
     )
     pipeline = [
         FunctionStep(
@@ -245,7 +276,9 @@ def test_zmq_pipeline_transport_preserves_explicit_lazy_processing_defaults():
 
     assert "group_by=GroupBy.NONE" in source
     assert "input_source=InputSource.PREVIOUS_STEP" in source
-    assert object.__getattribute__(restored_processing_config, "group_by") is GroupBy.NONE
+    assert (
+        object.__getattribute__(restored_processing_config, "group_by") is GroupBy.NONE
+    )
     assert (
         object.__getattribute__(restored_processing_config, "input_source")
         is InputSource.PREVIOUS_STEP
@@ -256,9 +289,7 @@ def test_function_step_parameter_order_uses_abstract_step_declaration_order():
     from python_introspect import UnifiedParameterAnalyzer
 
     parameter_names = list(
-        UnifiedParameterAnalyzer.analyze(
-            FunctionStep(func=cellprofiler_backend.crop)
-        )
+        UnifiedParameterAnalyzer.analyze(FunctionStep(func=cellprofiler_backend.crop))
     )
 
     assert parameter_names.index("source_bindings") > parameter_names.index(
@@ -272,7 +303,16 @@ def test_function_step_parameter_order_uses_abstract_step_declaration_order():
 def test_cellprofiler_runtime_callable_is_function_step_picklable():
     contract = ModuleArtifactContract(
         module_name="IdentifyTertiaryObjects",
-        outputs=(ArtifactSpec("Tertiary", ArtifactKind.OBJECT_LABELS),),
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (ArtifactSpec.output("Tertiary", ObjectLabelsArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (ArtifactSpec.output("Tertiary", ObjectLabelsArtifactType),),
+            ),
+        ),
     )
     runtime_callable = _declared_runtime_callable(
         cellprofiler_backend.identify_tertiary_objects,
@@ -280,7 +320,9 @@ def test_cellprofiler_runtime_callable_is_function_step_picklable():
     )
 
     restored_step = pickle.loads(
-        pickle.dumps(FunctionStep(func=runtime_callable, name="IdentifyTertiaryObjects"))
+        pickle.dumps(
+            FunctionStep(func=runtime_callable, name="IdentifyTertiaryObjects")
+        )
     )
     restored_contract = CallableContract.from_callable(restored_step.func)
 
@@ -291,12 +333,29 @@ def test_cellprofiler_runtime_callable_is_function_step_picklable():
 def test_cellprofiler_runtime_callable_source_derives_materialization_contract():
     contract = ModuleArtifactContract(
         module_name="Crop",
-        outputs=(
-            ArtifactSpec(
-                "CropBlue",
-                ArtifactKind.IMAGE,
-                materialization=MaterializationSpec(
-                    TiffStackOptions(normalize_uint8=True),
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (
+                    ArtifactSpec.output(
+                        "CropBlue",
+                        ImageArtifactType,
+                        materialization=MaterializationSpec(
+                            TiffStackOptions(normalize_uint8=True),
+                        ),
+                    ),
+                ),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (
+                    ArtifactSpec.output(
+                        "CropBlue",
+                        ImageArtifactType,
+                        materialization=MaterializationSpec(
+                            TiffStackOptions(normalize_uint8=True),
+                        ),
+                    ),
                 ),
             ),
         ),
@@ -328,7 +387,9 @@ def test_zmq_pipeline_transport_uses_source_only_cellprofiler_catalog_identity_a
     import importlib
 
     crop = cellprofiler_backend.crop
-    crop_module = importlib.import_module("openhcs.processing.backends.cellprofiler.crop")
+    crop_module = importlib.import_module(
+        "openhcs.processing.backends.cellprofiler.crop"
+    )
     importlib.reload(crop_module)
     pipeline = [FunctionStep(func=(crop, {"crop_shape": "Rectangle"}), name="Crop")]
     pipeline_source = generate_python_source(
@@ -416,7 +477,16 @@ def codex_lazy_import_probe(image):
 def test_function_reference_transport_preserves_runtime_callable_contracts():
     contract = ModuleArtifactContract(
         module_name="Crop",
-        outputs=(ArtifactSpec("CropBlue", ArtifactKind.IMAGE),),
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (ArtifactSpec.output("CropBlue", ImageArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (ArtifactSpec.output("CropBlue", ImageArtifactType),),
+            ),
+        ),
     )
     runtime_callable = _declared_runtime_callable(
         cellprofiler_backend.crop,
@@ -424,7 +494,11 @@ def test_function_reference_transport_preserves_runtime_callable_contracts():
     )
 
     referenced = FunctionReferenceTransportAuthority.reference_pipeline(
-        [FunctionStep(func=(runtime_callable, {"crop_shape": "Rectangle"}), name="Crop")]
+        [
+            FunctionStep(
+                func=(runtime_callable, {"crop_shape": "Rectangle"}), name="Crop"
+            )
+        ]
     )
 
     referenced_func = referenced[0].func[0]
@@ -437,7 +511,6 @@ def test_function_reference_transport_preserves_runtime_callable_contracts():
 
 def test_transport_authority_normalizes_compiled_context_callable_contracts():
     crop = cellprofiler_backend.crop
-    cellprofiler_backend._cellprofiler_function_maps.cache_clear()
 
     contract = CallableContract.from_callable(crop)
     step_plan = CompiledStepPlan(
@@ -524,8 +597,7 @@ def test_transport_authority_normalizes_cellprofiler_submodule_raw_contract():
     normalized_invocation = next(
         normalized_contexts["A01"]
         .step_plans[0]
-        .compiled_function_pattern
-        .iter_invocations()
+        .compiled_function_pattern.iter_invocations()
     )
 
     assert normalized_invocation.contract.raw_processing_function is (
@@ -567,14 +639,24 @@ def test_function_reference_resolver_preserves_cellprofiler_module_contracts(
         raw_crop,
         ModuleArtifactContract(
             module_name="Crop",
-            inputs=(ArtifactSpec("OrigBlue", ArtifactKind.IMAGE),),
+            items=(
+                *ModuleArtifactContract.items_for_partition(
+                    SourceArtifactInputPartition,
+                    (ArtifactSpec.input("OrigBlue", ImageArtifactType),),
+                ),
+            ),
         ),
     )
     green_callable = _declared_runtime_callable(
         raw_crop,
         ModuleArtifactContract(
             module_name="Crop",
-            inputs=(ArtifactSpec("OrigGreen", ArtifactKind.IMAGE),),
+            items=(
+                *ModuleArtifactContract.items_for_partition(
+                    SourceArtifactInputPartition,
+                    (ArtifactSpec.input("OrigGreen", ImageArtifactType),),
+                ),
+            ),
         ),
     )
     blue_contract = CallableContract.from_callable(blue_callable)

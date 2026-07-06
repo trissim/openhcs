@@ -4,12 +4,20 @@ from dataclasses import dataclass
 
 import pytest
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.artifacts import (
+    ArtifactOutputPlan,
+    ArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+)
 from openhcs.core.measurement_row_materialization import (
     ConcatenatedColumnarRows,
     MeasurementProjectedColumnarRows,
+    MeasurementRowsAxisProjection,
     MeasurementRowOwnership,
+    MeasurementSliceIndexImageNumberProjection,
     MeasurementSparseColumnarRows,
+    MeasurementSourceImageNumberProjection,
     MEASUREMENT_SPARSE_CELL,
 )
 from openhcs.core.runtime_artifact_queries import (
@@ -74,6 +82,58 @@ def measurement_values_for_label_slices(
     ).values_for_labels(labels, row_axis_start=row_axis_start)
 
 
+def test_source_qualified_image_rows_use_source_identity_before_slice_index() -> None:
+    rows = (
+        {
+            "slice_index": 0,
+            "source_image_name": "ColocalizedRegion",
+            "feature_name": "AreaOccupied_AreaOccupied_ColocalizedRegion",
+            "result_value": 17809.0,
+        },
+        {
+            "slice_index": 1,
+            "source_image_name": "Objects1",
+            "feature_name": "AreaOccupied_AreaOccupied_Objects1",
+            "result_value": 30324.0,
+        },
+    )
+
+    projected = MeasurementRowsAxisProjection.from_rows(rows).apply(
+        MeasurementSliceIndexImageNumberProjection(
+            start=1,
+            image_numbers_by_slice={0: 1, 1: 2},
+        ),
+        source_image_numbers=MeasurementSourceImageNumberProjection(
+            {
+                "ColocalizedRegion": 1,
+                "Objects1": 1,
+            }
+        ),
+    )
+
+    assert [row["image_number"] for row in projected] == [1, 1]
+    assert [row["slice_index"] for row in projected] == [0, 1]
+
+
+def test_source_qualified_image_rows_require_source_identity() -> None:
+    rows = (
+        {
+            "slice_index": 1,
+            "source_image_name": "Objects1",
+            "feature_name": "AreaOccupied_AreaOccupied_Objects1",
+            "result_value": 30324.0,
+        },
+    )
+
+    with pytest.raises(ValueError, match="source-qualified measurement rows"):
+        MeasurementRowsAxisProjection.from_rows(rows).apply(
+            MeasurementSliceIndexImageNumberProjection(
+                start=1,
+                image_numbers_by_slice={1: 2},
+            ),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class MeasurementRow:
     object_name: str
@@ -89,7 +149,7 @@ def test_runtime_measurement_query_matches_schema_and_row_object_subjects() -> N
             rows=({"object_label": 1, "area": 42.0},),
             object_name="Nuclei",
         ),
-        ArtifactKind.MEASUREMENTS,
+        MeasurementsArtifactType,
     )
     _record_native(
         store,
@@ -100,12 +160,12 @@ def test_runtime_measurement_query_matches_schema_and_row_object_subjects() -> N
                 {"object_name": "Cells", "object_label": 1, "mean": 9.0},
             ),
         ),
-        ArtifactKind.MEASUREMENTS,
+        MeasurementsArtifactType,
     )
     _record_native(
         store,
         MeasurementTable(name="ImageMeasurements", rows=({"area": 100.0},)),
-        ArtifactKind.MEASUREMENTS,
+        MeasurementsArtifactType,
     )
 
     tables = runtime_measurement_tables_for_object(
@@ -176,6 +236,47 @@ def test_sparse_columnar_rows_omit_structural_missing_cells_only() -> None:
     )
 
 
+def test_sparse_columnar_rows_coalesce_duplicate_axis_identity_fragments() -> None:
+    rows = MeasurementSparseColumnarRows.from_rows(
+        (
+            {
+                "image_number": 1,
+                "object_name": "Cells",
+                "object_label": 1,
+                "correlation_a_b": 0.5,
+            },
+            {
+                "image_number": 1,
+                "object_name": "Cells",
+                "object_label": 1,
+                "correlation_a_c": 0.75,
+            },
+            {
+                "image_number": 1,
+                "object_name": "Cells",
+                "object_label": 2,
+                "correlation_a_b": 0.25,
+            },
+        )
+    )
+
+    assert rows.row_mappings() == (
+        {
+            "image_number": 1,
+            "object_name": "Cells",
+            "object_label": 1,
+            "correlation_a_b": 0.5,
+            "correlation_a_c": 0.75,
+        },
+        {
+            "image_number": 1,
+            "object_name": "Cells",
+            "object_label": 2,
+            "correlation_a_b": 0.25,
+        },
+    )
+
+
 def test_projected_columnar_rows_omit_structural_missing_cells() -> None:
     rows = MeasurementProjectedColumnarRows(
         {
@@ -201,6 +302,31 @@ def test_projected_columnar_rows_omit_structural_missing_cells() -> None:
             "object_label": 1,
         },
     )
+
+
+def test_source_qualified_columnar_query_uses_row_source_over_table_source() -> None:
+    table = MeasurementTable(
+        name="MeasureObjectIntensityMeasurements",
+        rows=MeasurementProjectedColumnarRows(
+            {
+                "object_name": ("Nuclei", "Nuclei", "Nuclei", "Nuclei"),
+                "object_label": (1, 2, 1, 2),
+                "source_image_name": ("OrigGreen", "OrigGreen", "OrigBlue", "OrigBlue"),
+                "max_intensity": (0.5, 0.9, 0.1, 0.2),
+            }
+        ),
+        source_image_name="OrigBlue__OrigGreen",
+    )
+
+    values = measurement_values_for_feature(
+        (table,),
+        "Intensity_MaxIntensity_OrigGreen",
+        object_count=2,
+        object_name="Nuclei",
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    assert values.tolist() == [0.5, 0.9]
 
 
 def test_measurement_table_axis_values_omit_sparse_columnar_axis_cells() -> None:
@@ -786,7 +912,7 @@ def test_runtime_relationship_query_reconstructs_typed_relationship() -> None:
             target_ids=(1, 2),
             relationship_type=semantics.relationship_type,
         ),
-        ArtifactKind.RELATIONSHIPS,
+        RelationshipsArtifactType,
     )
 
     relationship = runtime_relationship(
@@ -814,21 +940,21 @@ def test_runtime_artifact_ambiguity_reports_locations_without_payload_repr() -> 
                 name="SharedMeasurements",
                 rows=({"payload": ReprMustNotRun()},),
             ),
-            ArtifactKind.MEASUREMENTS,
+            MeasurementsArtifactType,
             group_key=group_key,
         )
 
     with pytest.raises(RuntimeError, match="Ambiguous runtime artifact"):
         RuntimeArtifactQueryContext(store, AXIS_ID).resolve(
             name="SharedMeasurements",
-            kind=ArtifactKind.MEASUREMENTS,
+            artifact_type=MeasurementsArtifactType,
         )
 
 
 def _record_native(
     store: RuntimeValueStore,
     native_value: MeasurementTable | ObjectRelationship,
-    kind: ArtifactKind,
+    kind: ArtifactType,
     *,
     group_key: str | None = None,
 ) -> None:
@@ -836,7 +962,7 @@ def _record_native(
         ArtifactOutputPlan(
             name=native_value.name,
             path=f"/memory/{native_value.name}.pkl",
-            kind=kind,
+            artifact_type=kind,
             group_keys=(group_key,) if group_key is not None else (),
         ),
         native_value,

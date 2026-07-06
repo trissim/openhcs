@@ -16,10 +16,15 @@ from openhcs.core.image_shapes import (
 )
 from openhcs.core.image_stack_layout import ImageStackLayout, SourceSliceUnstackRequest
 from openhcs.core.memory import MEMORY_TYPE_NUMPY
+from openhcs.core.pipeline_image_schema import ColorImageTypeSourceRole
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     MaskedImagePayload,
     RuntimeImagePayloadContext,
+)
+from openhcs.core.source_image_provenance import SourceImageProvenancePlanes
+from openhcs.interop.cellprofiler.runtime.pure2d_output_aggregation import (
+    CellProfilerPure2DImagePlaneSemantics,
 )
 
 
@@ -109,11 +114,34 @@ def test_payload_alignment_unstacks_grayscale_volume_stacks():
     np.testing.assert_array_equal(slices[1], second)
 
 
-def test_payload_alignment_preserves_single_source_volume():
+def test_payload_alignment_slices_plain_three_dimensional_stack():
+    stack = np.zeros((3, 4, 5), dtype=np.uint16)
+    payload = RuntimeImagePayloadContext(
+        stack,
+        metadata=ImagePayloadMetadata.for_array(stack, source_path="/tmp/source.tif"),
+    mask = None).payload()
+
+    slices = payload_slices_for_alignment(payload)
+
+    assert len(slices) == 3
+    for index, payload_slice in enumerate(slices):
+        np.testing.assert_array_equal(payload_slice.data, stack[index])
+
+
+def test_payload_alignment_preserves_declared_single_source_volume():
     volume = np.zeros((3, 4, 5), dtype=np.uint16)
     payload = RuntimeImagePayloadContext(
         volume,
-        metadata=ImagePayloadMetadata.for_array(volume, source_path="/tmp/source.tif"),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("/tmp/source.tif",) * 3,
+                component_metadata=(
+                    {"z_index": "1"},
+                    {"z_index": "2"},
+                    {"z_index": "3"},
+                ),
+            ),
+        ),
     mask = None).payload()
 
     slices = payload_slices_for_alignment(payload)
@@ -122,14 +150,102 @@ def test_payload_alignment_preserves_single_source_volume():
     np.testing.assert_array_equal(slices[0].data, volume)
 
 
+def test_payload_alignment_slices_multi_source_three_dimensional_stack():
+    stack = np.zeros((3, 4, 5), dtype=np.uint16)
+    payload = RuntimeImagePayloadContext(
+        stack,
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/tmp/source_s1.tif",
+                    "/tmp/source_s2.tif",
+                    "/tmp/source_s3.tif",
+                ),
+                component_metadata=(
+                    {"site": "1"},
+                    {"site": "2"},
+                    {"site": "3"},
+                ),
+            ),
+        ),
+    mask = None).payload()
+
+    slices = payload_slices_for_alignment(payload)
+
+    assert len(slices) == 3
+    for index, payload_slice in enumerate(slices):
+        np.testing.assert_array_equal(payload_slice.data, stack[index])
+
+
+def test_color_source_role_does_not_treat_grayscale_stack_as_channel_last_plane():
+    role = ColorImageTypeSourceRole()
+
+    assert role.is_channel_last_source_plane(np.zeros((4, 5, 2), dtype=np.uint8))
+    assert role.is_channel_last_source_plane(np.zeros((4, 5, 3), dtype=np.uint8))
+    assert not role.is_channel_last_source_plane(
+        np.zeros((3, 4, 5), dtype=np.uint8)
+    )
+    assert role.is_channel_last_source_stack(
+        np.zeros((3, 4, 5, 2), dtype=np.uint8)
+    )
+    assert role.is_channel_last_source_stack(
+        np.zeros((3, 4, 5, 3), dtype=np.uint8)
+    )
+    assert not role.is_channel_last_source_stack(
+        np.zeros((3, 4, 5), dtype=np.uint8)
+    )
+
+
+def test_cellprofiler_pure2d_semantics_keeps_hwc_color_slice_whole():
+    image = np.zeros((4, 5, 3), dtype=np.uint8)
+    payload = RuntimeImagePayloadContext(
+        image,
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("/tmp/red.tif", "/tmp/green.tif", "/tmp/blue.tif"),
+                component_metadata=(
+                    {"channel": "1"},
+                    {"channel": "2"},
+                    {"channel": "3"},
+                ),
+            ),
+        ),
+    mask = None).payload()
+
+    semantics = CellProfilerPure2DImagePlaneSemantics.from_image(payload)
+
+    assert semantics.is_single_source_plane()
+    assert semantics.slices(MEMORY_TYPE_NUMPY) == (payload,)
+
+
+def test_masked_image_payload_accepts_two_channel_color_spatial_mask():
+    plane = MaskedImagePayload(
+        data=np.zeros((4, 5, 2), dtype=np.float32),
+        mask=np.ones((4, 5), dtype=bool),
+    )
+    stack = MaskedImagePayload(
+        data=np.zeros((3, 4, 5, 2), dtype=np.float32),
+        mask=np.ones((3, 4, 5), dtype=bool),
+    )
+
+    assert plane.mask.shape == (4, 5)
+    assert stack.mask.shape == (3, 4, 5)
+
+
 def test_aligned_image_payload_composes_multiple_source_volumes_as_image_bundle():
     volumes = tuple(np.full((3, 4, 5), index, dtype=np.uint16) for index in range(3))
     payloads = tuple(
         RuntimeImagePayloadContext(
             volume,
-            metadata=ImagePayloadMetadata.for_array(
-                volume,
-                source_path=f"/tmp/source_{index}.tif",
+            metadata=ImagePayloadMetadata(
+                source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                    paths=(f"/tmp/source_{index}.tif",) * 3,
+                    component_metadata=(
+                        {"z_index": "1"},
+                        {"z_index": "2"},
+                        {"z_index": "3"},
+                    ),
+                ),
             ),
         mask = None).payload()
         for index, volume in enumerate(volumes)

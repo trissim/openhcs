@@ -10,7 +10,14 @@ from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 
 from openhcs.constants.constants import AllComponents, VariableComponents
 from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.artifacts import (
+    ArtifactOutputPlan,
+    SpecialArtifactType,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    MetadataArtifactType,
+)
 from openhcs.core.runtime_semantics import ObjectLabelDomain, RuntimePlaneAxis
 from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from openhcs.core.runtime_stores import RuntimeValueStore
@@ -227,8 +234,11 @@ def _plan(
     memory_paths=(),
     variable_components=(),
     group_by_value=None,
+    execution_group_value=None,
 ):
     variable_components = tuple(variable_components)
+    if execution_group_value is None:
+        execution_group_value = group_by_value
     return SimpleNamespace(
         artifact_outputs={output_plan.name: output_plan},
         streaming_configs=streaming_configs,
@@ -242,10 +252,15 @@ def _plan(
         output_dir=Path("/tmp/output"),
         input_dir=Path("/tmp/input"),
         read_backend="memory",
+        group_by=None,
         group_by_value=group_by_value,
+        execution_group_value=execution_group_value,
         group_projects_runtime_plane=(
-            group_by_value is not None
-            and any(component.value == group_by_value for component in variable_components)
+            execution_group_value is not None
+            and any(
+                component.value == execution_group_value
+                for component in variable_components
+            )
         ),
         variable_components=variable_components,
     )
@@ -275,7 +290,7 @@ def test_planned_materialization_preview_uses_declared_candidate_paths():
     output_plan = ArtifactOutputPlan(
         name="cell_counts",
         path="/memory/A01_cell_counts_step7.pkl",
-        kind=ArtifactKind.SPECIAL,
+        artifact_type=SpecialArtifactType,
         materialization=csv_only(),
     )
     filemanager = FileManagerStub()
@@ -300,7 +315,7 @@ def test_slice_aligned_object_label_arrays_preserve_source_slice_metadata():
     output_plan = ArtifactOutputPlan(
         name="Nuclei",
         path="/memory/Nuclei.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     source = RuntimeImagePayloadContext(
         np.zeros((2, 8, 8), dtype=np.float32),
@@ -350,7 +365,7 @@ def test_image_outputs_merge_source_provenance_when_output_already_has_metadata(
     output_plan = ArtifactOutputPlan(
         name="Corrected",
         path="/memory/Corrected.pkl",
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
     )
     source = RuntimeImagePayloadContext(
         np.zeros((2, 8, 8), dtype=np.float32),
@@ -392,7 +407,7 @@ def test_object_label_payload_stack_preserves_source_slice_metadata():
     output_plan = ArtifactOutputPlan(
         name="Nuclei",
         path="/memory/Nuclei.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     source = RuntimeImagePayloadContext(
         np.zeros((2, 8, 8), dtype=np.float32),
@@ -485,7 +500,7 @@ def test_materialize_artifact_outputs_attaches_image_schema_provenance(monkeypat
     output_plan = ArtifactOutputPlan(
         name="converted_image",
         path="/memory/converted_image.pkl",
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         materialization=tiff_stack(),
     )
     filemanager = FileManagerStub()
@@ -496,7 +511,7 @@ def test_materialize_artifact_outputs_attaches_image_schema_provenance(monkeypat
             np.zeros((3, 5, 7), dtype=np.float32),
             axis_id="A01",
             schema=RuntimeValueSchema(
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 source_component_metadata={
                     "well": "A01",
                     "site": "1",
@@ -605,13 +620,59 @@ def test_materialize_artifact_outputs_does_not_require_vfs_payload_for_store_rec
     ]
 
 
+def test_materialize_artifact_outputs_uses_runtime_record_identity_not_final_path(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="measurements",
+        path="/analysis/A01_measurements_step7.csv",
+        artifact_type=MeasurementsArtifactType,
+        materialization=csv_only(),
+        group_keys=("1",),
+        paths_by_group={"1": "/analysis/A01_measurements_step7.csv"},
+    )
+    runtime_output_plan = output_plan.for_group("1")
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(
+            runtime_output_plan,
+            [{"object_id": 1, "area": 42}],
+            axis_id="A01",
+        ),
+        path="/memory/runtime_cache/measurements_1.pkl",
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(_spec, data, path, *_args, **_kwargs):
+        materialized.append((data, path))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(output_plan),
+        PersistentArtifactMaterializationTargetPlan("disk"),
+        context,
+    )
+
+    assert materialized == [
+        ([{"object_id": 1, "area": 42}], "/analysis/measurements_1.roi.zip")
+    ]
+
+
 def test_materialize_artifact_outputs_defaults_measurements_to_existing_csv_spec(
     monkeypatch,
 ):
     output_plan = ArtifactOutputPlan(
         name="measurements",
         path="/memory/measurements.pkl",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
     )
     filemanager = FileManagerStub()
     filemanager.memory[output_plan.path] = [{"object_id": 1, "area": 42}]
@@ -650,13 +711,78 @@ def test_materialize_artifact_outputs_defaults_measurements_to_existing_csv_spec
     assert path == "/analysis/A01_measurements_step7.roi.zip"
 
 
+def test_materialize_artifact_outputs_unions_measurement_subject_records(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="measurements",
+        path="/memory/A01_measurements_step7.pkl",
+        artifact_type=MeasurementsArtifactType,
+        materialization=csv_only(),
+        group_keys=("1",),
+        paths_by_group={"1": "/memory/A01_w1_measurements_step7.pkl"},
+    )
+    runtime_output_plan = output_plan.for_group("1")
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    for table in (
+        MeasurementTable(
+            name="measurements",
+            rows=({"image_area": 100.0},),
+            source_image_name="OrigBlue",
+        ),
+        MeasurementTable(
+            name="measurements",
+            rows=({"object_label": 1, "area": 42.0},),
+            object_name="Nuclei",
+            object_id_field="object_label",
+        ),
+    ):
+        context.runtime_value_store.record(
+            normalize_artifact_value(
+                runtime_output_plan,
+                table,
+                axis_id="A01",
+            ),
+            path=runtime_output_plan.path,
+            backend="memory",
+        )
+    materialized = []
+
+    def fake_materialize(_spec, data, path, *_args, **_kwargs):
+        materialized.append((tuple(data), path))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(output_plan),
+        PersistentArtifactMaterializationTargetPlan("disk"),
+        context,
+    )
+
+    assert materialized == [
+        (
+            (
+                {"image_area": 100.0},
+                {"object_label": 1, "area": 42.0},
+            ),
+            "/analysis/A01_w1_measurements_step7.roi.zip",
+        )
+    ]
+
+
 def test_materialize_tabular_artifact_does_not_build_viewer_stream_kwargs(
     monkeypatch,
 ):
     output_plan = ArtifactOutputPlan(
         name="measurements",
         path="/memory/measurements.pkl",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
     )
     filemanager = FileManagerStub()
     context = _context(filemanager)
@@ -707,7 +833,7 @@ def test_materialize_artifact_outputs_uses_actual_group_records(monkeypatch):
     output_plan = ArtifactOutputPlan(
         name="measurements",
         path="/memory/A01_measurements_step7.pkl",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         group_keys=("1", "2"),
         paths_by_group={
             "1": "/memory/A01_w1_measurements_step7.pkl",
@@ -752,13 +878,13 @@ def test_materialize_artifact_outputs_uses_actual_group_records(monkeypatch):
     assert path == "/analysis/A01_w1_measurements_step7.roi.zip"
 
 
-def test_materialize_artifact_outputs_uses_group_measurement_source_identity(
+def test_materialize_artifact_outputs_uses_group_measurement_artifact_identity(
     monkeypatch,
 ):
     output_plan = ArtifactOutputPlan(
         name="measurements",
         path="/memory/A01_measurements_step7.pkl",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         group_keys=("1", "2"),
         paths_by_group={
             "1": "/memory/A01_s001_measurements_step7.pkl",
@@ -824,12 +950,69 @@ def test_materialize_artifact_outputs_uses_group_measurement_source_identity(
     )
 
     assert [path for _spec, _data, path in materialized] == [
-        "/analysis/A01_s001_w5_z001_t001_measurements_step7.roi.zip",
-        "/analysis/A01_s002_w5_z001_t001_measurements_step7.roi.zip",
+        "/analysis/A01_s001_measurements_step7.roi.zip",
+        "/analysis/A01_s002_measurements_step7.roi.zip",
     ]
     assert [data for _spec, data, _path in materialized] == [
         [{"site": "1", "object_id": 1, "area": 42}],
         [{"site": "2", "object_id": 2, "area": 84}],
+    ]
+
+
+def test_materialize_artifact_outputs_keeps_grouped_artifact_record_path(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="measurements",
+        path="/memory/A01_measurements_step7.pkl",
+        artifact_type=MeasurementsArtifactType,
+        group_keys=("2",),
+        group_component=AllComponents.CHANNEL,
+        paths_by_group={
+            "2": "/memory/A01_w2_measurements_step7.pkl",
+        },
+    )
+    group_plan = output_plan.for_group("2")
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(
+            group_plan,
+            [{"channel": "2", "area": 42}],
+            axis_id="A01",
+        ),
+        path=group_plan.path,
+        backend="memory",
+    )
+    monkeypatch.setattr(
+        AnalysisOutputDescriptorAuthority,
+        "produced_memory_paths",
+        classmethod(
+            lambda cls, _context, _plan: [
+                "/memory/A01_s001_w1_z001_t001.TIF",
+            ]
+        ),
+    )
+    materialized = []
+
+    def fake_materialize(spec, data, path, *_args, **_kwargs):
+        materialized.append((spec, data, path))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(output_plan, group_by_value="channel"),
+        PersistentArtifactMaterializationTargetPlan("disk"),
+        context,
+    )
+
+    assert [path for _spec, _data, path in materialized] == [
+        "/analysis/A01_w2_measurements_step7.roi.zip",
     ]
 
 
@@ -839,7 +1022,7 @@ def test_materialize_artifact_outputs_uses_group_axis_for_partial_record_identit
     output_plan = ArtifactOutputPlan(
         name="measurements",
         path="/memory/measurements.pkl",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         group_keys=("2",),
         paths_by_group={
             "2": "/memory/site2_measurements.pkl",
@@ -900,7 +1083,7 @@ def test_materialize_artifact_outputs_uses_null_component_group_identity_for_str
     output_plan = ArtifactOutputPlan(
         name="Nuclei",
         path="/memory/Nuclei.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
         group_keys=("2",),
         paths_by_group={
             "2": "/memory/channel2_Nuclei.pkl",
@@ -972,7 +1155,7 @@ def test_materialize_artifact_outputs_streams_aggregate_artifact_with_incomplete
     output_plan = ArtifactOutputPlan(
         name="Nuclei",
         path="/memory/Nuclei.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     labels = ObjectLabelPayload(
         labels=np.zeros((2, 2), dtype=np.int32),
@@ -1056,7 +1239,7 @@ def test_materialize_artifact_outputs_defaults_metadata_to_existing_json_spec(
     output_plan = ArtifactOutputPlan(
         name="metadata",
         path="/memory/metadata.pkl",
-        kind=ArtifactKind.METADATA,
+        artifact_type=MetadataArtifactType,
     )
     filemanager = FileManagerStub()
     filemanager.memory[output_plan.path] = {"plate": "A"}
@@ -1095,7 +1278,7 @@ def test_materialize_artifact_outputs_skips_special_without_explicit_spec(
     output_plan = ArtifactOutputPlan(
         name="positions",
         path="/memory/positions.pkl",
-        kind=ArtifactKind.SPECIAL,
+        artifact_type=SpecialArtifactType,
     )
     filemanager = FileManagerStub()
     filemanager.memory[output_plan.path] = {"x": 1}
@@ -1126,7 +1309,7 @@ def test_materialize_artifact_outputs_skips_explicitly_disabled_artifact_without
     output_plan = ArtifactOutputPlan(
         name="ER",
         path="/memory/ER.pkl",
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         materialization=NO_ARTIFACT_MATERIALIZATION,
     )
     filemanager = FileManagerStub()
@@ -1155,7 +1338,7 @@ def test_materialize_artifact_outputs_defaults_object_labels_to_roi_spec(monkeyp
     output_plan = ArtifactOutputPlan(
         name="labels",
         path="/memory/labels.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     array_like = ArrayLike()
     filemanager = FileManagerStub()
@@ -1196,7 +1379,7 @@ def test_materialize_artifact_outputs_can_target_streaming_without_persistent_ba
     output_plan = ArtifactOutputPlan(
         name="labels",
         path="/memory/labels.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     streaming_config = streaming_config_stub()
     labels = ObjectLabelPayload(
@@ -1280,7 +1463,7 @@ def test_materialize_artifact_outputs_uses_artifact_source_metadata_for_streamin
     output_plan = ArtifactOutputPlan(
         name="labels",
         path="/memory/labels.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     streaming_config = streaming_config_stub()
     labels = ObjectLabelPayload(
@@ -1368,7 +1551,7 @@ def test_materialize_artifact_outputs_streams_payload_component_metadata(
     output_plan = ArtifactOutputPlan(
         name="Nuclei",
         path="/memory/Nuclei.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     streaming_config = streaming_config_stub()
     labels = ObjectLabelPayload(
@@ -1424,7 +1607,7 @@ def test_materialize_artifact_outputs_uses_runtime_plane_group_identity(
     output_plan = ArtifactOutputPlan(
         name="AdjacentImage",
         path="/memory/AdjacentImage.pkl",
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         materialization=csv_only(),
         group_keys=("11",),
         paths_by_group={
@@ -1488,7 +1671,7 @@ def test_materialize_artifact_outputs_merges_parser_axes_into_source_metadata(
     output_plan = ArtifactOutputPlan(
         name="Nuclei",
         path="/memory/Nuclei.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     streaming_config = streaming_config_stub()
     labels = ObjectLabelPayload(
@@ -1556,7 +1739,7 @@ def test_materialize_artifact_outputs_uses_variable_components_for_streaming_ide
     output_plan = ArtifactOutputPlan(
         name="Nuclei",
         path="/memory/Nuclei.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     streaming_config = streaming_config_stub()
     labels = ObjectLabelPayload(
@@ -1649,7 +1832,7 @@ def test_materialize_artifact_outputs_streams_source_binding_roi_plane_metadata(
     output_plan = ArtifactOutputPlan(
         name="segmentation_masks",
         path="/memory/segmentation_masks.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     streaming_config = streaming_config_stub()
     labels = ObjectLabelPayload(
@@ -1743,7 +1926,7 @@ def test_materialize_rgb_artifact_streams_filename_channel_identity(
     output_plan = ArtifactOutputPlan(
         name="RGBImage",
         path="/memory/RGBImage.pkl",
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         materialization=tiff_stack(),
     )
     streaming_config = streaming_config_stub()
@@ -1839,7 +2022,7 @@ def test_materialize_rgb_artifact_keeps_scalar_filename_identity_for_mixed_prove
     output_plan = ArtifactOutputPlan(
         name="OrigOverlay",
         path="/memory/OrigOverlay.pkl",
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         materialization=tiff_stack(),
     )
     streaming_config = streaming_config_stub()

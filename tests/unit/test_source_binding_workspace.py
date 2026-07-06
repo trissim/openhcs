@@ -8,7 +8,7 @@ import pytest
 import tifffile
 
 from openhcs.constants.constants import AllComponents, Microscope
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ImageArtifactType
 from openhcs.core.source_binding_workspace import SourceBindingWorkspaceProjector
 from openhcs.core.source_bindings import (
     ComponentSelector,
@@ -356,7 +356,7 @@ def test_source_bindings_handler_materializes_non_stack_source_artifacts(tmp_pat
                 ),
                 NamedSourceBinding(
                     alias="Illum",
-                    artifact_kind=ArtifactKind.IMAGE,
+                    artifact_kind=ImageArtifactType,
                     selector=SourceSelector(
                         filters=(
                             SourceFilterClause(

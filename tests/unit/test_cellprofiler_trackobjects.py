@@ -1,3 +1,4 @@
+from openhcs.core.runtime_semantics import MeasurementRowAxisField, MeasurementRowValueField
 import math
 
 import numpy as np
@@ -5,11 +6,7 @@ from inspect import unwrap
 
 from benchmark.cellprofiler_library.functions.trackobjects import track_objects
 from openhcs.constants.constants import MemoryType
-from openhcs.core.measurement_feature_queries import (
-    MEASUREMENT_FEATURE_NAME_FIELD,
-    MEASUREMENT_MEASUREMENT_VALUE_FIELD,
-)
-from openhcs.core.measurement_row_materialization import MEASUREMENT_OBJECT_LABEL_FIELD
+
 from openhcs.processing.backends.cellprofiler.tracking import (
     NumbaNumpyObjectTrackingBackendStrategy,
     ObjectTrackingBackendStrategy,
@@ -20,14 +17,14 @@ def _measurement_value(rows, *, image_number, feature_name, object_label=None):
     for row in rows:
         if row.get("image_number") != image_number:
             continue
-        if row.get(MEASUREMENT_FEATURE_NAME_FIELD) != feature_name:
+        if row.get(MeasurementRowAxisField.FEATURE_NAME.value) != feature_name:
             continue
         if (
             object_label is not None
-            and row.get(MEASUREMENT_OBJECT_LABEL_FIELD) != object_label
+            and row.get(MeasurementRowAxisField.OBJECT_LABEL.value) != object_label
         ):
             continue
-        return row[MEASUREMENT_MEASUREMENT_VALUE_FIELD]
+        return row[MeasurementRowValueField.MEASUREMENT_VALUE.value]
     raise AssertionError(f"missing measurement row {image_number=} {feature_name=}")
 
 

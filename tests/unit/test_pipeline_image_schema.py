@@ -1,6 +1,6 @@
 import pytest
 
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ArtifactType, ImageArtifactType, ObjectLabelsArtifactType
 from openhcs.constants.constants import AllComponents
 from openhcs.core.pipeline_image_schema import (
     GroupingPlan,
@@ -62,7 +62,7 @@ def test_pipeline_image_schema_builder_rejects_alias_kind_conflicts():
         builder.declare_source_artifact(
             SourceArtifactAssignment(
                 alias="Nuclei",
-                artifact_kind=ArtifactKind.OBJECT_LABELS,
+                artifact_kind=ObjectLabelsArtifactType,
                 selector=SourceSelector(),
                 origin=SourceBindingOrigin.PIPELINE_START,
             )
@@ -82,7 +82,7 @@ def test_pipeline_image_schema_measurement_source_names_exclude_object_artifacts
     builder.declare_source_artifact(
         SourceArtifactAssignment(
             alias="Embryos",
-            artifact_kind=ArtifactKind.OBJECT_LABELS,
+            artifact_kind=ObjectLabelsArtifactType,
             selector=SourceSelector(),
             origin=SourceBindingOrigin.STEP_INPUT,
         )
@@ -116,7 +116,7 @@ def test_pipeline_image_schema_projects_representable_source_bindings_config():
         source_artifacts_by_alias={
             "Nuclei": SourceArtifactAssignment(
                 alias="Nuclei",
-                artifact_kind=ArtifactKind.OBJECT_LABELS,
+                artifact_kind=ObjectLabelsArtifactType,
                 selector=SourceSelector(),
                 origin=SourceBindingOrigin.PIPELINE_START,
             )
@@ -130,8 +130,8 @@ def test_pipeline_image_schema_projects_representable_source_bindings_config():
     assert config.metadata_rules == (metadata_rule,)
     assert config.match_plan == match_plan
     assert tuple(binding.alias for binding in config.bindings) == ("DNA", "Nuclei")
-    assert config.bindings[0].artifact_kind is ArtifactKind.IMAGE
-    assert config.bindings[1].artifact_kind is ArtifactKind.OBJECT_LABELS
+    assert config.bindings[0].artifact_kind is ImageArtifactType
+    assert config.bindings[1].artifact_kind is ObjectLabelsArtifactType
 
 
 def test_pipeline_image_schema_lowers_to_source_bindings_pipeline_config():
@@ -209,7 +209,7 @@ def test_pipeline_image_schema_lowers_to_source_bindings_pipeline_config():
                 source_artifacts_by_alias={
                     "Illum": SourceArtifactAssignment(
                         alias="Illum",
-                        artifact_kind=ArtifactKind.IMAGE,
+                        artifact_kind=ImageArtifactType,
                         selector=SourceSelector(),
                         origin=SourceBindingOrigin.PIPELINE_START,
                         payload_type="Illumination function",
@@ -231,14 +231,14 @@ def test_pipeline_image_schema_source_bindings_projection_rejects_unrepresented_
 @pytest.mark.parametrize(
     ("image_type", "artifact_kind", "participates_in_stack"),
     (
-        ("Grayscale image", ArtifactKind.IMAGE, True),
-        ("Illumination function", ArtifactKind.IMAGE, False),
-        ("Objects", ArtifactKind.OBJECT_LABELS, False),
+        ("Grayscale image", ImageArtifactType, True),
+        ("Illumination function", ImageArtifactType, False),
+        ("Objects", ObjectLabelsArtifactType, False),
     ),
 )
 def test_image_type_roles_define_artifact_kind_and_stack_participation(
     image_type: str,
-    artifact_kind: ArtifactKind,
+    artifact_kind: ArtifactType,
     participates_in_stack: bool,
 ):
     assert image_type_artifact_kind(image_type) is artifact_kind
@@ -248,7 +248,7 @@ def test_image_type_roles_define_artifact_kind_and_stack_participation(
 def test_image_type_role_class_owns_schema_label():
     image_type = GrayscaleImageTypeSourceRole.image_type()
 
-    assert image_type_artifact_kind(image_type) is ArtifactKind.IMAGE
+    assert image_type_artifact_kind(image_type) is ImageArtifactType
     assert image_type_participates_in_image_stack(image_type)
 
 

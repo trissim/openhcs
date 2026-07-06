@@ -4,12 +4,21 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from openhcs.constants.constants import VariableComponents
+from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
 from openhcs.core.steps.function_output_manifest import StepOutputManifestStore
-from openhcs.core.steps.function_execution import PatternGroups, StepAnchorPatternFilter
+from openhcs.core.steps.function_execution import (
+    FunctionStepExecutor,
+    PatternGroups,
+    StepAnchorPatternFilter,
+)
 from openhcs.core.aligned_image_payload import AlignedImageSliceContext
-from openhcs.core.artifacts import ArtifactInputPlan, ArtifactKind, ArtifactSidecarRole
+from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ArtifactSidecarRole,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+)
 from openhcs.core.steps.function_output_identity import (
     FunctionOutputIdentity,
     FunctionOutputIdentityAuthority,
@@ -27,7 +36,14 @@ from openhcs.core.aligned_image_payload import (
     stack_image_payload_context,
 )
 from openhcs.core.step_dependencies import StepInputDependency
-from openhcs.core.source_bindings import CompiledSourceBindingPlan, NamedSourceBinding
+from openhcs.core.source_bindings import (
+    CompiledSourceBindingPlan,
+    NamedSourceBinding,
+    SourceFilterClause,
+    SourceFilterMatchType,
+    SourceFilterSubject,
+    SourceSelector,
+)
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     RuntimeImagePayloadContext,
@@ -59,6 +75,29 @@ def test_pattern_discovery_uses_authoritative_virtual_source_files(
     )
 
     assert patterns == {"A01": ["A01_s{iii}_w1_z001_t001.tif"]}
+
+
+def test_pattern_discovery_accepts_axis_scoped_source_projection_files(
+    tmp_path: Path,
+) -> None:
+    plate_path = tmp_path / "plate"
+    source_files = [
+        plate_path / "A01_s001_w1_z001_t001.tif",
+    ]
+    engine = PatternDiscoveryEngine(
+        SourceSchemaFilenameParser(),
+        SimpleNamespace(),
+    )
+
+    patterns = engine.auto_detect_patterns_from_axis_files(
+        source_files,
+        axis_id="source_projection_axis",
+        variable_components=[],
+    )
+
+    assert patterns == {
+        "source_projection_axis": ["A01_s001_w1_z001_t001.tif"]
+    }
 
 
 def test_virtual_workspace_pipeline_start_files_preserve_virtual_identity(tmp_path: Path) -> None:
@@ -384,14 +423,14 @@ def test_step_output_manifest_deduplicates_multi_artifact_anchor_paths(
             "Cells": ArtifactInputPlan(
                 name="Cells",
                 path="Cells",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
                 source_step_id=6,
                 source_step_scope_id="identify_cells",
             ),
             "Nuclei": ArtifactInputPlan(
                 name="Nuclei",
                 path="Nuclei",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
                 source_step_id=5,
                 source_step_scope_id="identify_nuclei",
             ),
@@ -423,7 +462,7 @@ def test_step_output_manifest_deduplicates_multi_artifact_anchor_paths(
                     ),
                     output_context=AlignedImageSliceContext.main_flow(
                         output_key=output_key,
-                        artifact_kind=ArtifactKind.OBJECT_LABELS.value,
+                        artifact_kind=ObjectLabelsArtifactType.value,
                     ),
                 ),
                 ProducedOutputSemantics.from_output(
@@ -442,7 +481,7 @@ def test_step_output_manifest_deduplicates_multi_artifact_anchor_paths(
                     ),
                     output_context=AlignedImageSliceContext.main_flow(
                         output_key=output_key,
-                        artifact_kind=ArtifactKind.OBJECT_LABELS.value,
+                        artifact_kind=ObjectLabelsArtifactType.value,
                     ),
                 ),
             ),
@@ -487,7 +526,7 @@ def test_step_output_manifest_uses_declared_artifact_producer_scope(
             "CropBlue": ArtifactInputPlan(
                 name="CropBlue",
                 path="CropBlue",
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 source_step_id=2,
                 source_step_scope_id="crop_blue",
             )
@@ -515,7 +554,7 @@ def test_step_output_manifest_uses_declared_artifact_producer_scope(
                 ),
                 output_context=AlignedImageSliceContext.main_flow(
                     output_key="CropBlue",
-                    artifact_kind=ArtifactKind.IMAGE.value,
+                    artifact_kind=ImageArtifactType.value,
                 ),
             ),
         ),
@@ -540,7 +579,7 @@ def test_step_output_manifest_uses_declared_artifact_producer_scope(
                 ),
                 output_context=AlignedImageSliceContext.main_flow(
                     output_key="CropRed",
-                    artifact_kind=ArtifactKind.IMAGE.value,
+                    artifact_kind=ImageArtifactType.value,
                 ),
             ),
         ),
@@ -565,7 +604,7 @@ def test_step_output_manifest_ignores_sidecar_artifact_for_anchor_filtering() ->
             "CropBlue__crop_mask": ArtifactInputPlan(
                 name="CropBlue__crop_mask",
                 path="CropBlue__crop_mask",
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 sidecar_role=ArtifactSidecarRole.CROP_MASK,
                 source_step_id=0,
                 source_step_scope_id="crop_mask",
@@ -591,7 +630,7 @@ def test_step_output_manifest_preserves_pipeline_start_source_bound_anchor() -> 
             "Nuclei": ArtifactInputPlan(
                 name="Nuclei",
                 path="Nuclei",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
                 source_step_id=0,
                 source_step_scope_id="identify_primary",
             )
@@ -649,6 +688,26 @@ def test_step_output_load_filter_skips_source_binding_filter() -> None:
     )
 
 
+def test_ungrouped_runtime_scope_omits_axis_component() -> None:
+    from openhcs.core.steps.function_runtime import PatternGroupExecutionScope
+
+    scope = PatternGroupExecutionScope(
+        context=SimpleNamespace(),
+        execution_plan=SimpleNamespace(
+            axis_id="A01",
+            group_by_value=GroupBy.CHANNEL.value,
+            execution_group_value=None,
+        ),
+        compiled_group=SimpleNamespace(),
+        component_value=None,
+    )
+
+    assert scope.axis_component is None
+    assert scope.axis_component_value is None
+    assert scope.axis_scope.component is None
+    assert scope.axis_scope.value is None
+
+
 def test_step_output_manifest_filters_declared_artifact_output_identity(
     tmp_path: Path,
 ) -> None:
@@ -671,7 +730,7 @@ def test_step_output_manifest_filters_declared_artifact_output_identity(
             "CorrDNA": ArtifactInputPlan(
                 name="CorrDNA",
                 path="CorrDNA",
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 source_step_id=1,
             )
         },
@@ -696,7 +755,7 @@ def test_step_output_manifest_filters_declared_artifact_output_identity(
                 ),
                 output_context=AlignedImageSliceContext.main_flow(
                     output_key="CorrProtein",
-                    artifact_kind=ArtifactKind.IMAGE.value,
+                    artifact_kind=ImageArtifactType.value,
                 ),
             ),
             ProducedOutputSemantics.from_output(
@@ -713,7 +772,7 @@ def test_step_output_manifest_filters_declared_artifact_output_identity(
                 ),
                 output_context=AlignedImageSliceContext.main_flow(
                     output_key="CorrDNA",
-                    artifact_kind=ArtifactKind.IMAGE.value,
+                    artifact_kind=ImageArtifactType.value,
                 ),
             ),
         ),
@@ -751,7 +810,7 @@ def test_step_output_manifest_preserves_anonymous_side_effect_main_flow(
             "Nuclei": ArtifactInputPlan(
                 name="Nuclei",
                 path="Nuclei",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
                 source_step_id=2,
             )
         },
@@ -807,7 +866,7 @@ def test_step_output_manifest_accepts_source_anchor_for_qualified_output(
             "CorrBlue": ArtifactInputPlan(
                 name="CorrBlue",
                 path="CorrBlue",
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 source_step_id=4,
             )
         },
@@ -835,7 +894,7 @@ def test_step_output_manifest_accepts_source_anchor_for_qualified_output(
                 identity,
                 output_context=AlignedImageSliceContext.main_flow(
                     output_key="CorrBlue",
-                    artifact_kind=ArtifactKind.IMAGE.value,
+                    artifact_kind=ImageArtifactType.value,
                 ),
             ),
         ),
@@ -1157,7 +1216,7 @@ def test_declared_main_flow_output_context_qualifies_output_filename(
     }
 
 
-def test_function_output_path_rejects_variation_outside_variable_components(
+def test_function_output_path_rejects_variation_outside_identity_components(
     tmp_path: Path,
 ) -> None:
     payload = RuntimeImagePayloadContext(
@@ -1173,7 +1232,7 @@ def test_function_output_path_rejects_variation_outside_variable_components(
         mask=None,
     ).payload()
 
-    with pytest.raises(ValueError, match="varies outside variable components"):
+    with pytest.raises(ValueError, match="varies outside identity components"):
         FunctionOutputIdentityAuthority.identity(
             FunctionOutputPathRequest(
                 parser=SourceSchemaFilenameParser(),
@@ -1183,3 +1242,104 @@ def test_function_output_path_rejects_variation_outside_variable_components(
                 variable_components=(VariableComponents.Z_INDEX,),
             )
         )
+
+
+def test_function_output_path_rejects_group_by_component_stack_variation(
+    tmp_path: Path,
+) -> None:
+    payload = RuntimeImagePayloadContext(
+        np.zeros((3, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/source/A01_s001_w1_z001_t001.tif",
+                    "/source/A01_s001_w3_z001_t001.tif",
+                    "/source/A01_s001_w2_z001_t001.tif",
+                ),
+            ),
+        ),
+        mask=None,
+    ).payload()
+    with pytest.raises(ValueError, match="varies outside identity components"):
+        FunctionOutputIdentityAuthority.identity(
+            FunctionOutputPathRequest(
+                parser=SourceSchemaFilenameParser(),
+                output_dir=tmp_path,
+                output_payload=payload,
+                input_path=None,
+                variable_components=(VariableComponents.SITE,),
+            )
+        )
+
+
+def test_input_aligned_stack_output_uses_input_filename_identity(
+    tmp_path: Path,
+) -> None:
+    payload = RuntimeImagePayloadContext(
+        np.zeros((2, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/source/A01_s001_w1_z001_t001.png",
+                    "/source/A01_s002_w1_z001_t001.png",
+                ),
+            ),
+        ),
+        mask=None,
+    ).payload()
+    request = FunctionOutputPathRequest(
+        parser=SourceSchemaFilenameParser(),
+        output_dir=tmp_path,
+        output_payload=payload,
+        input_path="A01_s002_w1_z001_t001.png",
+        variable_components=(VariableComponents.SITE,),
+        input_aligned_output=True,
+    )
+
+    identity = FunctionOutputIdentityAuthority.identity(request)
+    output_path = FunctionOutputPathAuthority.output_path_for_identity(
+        request,
+        identity,
+    )
+
+    assert output_path.name == "A01_s002_w1_z001_t001.png"
+    assert identity.component_values["site"] == 2
+    assert identity.filename_component_values is not None
+    assert identity.filename_component_values["site"] == 2
+
+
+def test_function_output_path_uses_input_split_axis_for_payload_filename(
+    tmp_path: Path,
+) -> None:
+    payload = RuntimeImagePayloadContext(
+        np.zeros((4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_path="/source/A01_s001_w1_z001_t001.tif",
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "1",
+                "z_index": "1",
+                "timepoint": "1",
+            },
+        ),
+        mask=None,
+    ).payload()
+    request = FunctionOutputPathRequest(
+        parser=SourceSchemaFilenameParser(),
+        output_dir=tmp_path,
+        output_payload=payload,
+        input_path="A01_s003_w1_z001_t001.tif",
+        variable_components=(VariableComponents.SITE,),
+    )
+
+    identity = FunctionOutputIdentityAuthority.identity(request)
+    output_path = FunctionOutputPathAuthority.output_path_for_identity(
+        request,
+        identity,
+    )
+
+    assert output_path.name == "A01_s003_w1_z001_t001.tif"
+    assert identity.component_values["site"] == 3
+    assert identity.filename_component_values is not None
+    assert identity.filename_component_values["site"] == 3

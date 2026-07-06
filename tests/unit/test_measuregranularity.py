@@ -6,11 +6,13 @@ from benchmark.cellprofiler_library.functions.measuregranularity import (
 from openhcs.processing.backends.cellprofiler.granularity import (
     GRANULARITY_IMAGE_SERIES_CACHE,
     GranularityImageSeriesRequest,
+    NativeGranularityReconstructionBackendStrategy,
+    NumbaGranularityReconstructionBackendStrategy,
+    OpenCVGranularityReconstructionBackendStrategy,
     background_corrected_pixels,
-    disk_offsets,
-    gray_dilation_offsets_reflect_numba,
-    gray_erosion_offsets_reflect_numba,
-    reconstruct_dilation_cross_numba,
+    granularity_reconstruction_backend,
+    granularity_reconstruction_series,
+    granularity_grey_erosion,
 )
 from openhcs.core.config import DtypeConfig
 
@@ -116,62 +118,11 @@ def test_measure_granularity_objects_uses_order_one_coordinate_sampling_after_su
     np.testing.assert_allclose(actual, expected)
 
 
-def test_numba_disk_morphology_matches_skimage_reflect_mode():
-    import skimage.morphology
-
-    image = np.array(
-        [
-            [5.0, 4.0, 3.0, 2.0],
-            [6.0, 1.0, 7.0, 8.0],
-            [9.0, 2.0, 0.0, 3.0],
-        ],
-        dtype=np.float64,
-    )
-    footprint = skimage.morphology.disk(1, dtype=bool)
-    offsets = disk_offsets(1)
-
-    np.testing.assert_allclose(
-        gray_erosion_offsets_reflect_numba(image, offsets),
-        skimage.morphology.erosion(image, footprint=footprint),
-    )
-    np.testing.assert_allclose(
-        gray_dilation_offsets_reflect_numba(image, offsets),
-        skimage.morphology.dilation(image, footprint=footprint),
-    )
-
-
-def test_numba_reconstruction_matches_skimage_disk_one_connectivity():
-    import skimage.morphology
-
-    mask = np.array(
-        [
-            [0.2, 0.5, 0.4, 0.1, 0.0],
-            [0.3, 0.9, 0.8, 0.3, 0.2],
-            [0.1, 0.4, 0.7, 0.6, 0.1],
-            [0.0, 0.2, 0.5, 0.4, 0.3],
-        ],
-        dtype=np.float64,
-    )
-    seed = skimage.morphology.erosion(
-        mask,
-        footprint=skimage.morphology.disk(1, dtype=bool),
-    )
-
-    expected = skimage.morphology.reconstruction(
-        seed,
-        mask,
-        footprint=skimage.morphology.disk(1, dtype=bool),
-    )
-    actual = reconstruct_dilation_cross_numba(seed, mask)
-
-    np.testing.assert_allclose(actual, expected)
-
-
 def test_background_corrected_pixels_match_reference_operations():
     import scipy.ndimage
     import skimage.morphology
 
-    image = np.arange(80, dtype=np.float64).reshape(8, 10) / 80.0
+    image = np.arange(99, dtype=np.float64).reshape(9, 11) / 99.0
     pixels, _shape = background_corrected_pixels(
         image,
         subsample_size=1.0,
@@ -179,7 +130,7 @@ def test_background_corrected_pixels_match_reference_operations():
         element_radius=1,
     )
 
-    back_shape = (np.asarray(image.shape) * 0.5).astype(int)
+    back_shape = np.asarray(image.shape) * 0.5
     bi, bj = np.mgrid[0:back_shape[0], 0:back_shape[1]].astype(float) / 0.5
     back_pixels = scipy.ndimage.map_coordinates(image, (bi, bj), order=1)
     footprint = skimage.morphology.disk(1, dtype=bool)
@@ -192,6 +143,78 @@ def test_background_corrected_pixels_match_reference_operations():
     expected[expected < 0] = 0
 
     np.testing.assert_allclose(pixels, expected)
+
+
+def test_granularity_reconstruction_default_backend_is_numba():
+    assert isinstance(
+        granularity_reconstruction_backend(),
+        NumbaGranularityReconstructionBackendStrategy,
+    )
+
+
+def test_numba_granularity_reconstruction_matches_native_radius_one():
+    import skimage.morphology
+
+    rng = np.random.default_rng(22)
+    pixels = rng.random((40, 41), dtype=np.float32)
+    footprint = skimage.morphology.disk(1, dtype=np.uint8)
+    seed = granularity_grey_erosion(pixels, footprint)
+
+    native = NativeGranularityReconstructionBackendStrategy().reconstruct_radius_one(
+        seed,
+        pixels,
+    )
+    accelerated = NumbaGranularityReconstructionBackendStrategy().reconstruct_radius_one(
+        seed,
+        pixels,
+    )
+
+    np.testing.assert_array_equal(accelerated, native)
+
+
+def test_opencv_granularity_reconstruction_matches_native_radius_one():
+    import skimage.morphology
+
+    rng = np.random.default_rng(24)
+    pixels = rng.random((40, 41), dtype=np.float32)
+    footprint = skimage.morphology.disk(1, dtype=np.uint8)
+    seed = granularity_grey_erosion(pixels, footprint)
+
+    native = NativeGranularityReconstructionBackendStrategy().reconstruct_radius_one(
+        seed,
+        pixels,
+    )
+    accelerated = OpenCVGranularityReconstructionBackendStrategy().reconstruct_radius_one(
+        seed,
+        pixels,
+    )
+
+    np.testing.assert_array_equal(accelerated, native)
+
+
+def test_numba_granularity_reconstruction_series_matches_reference():
+    import skimage.morphology
+
+    rng = np.random.default_rng(23)
+    pixels = rng.random((35, 37), dtype=np.float32)
+    footprint = skimage.morphology.disk(1, dtype=bool)
+    erosion_footprint = skimage.morphology.disk(1, dtype=np.uint8)
+    expected = []
+    ero = pixels.copy()
+    for _index in range(3):
+        ero = granularity_grey_erosion(ero, erosion_footprint)
+        expected.append(
+            skimage.morphology.reconstruction(
+                ero,
+                pixels,
+                footprint=footprint,
+            )
+        )
+
+    actual = granularity_reconstruction_series(pixels, 3)
+
+    for actual_image, expected_image in zip(actual, expected, strict=True):
+        np.testing.assert_array_equal(actual_image, expected_image)
 
 
 def test_measure_granularity_objects_matches_reference_operations():

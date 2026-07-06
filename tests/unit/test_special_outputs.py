@@ -1,6 +1,12 @@
 import pytest
 
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import (
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+    SpatialGridArtifactType,
+)
 from openhcs.core.special_outputs import (
     SpecialOutputKindClassifier,
     special_output_materialization,
@@ -19,15 +25,15 @@ def test_special_output_kind_classifier_uses_materialization_options() -> None:
         SpecialOutputKindClassifier.kind_for(
             ("measurements", MaterializationSpec(CsvOptions()))
         )
-        is ArtifactKind.MEASUREMENTS
+        is MeasurementsArtifactType
     )
     assert (
         SpecialOutputKindClassifier.kind_for(("objects", MaterializationSpec(ROIOptions())))
-        is ArtifactKind.OBJECT_LABELS
+        is ObjectLabelsArtifactType
     )
     assert (
         SpecialOutputKindClassifier.kind_for(("image", MaterializationSpec(TiffStackOptions())))
-        is ArtifactKind.IMAGE
+        is ImageArtifactType
     )
 
 
@@ -36,15 +42,15 @@ def test_spatial_grid_name_owns_csv_materialized_grid_outputs() -> None:
         SpecialOutputKindClassifier.kind_for(
             ("grid_info", MaterializationSpec(CsvOptions()))
         )
-        is ArtifactKind.SPATIAL_GRID
+        is SpatialGridArtifactType
     )
 
 
 def test_special_output_kind_classifier_preserves_legacy_name_semantics() -> None:
-    assert SpecialOutputKindClassifier.kind_for("grid_definition") is ArtifactKind.SPATIAL_GRID
-    assert SpecialOutputKindClassifier.kind_for("parent_relationship_rows") is ArtifactKind.RELATIONSHIPS
-    assert SpecialOutputKindClassifier.kind_for("object_labels") is ArtifactKind.OBJECT_LABELS
-    assert SpecialOutputKindClassifier.kind_for("quality_rows") is ArtifactKind.MEASUREMENTS
+    assert SpecialOutputKindClassifier.kind_for("grid_definition") is SpatialGridArtifactType
+    assert SpecialOutputKindClassifier.kind_for("parent_relationship_rows") is RelationshipsArtifactType
+    assert SpecialOutputKindClassifier.kind_for("object_labels") is ObjectLabelsArtifactType
+    assert SpecialOutputKindClassifier.kind_for("quality_rows") is MeasurementsArtifactType
 
 
 def test_special_output_accessors_fail_loud_for_invalid_declarations() -> None:

@@ -17,7 +17,14 @@ import tifffile
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.constants import Microscope
 from openhcs.constants.constants import AllComponents
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import (
+    ArtifactType,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+    SpatialGridArtifactType,
+)
 from openhcs.core.config import (
     AnalysisConsolidationConfig,
     GlobalPipelineConfig,
@@ -102,7 +109,7 @@ def test_cppipe_generated_pipeline_executes_through_orchestrator(
 
     nuclei_records = execution.compiled_contexts["A01"].runtime_value_store.find(
         name="Nuclei",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
         axis_id="A01",
     )
     assert len(nuclei_records) == 1
@@ -145,12 +152,12 @@ def test_bbbc021_cppipe_generated_pipeline_executes_named_channel_bindings(
     )
     nuclei_records = execution.compiled_contexts["A01"].runtime_value_store.find(
         name="Nuclei",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
         axis_id="A01",
     )
     composite_records = execution.compiled_contexts["A01"].runtime_value_store.find(
         name="Composite",
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         axis_id="A01",
     )
     assert len(nuclei_records) == 1
@@ -231,7 +238,7 @@ def test_loadimages_cppipe_executes_pipeline_start_mat_illumination_binding(
     raw_assignment = prepared.source_schema.resolved_assignment_for_alias("Raw")
     illum_assignment = prepared.source_schema.resolved_source_artifact_for_alias(
         "Illum",
-        ArtifactKind.IMAGE,
+        ImageArtifactType,
     )
     assert raw_assignment is not None
     assert raw_assignment.origin is SourceBindingOrigin.PIPELINE_START
@@ -264,7 +271,7 @@ def test_loadimages_cppipe_executes_pipeline_start_mat_illumination_binding(
     )
     corrected_records = execution.compiled_contexts["A01"].runtime_value_store.find(
         name="CorrectedRaw",
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         axis_id="A01",
     )
     assert len(corrected_records) == 1
@@ -328,16 +335,16 @@ def test_examplefly_cppipe_generated_pipeline_executes_real_pipeline_shape(
     runtime_store = execution.compiled_contexts["A01"].runtime_value_store
     assert runtime_store.find(
         name="Cells",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
         axis_id="A01",
     )
     assert runtime_store.find(
         name="Cytoplasm",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
         axis_id="A01",
     )
     assert runtime_store.find(
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id="A01",
     )
     csv_outputs = sorted(
@@ -412,12 +419,12 @@ def test_examplehuman_cppipe_executes_via_source_schema_workspace(
     runtime_store = execution.compiled_contexts[axis_id].runtime_value_store
     cytoplasm_records = runtime_store.find(
         name="Cytoplasm",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
         axis_id=axis_id,
     )
     measurement_records = runtime_store.find(
         name="MeasureObjectIntensity_10_measurements",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id=axis_id,
     )
     assert len(cytoplasm_records) == 1
@@ -493,26 +500,27 @@ def test_official_example_untangleworms_cppipe_executes_via_source_schema_worksp
     runtime_store = execution.compiled_contexts[axis_id].runtime_value_store
     assert runtime_store.find(
         name="OverlappingWorms",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
         axis_id=axis_id,
     )
     assert runtime_store.find(
         name="NonOverlappingWorms",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
         axis_id=axis_id,
     )
     overlay_records = runtime_store.find(
         name="OrigOverlay",
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         axis_id=axis_id,
     )
     assert len(overlay_records) == 1
     overlay = np.asarray(overlay_records[0].value.data)
-    assert overlay.ndim == 3
+    assert overlay.ndim == 4
+    assert overlay.shape[0] == 2
     assert overlay.shape[-1] == 3
     assert runtime_store.find(
         name="MeasureObjectIntensity_17_measurements",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id=axis_id,
     )
 
@@ -575,17 +583,17 @@ def test_official_examplefly_cppipe_executes_measurement_math_classification(
     runtime_store = execution.compiled_contexts["A01"].runtime_value_store
     assert runtime_store.find(
         name="CalculateMath_18_measurements",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id="A01",
     )
     assert runtime_store.find(
         name="ClassifyObjects_19_measurements",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id="A01",
     )
     assert runtime_store.find(
         name="RGBImage",
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         axis_id="A01",
     )
 
@@ -868,7 +876,7 @@ def test_official_example_colocalization_cppipe_executes_relationship_exports(
     )
     runtime_store = execution.compiled_contexts["A01"].runtime_value_store
     relationship_records = runtime_store.find(
-        kind=ArtifactKind.RELATIONSHIPS,
+        artifact_type=RelationshipsArtifactType,
         axis_id="A01",
     )
     assert {
@@ -882,7 +890,12 @@ def test_official_example_colocalization_cppipe_executes_relationship_exports(
     }
     relationships = tuple(
         runtime_relationship(
-            RuntimeArtifactQueryContext(runtime_store, "A01"),
+            RuntimeArtifactQueryContext(
+                runtime_store,
+                "A01",
+                group_key=record.key.scope.group_key,
+                match_group=True,
+            ),
             record.key.name,
         )
         for record in relationship_records
@@ -891,12 +904,12 @@ def test_official_example_colocalization_cppipe_executes_relationship_exports(
     assert {relationship.target.role for relationship in relationships} == {"child"}
     assert runtime_store.find(
         name="MeasureColocalization_9_measurements",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id="A01",
     )
     assert runtime_store.find(
         name="CalculateMath_22_measurements",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id="A01",
     )
 
@@ -983,14 +996,14 @@ def test_official_example_neighbors_cppipe_executes_neighbor_exports(
     runtime_store = execution.compiled_contexts["A01"].runtime_value_store
     cells_records = runtime_store.find(
         name="Cells",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
         axis_id="A01",
     )
     assert cells_records
     assert np.asarray(cells_records[0].value.data).max() > 0
     assert runtime_store.find(
         name="MeasureObjectNeighbors_10_measurements",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id="A01",
     )
 
@@ -1193,10 +1206,10 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
             "ExamplePercentPositive",
             "ExamplePercentPositive",
             (
-                ("PH3PosNuclei", ArtifactKind.OBJECT_LABELS),
-                ("Nuclei_PH3_relationships", ArtifactKind.RELATIONSHIPS),
-                ("CalculateMath_13_measurements", ArtifactKind.MEASUREMENTS),
-                ("DisplayImage", ArtifactKind.IMAGE),
+                ("PH3PosNuclei", ObjectLabelsArtifactType),
+                ("Nuclei_PH3_relationships", RelationshipsArtifactType),
+                ("CalculateMath_13_measurements", MeasurementsArtifactType),
+                ("DisplayImage", ImageArtifactType),
             ),
             ("relationships", "ClassifyObjects", "CalculateMath"),
             (".tif",),
@@ -1206,9 +1219,9 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
             "ExampleSpeckles",
             "ExampleSpeckles",
             (
-                ("h2ax", ArtifactKind.OBJECT_LABELS),
-                ("Nuclei_h2ax_relationships", ArtifactKind.RELATIONSHIPS),
-                ("MeasureObjectIntensity_10_measurements", ArtifactKind.MEASUREMENTS),
+                ("h2ax", ObjectLabelsArtifactType),
+                ("Nuclei_h2ax_relationships", RelationshipsArtifactType),
+                ("MeasureObjectIntensity_10_measurements", MeasurementsArtifactType),
             ),
             ("relationships", "MeasureObjectIntensity", "RelateObjects"),
             (),
@@ -1218,9 +1231,9 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
             "ExampleTumor",
             "ExampleTumor",
             (
-                ("tumor", ArtifactKind.OBJECT_LABELS),
-                ("TumorOutline", ArtifactKind.IMAGE),
-                ("MeasureObjectSizeShape_8_measurements", ArtifactKind.MEASUREMENTS),
+                ("tumor", ObjectLabelsArtifactType),
+                ("TumorOutline", ImageArtifactType),
+                ("MeasureObjectSizeShape_8_measurements", MeasurementsArtifactType),
             ),
             ("MeasureObjectSizeShape",),
             (".jpg",),
@@ -1230,13 +1243,13 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
             "ExampleUntangleAndStraightenWorms",
             "ExampleStraightenWorms",
             (
-                ("StraightenedWorms", ArtifactKind.OBJECT_LABELS),
+                ("StraightenedWorms", ObjectLabelsArtifactType),
                 (
                     "NonOverlappingWorms_HeadMarkers_relationships",
-                    ArtifactKind.RELATIONSHIPS,
+                    RelationshipsArtifactType,
                 ),
-                ("StraightenWorms_11_measurements", ArtifactKind.MEASUREMENTS),
-                ("StraightenedRG", ArtifactKind.IMAGE),
+                ("StraightenWorms_11_measurements", MeasurementsArtifactType),
+                ("StraightenedRG", ImageArtifactType),
             ),
             ("relationships", "StraightenWorms", "UntangleWorms"),
             (".tif",),
@@ -1246,9 +1259,9 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
             "ExampleYeastColonies",
             "ExampleYeastColonies",
             (
-                ("Colonies", ArtifactKind.OBJECT_LABELS),
-                ("OutlinedColonies", ArtifactKind.IMAGE),
-                ("ClassifyObjects_18_measurements", ArtifactKind.MEASUREMENTS),
+                ("Colonies", ObjectLabelsArtifactType),
+                ("OutlinedColonies", ImageArtifactType),
+                ("ClassifyObjects_18_measurements", MeasurementsArtifactType),
             ),
             (
                 "CorrectIlluminationCalculate",
@@ -1262,12 +1275,12 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
             "ExampleYeastPatches",
             "ExampleYeastPatches",
             (
-                ("Prespots", ArtifactKind.OBJECT_LABELS),
-                ("FilterObjects", ArtifactKind.OBJECT_LABELS),
-                ("NaturalSpots", ArtifactKind.OBJECT_LABELS),
-                ("ForcedSpots", ArtifactKind.OBJECT_LABELS),
-                ("Grid", ArtifactKind.SPATIAL_GRID),
-                ("MeasureObjectIntensity_18_measurements", ArtifactKind.MEASUREMENTS),
+                ("Prespots", ObjectLabelsArtifactType),
+                ("FilterObjects", ObjectLabelsArtifactType),
+                ("NaturalSpots", ObjectLabelsArtifactType),
+                ("ForcedSpots", ObjectLabelsArtifactType),
+                ("Grid", SpatialGridArtifactType),
+                ("MeasureObjectIntensity_18_measurements", MeasurementsArtifactType),
             ),
             (
                 "CorrectIlluminationCalculate",
@@ -1282,16 +1295,16 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
             "ExampleImagingFlowCytometryObjectsInGrid",
             "ExampleImagingFlowCytometryObjectsInGrid",
             (
-                ("BF_cells_on_grid", ArtifactKind.OBJECT_LABELS),
+                ("BF_cells_on_grid", ObjectLabelsArtifactType),
                 (
                     "Non_empty_tile_FilteredBF_relationships",
-                    ArtifactKind.RELATIONSHIPS,
+                    RelationshipsArtifactType,
                 ),
-                ("MeasureGranularity_24_measurements", ArtifactKind.MEASUREMENTS),
-                ("MeasureTexture_25_measurements", ArtifactKind.MEASUREMENTS),
+                ("MeasureGranularity_24_measurements", MeasurementsArtifactType),
+                ("MeasureTexture_25_measurements", MeasurementsArtifactType),
                 (
                     "MeasureObjectIntensityDistribution_30_measurements",
-                    ArtifactKind.MEASUREMENTS,
+                    MeasurementsArtifactType,
                 ),
             ),
             (
@@ -1308,10 +1321,10 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
             "ExampleTrackObjects",
             "ExampleTrackObjects",
             (
-                ("TrackedCells", ArtifactKind.IMAGE),
-                ("TrackObjects_9_measurements", ArtifactKind.MEASUREMENTS),
-                ("OutlineImage", ArtifactKind.IMAGE),
-                ("AdjacentImage", ArtifactKind.IMAGE),
+                ("TrackedCells", ImageArtifactType),
+                ("TrackObjects_9_measurements", MeasurementsArtifactType),
+                ("OutlineImage", ImageArtifactType),
+                ("AdjacentImage", ImageArtifactType),
             ),
             ("TrackObjects",),
             (".tif",),
@@ -1321,13 +1334,13 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
             "ExampleVitra",
             "ExampleVitraImages",
             (
-                ("CorrProtein", ArtifactKind.IMAGE),
-                ("Cells", ArtifactKind.OBJECT_LABELS),
-                ("Cytoplasm", ArtifactKind.OBJECT_LABELS),
-                ("Outlined", ArtifactKind.IMAGE),
-                ("MeasureObjectIntensity_9_measurements", ArtifactKind.MEASUREMENTS),
-                ("CalculateMath_10_measurements", ArtifactKind.MEASUREMENTS),
-                ("CalculateMath_11_measurements", ArtifactKind.MEASUREMENTS),
+                ("CorrProtein", ImageArtifactType),
+                ("Cells", ObjectLabelsArtifactType),
+                ("Cytoplasm", ObjectLabelsArtifactType),
+                ("Outlined", ImageArtifactType),
+                ("MeasureObjectIntensity_9_measurements", MeasurementsArtifactType),
+                ("CalculateMath_10_measurements", MeasurementsArtifactType),
+                ("CalculateMath_11_measurements", MeasurementsArtifactType),
             ),
             (
                 "MeasureObjectIntensity",
@@ -1343,7 +1356,7 @@ def test_official_cellprofiler3_additional_representative_pipelines_execute(
     tmp_path: Path,
     pipeline_name: str,
     source_name: str,
-    expected_records: tuple[tuple[str, ArtifactKind], ...],
+    expected_records: tuple[tuple[str, ArtifactType], ...],
     csv_fragments: tuple[str, ...],
     image_suffixes: tuple[str, ...],
 ) -> None:
@@ -1361,7 +1374,7 @@ def test_official_cellprofiler3_additional_representative_pipelines_execute(
     axis_id = _single_execution_axis(execution)
     runtime_store = execution.compiled_contexts[axis_id].runtime_value_store
     for name, kind in expected_records:
-        assert runtime_store.find(name=name, kind=kind, axis_id=axis_id)
+        assert runtime_store.find(name=name, artifact_type=kind, axis_id=axis_id)
 
     result_outputs = sorted(
         path
@@ -1507,11 +1520,11 @@ def test_cppipe_generated_pipeline_materializes_relationship_outputs(
 
     runtime_store = execution.compiled_contexts["A01"].runtime_value_store
     relationship_records = runtime_store.find(
-        kind=ArtifactKind.RELATIONSHIPS,
+        artifact_type=RelationshipsArtifactType,
         axis_id="A01",
     )
     measurement_records = runtime_store.find(
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id="A01",
     )
     assert relationship_records
@@ -1615,17 +1628,17 @@ def test_percent_positive_cppipe_executes_relationship_measurement_consumers(
     runtime_store = execution.compiled_contexts["A01"].runtime_value_store
     assert runtime_store.find(
         name="PH3PosNuclei",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
         axis_id="A01",
     )
     assert runtime_store.find(
         name="DisplayImage",
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         axis_id="A01",
     )
     calculate_math_records = runtime_store.find(
         name="CalculateMath_11_measurements",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id="A01",
     )
     assert calculate_math_records

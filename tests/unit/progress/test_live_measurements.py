@@ -1,6 +1,6 @@
 import pytest
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.artifacts import ArtifactOutputPlan, MeasurementsArtifactType
 from openhcs.core.progress import (
     ProgressEvent,
     ProgressIdentity,
@@ -11,8 +11,13 @@ from openhcs.core.progress.live_measurements import (
     LiveMeasurementPayloadError,
     LiveMeasurementProgressPayload,
 )
+from openhcs.core.runtime_semantics import FieldSpec
 from openhcs.core.runtime_stores import RuntimeValueStore
-from openhcs.core.runtime_values import normalize_artifact_value
+from openhcs.core.runtime_values import (
+    ColumnarRows,
+    MeasurementTable,
+    normalize_artifact_value,
+)
 
 
 def _measurement_record(
@@ -26,7 +31,7 @@ def _measurement_record(
         ArtifactOutputPlan(
             name=name,
             path=path,
-            kind=ArtifactKind.MEASUREMENTS,
+            artifact_type=MeasurementsArtifactType,
             group_keys=("DAPI",),
         ),
         rows
@@ -106,6 +111,42 @@ def test_live_measurement_payload_truncates_rows_columns_and_previews():
     assert payload.previews[0].rows == ({"a": 1, "b": 2},)
     assert payload.previews[0].truncated_rows is True
     assert payload.previews[0].truncated_columns is True
+
+
+def test_live_measurement_payload_previews_columnar_rows_without_materializing_all_rows():
+    class ExplodingColumnarRows(ColumnarRows):
+        @property
+        def columns(self):
+            return {
+                "object_id": tuple(range(100)),
+                "mean": tuple(float(index) for index in range(100)),
+            }
+
+        def row_mappings(self):
+            raise AssertionError("live preview should not materialize all rows")
+
+    payload = LiveMeasurementProgressPayload.from_records(
+        (
+            _measurement_record(
+                rows=MeasurementTable(
+                    name="MeasureObjectIntensity",
+                    rows=ExplodingColumnarRows(),
+                    fields=(FieldSpec("object_id"), FieldSpec("mean")),
+                ),
+            ),
+        ),
+        row_limit=2,
+    )
+
+    assert payload is not None
+    preview = payload.previews[0]
+    assert preview.row_count == 100
+    assert preview.truncated_rows is True
+    assert preview.columns == ("object_id", "mean")
+    assert preview.rows == (
+        {"object_id": 0, "mean": 0.0},
+        {"object_id": 1, "mean": 1.0},
+    )
 
 
 def test_live_measurement_payload_absent_context_is_noop():

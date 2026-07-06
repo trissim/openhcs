@@ -1,7 +1,16 @@
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
 from openhcs.core.callable_contract import CallableContract, CallableMetadata
-from openhcs.core.function_patterns import CompiledFunctionInvocation, FunctionInvocationKey
+from openhcs.core.function_patterns import (
+    CompiledFunctionInvocation,
+    FunctionInvocationKey,
+)
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
+from openhcs.core.module_artifact_contract import (
+    DeclaredArtifactOutputPartition,
+    RecordedArtifactOutputPartition,
+    RuntimeArtifactInputPartition,
+    SourceArtifactInputPartition,
+)
 from openhcs.core.function_reference import FunctionReference
 from openhcs.core.steps.function_runtime import FunctionInvocationCallableResolver
 
@@ -34,14 +43,32 @@ def test_function_reference_cache_key_includes_module_artifact_contract():
         reference,
         ModuleArtifactContract(
             "ImageMath",
-            outputs=(ArtifactSpec("CombinedImage", ArtifactKind.IMAGE),),
+            items=(
+                *ModuleArtifactContract.items_for_partition(
+                    RecordedArtifactOutputPartition,
+                    (ArtifactSpec.output("CombinedImage", ImageArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    DeclaredArtifactOutputPartition,
+                    (ArtifactSpec.output("CombinedImage", ImageArtifactType),),
+                ),
+            ),
         ),
     )
     second_contract = _callable_contract_for_reference(
         reference,
         ModuleArtifactContract(
             "ImageMath",
-            outputs=(ArtifactSpec("SubtractedRed", ArtifactKind.IMAGE),),
+            items=(
+                *ModuleArtifactContract.items_for_partition(
+                    RecordedArtifactOutputPartition,
+                    (ArtifactSpec.output("SubtractedRed", ImageArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    DeclaredArtifactOutputPartition,
+                    (ArtifactSpec.output("SubtractedRed", ImageArtifactType),),
+                ),
+            ),
         ),
     )
 

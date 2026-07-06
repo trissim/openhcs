@@ -62,6 +62,19 @@ def test_fill_labeled_holes_honors_size_predicate() -> None:
     assert not filled[4, 4]
 
 
+def test_fill_labeled_holes_mask_excludes_background_from_fill_domain() -> None:
+    labels = np.ones((5, 5), dtype=np.int32)
+    labels[2, 2] = 0
+    labels[1, 1] = 0
+    mask = labels == 0
+    mask[1, 1] = False
+
+    filled = MORPHOLOGY.fill_labeled_holes(labels, mask=mask)
+
+    assert filled[2, 2] == 1
+    assert filled[1, 1] == 0
+
+
 def test_fill_labeled_holes_handles_stacked_planes_planewise() -> None:
     labels = np.zeros((2, 6, 6), dtype=np.int32)
     labels[:, 1:5, 1:5] = 3

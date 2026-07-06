@@ -11,7 +11,13 @@ from openhcs.interop.cellprofiler.execution_validation import (
 )
 from openhcs.interop.cellprofiler.parser import ModuleBlock
 from openhcs.interop.cellprofiler.runtime_pipeline import DirectPipelineExecution
-from openhcs.core.artifacts import ArtifactKey, ArtifactKind, ArtifactScope, ArtifactSpec
+from openhcs.core.artifacts import (
+    ArtifactKey,
+    ArtifactScope,
+    ArtifactSpec,
+    ImageArtifactType,
+    MeasurementsArtifactType,
+)
 from openhcs.core.runtime_exports import RuntimeImageExportBitDepth
 from openhcs.core.runtime_semantics import FieldSpec
 from openhcs.core.runtime_stores import RuntimeValueStore
@@ -112,9 +118,9 @@ def _prepared_exporting_measurements() -> SimpleNamespace:
             artifact_contracts=(
                 SimpleNamespace(
                     outputs=(
-                        ArtifactSpec(
+                        ArtifactSpec.output(
                             name="Measurements",
-                            kind=ArtifactKind.MEASUREMENTS,
+                            artifact_type=MeasurementsArtifactType,
                         ),
                     )
                 ),
@@ -140,9 +146,9 @@ def _prepared_exporting_images() -> SimpleNamespace:
             artifact_contracts=(
                 SimpleNamespace(
                     outputs=(
-                        ArtifactSpec(
+                        ArtifactSpec.output(
                             name="RGBImage",
-                            kind=ArtifactKind.IMAGE,
+                            artifact_type=ImageArtifactType,
                         ),
                     )
                 ),
@@ -160,12 +166,12 @@ def _successful_execution_with_measurement_record(
         RuntimeValue(
             key=ArtifactKey(
                 name="Measurements",
-                kind=ArtifactKind.MEASUREMENTS,
+                artifact_type=MeasurementsArtifactType,
                 scope=ArtifactScope(axis_id="A01"),
             ),
             data=rows,
             schema=RuntimeValueSchema(
-                kind=ArtifactKind.MEASUREMENTS,
+                artifact_type=MeasurementsArtifactType,
                 fields=(FieldSpec("slice_index"),),
             ),
         ),
@@ -188,11 +194,11 @@ def _successful_execution_with_image_record() -> DirectPipelineExecution:
         RuntimeValue(
             key=ArtifactKey(
                 name="RGBImage",
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 scope=ArtifactScope(axis_id="A01"),
             ),
             data=object(),
-            schema=RuntimeValueSchema(kind=ArtifactKind.IMAGE),
+            schema=RuntimeValueSchema(artifact_type=ImageArtifactType),
         ),
         path="results/axis_RGBImage_step1.pkl",
         backend="memory",

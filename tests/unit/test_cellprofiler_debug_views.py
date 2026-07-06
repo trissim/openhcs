@@ -1,4 +1,9 @@
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import (
+    ArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+)
 from openhcs.core.debug import DebugArtifactRef, DebugCursor, DebugSnapshot
 from openhcs.core.debug_views import DebugViewModel, DebugViewSectionKind
 from openhcs.interop.cellprofiler.debug_views import (
@@ -28,7 +33,7 @@ class CellProfilerDebugViewFixture:
     def artifact_ref(
         cls,
         *,
-        kind: ArtifactKind,
+        kind: ArtifactType,
         name: str,
         cursor: DebugCursor,
         extension: str,
@@ -63,7 +68,7 @@ def test_cellprofiler_debug_view_uses_generic_snapshot_sections():
         invocation_name=CellProfilerDebugViewFixture.MEASURE_IMAGE_INTENSITY,
     )
     measurements_ref = CellProfilerDebugViewFixture.artifact_ref(
-        kind=ArtifactKind.MEASUREMENTS,
+        kind=MeasurementsArtifactType,
         name="ImageMeasurements",
         cursor=cursor,
         extension="csv",
@@ -100,7 +105,7 @@ def test_cellprofiler_debug_view_uses_generic_snapshot_sections():
     output_row = table_row_mapping(
         section_by_kind(view, DebugViewSectionKind.OUTPUT_ARTIFACTS)
     )
-    assert output_row["kind"] == ArtifactKind.MEASUREMENTS.value
+    assert output_row["kind"] == MeasurementsArtifactType.value
     assert output_row["name"] == "ImageMeasurements"
     assert output_row["storage_ref"] == "debug/snap/ImageMeasurements.csv"
     assert output_row["dtype"] == "csv"
@@ -117,7 +122,7 @@ def test_snapshot_sections_are_derived_from_present_debug_payloads():
         invocation_name="RelateObjects",
     )
     input_ref = CellProfilerDebugViewFixture.artifact_ref(
-        kind=ArtifactKind.OBJECT_LABELS,
+        kind=ObjectLabelsArtifactType,
         name="Nuclei",
         cursor=cursor,
         extension="zarr",
@@ -125,7 +130,7 @@ def test_snapshot_sections_are_derived_from_present_debug_payloads():
         dtype="uint16",
     )
     relationship_ref = CellProfilerDebugViewFixture.artifact_ref(
-        kind=ArtifactKind.RELATIONSHIPS,
+        kind=RelationshipsArtifactType,
         name="ParentChild",
         cursor=cursor,
         extension="csv",
@@ -151,12 +156,12 @@ def test_snapshot_sections_are_derived_from_present_debug_payloads():
     input_row = table_row_mapping(
         section_by_kind(view, DebugViewSectionKind.INPUT_ARTIFACTS)
     )
-    assert input_row["kind"] == ArtifactKind.OBJECT_LABELS.value
+    assert input_row["kind"] == ObjectLabelsArtifactType.value
     assert input_row["name"] == "Nuclei"
     assert input_row["shape"] == "1, 64, 64"
     relationship_row = table_row_mapping(
         section_by_kind(view, DebugViewSectionKind.RELATIONSHIPS)
     )
-    assert relationship_row["kind"] == ArtifactKind.RELATIONSHIPS.value
+    assert relationship_row["kind"] == RelationshipsArtifactType.value
     assert relationship_row["name"] == "ParentChild"
     assert section_by_kind(view, DebugViewSectionKind.ERROR).text == "boom"

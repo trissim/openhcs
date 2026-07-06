@@ -95,6 +95,37 @@ def test_pure_2d_contract_slices_image_metadata_payload_nominally() -> None:
     )
 
 
+def test_pure_2d_contract_projects_stack_shaped_kwargs_per_slice() -> None:
+    stack = np.arange(40, dtype=np.float32).reshape(2, 4, 5)
+    mask = np.zeros(stack.shape, dtype=bool)
+    mask[0, 0, 0] = True
+    mask[1, 1, 1] = True
+    seen_shapes: list[tuple[int, ...]] = []
+    seen_true_indices: list[tuple[int, int]] = []
+
+    def apply_mask(image: np.ndarray, *, mask: np.ndarray) -> np.ndarray:
+        seen_shapes.append(mask.shape)
+        true_y, true_x = np.argwhere(mask)[0]
+        seen_true_indices.append((int(true_y), int(true_x)))
+        return np.where(mask, image + 100, image)
+
+    apply_mask.output_memory_type = MEMORY_TYPE_NUMPY
+
+    result = ProcessingContract.PURE_2D.execute(
+        MinimalRegistry("minimal"),
+        apply_mask,
+        stack,
+        mask=mask,
+    )
+
+    expected = stack.copy()
+    expected[0, 0, 0] += 100
+    expected[1, 1, 1] += 100
+    np.testing.assert_array_equal(result, expected)
+    assert seen_shapes == [(4, 5), (4, 5)]
+    assert seen_true_indices == [(0, 0), (1, 1)]
+
+
 def test_pure_3d_contract_preserves_metadata_for_plain_numpy_processor() -> None:
     stack = np.arange(60, dtype=np.float32).reshape(2, 5, 6)
     payload = ImageMetadataPayload(

@@ -3,7 +3,12 @@ from types import SimpleNamespace
 import pytest
 
 from openhcs.constants import GroupBy, VariableComponents
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, ArtifactSpec
+from openhcs.core.artifacts import (
+    ArtifactOutputPlan,
+    ArtifactSpec,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+)
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.function_patterns import compile_function_pattern
 from openhcs.core.memory.decorators import numpy
@@ -44,13 +49,13 @@ def _compiled_pattern(func):
 def _artifact_output(
     name="OutputImage",
     *,
-    kind=ArtifactKind.IMAGE,
+    kind=ImageArtifactType,
     materialization=None,
 ):
     return ArtifactOutputPlan(
         name=name,
         path=f"/tmp/{name}",
-        kind=kind,
+        artifact_type=kind,
         materialization=materialization,
     )
 
@@ -88,18 +93,23 @@ def test_validate_compiled_function_pattern_reports_invocation_identity():
         )
 
 
-def test_normalized_group_by_resolves_variable_component_conflict_to_none():
-    assert (
+def test_normalized_group_by_rejects_variable_component_conflict():
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"Step 'step' has invalid processing_config: "
+            r"group_by=CHANNEL cannot also appear in "
+            r"variable_components=\('CHANNEL',\)"
+        ),
+    ):
         FuncStepContractValidator.normalized_group_by(
             GroupBy.CHANNEL,
             (VariableComponents.CHANNEL,),
             "step",
         )
-        is GroupBy.NONE
-    )
 
 
-def test_validate_funcstep_skips_dict_key_lookup_for_groupby_none():
+def test_validate_funcstep_rejects_dict_pattern_groupby_none():
     func = _function("channel_branch")
     func.input_memory_type = "numpy"
     func.output_memory_type = "numpy"
@@ -109,12 +119,11 @@ def test_validate_funcstep_skips_dict_key_lookup_for_groupby_none():
         processing_config=LazyProcessingConfig(group_by=GroupBy.NONE),
     )
 
-    def fail_component_lookup(_group_by):
-        raise AssertionError("GroupBy.NONE must not query component keys")
-
-    orchestrator = SimpleNamespace(get_component_keys=fail_component_lookup)
-
-    FuncStepContractValidator.validate_funcstep(step, orchestrator=orchestrator)
+    with pytest.raises(
+        ValueError,
+        match="Dict pattern requires a concrete group_by component",
+    ):
+        FuncStepContractValidator.validate_funcstep(step, orchestrator=SimpleNamespace())
 
 
 def test_validate_required_variable_components_allows_declared_axis():
@@ -328,8 +337,8 @@ def _runtime_artifact_step_plan(
         lambda _request: object(),
         manages_artifact_inputs=True,
     )
-    @artifact_inputs(ArtifactSpec("InputImage", ArtifactKind.IMAGE))
-    @artifact_outputs(ArtifactSpec("OutputImage", ArtifactKind.IMAGE))
+    @artifact_inputs(ArtifactSpec.input("InputImage", ImageArtifactType))
+    @artifact_outputs(ArtifactSpec.output("OutputImage", ImageArtifactType))
     def runtime_artifact_step(image, *, runtime):
         return image
 
@@ -358,9 +367,18 @@ def test_validate_artifact_managed_runtime_scope_allows_channel_variable_axis():
     FuncStepContractValidator.validate_artifact_managed_runtime_scope(step_plan)
 
 
-def test_validate_artifact_managed_runtime_scope_rejects_channel_group_by_axis():
+def test_validate_artifact_managed_runtime_scope_allows_channel_group_by_batch_axis():
     step_plan = _runtime_artifact_step_plan(
         variable_components=(VariableComponents.SITE,),
+        group_by=GroupBy.CHANNEL,
+    )
+
+    FuncStepContractValidator.validate_artifact_managed_runtime_scope(step_plan)
+
+
+def test_validate_artifact_managed_runtime_scope_rejects_projected_channel_group_axis():
+    step_plan = _runtime_artifact_step_plan(
+        variable_components=(VariableComponents.CHANNEL,),
         group_by=GroupBy.CHANNEL,
     )
 
@@ -391,7 +409,7 @@ def _artifact_contract_scope():
         artifact_outputs={
             "Nuclei": _artifact_output(
                 "Nuclei",
-                kind=ArtifactKind.OBJECT_LABELS,
+                kind=ObjectLabelsArtifactType,
             )
         },
         compiled_function_pattern=_compiled_pattern(func),

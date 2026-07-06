@@ -20,6 +20,10 @@ from benchmark.cellprofiler_comparison import (
     write_phase_timing_csv,
     write_summary_csv,
 )
+from benchmark.adapters.cellprofiler import (
+    NativeCellProfilerInputDomainStrategyKey,
+    NativeCellProfilerProvenanceField,
+)
 from benchmark.cellprofiler_benchmark_cli import _filter_cases_by_name
 import pytest
 from benchmark.contracts.tool_adapter import ToolExecutionError
@@ -166,7 +170,7 @@ def test_failed_comparison_observation_records_traceback(tmp_path: Path) -> None
     assert "TypeError: broken metadata" in observation.native_cellprofiler.error_message
 
 
-def test_native_reference_scope_discovers_completed_reference_with_dataset_alias(
+def test_native_reference_scope_rejects_unscoped_selected_source_reference(
     tmp_path: Path,
 ) -> None:
     dataset_path = tmp_path / "tutorial" / "translocation_axis1_20260512"
@@ -216,6 +220,78 @@ def test_native_reference_scope_discovers_completed_reference_with_dataset_alias
     reference.mkdir(parents=True)
     (reference / ".cellprofiler_benchmark_reference.json").write_text(
         json.dumps({"schema_version": 1, "provenance": {}}),
+        encoding="utf-8",
+    )
+
+    location = scope.resolve()
+
+    assert location.output_dir == scope.output_dir
+    assert location.reference_output_dir is None
+
+
+def test_native_reference_scope_accepts_matching_selected_source_reference(
+    tmp_path: Path,
+) -> None:
+    dataset_path = tmp_path / "tutorial" / "translocation_axis1_20260512"
+    dataset_path.mkdir(parents=True)
+    cppipe_path = tmp_path / "pipeline.cppipe"
+    cppipe_path.write_text(
+        "\n".join(
+            [
+                "CellProfiler Pipeline: http://www.cellprofiler.org",
+                "Images:[module_num:1|enabled:True]",
+                "    Filter images?:Images only",
+                "Metadata:[module_num:2|enabled:True]",
+                "    Extract metadata?:Yes",
+                "    Metadata source:File name",
+                "    Regular expression to extract from file name:^(?P<Well>[A-Z][0-9]{2})_s(?P<Site>[0-9]+)_w(?P<Channel>[0-9]+)",
+                "NamesAndTypes:[module_num:3|enabled:True]",
+                "    Assign a name to:Images matching rules",
+                "    Select the image type:Grayscale image",
+                "    Name to assign these images:DNA",
+                "    Image set matching method:Order",
+                "    Assignments count:1",
+                "    Single images count:0",
+                "    Select the rule criteria:and (file does contain \"\")",
+                "    Name to assign these images:DNA",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    selection = SourceSchemaImageSetSelection(max_image_set_count=1)
+    case = CellProfilerComparisonCase(
+        name="cp_tutorial_translocation_final",
+        dataset_path=dataset_path,
+        cppipe_path=cppipe_path,
+        dataset_id="CellProfiler_tutorials",
+    )
+    scope = NativeCellProfilerReferenceScope(
+        case=case,
+        native_reference_root=tmp_path / "native_refs",
+        pipeline_params={},
+        source_schema_image_set_selection=selection,
+    )
+    reference = (
+        scope.output_dir
+        / "TranslocationData_cp_tutorial_translocation_final_native_cellprofiler"
+    )
+    reference.mkdir(parents=True)
+    (reference / ".cellprofiler_benchmark_reference.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "provenance": {
+                    "cppipe_path": str(cppipe_path),
+                    NativeCellProfilerProvenanceField.INPUT_DOMAIN_STRATEGY: (
+                        NativeCellProfilerInputDomainStrategyKey.SELECTED_SOURCE_SCHEMA_WELLS
+                    ),
+                    NativeCellProfilerProvenanceField.SOURCE_SCHEMA_IMAGE_SET_SELECTION: {
+                        "well_filter": [],
+                        "max_image_set_count": 1,
+                    },
+                },
+            }
+        ),
         encoding="utf-8",
     )
 

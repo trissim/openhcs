@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import QApplication, QListWidget, QPushButton
 from pyqt_reactive.theming import ColorScheme
 
 import openhcs.processing.backends.cellprofiler as cellprofiler_backend
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.config import (
     GlobalPipelineConfig,
@@ -19,6 +19,12 @@ from openhcs.core.config import (
 from openhcs.constants.constants import OrchestratorState
 from openhcs.core.input_workspace import InputWorkspacePreparationResult
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
+from openhcs.core.module_artifact_contract import (
+    DeclaredArtifactOutputPartition,
+    RecordedArtifactOutputPartition,
+    RuntimeArtifactInputPartition,
+    SourceArtifactInputPartition,
+)
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.pipeline.step_snapshot import StepSnapshot
 from openhcs.core.source_binding_context import SourceBindingContext
@@ -130,12 +136,16 @@ class PlateManagerWidgetTestHarness:
         QtApplicationHarness.app()
         monkeypatch.setattr(PlateManagerWidget, "setup_ui", lambda self: None)
         monkeypatch.setattr(PlateManagerWidget, "setup_connections", lambda self: None)
-        monkeypatch.setattr(PlateManagerWidget, "update_button_states", lambda self: None)
+        monkeypatch.setattr(
+            PlateManagerWidget, "update_button_states", lambda self: None
+        )
         return PlateManagerWidget(PlateManagerServiceStub())
 
 
 class TestPlateManagerWidget:
-    def test_constructor_initializes_qobject_before_signal_use(self, monkeypatch) -> None:
+    def test_constructor_initializes_qobject_before_signal_use(
+        self, monkeypatch
+    ) -> None:
         widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
 
         assert widget.debug_snapshot_available is not None
@@ -158,12 +168,8 @@ class TestPlateManagerWidget:
         context = widget.source_binding_context_for_plate("/plate")
         assert context is not None
         assert context.logical_plate_id == "/plate"
-        assert context.display_plate_root == Path(
-            "/source"
-        )
-        assert context.execution_plate_path == Path(
-            "/execution"
-        )
+        assert context.display_plate_root == Path("/source")
+        assert context.execution_plate_path == Path("/execution")
         close_widget(widget)
         ObjectStateRegistry.clear()
 
@@ -282,7 +288,9 @@ class TestPlateManagerWidget:
             ),
         )
 
-        assert PipelineObjectStateBinding.steps_for_plate("/plate")[0].name == "Imported"
+        assert (
+            PipelineObjectStateBinding.steps_for_plate("/plate")[0].name == "Imported"
+        )
         close_widget(widget)
         ObjectStateRegistry.clear()
 
@@ -365,7 +373,9 @@ class TestPlateManagerWidget:
         ObjectStateRegistry.clear()
         widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
         service_adapter = PlateManagerServiceStub()
-        ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
+        ensure_global_config_context(
+            GlobalPipelineConfig, service_adapter.global_config
+        )
         plate_root = tmp_path / "plate"
         plate_root.mkdir()
         plate_scope = PlateScopeIdentity.from_cellprofiler_pipeline(
@@ -430,7 +440,9 @@ class TestPlateManagerWidget:
             assert applied is True
             assert state is not None
             assert state.get_resolved_value("napari_streaming_config.port") == 5557
-            assert state.get_saved_resolved_value("napari_streaming_config.port") == 5557
+            assert (
+                state.get_saved_resolved_value("napari_streaming_config.port") == 5557
+            )
             assert state.dirty_fields == set()
             assert {
                 "napari_streaming_config.enabled",
@@ -494,10 +506,13 @@ class TestPlateManagerWidget:
                 new_global_config,
             )
 
-            assert object.__getattribute__(
-                orchestrator.pipeline_config,
-                "num_workers",
-            ) is None
+            assert (
+                object.__getattribute__(
+                    orchestrator.pipeline_config,
+                    "num_workers",
+                )
+                is None
+            )
             assert plate_state.parameters["num_workers"] == 3
             assert plate_state._saved_parameters["num_workers"] is None
             assert plate_state.get_resolved_value("num_workers") == 3
@@ -622,7 +637,9 @@ class TestPlateManagerWidget:
         QtApplicationHarness.app()
         ObjectStateRegistry.clear()
         service_adapter = PlateManagerServiceStub()
-        ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
+        ensure_global_config_context(
+            GlobalPipelineConfig, service_adapter.global_config
+        )
         widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
         editor = PipelineEditorWidget(service_adapter)
         widget.pipeline_editor = editor
@@ -650,12 +667,12 @@ class TestPlateManagerWidget:
                 CellProfilerWorkspaceResultFixture.with_steps(tuple(final_steps)),
             )
 
-            assert [step.name for step in editor.get_pipeline_for_plate(start_scope)] == [
-                "StartOnly"
-            ]
-            assert [step.name for step in editor.get_pipeline_for_plate(final_scope)] == [
-                "FinalOnly"
-            ]
+            assert [
+                step.name for step in editor.get_pipeline_for_plate(start_scope)
+            ] == ["StartOnly"]
+            assert [
+                step.name for step in editor.get_pipeline_for_plate(final_scope)
+            ] == ["FinalOnly"]
             assert editor.current_plate == start_scope
             assert [step.name for step in editor.pipeline_steps] == ["StartOnly"]
         finally:
@@ -675,12 +692,21 @@ class TestPlateManagerWidget:
             plate_root,
             cppipe_path,
         ).scope_id
-        crop_metadata = cellprofiler_backend.cellprofiler_function_runtime_metadata(
+        crop_metadata = cellprofiler_backend.CellProfilerFunctionCatalog.runtime_metadata(
             cellprofiler_backend.crop,
         )
         contract = ModuleArtifactContract(
             module_name=crop_metadata.module_name,
-            outputs=(ArtifactSpec("CropBlue", ArtifactKind.IMAGE),),
+            items=(
+                *ModuleArtifactContract.items_for_partition(
+                    RecordedArtifactOutputPartition,
+                    (ArtifactSpec.output("CropBlue", ImageArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    DeclaredArtifactOutputPartition,
+                    (ArtifactSpec.output("CropBlue", ImageArtifactType),),
+                ),
+            ),
         )
         import_result = SimpleNamespace(
             generated_module_name="generated_cellprofiler_pipeline",
@@ -718,12 +744,21 @@ class TestPlateManagerWidget:
             plate_root,
             cppipe_path,
         ).scope_id
-        crop_metadata = cellprofiler_backend.cellprofiler_function_runtime_metadata(
+        crop_metadata = cellprofiler_backend.CellProfilerFunctionCatalog.runtime_metadata(
             cellprofiler_backend.crop,
         )
         contract = ModuleArtifactContract(
             module_name=crop_metadata.module_name,
-            outputs=(ArtifactSpec("CropBlue", ArtifactKind.IMAGE),),
+            items=(
+                *ModuleArtifactContract.items_for_partition(
+                    RecordedArtifactOutputPartition,
+                    (ArtifactSpec.output("CropBlue", ImageArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    DeclaredArtifactOutputPartition,
+                    (ArtifactSpec.output("CropBlue", ImageArtifactType),),
+                ),
+            ),
         )
         bound_step = FunctionStep(
             func=(
@@ -741,7 +776,9 @@ class TestPlateManagerWidget:
         )
         manager = PlateManagerCodeWorkflowHarness(selected_plate_path=plate_scope)
 
-        PlateManagerCodeWorkflow(manager).apply_pipeline_data({plate_scope: [bound_step]})
+        PlateManagerCodeWorkflow(manager).apply_pipeline_data(
+            {plate_scope: [bound_step]}
+        )
 
         updated_steps = PipelineObjectStateBinding.steps_for_plate(plate_scope)
         updated_func = updated_steps[0].func[0]

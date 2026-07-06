@@ -2,19 +2,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import tifffile
 
+from openhcs.constants.constants import AllComponents, Microscope
+from openhcs.core.config import PipelineConfig
 from openhcs.core.pipeline_image_schema import (
     ImageAssignment,
     ImagesRule,
     PipelineImageSchema,
 )
 from openhcs.core.source_bindings import (
+    ComponentSelector,
     MetadataExtractionRule,
     MetadataSource,
+    SourceBindingOrigin,
     SourceBindingMatchDimension,
     SourceBindingMatchField,
     SourceBindingMatchMethod,
@@ -33,6 +38,7 @@ from openhcs.interop.cellprofiler.source_schema_ingestion import (
     prepare_cellprofiler_source_schema_only_workspace,
     prepare_cellprofiler_source_schema_workspace,
 )
+from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
 
 
 def test_prepare_cellprofiler_source_schema_workspace_materializes_openhcs_metadata(
@@ -62,6 +68,69 @@ def test_prepare_cellprofiler_source_schema_workspace_materializes_openhcs_metad
     assert set(result.materialization.primary_mappings) == {
         "A01_s001_w1_z001_t001.TIF",
     }
+
+
+def test_prepare_source_bindings_pipeline_materializes_when_image_sets_are_selected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    tifffile.imwrite(source_root / "CometTails.tif", np.full((4, 4), 1, dtype=np.uint8))
+    tifffile.imwrite(source_root / "NoTails.tif", np.full((4, 4), 2, dtype=np.uint8))
+    cppipe_path = tmp_path / "source_bindings.cppipe"
+    cppipe_path.write_text("CellProfiler Pipeline: http://www.cellprofiler.org\n")
+    schema = PipelineImageSchema(
+        assignments_by_alias={
+            "OrigComet": ImageAssignment(
+                alias="OrigComet",
+                image_type="Grayscale image",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            ".tif",
+                        ),
+                    )
+                ),
+                origin=SourceBindingOrigin.PIPELINE_START,
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "1"),
+                ),
+            )
+        },
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+    )
+    prepared = SimpleNamespace(
+        source_schema=schema,
+        generated_pipeline=SimpleNamespace(
+            pipeline_config=PipelineConfig(microscope=Microscope.SOURCE_BINDINGS),
+        ),
+    )
+    monkeypatch.setattr(
+        "openhcs.interop.cellprofiler.source_schema_ingestion.prepare_generated_pipeline",
+        lambda *args, **kwargs: prepared,
+    )
+
+    result = prepare_cellprofiler_source_schema_workspace(
+        CellProfilerSourceSchemaWorkspaceRequest(
+            source_root=source_root,
+            cppipe_path=cppipe_path,
+            workspace_root=tmp_path / "workspace",
+            generated_pipeline_path=tmp_path / "generated.py",
+            image_set_selection=SourceSchemaImageSetSelection(max_image_set_count=1),
+        )
+    )
+
+    assert result.materialization is not None
+    assert result.execution_plate_path == result.materialization.workspace_root
+    assert {
+        path.name
+        for path in result.materialization.source_paths_for_primary_wells(
+            result.materialization.primary_wells()
+        )
+    } == {"CometTails.tif"}
 
 
 def test_prepare_cellprofiler_source_schema_workspace_reports_missing_sources(

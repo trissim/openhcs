@@ -54,7 +54,12 @@ from openhcs.agent.dto.viewer import (
     ViewerWindowValidationRequest,
 )
 from openhcs.core.config import Backend, GlobalPipelineConfig, PipelineConfig
-from openhcs.core.artifacts import ArtifactInputPlan, ArtifactKind, ArtifactOutputPlan
+from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ArtifactOutputPlan,
+    SpecialArtifactType,
+    ObjectLabelsArtifactType,
+)
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.source_workspace_projection import VirtualWorkspaceSourceProjection
@@ -376,7 +381,7 @@ class _FakeCompileInspectionGateway:
         step_plan.execution_groups = ["A01"]
         step_plan.artifact_inputs["positions"] = ArtifactInputPlan(
             name="positions",
-            kind=ArtifactKind.SPECIAL,
+            artifact_type=SpecialArtifactType,
             path="/tmp/out/A01/positions.pkl",
             group_keys=("A01",),
             paths_by_group={"A01": "/tmp/out/A01/positions.pkl"},
@@ -385,7 +390,7 @@ class _FakeCompileInspectionGateway:
         )
         step_plan.artifact_outputs["objects"] = ArtifactOutputPlan(
             name="objects",
-            kind=ArtifactKind.OBJECT_LABELS,
+            artifact_type=ObjectLabelsArtifactType,
             path="/tmp/out/A01/objects.zarr",
             group_keys=("A01",),
             paths_by_group={"A01": "/tmp/out/A01/objects.zarr"},

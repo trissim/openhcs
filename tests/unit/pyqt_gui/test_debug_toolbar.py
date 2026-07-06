@@ -7,7 +7,7 @@ from objectstate.lazy_factory import PREVIEW_LABEL_REGISTRY
 from metaclass_registry import AutoRegisterMeta
 from PyQt6.QtWidgets import QApplication
 
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import MeasurementsArtifactType
 from openhcs.core.config import NapariStreamingConfig
 from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.core.debug import (
@@ -1021,7 +1021,7 @@ def test_pipeline_editor_exports_debug_artifact_through_plate_manager(monkeypatc
     )
     harness.plate_manager = PlateManagerRunRecorder()
     artifact_ref = DebugArtifactRef(
-        kind=ArtifactKind.MEASUREMENTS,
+        kind=MeasurementsArtifactType,
         name="Measurements",
         cursor=DebugCursor(0, "scope", "default", "default:0:measure"),
         storage_ref="/debug/measurements.csv",
@@ -1101,7 +1101,7 @@ def test_debug_gui_workflow_runs_commands_inspects_snapshot_and_exports(
         debug_snapshot_notification(snapshot_store_backend="memory")
     )
     artifact_ref = DebugArtifactRef(
-        kind=ArtifactKind.MEASUREMENTS,
+        kind=MeasurementsArtifactType,
         name="Measurements",
         cursor=DebugCursor(0, "scope", "default", "default:0:measure"),
         storage_ref="/debug/measurements.csv",

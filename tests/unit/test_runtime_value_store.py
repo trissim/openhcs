@@ -1,11 +1,29 @@
+from collections import Counter
+
 import pytest
 
-from openhcs.core.artifacts import ArtifactInputPlan, ArtifactKind, ArtifactOutputPlan
+from openhcs.core.artifacts import (
+    ArtifactScope,
+    ArtifactInputPlan,
+    ArtifactOutputPlan,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+)
 from openhcs.core.runtime_stores import (
+    RuntimeArtifactLocation,
     RuntimeArtifactGroupTarget,
     RuntimeArtifactLocationTarget,
     RuntimeArtifactQuery,
     RuntimeValueStore,
+    StoredRuntimeValue,
+)
+from openhcs.core.runtime_equivalence import (
+    RuntimeAxisRecordPlaneIdentityResolver,
+    RuntimeMeasurementObservationAxis,
+)
+from openhcs.core.equivalence.relationships import (
+    RuntimeRecordPlaneIdentityAuthority,
 )
 from openhcs.core.runtime_values import MeasurementTable, normalize_artifact_value
 
@@ -15,7 +33,7 @@ def _runtime_value(name="measurements", path="/memory/measurements.pkl"):
         ArtifactOutputPlan(
             name=name,
             path=path,
-            kind=ArtifactKind.MEASUREMENTS,
+            artifact_type=MeasurementsArtifactType,
             group_keys=("DAPI",),
         ),
         [{"object_id": 1}],
@@ -37,7 +55,7 @@ def test_runtime_value_store_records_and_finds_by_typed_identity():
     assert store.find(name="measurements") == (record,)
     assert store.find(
         name="measurements",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id="A01",
         group_key="DAPI",
         match_group=True,
@@ -86,7 +104,7 @@ def test_runtime_value_store_find_matching_cache_invalidates_after_replace():
     original = store.record(value, path="/memory/measurements.pkl", backend="memory")
     query = RuntimeArtifactQuery(
         name="measurements",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id="A01",
         target=RuntimeArtifactGroupTarget("DAPI"),
     )
@@ -107,7 +125,7 @@ def test_runtime_artifact_query_from_input_plan_uses_group_path():
         ArtifactInputPlan(
             name="DNA",
             path="/memory/DNA.pkl",
-            kind=ArtifactKind.IMAGE,
+            artifact_type=ImageArtifactType,
             group_keys=("1", "2"),
             paths_by_group={"1": "/memory/DNA_s1.pkl", "2": "/memory/DNA_s2.pkl"},
         ),
@@ -121,12 +139,27 @@ def test_runtime_artifact_query_from_input_plan_uses_group_path():
     assert query.target.location.backend == "memory"
 
 
+def test_measurement_record_groups_ignore_payload_slice_count():
+    output_plan = ArtifactOutputPlan(
+        name="measurements",
+        path="/memory/measurements.pkl",
+        artifact_type=MeasurementsArtifactType,
+        group_keys=("1", "3", "2"),
+    )
+
+    assert output_plan.runtime_record_group_keys(
+        requested_group_key=None,
+        scoped_group_key=None,
+        slice_count=2,
+    ) == ("1", "3", "2")
+
+
 def test_runtime_artifact_query_from_self_input_plan_requires_single_group():
     query = RuntimeArtifactQuery.from_input_plan(
         ArtifactInputPlan(
             name="Nuclei",
             path="self",
-            kind=ArtifactKind.OBJECT_LABELS,
+            artifact_type=ObjectLabelsArtifactType,
             group_keys=("DNA",),
         ),
         axis_id="A01",
@@ -141,7 +174,7 @@ def test_runtime_artifact_query_from_self_input_plan_requires_single_group():
             ArtifactInputPlan(
                 name="Nuclei",
                 path="self",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
                 group_keys=("DNA", "Mito"),
             ),
             axis_id="A01",
@@ -183,7 +216,7 @@ def test_runtime_value_store_preserves_same_artifact_measurement_subjects():
     output_plan = ArtifactOutputPlan(
         name="RelateObjects_measurements",
         path="/memory/RelateObjects_measurements.pkl",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
     )
     parent_value = normalize_artifact_value(
         output_plan,
@@ -218,7 +251,7 @@ def test_runtime_value_store_preserves_same_artifact_measurement_subjects():
     assert parent_value.key != child_value.key
     assert store.find(
         name="RelateObjects_measurements",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id="A01",
     ) == (parent_record, child_record)
 
@@ -238,6 +271,60 @@ def test_runtime_value_store_merges_observed_records_from_worker_boundary():
 
     assert parent_store.get(value.key) == record
     assert parent_store.observed_values == (record,)
+
+
+def test_runtime_measurement_observation_axis_accepts_table_record_once():
+    value = _runtime_value()
+    record = StoredRuntimeValue(
+        value=value,
+        location=RuntimeArtifactLocation(
+            path="/memory/measurements.pkl",
+            backend="memory",
+        ),
+    )
+    axis = RuntimeMeasurementObservationAxis("A01")
+    resolver = RuntimeAxisRecordPlaneIdentityResolver.from_records((record,))
+    seen_aggregate_tables = set()
+
+    assert axis.accept_measurement_table(
+        record,
+        resolver,
+        seen_aggregate_tables,
+    ) is not None
+    assert axis.accept_measurement_table(
+        record,
+        resolver,
+        seen_aggregate_tables,
+    ) is None
+
+
+def test_runtime_axis_record_plane_identity_prefers_group_scope():
+    resolver = RuntimeAxisRecordPlaneIdentityResolver(
+        repeated_artifact_counts=Counter({(MeasurementsArtifactType, "measurements"): 2})
+    )
+
+    first = resolver.plane_identity_for_record(
+        kind=MeasurementsArtifactType,
+        name="measurements",
+        scope=ArtifactScope(axis_id="A01", group_key="2"),
+    )
+    second = resolver.plane_identity_for_record(
+        kind=MeasurementsArtifactType,
+        name="measurements",
+        scope=ArtifactScope(axis_id="A01", group_key="1"),
+    )
+    first_replay = resolver.plane_identity_for_record(
+        kind=MeasurementsArtifactType,
+        name="measurements",
+        scope=ArtifactScope(axis_id="A01", group_key="2"),
+    )
+
+    assert first is not None
+    assert second is not None
+    assert first.authority is RuntimeRecordPlaneIdentityAuthority.FILL_MISSING_ROW_IDENTITY
+    assert second.authority is RuntimeRecordPlaneIdentityAuthority.FILL_MISSING_ROW_IDENTITY
+    assert first.slice_index != second.slice_index
+    assert first_replay == first
 
 
 def test_runtime_value_store_clear_releases_records_and_advances_revision():

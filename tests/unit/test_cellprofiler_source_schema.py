@@ -1,6 +1,9 @@
 import re
 from pathlib import Path
 
+import pytest
+
+from openhcs.constants.constants import AllComponents, VariableComponents
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.module_processing_components import (
     SourceBindingProcessingScope,
@@ -12,8 +15,7 @@ from openhcs.interop.cellprofiler.pipeline_generator import (
 )
 from openhcs.interop.cellprofiler.source_schema import compile_image_schema
 from openhcs.interop.cellprofiler.symbol_table import CellProfilerSymbolTable
-from openhcs.constants.constants import AllComponents
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ObjectLabelsArtifactType
 from openhcs.core.pipeline_image_schema import (
     ImagePlaneSource,
     PipelineImageSchema,
@@ -30,6 +32,7 @@ from openhcs.core.source_bindings import (
     SourceFilterSubject,
     StepSourceBindingsConfig,
 )
+from openhcs.processing.backends.cellprofiler.alignment import AlignModule
 
 
 def _module_with_records(
@@ -433,11 +436,11 @@ def test_compile_image_schema_lowers_object_loads_to_source_artifacts():
     schema = compile_image_schema([names_and_types_module])
     source_artifact = schema.resolved_source_artifact_for_alias(
         "LoadedNuclei",
-        ArtifactKind.OBJECT_LABELS,
+        ObjectLabelsArtifactType,
     )
 
     assert source_artifact is not None
-    assert source_artifact.artifact_kind is ArtifactKind.OBJECT_LABELS
+    assert source_artifact.artifact_kind is ObjectLabelsArtifactType
     assert source_artifact.selector.metadata == (
         MetadataSelector("channel", "3"),
     )
@@ -557,7 +560,46 @@ def test_codegen_groups_metadata_free_ordered_image_sets_by_workspace_site():
         is SourceBindingMatchMethod.ORDER
     )
     assert "variable_components=[VariableComponents.SITE]" in generated.code
-    assert "group_by=GroupBy.NONE" in generated.code
+    assert "group_by=GroupBy.CHANNEL" in generated.code
+
+
+def test_codegen_preserves_single_source_alias_image_set_axis():
+    names_and_types_module = _module_with_records(
+        1,
+        "NamesAndTypes",
+        [
+            ("Assignments count", "1"),
+            ("Image set matching method", "Order"),
+            ("Select the rule criteria", 'and (file does contain "_D")'),
+            ("Name to assign these images", "OrigBlue"),
+            ("Select the image type", "Grayscale image"),
+        ],
+    )
+    crop_module = ModuleBlock(
+        name="Crop",
+        module_num=2,
+        settings={
+            "Select the input image": "OrigBlue",
+            "Name the output image": "CropBlue",
+            "Select the cropping shape": "Rectangle",
+        },
+    )
+
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_single_ordered_source",
+        source_cppipe=Path("source.cppipe"),
+        modules=[crop_module],
+        skipped_modules=[names_and_types_module],
+    )
+    step_start = generated.code.index('# CellProfiler artifact outputs: image:CropBlue')
+    step_source = generated.code[step_start:]
+    processing_start = step_source.index("processing_config=LazyProcessingConfig(")
+    processing_end = step_source.index("        ),", processing_start)
+    processing_config = step_source[processing_start:processing_end]
+
+    assert "source_bindings=LazyStepSourceBindingsConfig" in step_source
+    assert "variable_components=[VariableComponents.SITE]" in processing_config
+    assert "group_by=GroupBy.CHANNEL" in processing_config
 
 
 def test_compile_image_schema_treats_binary_masks_as_stack_images():
@@ -811,7 +853,7 @@ def test_symbol_table_and_codegen_use_compiled_setup_schema():
     assert generated.pipeline_config.source_bindings_config.match_plan is not None
     assert "SourceBindingOrigin.PIPELINE_START" in generated.code
     assert "input_source=InputSource.PIPELINE_START" in generated.code
-    assert "group_by=GroupBy.NONE" in generated.code
+    assert "group_by=GroupBy.CHANNEL" in generated.code
 
 
 def test_measure_image_quality_all_loaded_images_uses_module_declared_sources():
@@ -886,6 +928,7 @@ def test_measure_image_quality_all_loaded_images_uses_module_declared_sources():
     assert "source_bindings=StepSourceBindingsConfig(" not in generated.code
     assert "# CellProfiler artifact inputs: image:DAPI, image:GFP" in generated.code
     assert "VariableComponents.CHANNEL" in generated.code
+    assert "group_by=GroupBy.SITE" in generated.code
     assert "input_source=InputSource.PIPELINE_START" in generated.code
 
 
@@ -1020,11 +1063,189 @@ def test_imagemath_pipeline_start_operands_consume_source_alias_axis():
     step_source = generated.code[step_start:]
 
     assert step_source.count("participates_in_image_stack=False") == 2
-    assert (
-        "variable_components=[VariableComponents.SITE, VariableComponents.Z_INDEX]"
-        in step_source
-    )
+    assert "variable_components=[VariableComponents.Z_INDEX]" in step_source
+    assert "VariableComponents.SITE" not in step_source
     assert "VariableComponents.CHANNEL" not in step_source
+
+
+def test_align_source_images_infer_axis_from_selected_source_aliases():
+    setup_modules = [
+        _module_with_records(
+            1,
+            "Metadata",
+            [
+                ("Metadata extraction method", "Extract from file/folder names"),
+                ("Metadata source", "File name"),
+                (
+                    "Regular expression to extract from file name",
+                    r"^(?P<Plate>.*)_s(?P<Site>[0-9])_ch(?P<ChannelNumber>[0-9])",
+                ),
+            ],
+        ),
+        _module_with_records(
+            2,
+            "NamesAndTypes",
+            [
+                ("Assignments count", "2"),
+                ("Assign a name to", "Images matching rules"),
+                ("Select the image type", "Grayscale image"),
+                ("Name to assign these images", "OrigStain1"),
+                ("Match metadata", "[]"),
+                ("Image set matching method", "Order"),
+                ("Select the rule criteria", 'and (metadata does ChannelNumber "1")'),
+                ("Name to assign these images", "OrigStain2"),
+                ("Select the image type", "Grayscale image"),
+                ("Select the rule criteria", 'and (metadata does ChannelNumber "2")'),
+            ],
+        ),
+    ]
+    align_module = _module_with_records(
+        3,
+        "Align",
+        [
+            ("Select the alignment method", "Mutual Information"),
+            ("Crop mode", "Keep size"),
+            ("Select the first input image", "OrigStain1"),
+            ("Name the first output image", "Stain1"),
+            ("Select the second input image", "OrigStain2"),
+            ("Name the second output image", "Stain2"),
+        ],
+    )
+
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_align_sources",
+        source_cppipe=Path("source.cppipe"),
+        modules=[align_module],
+        skipped_modules=setup_modules,
+    )
+    step_start = generated.code.index('# CellProfiler artifact outputs: image:Stain1')
+    step_source = generated.code[step_start:]
+
+    assert "source_bindings=LazyStepSourceBindingsConfig" in step_source
+    assert "variable_components=[VariableComponents.CHANNEL]" in step_source
+    assert "group_by=GroupBy.SITE" in step_source
+    assert "VariableComponents.SITE" not in step_source.split("group_by=")[0]
+
+
+def test_align_source_images_adapt_to_site_axis_from_selected_source_aliases():
+    setup_modules = [
+        _module_with_records(
+            1,
+            "Metadata",
+            [
+                ("Metadata extraction method", "Extract from file/folder names"),
+                ("Metadata source", "File name"),
+                (
+                    "Regular expression to extract from file name",
+                    r"^(?P<Plate>.*)_s(?P<Site>[0-9])",
+                ),
+            ],
+        ),
+        _module_with_records(
+            2,
+            "NamesAndTypes",
+            [
+                ("Assignments count", "2"),
+                ("Assign a name to", "Images matching rules"),
+                ("Select the image type", "Grayscale image"),
+                ("Name to assign these images", "SiteOne"),
+                ("Match metadata", "[]"),
+                ("Image set matching method", "Order"),
+                ("Select the rule criteria", 'and (metadata does Site "1")'),
+                ("Assign a name to", "Images matching rules"),
+                ("Name to assign these images", "SiteTwo"),
+                ("Select the image type", "Grayscale image"),
+                ("Select the rule criteria", 'and (metadata does Site "2")'),
+            ],
+        ),
+    ]
+    align_module = _module_with_records(
+        3,
+        "Align",
+        [
+            ("Select the alignment method", "Mutual Information"),
+            ("Crop mode", "Keep size"),
+            ("Select the first input image", "SiteOne"),
+            ("Name the first output image", "Aligned1"),
+            ("Select the second input image", "SiteTwo"),
+            ("Name the second output image", "Aligned2"),
+        ],
+    )
+
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_align_sites",
+        source_cppipe=Path("source.cppipe"),
+        modules=[align_module],
+        skipped_modules=setup_modules,
+    )
+    step_start = generated.code.index('# CellProfiler artifact outputs: image:Aligned1')
+    step_source = generated.code[step_start:]
+    processing_start = step_source.index("processing_config=LazyProcessingConfig(")
+    processing_end = step_source.index("        ),", processing_start)
+    processing_config = step_source[processing_start:processing_end]
+
+    assert "source_bindings=LazyStepSourceBindingsConfig" in step_source
+    assert "variable_components=[VariableComponents.SITE]" in processing_config
+    assert "VariableComponents.CHANNEL" not in processing_config.split("group_by=")[0]
+    assert "group_by=GroupBy.CHANNEL" in processing_config
+
+
+def test_source_binding_axis_inference_rejects_incompatible_module_requirements(monkeypatch):
+    setup_modules = [
+        _module_with_records(
+            1,
+            "Metadata",
+            [
+                ("Metadata extraction method", "Extract from file/folder names"),
+                ("Metadata source", "File name"),
+                (
+                    "Regular expression to extract from file name",
+                    r"^(?P<Plate>.*)_s(?P<Site>[0-9])_ch(?P<ChannelNumber>[0-9])",
+                ),
+            ],
+        ),
+        _module_with_records(
+            2,
+            "NamesAndTypes",
+            [
+                ("Assignments count", "2"),
+                ("Assign a name to", "Images matching rules"),
+                ("Select the image type", "Grayscale image"),
+                ("Name to assign these images", "OrigStain1"),
+                ("Match metadata", "[]"),
+                ("Image set matching method", "Order"),
+                ("Select the rule criteria", 'and (metadata does ChannelNumber "1")'),
+                ("Name to assign these images", "OrigStain2"),
+                ("Select the image type", "Grayscale image"),
+                ("Select the rule criteria", 'and (metadata does ChannelNumber "2")'),
+            ],
+        ),
+    ]
+    align_module = _module_with_records(
+        3,
+        "Align",
+        [
+            ("Select the alignment method", "Mutual Information"),
+            ("Crop mode", "Keep size"),
+            ("Select the first input image", "OrigStain1"),
+            ("Name the first output image", "Stain1"),
+            ("Select the second input image", "OrigStain2"),
+            ("Name the second output image", "Stain2"),
+        ],
+    )
+    monkeypatch.setattr(
+        AlignModule,
+        "required_variable_components",
+        (VariableComponents.TIMEPOINT,),
+    )
+
+    with pytest.raises(ValueError, match="Align requires variable_components"):
+        PipelineGenerator().generate_from_registry(
+            pipeline_name="cp_align_incompatible_source_axis",
+            source_cppipe=Path("source.cppipe"),
+            modules=[align_module],
+            skipped_modules=setup_modules,
+        )
 
 
 def test_source_binding_scope_ignores_stack_axes_without_image_stack_anchor():
@@ -1100,7 +1321,7 @@ def test_codegen_uses_pipeline_start_for_load_images_filter_bindings():
     assert "SourceFilterClause(" in generated.code
     assert "SourceFilterMatchType.CONTAINS" in generated.code
     assert "input_source=InputSource.PIPELINE_START," in generated.code
-    assert "group_by=GroupBy.NONE" in generated.code
+    assert "group_by=GroupBy.CHANNEL" in generated.code
 
 
 def test_codegen_preserves_source_timepoint_lineage_for_runtime_artifact_steps():
@@ -1164,7 +1385,7 @@ def test_codegen_preserves_source_timepoint_lineage_for_runtime_artifact_steps()
     assert primary_match is not None
     primary_config = primary_match.group("body")
     assert "variable_components=[VariableComponents.TIMEPOINT]," in primary_config
-    assert "group_by=GroupBy.NONE" in primary_config
+    assert "group_by=GroupBy.CHANNEL" in primary_config
 
     measurement_match = re.search(
         r'name="MeasureObjectSizeShape".*?'
@@ -1176,7 +1397,15 @@ def test_codegen_preserves_source_timepoint_lineage_for_runtime_artifact_steps()
     measurement_config = measurement_match.group("body")
     assert "VariableComponents.SITE" not in measurement_config
     assert "variable_components=[VariableComponents.TIMEPOINT]," in measurement_config
-    assert "group_by=GroupBy.NONE" in measurement_config
+    assert "group_by=GroupBy.CHANNEL" in measurement_config
+    measurement_step = re.search(
+        r"FunctionStep\(\n(?P<body>.*?)"
+        r'name="MeasureObjectSizeShape".*?\n    \),',
+        generated.code,
+        re.S,
+    )
+    assert measurement_step is not None
+    assert "'slice_by_slice': True" in measurement_step.group("body")
 
 
 def test_codegen_keeps_source_binding_channel_out_of_runtime_artifact_scope():
@@ -1244,7 +1473,7 @@ def test_codegen_keeps_source_binding_channel_out_of_runtime_artifact_scope():
     primary_config = primary_match.group("body")
     assert "VariableComponents.CHANNEL" not in primary_config
     assert "variable_components=[VariableComponents.SITE]," in primary_config
-    assert "group_by=GroupBy.NONE" in primary_config
+    assert "group_by=GroupBy.CHANNEL" in primary_config
 
     secondary_match = re.search(
         r'name="IdentifySecondaryObjects".*?'
@@ -1256,7 +1485,7 @@ def test_codegen_keeps_source_binding_channel_out_of_runtime_artifact_scope():
     secondary_config = secondary_match.group("body")
     assert "VariableComponents.CHANNEL" not in secondary_config
     assert "variable_components=[VariableComponents.SITE]," in secondary_config
-    assert "group_by=GroupBy.NONE" in secondary_config
+    assert "group_by=GroupBy.CHANNEL" in secondary_config
 
 
 def test_straightenworms_does_not_declare_step_source_identity_axis():
@@ -1383,7 +1612,7 @@ def test_correct_illumination_all_scope_allows_single_channel_schema():
 
     assert step_match is not None
     assert "variable_components=[VariableComponents.SITE]" in step_match.group("body")
-    assert "group_by=GroupBy.NONE" in step_match.group("body")
+    assert "group_by=GroupBy.CHANNEL" in step_match.group("body")
 
 
 def test_compile_image_schema_decodes_legacy_escaped_match_metadata():
@@ -1513,8 +1742,16 @@ def test_compile_image_schema_supports_order_based_matching():
     assert schema.match_plan is not None
     assert schema.match_plan.method is SourceBindingMatchMethod.ORDER
     assert schema.match_plan.dimensions == ()
-    assert schema.assignment_for_alias("DNA") is not None
-    assert schema.assignment_for_alias("Actin") is not None
+    dna = schema.assignment_for_alias("DNA")
+    actin = schema.assignment_for_alias("Actin")
+    assert dna is not None
+    assert actin is not None
+    assert dna.component_identity == (
+        ComponentSelector(AllComponents.CHANNEL, "1"),
+    )
+    assert actin.component_identity == (
+        ComponentSelector(AllComponents.CHANNEL, "2"),
+    )
 
 
 def test_ordered_image_set_axis_separates_sample_and_alias_axes():
@@ -1622,7 +1859,7 @@ def test_generated_runtime_callables_with_non_image_artifacts_are_flexible():
     assert "CellProfilerModuleRuntimeBinding" not in generated.code
     assert "name=\"IdentifyTertiaryObjects\"," in generated.code
     assert "variable_components=[VariableComponents.SITE]," in generated.code
-    assert "group_by=GroupBy.NONE" in generated.code
+    assert "group_by=GroupBy.CHANNEL" in generated.code
 
 
 def test_compile_image_schema_for_bbbc021_analysis_preserves_real_matching_plan():

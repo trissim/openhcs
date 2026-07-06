@@ -1,5 +1,5 @@
 from openhcs.constants.constants import AllComponents
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ObjectLabelsArtifactType
 from openhcs.core.pipeline_image_schema import (
     GroupingPlan,
     ImageAssignment,
@@ -104,7 +104,7 @@ def test_source_bindings_view_model_projects_pipeline_and_step_bindings():
         source_artifacts_by_alias={
             "Nuclei": SourceArtifactAssignment(
                 alias="Nuclei",
-                artifact_kind=ArtifactKind.OBJECT_LABELS,
+                artifact_kind=ObjectLabelsArtifactType,
                 payload_type="Objects",
                 selector=SourceSelector(
                     metadata=(MetadataSelector("object_type", "nuclei"),),

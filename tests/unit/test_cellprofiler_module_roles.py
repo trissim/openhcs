@@ -1,6 +1,6 @@
 """CellProfiler module-role policy tests."""
 
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ImageArtifactType
 from openhcs.interop import cellprofiler
 from openhcs.interop.cellprofiler.module_roles import (
     ArtifactSpecKey,
@@ -23,8 +23,8 @@ def test_saveimages_infrastructure_policy_declares_retained_image_artifacts() ->
         contracts_by_module_num={},
     ) == frozenset(
         (
-            ArtifactSpecKey(ArtifactKind.IMAGE, "OverlayImage"),
-            ArtifactSpecKey(ArtifactKind.IMAGE, "CorrectedImage"),
+            ArtifactSpecKey(ImageArtifactType, "OverlayImage"),
+            ArtifactSpecKey(ImageArtifactType, "CorrectedImage"),
         )
     )
 

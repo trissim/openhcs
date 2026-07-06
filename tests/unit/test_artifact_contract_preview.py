@@ -1,14 +1,29 @@
 from __future__ import annotations
 
+from dataclasses import fields
+
 from openhcs.core.artifact_contract_preview import (
     ArtifactContractPreview,
     ArtifactPreviewDirection,
     ArtifactPreviewOrigin,
     SourceBindingRuntimeContractGuard,
 )
-from openhcs.core.artifacts import ArtifactKind, ArtifactSidecarRole, ArtifactSpec
-from openhcs.core.module_artifact_contract import ModuleArtifactContract
-from openhcs.core.module_artifact_contract import module_artifact_contract
+from openhcs.core.artifacts import (
+    ArtifactSidecarRole,
+    ArtifactSpec,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+)
+from openhcs.core.module_artifact_contract import (
+    DeclaredArtifactOutputPartition,
+    ModuleArtifactContract,
+    ModuleArtifactContractItem,
+    RecordedArtifactOutputPartition,
+    RuntimeArtifactInputPartition,
+    SourceArtifactInputPartition,
+    module_artifact_contract,
+)
 from openhcs.core.source_bindings import (
     NamedSourceBinding,
     StepSourceBindingsConfig,
@@ -18,20 +33,83 @@ from openhcs.pyqt_gui.widgets.artifact_contract_preview import (
 )
 
 
+def test_module_artifact_contract_stores_partitioned_items() -> None:
+    contract = ModuleArtifactContract(
+        module_name="Measure",
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                SourceArtifactInputPartition,
+                (ArtifactSpec.input("DNA", ImageArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                RuntimeArtifactInputPartition,
+                (ArtifactSpec.input("Nuclei", ObjectLabelsArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (ArtifactSpec.output("Measurements", MeasurementsArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (ArtifactSpec.output("Measurements", MeasurementsArtifactType),),
+            ),
+        ),
+    )
+
+    assert [field.name for field in fields(ModuleArtifactContract)] == [
+        "module_name",
+        "items",
+        "required_variable_components",
+    ]
+    assert [(item.partition_type, item.spec.name) for item in contract.items] == [
+        (SourceArtifactInputPartition, "DNA"),
+        (RuntimeArtifactInputPartition, "Nuclei"),
+        (RecordedArtifactOutputPartition, "Measurements"),
+        (DeclaredArtifactOutputPartition, "Measurements"),
+    ]
+    assert all(isinstance(item, ModuleArtifactContractItem) for item in contract.items)
+    assert [spec.name for spec in contract.inputs] == ["DNA"]
+    assert [spec.name for spec in contract.runtime_artifact_inputs] == ["Nuclei"]
+    assert [spec.name for spec in contract.outputs] == ["Measurements"]
+    assert [spec.name for spec in contract.declared_outputs] == ["Measurements"]
+
+
 def test_artifact_contract_preview_projects_inputs_outputs_and_sidecars() -> None:
     contract = ModuleArtifactContract(
         module_name="Crop",
-        inputs=(
-            ArtifactSpec("OrigBlue", ArtifactKind.IMAGE),
-            ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),
-        ),
-        runtime_artifact_inputs=(ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),),
-        outputs=(
-            ArtifactSpec("CropBlue", ArtifactKind.IMAGE),
-            ArtifactSpec(
-                "CropBlue__crop_mask",
-                ArtifactKind.IMAGE,
-                sidecar_role=ArtifactSidecarRole.CROP_MASK,
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                SourceArtifactInputPartition,
+                (
+                    ArtifactSpec.input("OrigBlue", ImageArtifactType),
+                    ArtifactSpec.input("Nuclei", ObjectLabelsArtifactType),
+                ),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                RuntimeArtifactInputPartition,
+                (ArtifactSpec.input("Nuclei", ObjectLabelsArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (
+                    ArtifactSpec.output("CropBlue", ImageArtifactType),
+                    ArtifactSpec.output(
+                        "CropBlue__crop_mask",
+                        ImageArtifactType,
+                        sidecar_role=ArtifactSidecarRole.CROP_MASK,
+                    ),
+                ),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (
+                    ArtifactSpec.output("CropBlue", ImageArtifactType),
+                    ArtifactSpec.output(
+                        "CropBlue__crop_mask",
+                        ImageArtifactType,
+                        sidecar_role=ArtifactSidecarRole.CROP_MASK,
+                    ),
+                ),
             ),
         ),
     )
@@ -42,16 +120,35 @@ def test_artifact_contract_preview_projects_inputs_outputs_and_sidecars() -> Non
     assert [row.name for row in preview.inputs] == ["OrigBlue", "Nuclei"]
     assert preview.inputs[0].origin is ArtifactPreviewOrigin.SOURCE_BINDING
     assert preview.inputs[1].origin is ArtifactPreviewOrigin.RUNTIME_ARTIFACT
-    assert all(row.direction is ArtifactPreviewDirection.OUTPUT for row in preview.outputs)
+    assert all(
+        row.direction is ArtifactPreviewDirection.OUTPUT for row in preview.outputs
+    )
     assert preview.outputs[1].sidecar_role is ArtifactSidecarRole.CROP_MASK
 
 
-def test_artifact_contract_projection_reads_callable_contracts_from_function_spec() -> None:
+def test_artifact_contract_projection_reads_callable_contracts_from_function_spec() -> (
+    None
+):
     contract = ModuleArtifactContract(
         module_name="Measure",
-        inputs=(ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),),
-        runtime_artifact_inputs=(ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),),
-        outputs=(ArtifactSpec("Measurements", ArtifactKind.MEASUREMENTS),),
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                SourceArtifactInputPartition,
+                (ArtifactSpec.input("Nuclei", ObjectLabelsArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                RuntimeArtifactInputPartition,
+                (ArtifactSpec.input("Nuclei", ObjectLabelsArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (ArtifactSpec.output("Measurements", MeasurementsArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (ArtifactSpec.output("Measurements", MeasurementsArtifactType),),
+            ),
+        ),
     )
 
     @module_artifact_contract(contract)
@@ -70,7 +167,16 @@ def test_artifact_contract_projection_reads_callable_contracts_from_function_spe
 def test_artifact_contract_projection_reads_dict_function_patterns() -> None:
     contract = ModuleArtifactContract(
         module_name="Segment",
-        outputs=(ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),),
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (ArtifactSpec.output("Nuclei", ObjectLabelsArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (ArtifactSpec.output("Nuclei", ObjectLabelsArtifactType),),
+            ),
+        ),
     )
 
     @module_artifact_contract(contract)
@@ -88,9 +194,15 @@ def test_artifact_contract_projection_reads_dict_function_patterns() -> None:
 def test_source_binding_contract_alignment_reports_drift() -> None:
     contract = ModuleArtifactContract(
         module_name="Crop",
-        inputs=(ArtifactSpec("OrigBlue", ArtifactKind.IMAGE),),
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                SourceArtifactInputPartition,
+                (ArtifactSpec.input("OrigBlue", ImageArtifactType),),
+            ),
+        ),
     )
-    source_bindings = StepSourceBindingsConfig(bindings=(NamedSourceBinding(alias="OrigGreen"),),
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(NamedSourceBinding(alias="OrigGreen"),),
     )
 
     alignment = SourceBindingRuntimeContractGuard(
@@ -99,8 +211,8 @@ def test_source_binding_contract_alignment_reports_drift() -> None:
     ).alignment()
 
     assert not alignment.ok
-    assert alignment.missing == (("OrigBlue", ArtifactKind.IMAGE),)
-    assert alignment.unexpected == (("OrigGreen", ArtifactKind.IMAGE),)
+    assert alignment.missing == (("OrigBlue", ImageArtifactType),)
+    assert alignment.unexpected == (("OrigGreen", ImageArtifactType),)
     assert "missing: image:OrigBlue" in alignment.message
     assert "unexpected: image:OrigGreen" in alignment.message
 
@@ -108,7 +220,12 @@ def test_source_binding_contract_alignment_reports_drift() -> None:
 def test_artifact_contract_projection_message_surfaces_source_binding_drift() -> None:
     contract = ModuleArtifactContract(
         module_name="Crop",
-        inputs=(ArtifactSpec("OrigBlue", ArtifactKind.IMAGE),),
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                SourceArtifactInputPartition,
+                (ArtifactSpec.input("OrigBlue", ImageArtifactType),),
+            ),
+        ),
     )
 
     @module_artifact_contract(contract)
@@ -117,7 +234,8 @@ def test_artifact_contract_projection_message_surfaces_source_binding_drift() ->
 
     projection = ArtifactContractPreviewProjection(
         crop,
-        source_bindings=StepSourceBindingsConfig(bindings=(NamedSourceBinding(alias="OrigGreen"),),
+        source_bindings=StepSourceBindingsConfig(
+            bindings=(NamedSourceBinding(alias="OrigGreen"),),
         ),
     )
 

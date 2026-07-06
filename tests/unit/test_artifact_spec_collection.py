@@ -2,23 +2,28 @@ from __future__ import annotations
 
 import pytest
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
+from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ArtifactSpecCollection,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+)
 
 
 def test_artifact_spec_collection_queries_ordered_artifact_contracts() -> None:
-    image = ArtifactSpec("DNA", ArtifactKind.IMAGE)
-    objects = ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS)
+    image = ArtifactSpec.output("DNA", ImageArtifactType)
+    objects = ArtifactSpec.output("Nuclei", ObjectLabelsArtifactType)
 
     collection = ArtifactSpecCollection((image, objects))
 
-    assert collection.of_kind(ArtifactKind.IMAGE) == (image,)
+    assert collection.of_artifact_type(ImageArtifactType) == (image,)
     assert collection.by_name("Nuclei") == objects
-    assert collection.by_name_and_kind("Nuclei", ArtifactKind.OBJECT_LABELS) == objects
-    assert collection.by_name_and_kind("Nuclei", ArtifactKind.IMAGE) is None
+    assert collection.by_name_and_artifact_type("Nuclei", ObjectLabelsArtifactType) == objects
+    assert collection.by_name_and_artifact_type("Nuclei", ImageArtifactType) is None
 
 
 def test_artifact_spec_collection_deduplicates_or_fails_loudly() -> None:
-    image = ArtifactSpec("DNA", ArtifactKind.IMAGE)
+    image = ArtifactSpec.output("DNA", ImageArtifactType)
 
     assert ArtifactSpecCollection((image, image)).unique() == (image,)
 
@@ -26,6 +31,6 @@ def test_artifact_spec_collection_deduplicates_or_fails_loudly() -> None:
         ArtifactSpecCollection(
             (
                 image,
-                ArtifactSpec("DNA", ArtifactKind.IMAGE, required=False),
+                ArtifactSpec.output("DNA", ImageArtifactType, required=False),
             )
         ).unique(conflict_context="runtime")

@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.artifacts import ArtifactOutputPlan, MeasurementsArtifactType
 from openhcs.core.compiled_execution import (
     CompiledExecutionBundle,
     CompiledGpuRegistryPlan,
@@ -78,7 +78,7 @@ def test_runtime_execution_observation_merges_into_parent_contexts():
         ArtifactOutputPlan(
             name="measurements",
             path="/memory/measurements.pkl",
-            kind=ArtifactKind.MEASUREMENTS,
+            artifact_type=MeasurementsArtifactType,
             group_keys=("DAPI",),
         ),
         [{"object_id": 1}],

@@ -403,7 +403,7 @@ def test_cellprofiler_adapter_runs_bounded_image_set_range(
     assert result.provenance[CELLPROFILER_LAST_IMAGE_SET_PARAM] == 1
 
 
-def test_cellprofiler_adapter_file_list_preserves_selected_well_sites_and_channels(
+def test_cellprofiler_adapter_file_list_limits_selected_image_sets(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -504,12 +504,11 @@ def test_cellprofiler_adapter_file_list_preserves_selected_well_sites_and_channe
     command = commands[1]
     file_list_path = Path(command[command.index("--file-list") + 1])
     file_list = file_list_path.read_text(encoding="utf-8").splitlines()
-    assert len(file_list) == 4
+    assert len(file_list) == 2
     assert all("Plate_A01_" in entry for entry in file_list)
     assert any("_s1_dapi" in entry for entry in file_list)
     assert any("_s1_gfp" in entry for entry in file_list)
-    assert any("_s2_dapi" in entry for entry in file_list)
-    assert any("_s2_gfp" in entry for entry in file_list)
+    assert not any("_s2_" in entry for entry in file_list)
     assert result.provenance[NativeCellProfilerProvenanceField.SELECTED_WELLS] == (
         "A01",
     )
@@ -517,7 +516,7 @@ def test_cellprofiler_adapter_file_list_preserves_selected_well_sites_and_channe
         result.provenance[
             NativeCellProfilerProvenanceField.SELECTED_SOURCE_FILE_COUNT
         ]
-        == 4
+        == 2
     )
 
 

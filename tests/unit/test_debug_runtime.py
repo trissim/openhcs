@@ -63,7 +63,12 @@ from openhcs.core.progress import (
     ProgressPhase,
     ProgressStatus,
 )
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.artifacts import (
+    ArtifactOutputPlan,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+)
 from openhcs.core.runtime_values import normalize_artifact_value
 from openhcs.core.function_patterns import (
     CompiledFunctionGroup,
@@ -427,12 +432,12 @@ def test_execute_chain_debug_events_include_planned_artifact_refs():
             "measurements": ArtifactOutputPlan(
                 name="measurements",
                 path="/debug/measurements.csv",
-                kind=ArtifactKind.MEASUREMENTS,
+                artifact_type=MeasurementsArtifactType,
             ),
             "relationships": ArtifactOutputPlan(
                 name="relationships",
                 path="/debug/relationships.csv",
-                kind=ArtifactKind.RELATIONSHIPS,
+                artifact_type=RelationshipsArtifactType,
             ),
         },
     )
@@ -556,7 +561,7 @@ def test_local_debug_snapshot_store_round_trips_metadata(tmp_path):
         source_paths=("B02_s1_w1.tif",),
         output_artifact_refs=(
             DebugArtifactRef(
-                kind=ArtifactKind.MEASUREMENTS,
+                kind=MeasurementsArtifactType,
                 name="Cells.csv",
                 cursor=cursor,
                 storage_ref="debug/snap-1/Cells.csv",
@@ -923,7 +928,7 @@ def test_debug_snapshot_round_trips_invocation_parameters_and_artifact_identity(
     artifact = ArtifactOutputPlan(
         name="objects",
         path="/tmp/objects.json",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
         group_keys=("A01",),
     )
     event = DebugEvent(
@@ -955,7 +960,7 @@ def test_paused_worker_runtime_inspection_projects_runtime_value_store():
         ArtifactOutputPlan(
             name="measurements",
             path="/memory/measurements.pkl",
-            kind=ArtifactKind.MEASUREMENTS,
+            artifact_type=MeasurementsArtifactType,
             group_keys=("DAPI",),
         ),
         [{"object_id": 1}],
@@ -980,7 +985,7 @@ def test_paused_worker_runtime_inspection_projects_runtime_value_store():
     key_record = json.loads(table.rows[0][0])
     location_record = json.loads(table.rows[0][1])
     assert key_record["name"] == "measurements"
-    assert key_record["kind"] == ArtifactKind.MEASUREMENTS.value
+    assert key_record["artifact_type"] == MeasurementsArtifactType.value
     assert key_record["scope"]["axis_id"] == DebugRuntimeFixture.AXIS_ID
     assert key_record["scope"]["group_key"] == "DAPI"
     assert location_record["backend"] == DebugRuntimeFixture.DEBUG_SNAPSHOT_BACKEND
@@ -1035,7 +1040,7 @@ def test_warm_replay_rejects_missing_artifact_outputs():
     missing_artifact = ArtifactOutputPlan(
         name="measurements",
         path="/tmp/openhcs-missing-debug-artifact.csv",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
     )
     plan = DebugWarmReplayArtifactReusePlan.from_artifact_plans(
         artifact_plans={"measurements": missing_artifact},
@@ -1058,12 +1063,12 @@ def test_warm_replay_hydrates_local_artifact_from_snapshot_identity(tmp_path):
     source_plan = ArtifactOutputPlan(
         name="measurements",
         path=str(source_path),
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
     )
     destination_plan = ArtifactOutputPlan(
         name="measurements",
         path=str(destination_path),
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
     )
     store = LocalDebugSnapshotStore(
         root_path=tmp_path / "snapshots",
@@ -1096,12 +1101,12 @@ def test_warm_replay_hydrates_vfs_artifact_from_snapshot_identity():
     source_plan = ArtifactOutputPlan(
         name="measurements",
         path="/debug/source/measurements.json",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
     )
     destination_plan = ArtifactOutputPlan(
         name="measurements",
         path="/debug/replay/measurements.json",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
     )
     store = FileManagerDebugSnapshotStore(
         filemanager=filemanager,
@@ -1136,12 +1141,12 @@ def test_warm_replay_rejects_snapshot_artifact_with_stale_vfs_content():
     source_plan = ArtifactOutputPlan(
         name="measurements",
         path="/debug/source/measurements.json",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
     )
     destination_plan = ArtifactOutputPlan(
         name="measurements",
         path="/debug/replay/measurements.json",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
     )
     store = FileManagerDebugSnapshotStore(
         filemanager=filemanager,
@@ -1180,13 +1185,13 @@ def test_warm_replay_rejects_snapshot_artifact_with_mismatched_settings_identity
     source_plan = ArtifactOutputPlan(
         name="measurements",
         path="/debug/source/measurements.json",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         materialization="old-settings",
     )
     destination_plan = ArtifactOutputPlan(
         name="measurements",
         path="/debug/replay/measurements.json",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         materialization="new-settings",
     )
     store = FileManagerDebugSnapshotStore(
@@ -1223,7 +1228,7 @@ def test_debug_artifact_export_plan_materializes_vfs_payload(tmp_path):
     filemanager = DebugSnapshotFileManagerStub()
     filemanager.save("payload", "/debug/artifact.txt", "memory")
     artifact_ref = DebugArtifactRef(
-        kind=ArtifactKind.MEASUREMENTS,
+        kind=MeasurementsArtifactType,
         name="artifact",
         cursor=cursor,
         storage_ref="/debug/artifact.txt",
@@ -1269,7 +1274,7 @@ def test_zmq_server_exports_debug_artifact_by_control_request(tmp_path):
     source_path.write_text("value\n1\n", encoding="utf-8")
     cursor = DebugRuntimeFixture.cursor()
     artifact_ref = DebugArtifactRef(
-        kind=ArtifactKind.MEASUREMENTS,
+        kind=MeasurementsArtifactType,
         name="measurements",
         cursor=cursor,
         storage_ref=str(source_path),

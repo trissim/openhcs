@@ -25,7 +25,7 @@ from polystore.streaming.viewer_transport import (
 from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 
 from openhcs.constants.constants import AllComponents, VariableComponents
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ImageArtifactType
 from openhcs.core.config import TransportMode
 from openhcs.core.measurement_row_materialization import MeasurementProjectedColumnarRows
 from openhcs.core.runtime_semantics import RuntimePlaneAxis
@@ -219,12 +219,12 @@ def test_materialization_spec_candidate_paths_follow_registered_writers() -> Non
 
 @pytest.mark.unit
 def test_materialization_spec_declares_filename_identity() -> None:
-    assert tiff_stack().uses_source_identity_filename_for_artifact_kind(
-        ArtifactKind.IMAGE
+    assert tiff_stack().uses_source_identity_filename_for_artifact_type(
+        ImageArtifactType
     )
     assert not tiff_stack(
         filename_identity=MaterializedFilenameIdentity.ARTIFACT_NAME
-    ).uses_source_identity_filename_for_artifact_kind(ArtifactKind.IMAGE)
+    ).uses_source_identity_filename_for_artifact_type(ImageArtifactType)
 
 
 def _two_plane_roi_labels():
@@ -362,6 +362,41 @@ def test_csv_materialization_expands_columnar_rows() -> None:
         "object_label,area",
         "1,9.0",
         "2,10.5",
+    ]
+
+
+@pytest.mark.unit
+def test_csv_materialization_expands_mapping_columns() -> None:
+    fm = FileManager({"memory": MemoryStorageBackend()})
+
+    out = materialize(
+        csv_only(
+            fields=[
+                "relationship_type",
+                "parent_id",
+                "child_id",
+                "slice_index",
+                "slice_count",
+            ]
+        ),
+        data={
+            "relationship_type": "parent_child",
+            "parent_id": (10, 11),
+            "child_id": (1, 2),
+            "slice_count": 2,
+            "source_component_metadata": {"channel": "1"},
+        },
+        path="/tmp/A01_relationships",
+        filemanager=fm,
+        backends=["memory"],
+        backend_kwargs={},
+    )
+
+    assert out == "/tmp/A01_relationships_details.csv"
+    assert fm.load(out, "memory").splitlines() == [
+        "relationship_type,parent_id,child_id,slice_index,slice_count",
+        "parent_child,10,1,0,2",
+        "parent_child,11,2,1,2",
     ]
 
 

@@ -12,11 +12,6 @@ from benchmark.datasets.registry import BBBC021_SINGLE_PLATE
 from benchmark.pipelines.registry import NUCLEI_SEGMENTATION
 from benchmark.adapters.openhcs import (
     _candidate_image_snapshots_for_equivalence,
-    _candidate_measurement_snapshot_cache_key,
-    _reference_snapshot_for_equivalence_fallback,
-    _reference_measurement_snapshot_cache_key,
-    _runtime_measurement_observation_fingerprint,
-    _runtime_execution_cache_key_for_snapshot,
     _runtime_execution_cache_key_matches,
 )
 from benchmark.adapters.cellprofiler import (
@@ -39,19 +34,11 @@ from benchmark.runner import (
     run_cellprofiler_cppipe_parity,
 )
 from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
-from openhcs.core.runtime_equivalence import (
-    RuntimeEquivalencePolicy,
-    RuntimeMeasurementFeatureKey,
-    RuntimeMeasurementSubjectKey,
-    runtime_measurement_projection_cache_identity,
-)
 from openhcs.core.runtime_exports import (
     RuntimeExportExpectation,
     RuntimeExportObservation,
     RuntimeImageExportSpec,
 )
-from openhcs.core.runtime_semantics import MeasurementScope
-from openhcs.core.artifacts import ArtifactKind
 
 
 def test_cellprofiler_compatibility_runner_feeds_native_output_to_openhcs(
@@ -256,10 +243,10 @@ def test_native_reference_lookup_separates_openhcs_sample_scope(tmp_path: Path) 
         source_schema_image_set_selection=selection,
     )
 
-    assert native_cellprofiler_sample_scope_slug(selection) == "samples_first1wells"
+    assert native_cellprofiler_sample_scope_slug(selection) == "samples_first1imagesets"
     assert location.output_dir == (
         native_reference_root
-        / "example_ExampleOneWell_samples_first1wells"
+        / "example_ExampleOneWell_samples_first1imagesets"
     )
 
 
@@ -419,105 +406,6 @@ def test_openhcs_execution_cache_accepts_exact_current_key() -> None:
     assert _runtime_execution_cache_key_matches(cache_key, cache_key)
 
 
-def test_measurement_snapshot_key_uses_runtime_cache_key_directly() -> None:
-    cache_key = _execution_cache_key(
-        source_field="execution_source_tree",
-        digest="execution",
-    )
-
-    snapshot_key = _runtime_execution_cache_key_for_snapshot(cache_key)
-
-    assert snapshot_key is cache_key
-    assert snapshot_key["execution_source_tree"] == {"digest": "execution"}
-
-
-def test_measurement_snapshot_keys_include_semantic_projection_fingerprint(
-    tmp_path: Path,
-) -> None:
-    cache_key = _execution_cache_key(
-        source_field="execution_source_tree",
-        digest="execution",
-    )
-    policy = RuntimeEquivalencePolicy()
-    projection_identity = runtime_measurement_projection_cache_identity()
-    projection_modules = {module_name for module_name, _digest in projection_identity}
-    required_key = RuntimeMeasurementFeatureKey(
-        RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Cells"),
-        "object_number",
-    )
-
-    reference_key = _reference_measurement_snapshot_cache_key(
-        tmp_path,
-        policy=policy,
-        known_source_names=(),
-    )
-    candidate_key = _candidate_measurement_snapshot_cache_key(
-        SimpleNamespace(runtime_execution_cache_key=cache_key),
-        policy=policy,
-        known_source_names=(),
-        required_measurement_keys=frozenset({required_key}),
-        candidate_observation_fingerprint="observation",
-    )
-
-    assert reference_key["semantic_measurement_projection"] == projection_identity
-    assert candidate_key["semantic_measurement_projection"] == projection_identity
-    assert {
-        "openhcs.core.measurement_feature_queries",
-        "openhcs.core.measurement_row_materialization",
-        "openhcs.core.equivalence.measurement_facts",
-        "openhcs.core.equivalence.measurement_rows",
-        "openhcs.core.equivalence.tables",
-    }.issubset(projection_modules)
-
-
-def test_candidate_observation_fingerprint_depends_on_non_image_record_values() -> None:
-    def validation_for(value: object) -> SimpleNamespace:
-        scope = SimpleNamespace(
-            axis_id="A01",
-            group_key=None,
-            site=None,
-            channel=None,
-            z_index=None,
-            timepoint=None,
-        )
-        record = SimpleNamespace(
-            key=SimpleNamespace(
-                name="Measurements",
-                kind=ArtifactKind.MEASUREMENTS,
-                scope=scope,
-            ),
-            location=SimpleNamespace(
-                path="/memory/Measurements.pkl",
-                backend="memory",
-            ),
-            value=value,
-        )
-        return SimpleNamespace(
-            expectation=RuntimeExportExpectation.from_flags(
-                table_exports=True,
-                image_exports=False,
-            ),
-            observation=SimpleNamespace(
-                records_by_axis={"A01": (record,)},
-                exports=RuntimeExportObservation(
-                    table_outputs=(),
-                    image_outputs=(),
-                    table_headers_by_path={},
-                    table_row_counts_by_path={},
-                ),
-            ),
-        )
-
-    first = _runtime_measurement_observation_fingerprint(
-        validation_for({"rows": (("feature", 1.0),)})
-    )
-    second = _runtime_measurement_observation_fingerprint(
-        validation_for({"rows": (("feature", 2.0),)})
-    )
-
-    assert first != second
-
-
 def test_saveimages_export_specs_use_runtime_artifacts_not_incidental_files(
     tmp_path: Path,
 ) -> None:
@@ -569,30 +457,6 @@ def test_exported_image_files_are_used_without_declared_image_artifacts(
     assert snapshots is not None
     assert len(snapshots) == 1
     assert snapshots[0].shape == (2, 3)
-
-
-def test_value_only_fallback_strips_reference_images(tmp_path: Path) -> None:
-    (tmp_path / "Image.csv").write_text("ImageNumber\n1\n")
-    np.save(tmp_path / "SavedImage.npy", np.ones((2, 3), dtype=np.float32))
-
-    snapshot = _reference_snapshot_for_equivalence_fallback(
-        tmp_path,
-        compare_image_outputs=False,
-    )
-
-    assert len(snapshot.tables) == 1
-    assert snapshot.images == ()
-
-
-def test_image_fallback_keeps_reference_images(tmp_path: Path) -> None:
-    np.save(tmp_path / "SavedImage.npy", np.ones((2, 3), dtype=np.float32))
-
-    snapshot = _reference_snapshot_for_equivalence_fallback(
-        tmp_path,
-        compare_image_outputs=True,
-    )
-
-    assert len(snapshot.images) == 1
 
 
 def test_source_cache_domain_parser_handles_bom_python(tmp_path: Path) -> None:

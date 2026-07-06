@@ -1,4 +1,3 @@
-import json
 import importlib.util
 import sys
 from dataclasses import dataclass, replace
@@ -25,9 +24,13 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
 )
 from openhcs.processing.backends.cellprofiler.primary_objects import (
     IdentifyPrimaryObjectsModule,
+    PrimaryObjectStats,
 )
 from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
-from openhcs.interop.cellprofiler.pipeline_generator import GeneratedPipeline, PipelineGenerator
+from openhcs.interop.cellprofiler.pipeline_generator import (
+    GeneratedPipeline,
+    PipelineGenerator,
+)
 from openhcs.constants import Backend
 from openhcs.constants.constants import MEMORY_TYPE_NUMPY
 from openhcs.constants.input_source import InputSource
@@ -35,9 +38,13 @@ from openhcs.core.callable_contract import CallableContract, CallableMetadata
 from openhcs.core.invocation_artifacts import PipelineInvocationContractProviderMetadata
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
-    ArtifactKind,
     ArtifactOutputPlan,
     ArtifactSpec,
+    ArtifactSpecCollection,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
 )
 from openhcs.core.config import DtypeConfig
 from openhcs.core.runtime_adapters import runtime_adapter_spec_from_callable
@@ -86,7 +93,6 @@ from openhcs.processing.backends.lib_registry.unified_registry import Processing
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
 
-
 AXIS_ID = "A01"
 SOURCE_IMAGE = "OrigBlue"
 NUCLEI = "Nuclei"
@@ -130,7 +136,16 @@ def test_identify_objects_threshold_measurements_keep_source_payload():
         ),
     ).payload()
     request = SimpleNamespace(
-        output_value=[{"slice_index": 0, "final_threshold": 0.25}],
+        output_value=[
+            PrimaryObjectStats(
+                slice_index=0,
+                object_count=1,
+                mean_area=1.0,
+                median_area=1.0,
+                total_area=1.0,
+                final_threshold=0.25,
+            )
+        ],
         source=SimpleNamespace(payload=source_payload),
         single_output_object_name=lambda: "Mitochondria",
     )
@@ -149,7 +164,9 @@ class _CoreExecutionRequest:
     artifact_inputs: Mapping[str, ArtifactInputPlan]
     artifact_outputs: Mapping[str, ArtifactOutputPlan]
     source_binding_plan: CompiledSourceBindingPlan = CompiledSourceBindingPlan.empty()
-    source_binding_context: SourceBindingRuntimeContext = SourceBindingRuntimeContext.empty()
+    source_binding_context: SourceBindingRuntimeContext = (
+        SourceBindingRuntimeContext.empty()
+    )
     group_key: str = "default"
 
 
@@ -196,6 +213,7 @@ def _execute_function_core(request: _CoreExecutionRequest):
         output_dir=Path("/plate/Output"),
         variable_components=(),
         group_by=None,
+        execution_group_component=None,
         sequential_filter_plan=SequentialRuntimeFilterPlan.disabled(),
         main_input_dependency=StepInputDependency.unresolved(),
         source_binding_plan=request.source_binding_plan,
@@ -378,10 +396,10 @@ def _pipeline_namespace(generated: GeneratedPipeline) -> dict:
     return namespace
 
 
-def test_generated_pipeline_imports_artifact_kind_for_source_binding_literals():
+def test_generated_pipeline_omits_legacy_artifact_type_enum_import():
     generated = _generated_pipeline(_image_artifact_pipeline_modules())
 
-    assert "from openhcs.core.artifacts import ArtifactKind" in generated.code
+    assert "from openhcs.core.artifacts import ArtifactType" not in generated.code
 
 
 def test_generated_runtime_binding_preserves_backend_callable_identity() -> None:
@@ -450,7 +468,7 @@ def test_generated_pipeline_save_can_use_explicit_filemanager_vfs(
     assert not output_path.exists()
 
 
-def test_materialized_generated_pipeline_contract_sidecar_is_versioned_json(
+def test_materialized_generated_pipeline_contract_sidecar_is_python_source(
     tmp_path: Path,
 ) -> None:
     generated = _generated_pipeline(_image_artifact_pipeline_modules())
@@ -464,23 +482,18 @@ def test_materialized_generated_pipeline_contract_sidecar_is_versioned_json(
         artifact_contracts=generated.runtime_module_contracts_by_module_num,
     )
 
-    sidecar_path = output_dir / f"{module_name}.cellprofiler_contracts.json"
+    sidecar_path = output_dir / f"{module_name}.cellprofiler_contracts.py"
     assert sidecar_path.exists()
+    assert not (output_dir / f"{module_name}.cellprofiler_contracts.json").exists()
     assert not (output_dir / f"{module_name}.cellprofiler_contracts.pkl").exists()
-
-    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
-    assert payload["schema"] == "openhcs.cellprofiler.generated_contracts"
-    assert payload["version"] == 1
-    assert [contract["module_num"] for contract in payload["contracts"]] == [
-        1,
-        2,
-        3,
-        4,
-    ]
 
     restored = GeneratedPipelineContractSidecar.read(sidecar_path)
     assert restored[3].module_name == "Opening"
     assert restored[3].outputs[0].name == OPENED_NUCLEI_IMAGE
+    sidecar_source = sidecar_path.read_text(encoding="utf-8")
+    assert "CELLPROFILER_ARTIFACT_CONTRACTS" in sidecar_source
+    assert "ModuleArtifactContract(" in sidecar_source
+    assert "MaterializationSpec(" in sidecar_source
     assert "GeneratedPipelineContractSidecar" in import_module_path.read_text(
         encoding="utf-8"
     )
@@ -496,10 +509,7 @@ def test_materialized_generated_pipeline_contract_sidecar_is_versioned_json(
         module,
         pipeline_name="contract-sidecar-smoke",
     )
-    assert (
-        PipelineInvocationContractProviderMetadata.metadata_key
-        in pipeline.metadata
-    )
+    assert PipelineInvocationContractProviderMetadata.metadata_key in pipeline.metadata
 
 
 def test_materialized_generated_pipeline_exports_semantic_contracts_as_python(
@@ -525,7 +535,9 @@ def test_materialized_generated_pipeline_exports_semantic_contracts_as_python(
 
     sidecar_path = output_dir / f"{module_name}.cellprofiler_semantic_contracts.py"
     assert sidecar_path.exists()
-    assert not (output_dir / f"{module_name}.cellprofiler_semantic_contracts.json").exists()
+    assert not (
+        output_dir / f"{module_name}.cellprofiler_semantic_contracts.json"
+    ).exists()
 
     restored = GeneratedPipelineSemanticContractsModule.load(
         sidecar_path,
@@ -572,9 +584,12 @@ def test_generator_uses_absorbed_function_contract_for_unknown_registry_contract
 
     assert (
         "from openhcs.processing.backends.cellprofiler import "
-        "get_cellprofiler_function as _get_cellprofiler_function"
+        "CellProfilerFunctionCatalog"
     ) in generated.code
-    assert "opening = _get_cellprofiler_function('opening')" in generated.code
+    assert (
+        "opening = CellProfilerFunctionCatalog.get_function('opening')"
+        in generated.code
+    )
 
 
 def test_generator_scopes_artifact_managed_callables_to_pattern_group():
@@ -593,7 +608,7 @@ def test_generator_scopes_runtime_artifact_only_step_once_per_axis():
     assert measurement_step.processing_config.variable_components == [
         VariableComponents.SITE
     ]
-    assert measurement_step.processing_config.group_by is GroupBy.NONE
+    assert measurement_step.processing_config.group_by is GroupBy.CHANNEL
 
 
 def test_generator_scopes_runtime_artifact_object_outputs_per_image_set():
@@ -605,7 +620,7 @@ def test_generator_scopes_runtime_artifact_object_outputs_per_image_set():
     assert filter_step.processing_config.variable_components == [
         VariableComponents.SITE
     ]
-    assert filter_step.processing_config.group_by is GroupBy.NONE
+    assert filter_step.processing_config.group_by is GroupBy.CHANNEL
 
 
 def test_generator_scopes_runtime_artifact_relationship_outputs_per_image_set():
@@ -617,7 +632,7 @@ def test_generator_scopes_runtime_artifact_relationship_outputs_per_image_set():
     assert relate_step.processing_config.variable_components == [
         VariableComponents.SITE
     ]
-    assert relate_step.processing_config.group_by is GroupBy.NONE
+    assert relate_step.processing_config.group_by is GroupBy.CHANNEL
 
 
 def test_generator_scopes_grid_guided_object_outputs_per_image_set():
@@ -629,7 +644,7 @@ def test_generator_scopes_grid_guided_object_outputs_per_image_set():
     assert identify_grid_step.processing_config.variable_components == [
         VariableComponents.SITE
     ]
-    assert identify_grid_step.processing_config.group_by is GroupBy.NONE
+    assert identify_grid_step.processing_config.group_by is GroupBy.CHANNEL
 
 
 def test_generator_scopes_multi_object_measurements_per_image_set():
@@ -641,7 +656,7 @@ def test_generator_scopes_multi_object_measurements_per_image_set():
     assert area_occupied_step.processing_config.variable_components == [
         VariableComponents.SITE
     ]
-    assert area_occupied_step.processing_config.group_by is GroupBy.NONE
+    assert area_occupied_step.processing_config.group_by is GroupBy.CHANNEL
 
 
 def test_generator_propagates_pairwise_object_scope_to_measurement_consumers():
@@ -653,7 +668,7 @@ def test_generator_propagates_pairwise_object_scope_to_measurement_consumers():
     assert calculate_math_step.processing_config.variable_components == [
         VariableComponents.SITE
     ]
-    assert calculate_math_step.processing_config.group_by is GroupBy.NONE
+    assert calculate_math_step.processing_config.group_by is GroupBy.CHANNEL
 
 
 def test_generator_does_not_propagate_pairwise_scope_to_direct_object_measurements():
@@ -665,7 +680,7 @@ def test_generator_does_not_propagate_pairwise_scope_to_direct_object_measuremen
     assert measurement_step.processing_config.variable_components == [
         VariableComponents.SITE
     ]
-    assert measurement_step.processing_config.group_by is GroupBy.NONE
+    assert measurement_step.processing_config.group_by is GroupBy.CHANNEL
 
 
 def test_generator_binds_canonical_morphology_alias_structuring_element():
@@ -778,7 +793,7 @@ def _artifact_output_plans(contract) -> dict[str, ArtifactOutputPlan]:
         spec.name: ArtifactOutputPlan(
             name=spec.name,
             path=_artifact_path(spec.name),
-            kind=spec.kind,
+            artifact_type=spec.artifact_type,
         )
         for spec in contract.outputs
     }
@@ -789,7 +804,7 @@ def _artifact_input_plans(contract) -> dict[str, ArtifactInputPlan]:
         spec.name: ArtifactInputPlan(
             name=spec.name,
             path=_artifact_path(spec.name),
-            kind=spec.kind,
+            artifact_type=spec.artifact_type,
         )
         for spec in contract.runtime_artifact_inputs
     }
@@ -1159,9 +1174,7 @@ def _filter_objects_measurement_pipeline_modules() -> list[ModuleBlock]:
 
 
 def _single_channel_source_binding_context() -> SourceBindingRuntimeContext:
-    return SourceBindingRuntimeContext(
-        step_input_files=("A01_s001_w1_z001_t001.tif",)
-    )
+    return SourceBindingRuntimeContext(step_input_files=("A01_s001_w1_z001_t001.tif",))
 
 
 def test_generated_cellprofiler_pipeline_executes_runtime_artifact_flow():
@@ -1187,13 +1200,13 @@ def test_generated_cellprofiler_pipeline_executes_runtime_artifact_flow():
 
     nuclei_records = context.runtime_value_store.find(
         name=NUCLEI,
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
         axis_id=AXIS_ID,
     )
     measurement_name = generated.artifact_contracts[1].outputs[0].name
     measurement_records = context.runtime_value_store.find(
         name=measurement_name,
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id=AXIS_ID,
     )
 
@@ -1228,17 +1241,17 @@ def test_generated_cellprofiler_pipeline_executes_runtime_image_artifact_flow():
 
     nuclei_image_records = context.runtime_value_store.find(
         name=NUCLEI_IMAGE,
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         axis_id=AXIS_ID,
     )
     opened_image_records = context.runtime_value_store.find(
         name=OPENED_NUCLEI_IMAGE,
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         axis_id=AXIS_ID,
     )
     overlay_image_records = context.runtime_value_store.find(
         name=OVERLAY_IMAGE,
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         axis_id=AXIS_ID,
     )
 
@@ -1303,9 +1316,9 @@ def test_generator_prunes_dead_outputs_from_retained_modules():
     (contract,) = generated.artifact_contracts
 
     assert contract.module_name == THRESHOLD
-    assert [output.kind for output in contract.outputs] == [
-        ArtifactKind.IMAGE,
-        ArtifactKind.MEASUREMENTS,
+    assert [output.artifact_type for output in contract.outputs] == [
+        ImageArtifactType,
+        MeasurementsArtifactType,
     ]
     assert "image:UnusedThresholdImage" in generated.code
 
@@ -1323,8 +1336,12 @@ def test_generator_retains_observable_object_label_outputs_when_pruning():
     )
 
     assert 'name="FilterObjects"' in generated.code
-    assert ArtifactSpec(FILTERED_NUCLEI, ArtifactKind.OBJECT_LABELS) in (
-        filter_contract.outputs
+    assert (
+        ArtifactSpecCollection(filter_contract.outputs).by_name_and_artifact_type(
+            FILTERED_NUCLEI,
+            ObjectLabelsArtifactType,
+        )
+        is not None
     )
 
 
@@ -1333,7 +1350,8 @@ def test_generator_keeps_unmaterialized_image_artifacts_required_by_saveimages()
         pipeline_name=GENERATED_RUNTIME_SMOKE_PIPELINE_NAME,
         source_cppipe=GENERATED_RUNTIME_SMOKE_CPIPE,
         modules=_image_artifact_pipeline_modules(),
-        skipped_modules=_source_setup_modules() + [
+        skipped_modules=_source_setup_modules()
+        + [
             _module(
                 5,
                 "SaveImages",
@@ -1363,7 +1381,8 @@ def test_generator_can_ignore_saveimages_artifacts_for_value_only_runs():
         pipeline_name=GENERATED_RUNTIME_SMOKE_PIPELINE_NAME,
         source_cppipe=GENERATED_RUNTIME_SMOKE_CPIPE,
         modules=_image_artifact_pipeline_modules(),
-        skipped_modules=_source_setup_modules() + [
+        skipped_modules=_source_setup_modules()
+        + [
             _module(
                 5,
                 "SaveImages",
@@ -1411,7 +1430,7 @@ def test_generated_cellprofiler_pipeline_executes_gray_to_color_module():
 
     color_image_records = context.runtime_value_store.find(
         name=COLOR_IMAGE,
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         axis_id=AXIS_ID,
     )
 
@@ -1445,7 +1464,8 @@ def test_identify_primary_objects_uses_runtime_image_intensity_scale():
             intensity_scale=4095.0,
             source_dtype="uint16",
         ),
-    mask = None).payload()
+        mask=None,
+    ).payload()
 
     _raw_image, stats, labels = identify_primary_objects(
         source_scaled_image,
@@ -1483,9 +1503,11 @@ def test_runtime_image_metadata_uses_declared_tiff_intensity_scale(tmp_path):
     )
     readback = imageio.imread(path)
 
-    metadata = ImagePayloadSourceMetadataContext(
-        SourceImageIdentity(str(path))
-    ).metadata_request(readback).metadata()
+    metadata = (
+        ImagePayloadSourceMetadataContext(SourceImageIdentity(str(path)))
+        .metadata_request(readback)
+        .metadata()
+    )
 
     assert metadata.source_dtype == "uint16"
     assert metadata.intensity_scale == 4095.0
@@ -1519,9 +1541,7 @@ def test_runtime_adapter_receives_step_input_source_binding_context():
                 NamedSourceBinding(
                     alias=SOURCE_IMAGE,
                     selector=SourceSelector(
-                        components=(
-                            ComponentSelector(AllComponents.CHANNEL, "1"),
-                        ),
+                        components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
                     ),
                 ),
             ),
@@ -1584,12 +1604,12 @@ def test_generated_cellprofiler_pipeline_records_relationship_artifacts():
     measurement_name = generated.artifact_contracts[2].outputs[1].name
     relationship_records = context.runtime_value_store.find(
         name=relationship_name,
-        kind=ArtifactKind.RELATIONSHIPS,
+        artifact_type=RelationshipsArtifactType,
         axis_id=AXIS_ID,
     )
     measurement_records = context.runtime_value_store.find(
         name=measurement_name,
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id=AXIS_ID,
     )
 
@@ -1620,17 +1640,17 @@ def test_generated_cellprofiler_pipeline_executes_generic_mask_objects_contract(
 
     masked_records = context.runtime_value_store.find(
         name=MASKED_NUCLEI,
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
         axis_id=AXIS_ID,
     )
     measurement_records = context.runtime_value_store.find(
         name="MaskObjects_2_measurements",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id=AXIS_ID,
     )
     relationship_records = context.runtime_value_store.find(
         name=f"{NUCLEI}_{MASKED_NUCLEI}_relationships",
-        kind=ArtifactKind.RELATIONSHIPS,
+        artifact_type=RelationshipsArtifactType,
         axis_id=AXIS_ID,
     )
 
@@ -1663,22 +1683,22 @@ def test_generated_cellprofiler_pipeline_executes_filterobjects_relabel_outputs(
 
     filtered_nuclei_records = context.runtime_value_store.find(
         name=FILTERED_NUCLEI,
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
         axis_id=AXIS_ID,
     )
     filtered_cells_records = context.runtime_value_store.find(
         name=FILTERED_CELLS,
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
         axis_id=AXIS_ID,
     )
     measurement_records = context.runtime_value_store.find(
         name="FilterObjects_3_measurements",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         axis_id=AXIS_ID,
     )
     relationship_records = context.runtime_value_store.find(
         name=parent_child_relationship_artifact_name(NUCLEI, FILTERED_NUCLEI),
-        kind=ArtifactKind.RELATIONSHIPS,
+        artifact_type=RelationshipsArtifactType,
         axis_id=AXIS_ID,
     )
 
@@ -1715,12 +1735,12 @@ def test_generated_cellprofiler_pipeline_filters_objects_by_prior_measurements()
 
     filtered_records = context.runtime_value_store.find(
         name=FILTERED_NUCLEI,
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
         axis_id=AXIS_ID,
     )
     relationship_records = context.runtime_value_store.find(
         name=parent_child_relationship_artifact_name(NUCLEI, FILTERED_NUCLEI),
-        kind=ArtifactKind.RELATIONSHIPS,
+        artifact_type=RelationshipsArtifactType,
         axis_id=AXIS_ID,
     )
 

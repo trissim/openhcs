@@ -2,11 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from openhcs.core.artifacts import (
-    ArtifactKey,
-    ArtifactKind,
-    ArtifactScope,
-)
+from openhcs.core.artifacts import ArtifactKey, ArtifactScope, MeasurementsArtifactType
 from openhcs.core.runtime_exports import (
     RuntimeExportExpectation,
     RuntimeExportObservation,
@@ -28,7 +24,7 @@ def test_runtime_export_validation_accepts_header_only_empty_table(
         RuntimeExportExpectation.from_flags(
             table_exports=True,
             image_exports=False,
-            table_artifact_kinds=frozenset((ArtifactKind.MEASUREMENTS,)),
+            table_artifact_kinds=frozenset((MeasurementsArtifactType,)),
         ),
         RuntimeExportObservation.from_output_root(tmp_path),
         {"A01": (record,)},
@@ -48,7 +44,7 @@ def test_runtime_export_validation_accepts_header_only_empty_column_table(
         RuntimeExportExpectation.from_flags(
             table_exports=True,
             image_exports=False,
-            table_artifact_kinds=frozenset((ArtifactKind.MEASUREMENTS,)),
+            table_artifact_kinds=frozenset((MeasurementsArtifactType,)),
         ),
         RuntimeExportObservation.from_output_root(tmp_path),
         {"A01": (record,)},
@@ -68,7 +64,7 @@ def test_runtime_export_validation_rejects_header_only_nonempty_table(
         RuntimeExportExpectation.from_flags(
             table_exports=True,
             image_exports=False,
-            table_artifact_kinds=frozenset((ArtifactKind.MEASUREMENTS,)),
+            table_artifact_kinds=frozenset((MeasurementsArtifactType,)),
         ),
         RuntimeExportObservation.from_output_root(tmp_path),
         {"A01": (record,)},
@@ -88,7 +84,7 @@ def test_runtime_export_validation_checks_table_schema_fields(
         RuntimeExportExpectation.from_flags(
             table_exports=True,
             image_exports=False,
-            table_artifact_kinds=frozenset((ArtifactKind.MEASUREMENTS,)),
+            table_artifact_kinds=frozenset((MeasurementsArtifactType,)),
         ),
         RuntimeExportObservation.from_output_root(tmp_path),
         {"A01": (record,)},
@@ -117,7 +113,7 @@ def test_runtime_export_validation_scopes_table_outputs_by_axis(
         RuntimeExportExpectation.from_flags(
             table_exports=True,
             image_exports=False,
-            table_artifact_kinds=frozenset((ArtifactKind.MEASUREMENTS,)),
+            table_artifact_kinds=frozenset((MeasurementsArtifactType,)),
         ),
         RuntimeExportObservation.from_output_root(tmp_path),
         {"A01": (a01_record,), "A02": (a02_record,)},
@@ -137,7 +133,7 @@ def test_runtime_export_validation_accepts_format_compatible_schema_fields(
         RuntimeExportExpectation.from_flags(
             table_exports=True,
             image_exports=False,
-            table_artifact_kinds=frozenset((ArtifactKind.MEASUREMENTS,)),
+            table_artifact_kinds=frozenset((MeasurementsArtifactType,)),
         ),
         RuntimeExportObservation.from_output_root(tmp_path),
         {"A01": (record,)},
@@ -154,12 +150,12 @@ def _stored_measurements_record(
     value = RuntimeValue(
         key=ArtifactKey(
             name="Measurements",
-            kind=ArtifactKind.MEASUREMENTS,
+            artifact_type=MeasurementsArtifactType,
             scope=ArtifactScope(axis_id=axis_id),
         ),
         data=rows,
         schema=RuntimeValueSchema(
-            kind=ArtifactKind.MEASUREMENTS,
+            artifact_type=MeasurementsArtifactType,
             fields=(FieldSpec("slice_index"),),
         ),
     )

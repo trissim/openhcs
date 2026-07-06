@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.artifacts import ArtifactOutputPlan, MeasurementsArtifactType, RelationshipsArtifactType
 from openhcs.core.runtime_semantics import MeasurementScope, MeasurementSubject
 from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_values import (
@@ -214,7 +214,7 @@ def _record_measurements(
     output_plan = ArtifactOutputPlan(
         name=table.name,
         path=f"/memory/{table.name}.pkl",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
     )
     store.record(
         normalize_artifact_value(output_plan, table, axis_id=axis_id),
@@ -232,7 +232,7 @@ def _record_relationship(
     output_plan = ArtifactOutputPlan(
         name=relationship.name,
         path=f"/memory/{relationship.name}.pkl",
-        kind=ArtifactKind.RELATIONSHIPS,
+        artifact_type=RelationshipsArtifactType,
     )
     store.record(
         normalize_artifact_value(output_plan, relationship, axis_id=axis_id),

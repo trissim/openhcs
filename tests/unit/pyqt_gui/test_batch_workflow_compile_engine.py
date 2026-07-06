@@ -12,7 +12,7 @@ from openhcs.core.debug import (
     DebugProgressEventRequest,
     DebugReplayMode,
 )
-from openhcs.core.artifacts import ArtifactKey, ArtifactKind, ArtifactScope
+from openhcs.core.artifacts import ArtifactKey, ArtifactScope, MeasurementsArtifactType
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
     DebugSnapshotAvailableNotification,
@@ -318,8 +318,14 @@ def test_compile_submission_uses_execution_plate_path_for_transport():
 
     assert execution_id == "compile-1"
     assert captured["plate_id"] == plate_scope.scope_id
-    assert captured["execution_plate_id"] == "/tmp/source/.openhcs_cellprofiler/Analysis_Start"
-    assert captured["selected_pipeline_path"] == "/tmp/source/BBBC022_Analysis_Start.cppipe"
+    assert (
+        captured["execution_plate_id"]
+        == "/tmp/source/.openhcs_cellprofiler/Analysis_Start"
+    )
+    assert (
+        captured["selected_pipeline_path"]
+        == "/tmp/source/BBBC022_Analysis_Start.cppipe"
+    )
 
 
 def test_compile_transport_normalizes_cellprofiler_submodule_function_collision():
@@ -328,7 +334,9 @@ def test_compile_transport_normalizes_cellprofiler_submodule_function_collision(
 
     from openhcs.core.steps.function_step import FunctionStep
 
-    crop_module = importlib.import_module("openhcs.processing.backends.cellprofiler.crop")
+    crop_module = importlib.import_module(
+        "openhcs.processing.backends.cellprofiler.crop"
+    )
     pipeline = [
         FunctionStep(
             func=(crop_module, {"crop_shape": "Rectangle"}),
@@ -352,7 +360,6 @@ def test_compile_transport_preserves_stable_cellprofiler_function_wrappers():
     from openhcs.core.steps.function_step import FunctionStep
 
     crop = cellprofiler_backend.crop
-    cellprofiler_backend._cellprofiler_function_maps.cache_clear()
 
     pipeline = [FunctionStep(func=crop, name="Crop")]
 
@@ -385,12 +392,12 @@ def test_plate_pipeline_request_builder_rebinds_before_transport_validation(
 
     def rebind(**kwargs):
         calls.append(
-                (
-                    "rebind",
-                    kwargs["import_result_provider"],
-                    kwargs["plate_path"],
-                    kwargs["pipeline_steps"],
-                )
+            (
+                "rebind",
+                kwargs["import_result_provider"],
+                kwargs["plate_path"],
+                kwargs["pipeline_steps"],
+            )
         )
         return [rebound_step]
 
@@ -453,6 +460,7 @@ def test_compile_policy_fail_fast_submit_raises():
             )
         )
 
+
 def test_compile_policy_non_fail_fast_wait_tracks_error_and_finally():
     service = CompileBatchWorkflowService.__new__(CompileBatchWorkflowService)
     callbacks = {"start": [], "success": [], "error": [], "finally": []}
@@ -488,7 +496,9 @@ def test_compile_policy_non_fail_fast_wait_tracks_error_and_finally():
         ),
     )
     artifacts = asyncio.run(
-        BatchSubmitWaitEngine[CompileJob]().run([_job("/tmp/a"), _job("/tmp/b")], policy)
+        BatchSubmitWaitEngine[CompileJob]().run(
+            [_job("/tmp/a"), _job("/tmp/b")], policy
+        )
     )
 
     assert artifacts == {"/tmp/a": "exec-/tmp/a"}
@@ -734,7 +744,9 @@ class RecordingProgressTracker:
         self.events.append((execution_id, event))
 
     def get_execution_ids(self):
-        return tuple(dict.fromkeys(execution_id for execution_id, _event in self.events))
+        return tuple(
+            dict.fromkeys(execution_id for execution_id, _event in self.events)
+        )
 
     def get_events(self, execution_id):
         return [event for event_id, event in self.events if event_id == execution_id]
@@ -898,7 +910,7 @@ def test_on_progress_notifies_live_measurement_listeners() -> None:
                 address=RuntimeArtifactAddress(
                     key=ArtifactKey(
                         name="Measure",
-                        kind=ArtifactKind.MEASUREMENTS,
+                        artifact_type=MeasurementsArtifactType,
                         scope=ArtifactScope(axis_id="A01"),
                     ),
                     location=RuntimeArtifactLocation(

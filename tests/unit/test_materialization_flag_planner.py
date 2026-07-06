@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from openhcs.constants.constants import Backend
 from openhcs.constants.input_source import InputSource
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.artifacts import ArtifactOutputPlan, ObjectLabelsArtifactType, MeasurementsArtifactType
 from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.config import MaterializationBackend, VFSConfig
@@ -35,7 +35,7 @@ def test_final_measurement_only_step_keeps_images_in_memory() -> None:
                     "measurements": ArtifactOutputPlan(
                         "measurements",
                         "/memory/measurements.pkl",
-                        ArtifactKind.MEASUREMENTS,
+                        MeasurementsArtifactType,
                     )
                 },
             ),
@@ -64,7 +64,7 @@ def test_final_image_artifact_step_materializes_images() -> None:
                     "labels": ArtifactOutputPlan(
                         "labels",
                         "/memory/labels.pkl",
-                        ArtifactKind.OBJECT_LABELS,
+                        ObjectLabelsArtifactType,
                     )
                 },
             )
@@ -93,7 +93,7 @@ def test_final_image_artifact_step_honors_no_materialization_policy() -> None:
                     "labels": ArtifactOutputPlan(
                         "labels",
                         "/memory/labels.pkl",
-                        ArtifactKind.OBJECT_LABELS,
+                        ObjectLabelsArtifactType,
                         materialization=NO_ARTIFACT_MATERIALIZATION,
                     )
                 },

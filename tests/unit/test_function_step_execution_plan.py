@@ -1,13 +1,15 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from openhcs.constants.constants import VariableComponents
 from openhcs.core.compiled_step_plan import (
     CompiledStepPlan,
     InputConversionPlan,
     MaterializedOutputPlan,
 )
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.artifacts import ArtifactOutputPlan, ObjectLabelsArtifactType, MeasurementsArtifactType
 from openhcs.core.function_patterns import compile_function_pattern
 from openhcs.core.step_dependencies import (
     StepInputDependency,
@@ -48,7 +50,7 @@ def _compiled_plan(**overrides):
         axis_id="A01",
         input_dir=Path("/tmp/input"),
         output_dir=Path("/tmp/output"),
-        variable_components=None,
+        variable_components=(VariableComponents.SITE,),
         group_by=None,
         func=noop,
         main_input_dependency=StepInputDependency.step_output(
@@ -95,8 +97,7 @@ def test_execution_plan_snapshots_compiled_plan_without_raw_backing():
 
     assert not hasattr(plan, "raw")
     assert plan.step_scope_id == "plate::functionstep_2"
-    assert compiled_plan.variable_components is None
-    assert plan.variable_components == [VariableComponents.SITE]
+    assert plan.variable_components == (VariableComponents.SITE,)
     assert plan.main_input_dependency.kind is StepInputDependencyKind.STEP_OUTPUT
     assert plan.main_input_dependency.source_step_scope_id == "plate::functionstep_1"
     assert plan.source_binding_plan.is_empty
@@ -107,6 +108,14 @@ def test_execution_plan_snapshots_compiled_plan_without_raw_backing():
     assert plan.has_materialized_output
     assert plan.materialized_output_dir == Path("/tmp/materialized")
     assert plan.artifact_analysis_output_dir == Path("/tmp/materialized_results")
+
+
+def test_execution_plan_rejects_missing_variable_components():
+    compiled_plan = _compiled_plan(variable_components=None)
+    context = ContextStub(compiled_plan)
+
+    with pytest.raises(ValueError, match="missing compiled variable_components"):
+        FunctionStepExecutionPlan.from_context(context, 2)
 
 
 def test_function_step_execution_does_not_prepare_callables_in_hot_path(monkeypatch):
@@ -177,26 +186,8 @@ def test_function_step_execution_does_not_prepare_callables_in_hot_path(monkeypa
     assert ("finalize", "prepared-at-compile") in events
 
 
-def test_groupby_none_dict_pattern_infers_fixed_component_groups():
-    from openhcs.core.steps.function_execution import DictPatternGroupInference
-
-    class ParserStub:
-        FILENAME_COMPONENTS = ("well", "site", "channel", "z_index", "timepoint")
-
-        def parse_filename(self, filename):
-            if "_w1_" in filename:
-                channel = "1"
-            elif "_w2_" in filename:
-                channel = "2"
-            else:
-                return None
-            return {
-                "well": "A01",
-                "site": "{iii}",
-                "channel": channel,
-                "z_index": "1",
-                "timepoint": "1",
-            }
+def test_grouped_pattern_requires_concrete_execution_group_component():
+    from openhcs.core.steps.function_execution import FunctionStepExecutor
 
     def first(image):
         return image
@@ -204,22 +195,30 @@ def test_groupby_none_dict_pattern_infers_fixed_component_groups():
     def second(image):
         return image
 
-    compiled = compile_function_pattern({"1": first, "2": second}, {}, {})
-
-    grouped = DictPatternGroupInference.from_compiled_pattern(
-        ParserStub(),
-        compiled,
-    ).grouped(
-        (
-            "A01_s{iii}_w1_z001_t001.tif",
-            "A01_s{iii}_w2_z001_t001.tif",
-        )
+    executor = object.__new__(FunctionStepExecutor)
+    executor.plan = SimpleNamespace(
+        axis_id="A01",
+        step_name="dict-none",
+        execution_group_value=None,
+        compiled_function_pattern=compile_function_pattern(
+            {"1": first, "2": second},
+            {},
+            {},
+        ),
     )
 
-    assert grouped == {
-        "1": ["A01_s{iii}_w1_z001_t001.tif"],
-        "2": ["A01_s{iii}_w2_z001_t001.tif"],
-    }
+    with pytest.raises(
+        ValueError,
+        match="dict function pattern without a concrete execution group component",
+    ):
+        executor._prepare_groups(
+            {
+                "A01": (
+                    "A01_s{iii}_w1_z001_t001.tif",
+                    "A01_s{iii}_w2_z001_t001.tif",
+                )
+            }
+        )
 
 
 def test_build_analysis_filename_uses_pipeline_position_for_image_derived_name():
@@ -254,15 +253,15 @@ def test_component_artifact_plan_selection_merges_global_and_group_outputs():
     global_output = ArtifactOutputPlan(
         name="objects",
         path="/tmp/objects",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     grouped_output = ArtifactOutputPlan(
         name="measurements",
         path="/tmp/measurements/A01",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
     )
 
-    selected = ComponentArtifactPlans._select_plan_for_component(
+    selected = ComponentArtifactPlans._select_output_plans_for_component(
         {
             None: {"objects": global_output},
             "A01": {"measurements": grouped_output},
@@ -275,3 +274,47 @@ def test_component_artifact_plan_selection_merges_global_and_group_outputs():
         "objects": global_output,
         "measurements": grouped_output,
     }
+
+
+def test_component_artifact_plan_selection_omits_unscoped_outputs_for_missing_group():
+    output = ArtifactOutputPlan(
+        name="objects",
+        path="/tmp/objects",
+        artifact_type=ObjectLabelsArtifactType,
+        group_keys=("3",),
+        paths_by_group={"3": "/tmp/objects_w3"},
+    )
+
+    selected = ComponentArtifactPlans._select_output_plans_for_component(
+        {"3": {"objects": output.for_group("3")}},
+        "1",
+        {"objects": output},
+    )
+
+    assert selected == {}
+
+
+def test_default_invocation_keeps_compiled_grouped_output_plan():
+    grouped_output = ArtifactOutputPlan(
+        name="measurements",
+        path="/tmp/measurements",
+        artifact_type=MeasurementsArtifactType,
+        group_keys=("1", "3", "2"),
+        paths_by_group={
+            "1": "/tmp/w1_measurements",
+            "3": "/tmp/w3_measurements",
+            "2": "/tmp/w2_measurements",
+        },
+    )
+
+    selected = ComponentArtifactPlans._select_output_plans_for_component(
+        {
+            "1": {"measurements": grouped_output.for_group("1")},
+            "3": {"measurements": grouped_output.for_group("3")},
+            "2": {"measurements": grouped_output.for_group("2")},
+        },
+        None,
+        {"measurements": grouped_output},
+    )
+
+    assert selected == {"measurements": grouped_output}

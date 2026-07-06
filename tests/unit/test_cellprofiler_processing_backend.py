@@ -113,11 +113,13 @@ def test_cellprofiler_processing_backend_exports_absorbed_function() -> None:
     assert _processing_contract(function) is ProcessingContract.PURE_2D
     assert (
         function
-        is cellprofiler.get_cellprofiler_function("identify_primary_objects")
+        is cellprofiler.CellProfilerFunctionCatalog.get_function(
+            "identify_primary_objects"
+        )
     )
     assert (
         function
-        is cellprofiler.require_cellprofiler_function(
+        is cellprofiler.CellProfilerFunctionCatalog.require_function(
             "IdentifyPrimaryObjects",
             function_name="identify_primary_objects",
         )
@@ -205,7 +207,7 @@ def test_classify_objects_aligns_dense_label_indexed_measurements_to_sparse_labe
 def test_cellprofiler_processing_backend_exports_module_function_variants() -> None:
     from openhcs.processing.backends import cellprofiler
 
-    function = cellprofiler.require_cellprofiler_function(
+    function = cellprofiler.CellProfilerFunctionCatalog.require_function(
         "IdentifyObjectsInGrid",
         function_name="identify_objects_in_grid_with_guides",
     )
@@ -219,7 +221,7 @@ def test_cellprofiler_processing_backend_exports_module_function_variants() -> N
 def test_cellprofiler_processing_backend_exports_resize_volumetric_variant() -> None:
     from openhcs.processing.backends import cellprofiler
 
-    function = cellprofiler.require_cellprofiler_function(
+    function = cellprofiler.CellProfilerFunctionCatalog.require_function(
         "Resize",
         function_name="resize_volumetric",
     )
@@ -233,7 +235,7 @@ def test_cellprofiler_processing_backend_exports_resize_volumetric_variant() -> 
 def test_cellprofiler_processing_backend_exports_resize_objects_volumetric_variant() -> None:
     from openhcs.processing.backends import cellprofiler
 
-    function = cellprofiler.require_cellprofiler_function(
+    function = cellprofiler.CellProfilerFunctionCatalog.require_function(
         "ResizeObjects",
         function_name="resize_objects_3d",
     )
@@ -360,67 +362,127 @@ def test_cellprofiler_threshold_diagnostics_handles_nd_images_as_one_domain() ->
     binary = image > 0.5
 
     weighted_variance, sum_of_entropies = strategy.diagnostics(image, None, binary)
-    reference_weighted_variance = (
-        NumpyThresholdDiagnosticsBackendStrategy().weighted_variance(
-            image,
-            np.ones(image.shape, dtype=bool),
-            binary,
-        )
+    reference = NumpyThresholdDiagnosticsBackendStrategy()
+    flat_image = image.reshape(-1, 1)
+    flat_binary = binary.reshape(-1, 1)
+    flat_mask = np.ones(flat_image.shape, dtype=bool)
+    reference_weighted_variance = reference.weighted_variance(
+        flat_image,
+        flat_mask,
+        flat_binary,
     )
-    reference_sum_of_entropies = (
-        NumpyThresholdDiagnosticsBackendStrategy().sum_of_entropies(
-            image,
-            np.ones(image.shape, dtype=bool),
-            binary,
-        )
+    reference_sum_of_entropies = reference.sum_of_entropies(
+        flat_image,
+        flat_mask,
+        flat_binary,
     )
 
     assert isinstance(weighted_variance, float)
     assert isinstance(sum_of_entropies, float)
-    np.testing.assert_allclose(weighted_variance, reference_weighted_variance)
-    np.testing.assert_allclose(sum_of_entropies, reference_sum_of_entropies)
-
-
-def test_cellprofiler_threshold_quantized_diagnostics_preserve_low_dynamic_range() -> None:
-    from openhcs.processing.backends.cellprofiler.thresholding import (
-        NumbaNumpyThresholdDiagnosticsBackendStrategy,
-        NumpyThresholdDiagnosticsBackendStrategy,
+    np.testing.assert_allclose(
+        weighted_variance,
+        reference_weighted_variance,
+        rtol=1e-6,
+    )
+    np.testing.assert_allclose(
+        sum_of_entropies,
+        reference_sum_of_entropies,
+        rtol=1e-6,
     )
 
+
+def test_cellprofiler_threshold_diagnostics_prewarm_covers_runtime_paths() -> None:
+    from openhcs.processing.backends.cellprofiler.thresholding import (
+        NumpyThresholdDiagnosticsBackendStrategy,
+        ThresholdDiagnosticsBackendStrategy,
+    )
+
+    ThresholdDiagnosticsBackendStrategy.prepare_registered_family()
+    strategy = ThresholdDiagnosticsBackendStrategy.for_memory_type(MemoryType.NUMPY)
+    reference = NumpyThresholdDiagnosticsBackendStrategy()
     image = np.array(
         [
-            [0.0001, 0.0004, 0.0012, 0.0030],
-            [0.0002, 0.0005, 0.0015, 0.0034],
+            [[0.1, 0.0, 0.3], [0.7, 0.8, 0.9]],
+            [[0.2, 0.3, 0.4], [0.6, 0.7, 0.8]],
         ],
         dtype=np.float32,
     )
-    binary = image > 0.001
+    binary = image > 0.5
+    partial_mask = np.ones(image.shape, dtype=bool)
+    partial_mask[:, :, :1] = False
+
+    for mask in (None, partial_mask):
+        weighted_variance, sum_of_entropies = strategy.diagnostics(
+            image, mask, binary
+        )
+        reference_mask = (
+            np.ones(image.shape, dtype=bool) if mask is None else partial_mask
+        )
+        reference_weighted_variance = reference.weighted_variance(
+            image.reshape(-1, 1),
+            reference_mask.reshape(-1, 1),
+            binary.reshape(-1, 1),
+        )
+        reference_sum_of_entropies = reference.sum_of_entropies(
+            image.reshape(-1, 1),
+            reference_mask.reshape(-1, 1),
+            binary.reshape(-1, 1),
+        )
+        np.testing.assert_allclose(
+            weighted_variance,
+            reference_weighted_variance,
+            rtol=1e-6,
+        )
+        np.testing.assert_allclose(
+            sum_of_entropies,
+            reference_sum_of_entropies,
+            rtol=1e-6,
+        )
+
+
+def test_threshold_application_smoothing_matches_cellprofiler_mask_formula() -> None:
+    from scipy import ndimage as ndi
+
+    from openhcs.processing.backends.cellprofiler.thresholding import (
+        ThresholdApplicationRequest,
+    )
+
+    image = np.linspace(0.0, 1.0, 35, dtype=np.float32).reshape((5, 7))
     mask = np.ones(image.shape, dtype=bool)
-
-    weighted_variance, sum_of_entropies = (
-        NumbaNumpyThresholdDiagnosticsBackendStrategy().diagnostics(
-            image,
-            mask,
-            binary,
-            proven_unit_interval_scale=65535,
-        )
+    mask[:1, :2] = False
+    smoothing = 1.3488
+    sigma = smoothing / 0.6744 / 2.0
+    expected_weight = ndi.gaussian_filter(
+        mask.astype(float),
+        sigma,
+        mode="constant",
+        cval=0,
     )
-    reference_weighted_variance = (
-        NumpyThresholdDiagnosticsBackendStrategy().weighted_variance(
-            np.rint(image * 65535).astype(np.int64) / 65535,
-            mask,
-            binary,
-        )
-    )
+    masked_image = np.zeros(image.shape, image.dtype)
+    masked_image[mask] = image[mask]
+    expected_smoothed = ndi.gaussian_filter(
+        masked_image,
+        sigma,
+        mode="constant",
+        cval=0,
+    ) / (expected_weight + np.finfo(float).eps)
+    expected = (expected_smoothed >= 0.5) & mask
 
-    np.testing.assert_allclose(weighted_variance, reference_weighted_variance)
-    assert isinstance(sum_of_entropies, float)
+    actual, actual_sigma = ThresholdApplicationRequest(
+        image=image,
+        threshold=0.5,
+        mask=mask,
+        smoothing=smoothing,
+    ).apply()
+
+    assert actual_sigma == sigma
+    np.testing.assert_array_equal(actual, expected)
 
 
-def test_threshold_diagnostics_scale_policy_accepts_uint16_unit_interval_proof() -> None:
+def test_threshold_selection_scale_policy_accepts_uint16_unit_interval_proof() -> None:
     from openhcs.core.runtime_values import ImagePayloadMetadata
     from openhcs.processing.backends.cellprofiler.thresholding import (
-        unit_interval_scale_for_threshold_diagnostics,
+        unit_interval_scale_for_threshold_selection,
     )
 
     image = np.asarray([[0, 65535]], dtype=np.uint16)
@@ -428,19 +490,65 @@ def test_threshold_diagnostics_scale_policy_accepts_uint16_unit_interval_proof()
         65535
     )
 
-    assert unit_interval_scale_for_threshold_diagnostics(image, metadata) == 65535
+    assert unit_interval_scale_for_threshold_selection(image, metadata) == 65535
 
 
-def test_threshold_diagnostics_quantized_codes_use_uint16_for_uint16_scale() -> None:
-    from openhcs.processing.backends.cellprofiler.thresholding_threshold_numba_diagnostics_quantized import (
-        quantized_threshold_codes,
+def test_cellprofiler_uint8_source_normalization_matches_native_pixel_domain() -> None:
+    from openhcs.core.runtime_values import (
+        ImagePayloadMetadata,
+        MaskedImagePayload,
+        normalize_image_payload_intensity,
+    )
+    from openhcs.interop.cellprofiler.image_normalization import (
+        normalize_cellprofiler_image_payload,
     )
 
-    image = np.asarray([[0.0, 1.0]], dtype=np.float32)
-    codes = quantized_threshold_codes(image, 65535)
+    image = np.asarray([[7, 98, 128, 254, 255]], dtype=np.uint8)
+    core_normalized = np.asarray(normalize_image_payload_intensity(image))
+    pathless_normalized = np.asarray(normalize_cellprofiler_image_payload(image))
+    jpg_payload = MaskedImagePayload(
+        data=image,
+        mask=np.ones(image.shape, dtype=bool),
+        metadata=ImagePayloadMetadata.for_array(image, source_path="source.jpg"),
+    )
+    png_payload = MaskedImagePayload(
+        data=image,
+        mask=np.ones(image.shape, dtype=bool),
+        metadata=ImagePayloadMetadata.for_array(image, source_path="source.png"),
+    )
+    jpg_normalized = np.asarray(normalize_cellprofiler_image_payload(jpg_payload))
+    cellprofiler_normalized = np.asarray(
+        normalize_cellprofiler_image_payload(png_payload)
+    )
 
-    assert codes.dtype == np.uint16
-    np.testing.assert_array_equal(codes, np.asarray([[0, 65535]], dtype=np.uint16))
+    np.testing.assert_array_equal(pathless_normalized, core_normalized)
+    np.testing.assert_array_equal(jpg_normalized, core_normalized)
+    assert cellprofiler_normalized.dtype == np.float32
+    assert cellprofiler_normalized[0, 0].view(np.uint32) == np.nextafter(
+        core_normalized[0, 0], np.float32(0.0), dtype=np.float32
+    ).view(np.uint32)
+    assert cellprofiler_normalized[0, 1].view(np.uint32) == np.nextafter(
+        core_normalized[0, 1], np.float32(0.0), dtype=np.float32
+    ).view(np.uint32)
+    assert cellprofiler_normalized[0, 2].view(np.uint32) == core_normalized[
+        0, 2
+    ].view(np.uint32)
+    assert cellprofiler_normalized[0, 3].view(np.uint32) == core_normalized[
+        0, 3
+    ].view(np.uint32)
+    assert cellprofiler_normalized[0, 4] == np.float32(1.0)
+
+    normalized_payload = MaskedImagePayload(
+        data=core_normalized,
+        mask=np.ones(core_normalized.shape, dtype=bool),
+        metadata=ImagePayloadMetadata.for_array(
+            core_normalized, source_path="source.png"
+        )
+        .with_unit_interval_intensity_scale(255),
+    )
+    remapped = np.asarray(normalize_cellprofiler_image_payload(normalized_payload))
+
+    np.testing.assert_array_equal(remapped, cellprofiler_normalized)
 
 
 def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
@@ -489,6 +597,7 @@ def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
     )
     from openhcs.processing.backends.cellprofiler.zernike import (
         LegacyFastNumpyShapeZernikeBackendStrategy,
+        NativeNumpyShapeZernikeBackendStrategy,
         ShapeZernikeBackendStrategy,
     )
 
@@ -573,7 +682,7 @@ def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
         )
     ) is NumbaNumpyObjectIntensityBackendStrategy
     assert type(RadialDistributionBackendStrategy.for_memory_type(MemoryType.NUMPY)) is (
-        NumbaNumpyRadialDistributionBackendStrategy
+        NativeNumpyRadialDistributionBackendStrategy
     )
     assert type(
         RadialDistributionBackendStrategy.for_memory_type(
@@ -613,6 +722,14 @@ def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
             backend_provider=CellProfilerBackendProvider.CENTROSOME,
         )
     assert type(ShapeZernikeBackendStrategy.for_memory_type(MemoryType.NUMPY)) is (
+        NativeNumpyShapeZernikeBackendStrategy
+    )
+    assert type(
+        ShapeZernikeBackendStrategy.for_memory_type(
+            MemoryType.NUMPY,
+            backend_provider=CellProfilerBackendProvider.LEGACY_FAST,
+        )
+    ) is (
         LegacyFastNumpyShapeZernikeBackendStrategy
     )
     with pytest.raises(NotImplementedError):
@@ -840,7 +957,7 @@ def test_default_shape_maximum_position_preserves_cellprofiler_tie_semantics() -
     )
 
     np.testing.assert_array_equal(actual_i, np.array([1.0, 2.0, 3.0]))
-    np.testing.assert_array_equal(actual_j, np.array([1.0, 2.0, 0.0]))
+    np.testing.assert_array_equal(actual_j, np.array([2.0, 3.0, 0.0]))
 
 
 def test_medianfilter_preserves_unit_interval_scale_metadata() -> None:
@@ -1288,6 +1405,77 @@ def test_numba_minimum_cross_entropy_uses_quantized_scale_without_semantic_drift
     assert quantized_masked == pytest.approx(dense_masked, abs=1e-7)
 
 
+def test_measure_colocalization_object_thresholds_use_pixel_dtype_boundary() -> None:
+    from openhcs.processing.backends.cellprofiler.colocalization import (
+        measure_colocalization_objects,
+    )
+
+    scale = np.float32(65535)
+    image = np.asarray(
+        [
+            [[1000, 1000, 1000]],
+            [[105, 700, 700]],
+        ],
+        dtype=np.float32,
+    ) / scale
+    labels = np.asarray([[1, 1, 1]], dtype=np.int32)
+
+    _, rows = measure_colocalization_objects(
+        image,
+        labels,
+        channel_1=0,
+        channel_2=1,
+        threshold_percent=15.0,
+        do_correlation=False,
+        do_manders=True,
+        do_rwc=False,
+        do_overlap=True,
+        do_costes=False,
+    )
+    row = next(iter(rows))
+
+    assert row.manders_m1 == pytest.approx(2.0 / 3.0)
+
+
+def test_measure_colocalization_object_correlation_uses_cellprofiler_two_pass_formula() -> None:
+    from openhcs.processing.backends.cellprofiler.colocalization import (
+        measure_colocalization_objects,
+    )
+
+    first = np.asarray([[0.001, 0.003, 0.008, 0.013, 0.021]], dtype=np.float32)
+    second = np.asarray([[0.002, 0.005, 0.007, 0.017, 0.019]], dtype=np.float32)
+    image = np.stack((first, second), axis=0)
+    labels = np.ones(first.shape, dtype=np.int32)
+
+    _, rows = measure_colocalization_objects(
+        image,
+        labels,
+        channel_1=0,
+        channel_2=1,
+        threshold_percent=15.0,
+        do_correlation=True,
+        do_manders=False,
+        do_rwc=False,
+        do_overlap=False,
+        do_costes=False,
+    )
+    row = next(iter(rows))
+
+    first_pixels = np.asarray(first.ravel(), dtype=float)
+    second_pixels = np.asarray(second.ravel(), dtype=float)
+    first_delta = first_pixels - np.mean(first_pixels)
+    second_delta = second_pixels - np.mean(second_pixels)
+    expected = np.sum(
+        first_delta
+        * second_delta
+        / (
+            np.sqrt(np.sum(first_delta * first_delta))
+            * np.sqrt(np.sum(second_delta * second_delta))
+        )
+    )
+    assert row.correlation == pytest.approx(float(expected), abs=1e-12)
+
+
 def test_cellprofiler_backend_selection_does_not_silently_fallback() -> None:
     import pytest
 
@@ -1662,6 +1850,122 @@ def test_legacy_fast_shape_zernike_backend_zeros_pixels_outside_unit_circle() ->
     )
 
 
+def test_legacy_fast_shape_zernike_backend_matches_cp_boundary_tie_reference() -> None:
+    from openhcs.processing.backends.cellprofiler._backend import (
+        CellProfilerBackendProvider,
+    )
+    from openhcs.processing.backends.cellprofiler.zernike import (
+        shape_zernike_moments,
+    )
+
+    labels = np.array(
+        [
+            [0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0],
+            [0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0],
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0],
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0],
+            [0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0],
+            [0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0],
+        ],
+        dtype=np.int32,
+    )
+
+    legacy_fast_indexes, legacy_fast_values = shape_zernike_moments(
+        labels,
+        np.array([1], dtype=np.int32),
+        max_order=9,
+        backend_provider=CellProfilerBackendProvider.LEGACY_FAST,
+    )
+    expected_first_ten = np.array(
+        [
+            9.836620553573459e-01,
+            9.587285264010693e-03,
+            1.527408829685409e-02,
+            2.2072774040876608e-02,
+            7.816253864125930e-03,
+            3.954710099285566e-02,
+            1.3732495466202541e-02,
+            1.953523677243512e-02,
+            8.122532660014267e-03,
+            8.319151920377181e-03,
+        ],
+        dtype=np.float64,
+    )
+
+    assert legacy_fast_indexes[:10] == (
+        (0, 0),
+        (1, 1),
+        (2, 0),
+        (2, 2),
+        (3, 1),
+        (3, 3),
+        (4, 0),
+        (4, 2),
+        (4, 4),
+        (5, 1),
+    )
+    np.testing.assert_allclose(
+        legacy_fast_values[0, :10],
+        expected_first_ten,
+        atol=1e-12,
+        rtol=1e-12,
+    )
+
+
+def test_measure_object_size_shape_callable_defaults_are_declared_on_module() -> None:
+    import inspect
+
+    from openhcs.processing.backends.analysis.region_properties import (
+        AnalysisBackendProvider,
+    )
+    from openhcs.processing.backends.cellprofiler._backend import (
+        CellProfilerBackendProvider,
+    )
+    from openhcs.processing.backends.cellprofiler.shape import (
+        MeasureObjectSizeShapeModule,
+        measure_object_size_shape,
+        measure_object_size_shape_feature_arrays,
+    )
+
+    assert (
+        MeasureObjectSizeShapeModule.zernike_backend_provider
+        is CellProfilerBackendProvider.LEGACY_FAST
+    )
+    assert (
+        MeasureObjectSizeShapeModule.regionprops_backend_provider
+        is AnalysisBackendProvider.NUMBA
+    )
+    assert (
+        inspect.signature(measure_object_size_shape)
+        .parameters["zernike_backend_provider"]
+        .default
+        is CellProfilerBackendProvider.LEGACY_FAST
+    )
+    assert (
+        inspect.signature(measure_object_size_shape_feature_arrays)
+        .parameters["zernike_backend_provider"]
+        .default
+        is CellProfilerBackendProvider.LEGACY_FAST
+    )
+    assert (
+        inspect.signature(measure_object_size_shape)
+        .parameters["regionprops_backend_provider"]
+        .default
+        is AnalysisBackendProvider.NUMBA
+    )
+    assert (
+        inspect.signature(measure_object_size_shape_feature_arrays)
+        .parameters["regionprops_backend_provider"]
+        .default
+        is AnalysisBackendProvider.NUMBA
+    )
+
+
 def test_legacy_fast_intensity_zernike_backend_matches_centrosome_provider() -> None:
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
@@ -1770,6 +2074,46 @@ def test_legacy_fast_intensity_zernike_backend_matches_centrosome_provider() -> 
         expected_phases[meaningful_phase],
         atol=1e-12,
         rtol=1e-12,
+    )
+
+
+def test_native_intensity_zernike_uses_vectorized_reference_geometry(monkeypatch) -> None:
+    from openhcs.processing.backends.cellprofiler._backend import (
+        CellProfilerBackendProvider,
+    )
+    from openhcs.processing.backends.cellprofiler import zernike
+
+    labels = np.zeros((12, 12), dtype=np.int32)
+    labels[2:7, 2:7] = 1
+    labels[6:10, 7:11] = 2
+    image = np.ones(labels.shape, dtype=np.float64)
+    measured_labels = np.array([1, 2], dtype=np.int32)
+    expected_centers, expected_radii = zernike._cellprofiler_reference_enclosing_circles(
+        labels,
+        measured_labels,
+    )
+    centers, radii = zernike._shape_zernike_minimum_enclosing_circles(
+        labels,
+        measured_labels,
+    )
+    np.testing.assert_allclose(centers, expected_centers, atol=1e-12, rtol=1e-12)
+    np.testing.assert_allclose(radii, expected_radii, atol=1e-12, rtol=1e-12)
+
+    def forbidden_minimum_enclosing_circle(*args, **kwargs):
+        raise AssertionError("native intensity Zernike must use vectorized geometry")
+
+    monkeypatch.setattr(
+        zernike.centrosome.cpmorphology,
+        "minimum_enclosing_circle",
+        forbidden_minimum_enclosing_circle,
+    )
+
+    zernike.intensity_zernike_moments(
+        image,
+        labels,
+        measured_labels,
+        max_order=2,
+        backend_provider=CellProfilerBackendProvider.NATIVE,
     )
 
 

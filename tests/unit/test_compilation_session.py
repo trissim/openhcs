@@ -7,7 +7,7 @@ from openhcs.config_framework.object_state import ObjectState
 from openhcs.config_framework.object_state_registry import ObjectStateRegistry
 from openhcs.constants.constants import AllComponents, VariableComponents
 from openhcs.constants.input_source import InputSource
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.config import (
     GlobalPipelineConfig,
@@ -21,6 +21,12 @@ from openhcs.core.function_patterns import compile_function_pattern
 from openhcs.core.module_artifact_contract import (
     ModuleArtifactContract,
     module_artifact_contract,
+)
+from openhcs.core.module_artifact_contract import (
+    DeclaredArtifactOutputPartition,
+    RecordedArtifactOutputPartition,
+    RuntimeArtifactInputPartition,
+    SourceArtifactInputPartition,
 )
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline.compilation_session import CompilationSession
@@ -53,7 +59,12 @@ def _identity(image):
 @module_artifact_contract(
     ModuleArtifactContract(
         module_name="ExternalSourceConsumer",
-        inputs=(ArtifactSpec("DNA", ArtifactKind.IMAGE),),
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                SourceArtifactInputPartition,
+                (ArtifactSpec.input("DNA", ImageArtifactType),),
+            ),
+        ),
     )
 )
 def _external_source_consumer(image):

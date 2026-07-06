@@ -36,6 +36,7 @@ def test_visible_source_alias_is_writable_polystore_workspace(
         "source": True,
     }
     assert resolve_visible_source_path(hidden_source) == alias
+    assert not filemanager.exists(alias / "openhcs_metadata.json", backend)
 
 
 def test_visible_source_alias_preserves_pipeline_parent_siblings(
@@ -67,3 +68,60 @@ def test_visible_source_alias_preserves_pipeline_parent_siblings(
     assert filemanager.is_symlink(alias.parent / "20585_AE.csv", backend)
     assert filemanager.is_symlink(alias.parent / "BBBC022_Analysis_Final.cppipe", backend)
     assert resolve_visible_source_path(image_root) == alias
+
+
+def test_visible_source_alias_rebuilds_nested_openhcs_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from polystore.base import ensure_storage_registry, storage_registry
+
+    backend = Backend.DISK.value
+    ensure_storage_registry()
+    filemanager = FileManager(storage_registry)
+    pipeline_root = tmp_path / ".cache" / "Example"
+    image_root = pipeline_root / "images"
+    visible_root = tmp_path / "visible_sources"
+    filemanager.ensure_directory(image_root, backend)
+    (pipeline_root / "pipeline.cppipe").write_text("pipeline", encoding="utf-8")
+    (image_root / "image.tif").write_text("image", encoding="utf-8")
+    monkeypatch.setenv("OPENHCS_BENCHMARK_VISIBLE_SOURCE_ROOT", str(visible_root))
+
+    alias = resolve_visible_source_path(image_root)
+    metadata_path = alias / "openhcs_metadata.json"
+    filemanager.save({"stale": True}, metadata_path, backend)
+
+    assert resolve_visible_source_path(image_root) == alias
+    assert not filemanager.exists(metadata_path, backend)
+    assert filemanager.is_symlink(alias / "image.tif", backend)
+
+
+def test_visible_source_alias_rebuilds_stale_file_mirror(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from polystore.base import ensure_storage_registry, storage_registry
+
+    backend = Backend.DISK.value
+    ensure_storage_registry()
+    filemanager = FileManager(storage_registry)
+    pipeline_root = tmp_path / ".cache" / "PixelBasedClassification"
+    image_root = pipeline_root / "images"
+    visible_root = tmp_path / "visible_sources"
+    filemanager.ensure_directory(image_root, backend)
+    (pipeline_root / "pixel_based_classification_cho.cppipe").write_text(
+        "pipeline",
+        encoding="utf-8",
+    )
+    (image_root / "cho01.png").write_text("phase", encoding="utf-8")
+    monkeypatch.setenv("OPENHCS_BENCHMARK_VISIBLE_SOURCE_ROOT", str(visible_root))
+
+    alias = resolve_visible_source_path(image_root)
+    (image_root / "cho01_Probabilities.tiff").write_text(
+        "probabilities",
+        encoding="utf-8",
+    )
+
+    assert resolve_visible_source_path(image_root) == alias
+    assert filemanager.is_symlink(alias / "cho01.png", backend)
+    assert filemanager.is_symlink(alias / "cho01_Probabilities.tiff", backend)

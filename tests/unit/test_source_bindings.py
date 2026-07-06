@@ -9,7 +9,7 @@ from openhcs.config_framework.object_state import ObjectState
 from openhcs.config_framework.object_state_registry import ObjectStateRegistry
 from openhcs.constants import Microscope
 from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
 from openhcs.core.config import (
     GlobalPipelineConfig,
     LazyStepSourceBindingsConfig,
@@ -67,14 +67,14 @@ def test_named_source_binding_normalizes_origin_and_requires_alias():
     )
 
     assert binding.origin is SourceBindingOrigin.PIPELINE_START
-    assert binding.artifact_kind is ArtifactKind.IMAGE
+    assert binding.artifact_kind is ImageArtifactType
 
     objects_binding = NamedSourceBinding(
         alias="Nuclei",
         artifact_kind="object_labels",
     )
 
-    assert objects_binding.artifact_kind is ArtifactKind.OBJECT_LABELS
+    assert objects_binding.artifact_kind is ObjectLabelsArtifactType
 
     with pytest.raises(ValueError, match="alias cannot be empty"):
         NamedSourceBinding(alias="")

@@ -9,9 +9,13 @@ from openhcs.constants.constants import MEMORY_TYPE_NUMPY
 from openhcs.core.artifacts import (
     CROP_MASK_ARTIFACT_SIDECAR,
     ArtifactInputPlan,
-    ArtifactKind,
     ArtifactOutputPlan,
+    ArtifactSpec,
     StepResult,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    MetadataArtifactType,
 )
 from openhcs.core.callable_contract import CallableContract, CallableMetadata
 from openhcs.core.function_patterns import (
@@ -23,6 +27,13 @@ from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_adapters import (
     runtime_adapter,
     runtime_adapter_spec_from_callable,
+)
+from openhcs.core.module_artifact_contract import (
+    ModuleArtifactContract,
+    ModuleArtifactContractItem,
+    RecordedArtifactOutputPartition,
+    module_artifact_contract,
+    module_artifact_contract_from_namespace,
 )
 from openhcs.core.image_shapes import is_image_stack
 from openhcs.core.image_stack_layout import ImageStackLayout
@@ -117,6 +128,10 @@ def _execute_function_core(request: CoreExecutionRequest):
             input_memory_type=MEMORY_TYPE_NUMPY,
             output_memory_type=MEMORY_TYPE_NUMPY,
             runtime_adapter=runtime_adapter_spec_from_callable(request.func_callable),
+            module_artifact_contract=module_artifact_contract_from_namespace(
+                vars(request.func_callable),
+                owner_name=request.func_callable.__name__,
+            ),
         ),
     )
     invocation = CompiledFunctionInvocation(
@@ -495,12 +510,12 @@ def test_execute_function_core_routes_exact_image_artifact_tuple_to_main_flow():
                 "Red": ArtifactOutputPlan(
                     name="Red",
                     path="/memory/red.pkl",
-                    kind=ArtifactKind.IMAGE,
+                    artifact_type=ImageArtifactType,
                 ),
                 "Green": ArtifactOutputPlan(
                     name="Green",
                     path="/memory/green.pkl",
-                    kind=ArtifactKind.IMAGE,
+                    artifact_type=ImageArtifactType,
                 ),
             },
         )
@@ -517,6 +532,37 @@ def test_execute_function_core_routes_exact_image_artifact_tuple_to_main_flow():
     assert len(green_records) == 1
     assert image_payload_data(red_records[0].value.data)[0, 0] == 1
     assert image_payload_data(green_records[0].value.data)[0, 0] == 2
+
+
+def test_execute_function_core_saves_single_image_artifact_output_to_main_flow():
+    context = ContextStub()
+    output = np.full((4, 5), 7, dtype=np.float32)
+
+    def produce_corrected_image(image):
+        del image
+        return output
+
+    result = _execute_function_core(
+        CoreExecutionRequest(
+            func_callable=produce_corrected_image,
+            main_data_arg=np.zeros((4, 5), dtype=np.float32),
+            base_kwargs={},
+            context=context,
+            artifact_inputs={},
+            artifact_outputs={
+                "CorrectedImage": ArtifactOutputPlan(
+                    name="CorrectedImage",
+                    path="/memory/corrected.pkl",
+                    artifact_type=ImageArtifactType,
+                )
+            },
+        )
+    )
+
+    np.testing.assert_array_equal(result, output)
+    stored = context.runtime_value_store.find(name="CorrectedImage", axis_id="A01")
+    assert len(stored) == 1
+    np.testing.assert_array_equal(image_payload_data(stored[0].value.data), output)
 
 
 def test_execute_function_core_saves_artifact_to_runtime_group_path():
@@ -539,7 +585,7 @@ def test_execute_function_core_saves_artifact_to_runtime_group_path():
                 "measurements": ArtifactOutputPlan(
                     name="measurements",
                     path="/memory/A01_measurements.pkl",
-                    kind=ArtifactKind.MEASUREMENTS,
+                    artifact_type=MeasurementsArtifactType,
                     group_keys=("1", "2"),
                     paths_by_group={
                         "1": "/memory/A01_s1_measurements.pkl",
@@ -647,7 +693,7 @@ def test_managed_runtime_adapter_output_preserves_authoritative_source_metadata(
                 "source_image": ArtifactInputPlan(
                     name="source_image",
                     path="/memory/source_image.pkl",
-                    kind=ArtifactKind.IMAGE,
+                    artifact_type=ImageArtifactType,
                 )
             },
             artifact_outputs={},
@@ -661,6 +707,74 @@ def test_managed_runtime_adapter_output_preserves_authoritative_source_metadata(
         "site": "1",
         "channel": "3",
     }
+
+
+def test_module_runtime_adapter_records_declared_outputs_and_returns_main_flow():
+    context = ContextStub()
+    ambient_source = RuntimeImagePayloadContext(
+        np.zeros((2, 3), dtype=np.uint16),
+        metadata=ImagePayloadMetadata(
+            source_path="/input/A01_s1_w1.tif",
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "1",
+            },
+        ),
+        mask=None,
+    ).payload()
+    main_output = RuntimeImagePayloadContext(
+        np.full((2, 3), 7, dtype=np.uint16),
+        metadata=ImagePayloadMetadata(
+            source_path="/input/A01_s1_w1.tif",
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "channel": "1",
+            },
+        ),
+        mask=None,
+    ).payload()
+    recorded_output = ArtifactOutputPlan(
+        name="ModuleImage",
+        path="/memory/ModuleImage.pkl",
+        artifact_type=ImageArtifactType,
+    )
+
+    @runtime_adapter(
+        "runtime",
+        lambda _request: object(),
+        manages_artifact_inputs=True,
+    )
+    @module_artifact_contract(
+        ModuleArtifactContract(
+            "ExampleModule",
+            items=(
+                ModuleArtifactContractItem(
+                    RecordedArtifactOutputPartition,
+                    ArtifactSpec.output("ModuleImage", ImageArtifactType),
+                ),
+            ),
+        )
+    )
+    def module_step(image, *, runtime):
+        del image, runtime
+        context.filemanager.save(main_output, recorded_output.path, "memory")
+        return main_output
+
+    result = _execute_function_core(
+        CoreExecutionRequest(
+            func_callable=module_step,
+            main_data_arg=ambient_source,
+            base_kwargs={},
+            context=context,
+            artifact_inputs={},
+            artifact_outputs={"ModuleImage": recorded_output},
+        )
+    )
+
+    assert result is main_output
+    assert context.filemanager.load(recorded_output.path, "memory") is main_output
 
 
 def test_execute_function_core_preserves_complete_main_output_source_identity_with_object_input():
@@ -699,7 +813,7 @@ def test_execute_function_core_preserves_complete_main_output_source_identity_wi
                 "labels": ArtifactOutputPlan(
                     name="labels",
                     path="/memory/labels.pkl",
-                    kind=ArtifactKind.OBJECT_LABELS,
+                    artifact_type=ObjectLabelsArtifactType,
                 )
             },
         )
@@ -735,7 +849,7 @@ def test_execute_function_core_preserves_complete_main_output_source_identity_wi
                 "labels": ArtifactInputPlan(
                     name="labels",
                     path="/memory/labels.pkl",
-                    kind=ArtifactKind.OBJECT_LABELS,
+                    artifact_type=ObjectLabelsArtifactType,
                 )
             },
             artifact_outputs={},
@@ -784,7 +898,7 @@ def test_execute_function_core_uses_object_input_source_for_image_artifact_outpu
                 "labels": ArtifactOutputPlan(
                     name="labels",
                     path="/memory/labels.pkl",
-                    kind=ArtifactKind.OBJECT_LABELS,
+                    artifact_type=ObjectLabelsArtifactType,
                 )
             },
         )
@@ -817,14 +931,14 @@ def test_execute_function_core_uses_object_input_source_for_image_artifact_outpu
                 "labels": ArtifactInputPlan(
                     name="labels",
                     path="/memory/labels.pkl",
-                    kind=ArtifactKind.OBJECT_LABELS,
+                    artifact_type=ObjectLabelsArtifactType,
                 )
             },
             artifact_outputs={
                 "label_image": ArtifactOutputPlan(
                     name="label_image",
                     path="/memory/label_image.pkl",
-                    kind=ArtifactKind.IMAGE,
+                    artifact_type=ImageArtifactType,
                 )
             },
         )
@@ -872,7 +986,7 @@ def test_execute_function_core_contextualizes_bare_object_label_artifact():
                 "nuclei": ArtifactOutputPlan(
                     name="nuclei",
                     path="/memory/nuclei.pkl",
-                    kind=ArtifactKind.OBJECT_LABELS,
+                    artifact_type=ObjectLabelsArtifactType,
                 )
             },
         )
@@ -1008,7 +1122,7 @@ def test_execute_function_core_validates_step_result_artifact_kind():
                     "metadata": ArtifactOutputPlan(
                         name="metadata",
                         path="/memory/metadata.pkl",
-                        kind=ArtifactKind.METADATA,
+                        artifact_type=MetadataArtifactType,
                     )
                 },
             )
@@ -1033,7 +1147,7 @@ def test_execute_function_core_validates_tuple_artifact_kind():
                     "nuclei": ArtifactOutputPlan(
                         name="nuclei",
                         path="/memory/nuclei.pkl",
-                        kind=ArtifactKind.OBJECT_LABELS,
+                        artifact_type=ObjectLabelsArtifactType,
                     )
                 },
         )

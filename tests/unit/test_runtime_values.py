@@ -4,7 +4,17 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from openhcs.core.artifacts import ArtifactKey, ArtifactKind, ArtifactOutputPlan, ArtifactScope
+from openhcs.core.artifacts import (
+    ArtifactKey,
+    ArtifactOutputPlan,
+    ArtifactScope,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+    SpatialGridArtifactType,
+    MetadataArtifactType,
+)
 from openhcs.core.pipeline_image_schema import SOURCE_IMAGE_TYPE_METADATA_FIELD
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_slice_projection import (
@@ -14,10 +24,14 @@ from openhcs.core.runtime_slice_projection import (
     RuntimeSliceProjectionStrategy,
     RuntimeProjectionAxis,
 )
-from openhcs.core.source_image_semantics import SourceImagePayloadSemantics
+from openhcs.core.source_image_semantics import (
+    SourceImagePayloadSemantics,
+    source_image_payload_role,
+)
 from openhcs.core.source_metadata import (
     SOURCE_PLANE_COUNT_FIELD,
     SOURCE_PLANE_INDEX_FIELD,
+    SourceVoxelSpacing,
 )
 from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from openhcs.core.runtime_values import (
@@ -85,19 +99,27 @@ from openhcs.core.runtime_semantics import (
     ObjectLabelDomainMetadataStrategy,
     ObjectFeatureValueTable,
     ObjectLabelVariant,
-    ObjectShapeMeasurementFeature,
     MeasurementRowAxisField,
     MeasurementObjectRowIdentity,
     RuntimePlaneAxis,
-    ShapeObjectFeatureValueTable,
     SpatialGridOrdering,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import (
     Pure2DAuxiliaryOutputAggregator,
 )
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    CellProfilerBackendProvider,
+)
+from openhcs.processing.backends.analysis.region_properties import (
+    AnalysisBackendProvider,
+)
 from openhcs.processing.backends.cellprofiler.shape import (
+    MeasureObjectSizeShapeModule,
     ObjectSizeShapeMeasurementRowsRequest,
+    ShapeObjectFeatureValueTable,
+)
+from openhcs.processing.backends.cellprofiler.zernike import (
+    ShapeZernikeFeatureAuthority,
 )
 
 
@@ -105,14 +127,16 @@ from openhcs.processing.backends.cellprofiler.shape import (
 class _RuntimeValueTestColumnarRows(ColumnarRows):
     columns: dict[str, tuple[object, ...]]
 
+
 def test_runtime_slice_aligned_values_repeat_across_divisible_outer_domain():
     values = RuntimeSliceAlignedValues(("a", "b"))
 
-    assert [
-        values.value_for_aligned_slice(index, 4)
-        for index in range(4)
-    ] == ["a", "b", "a", "b"]
-
+    assert [values.value_for_aligned_slice(index, 4) for index in range(4)] == [
+        "a",
+        "b",
+        "a",
+        "b",
+    ]
 
 
 class ArrayLike(RuntimeArrayPayload):
@@ -228,9 +252,7 @@ def test_object_label_set_from_payload_uses_domain_and_context_authorities() -> 
 
 
 def test_sparse_ijv_object_label_dense_data_uses_source_shape() -> None:
-    sparse_rows = SparseIJVLabelRows(
-        np.array([[0, 1, 2], [2, 3, 4]], dtype=np.int32)
-    )
+    sparse_rows = SparseIJVLabelRows(np.array([[0, 1, 2], [2, 3, 4]], dtype=np.int32))
     label_set = ObjectLabelSet(
         name="Cells",
         labels=sparse_rows,
@@ -298,14 +320,18 @@ def test_object_label_domain_preservation_rejects_structural_lookalikes() -> Non
 def test_object_label_pure_2d_aggregator_preserves_dense_payload_domains() -> None:
     first = ObjectLabelPayload(
         labels=np.asarray([[0, 1], [0, 0]], dtype=np.int32),
-        domain=ObjectLabelDomain(declared_object_ids=(1,),
-        scope=ObjectLabelDomainScope.PAYLOAD,
-    ))
+        domain=ObjectLabelDomain(
+            declared_object_ids=(1,),
+            scope=ObjectLabelDomainScope.PAYLOAD,
+        ),
+    )
     second = ObjectLabelPayload(
         labels=np.asarray([[0, 2], [0, 0]], dtype=np.int32),
-        domain=ObjectLabelDomain(declared_object_ids=(2,),
-        scope=ObjectLabelDomainScope.PAYLOAD,
-    ))
+        domain=ObjectLabelDomain(
+            declared_object_ids=(2,),
+            scope=ObjectLabelDomainScope.PAYLOAD,
+        ),
+    )
 
     aggregated = ObjectLabelPure2DSliceAggregator.aggregate(
         (first, second),
@@ -413,19 +439,26 @@ def test_object_label_pure_2d_aggregator_declares_source_binding_plane_axis() ->
     )
 
 
-def test_source_image_object_label_build_treats_repeated_source_names_as_runtime_slices() -> None:
+def test_source_image_object_label_build_treats_repeated_source_names_as_runtime_slices() -> (
+    None
+):
     image = RuntimeImagePayloadContext(
         np.zeros((2, 5, 6), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = (
-                "/input/A01_s1_w1.tif",
-                "/input/A01_s2_w1.tif",
-            ), component_metadata = (
-                {"well": "A01", "site": "1", "channel": "1"},
-                {"well": "A01", "site": "2", "channel": "1"},
-            )), source_image_names=("OrigHoechst", "OrigHoechst"),
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/input/A01_s1_w1.tif",
+                    "/input/A01_s2_w1.tif",
+                ),
+                component_metadata=(
+                    {"well": "A01", "site": "1", "channel": "1"},
+                    {"well": "A01", "site": "2", "channel": "1"},
+                ),
+            ),
+            source_image_names=("OrigHoechst", "OrigHoechst"),
         ),
-    mask = None).payload()
+        mask=None,
+    ).payload()
     labels = np.zeros((2, 5, 6), dtype=np.int32)
 
     payload = SourceImageObjectLabelBuildRequest(image=image, labels=labels).payload()
@@ -435,19 +468,26 @@ def test_source_image_object_label_build_treats_repeated_source_names_as_runtime
     assert payload.source_image_names == ("OrigHoechst", "OrigHoechst")
 
 
-def test_source_image_object_label_build_keeps_distinct_source_names_as_bindings() -> None:
+def test_source_image_object_label_build_keeps_distinct_source_names_as_bindings() -> (
+    None
+):
     image = RuntimeImagePayloadContext(
         np.zeros((2, 5, 6), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = (
-                "/input/A01_s1_w1.tif",
-                "/input/A01_s1_w2.tif",
-            ), component_metadata = (
-                {"well": "A01", "site": "1", "channel": "1"},
-                {"well": "A01", "site": "1", "channel": "2"},
-            )), source_image_names=("OrigHoechst", "OrigER"),
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/input/A01_s1_w1.tif",
+                    "/input/A01_s1_w2.tif",
+                ),
+                component_metadata=(
+                    {"well": "A01", "site": "1", "channel": "1"},
+                    {"well": "A01", "site": "1", "channel": "2"},
+                ),
+            ),
+            source_image_names=("OrigHoechst", "OrigER"),
         ),
-    mask = None).payload()
+        mask=None,
+    ).payload()
     labels = np.zeros((2, 5, 6), dtype=np.int32)
 
     payload = SourceImageObjectLabelBuildRequest(image=image, labels=labels).payload()
@@ -457,7 +497,9 @@ def test_source_image_object_label_build_keeps_distinct_source_names_as_bindings
     assert payload.source_image_names == ("OrigHoechst", "OrigER")
 
 
-def test_object_label_pure_2d_aggregator_prefers_explicit_source_plane_aliases() -> None:
+def test_object_label_pure_2d_aggregator_prefers_explicit_source_plane_aliases() -> (
+    None
+):
     first_set = ObjectLabelSet(
         name="Nuclei",
         labels=np.asarray([[0, 1], [0, 0]], dtype=np.int32),
@@ -482,7 +524,9 @@ def test_object_label_pure_2d_aggregator_prefers_explicit_source_plane_aliases()
     assert aggregated.source_image_name == "CellProfilerInternalImage"
 
 
-def test_object_label_pure_2d_aggregator_does_not_force_duplicate_source_aliases() -> None:
+def test_object_label_pure_2d_aggregator_does_not_force_duplicate_source_aliases() -> (
+    None
+):
     first_set = ObjectLabelSet(
         name="Nuclei",
         labels=np.asarray([[0, 1], [0, 0]], dtype=np.int32),
@@ -519,9 +563,11 @@ def test_object_label_projected_plane_reduces_domain_to_payload_scope() -> None:
         ),
         plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
         source_image_names=("rawDNA", "rawGFP"),
-    domain=ObjectLabelDomain(declared_object_id_domains=((1,), (2,)),
-        scope=ObjectLabelDomainScope.PLANE,
-        ))
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((1,), (2,)),
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
 
     projected = labels.with_projected_plane(labels.labels[1], 1)
 
@@ -542,30 +588,41 @@ def test_object_label_projected_plane_promotes_channel_provenance_to_scalar() ->
             dtype=np.int32,
         ),
         plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-        source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = (
-            "/input/A01_s1_w1.tif",
-            "/input/A01_s2_w1.tif",
-        ), component_metadata = (
-            {"well": "A01", "site": "1", "channel": "1"},
-            {"well": "A01", "site": "2", "channel": "1"},
-        )), source_image_names=("OrigHoechst", "OrigHoechst"),
-    domain=ObjectLabelDomain(declared_object_id_domains=((1,), (2,)),
-        scope=ObjectLabelDomainScope.PLANE,
-        ))
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=(
+                "/input/A01_s1_w1.tif",
+                "/input/A01_s2_w1.tif",
+            ),
+            component_metadata=(
+                {"well": "A01", "site": "1", "channel": "1"},
+                {"well": "A01", "site": "2", "channel": "1"},
+            ),
+        ),
+        source_image_names=("OrigHoechst", "OrigHoechst"),
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((1,), (2,)),
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
 
     projected = labels.with_projected_plane(labels.labels[1], 1)
     source_image = RuntimeImagePayloadContext(
         np.zeros((2, 2, 2), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = (
-                "/input/A01_s1_w1.tif",
-                "/input/A01_s2_w1.tif",
-            ), component_metadata = (
-                {"well": "A01", "site": "1", "channel": "1"},
-                {"well": "A01", "site": "2", "channel": "1"},
-            )), source_image_names=("OrigHoechst", "OrigHoechst"),
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/input/A01_s1_w1.tif",
+                    "/input/A01_s2_w1.tif",
+                ),
+                component_metadata=(
+                    {"well": "A01", "site": "1", "channel": "1"},
+                    {"well": "A01", "site": "2", "channel": "1"},
+                ),
+            ),
+            source_image_names=("OrigHoechst", "OrigHoechst"),
         ),
-    mask = None).payload()
+        mask=None,
+    ).payload()
     enriched = projected.with_source_image_context(source_image)
 
     assert projected.domain.scope is ObjectLabelDomainScope.PAYLOAD
@@ -590,7 +647,9 @@ def test_object_label_projected_plane_promotes_channel_provenance_to_scalar() ->
     assert enriched.source_image_names == ("OrigHoechst",)
 
 
-def test_source_backed_object_label_stack_declares_plane_count_from_provenance() -> None:
+def test_source_backed_object_label_stack_declares_plane_count_from_provenance() -> (
+    None
+):
     labels = ObjectLabelSet(
         name="Nuclei",
         labels=np.asarray(
@@ -600,7 +659,10 @@ def test_source_backed_object_label_stack_declares_plane_count_from_provenance()
             ],
             dtype=np.int32,
         ),
-        source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = ("/input/A01_s1.tif", "/input/A01_s2.tif")))
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=("/input/A01_s1.tif", "/input/A01_s2.tif")
+        ),
+    )
 
     plane_count = ObjectLabelSetPlaneStackContract().value_plane_count(labels)
 
@@ -620,9 +682,11 @@ def test_object_label_measurement_replacement_projects_matching_plane_domain() -
         ),
         plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
         source_image_names=("rawDNA", "rawGFP", "rawFarRed"),
-    domain=ObjectLabelDomain(declared_object_id_domains=((1,), (2,), (3,)),
-        scope=ObjectLabelDomainScope.PLANE,
-        ))
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((1,), (2,), (3,)),
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
 
     projected = ObjectLabelMeasurementPayloadStrategy.for_source(labels).materialize(
         labels,
@@ -636,7 +700,9 @@ def test_object_label_measurement_replacement_projects_matching_plane_domain() -
     assert projected.source_image_names == ("rawFarRed",)
 
 
-def test_object_label_derived_plane_uses_replacement_domain_and_source_provenance() -> None:
+def test_object_label_derived_plane_uses_replacement_domain_and_source_provenance() -> (
+    None
+):
     source = ObjectLabelPayload(
         labels=np.asarray(
             [
@@ -654,9 +720,11 @@ def test_object_label_derived_plane_uses_replacement_domain_and_source_provenanc
             ),
         ),
         source_image_names=("rawDNA", "rawActin"),
-    domain=ObjectLabelDomain(declared_object_id_domains=((1,), (9,)),
-        scope=ObjectLabelDomainScope.PLANE,
-        ))
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((1,), (9,)),
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
     derived = np.asarray([[0, 4], [0, 0]], dtype=np.int32)
 
     projected = ObjectLabelMeasurementPayloadStrategy.for_source(
@@ -756,37 +824,52 @@ def test_empty_sparse_ijv_stack_preserves_runtime_slice_count() -> None:
         (0,),
         (1,),
     ]
-    assert [
-        object_label_dense_array(item.value).shape for item in projected_items
-    ] == [shape, shape]
+    assert [object_label_dense_array(item.value).shape for item in projected_items] == [
+        shape,
+        shape,
+    ]
 
 
 def test_shape_object_feature_table_uses_registered_nominal_contract() -> None:
     table = ShapeObjectFeatureValueTable.from_feature_arrays(
         {
-            ObjectShapeMeasurementFeature.AREA.value: np.asarray([10.0]),
-            ObjectShapeMeasurementFeature.MAXIMUM_RADIUS.value: np.asarray([2.0]),
+            MeasureObjectSizeShapeModule.MeasurementFeature.AREA.value: np.asarray(
+                [10.0]
+            ),
+            MeasureObjectSizeShapeModule.MeasurementFeature.MAXIMUM_RADIUS.value: np.asarray(
+                [2.0]
+            ),
         },
         measured_object_ids=(2,),
         object_domain=(1, 2),
     )
 
     assert issubclass(ShapeObjectFeatureValueTable, ObjectFeatureValueTable)
-    assert ShapeObjectFeatureValueTable in ObjectFeatureValueTable.registered_strategy_types()
+    assert (
+        ShapeObjectFeatureValueTable
+        in ObjectFeatureValueTable.registered_strategy_types()
+    )
 
     rows = table.rows()
     assert rows[0]["object_label"] == 1
-    assert np.isnan(rows[0][ObjectShapeMeasurementFeature.AREA.value])
-    assert rows[0][ObjectShapeMeasurementFeature.MAXIMUM_RADIUS.value] == 0.0
-    assert rows[0][ObjectShapeMeasurementFeature.CENTER_Z.value] == 0.0
+    assert rows[0][MeasureObjectSizeShapeModule.MeasurementFeature.AREA.value] == 10.0
+    assert (
+        rows[0][MeasureObjectSizeShapeModule.MeasurementFeature.MAXIMUM_RADIUS.value]
+        == 2.0
+    )
+    assert (
+        rows[0][MeasureObjectSizeShapeModule.MeasurementFeature.CENTER_Z.value] == 0.0
+    )
     assert rows[1]["object_label"] == 2
-    assert rows[1][ObjectShapeMeasurementFeature.AREA.value] == 10.0
+    assert np.isnan(rows[1][MeasureObjectSizeShapeModule.MeasurementFeature.AREA.value])
 
 
 def test_shape_object_feature_table_rejects_undeclared_dense_feature_domain() -> None:
     table = ShapeObjectFeatureValueTable.from_feature_arrays(
         {
-            ObjectShapeMeasurementFeature.ZERNIKE.value: np.asarray(
+            ShapeZernikeFeatureAuthority.shape_zernike_feature_name(
+                degree=0, repetition=0
+            ): np.asarray(
                 [0.1, 0.2, 0.3],
             ),
         },
@@ -801,7 +884,7 @@ def test_shape_object_feature_table_rejects_undeclared_dense_feature_domain() ->
 def test_shape_descriptor_row_ordinal_domain_is_registered_nominally() -> None:
     table = ShapeObjectFeatureValueTable.from_feature_arrays(
         {
-            ObjectShapeMeasurementFeature.MAX_FERET_DIAMETER.value: np.asarray(
+            MeasureObjectSizeShapeModule.MeasurementFeature.MAX_FERET_DIAMETER.value: np.asarray(
                 [0.0, 20.0],
             ),
             "Zernike_0_0": np.asarray([0.1, 0.2]),
@@ -824,16 +907,30 @@ def test_shape_descriptor_row_ordinal_domain_is_registered_nominally() -> None:
     )
 
     rows = table.rows()
-    assert rows[1][ObjectShapeMeasurementFeature.MAX_FERET_DIAMETER.value] == 20.0
-    assert rows[2][ObjectShapeMeasurementFeature.MAX_FERET_DIAMETER.value] == 0.0
-    assert np.isnan(rows[2]["Zernike_0_0"])
+    assert (
+        rows[1][
+            MeasureObjectSizeShapeModule.MeasurementFeature.MAX_FERET_DIAMETER.value
+        ]
+        == 20.0
+    )
+    assert (
+        rows[2][
+            MeasureObjectSizeShapeModule.MeasurementFeature.MAX_FERET_DIAMETER.value
+        ]
+        == 0.0
+    )
+    assert rows[2]["Zernike_0_0"] == 0.2
 
 
 def test_shape_center_features_align_to_measured_sparse_object_ids() -> None:
     table = ShapeObjectFeatureValueTable.from_feature_arrays(
         {
-            ObjectShapeMeasurementFeature.CENTER_X.value: np.asarray([14.0]),
-            ObjectShapeMeasurementFeature.CENTER_Y.value: np.asarray([21.0]),
+            MeasureObjectSizeShapeModule.MeasurementFeature.CENTER_X.value: np.asarray(
+                [14.0]
+            ),
+            MeasureObjectSizeShapeModule.MeasurementFeature.CENTER_Y.value: np.asarray(
+                [21.0]
+            ),
         },
         measured_object_ids=(892,),
         object_domain=(1, 892),
@@ -841,9 +938,15 @@ def test_shape_center_features_align_to_measured_sparse_object_ids() -> None:
 
     rows = table.rows()
 
-    assert np.isnan(rows[0][ObjectShapeMeasurementFeature.CENTER_X.value])
-    assert rows[1][ObjectShapeMeasurementFeature.CENTER_X.value] == 14.0
-    assert rows[1][ObjectShapeMeasurementFeature.CENTER_Y.value] == 21.0
+    assert np.isnan(
+        rows[0][MeasureObjectSizeShapeModule.MeasurementFeature.CENTER_X.value]
+    )
+    assert (
+        rows[1][MeasureObjectSizeShapeModule.MeasurementFeature.CENTER_X.value] == 14.0
+    )
+    assert (
+        rows[1][MeasureObjectSizeShapeModule.MeasurementFeature.CENTER_Y.value] == 21.0
+    )
 
 
 def test_sparse_shape_measurement_preserves_high_object_id_feature_domain() -> None:
@@ -861,8 +964,10 @@ def test_sparse_shape_measurement_preserves_high_object_id_feature_domain() -> N
             )
         ),
         representation=ObjectLabelRepresentation.SPARSE_IJV,
-        domain=ObjectLabelDomain(declared_object_ids=(892,),
-    ))
+        domain=ObjectLabelDomain(
+            declared_object_ids=(892,),
+        ),
+    )
 
     rows = ObjectSizeShapeMeasurementRowsRequest(
         labels=labels,
@@ -870,13 +975,21 @@ def test_sparse_shape_measurement_preserves_high_object_id_feature_domain() -> N
         calculate_zernikes=True,
         shape_backend_provider=CellProfilerBackendProvider.LEGACY_FAST,
         zernike_backend_provider=CellProfilerBackendProvider.LEGACY_FAST,
+        regionprops_backend_provider=AnalysisBackendProvider.NUMBA,
     ).rows()
 
     assert len(rows) == 1
     assert rows[0][MeasurementRowAxisField.OBJECT_LABEL.value] == 892
-    assert rows[0][ObjectShapeMeasurementFeature.AREA.value] == 4.0
-    assert rows[0][ObjectShapeMeasurementFeature.CENTER_X.value] == 2.5
-    assert ObjectShapeMeasurementFeature.ZERNIKE.value + "_0_0" in rows[0]
+    assert rows[0][MeasureObjectSizeShapeModule.MeasurementFeature.AREA.value] == 4.0
+    assert (
+        rows[0][MeasureObjectSizeShapeModule.MeasurementFeature.CENTER_X.value] == 2.5
+    )
+    assert (
+        ShapeZernikeFeatureAuthority.shape_zernike_feature_name(
+            degree=0, repetition=0
+        )
+        in rows[0]
+    )
 
 
 def test_object_label_payload_builder_uses_nominal_payload_registry() -> None:
@@ -889,8 +1002,10 @@ def test_object_label_payload_builder_uses_nominal_payload_registry() -> None:
             origin_yx=(3, 5),
             source_shape_yx=(20, 30),
         ),
-    domain=ObjectLabelDomain(declared_object_ids=(1, 2),
-        ))
+        domain=ObjectLabelDomain(
+            declared_object_ids=(1, 2),
+        ),
+    )
 
     rebuilt = object_label_value_with_dense_labels(
         payload,
@@ -918,18 +1033,22 @@ def test_object_label_payload_builder_uses_nominal_payload_registry() -> None:
 def test_object_label_payload_from_source_image_uses_image_metadata() -> None:
     image = ImageMetadataPayload(
         data=np.zeros((4, 5), dtype=np.float32),
-            metadata=ImagePayloadMetadata(
-                source_spatial_domain=SourceSpatialDomain(
-                    origin_yx=(2, 3),
-                    source_shape_yx=(10, 12),
+        metadata=ImagePayloadMetadata(
+            source_spatial_domain=SourceSpatialDomain(
+                origin_yx=(2, 3),
+                source_shape_yx=(10, 12),
+            ),
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/input/A01_s001_w1_z001_t001.TIF",
+                    "/input/A01_s002_w1_z001_t001.TIF",
                 ),
-                source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = (
-                "/input/A01_s001_w1_z001_t001.TIF",
-                "/input/A01_s002_w1_z001_t001.TIF",
-            ), component_metadata = (
-                {"well": "A01", "site": "1", "channel": "1"},
-                {"well": "A01", "site": "2", "channel": "1"},
-            ))),
+                component_metadata=(
+                    {"well": "A01", "site": "1", "channel": "1"},
+                    {"well": "A01", "site": "2", "channel": "1"},
+                ),
+            ),
+        ),
     )
     labels = np.array([[0, 1], [2, 0]], dtype=np.int32)
 
@@ -947,7 +1066,9 @@ def test_object_label_payload_from_source_image_uses_image_metadata() -> None:
         "/input/A01_s001_w1_z001_t001.TIF",
         "/input/A01_s002_w1_z001_t001.TIF",
     )
-    assert tuple(dict(item) for item in payload.source_image_provenance_planes.component_metadata) == (
+    assert tuple(
+        dict(item) for item in payload.source_image_provenance_planes.component_metadata
+    ) == (
         {"well": "A01", "site": "1", "channel": "1"},
         {"well": "A01", "site": "2", "channel": "1"},
     )
@@ -957,17 +1078,23 @@ def test_composed_image_metadata_preserves_single_channel_source_context() -> No
     first = RuntimeImagePayloadContext(
         np.zeros((4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = ("/input/A01_s001_w1_z001_t001.TIF",), component_metadata = (
-                {"well": "A01", "site": "1", "channel": "1"},
-            ))),
-    mask = None).payload()
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("/input/A01_s001_w1_z001_t001.TIF",),
+                component_metadata=({"well": "A01", "site": "1", "channel": "1"},),
+            )
+        ),
+        mask=None,
+    ).payload()
     second = RuntimeImagePayloadContext(
         np.ones((4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = ("/input/A01_s002_w1_z001_t001.TIF",), component_metadata = (
-                {"well": "A01", "site": "2", "channel": "1"},
-            ))),
-    mask = None).payload()
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("/input/A01_s002_w1_z001_t001.TIF",),
+                component_metadata=({"well": "A01", "site": "2", "channel": "1"},),
+            )
+        ),
+        mask=None,
+    ).payload()
 
     metadata = ImagePayloadMetadataCompositionRequest((first, second)).metadata()
 
@@ -975,7 +1102,10 @@ def test_composed_image_metadata_preserves_single_channel_source_context() -> No
         "/input/A01_s001_w1_z001_t001.TIF",
         "/input/A01_s002_w1_z001_t001.TIF",
     )
-    assert tuple(dict(item) for item in metadata.source_image_provenance_planes.component_metadata) == (
+    assert tuple(
+        dict(item)
+        for item in metadata.source_image_provenance_planes.component_metadata
+    ) == (
         {"well": "A01", "site": "1", "channel": "1"},
         {"well": "A01", "site": "2", "channel": "1"},
     )
@@ -987,6 +1117,84 @@ def test_composed_image_metadata_preserves_single_channel_source_context() -> No
         "site": "2",
         "channel": "1",
     }
+
+
+def test_composed_image_metadata_preserves_transformed_scalar_image_type() -> None:
+    first = RuntimeImagePayloadContext(
+        np.zeros((4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_component_metadata={
+                SOURCE_IMAGE_TYPE_METADATA_FIELD: "grayscale image",
+                "channel": "1",
+            },
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("/input/A01_s001_w1_z001_t001.JPG",),
+                component_metadata=(
+                    {
+                        SOURCE_IMAGE_TYPE_METADATA_FIELD: "color image",
+                        "site": "1",
+                    },
+                ),
+            ),
+        ),
+        mask=None,
+    ).payload()
+    second = RuntimeImagePayloadContext(
+        np.ones((4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_component_metadata={
+                SOURCE_IMAGE_TYPE_METADATA_FIELD: "grayscale image",
+                "channel": "1",
+            },
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("/input/A01_s002_w1_z001_t001.JPG",),
+                component_metadata=(
+                    {
+                        SOURCE_IMAGE_TYPE_METADATA_FIELD: "color image",
+                        "site": "2",
+                    },
+                ),
+            ),
+        ),
+        mask=None,
+    ).payload()
+
+    metadata = ImagePayloadMetadataCompositionRequest((first, second)).metadata()
+
+    assert dict(metadata.source_component_metadata) == {
+        SOURCE_IMAGE_TYPE_METADATA_FIELD: "grayscale image",
+        "channel": "1",
+    }
+    assert tuple(
+        dict(item)
+        for item in metadata.source_image_provenance_planes.component_metadata
+    ) == (
+        {SOURCE_IMAGE_TYPE_METADATA_FIELD: "color image", "site": "1", "channel": "1"},
+        {SOURCE_IMAGE_TYPE_METADATA_FIELD: "color image", "site": "2", "channel": "1"},
+    )
+
+
+def test_source_image_payload_role_uses_transformed_scalar_role_before_provenance() -> None:
+    payload = RuntimeImagePayloadContext(
+        np.zeros((2, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_component_metadata={
+                SOURCE_IMAGE_TYPE_METADATA_FIELD: "grayscale image",
+            },
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                component_metadata=(
+                    {SOURCE_IMAGE_TYPE_METADATA_FIELD: "color image"},
+                    {SOURCE_IMAGE_TYPE_METADATA_FIELD: "color image"},
+                ),
+            ),
+        ),
+        mask=None,
+    ).payload()
+
+    role = source_image_payload_role(payload)
+
+    assert role is not None
+    assert role.image_type() == "grayscale image"
 
 
 def test_bundle_image_metadata_keeps_agreed_present_component_values() -> None:
@@ -1092,27 +1300,36 @@ def test_bundle_image_metadata_preserves_payload_source_provenance() -> None:
     assert stack.source_image_provenance_planes.count == 2
 
 
-def test_object_label_payload_from_composed_source_image_keeps_site_axis_metadata() -> None:
+def test_object_label_payload_from_composed_source_image_keeps_site_axis_metadata() -> (
+    None
+):
     source_slices = (
         RuntimeImagePayloadContext(
             np.zeros((4, 5), dtype=np.float32),
             metadata=ImagePayloadMetadata(
-                source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = ("/input/A01_s001_w1_z001_t001.TIF",), component_metadata = (
-                    {"well": "A01", "site": "1", "channel": "1"},
-                ))),
-        mask = None).payload(),
+                source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                    paths=("/input/A01_s001_w1_z001_t001.TIF",),
+                    component_metadata=({"well": "A01", "site": "1", "channel": "1"},),
+                )
+            ),
+            mask=None,
+        ).payload(),
         RuntimeImagePayloadContext(
             np.ones((4, 5), dtype=np.float32),
             metadata=ImagePayloadMetadata(
-                source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = ("/input/A01_s002_w1_z001_t001.TIF",), component_metadata = (
-                    {"well": "A01", "site": "2", "channel": "1"},
-                ))),
-        mask = None).payload(),
+                source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                    paths=("/input/A01_s002_w1_z001_t001.TIF",),
+                    component_metadata=({"well": "A01", "site": "2", "channel": "1"},),
+                )
+            ),
+            mask=None,
+        ).payload(),
     )
     image = RuntimeImagePayloadContext(
         np.stack(tuple(image_payload_data(payload) for payload in source_slices)),
         metadata=ImagePayloadMetadataCompositionRequest(source_slices).metadata(),
-    mask = None).payload()
+        mask=None,
+    ).payload()
     labels = np.ones((2, 4, 5), dtype=np.int32)
 
     payload = SourceImageObjectLabelBuildRequest(
@@ -1125,13 +1342,17 @@ def test_object_label_payload_from_composed_source_image_keeps_site_axis_metadat
         "/input/A01_s001_w1_z001_t001.TIF",
         "/input/A01_s002_w1_z001_t001.TIF",
     )
-    assert tuple(dict(item) for item in payload.source_image_provenance_planes.component_metadata) == (
+    assert tuple(
+        dict(item) for item in payload.source_image_provenance_planes.component_metadata
+    ) == (
         {"well": "A01", "site": "1", "channel": "1"},
         {"well": "A01", "site": "2", "channel": "1"},
     )
 
 
-def test_object_label_payload_from_source_image_keeps_ambiguous_3d_domain_payload_scoped() -> None:
+def test_object_label_payload_from_source_image_keeps_ambiguous_3d_domain_payload_scoped() -> (
+    None
+):
     image = ImageMetadataPayload(
         data=np.zeros((2, 4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(source_dtype="float32"),
@@ -1156,11 +1377,16 @@ def test_object_label_payload_from_source_image_keeps_ambiguous_3d_domain_payloa
     assert payload.domain.declared_object_id_domains == ()
 
 
-def test_object_label_payload_from_source_image_declares_source_binding_plane_domain() -> None:
+def test_object_label_payload_from_source_image_declares_source_binding_plane_domain() -> (
+    None
+):
     image = ImageMetadataPayload(
         data=np.zeros((2, 4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = ("rawDNA.tif", "rawGFP.tif"))),
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("rawDNA.tif", "rawGFP.tif")
+            )
+        ),
     )
     labels = np.array(
         [
@@ -1181,11 +1407,16 @@ def test_object_label_payload_from_source_image_declares_source_binding_plane_do
     assert payload.domain.declared_object_id_domains == ((1, 2), (3, 4))
 
 
-def test_object_label_payload_domain_declaration_overrides_source_binding_planes() -> None:
+def test_object_label_payload_domain_declaration_overrides_source_binding_planes() -> (
+    None
+):
     image = ImageMetadataPayload(
         data=np.zeros((2, 4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = ("z0.tif", "z1.tif"))),
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("z0.tif", "z1.tif")
+            )
+        ),
     )
     labels = np.array(
         [
@@ -1212,7 +1443,10 @@ def test_source_image_plane_axis_request_uses_channel_provenance() -> None:
     image = ImageMetadataPayload(
         data=np.zeros((2, 4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = ("rawDNA.tif", "rawGFP.tif"))),
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("rawDNA.tif", "rawGFP.tif")
+            )
+        ),
     )
 
     assert (
@@ -1270,7 +1504,9 @@ def test_source_image_plane_axis_request_uses_site_component_metadata() -> None:
         is RuntimePlaneAxis.RUNTIME_SLICE
     )
     assert (
-        SourceImageObjectLabelBuildRequest(image=image, labels=labels).payload().plane_axis
+        SourceImageObjectLabelBuildRequest(image=image, labels=labels)
+        .payload()
+        .plane_axis
         is RuntimePlaneAxis.RUNTIME_SLICE
     )
 
@@ -1278,18 +1514,16 @@ def test_source_image_plane_axis_request_uses_site_component_metadata() -> None:
 def test_object_label_set_from_source_image_uses_image_metadata() -> None:
     image = ImageMetadataPayload(
         data=np.zeros((4, 5), dtype=np.float32),
-            metadata=ImagePayloadMetadata(
-                source_spatial_domain=SourceSpatialDomain(
-                    origin_yx=(2, 3),
-                    source_shape_yx=(10, 12),
-                ),
-                source_path="/input/A01_s001_w1_z001_t001.TIF",
+        metadata=ImagePayloadMetadata(
+            source_spatial_domain=SourceSpatialDomain(
+                origin_yx=(2, 3),
+                source_shape_yx=(10, 12),
+            ),
+            source_path="/input/A01_s001_w1_z001_t001.TIF",
             source_component_metadata={"well": "A01", "site": "1", "channel": "1"},
         ),
     )
-    sparse_rows = SparseIJVLabelRows(
-        np.array([[0, 0, 1], [1, 1, 2]], dtype=np.int32)
-    )
+    sparse_rows = SparseIJVLabelRows(np.array([[0, 0, 1], [1, 1, 2]], dtype=np.int32))
 
     label_set = SourceImageObjectLabelBuildRequest(
         image=image,
@@ -1317,19 +1551,25 @@ def test_object_label_set_source_image_context_fills_missing_stack_metadata() ->
     image = ImageMetadataPayload(
         data=np.zeros((2, 4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = (
-                "/input/A02_s001_w1_z001_t001.tif",
-                "/input/A02_s002_w1_z001_t001.tif",
-            ), component_metadata = (
-                {"well": "A02", "site": 1, "channel": 1},
-                {"well": "A02", "site": 2, "channel": 1},
-            ))),
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/input/A02_s001_w1_z001_t001.tif",
+                    "/input/A02_s002_w1_z001_t001.tif",
+                ),
+                component_metadata=(
+                    {"well": "A02", "site": 1, "channel": 1},
+                    {"well": "A02", "site": 2, "channel": 1},
+                ),
+            )
+        ),
     )
     labels = ObjectLabelSet(
         name="Nuclei",
         labels=np.zeros((2, 2, 2), dtype=np.int32),
-        domain=ObjectLabelDomain(declared_object_count=3,
-    ))
+        domain=ObjectLabelDomain(
+            declared_object_count=3,
+        ),
+    )
 
     contextualized = labels.with_source_image_context(image)
 
@@ -1340,28 +1580,38 @@ def test_object_label_set_source_image_context_fills_missing_stack_metadata() ->
         "/input/A02_s002_w1_z001_t001.tif",
     )
     assert tuple(
-        dict(item) for item in contextualized.source_image_provenance_planes.component_metadata
+        dict(item)
+        for item in contextualized.source_image_provenance_planes.component_metadata
     ) == (
         {"well": "A02", "site": 1, "channel": 1},
         {"well": "A02", "site": 2, "channel": 1},
     )
 
 
-def test_object_label_payload_source_image_context_fills_partial_stack_metadata() -> None:
+def test_object_label_payload_source_image_context_fills_partial_stack_metadata() -> (
+    None
+):
     image = ImageMetadataPayload(
         data=np.zeros((2, 4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = (
-                "/input/A02_s001_w1_z001_t001.tif",
-                "/input/A02_s002_w1_z001_t001.tif",
-            ), component_metadata = (
-                {"well": "A02", "site": 1, "channel": 1},
-                {"well": "A02", "site": 2, "channel": 1},
-            ))),
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/input/A02_s001_w1_z001_t001.tif",
+                    "/input/A02_s002_w1_z001_t001.tif",
+                ),
+                component_metadata=(
+                    {"well": "A02", "site": 1, "channel": 1},
+                    {"well": "A02", "site": 2, "channel": 1},
+                ),
+            )
+        ),
     )
     labels = ObjectLabelPayload(
         labels=np.zeros((2, 4, 5), dtype=np.int32),
-        source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = (None, None), component_metadata = (None, None)))
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=(None, None), component_metadata=(None, None)
+        ),
+    )
 
     contextualized = labels.with_source_image_context(image)
 
@@ -1370,7 +1620,8 @@ def test_object_label_payload_source_image_context_fills_partial_stack_metadata(
         "/input/A02_s002_w1_z001_t001.tif",
     )
     assert tuple(
-        dict(item) for item in contextualized.source_image_provenance_planes.component_metadata
+        dict(item)
+        for item in contextualized.source_image_provenance_planes.component_metadata
     ) == (
         {"well": "A02", "site": 1, "channel": 1},
         {"well": "A02", "site": 2, "channel": 1},
@@ -1412,12 +1663,8 @@ def test_object_label_source_image_semantics_treats_rgb_image_as_label_plane() -
 
 
 def test_object_label_set_replacement_preserves_sparse_ijv_representation() -> None:
-    source_rows = SparseIJVLabelRows(
-        np.array([[0, 0, 1], [1, 1, 2]], dtype=np.int32)
-    )
-    replacement_rows = SparseIJVLabelRows(
-        np.array([[0, 1, 1]], dtype=np.int32)
-    )
+    source_rows = SparseIJVLabelRows(np.array([[0, 0, 1], [1, 1, 2]], dtype=np.int32))
+    replacement_rows = SparseIJVLabelRows(np.array([[0, 1, 1]], dtype=np.int32))
     source = ObjectLabelSet(
         name="OverlappingWorms",
         labels=source_rows,
@@ -1461,7 +1708,9 @@ def test_sparse_ijv_object_label_replacement_converts_dense_labels() -> None:
     )
 
 
-def test_object_label_payload_with_measurement_labels_preserves_domain_and_variants() -> None:
+def test_object_label_payload_with_measurement_labels_preserves_domain_and_variants() -> (
+    None
+):
     labels = np.zeros((1, 2, 2), dtype=np.int32)
     unedited = np.ones_like(labels)
     small_removed = np.full_like(labels, 2)
@@ -1473,9 +1722,11 @@ def test_object_label_payload_with_measurement_labels_preserves_domain_and_varia
             origin_yx=(4, 5),
             source_shape_yx=(10, 11),
         ),
-    domain=ObjectLabelDomain(declared_object_count=2,
-        declared_object_ids=(1, 2),
-        ))
+        domain=ObjectLabelDomain(
+            declared_object_count=2,
+            declared_object_ids=(1, 2),
+        ),
+    )
     selected = labels[0]
 
     rebuilt = ObjectLabelMeasurementPayloadStrategy.for_source(payload).materialize(
@@ -1534,9 +1785,9 @@ def test_singleton_object_label_stack_collapse_uses_nominal_registry() -> None:
         ),
     )
 
-    collapsed_array = SingletonObjectLabelStackCollapseStrategy.for_labels(labels).collapse(
+    collapsed_array = SingletonObjectLabelStackCollapseStrategy.for_labels(
         labels
-    )
+    ).collapse(labels)
     collapsed_payload = SingletonObjectLabelStackCollapseStrategy.for_labels(
         payload
     ).collapse(payload)
@@ -1578,7 +1829,9 @@ def test_runtime_projection_requirement_projects_singleton_object_label_stack() 
     assert item.runtime_plane_metadata is None
 
 
-def test_runtime_projection_requirement_tracks_multi_plane_runtime_coordinates() -> None:
+def test_runtime_projection_requirement_tracks_multi_plane_runtime_coordinates() -> (
+    None
+):
     labels = np.arange(50, dtype=np.int32).reshape(2, 5, 5)
     payload = ObjectLabelPayload(
         labels=labels,
@@ -1664,8 +1917,7 @@ def test_runtime_projection_expands_indexed_scalar_source_metadata() -> None:
         "3",
     ]
     assert [
-        item.source_component_metadata[SOURCE_PLANE_INDEX_FIELD]
-        for item in projected
+        item.source_component_metadata[SOURCE_PLANE_INDEX_FIELD] for item in projected
     ] == ["0", "1", "2"]
 
 
@@ -1725,9 +1977,11 @@ def test_dense_object_label_slice_stack_preserves_projected_payload_domain() -> 
     )
     payload = ObjectLabelPayload(
         labels=labels,
-        domain=ObjectLabelDomain(declared_object_id_domains=((1, 2), (1, 2, 3)),
-        scope=ObjectLabelDomainScope.PLANE,
-    ))
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((1, 2), (1, 2, 3)),
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
 
     stack = DenseObjectLabelSliceStackRequest(
         payload,
@@ -1778,9 +2032,11 @@ def test_object_label_value_runtime_slice_projection_owns_domain_and_labels() ->
     )
     payload = ObjectLabelPayload(
         labels=labels,
-        domain=ObjectLabelDomain(declared_object_id_domains=((1,), (2,), (3,), (4,)),
-        scope=ObjectLabelDomainScope.PLANE,
-    ))
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((1,), (2,), (3,), (4,)),
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
 
     projected = payload.with_runtime_slice_projection(
         slice_index=0,
@@ -1796,7 +2052,33 @@ def test_object_label_value_runtime_slice_projection_owns_domain_and_labels() ->
     assert projected.domain.declared_object_id_domains == ((1,), (3,))
 
 
-def test_object_label_runtime_slice_projection_preserves_grouped_source_planes() -> None:
+def test_object_label_runtime_slice_projection_keeps_volume_plane_domain() -> None:
+    labels = np.zeros((2, 3, 4, 4), dtype=np.int32)
+    labels[0, :, 0:2, 0:2] = 1
+    labels[1, :, 1:4, 1:4] = 2
+    payload = ObjectLabelPayload(
+        labels=labels,
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((1,), (2,)),
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
+
+    projected = RuntimeSliceProjection.value_for_slice(
+        payload,
+        RuntimeProjectionAxis(slice_index=1, extent=2),
+    )
+
+    assert isinstance(projected, ObjectLabelPayload)
+    np.testing.assert_array_equal(projected.labels, labels[1])
+    assert projected.domain.declared_object_ids == (2,)
+    assert projected.domain.declared_object_id_domains == ()
+
+
+def test_object_label_runtime_slice_projection_preserves_grouped_source_planes() -> (
+    None
+):
     labels = np.array(
         [
             [[1, 0], [0, 0]],
@@ -1884,7 +2166,7 @@ def test_normalize_artifact_value_builds_key_schema_and_storage_policy():
     output_plan = ArtifactOutputPlan(
         name="measurements",
         path="/memory/measurements.pkl",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
         group_keys=("DAPI",),
     )
 
@@ -1895,10 +2177,10 @@ def test_normalize_artifact_value_builds_key_schema_and_storage_policy():
     )
 
     assert value.name == "measurements"
-    assert value.kind is ArtifactKind.MEASUREMENTS
+    assert value.artifact_type is MeasurementsArtifactType
     assert value.key.scope.axis_id == "A01"
     assert value.key.scope.group_key == "DAPI"
-    assert value.schema.kind is ArtifactKind.MEASUREMENTS
+    assert value.schema.artifact_type is MeasurementsArtifactType
     assert value.storage == RuntimeStoragePolicy(
         backend="memory",
         path="/memory/measurements.pkl",
@@ -1910,16 +2192,20 @@ def test_normalize_artifact_value_aggregates_slice_aligned_object_label_domains(
     output_plan = ArtifactOutputPlan(
         name="GridObjects",
         path="/memory/GridObjects.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     first = ObjectLabelPayload(
         labels=np.array([[0, 1], [0, 3]], dtype=np.int32),
-        domain=ObjectLabelDomain(declared_object_count=4,
-    ))
+        domain=ObjectLabelDomain(
+            declared_object_count=4,
+        ),
+    )
     second = ObjectLabelPayload(
         labels=np.array([[0, 2], [4, 0]], dtype=np.int32),
-        domain=ObjectLabelDomain(declared_object_count=4,
-    ))
+        domain=ObjectLabelDomain(
+            declared_object_count=4,
+        ),
+    )
 
     value = normalize_artifact_value(
         output_plan,
@@ -1949,7 +2235,7 @@ def test_normalize_artifact_value_preserves_slice_aligned_object_label_sources()
     output_plan = ArtifactOutputPlan(
         name="Nuclei",
         path="/memory/Nuclei.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     first = ObjectLabelPayload(
         labels=np.array([[0, 1], [0, 0]], dtype=np.int32),
@@ -1975,7 +2261,9 @@ def test_normalize_artifact_value_preserves_slice_aligned_object_label_sources()
         "/input/A02_s001_w1_z001_t001.tif",
         "/input/A02_s002_w1_z001_t001.tif",
     )
-    assert tuple(dict(item) for item in payload.source_image_provenance_planes.component_metadata) == (
+    assert tuple(
+        dict(item) for item in payload.source_image_provenance_planes.component_metadata
+    ) == (
         {"well": "A02", "site": 1, "channel": 1},
         {"well": "A02", "site": 2, "channel": 1},
     )
@@ -1986,9 +2274,7 @@ def test_normalize_artifact_value_preserves_slice_aligned_object_label_sources()
     assert tuple(
         dict(item)
         for item in (
-            value.schema.source_provenance
-            .source_image_provenance_planes
-            .component_metadata
+            value.schema.source_provenance.source_image_provenance_planes.component_metadata
         )
     ) == (
         {"well": "A02", "site": 1, "channel": 1},
@@ -2000,7 +2286,7 @@ def test_normalize_artifact_value_rejects_metadata_payload_mismatch():
     output_plan = ArtifactOutputPlan(
         name="metadata",
         path="/memory/metadata.pkl",
-        kind=ArtifactKind.METADATA,
+        artifact_type=MetadataArtifactType,
     )
 
     with pytest.raises(TypeError, match="expected metadata mapping"):
@@ -2011,7 +2297,7 @@ def test_normalize_artifact_value_rejects_object_label_payload_mismatch():
     output_plan = ArtifactOutputPlan(
         name="nuclei",
         path="/memory/nuclei.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
 
     with pytest.raises(TypeError, match="expected object_labels payload"):
@@ -2022,7 +2308,7 @@ def test_object_label_payload_validator_accepts_nominal_slice_aggregate():
     output_plan = ArtifactOutputPlan(
         name="nuclei",
         path="/memory/nuclei.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     payload = ObjectLabelPayload(
         labels=np.array(
@@ -2032,18 +2318,20 @@ def test_object_label_payload_validator_accepts_nominal_slice_aggregate():
             ],
             dtype=np.int32,
         ),
-        domain=ObjectLabelDomain(declared_object_id_domains=((1, 2), (3, 4)),
-        scope=ObjectLabelDomainScope.PLANE,
-    ))
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((1, 2), (3, 4)),
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
     value = RuntimeValue(
         key=ArtifactKey(
             name="nuclei",
-            kind=ArtifactKind.OBJECT_LABELS,
+            artifact_type=ObjectLabelsArtifactType,
             scope=ArtifactScope(axis_id="A01"),
         ),
         data=payload,
         schema=RuntimeValueSchema(
-            kind=ArtifactKind.OBJECT_LABELS,
+            artifact_type=ObjectLabelsArtifactType,
             slice_aligned=True,
             object_name="nuclei",
         ),
@@ -2058,7 +2346,7 @@ def test_spatial_grid_normalizes_to_mapping_runtime_value():
     output_plan = ArtifactOutputPlan(
         name="Grid",
         path="/memory/Grid.pkl",
-        kind=ArtifactKind.SPATIAL_GRID,
+        artifact_type=SpatialGridArtifactType,
     )
     grid = SpatialGrid(
         name="Grid",
@@ -2072,8 +2360,8 @@ def test_spatial_grid_normalizes_to_mapping_runtime_value():
 
     value = normalize_artifact_value(output_plan, grid, axis_id="A01")
 
-    assert value.kind is ArtifactKind.SPATIAL_GRID
-    assert value.schema.kind is ArtifactKind.SPATIAL_GRID
+    assert value.artifact_type is SpatialGridArtifactType
+    assert value.schema.artifact_type is SpatialGridArtifactType
     assert value.data["rows"] == 30
     assert value.data["x_location_of_lowest_x_spot"] == 27.0
     assert value.data["ordering"] == SpatialGridOrdering.BY_ROWS.value
@@ -2084,7 +2372,7 @@ def test_slice_aligned_spatial_grid_normalizes_to_validated_mapping_sequence():
     output_plan = ArtifactOutputPlan(
         name="Grid",
         path="/memory/Grid.pkl",
-        kind=ArtifactKind.SPATIAL_GRID,
+        artifact_type=SpatialGridArtifactType,
     )
     grids = RuntimeSliceAlignedValues(
         slices=(
@@ -2111,7 +2399,7 @@ def test_slice_aligned_spatial_grid_normalizes_to_validated_mapping_sequence():
 
     value = normalize_artifact_value(output_plan, grids, axis_id="A01")
 
-    assert value.kind is ArtifactKind.SPATIAL_GRID
+    assert value.artifact_type is SpatialGridArtifactType
     assert value.schema.slice_aligned is True
     assert [grid["x_origin"] for grid in value.data] == [1.0, 2.0]
 
@@ -2120,7 +2408,7 @@ def test_spatial_grid_preserves_column_ordering():
     output_plan = ArtifactOutputPlan(
         name="Grid",
         path="/memory/Grid.pkl",
-        kind=ArtifactKind.SPATIAL_GRID,
+        artifact_type=SpatialGridArtifactType,
     )
     grid = SpatialGrid(
         name="Grid",
@@ -2136,40 +2424,42 @@ def test_spatial_grid_preserves_column_ordering():
     value = normalize_artifact_value(output_plan, grid, axis_id="A01")
 
     assert value.data["ordering"] == SpatialGridOrdering.BY_COLUMNS.value
-    assert SpatialGrid.from_runtime_value(value).ordering is SpatialGridOrdering.BY_COLUMNS
+    assert (
+        SpatialGrid.from_runtime_value(value).ordering is SpatialGridOrdering.BY_COLUMNS
+    )
 
 
 def test_normalize_artifact_value_accepts_object_label_arrays():
     output_plan = ArtifactOutputPlan(
         name="nuclei",
         path="/memory/nuclei.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
 
     value = normalize_artifact_value(output_plan, ArrayLike(), axis_id="A01")
 
-    assert value.kind is ArtifactKind.OBJECT_LABELS
+    assert value.artifact_type is ObjectLabelsArtifactType
 
 
 def test_normalize_artifact_value_accepts_registered_external_arrays():
     output_plan = ArtifactOutputPlan(
         name="nuclei",
         path="/memory/nuclei.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     labels = np.zeros((3, 3), dtype=np.uint16)
 
     value = normalize_artifact_value(output_plan, labels, axis_id="A01")
 
     assert value.data is labels
-    assert value.kind is ArtifactKind.OBJECT_LABELS
+    assert value.artifact_type is ObjectLabelsArtifactType
 
 
 def test_normalize_named_image_preserves_raw_payload_and_schema():
     output_plan = ArtifactOutputPlan(
         name="DNA",
         path="/memory/DNA.pkl",
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
     )
     image = ArrayLike()
 
@@ -2185,7 +2475,7 @@ def test_normalize_named_image_preserves_raw_payload_and_schema():
     )
 
     assert value.data is image
-    assert value.schema.kind is ArtifactKind.IMAGE
+    assert value.schema.artifact_type is ImageArtifactType
     assert value.schema.dimensions == ("z", "y", "x")
     assert value.schema.source_image_name == "raw_DNA"
 
@@ -2194,7 +2484,7 @@ def test_object_label_runtime_value_preserves_source_provenance_in_schema():
     output_plan = ArtifactOutputPlan(
         name="Mitochondria",
         path="/memory/Mitochondria.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     labels = np.array([[0, 1], [2, 0]], dtype=np.int32)
 
@@ -2226,6 +2516,24 @@ def test_object_label_runtime_value_preserves_source_provenance_in_schema():
         "site": "1",
         "channel": "5",
     }
+
+
+def test_object_label_set_preserves_payload_parent_image_spacing() -> None:
+    payload = ObjectLabelPayload(
+        labels=np.array([[0, 1], [0, 0]], dtype=np.int32),
+        parent_image_source_voxel_spacing=SourceVoxelSpacing((2.0, 1.0, 1.0)),
+    )
+
+    labels = ObjectLabelSet(name="Cells", labels=payload)
+    runtime_payload = labels.runtime_payload()
+
+    assert labels.parent_image_source_voxel_spacing == SourceVoxelSpacing(
+        (2.0, 1.0, 1.0)
+    )
+    assert isinstance(runtime_payload, ObjectLabelPayload)
+    assert runtime_payload.parent_image_source_voxel_spacing == SourceVoxelSpacing(
+        (2.0, 1.0, 1.0)
+    )
 
 
 def test_masked_image_payload_behaves_like_array_with_mask() -> None:
@@ -2260,17 +2568,23 @@ def test_masked_image_payload_flatten_uses_backing_array() -> None:
     np.testing.assert_array_equal(payload.flatten(), image.flatten())
 
 
-def test_derived_image_payload_context_merges_source_provenance_into_output_metadata() -> None:
+def test_derived_image_payload_context_merges_source_provenance_into_output_metadata() -> (
+    None
+):
     source = ImageMetadataPayload(
         data=np.zeros((2, 4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = (
-                "/input/A01_s001_w1_z001_t001.tif",
-                "/input/A01_s002_w1_z001_t001.tif",
-            ), component_metadata = (
-                {"well": "A01", "site": "1", "channel": "1"},
-                {"well": "A01", "site": "2", "channel": "1"},
-            ))),
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/input/A01_s001_w1_z001_t001.tif",
+                    "/input/A01_s002_w1_z001_t001.tif",
+                ),
+                component_metadata=(
+                    {"well": "A01", "site": "1", "channel": "1"},
+                    {"well": "A01", "site": "2", "channel": "1"},
+                ),
+            )
+        ),
     )
     output = ImageMetadataPayload(
         data=np.ones((2, 4, 5), dtype=np.float32),
@@ -2286,24 +2600,31 @@ def test_derived_image_payload_context_merges_source_provenance_into_output_meta
         "/input/A01_s002_w1_z001_t001.tif",
     )
     assert tuple(
-        dict(item) for item in result_metadata.source_image_provenance_planes.component_metadata
+        dict(item)
+        for item in result_metadata.source_image_provenance_planes.component_metadata
     ) == (
         {"well": "A01", "site": "1", "channel": "1"},
         {"well": "A01", "site": "2", "channel": "1"},
     )
 
 
-def test_derived_image_payload_context_replaces_stale_scalar_source_with_planes() -> None:
+def test_derived_image_payload_context_replaces_stale_scalar_source_with_planes() -> (
+    None
+):
     source = ImageMetadataPayload(
         data=np.zeros((2, 4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = (
-                "/input/A01_s001_w5_z001_t001.tif",
-                "/input/A01_s002_w5_z001_t001.tif",
-            ), component_metadata = (
-                {"well": "A01", "site": "1", "channel": "5"},
-                {"well": "A01", "site": "2", "channel": "5"},
-            ))),
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/input/A01_s001_w5_z001_t001.tif",
+                    "/input/A01_s002_w5_z001_t001.tif",
+                ),
+                component_metadata=(
+                    {"well": "A01", "site": "1", "channel": "5"},
+                    {"well": "A01", "site": "2", "channel": "5"},
+                ),
+            )
+        ),
     )
     output = ImageMetadataPayload(
         data=np.ones((2, 4, 5), dtype=np.float32),
@@ -2322,13 +2643,18 @@ def test_derived_image_payload_context_replaces_stale_scalar_source_with_planes(
         "/input/A01_s001_w5_z001_t001.tif",
         "/input/A01_s002_w5_z001_t001.tif",
     )
-    assert tuple(dict(item) for item in metadata.source_image_provenance_planes.component_metadata) == (
+    assert tuple(
+        dict(item)
+        for item in metadata.source_image_provenance_planes.component_metadata
+    ) == (
         {"well": "A01", "site": "1", "channel": "5"},
         {"well": "A01", "site": "2", "channel": "5"},
     )
 
 
-def test_derived_image_payload_context_replaces_stale_matching_plane_source_identity() -> None:
+def test_derived_image_payload_context_replaces_stale_matching_plane_source_identity() -> (
+    None
+):
     source = ImageMetadataPayload(
         data=np.zeros((2, 4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(
@@ -2370,7 +2696,8 @@ def test_derived_image_payload_context_replaces_stale_matching_plane_source_iden
         "/input/A01_s002_w3_z001_t001.tif",
     )
     assert tuple(
-        dict(item) for item in metadata.source_image_provenance_planes.component_metadata
+        dict(item)
+        for item in metadata.source_image_provenance_planes.component_metadata
     ) == (
         {"well": "A01", "site": "1", "channel": "3"},
         {"well": "A01", "site": "2", "channel": "3"},
@@ -2409,7 +2736,9 @@ def test_derived_image_payload_context_replaces_stale_scalar_source_identity() -
     assert metadata.source_image_names == ("OrigSyto",)
 
 
-def test_derived_image_payload_context_replaces_singleton_stack_scalar_source_identity() -> None:
+def test_derived_image_payload_context_replaces_singleton_stack_scalar_source_identity() -> (
+    None
+):
     source = ImageMetadataPayload(
         data=np.zeros((4, 5, 3), dtype=np.float32),
         metadata=ImagePayloadMetadata(
@@ -2450,7 +2779,9 @@ def test_derived_image_payload_context_replaces_singleton_stack_scalar_source_id
     assert metadata.source_image_names == ("OrigColor",)
 
 
-def test_derived_image_payload_context_expands_indexed_scalar_source_metadata_for_stack() -> None:
+def test_derived_image_payload_context_expands_indexed_scalar_source_metadata_for_stack() -> (
+    None
+):
     source_path = "/input/A01_s001_w3_z001_t001.tif"
     source = ImageMetadataPayload(
         data=np.zeros((3, 4, 5), dtype=np.float32),
@@ -2477,7 +2808,8 @@ def test_derived_image_payload_context_expands_indexed_scalar_source_metadata_fo
         source_path,
     )
     assert tuple(
-        dict(item) for item in metadata.source_image_provenance_planes.component_metadata
+        dict(item)
+        for item in metadata.source_image_provenance_planes.component_metadata
     ) == (
         {
             "well": "A01",
@@ -2512,7 +2844,9 @@ def test_derived_image_payload_context_expands_indexed_scalar_source_metadata_fo
     }
 
 
-def test_derived_image_payload_context_expands_indexed_scalar_output_metadata_for_stack() -> None:
+def test_derived_image_payload_context_expands_indexed_scalar_output_metadata_for_stack() -> (
+    None
+):
     source_path = "/input/A01_s001_w3_z001_t001.tif"
     output = ImageMetadataPayload(
         data=np.ones((3, 4, 5), dtype=np.float32),
@@ -2541,7 +2875,8 @@ def test_derived_image_payload_context_expands_indexed_scalar_output_metadata_fo
         source_path,
     )
     assert tuple(
-        dict(item) for item in metadata.source_image_provenance_planes.component_metadata
+        dict(item)
+        for item in metadata.source_image_provenance_planes.component_metadata
     ) == (
         {
             "well": "A01",
@@ -2576,7 +2911,9 @@ def test_derived_image_payload_context_expands_indexed_scalar_output_metadata_fo
     }
 
 
-def test_derived_image_payload_context_keeps_scalar_output_source_over_stack_source() -> None:
+def test_derived_image_payload_context_keeps_scalar_output_source_over_stack_source() -> (
+    None
+):
     source = ImageMetadataPayload(
         data=np.zeros((2, 4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(
@@ -2617,10 +2954,7 @@ def test_derived_image_payload_context_keeps_scalar_output_source_over_stack_sou
 
 
 def test_object_label_source_context_keeps_source_aligned_stack_planes() -> None:
-    paths = tuple(
-        f"/input/A01_s001_w1_z{index:03d}_t001.tif"
-        for index in range(1, 61)
-    )
+    paths = tuple(f"/input/A01_s001_w1_z{index:03d}_t001.tif" for index in range(1, 61))
     component_metadata = tuple(
         {"well": "A01", "site": "1", "channel": "1", "z_index": str(index)}
         for index in range(1, 61)
@@ -2645,13 +2979,18 @@ def test_object_label_source_context_keeps_source_aligned_stack_planes() -> None
     contextualized = labels.with_source_image_context(image)
 
     assert contextualized.source_image_provenance_planes.paths == paths
-    assert tuple(
-        dict(item)
-        for item in contextualized.source_image_provenance_planes.component_metadata
-    ) == component_metadata
+    assert (
+        tuple(
+            dict(item)
+            for item in contextualized.source_image_provenance_planes.component_metadata
+        )
+        == component_metadata
+    )
 
 
-def test_object_label_source_context_keeps_source_aligned_stack_planes_with_scalar_label_source() -> None:
+def test_object_label_source_context_keeps_source_aligned_stack_planes_with_scalar_label_source() -> (
+    None
+):
     source_path = "/input/A01_s001_w3_z001_t001.tif"
     paths = (source_path, source_path, source_path)
     component_metadata = (
@@ -2715,10 +3054,13 @@ def test_object_label_source_context_keeps_source_aligned_stack_planes_with_scal
         SOURCE_PLANE_COUNT_FIELD: "3",
     }
     assert contextualized.source_image_provenance_planes.paths == paths
-    assert tuple(
-        dict(item)
-        for item in contextualized.source_image_provenance_planes.component_metadata
-    ) == component_metadata
+    assert (
+        tuple(
+            dict(item)
+            for item in contextualized.source_image_provenance_planes.component_metadata
+        )
+        == component_metadata
+    )
 
 
 def test_image_mask_for_data_domain_broadcasts_spatial_mask_to_leading_axes() -> None:
@@ -2735,6 +3077,16 @@ def test_image_mask_for_data_domain_broadcasts_spatial_mask_to_leading_axes() ->
     assert projected.shape == image.shape
     np.testing.assert_array_equal(projected[0], mask)
     np.testing.assert_array_equal(projected[1], mask)
+
+
+def test_masked_image_payload_accepts_singleton_stack_spatial_mask() -> None:
+    data = np.zeros((1, 4, 5), dtype=np.float32)
+    mask = np.ones((4, 5), dtype=bool)
+    mask[0, 0] = False
+
+    payload = MaskedImagePayload(data=data, mask=mask)
+
+    np.testing.assert_array_equal(payload.mask, mask)
 
 
 def test_image_payload_channel_projection_preserves_channel_mask_and_metadata() -> None:
@@ -2838,9 +3190,11 @@ def test_image_metadata_payload_carries_source_intensity_scale() -> None:
 def test_source_image_metadata_context_stamps_source_spatial_domain() -> None:
     image = np.zeros((520, 696), dtype=np.uint16)
 
-    metadata = ImagePayloadSourceMetadataContext(
-        SourceImageIdentity("/plate/A01_s001_w1.png")
-    ).metadata_request(image).metadata()
+    metadata = (
+        ImagePayloadSourceMetadataContext(SourceImageIdentity("/plate/A01_s001_w1.png"))
+        .metadata_request(image)
+        .metadata()
+    )
 
     assert metadata.spatial_origin_yx == (0, 0)
     assert metadata.source_spatial_shape_yx == (520, 696)
@@ -2887,11 +3241,13 @@ def test_image_payload_metadata_composition_tracks_per_source_planes() -> None:
     first = RuntimeImagePayloadContext(
         np.zeros((2, 3), dtype=np.float32),
         metadata=ImagePayloadMetadata(intensity_scale=65535.0, source_dtype="uint16"),
-    mask = None).payload()
+        mask=None,
+    ).payload()
     second = RuntimeImagePayloadContext(
         np.zeros((2, 3), dtype=np.float32),
         metadata=ImagePayloadMetadata(intensity_scale=255.0, source_dtype="uint8"),
-    mask = None).payload()
+        mask=None,
+    ).payload()
 
     metadata = ImagePayloadMetadataCompositionRequest((first, second)).metadata()
 
@@ -2908,7 +3264,8 @@ def test_image_payload_metadata_composition_tracks_unit_interval_proof() -> None
             source_dtype="uint16",
             unit_interval_intensity_scale=65535,
         ),
-    mask = None).payload()
+        mask=None,
+    ).payload()
     second = RuntimeImagePayloadContext(
         np.zeros((2, 3), dtype=np.float32),
         metadata=ImagePayloadMetadata(
@@ -2916,7 +3273,8 @@ def test_image_payload_metadata_composition_tracks_unit_interval_proof() -> None
             source_dtype="uint8",
             unit_interval_intensity_scale=255,
         ),
-    mask = None).payload()
+        mask=None,
+    ).payload()
 
     metadata = ImagePayloadMetadataCompositionRequest((first, second)).metadata()
 
@@ -2974,15 +3332,19 @@ def test_object_label_runtime_slice_projection_projects_source_path() -> None:
     payload = ObjectLabelPayload(
         labels=np.zeros((3, 4, 5), dtype=np.int32),
         source_spatial_domain=SourceSpatialDomain(source_shape_yx=(10, 12)),
-        source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = (
-            "/input/A01_s001_w1_z001_t001.TIF",
-            "/input/A01_s002_w1_z001_t001.TIF",
-            "/input/A01_s003_w1_z001_t001.TIF",
-        ), component_metadata = (
-            {"well": "A01", "site": "1", "channel": "1"},
-            {"well": "A01", "site": "2", "channel": "1"},
-            {"well": "A01", "site": "3", "channel": "1"},
-        )))
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=(
+                "/input/A01_s001_w1_z001_t001.TIF",
+                "/input/A01_s002_w1_z001_t001.TIF",
+                "/input/A01_s003_w1_z001_t001.TIF",
+            ),
+            component_metadata=(
+                {"well": "A01", "site": "1", "channel": "1"},
+                {"well": "A01", "site": "2", "channel": "1"},
+                {"well": "A01", "site": "3", "channel": "1"},
+            ),
+        ),
+    )
 
     projected = RuntimeSliceProjection.value_for_slice(
         payload,
@@ -3008,15 +3370,19 @@ def test_object_label_set_runtime_slice_projection_projects_source_path() -> Non
         name="Nuclei",
         labels=np.zeros((3, 4, 5), dtype=np.int32),
         source_spatial_domain=SourceSpatialDomain(source_shape_yx=(10, 12)),
-        source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = (
-            "/input/A01_s001_w1_z001_t001.TIF",
-            "/input/A01_s002_w1_z001_t001.TIF",
-            "/input/A01_s003_w1_z001_t001.TIF",
-        ), component_metadata = (
-            {"well": "A01", "site": "1", "channel": "1"},
-            {"well": "A01", "site": "2", "channel": "1"},
-            {"well": "A01", "site": "3", "channel": "1"},
-        )))
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=(
+                "/input/A01_s001_w1_z001_t001.TIF",
+                "/input/A01_s002_w1_z001_t001.TIF",
+                "/input/A01_s003_w1_z001_t001.TIF",
+            ),
+            component_metadata=(
+                {"well": "A01", "site": "1", "channel": "1"},
+                {"well": "A01", "site": "2", "channel": "1"},
+                {"well": "A01", "site": "3", "channel": "1"},
+            ),
+        ),
+    )
 
     projected = RuntimeSliceProjection.value_for_slice(
         label_set,
@@ -3080,9 +3446,9 @@ def test_measurement_table_runtime_slice_projection_projects_source_identity() -
         "channel": "1",
     }
     assert projected.source_image_provenance_planes.paths == ()
-    assert projected.runtime_schema(ArtifactKind.MEASUREMENTS).source_provenance.source_path == (
-        "/input/A01_s002_w1_z001_t001.TIF"
-    )
+    assert projected.runtime_schema(
+        MeasurementsArtifactType
+    ).source_provenance.source_path == ("/input/A01_s002_w1_z001_t001.TIF")
 
 
 def test_relationship_runtime_slice_projection_projects_source_identity() -> None:
@@ -3130,9 +3496,9 @@ def test_relationship_runtime_slice_projection_projects_source_identity() -> Non
         "channel": "4",
     }
     assert projected.source_image_provenance_planes.paths == ()
-    assert projected.runtime_schema(ArtifactKind.RELATIONSHIPS).source_provenance.source_path == (
-        "/input/A01_s002_w4_z001_t001.TIF"
-    )
+    assert projected.runtime_schema(
+        RelationshipsArtifactType
+    ).source_provenance.source_path == ("/input/A01_s002_w4_z001_t001.TIF")
 
 
 def test_image_payload_metadata_composition_preserves_shared_spatial_context() -> None:
@@ -3143,13 +3509,11 @@ def test_image_payload_metadata_composition_preserves_shared_spatial_context() -
         physical_border_edges_yx=(True, False, False, False),
     )
     first = RuntimeImagePayloadContext(
-        np.zeros((4, 5), dtype=np.float32),
-        metadata=metadata,
-    mask = None).payload()
+        np.zeros((4, 5), dtype=np.float32), metadata=metadata, mask=None
+    ).payload()
     second = RuntimeImagePayloadContext(
-        np.zeros((4, 5), dtype=np.float32),
-        metadata=metadata,
-    mask = None).payload()
+        np.zeros((4, 5), dtype=np.float32), metadata=metadata, mask=None
+    ).payload()
 
     composed = ImagePayloadMetadataCompositionRequest((first, second)).metadata()
 
@@ -3167,17 +3531,21 @@ def test_pure_2d_auxiliary_aggregator_preserves_image_payload_metadata() -> None
     first = RuntimeImagePayloadContext(
         np.zeros((2, 3), dtype=np.float32),
         metadata=ImagePayloadMetadata(intensity_scale=65535.0, source_dtype="uint16"),
-    mask = None).payload()
+        mask=None,
+    ).payload()
     second = RuntimeImagePayloadContext(
         np.ones((2, 3), dtype=np.float32),
         metadata=ImagePayloadMetadata(intensity_scale=255.0, source_dtype="uint8"),
-    mask = None).payload()
+        mask=None,
+    ).payload()
 
     stacked = Pure2DAuxiliaryOutputAggregator.aggregate([first, second], "numpy")
 
     assert isinstance(stacked, ImageMetadataPayload)
     assert image_payload_data(stacked).shape == (2, 2, 3)
-    assert image_payload_metadata(stacked).for_source_plane(0).intensity_scale == 65535.0
+    assert (
+        image_payload_metadata(stacked).for_source_plane(0).intensity_scale == 65535.0
+    )
     assert image_payload_metadata(stacked).for_source_plane(1).source_dtype == "uint8"
 
 
@@ -3251,10 +3619,7 @@ def test_pure_2d_auxiliary_aggregator_preserves_sequence_row_axis() -> None:
         "numpy",
     )
 
-    assert [
-        (row.slice_index, row.object_label, row.value)
-        for row in aggregated
-    ] == [
+    assert [(row.slice_index, row.object_label, row.value) for row in aggregated] == [
         (0, 1, 10.0),
         (1, 1, 20.0),
     ]
@@ -3264,13 +3629,17 @@ def test_pure_2d_auxiliary_aggregator_uses_runtime_object_label_domains() -> Non
     first = ObjectLabelPayload(
         labels=np.asarray([[0, 4], [0, 0]], dtype=np.int32),
         source_image_names=("rawDNA",),
-    domain=ObjectLabelDomain(declared_object_ids=(4,),
-        ))
+        domain=ObjectLabelDomain(
+            declared_object_ids=(4,),
+        ),
+    )
     second = ObjectLabelPayload(
         labels=np.asarray([[0, 7], [0, 0]], dtype=np.int32),
         source_image_names=("rawActin",),
-    domain=ObjectLabelDomain(declared_object_ids=(7,),
-        ))
+        domain=ObjectLabelDomain(
+            declared_object_ids=(7,),
+        ),
+    )
 
     stacked = Pure2DAuxiliaryOutputAggregator.aggregate([first, second], "numpy")
 
@@ -3287,9 +3656,11 @@ def test_dense_object_label_plane_domain_stack_uses_square_diagonal_domains() ->
     payload = ObjectLabelPayload(
         labels=labels,
         source_image_names=("A", "B"),
-    domain=ObjectLabelDomain(declared_object_id_domains=((1, 2), (10,), (20,), (3, 4, 5)),
-        scope=ObjectLabelDomainScope.PLANE,
-        ))
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((1, 2), (10,), (20,), (3, 4, 5)),
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
 
     stack = DenseObjectLabelPlaneDomainStackRequest(payload).stack()
 
@@ -3298,16 +3669,20 @@ def test_dense_object_label_plane_domain_stack_uses_square_diagonal_domains() ->
     assert stack.measurement_row_identity is MeasurementObjectRowIdentity.ROW_SEQUENCE
 
 
-def test_dense_object_label_plane_domain_stack_projects_diagonal_plane_domains() -> None:
+def test_dense_object_label_plane_domain_stack_projects_diagonal_plane_domains() -> (
+    None
+):
     labels = np.zeros((2, 2, 2, 2), dtype=np.int32)
     labels[0, 0] = np.asarray([[1, 0], [0, 2]], dtype=np.int32)
     labels[1, 1] = np.asarray([[3, 0], [0, 4]], dtype=np.int32)
     payload = ObjectLabelPayload(
         labels=labels,
         source_image_names=("A", "B"),
-    domain=ObjectLabelDomain(declared_object_id_domains=((1, 2), (10,), (20,), (3, 4, 5)),
-        scope=ObjectLabelDomainScope.PLANE,
-        ))
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((1, 2), (10,), (20,), (3, 4, 5)),
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
 
     stack = DenseObjectLabelPlaneDomainStackRequest(payload).stack()
 
@@ -3327,9 +3702,11 @@ def test_pure_2d_slice_index_projector_projects_object_label_payload_domains() -
         labels=np.asarray([[0, 7], [0, 0]], dtype=np.int32),
         plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
         source_image_names=("rawDNA", "rawActin", "rawMito"),
-    domain=ObjectLabelDomain(declared_object_id_domains=((1,), (7,), (9,)),
-        scope=ObjectLabelDomainScope.PLANE,
-        ))
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((1,), (7,), (9,)),
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
 
     projected = RuntimeSliceProjectionStrategy.strategy_for_value(
         payload,
@@ -3348,8 +3725,10 @@ def test_pure_2d_slice_index_projector_preserves_explicit_payload_domain() -> No
     payload = ObjectLabelPayload(
         labels=np.asarray([[0, 7], [0, 0]], dtype=np.int32),
         source_image_names=("rawActin",),
-    domain=ObjectLabelDomain(declared_object_count=9,
-        ))
+        domain=ObjectLabelDomain(
+            declared_object_count=9,
+        ),
+    )
 
     projected = RuntimeSliceProjectionStrategy.strategy_for_value(
         payload,
@@ -3370,7 +3749,8 @@ def test_normalize_image_payload_intensity_uses_semantic_scale() -> None:
     payload = RuntimeImagePayloadContext(
         image,
         metadata=ImagePayloadMetadata(intensity_scale=4095.0, source_dtype="uint16"),
-    mask = None).payload()
+        mask=None,
+    ).payload()
 
     normalized = normalize_image_payload_intensity(payload)
 
@@ -3401,7 +3781,7 @@ def test_normalize_object_label_set_adds_object_schema():
     output_plan = ArtifactOutputPlan(
         name="Nuclei",
         path="/memory/Nuclei.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     labels = ArrayLike()
 
@@ -3427,7 +3807,7 @@ def test_normalize_object_label_set_preserves_dense_label_variants():
     output_plan = ArtifactOutputPlan(
         name="Nuclei",
         path="/memory/Nuclei.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     labels = np.array([[0, 1], [2, 0]], dtype=np.int32)
     unedited_labels = np.array([[3, 1], [2, 0]], dtype=np.int32)
@@ -3460,7 +3840,7 @@ def test_normalize_object_label_set_accepts_sparse_ijv_representation():
     output_plan = ArtifactOutputPlan(
         name="Nuclei",
         path="/memory/Nuclei.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
     labels = [{"i": 0, "j": 1, "label": 7}]
 
@@ -3482,7 +3862,7 @@ def test_normalize_measurement_table_infers_fields_and_object_schema():
     output_plan = ArtifactOutputPlan(
         name="NucleiMeasurements",
         path="/memory/NucleiMeasurements.pkl",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
     )
     rows = [{"object_id": 1, "area": 12.0}]
 
@@ -3549,7 +3929,7 @@ def test_normalize_measurement_table_accepts_registered_columnar_rows():
     output_plan = ArtifactOutputPlan(
         name="NucleiMeasurements",
         path="/memory/NucleiMeasurements.pkl",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
     )
     rows = pd.DataFrame({"object_id": [1], "area": [12.0]})
 
@@ -3572,7 +3952,7 @@ def test_normalize_measurement_table_accepts_generic_subject():
     output_plan = ArtifactOutputPlan(
         name="ImageMeasurements",
         path="/memory/ImageMeasurements.pkl",
-        kind=ArtifactKind.MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
     )
     rows = [{"mean_intensity": 12.0}]
 
@@ -3604,7 +3984,7 @@ def test_normalize_object_relationship_materializes_table_columns():
     output_plan = ArtifactOutputPlan(
         name="ParentChild",
         path="/memory/ParentChild.pkl",
-        kind=ArtifactKind.RELATIONSHIPS,
+        artifact_type=RelationshipsArtifactType,
     )
 
     value = normalize_artifact_value(
@@ -3646,7 +4026,7 @@ def test_normalize_object_relationship_preserves_slice_metadata():
     output_plan = ArtifactOutputPlan(
         name="ParentChild",
         path="/memory/ParentChild.pkl",
-        kind=ArtifactKind.RELATIONSHIPS,
+        artifact_type=RelationshipsArtifactType,
     )
 
     value = normalize_artifact_value(
@@ -3684,7 +4064,7 @@ def test_native_runtime_value_name_must_match_output_plan():
     output_plan = ArtifactOutputPlan(
         name="Nuclei",
         path="/memory/Nuclei.pkl",
-        kind=ArtifactKind.OBJECT_LABELS,
+        artifact_type=ObjectLabelsArtifactType,
     )
 
     with pytest.raises(ValueError, match="does not match planned artifact"):

@@ -39,6 +39,7 @@ from openhcs.interop.cellprofiler.runtime.source_candidates import (
     ParsedSourceCandidate,
     ParsedSourceCandidateCollection,
     SourceCandidateMatcher,
+    source_candidate_process_cache_key,
 )
 from openhcs.interop.cellprofiler.runtime.source_binding_runtime import (
     NumpyArraySourceFileLoader,
@@ -62,13 +63,24 @@ from openhcs.core.measurement_row_materialization import measurement_rows
 from benchmark.cellprofiler_library import get_function
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
-    ArtifactKind,
     ArtifactOutputPlan,
     ArtifactSpec,
     ArtifactSidecarRole,
+    ImageArtifactType,
+    NoMainFlowOutput,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+    SpatialGridArtifactType,
 )
 from openhcs.core.config import DtypeConfig
-from openhcs.core.module_artifact_contract import ModuleArtifactContract
+from openhcs.core.module_artifact_contract import (
+    DeclaredArtifactOutputPartition,
+    ModuleArtifactContract,
+    RecordedArtifactOutputPartition,
+    RuntimeArtifactInputPartition,
+    SourceArtifactInputPartition,
+)
 from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.pipeline_image_schema import SOURCE_IMAGE_TYPE_METADATA_FIELD
 from openhcs.core.source_image_semantics import SourceImagePayloadSemantics
@@ -125,11 +137,11 @@ from openhcs.core.runtime_values import (
     RuntimeImagePayloadContext,
     normalize_artifact_value,
     object_label_dense_array,
-SourceImageProvenancePlanes)
+    SourceImageProvenancePlanes,
+)
 from openhcs.constants.constants import AllComponents, Backend
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-
 
 AXIS_ID = "A01"
 DNA_IMAGE = "DNA"
@@ -407,21 +419,33 @@ def _image_number_resolver_adapter(
     axis_scope: SourceAxisMetadataScope,
 ) -> SimpleNamespace:
     image_number_cache = {}
+    source_binding_context = SourceBindingRuntimeContext(
+        pipeline_input_files=tuple(candidate.path for candidate in candidates),
+        source_metadata_by_path={},
+    )
+    source_binding_plan = CompiledSourceBindingPlan.empty()
+    parser = ImageXpressFilenameParser()
 
     def cache_image_number_map(cache_key, image_number_map):
         image_number_cache[cache_key] = image_number_map
         return image_number_map
 
+    def candidate_process_cache_key(file_paths):
+        return source_candidate_process_cache_key(
+            file_paths=tuple(file_paths),
+            context=source_binding_context,
+            plan=source_binding_plan,
+            parser=parser,
+        )
+
     return SimpleNamespace(
-        source_binding_context=SourceBindingRuntimeContext(
-            pipeline_input_files=tuple(candidate.path for candidate in candidates),
-            source_metadata_by_path={},
-        ),
-        source_binding_plan=CompiledSourceBindingPlan.empty(),
+        source_binding_context=source_binding_context,
+        source_binding_plan=source_binding_plan,
         processing_context=SimpleNamespace(
-            microscope_handler=SimpleNamespace(parser=ImageXpressFilenameParser())
+            microscope_handler=SimpleNamespace(parser=parser)
         ),
         source_candidates=lambda _paths: candidates,
+        source_candidate_process_cache_key=candidate_process_cache_key,
         can_resolve_source_candidates=True,
         cached_cellprofiler_image_number_map=image_number_cache.get,
         cache_cellprofiler_image_number_map=cache_image_number_map,
@@ -452,13 +476,80 @@ def test_image_number_resolver_uses_group_start_for_multi_source_payloads():
 
     resolver = CellProfilerImageNumberResolver.for_adapter(adapter)
 
-    assert resolver.image_number_for_paths(("/source/site2.tif", "/source/site1.tif")) == 2
+    assert (
+        resolver.image_number_for_paths(("/source/site2.tif", "/source/site1.tif")) == 2
+    )
     assert (
         resolver.image_number_start_for_paths(
             ("/source/site2.tif", "/source/site1.tif")
         )
         == 1
     )
+
+
+def test_image_number_resolver_matches_resolved_runtime_path(tmp_path):
+    source_path = tmp_path / "site2.tif"
+    runtime_path = f"{tmp_path}/workspace/../site2.tif"
+    candidates = (
+        ParsedSourceCandidate(
+            path="A01_s001_w1_z001_t001.tif",
+            resolved_path=str(tmp_path / "site1.tif"),
+            filename="site1.tif",
+            metadata={"well": "A01", "site": "1", "channel": "1", "timepoint": "1"},
+        ),
+        ParsedSourceCandidate(
+            path="A01_s002_w1_z001_t001.tif",
+            resolved_path=str(source_path),
+            filename="site2.tif",
+            metadata={"well": "A01", "site": "2", "channel": "1", "timepoint": "1"},
+        ),
+    )
+    adapter = _image_number_resolver_adapter(
+        candidates,
+        SourceAxisMetadataScope.from_component_values((("well", "A01"),)),
+    )
+
+    resolver = CellProfilerImageNumberResolver.for_adapter(adapter)
+
+    assert resolver.image_number_for_paths((runtime_path,)) == 2
+
+
+def test_image_number_resolver_source_path_lookup_ignores_current_axis_scope():
+    candidates = (
+        ParsedSourceCandidate(
+            path="A01_s001_w1_z001_t001.tif",
+            resolved_path="/source/Ch1_1.tif",
+            filename="Ch1_1.tif",
+            metadata={"well": "A01", "site": "1", "channel": "1", "timepoint": "1"},
+        ),
+        ParsedSourceCandidate(
+            path="A01_s001_w2_z001_t001.tif",
+            resolved_path="/source/Ch2_1.tif",
+            filename="Ch2_1.tif",
+            metadata={"well": "A01", "site": "1", "channel": "2", "timepoint": "1"},
+        ),
+        ParsedSourceCandidate(
+            path="A01_s002_w1_z001_t001.tif",
+            resolved_path="/source/Ch1_2.tif",
+            filename="Ch1_2.tif",
+            metadata={"well": "A01", "site": "2", "channel": "1", "timepoint": "1"},
+        ),
+    )
+    adapter = _image_number_resolver_adapter(
+        candidates,
+        SourceAxisMetadataScope.from_component_values(
+            (("well", "A01"), ("site", "1"))
+        ),
+    )
+
+    resolver = CellProfilerImageNumberResolver.for_adapter(adapter)
+
+    assert resolver.image_number_for_paths(("/source/Ch1_2.tif",)) == 2
+    assert resolver.image_numbers_by_source_path_index(
+        ("/source/Ch1_1.tif", "/source/Ch1_2.tif")
+    ) == {0: 1, 1: 2}
+    assert resolver.source_path_for_image_number(1) == "A01_s001_w1_z001_t001.tif"
+    assert resolver.source_path_for_image_number(2) is None
 
 
 def test_source_candidate_matcher_matches_filters_across_path_identity():
@@ -501,14 +592,65 @@ def test_source_candidate_matcher_matches_filters_across_path_identity():
         origin=SourceBindingOrigin.PIPELINE_START,
     )
 
-    assert (
-        SourceCandidateMatcher.match_candidates(
-            candidates=candidates,
-            binding=binding,
-            inherit_components={},
-        )
-        == (target,)
+    assert SourceCandidateMatcher.match_candidates(
+        candidates=candidates,
+        binding=binding,
+        inherit_components={},
+    ) == (target,)
+
+
+def test_source_candidate_matcher_prefers_declared_source_filter_paths():
+    """CP file filters target declared source paths, not remapped virtual names."""
+
+    virtual_w1_original_w2 = ParsedSourceCandidate(
+        path="A01_s001_w1_z001_t001.tif",
+        resolved_path="/workspace/A01_s001_w1_z001_t001.tif",
+        virtual_path="A01_s001_w1_z001_t001.tif",
+        filename="A01_s001_w1_z001_t001.tif",
+        metadata={
+            "well": "A01",
+            "site": "1",
+            "channel": "1",
+            "timepoint": "1",
+            "OpenHCSSourceFilterPaths": SourceFilterPathMetadata.from_paths(
+                ("BBBC013_A01_s1_w2.tif",)
+            ).as_dict(),
+        },
     )
+    virtual_w2_original_w1 = ParsedSourceCandidate(
+        path="A01_s001_w2_z001_t001.tif",
+        resolved_path="/workspace/A01_s001_w2_z001_t001.tif",
+        virtual_path="A01_s001_w2_z001_t001.tif",
+        filename="A01_s001_w2_z001_t001.tif",
+        metadata={
+            "well": "A01",
+            "site": "1",
+            "channel": "2",
+            "timepoint": "1",
+            "OpenHCSSourceFilterPaths": SourceFilterPathMetadata.from_paths(
+                ("BBBC013_A01_s1_w1.tif",)
+            ).as_dict(),
+        },
+    )
+    binding = NamedSourceBinding(
+        alias="rawGFP",
+        selector=SourceSelector(
+            filters=(
+                SourceFilterClause(
+                    subject=SourceFilterSubject.FILE,
+                    match_type=SourceFilterMatchType.CONTAINS,
+                    value="w1",
+                ),
+            )
+        ),
+        origin=SourceBindingOrigin.PIPELINE_START,
+    )
+
+    assert SourceCandidateMatcher.match_candidates(
+        candidates=(virtual_w1_original_w2, virtual_w2_original_w1),
+        binding=binding,
+        inherit_components={},
+    ) == (virtual_w2_original_w1,)
 
 
 def test_image_number_resolver_reverse_lookup_is_axis_scoped():
@@ -608,6 +750,32 @@ def test_image_number_resolver_groups_channels_into_image_sets():
     assert tuple(image_numbers.values()) == (1, 2)
 
 
+def test_image_number_resolver_uses_image_set_scope_for_channel_axis():
+    candidates = (
+        ParsedSourceCandidate(
+            path="A01_s001_w1_z001_t001.tif",
+            resolved_path="/source/Ch1_1.tif",
+            filename="Ch1_1.tif",
+            metadata={"well": "A01", "site": "1", "channel": "1", "timepoint": "1"},
+        ),
+        ParsedSourceCandidate(
+            path="A01_s001_w2_z001_t001.tif",
+            resolved_path="/source/Ch2_1.tif",
+            filename="Ch2_1.tif",
+            metadata={"well": "A01", "site": "1", "channel": "2", "timepoint": "1"},
+        ),
+    )
+    adapter = _image_number_resolver_adapter(
+        candidates,
+        SourceAxisMetadataScope.from_component_values((("channel", "2"),)),
+    )
+
+    resolver = CellProfilerImageNumberResolver.for_adapter(adapter)
+
+    assert resolver.image_number_for_paths(("/source/Ch1_1.tif",)) == 1
+    assert resolver.image_number_for_paths(("/source/Ch2_1.tif",)) == 1
+
+
 def test_axis_image_number_start_matches_declared_axis_component_only():
     context = SourceBindingRuntimeContext(
         pipeline_input_files=(
@@ -648,13 +816,79 @@ def test_axis_image_number_start_matches_declared_axis_component_only():
         axis_scope=runtime_axis_scope("A01", "site", "2"),
         source_binding_context=context,
         processing_context=SimpleNamespace(
-            microscope_handler=SimpleNamespace(
-                parser=StaticFilenameParser({})
-            )
+            microscope_handler=SimpleNamespace(parser=StaticFilenameParser({}))
         ),
     )
 
     assert adapter.cellprofiler_axis_image_number_start() == 2
+
+
+def test_axis_image_number_start_uses_current_step_source_scope():
+    pipeline_files = (
+        "A01_s001_w1_z001_t001.tif",
+        "A01_s001_w2_z001_t001.tif",
+        "A01_s002_w1_z001_t001.tif",
+        "A01_s002_w2_z001_t001.tif",
+    )
+    metadata_by_path = {
+        "A01_s001_w1_z001_t001.tif": {
+            "well": "A01",
+            "site": "1",
+            "channel": "1",
+            "timepoint": "1",
+        },
+        "A01_s001_w2_z001_t001.tif": {
+            "well": "A01",
+            "site": "1",
+            "channel": "2",
+            "timepoint": "1",
+        },
+        "A01_s002_w1_z001_t001.tif": {
+            "well": "A01",
+            "site": "2",
+            "channel": "1",
+            "timepoint": "1",
+        },
+        "A01_s002_w2_z001_t001.tif": {
+            "well": "A01",
+            "site": "2",
+            "channel": "2",
+            "timepoint": "1",
+        },
+    }
+    processing_context = SimpleNamespace(
+        microscope_handler=SimpleNamespace(parser=StaticFilenameParser({}))
+    )
+
+    first_site = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_scope=runtime_axis_scope("A01"),
+        source_binding_context=SourceBindingRuntimeContext(
+            pipeline_input_files=pipeline_files,
+            current_step_input_files=(
+                "A01_s001_w1_z001_t001.tif",
+                "A01_s001_w2_z001_t001.tif",
+            ),
+            source_metadata_by_path=metadata_by_path,
+        ),
+        processing_context=processing_context,
+    )
+    second_site = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_scope=runtime_axis_scope("A01"),
+        source_binding_context=SourceBindingRuntimeContext(
+            pipeline_input_files=pipeline_files,
+            current_step_input_files=(
+                "A01_s002_w1_z001_t001.tif",
+                "A01_s002_w2_z001_t001.tif",
+            ),
+            source_metadata_by_path=metadata_by_path,
+        ),
+        processing_context=processing_context,
+    )
+
+    assert first_site.cellprofiler_axis_image_number_start() == 1
+    assert second_site.cellprofiler_axis_image_number_start() == 2
 
 
 def test_axis_image_number_start_matches_cellprofiler_metadata_spelling():
@@ -693,9 +927,7 @@ def test_axis_image_number_start_matches_cellprofiler_metadata_spelling():
         axis_scope=runtime_axis_scope("A14", "site", "2"),
         source_binding_context=context,
         processing_context=SimpleNamespace(
-            microscope_handler=SimpleNamespace(
-                parser=StaticFilenameParser({})
-            )
+            microscope_handler=SimpleNamespace(parser=StaticFilenameParser({}))
         ),
     )
 
@@ -736,12 +968,9 @@ def test_axis_image_number_start_uses_explicit_axis_component_value():
     adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope("A01", "site", "2"),
-        group_key="default",
         source_binding_context=context,
         processing_context=SimpleNamespace(
-            microscope_handler=SimpleNamespace(
-                parser=StaticFilenameParser({})
-            )
+            microscope_handler=SimpleNamespace(parser=StaticFilenameParser({}))
         ),
     )
 
@@ -791,9 +1020,11 @@ def test_axis_image_number_start_does_not_match_wrong_metadata_field():
 class SimpleColumnarRows(ColumnarRows):
     data: Mapping[str, tuple[object, ...]]
 
-    columns: ClassVar[AliasProperty[Mapping[str, tuple[object, ...]]]] = (
-        AliasProperty("data")
+    columns: ClassVar[AliasProperty[Mapping[str, tuple[object, ...]]]] = AliasProperty(
+        "data"
     )
+
+
 MEASURE_COLOCALIZATION = "MeasureColocalization"
 MEASURE_IMAGE_INTENSITY = "MeasureImageIntensity"
 RELATE_OBJECTS = "RelateObjects"
@@ -860,7 +1091,7 @@ class ContextStub:
 
 
 def _plan(name, kind):
-    return ArtifactOutputPlan(name=name, path=f"/memory/{name}.pkl", kind=kind)
+    return ArtifactOutputPlan(name=name, path=f"/memory/{name}.pkl", artifact_type=kind)
 
 
 def _compiled_source_binding_plan(
@@ -872,7 +1103,9 @@ def _compiled_source_binding_plan(
 def _adapter(
     outputs,
     *,
-    source_bindings=StepSourceBindingsConfig(bindings=(NamedSourceBinding(alias=DNA_IMAGE),)),
+    source_bindings=StepSourceBindingsConfig(
+        bindings=(NamedSourceBinding(alias=DNA_IMAGE),)
+    ),
     source_binding_context=SourceBindingRuntimeContext.empty(),
     processing_context=None,
 ):
@@ -916,10 +1149,11 @@ def _source_bound_image_adapter(outputs, images):
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs=outputs,
         source_binding_plan=_compiled_source_binding_plan(
-            StepSourceBindingsConfig(bindings=tuple(
-                            _pipeline_start_contains_binding(alias)
-                            for alias in images
-                        ))
+            StepSourceBindingsConfig(
+                bindings=tuple(
+                    _pipeline_start_contains_binding(alias) for alias in images
+                )
+            )
         ),
         source_binding_context=SourceBindingRuntimeContext(
             step_input_files=paths,
@@ -937,22 +1171,31 @@ def _executor(
     outputs,
     *,
     runtime_artifact_inputs=(),
-    inputs=(ArtifactSpec(DNA_IMAGE, ArtifactKind.IMAGE),),
+    inputs=(ArtifactSpec.input(DNA_IMAGE, ImageArtifactType),),
 ):
     return CellProfilerModuleExecutor(
         ModuleArtifactContract(
             module_name=module_name,
-            inputs=inputs,
-            runtime_artifact_inputs=runtime_artifact_inputs,
-            outputs=outputs,
+            items=(
+                *ModuleArtifactContract.items_for_partition(
+                    SourceArtifactInputPartition, inputs
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    RuntimeArtifactInputPartition, runtime_artifact_inputs
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    RecordedArtifactOutputPartition, outputs
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    DeclaredArtifactOutputPartition, outputs
+                ),
+            ),
         )
     )
 
 
 def test_cellprofiler_adapter_adds_and_reads_objects_through_runtime_store():
-    adapter, filemanager = _adapter(
-        {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
-    )
+    adapter, filemanager = _adapter({NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)})
     labels = ArrayLike()
 
     record = adapter.add_objects(
@@ -973,20 +1216,23 @@ def test_cellprofiler_adapter_adds_and_reads_objects_through_runtime_store():
 
 
 def test_cellprofiler_adapter_contextualizes_source_aligned_object_label_stack():
-    adapter, filemanager = _adapter(
-        {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
-    )
+    adapter, filemanager = _adapter({NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)})
     source_image = RuntimeImagePayloadContext(
         np.zeros((2, 5, 6), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = (
-                "/src/A01_s001_w1_z001_t001.tif",
-                "/src/A01_s002_w1_z001_t001.tif",
-            ), component_metadata = (
-                {"well": "A01", "site": "1", "channel": "1"},
-                {"well": "A01", "site": "2", "channel": "1"},
-            ))),
-    mask = None).payload()
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(
+                    "/src/A01_s001_w1_z001_t001.tif",
+                    "/src/A01_s002_w1_z001_t001.tif",
+                ),
+                component_metadata=(
+                    {"well": "A01", "site": "1", "channel": "1"},
+                    {"well": "A01", "site": "2", "channel": "1"},
+                ),
+            )
+        ),
+        mask=None,
+    ).payload()
     labels = ObjectLabelPayload(
         labels=np.ones((2, 5, 6), dtype=np.int32),
     )
@@ -1012,18 +1258,23 @@ def test_cellprofiler_adapter_contextualizes_source_aligned_object_label_stack()
         {"well": "A01", "site": "2", "channel": "1"},
     )
     saved_payload = filemanager.saved[("memory", "/memory/Nuclei.pkl")]
-    assert saved_payload.source_image_provenance_planes.paths == record.value.data.source_image_provenance_planes.paths
+    assert (
+        saved_payload.source_image_provenance_planes.paths
+        == record.value.data.source_image_provenance_planes.paths
+    )
 
 
 def test_cellprofiler_adapter_rejects_unaddressable_source_aligned_label_stack():
-    adapter, _filemanager = _adapter(
-        {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
-    )
+    adapter, _filemanager = _adapter({NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)})
     source_image = RuntimeImagePayloadContext(
         np.zeros((2, 5, 6), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = (None, None))),
-    mask = None).payload()
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=(None, None)
+            )
+        ),
+        mask=None,
+    ).payload()
     labels = ObjectLabelPayload(
         labels=np.ones((2, 5, 6), dtype=np.int32),
     )
@@ -1039,7 +1290,7 @@ def test_cellprofiler_adapter_rejects_unaddressable_source_aligned_label_stack()
 
 def test_cellprofiler_adapter_does_not_cache_current_image_object_selection():
     store = RuntimeValueStore()
-    outputs = {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
+    outputs = {NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)}
     source_paths = (
         "/src/A01_s001_w1_z001_t001.tif",
         "/src/A01_s002_w1_z001_t001.tif",
@@ -1086,7 +1337,8 @@ def test_cellprofiler_adapter_does_not_cache_current_image_object_selection():
         RuntimeImagePayloadContext(
             np.zeros((2, 2), dtype=np.float32),
             metadata=ImagePayloadMetadata(source_path=source_path),
-        mask = None).payload()
+            mask=None,
+        ).payload()
         for source_path in source_paths
     )
 
@@ -1099,7 +1351,7 @@ def test_cellprofiler_adapter_does_not_cache_current_image_object_selection():
 
 def test_cellprofiler_adapter_does_not_source_scope_default_image_records():
     store = RuntimeValueStore()
-    outputs = {DNA_IMAGE: _plan(DNA_IMAGE, ArtifactKind.IMAGE)}
+    outputs = {DNA_IMAGE: _plan(DNA_IMAGE, ImageArtifactType)}
     filemanager = FileManagerStub()
 
     for group_key, source_path, value in (
@@ -1122,7 +1374,8 @@ def test_cellprofiler_adapter_does_not_source_scope_default_image_records():
                     source_path=source_path,
                     source_component_metadata=source_metadata,
                 ),
-            mask = None).payload(),
+                mask=None,
+            ).payload(),
         )
 
     consumer = CellProfilerRuntimeAdapter(
@@ -1140,7 +1393,8 @@ def test_cellprofiler_adapter_does_not_source_scope_default_image_records():
             source_path="/src/A01_s003_w1.tif",
             source_component_metadata={"site": "3"},
         ),
-    mask = None).payload()
+        mask=None,
+    ).payload()
 
     image = consumer.get_image(DNA_IMAGE, current_image=current_image)
 
@@ -1151,7 +1405,7 @@ def test_cellprofiler_adapter_does_not_source_scope_default_image_records():
 
 def test_cellprofiler_adapter_caches_current_image_projection_until_image_write():
     store = RuntimeValueStore()
-    outputs = {DNA_IMAGE: _plan(DNA_IMAGE, ArtifactKind.IMAGE)}
+    outputs = {DNA_IMAGE: _plan(DNA_IMAGE, ImageArtifactType)}
     filemanager = FileManagerStub()
     adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
@@ -1162,7 +1416,8 @@ def test_cellprofiler_adapter_caches_current_image_projection_until_image_write(
     current_image = RuntimeImagePayloadContext(
         np.zeros((2, 2), dtype=np.float32),
         metadata=ImagePayloadMetadata(source_path="/src/A01_s001_w1.tif"),
-    mask = None).payload()
+        mask=None,
+    ).payload()
 
     adapter.add_image(DNA_IMAGE, np.full((2, 2), 1.0, dtype=np.float32))
     first = adapter.get_image(DNA_IMAGE, current_image=current_image)
@@ -1182,7 +1437,7 @@ def test_cellprofiler_adapter_caches_current_image_projection_until_image_write(
 
 def test_cellprofiler_adapter_source_path_cache_tracks_store_revision():
     store = RuntimeValueStore()
-    outputs = {DNA_IMAGE: _plan(DNA_IMAGE, ArtifactKind.IMAGE)}
+    outputs = {DNA_IMAGE: _plan(DNA_IMAGE, ImageArtifactType)}
     filemanager = FileManagerStub()
     producer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
@@ -1200,7 +1455,8 @@ def test_cellprofiler_adapter_source_path_cache_tracks_store_revision():
         RuntimeImagePayloadContext(
             np.zeros((1, 1), dtype=np.float32),
             metadata=ImagePayloadMetadata(source_path="/src/first.tif"),
-        mask = None).payload(),
+            mask=None,
+        ).payload(),
     )
 
     assert consumer.cellprofiler_source_paths_for_image_name(DNA_IMAGE) == (
@@ -1212,11 +1468,32 @@ def test_cellprofiler_adapter_source_path_cache_tracks_store_revision():
         RuntimeImagePayloadContext(
             np.ones((1, 1), dtype=np.float32),
             metadata=ImagePayloadMetadata(source_path="/src/second.tif"),
-        mask = None).payload(),
+            mask=None,
+        ).payload(),
     )
 
     assert consumer.cellprofiler_source_paths_for_image_name(DNA_IMAGE) == (
         "/src/second.tif",
+    )
+
+
+def test_cellprofiler_adapter_source_paths_for_source_bound_image_alias():
+    source_path = f"/src/{DNA_IMAGE}.tif"
+    adapter = _source_bound_image_adapter(
+        {},
+        {DNA_IMAGE: np.zeros((2, 2), dtype=np.float32)},
+    )
+    adapter.axis_scope = runtime_axis_scope(AXIS_ID, "channel", "2")
+    adapter.source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=(source_path,),
+        step_input_dir="/src",
+        pipeline_input_files=(source_path,),
+        pipeline_input_backend="memory",
+        source_metadata_by_path={source_path: {"well": AXIS_ID, "channel": "1"}},
+    )
+
+    assert adapter.cellprofiler_source_paths_for_image_name(DNA_IMAGE) == (
+        source_path,
     )
 
 
@@ -1233,7 +1510,7 @@ def test_cellprofiler_adapter_stacks_declared_default_image_input_runtime_groups
     output_plan = ArtifactOutputPlan(
         name=image_name,
         path=image_path,
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         group_keys=(None,),
     )
 
@@ -1256,7 +1533,8 @@ def test_cellprofiler_adapter_stacks_declared_default_image_input_runtime_groups
                     source_path=source_path,
                     source_component_metadata={"site": group_key},
                 ),
-            mask = None).payload(),
+                mask=None,
+            ).payload(),
         )
 
     source_binding_context = SourceBindingRuntimeContext(
@@ -1266,13 +1544,12 @@ def test_cellprofiler_adapter_stacks_declared_default_image_input_runtime_groups
     )
     consumer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
-        axis_scope=runtime_axis_scope(AXIS_ID),
-        group_key="default",
+        axis_scope=runtime_axis_scope(AXIS_ID, "well", AXIS_ID),
         artifact_inputs={
             image_name: ArtifactInputPlan(
                 name=image_name,
                 path=image_path,
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 group_keys=(None,),
             )
         },
@@ -1283,11 +1560,16 @@ def test_cellprofiler_adapter_stacks_declared_default_image_input_runtime_groups
     current_image = RuntimeImagePayloadContext(
         np.zeros((2, 2, 2), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = source_paths, component_metadata = (
-                {"site": "1"},
-                {"site": "2"},
-            ))),
-    mask = None).payload()
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=source_paths,
+                component_metadata=(
+                    {"site": "1"},
+                    {"site": "2"},
+                ),
+            )
+        ),
+        mask=None,
+    ).payload()
 
     image = consumer.get_image(image_name, current_image=current_image)
 
@@ -1313,7 +1595,7 @@ def test_cellprofiler_adapter_keeps_multisource_current_image_grouped_when_files
     output_plan = ArtifactOutputPlan(
         name=image_name,
         path=image_path,
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         group_keys=(None,),
     )
 
@@ -1336,18 +1618,18 @@ def test_cellprofiler_adapter_keeps_multisource_current_image_grouped_when_files
                     source_path=source_path,
                     source_component_metadata=source_metadata_by_path[source_path],
                 ),
-            mask = None).payload(),
+                mask=None,
+            ).payload(),
         )
 
     consumer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        group_key="default",
         artifact_inputs={
             image_name: ArtifactInputPlan(
                 name=image_name,
                 path=image_path,
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 group_keys=(None,),
             )
         },
@@ -1362,8 +1644,13 @@ def test_cellprofiler_adapter_keeps_multisource_current_image_grouped_when_files
     )
     current_image = RuntimeImagePayloadContext(
         np.zeros((2, 2, 2), dtype=np.float32),
-        metadata=ImagePayloadMetadata(source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = source_paths)),
-    mask = None).payload()
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=source_paths
+            )
+        ),
+        mask=None,
+    ).payload()
 
     image = consumer.get_image(image_name, current_image=current_image)
     metadata = image_payload_metadata(image.data)
@@ -1387,7 +1674,7 @@ def test_cellprofiler_adapter_stacks_declared_image_input_for_pattern_group():
     output_plan = ArtifactOutputPlan(
         name=image_name,
         path=image_path,
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         group_keys=(None,),
     )
 
@@ -1410,7 +1697,8 @@ def test_cellprofiler_adapter_stacks_declared_image_input_for_pattern_group():
                     source_path=source_path,
                     source_component_metadata={"site": group_key},
                 ),
-            mask = None).payload(),
+                mask=None,
+            ).payload(),
         )
 
     source_binding_context = SourceBindingRuntimeContext(
@@ -1426,7 +1714,7 @@ def test_cellprofiler_adapter_stacks_declared_image_input_for_pattern_group():
             image_name: ArtifactInputPlan(
                 name=image_name,
                 path=image_path,
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 group_keys=(None,),
             )
         },
@@ -1437,17 +1725,78 @@ def test_cellprofiler_adapter_stacks_declared_image_input_for_pattern_group():
     current_image = RuntimeImagePayloadContext(
         np.zeros((2, 2, 2), dtype=np.float32),
         metadata=ImagePayloadMetadata(
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = source_paths, component_metadata = (
-                {"site": "1"},
-                {"site": "2"},
-            ))),
-    mask = None).payload()
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=source_paths,
+                component_metadata=(
+                    {"site": "1"},
+                    {"site": "2"},
+                ),
+            )
+        ),
+        mask=None,
+    ).payload()
 
     image = consumer.get_image(image_name, current_image=current_image)
 
     assert image.data.shape == (2, 2, 2)
     np.testing.assert_array_equal(image.data[0], np.full((2, 2), 1.0))
     np.testing.assert_array_equal(image.data[1], np.full((2, 2), 2.0))
+
+
+def test_cellprofiler_adapter_records_source_scoped_output_group_from_payload():
+    store = RuntimeValueStore()
+    filemanager = FileManagerStub()
+    output_name = "MembMasked"
+    source_path = "/plate/Images/3d_monolayer_xy1_ch3.tif"
+    mask_path = "/plate/Images/3d_monolayer_xy1_ch1.tif"
+    output_plan = ArtifactOutputPlan(
+        name=output_name,
+        path=f"/memory/{output_name}.pkl",
+        artifact_type=ImageArtifactType,
+        group_keys=("0", "3"),
+        group_component=AllComponents.CHANNEL,
+        paths_by_group={
+            "0": f"/memory/{output_name}_w0.pkl",
+            "3": f"/memory/{output_name}_w3.pkl",
+        },
+    )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_scope=runtime_axis_scope(AXIS_ID, "channel", "1"),
+        group_key="1",
+        artifact_outputs={output_name: output_plan},
+        source_binding_context=SourceBindingRuntimeContext(
+            step_input_files=(mask_path,),
+            current_step_input_files=(mask_path,),
+            pipeline_input_files=(
+                "/plate/Images/3d_monolayer_xy1_ch0.tif",
+                mask_path,
+                source_path,
+            ),
+        ),
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+    output_payload = RuntimeImagePayloadContext(
+        np.full((2, 2), 3.0, dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_path=source_path,
+            source_component_metadata={
+                "well": "A01",
+                "site": "001",
+                "channel": "3",
+                "z_index": "001",
+                "time_index": "001",
+            },
+        ),
+        mask=None,
+    ).payload()
+
+    stored = adapter.add_image(output_name, output_payload)
+
+    assert stored.key.scope.group_key == "3"
+    assert ("memory", f"/memory/{output_name}_w3.pkl") in filemanager.saved
+    assert ("memory", f"/memory/{output_name}_w0.pkl") not in filemanager.saved
 
 
 def test_cellprofiler_adapter_projects_source_bound_runtime_image_to_group_plane():
@@ -1470,7 +1819,7 @@ def test_cellprofiler_adapter_projects_source_bound_runtime_image_to_group_plane
             image_name: ArtifactOutputPlan(
                 name=image_name,
                 path=image_path,
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 group_keys=(None,),
                 paths_by_group={None: image_path},
             )
@@ -1488,8 +1837,12 @@ def test_cellprofiler_adapter_projects_source_bound_runtime_image_to_group_plane
                 axis=0,
             ),
             metadata=ImagePayloadMetadata(
-                source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = source_paths, component_metadata = source_metadata)),
-        mask = None).payload(),
+                source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                    paths=source_paths, component_metadata=source_metadata
+                )
+            ),
+            mask=None,
+        ).payload(),
     )
 
     consumer = CellProfilerRuntimeAdapter(
@@ -1501,7 +1854,7 @@ def test_cellprofiler_adapter_projects_source_bound_runtime_image_to_group_plane
             image_name: ArtifactInputPlan(
                 name=image_name,
                 path=image_path,
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 group_keys=("2",),
                 paths_by_group={"2": image_path},
             )
@@ -1546,7 +1899,7 @@ def test_cellprofiler_adapter_deduplicates_grouped_runtime_image_input_locations
             image_name: ArtifactOutputPlan(
                 name=image_name,
                 path=image_path,
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 group_keys=(None,),
                 paths_by_group={None: image_path},
             )
@@ -1564,19 +1917,22 @@ def test_cellprofiler_adapter_deduplicates_grouped_runtime_image_input_locations
                 axis=0,
             ),
             metadata=ImagePayloadMetadata(
-                source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = source_paths, component_metadata = source_metadata)),
-        mask = None).payload(),
+                source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                    paths=source_paths, component_metadata=source_metadata
+                )
+            ),
+            mask=None,
+        ).payload(),
     )
     consumer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID, "site", "2"),
-        group_key="default",
         plane_projection=RuntimePlaneProjection.group(1),
         artifact_inputs={
             image_name: ArtifactInputPlan(
                 name=image_name,
                 path=image_path,
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 group_keys=("1", "2"),
                 paths_by_group={"1": image_path, "2": image_path},
             )
@@ -1601,6 +1957,122 @@ def test_cellprofiler_adapter_deduplicates_grouped_runtime_image_input_locations
     assert metadata.source_component_metadata == source_metadata[1]
 
 
+def test_cellprofiler_adapter_uses_identity_record_for_collapsed_grouped_input():
+    store = RuntimeValueStore()
+    filemanager = FileManagerStub()
+    image_name = "MaskedMito"
+    image_path = "/memory/MaskedMito.pkl"
+    producer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_scope=runtime_axis_scope(AXIS_ID),
+        artifact_outputs={
+            image_name: ArtifactOutputPlan(
+                name=image_name,
+                path=image_path,
+                artifact_type=ImageArtifactType,
+                group_keys=(None,),
+                paths_by_group={None: image_path},
+            )
+        },
+        filemanager=filemanager,
+    )
+    producer.add_image(
+        image_name,
+        RuntimeImagePayloadContext(
+            np.full((2, 3), 7.0, dtype=np.float32),
+            metadata=ImagePayloadMetadata(source_path="/plate/Images/A01_s1_w5.tif"),
+            mask=None,
+        ).payload(),
+    )
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_scope=runtime_axis_scope(AXIS_ID),
+        artifact_inputs={
+            image_name: ArtifactInputPlan(
+                name=image_name,
+                path=image_path,
+                artifact_type=ImageArtifactType,
+                group_keys=("1", "2"),
+                paths_by_group={
+                    "1": "/memory/MaskedMito_group1.pkl",
+                    "2": "/memory/MaskedMito_group2.pkl",
+                },
+            )
+        },
+        filemanager=filemanager,
+    )
+
+    image = consumer.get_image(image_name)
+
+    np.testing.assert_array_equal(
+        image_payload_data(image.data),
+        np.full((2, 3), 7.0, dtype=np.float32),
+    )
+
+
+def test_cellprofiler_adapter_uses_grouped_input_when_consumer_group_is_different_component():
+    store = RuntimeValueStore()
+    filemanager = FileManagerStub()
+    image_name = "Mito"
+    image_path = "/memory/Mito.pkl"
+    output_plan = ArtifactOutputPlan(
+        name=image_name,
+        path=image_path,
+        artifact_type=ImageArtifactType,
+        group_keys=("1", "2"),
+        paths_by_group={
+            "1": "/memory/A01_w1_Mito.pkl",
+            "2": "/memory/A01_w2_Mito.pkl",
+        },
+    )
+    for group_key, value in (("1", 1.0), ("2", 2.0)):
+        CellProfilerRuntimeAdapter(
+            runtime_value_store=store,
+            axis_scope=runtime_axis_scope(AXIS_ID, "site", group_key),
+            group_key=group_key,
+            artifact_outputs={image_name: output_plan},
+            filemanager=filemanager,
+        ).add_image(
+            image_name,
+            RuntimeImagePayloadContext(
+                np.full((2, 3), value, dtype=np.float32),
+                metadata=ImagePayloadMetadata(),
+                mask=None,
+            ).payload(),
+        )
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_scope=runtime_axis_scope(AXIS_ID, "channel", "3"),
+        group_key="3",
+        artifact_inputs={
+            image_name: ArtifactInputPlan(
+                name=image_name,
+                path=image_path,
+                artifact_type=ImageArtifactType,
+                group_keys=("1", "2"),
+                group_component=AllComponents.SITE,
+                paths_by_group={
+                    "1": "/memory/A01_w1_Mito.pkl",
+                    "2": "/memory/A01_w2_Mito.pkl",
+                },
+            )
+        },
+        filemanager=filemanager,
+    )
+
+    image = consumer.get_image(image_name)
+
+    assert image_payload_data(image.data).shape == (2, 2, 3)
+    np.testing.assert_array_equal(
+        image_payload_data(image.data)[0],
+        np.full((2, 3), 1.0, dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        image_payload_data(image.data)[1],
+        np.full((2, 3), 2.0, dtype=np.float32),
+    )
+
+
 def test_cellprofiler_adapter_does_not_project_channel_stack_for_site_group():
     store = RuntimeValueStore()
     filemanager = FileManagerStub()
@@ -1621,7 +2093,7 @@ def test_cellprofiler_adapter_does_not_project_channel_stack_for_site_group():
             image_name: ArtifactOutputPlan(
                 name=image_name,
                 path=image_path,
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 group_keys=(None,),
                 paths_by_group={None: image_path},
             )
@@ -1639,8 +2111,12 @@ def test_cellprofiler_adapter_does_not_project_channel_stack_for_site_group():
                 axis=0,
             ),
             metadata=ImagePayloadMetadata(
-                source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = source_paths, component_metadata = source_metadata)),
-        mask = None).payload(),
+                source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                    paths=source_paths, component_metadata=source_metadata
+                )
+            ),
+            mask=None,
+        ).payload(),
     )
     consumer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
@@ -1651,7 +2127,7 @@ def test_cellprofiler_adapter_does_not_project_channel_stack_for_site_group():
             image_name: ArtifactInputPlan(
                 name=image_name,
                 path=image_path,
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 group_keys=("2",),
                 paths_by_group={"2": image_path},
             )
@@ -1686,7 +2162,7 @@ def test_cellprofiler_adapter_projects_stack_with_current_image_plane_context():
             image_name: ArtifactOutputPlan(
                 name=image_name,
                 path=image_path,
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 group_keys=(None,),
                 paths_by_group={None: image_path},
             )
@@ -1707,7 +2183,8 @@ def test_cellprofiler_adapter_projects_stack_with_current_image_plane_context():
                 source_path="/plate/Images/A01_s1_w1.tif",
                 source_component_metadata={"site": "1", "channel": "1"},
             ),
-        mask = None).payload(),
+            mask=None,
+        ).payload(),
     )
     consumer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
@@ -1718,7 +2195,7 @@ def test_cellprofiler_adapter_projects_stack_with_current_image_plane_context():
             image_name: ArtifactInputPlan(
                 name=image_name,
                 path=image_path,
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 group_keys=("2",),
                 paths_by_group={"2": image_path},
             )
@@ -1731,7 +2208,8 @@ def test_cellprofiler_adapter_projects_stack_with_current_image_plane_context():
             source_path="/plate/Images/A01_s2_w1.tif",
             source_component_metadata={"site": "2", "channel": "1"},
         ),
-    mask = None).payload()
+        mask=None,
+    ).payload()
 
     image = consumer.get_image(image_name, current_image=current_image)
     metadata = image_payload_metadata(image.data)
@@ -1756,7 +2234,7 @@ def test_cellprofiler_adapter_selects_image_record_by_current_source_scope_acros
     output_plan = ArtifactOutputPlan(
         name=image_name,
         path="/memory/Mito.pkl",
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         group_keys=("1", "2"),
         paths_by_group=image_paths,
     )
@@ -1793,7 +2271,7 @@ def test_cellprofiler_adapter_selects_image_record_by_current_source_scope_acros
             image_name: ArtifactInputPlan(
                 name=image_name,
                 path="/memory/Mito.pkl",
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 group_keys=("1", "2"),
                 paths_by_group=image_paths,
             )
@@ -1828,7 +2306,9 @@ def test_cellprofiler_adapter_selects_image_record_by_current_source_scope_acros
     }
 
 
-def test_cellprofiler_adapter_selects_sidecar_record_from_resolved_workspace_source_path(tmp_path: Path):
+def test_cellprofiler_adapter_selects_sidecar_record_from_resolved_workspace_source_path(
+    tmp_path: Path,
+):
     store = RuntimeValueStore()
     filemanager = FileManagerStub()
     context = ContextStub(filemanager)
@@ -1858,7 +2338,7 @@ def test_cellprofiler_adapter_selects_sidecar_record_from_resolved_workspace_sou
     output_plan = ArtifactOutputPlan(
         name=image_name,
         path="/memory/CropBlue.pkl",
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
         group_keys=("1", "2"),
         paths_by_group=image_paths,
         sidecar_role=ArtifactSidecarRole.CROP_MASK,
@@ -1927,7 +2407,7 @@ def test_cellprofiler_adapter_selects_sidecar_record_from_resolved_workspace_sou
             image_name: ArtifactInputPlan(
                 name=image_name,
                 path="/memory/CropBlue.pkl",
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 group_keys=("1", "2"),
                 paths_by_group=image_paths,
                 sidecar_role=ArtifactSidecarRole.CROP_MASK,
@@ -1957,7 +2437,7 @@ def test_cellprofiler_adapter_selects_sidecar_record_from_resolved_workspace_sou
 
 def test_cellprofiler_adapter_keeps_template_scoped_object_records_grouped():
     store = RuntimeValueStore()
-    outputs = {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
+    outputs = {NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)}
     filemanager = FileManagerStub()
 
     for group_key, source_path, value in (
@@ -1992,7 +2472,8 @@ def test_cellprofiler_adapter_keeps_template_scoped_object_records_grouped():
     current_image = RuntimeImagePayloadContext(
         np.zeros((2, 2), dtype=np.float32),
         metadata=ImagePayloadMetadata(source_path="/src/A01_s{iii}_w1.tif"),
-    mask = None).payload()
+        mask=None,
+    ).payload()
 
     objects = consumer.get_objects(NUCLEI, current_image=current_image)
 
@@ -2003,7 +2484,7 @@ def test_cellprofiler_adapter_keeps_template_scoped_object_records_grouped():
 
 def test_cellprofiler_adapter_reads_object_labels_across_producer_groups():
     store = RuntimeValueStore()
-    outputs = {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
+    outputs = {NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)}
     filemanager = FileManagerStub()
 
     for group_key, label_value in (("1", 1), ("2", 2)):
@@ -2041,9 +2522,7 @@ def test_cellprofiler_adapter_reads_object_labels_across_producer_groups():
 
 
 def test_cellprofiler_adapter_projects_stacked_objects_by_current_source_plane():
-    adapter, _filemanager = _adapter(
-        {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
-    )
+    adapter, _filemanager = _adapter({NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)})
     source_paths = (
         "/plate/Images/A01_s1_w1.tif",
         "/plate/Images/A01_s2_w1.tif",
@@ -2060,10 +2539,15 @@ def test_cellprofiler_adapter_projects_stacked_objects_by_current_source_plane()
         ObjectLabelSet(
             name=NUCLEI,
             labels=labels,
-            source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = source_paths, component_metadata = ({"site": "1"}, {"site": "2"})), source_image_names=(DNA_IMAGE,),
-            domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE,
-            declared_object_id_domains=((1,), (2,)),
-        )),
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=source_paths, component_metadata=({"site": "1"}, {"site": "2"})
+            ),
+            source_image_names=(DNA_IMAGE,),
+            domain=ObjectLabelDomain(
+                scope=ObjectLabelDomainScope.PLANE,
+                declared_object_id_domains=((1,), (2,)),
+            ),
+        ),
     )
     current_image = RuntimeImagePayloadContext(
         np.zeros((2, 2), dtype=np.float32),
@@ -2071,7 +2555,8 @@ def test_cellprofiler_adapter_projects_stacked_objects_by_current_source_plane()
             source_path=source_paths[1],
             source_component_metadata={"site": "2"},
         ),
-    mask = None).payload()
+        mask=None,
+    ).payload()
 
     objects = adapter.get_objects(NUCLEI, current_image=current_image)
 
@@ -2083,9 +2568,9 @@ def test_cellprofiler_adapter_projects_stacked_objects_by_current_source_plane()
 def test_cellprofiler_adapter_trusts_nominal_object_label_domain_over_source_fallback():
     adapter, _filemanager = _adapter(
         {
-            DNA_IMAGE: _plan(DNA_IMAGE, ArtifactKind.IMAGE),
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
+            DNA_IMAGE: _plan(DNA_IMAGE, ImageArtifactType),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            CELLS: _plan(CELLS, ObjectLabelsArtifactType),
         }
     )
     source_image = RuntimeImagePayloadContext(
@@ -2096,7 +2581,8 @@ def test_cellprofiler_adapter_trusts_nominal_object_label_domain_over_source_fal
                 source_shape_yx=(16, 16),
             ),
         ),
-    mask = None).payload()
+        mask=None,
+    ).payload()
     adapter.add_image(DNA_IMAGE, source_image)
 
     raw_labels = np.ones((2, 2), dtype=np.int32)
@@ -2120,7 +2606,7 @@ def test_cellprofiler_adapter_requires_declared_source_image_coordinate_for_labe
     source_plan = ArtifactOutputPlan(
         name=DNA_IMAGE,
         path="/memory/DNA.pkl",
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
     )
     producer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
@@ -2136,10 +2622,10 @@ def test_cellprofiler_adapter_requires_declared_source_image_coordinate_for_labe
             DNA_IMAGE: ArtifactInputPlan(
                 name=DNA_IMAGE,
                 path=source_plan.path,
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
             ),
         },
-        artifact_outputs={NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)},
+        artifact_outputs={NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)},
         filemanager=filemanager,
     )
 
@@ -2157,7 +2643,7 @@ def test_cellprofiler_adapter_inherits_declared_source_image_coordinate_for_labe
     source_plan = ArtifactOutputPlan(
         name=DNA_IMAGE,
         path="/memory/DNA.pkl",
-        kind=ArtifactKind.IMAGE,
+        artifact_type=ImageArtifactType,
     )
     source_image = RuntimeImagePayloadContext(
         np.zeros((2, 2), dtype=np.float32),
@@ -2165,7 +2651,8 @@ def test_cellprofiler_adapter_inherits_declared_source_image_coordinate_for_labe
             source_path="/plate/A01_s001_w1_z001_t001.tif",
             source_component_metadata={"well": "A01", "site": "001", "channel": "1"},
         ),
-    mask = None).payload()
+        mask=None,
+    ).payload()
     producer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
@@ -2180,10 +2667,10 @@ def test_cellprofiler_adapter_inherits_declared_source_image_coordinate_for_labe
             DNA_IMAGE: ArtifactInputPlan(
                 name=DNA_IMAGE,
                 path=source_plan.path,
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
             ),
         },
-        artifact_outputs={NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)},
+        artifact_outputs={NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)},
         filemanager=filemanager,
     )
 
@@ -2203,9 +2690,7 @@ def test_cellprofiler_adapter_inherits_declared_source_image_coordinate_for_labe
 
 
 def test_cellprofiler_adapter_records_dense_object_label_slice_lists_as_stacks():
-    adapter, filemanager = _adapter(
-        {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
-    )
+    adapter, filemanager = _adapter({NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)})
     labels = [
         np.full((3, 4), 1, dtype=np.int32),
         np.full((3, 4), 2, dtype=np.int32),
@@ -2223,9 +2708,7 @@ def test_cellprofiler_adapter_records_dense_object_label_slice_lists_as_stacks()
 
 
 def test_cellprofiler_adapter_records_dense_object_label_volume_lists_as_stacks():
-    adapter, _filemanager = _adapter(
-        {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
-    )
+    adapter, _filemanager = _adapter({NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)})
     labels = [
         np.full((2, 3, 4), 1, dtype=np.int32),
         np.full((2, 3, 4), 2, dtype=np.int32),
@@ -2238,12 +2721,12 @@ def test_cellprofiler_adapter_records_dense_object_label_volume_lists_as_stacks(
     np.testing.assert_array_equal(objects.labels, np.stack(labels))
 
 
-def test_cellprofiler_adapter_refuses_explosive_dense_object_label_sequences(monkeypatch):
+def test_cellprofiler_adapter_refuses_explosive_dense_object_label_sequences(
+    monkeypatch,
+):
     from openhcs.interop.cellprofiler.runtime import runtime_value_authorities
 
-    adapter, _filemanager = _adapter(
-        {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
-    )
+    adapter, _filemanager = _adapter({NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)})
     monkeypatch.setattr(runtime_value_authorities, "_MAX_DENSE_LABEL_STACK_BYTES", 16)
     labels = []
     for slice_index in range(3):
@@ -2261,7 +2744,7 @@ def test_cellprofiler_adapter_reads_declared_inputs_by_compiled_location():
     producer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        artifact_outputs={NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)},
+        artifact_outputs={NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)},
         filemanager=filemanager,
     )
     labels = ArrayLike()
@@ -2270,12 +2753,11 @@ def test_cellprofiler_adapter_reads_declared_inputs_by_compiled_location():
     consumer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        group_key="default",
         artifact_inputs={
             NUCLEI: ArtifactInputPlan(
                 name=NUCLEI,
                 path="/memory/Nuclei.pkl",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
                 group_keys=(None,),
             )
         },
@@ -2301,7 +2783,7 @@ def test_cellprofiler_adapter_availability_accepts_grouped_runtime_inputs():
                 NUCLEI: ArtifactOutputPlan(
                     name=NUCLEI,
                     path=path,
-                    kind=ArtifactKind.OBJECT_LABELS,
+                    artifact_type=ObjectLabelsArtifactType,
                     group_keys=(group_key,),
                     paths_by_group={group_key: path},
                 )
@@ -2313,12 +2795,11 @@ def test_cellprofiler_adapter_availability_accepts_grouped_runtime_inputs():
     consumer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        group_key="default",
         artifact_inputs={
             NUCLEI: ArtifactInputPlan(
                 name=NUCLEI,
                 path="/memory/Nuclei.pkl",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
                 group_keys=tuple(group_paths),
                 paths_by_group=group_paths,
             )
@@ -2328,7 +2809,107 @@ def test_cellprofiler_adapter_availability_accepts_grouped_runtime_inputs():
 
     consumer.require_artifact_available(
         name=NUCLEI,
-        kind=ArtifactKind.OBJECT_LABELS,
+        kind=ObjectLabelsArtifactType,
+    )
+
+
+def test_cellprofiler_adapter_resolves_single_realized_grouped_runtime_input():
+    filemanager = FileManagerStub()
+    store = RuntimeValueStore()
+    realized_labels = np.full((2, 2), 1, dtype=np.int32)
+    planned_group_paths = {
+        "1": "/memory/Nuclei_s1.pkl",
+        "2": "/memory/Nuclei_s2.pkl",
+    }
+    producer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_scope=runtime_axis_scope(AXIS_ID),
+        group_key="1",
+        artifact_outputs={
+            NUCLEI: ArtifactOutputPlan(
+                name=NUCLEI,
+                path=planned_group_paths["1"],
+                artifact_type=ObjectLabelsArtifactType,
+                group_keys=("1",),
+                group_component=AllComponents.CHANNEL,
+                paths_by_group={"1": planned_group_paths["1"]},
+            )
+        },
+        filemanager=filemanager,
+    )
+    producer.add_objects(NUCLEI, realized_labels)
+
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_scope=runtime_axis_scope(AXIS_ID),
+        artifact_inputs={
+            NUCLEI: ArtifactInputPlan(
+                name=NUCLEI,
+                path="/memory/Nuclei.pkl",
+                artifact_type=ObjectLabelsArtifactType,
+                group_keys=tuple(planned_group_paths),
+                group_component=AllComponents.CHANNEL,
+                paths_by_group=planned_group_paths,
+            )
+        },
+        filemanager=filemanager,
+    )
+
+    assert consumer.get_objects(NUCLEI).labels is realized_labels
+
+
+def test_cellprofiler_adapter_resolves_realized_grouped_object_inputs_when_consumer_has_extra_group():
+    filemanager = FileManagerStub()
+    store = RuntimeValueStore()
+    group_paths = {
+        "1": "/memory/Cells_w1.pkl",
+        "2": "/memory/Cells_w2.pkl",
+        "3": "/memory/Cells_w3.pkl",
+    }
+    realized_labels = {
+        "1": np.full((2, 2), 1, dtype=np.int32),
+        "3": np.full((2, 2), 3, dtype=np.int32),
+    }
+    for group_key, labels in realized_labels.items():
+        producer = CellProfilerRuntimeAdapter(
+            runtime_value_store=store,
+            axis_scope=runtime_axis_scope(AXIS_ID),
+            group_key=group_key,
+            artifact_outputs={
+                CELLS: ArtifactOutputPlan(
+                    name=CELLS,
+                    path=group_paths[group_key],
+                    artifact_type=ObjectLabelsArtifactType,
+                    group_keys=(group_key,),
+                    group_component=AllComponents.CHANNEL,
+                    paths_by_group={group_key: group_paths[group_key]},
+                )
+            },
+            filemanager=filemanager,
+        )
+        producer.add_objects(CELLS, labels)
+
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_scope=runtime_axis_scope(AXIS_ID),
+        artifact_inputs={
+            CELLS: ArtifactInputPlan(
+                name=CELLS,
+                path="/memory/Cells.pkl",
+                artifact_type=ObjectLabelsArtifactType,
+                group_keys=tuple(group_paths),
+                group_component=AllComponents.CHANNEL,
+                paths_by_group=group_paths,
+            )
+        },
+        filemanager=filemanager,
+    )
+
+    objects = consumer.get_objects(CELLS)
+
+    np.testing.assert_array_equal(
+        objects.labels,
+        np.stack((realized_labels["1"], realized_labels["3"])),
     )
 
 
@@ -2354,8 +2935,9 @@ def test_cellprofiler_adapter_resolves_current_image_object_input_by_artifact_gr
                 NUCLEI: ArtifactOutputPlan(
                     name=NUCLEI,
                     path=group_paths[group_key],
-                    kind=ArtifactKind.OBJECT_LABELS,
+                    artifact_type=ObjectLabelsArtifactType,
                     group_keys=(group_key,),
+                    group_component=AllComponents.WELL,
                     paths_by_group={group_key: group_paths[group_key]},
                 )
             },
@@ -2366,13 +2948,13 @@ def test_cellprofiler_adapter_resolves_current_image_object_input_by_artifact_gr
     consumer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        group_key="default",
         artifact_inputs={
             NUCLEI: ArtifactInputPlan(
                 name=NUCLEI,
                 path="/memory/Nuclei.pkl",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
                 group_keys=(AXIS_ID, second_group),
+                group_component=AllComponents.WELL,
                 paths_by_group=group_paths,
             )
         },
@@ -2383,7 +2965,8 @@ def test_cellprofiler_adapter_resolves_current_image_object_input_by_artifact_gr
         metadata=ImagePayloadMetadata(
             source_path="/plate/Images/A01_s001_w1_z001_t001.tif",
         ),
-    mask = None).payload()
+        mask=None,
+    ).payload()
 
     objects = consumer.get_objects(NUCLEI, current_image=current_image)
 
@@ -2408,7 +2991,7 @@ def test_cellprofiler_adapter_resolves_object_input_by_current_source_context():
                 NUCLEI: ArtifactOutputPlan(
                     name=NUCLEI,
                     path=group_paths[group_key],
-                    kind=ArtifactKind.OBJECT_LABELS,
+                    artifact_type=ObjectLabelsArtifactType,
                     group_keys=(group_key,),
                     paths_by_group={group_key: group_paths[group_key]},
                 )
@@ -2436,12 +3019,11 @@ def test_cellprofiler_adapter_resolves_object_input_by_current_source_context():
     consumer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        group_key="default",
         artifact_inputs={
             NUCLEI: ArtifactInputPlan(
                 name=NUCLEI,
                 path="/memory/Nuclei.pkl",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
                 group_keys=("1", "2"),
                 paths_by_group=group_paths,
             )
@@ -2469,12 +3051,11 @@ def test_cellprofiler_adapter_projects_default_runtime_slice_output_to_group_pat
     producer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        group_key="default",
         artifact_outputs={
             NUCLEI: ArtifactOutputPlan(
                 name=NUCLEI,
                 path="/memory/Nuclei.pkl",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
                 group_keys=("1", "2"),
                 paths_by_group=group_paths,
             )
@@ -2489,9 +3070,11 @@ def test_cellprofiler_adapter_projects_default_runtime_slice_output_to_group_pat
             )
         ),
         plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-    domain=ObjectLabelDomain(declared_object_id_domains=((1,), (2,)),
-        scope=ObjectLabelDomainScope.PLANE,
-        ))
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((1,), (2,)),
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
 
     producer.add_objects(NUCLEI, labels)
 
@@ -2502,12 +3085,11 @@ def test_cellprofiler_adapter_projects_default_runtime_slice_output_to_group_pat
     consumer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        group_key="default",
         artifact_inputs={
             NUCLEI: ArtifactInputPlan(
                 name=NUCLEI,
                 path="/memory/Nuclei.pkl",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
                 group_keys=("1", "2"),
                 paths_by_group=group_paths,
             )
@@ -2534,7 +3116,7 @@ def test_cellprofiler_adapter_stacks_unplanned_global_grouped_images():
             DNA_IMAGE: ArtifactOutputPlan(
                 name=DNA_IMAGE,
                 path="/memory/DNA_s1.pkl",
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 group_keys=("1",),
                 paths_by_group={"1": "/memory/DNA_s1.pkl"},
             )
@@ -2549,7 +3131,7 @@ def test_cellprofiler_adapter_stacks_unplanned_global_grouped_images():
             DNA_IMAGE: ArtifactOutputPlan(
                 name=DNA_IMAGE,
                 path="/memory/DNA_s2.pkl",
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
                 group_keys=("2",),
                 paths_by_group={"2": "/memory/DNA_s2.pkl"},
             )
@@ -2562,7 +3144,6 @@ def test_cellprofiler_adapter_stacks_unplanned_global_grouped_images():
     consumer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        group_key="default",
         filemanager=filemanager,
     )
 
@@ -2580,8 +3161,8 @@ def test_cellprofiler_adapter_relationships_validate_declared_inputs_by_location
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            CELLS: _plan(CELLS, ObjectLabelsArtifactType),
         },
         filemanager=filemanager,
     )
@@ -2591,24 +3172,21 @@ def test_cellprofiler_adapter_relationships_validate_declared_inputs_by_location
     consumer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        group_key="default",
         artifact_inputs={
             NUCLEI: ArtifactInputPlan(
                 name=NUCLEI,
                 path="/memory/Nuclei.pkl",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
                 group_keys=(None,),
             ),
             CELLS: ArtifactInputPlan(
                 name=CELLS,
                 path="/memory/Cells.pkl",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
                 group_keys=(None,),
             ),
         },
-        artifact_outputs={
-            PARENT_CHILD: _plan(PARENT_CHILD, ArtifactKind.RELATIONSHIPS)
-        },
+        artifact_outputs={PARENT_CHILD: _plan(PARENT_CHILD, RelationshipsArtifactType)},
         filemanager=filemanager,
     )
 
@@ -2620,7 +3198,7 @@ def test_cellprofiler_adapter_relationships_validate_declared_inputs_by_location
         child_ids=np.array([2]),
     )
 
-    assert relationship.value.schema.kind is ArtifactKind.RELATIONSHIPS
+    assert relationship.value.schema.artifact_type is RelationshipsArtifactType
 
 
 def test_cellprofiler_adapter_declared_relationship_allows_pruned_child_endpoint():
@@ -2629,9 +3207,8 @@ def test_cellprofiler_adapter_declared_relationship_allows_pruned_child_endpoint
     adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
-        group_key="default",
         artifact_outputs={
-            relationship_name: _plan(relationship_name, ArtifactKind.RELATIONSHIPS),
+            relationship_name: _plan(relationship_name, RelationshipsArtifactType),
         },
         filemanager=filemanager,
     )
@@ -2644,7 +3221,7 @@ def test_cellprofiler_adapter_declared_relationship_allows_pruned_child_endpoint
         child_ids=np.array([2]),
     )
 
-    assert relationship.value.schema.kind is ArtifactKind.RELATIONSHIPS
+    assert relationship.value.schema.artifact_type is RelationshipsArtifactType
     assert relationship.value.schema.relationship.target.name == "FilteredCells"
 
 
@@ -2659,7 +3236,7 @@ def test_cellprofiler_adapter_relationships_accept_grouped_parent_inputs():
             CELLS: ArtifactOutputPlan(
                 name=CELLS,
                 path="/memory/Cells_s1.pkl",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
                 group_keys=("1",),
                 paths_by_group={"1": "/memory/Cells_s1.pkl"},
             )
@@ -2674,7 +3251,7 @@ def test_cellprofiler_adapter_relationships_accept_grouped_parent_inputs():
             CELLS: ArtifactOutputPlan(
                 name=CELLS,
                 path="/memory/Cells_s2.pkl",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
                 group_keys=("2",),
                 paths_by_group={"2": "/memory/Cells_s2.pkl"},
             )
@@ -2687,10 +3264,9 @@ def test_cellprofiler_adapter_relationships_accept_grouped_parent_inputs():
     consumer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        group_key="default",
         artifact_outputs={
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            PARENT_CHILD: _plan(PARENT_CHILD, ArtifactKind.RELATIONSHIPS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            PARENT_CHILD: _plan(PARENT_CHILD, RelationshipsArtifactType),
         },
         filemanager=filemanager,
     )
@@ -2704,7 +3280,7 @@ def test_cellprofiler_adapter_relationships_accept_grouped_parent_inputs():
         child_ids=np.array([2]),
     )
 
-    assert relationship.value.schema.kind is ArtifactKind.RELATIONSHIPS
+    assert relationship.value.schema.artifact_type is RelationshipsArtifactType
 
 
 def test_cellprofiler_adapter_relationships_allow_same_invocation_child_output():
@@ -2713,7 +3289,7 @@ def test_cellprofiler_adapter_relationships_allow_same_invocation_child_output()
     producer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        artifact_outputs={NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)},
+        artifact_outputs={NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)},
         filemanager=filemanager,
     )
     producer.add_objects(NUCLEI, ArrayLike())
@@ -2721,18 +3297,17 @@ def test_cellprofiler_adapter_relationships_allow_same_invocation_child_output()
     consumer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        group_key="default",
         artifact_inputs={
             NUCLEI: ArtifactInputPlan(
                 name=NUCLEI,
                 path="/memory/Nuclei.pkl",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
                 group_keys=(None,),
             )
         },
         artifact_outputs={
-            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
-            PARENT_CHILD: _plan(PARENT_CHILD, ArtifactKind.RELATIONSHIPS),
+            CELLS: _plan(CELLS, ObjectLabelsArtifactType),
+            PARENT_CHILD: _plan(PARENT_CHILD, RelationshipsArtifactType),
         },
         filemanager=filemanager,
     )
@@ -2745,11 +3320,11 @@ def test_cellprofiler_adapter_relationships_allow_same_invocation_child_output()
         child_ids=np.array([2]),
     )
 
-    assert relationship.value.schema.kind is ArtifactKind.RELATIONSHIPS
+    assert relationship.value.schema.artifact_type is RelationshipsArtifactType
 
 
 def test_cellprofiler_adapter_adds_and_reads_spatial_grid_artifacts():
-    adapter, filemanager = _adapter({"Grid": _plan("Grid", ArtifactKind.SPATIAL_GRID)})
+    adapter, filemanager = _adapter({"Grid": _plan("Grid", SpatialGridArtifactType)})
     grid = SpatialGrid(
         name="grid_info",
         rows=30,
@@ -2771,7 +3346,7 @@ def test_cellprofiler_adapter_adds_and_reads_spatial_grid_artifacts():
 
 
 def test_cellprofiler_adapter_adds_and_reads_slice_aligned_spatial_grids():
-    adapter, filemanager = _adapter({"Grid": _plan("Grid", ArtifactKind.SPATIAL_GRID)})
+    adapter, filemanager = _adapter({"Grid": _plan("Grid", SpatialGridArtifactType)})
     grids = RuntimeSliceAlignedValues(
         slices=(
             SpatialGrid(
@@ -2801,7 +3376,9 @@ def test_cellprofiler_adapter_adds_and_reads_slice_aligned_spatial_grids():
     assert isinstance(stored, RuntimeSliceAlignedValues)
     assert [grid.name for grid in stored.slices] == ["Grid", "Grid"]
     assert [grid.x_origin for grid in stored.slices] == [1.0, 2.0]
-    assert [grid["x_origin"] for grid in filemanager.saved[("memory", "/memory/Grid.pkl")]] == [
+    assert [
+        grid["x_origin"] for grid in filemanager.saved[("memory", "/memory/Grid.pkl")]
+    ] == [
         1.0,
         2.0,
     ]
@@ -2841,9 +3418,7 @@ def test_cellprofiler_spatial_grid_resolver_broadcasts_identical_scalar_grid():
 
 
 def test_cellprofiler_adapter_replaces_existing_payload_with_latest_binding():
-    adapter, filemanager = _adapter(
-        {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
-    )
+    adapter, filemanager = _adapter({NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)})
     first = np.ones((2, 2), dtype=np.uint16)
     second = np.full((2, 2), 2, dtype=np.uint16)
 
@@ -2856,12 +3431,14 @@ def test_cellprofiler_adapter_replaces_existing_payload_with_latest_binding():
 
 
 def test_cellprofiler_adapter_resolves_source_bound_objects():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias=NUCLEI,
-                        artifact_kind=ArtifactKind.OBJECT_LABELS,
-                    ),
-                ))
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias=NUCLEI,
+                artifact_kind=ObjectLabelsArtifactType,
+            ),
+        )
+    )
     adapter, _filemanager = _adapter({}, source_bindings=source_bindings)
     labels = np.ones((3, 3), dtype=np.uint16)
 
@@ -2873,17 +3450,19 @@ def test_cellprofiler_adapter_resolves_source_bound_objects():
 
 
 def test_cellprofiler_adapter_allows_measurements_for_source_bound_objects():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias=NUCLEI,
-                        artifact_kind=ArtifactKind.OBJECT_LABELS,
-                    ),
-                ))
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias=NUCLEI,
+                artifact_kind=ObjectLabelsArtifactType,
+            ),
+        )
+    )
     adapter, _filemanager = _adapter(
         {
             NUCLEI_MEASUREMENTS: _plan(
                 NUCLEI_MEASUREMENTS,
-                ArtifactKind.MEASUREMENTS,
+                MeasurementsArtifactType,
             ),
         },
         source_bindings=source_bindings,
@@ -2900,12 +3479,117 @@ def test_cellprofiler_adapter_allows_measurements_for_source_bound_objects():
     assert measurements.object_name == NUCLEI
 
 
+def test_cellprofiler_adapter_records_unsliced_measurements_for_compiler_groups():
+    filemanager = FileManagerStub()
+    store = RuntimeValueStore()
+    group_paths = {
+        "1": "/memory/A01_w1_Measurements.pkl",
+        "2": "/memory/A01_w2_Measurements.pkl",
+    }
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_scope=runtime_axis_scope(AXIS_ID),
+        artifact_outputs={
+            MEASUREMENTS: ArtifactOutputPlan(
+                name=MEASUREMENTS,
+                path="/memory/A01_Measurements.pkl",
+                artifact_type=MeasurementsArtifactType,
+                group_keys=("1", "2"),
+                paths_by_group=group_paths,
+            ),
+        },
+        filemanager=filemanager,
+    )
+
+    adapter.add_measurements(
+        MEASUREMENTS,
+        ({"image_area": 100.0},),
+    )
+
+    first_records = store.find(
+        name=MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
+        axis_id=AXIS_ID,
+        group_key="1",
+        match_group=True,
+    )
+    second_records = store.find(
+        name=MEASUREMENTS,
+        artifact_type=MeasurementsArtifactType,
+        axis_id=AXIS_ID,
+        group_key="2",
+        match_group=True,
+    )
+
+    assert len(first_records) == 1
+    assert len(second_records) == 1
+    assert first_records[0].path == group_paths["1"]
+    assert second_records[0].path == group_paths["2"]
+    assert (
+        store.find(
+            name=MEASUREMENTS,
+            artifact_type=MeasurementsArtifactType,
+            axis_id=AXIS_ID,
+            group_key=None,
+            match_group=True,
+        )
+        == ()
+    )
+
+
+def test_cellprofiler_adapter_records_single_compiler_output_group_for_unplanned_invocation_group():
+    filemanager = FileManagerStub()
+    store = RuntimeValueStore()
+    output_path = "/memory/A01_w3_Cytoplasm.pkl"
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_scope=runtime_axis_scope(AXIS_ID),
+        group_key="1",
+        artifact_outputs={
+            CELLS: ArtifactOutputPlan(
+                name=CELLS,
+                path=output_path,
+                artifact_type=ObjectLabelsArtifactType,
+                group_keys=("3",),
+                paths_by_group={"3": output_path},
+            ),
+        },
+        filemanager=filemanager,
+    )
+
+    record = adapter.add_objects(CELLS, np.array([[1]], dtype=np.int32))
+
+    assert record.key.scope.group_key == "3"
+    assert (
+        store.find(
+            name=CELLS,
+            artifact_type=ObjectLabelsArtifactType,
+            axis_id=AXIS_ID,
+            group_key="1",
+            match_group=True,
+        )
+        == ()
+    )
+    assert (
+        len(
+            store.find(
+                name=CELLS,
+                artifact_type=ObjectLabelsArtifactType,
+                axis_id=AXIS_ID,
+                group_key="3",
+                match_group=True,
+            )
+        )
+        == 1
+    )
+
+
 def test_cellprofiler_adapter_merges_same_artifact_measurement_subjects():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            CELLS: _plan(CELLS, ObjectLabelsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     adapter.add_objects(NUCLEI, np.array([[1]], dtype=np.int32))
@@ -2954,17 +3638,17 @@ def test_cellprofiler_adapter_selects_current_source_measurement_record():
                 NUCLEI: ArtifactOutputPlan(
                     name=NUCLEI,
                     path=object_group_paths[group_key],
-                    kind=ArtifactKind.OBJECT_LABELS,
+                    artifact_type=ObjectLabelsArtifactType,
                     group_keys=(group_key,),
                     paths_by_group={group_key: object_group_paths[group_key]},
                 ),
                 NUCLEI_MEASUREMENTS: ArtifactOutputPlan(
                     name=NUCLEI_MEASUREMENTS,
                     path=group_paths[group_key],
-                    kind=ArtifactKind.MEASUREMENTS,
+                    artifact_type=MeasurementsArtifactType,
                     group_keys=(group_key,),
                     paths_by_group={group_key: group_paths[group_key]},
-                )
+                ),
             },
             filemanager=filemanager,
         )
@@ -2976,26 +3660,21 @@ def test_cellprofiler_adapter_selects_current_source_measurement_record():
         )
 
     source_binding_context = SourceBindingRuntimeContext(
-        step_input_files=(
-            "/plate/Images/A01_s002_w1_z001_t001.tif",
-        ),
+        step_input_files=("/plate/Images/A01_s002_w1_z001_t001.tif",),
         pipeline_input_files=(
             "/plate/Images/A01_s001_w1_z001_t001.tif",
             "/plate/Images/A01_s002_w1_z001_t001.tif",
         ),
-        current_step_input_files=(
-            "/plate/Images/A01_s002_w1_z001_t001.tif",
-        ),
+        current_step_input_files=("/plate/Images/A01_s002_w1_z001_t001.tif",),
     )
     consumer = CellProfilerRuntimeAdapter(
         runtime_value_store=store,
         axis_scope=runtime_axis_scope(AXIS_ID),
-        group_key="default",
         artifact_inputs={
             NUCLEI_MEASUREMENTS: ArtifactInputPlan(
                 name=NUCLEI_MEASUREMENTS,
                 path="/memory/NucleiMeasurements.pkl",
-                kind=ArtifactKind.MEASUREMENTS,
+                artifact_type=MeasurementsArtifactType,
                 group_keys=("1", "2"),
                 paths_by_group=group_paths,
             )
@@ -3017,10 +3696,10 @@ def test_cellprofiler_adapter_selects_current_source_measurement_record():
 def test_cellprofiler_adapter_adds_measurements_after_object_reference_exists():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
             NUCLEI_MEASUREMENTS: _plan(
                 NUCLEI_MEASUREMENTS,
-                ArtifactKind.MEASUREMENTS,
+                MeasurementsArtifactType,
             ),
         }
     )
@@ -3045,12 +3724,12 @@ def test_cellprofiler_adapter_adds_measurements_after_object_reference_exists():
 def test_cellprofiler_adapter_lists_measurement_tables_for_object_subject():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
             NUCLEI_MEASUREMENTS: _plan(
                 NUCLEI_MEASUREMENTS,
-                ArtifactKind.MEASUREMENTS,
+                MeasurementsArtifactType,
             ),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     adapter.add_objects(NUCLEI, ArrayLike())
@@ -3084,7 +3763,7 @@ def test_cellprofiler_adapter_offsets_repeated_scalar_measurement_tables():
                 NUCLEI_MEASUREMENTS: ArtifactOutputPlan(
                     name=NUCLEI_MEASUREMENTS,
                     path=f"/memory/{NUCLEI_MEASUREMENTS}_{index}.pkl",
-                    kind=ArtifactKind.MEASUREMENTS,
+                    artifact_type=MeasurementsArtifactType,
                 ),
             },
             source_binding_plan=source_binding_plan,
@@ -3120,8 +3799,8 @@ def test_cellprofiler_adapter_aligns_multiplane_measurements_across_groups():
     store = RuntimeValueStore()
     filemanager = FileManagerStub()
     outputs = {
-        NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-        NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+        NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, MeasurementsArtifactType),
     }
     source_binding_plan = _compiled_source_binding_plan(
         StepSourceBindingsConfig(bindings=(NamedSourceBinding(alias=DNA_IMAGE),))
@@ -3173,8 +3852,8 @@ def test_cellprofiler_adapter_aligns_multiplane_measurements_across_groups():
 def test_cellprofiler_adapter_broadcasts_single_slice_measurements_for_repeated_labels():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     adapter.add_measurements(
@@ -3259,7 +3938,11 @@ def test_measurement_lookup_table_source_owns_columnar_source_domain():
 
 def test_source_qualified_object_feature_ignores_object_label_image_number_scope():
     adapter, _filemanager = _adapter(
-        {MEASURE_OBJECT_INTENSITY: _plan(MEASURE_OBJECT_INTENSITY, ArtifactKind.MEASUREMENTS)}
+        {
+            MEASURE_OBJECT_INTENSITY: _plan(
+                MEASURE_OBJECT_INTENSITY, MeasurementsArtifactType
+            )
+        }
     )
     adapter.add_measurements(
         MEASURE_OBJECT_INTENSITY,
@@ -3322,7 +4005,7 @@ def test_cellprofiler_adapter_multiplane_measurement_alignment_is_feature_scoped
     store = RuntimeValueStore()
     filemanager = FileManagerStub()
     outputs = {
-        NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, MeasurementsArtifactType),
     }
     source_binding_plan = _compiled_source_binding_plan(
         StepSourceBindingsConfig(bindings=(NamedSourceBinding(alias=DNA_IMAGE),))
@@ -3377,14 +4060,14 @@ def test_cellprofiler_adapter_multiplane_measurement_alignment_is_feature_scoped
 def test_cellprofiler_adapter_measurement_query_cache_is_store_scoped():
     first, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     second, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     labels = np.array([[1, 2], [0, 0]], dtype=np.int32)
@@ -3433,8 +4116,8 @@ def test_cellprofiler_adapter_projects_duplicate_object_labels_to_current_runtim
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
         artifact_outputs={
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, MeasurementsArtifactType),
         },
         source_binding_plan=_compiled_source_binding_plan(
             StepSourceBindingsConfig(bindings=(NamedSourceBinding(alias=DNA_IMAGE),))
@@ -3474,9 +4157,9 @@ def test_cellprofiler_adapter_projects_duplicate_object_labels_to_current_runtim
 def test_cellprofiler_adapter_adds_relationships_after_objects_exist():
     adapter, _filemanager = _adapter(
         {
-            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            PARENT_CHILD: _plan(PARENT_CHILD, ArtifactKind.RELATIONSHIPS),
+            CELLS: _plan(CELLS, ObjectLabelsArtifactType),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            PARENT_CHILD: _plan(PARENT_CHILD, RelationshipsArtifactType),
         }
     )
     adapter.add_objects(CELLS, ArrayLike())
@@ -3505,9 +4188,7 @@ def test_cellprofiler_adapter_write_requires_compiled_output_plan():
 
 
 def test_cellprofiler_adapter_write_rejects_output_kind_mismatch():
-    adapter, _filemanager = _adapter(
-        {NUCLEI: _plan(NUCLEI, ArtifactKind.MEASUREMENTS)}
-    )
+    adapter, _filemanager = _adapter({NUCLEI: _plan(NUCLEI, MeasurementsArtifactType)})
 
     with pytest.raises(ValueError, match="expected output kind object_labels"):
         adapter.add_objects(NUCLEI, ArrayLike())
@@ -3517,7 +4198,7 @@ def test_cellprofiler_adapter_write_requires_filemanager_vfs_boundary():
     adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
-        artifact_outputs={NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)},
+        artifact_outputs={NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)},
     )
 
     with pytest.raises(RuntimeError, match="filemanager is required for writes"):
@@ -3529,7 +4210,7 @@ def test_cellprofiler_adapter_measurements_require_object_reference():
         {
             NUCLEI_MEASUREMENTS: _plan(
                 NUCLEI_MEASUREMENTS,
-                ArtifactKind.MEASUREMENTS,
+                MeasurementsArtifactType,
             ),
         }
     )
@@ -3543,16 +4224,16 @@ def test_cellprofiler_adapter_measurements_require_object_reference():
 
 
 def test_cellprofiler_adapter_resolves_step_input_channel_selector_from_current_stack():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias=DNA_IMAGE,
-                        selector=SourceSelector(
-                            components=(
-                                ComponentSelector(AllComponents.CHANNEL, "1"),
-                            ),
-                        ),
-                    ),
-                ))
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias=DNA_IMAGE,
+                selector=SourceSelector(
+                    components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+                ),
+            ),
+        )
+    )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w1_z001_t001.tif",
@@ -3583,10 +4264,12 @@ def test_cellprofiler_adapter_resolves_step_input_channel_selector_from_current_
 
 
 def test_cellprofiler_adapter_source_binding_plane_uses_group_order_for_volumes():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(alias="origDNA"),
-                    NamedSourceBinding(alias="origMemb"),
-                ))
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(alias="origDNA"),
+            NamedSourceBinding(alias="origMemb"),
+        )
+    )
     adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
@@ -3600,20 +4283,22 @@ def test_cellprofiler_adapter_source_binding_plane_uses_group_order_for_volumes(
 
 
 def test_source_binding_plane_keeps_full_alias_stack_unprojected():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="origDNA",
-                        selector=SourceSelector(
-                            metadata=(MetadataSelector("ChannelNumber", "2"),),
-                        ),
-                    ),
-                    NamedSourceBinding(
-                        alias="origMemb",
-                        selector=SourceSelector(
-                            metadata=(MetadataSelector("ChannelNumber", "0"),),
-                        ),
-                    ),
-                ))
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="origDNA",
+                selector=SourceSelector(
+                    metadata=(MetadataSelector("ChannelNumber", "2"),),
+                ),
+            ),
+            NamedSourceBinding(
+                alias="origMemb",
+                selector=SourceSelector(
+                    metadata=(MetadataSelector("ChannelNumber", "0"),),
+                ),
+            ),
+        )
+    )
     dna_files = tuple(f"A01_s001_w1_z00{index}_t001.tif" for index in (1, 2, 3))
     memb_files = tuple(f"A01_s001_w2_z00{index}_t001.tif" for index in (1, 2, 3))
     source_binding_context = SourceBindingRuntimeContext(
@@ -3662,20 +4347,22 @@ def test_source_binding_axis_plane_resolution_keeps_composed_alias_axis():
 
 
 def test_cellprofiler_adapter_source_binding_plane_uses_single_group_alias_when_unqualified():
-    single_source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="OrigComet",
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    subject=SourceFilterSubject.FILE,
-                                    match_type=SourceFilterMatchType.CONTAINS,
-                                    value=".tif",
-                                ),
-                            )
+    single_source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigComet",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            subject=SourceFilterSubject.FILE,
+                            match_type=SourceFilterMatchType.CONTAINS,
+                            value=".tif",
                         ),
-                    ),
-                ))
+                    )
+                ),
+            ),
+        )
+    )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w1_z001_t001.tif",
@@ -3692,10 +4379,12 @@ def test_cellprofiler_adapter_source_binding_plane_uses_single_group_alias_when_
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
     )
-    multi_source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(alias="OrigComet"),
-                    NamedSourceBinding(alias="Other"),
-                ))
+    multi_source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(alias="OrigComet"),
+            NamedSourceBinding(alias="Other"),
+        )
+    )
     multi_adapter = CellProfilerRuntimeAdapter(
         runtime_value_store=RuntimeValueStore(),
         axis_scope=runtime_axis_scope(AXIS_ID),
@@ -3723,34 +4412,35 @@ def test_source_binding_plane_prefers_current_virtual_path_over_duplicate_metada
     er_archive_es_path = (
         "/plate/Archive_ES/images_Illum-corrected/plate1_A14_site1_Ch2.tif"
     )
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="OrigDNA",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    SourceFilterSubject.FILE,
-                                    SourceFilterMatchType.CONTAINS,
-                                    "Ch1",
-                                ),
-                            )
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigDNA",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "Ch1",
                         ),
-                    ),
-                    NamedSourceBinding(
-                        alias="OrigER",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    SourceFilterSubject.FILE,
-                                    SourceFilterMatchType.CONTAINS,
-                                    "Ch2",
-                                ),
-                            )
-                        ),
-                    ),
+                    )
                 ),
+            ),
+            NamedSourceBinding(
+                alias="OrigER",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "Ch2",
+                        ),
+                    )
+                ),
+            ),
+        ),
         match_plan=SourceBindingMatchPlan(
             method=SourceBindingMatchMethod.METADATA,
             dimensions=(
@@ -3823,26 +4513,36 @@ def test_source_binding_plane_prefers_current_virtual_path_over_duplicate_metada
     er_candidate_context = adapter.source_binding_plane_candidate_context("OrigER")
 
     assert dna_candidate_context is not None
-    assert dna_candidate_context.universe.plane_candidates.candidate_at(dna_plane_index).path == dna_virtual_path
+    assert (
+        dna_candidate_context.universe.plane_candidates.candidate_at(
+            dna_plane_index
+        ).path
+        == dna_virtual_path
+    )
     assert er_candidate_context is not None
-    assert er_candidate_context.universe.plane_candidates.candidate_at(er_plane_index).path == er_virtual_path
+    assert (
+        er_candidate_context.universe.plane_candidates.candidate_at(er_plane_index).path
+        == er_virtual_path
+    )
 
 
 def test_source_binding_axis_scope_uses_declared_component_not_any_equal_value():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="OrigRNA",
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    subject=SourceFilterSubject.FILE,
-                                    match_type=SourceFilterMatchType.CONTAINS,
-                                    value="Ch2",
-                                ),
-                            )
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigRNA",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            subject=SourceFilterSubject.FILE,
+                            match_type=SourceFilterMatchType.CONTAINS,
+                            value="Ch2",
                         ),
-                    ),
-                ))
+                    )
+                ),
+            ),
+        )
+    )
     ch1_path = "/plate/images/plate1_A14_site1_Ch1.tif"
     ch2_path = "/plate/images/plate1_A14_site1_Ch2.tif"
     adapter = CellProfilerRuntimeAdapter(
@@ -3865,20 +4565,22 @@ def test_source_binding_axis_scope_uses_declared_component_not_any_equal_value()
 
 
 def test_cellprofiler_adapter_single_source_alias_keeps_runtime_site_stack_unprojected():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="DF_image",
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    subject=SourceFilterSubject.FILE,
-                                    match_type=SourceFilterMatchType.CONTAINS,
-                                    value="Ch6",
-                                ),
-                            )
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="DF_image",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            subject=SourceFilterSubject.FILE,
+                            match_type=SourceFilterMatchType.CONTAINS,
+                            value="Ch6",
                         ),
-                    ),
-                ))
+                    )
+                ),
+            ),
+        )
+    )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w6_z001_t001.tif",
@@ -3899,20 +4601,22 @@ def test_cellprofiler_adapter_single_source_alias_keeps_runtime_site_stack_unpro
 
 
 def test_current_source_object_labels_project_source_binding_axis_without_plane_metadata():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="OrigComet",
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    subject=SourceFilterSubject.FILE,
-                                    match_type=SourceFilterMatchType.CONTAINS,
-                                    value=".tif",
-                                ),
-                            )
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigComet",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            subject=SourceFilterSubject.FILE,
+                            match_type=SourceFilterMatchType.CONTAINS,
+                            value=".tif",
                         ),
-                    ),
-                ))
+                    )
+                ),
+            ),
+        )
+    )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w1_z001_t001.tif",
@@ -3939,8 +4643,10 @@ def test_current_source_object_labels_project_source_binding_axis_without_plane_
             dtype=np.int32,
         ),
         plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
-    domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE,
-        ))
+        domain=ObjectLabelDomain(
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
 
     projected = CurrentSourceObjectLabelPayloadProjection(
         adapter,
@@ -3954,20 +4660,22 @@ def test_current_source_object_labels_project_source_binding_axis_without_plane_
 
 
 def test_current_source_object_labels_resolve_exact_ambiguity_by_source_binding_axis():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="OrigComet",
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    subject=SourceFilterSubject.FILE,
-                                    match_type=SourceFilterMatchType.CONTAINS,
-                                    value=".tif",
-                                ),
-                            )
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigComet",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            subject=SourceFilterSubject.FILE,
+                            match_type=SourceFilterMatchType.CONTAINS,
+                            value=".tif",
                         ),
-                    ),
-                ))
+                    )
+                ),
+            ),
+        )
+    )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w1_z001_t001.tif",
@@ -4000,8 +4708,10 @@ def test_current_source_object_labels_resolve_exact_ambiguity_by_source_binding_
                 {"well": "A01", "site": "2"},
             )
         ),
-    domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE,
-        ))
+        domain=ObjectLabelDomain(
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
     current_image = RuntimeImagePayloadContext(
         np.zeros((2, 2), dtype=np.float32),
         metadata=ImagePayloadMetadata(
@@ -4022,20 +4732,22 @@ def test_current_source_object_labels_resolve_exact_ambiguity_by_source_binding_
 
 
 def test_current_source_object_labels_resolve_ambiguous_exact_identity_through_source_binding_axis():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="OrigComet",
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    subject=SourceFilterSubject.FILE,
-                                    match_type=SourceFilterMatchType.CONTAINS,
-                                    value=".tif",
-                                ),
-                            )
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigComet",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            subject=SourceFilterSubject.FILE,
+                            match_type=SourceFilterMatchType.CONTAINS,
+                            value=".tif",
                         ),
-                    ),
-                ))
+                    )
+                ),
+            ),
+        )
+    )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w1_z001_t001.tif",
@@ -4107,8 +4819,10 @@ def test_current_source_object_labels_project_same_image_set_across_channels():
                 {"well": "A14", "site": "2", "channel": "1"},
             )
         ),
-    domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE,
-        ))
+        domain=ObjectLabelDomain(
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
     current_image = RuntimeImagePayloadContext(
         np.zeros((2, 2), dtype=np.float32),
         metadata=ImagePayloadMetadata(
@@ -4149,8 +4863,10 @@ def test_current_source_object_labels_keep_ambiguous_image_set_channel_stack():
                 {"well": "A14", "site": "2", "channel": "2"},
             )
         ),
-    domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE,
-        ))
+        domain=ObjectLabelDomain(
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
     current_image = RuntimeImagePayloadContext(
         np.zeros((2, 2), dtype=np.float32),
         metadata=ImagePayloadMetadata(
@@ -4198,20 +4914,25 @@ def test_current_source_object_labels_project_duplicate_source_stack_by_provenan
             dtype=np.int32,
         ),
         plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
-        source_image_provenance_planes = SourceImageProvenancePlanes.from_components(paths = (
-            real_path,
-            archive_en_path,
-            archive_es_path,
-            archive_pt_path,
-        )), source_image_names=(
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=(
+                real_path,
+                archive_en_path,
+                archive_es_path,
+                archive_pt_path,
+            )
+        ),
+        source_image_names=(
             "OrigActin_Golgi_Membrane",
             "OrigActin_Golgi_Membrane",
             "OrigActin_Golgi_Membrane",
             "OrigActin_Golgi_Membrane",
         ),
         source_image_name="OrigActin_Golgi_Membrane",
-    domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE,
-        ))
+        domain=ObjectLabelDomain(
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
 
     projected = CurrentSourceObjectLabelPayloadProjection(
         adapter,
@@ -4272,16 +4993,16 @@ def test_current_source_object_labels_prefer_current_resolved_path_provenance():
 
 
 def test_cellprofiler_adapter_preserves_step_input_image_metadata():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias=DNA_IMAGE,
-                        selector=SourceSelector(
-                            components=(
-                                ComponentSelector(AllComponents.CHANNEL, "1"),
-                            ),
-                        ),
-                    ),
-                ))
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias=DNA_IMAGE,
+                selector=SourceSelector(
+                    components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+                ),
+            ),
+        )
+    )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w1_z001_t001.tif",
@@ -4309,7 +5030,8 @@ def test_cellprofiler_adapter_preserves_step_input_image_metadata():
             source_plane_intensity_scales=(65535.0, 255.0),
             source_plane_dtypes=("uint16", "uint8"),
         ),
-    mask = None).payload()
+        mask=None,
+    ).payload()
 
     resolved = adapter.resolve_source_image(DNA_IMAGE, fallback_stack)
 
@@ -4320,14 +5042,16 @@ def test_cellprofiler_adapter_preserves_step_input_image_metadata():
 
 
 def test_cellprofiler_adapter_resolves_source_metadata_from_runtime_context():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias=DNA_IMAGE,
-                        selector=SourceSelector(
-                            metadata=(MetadataSelector("Compound", "DMSO"),),
-                        ),
-                    ),
-                ))
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias=DNA_IMAGE,
+                selector=SourceSelector(
+                    metadata=(MetadataSelector("Compound", "DMSO"),),
+                ),
+            ),
+        )
+    )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w1_z001_t001.tif",
@@ -4361,16 +5085,16 @@ def test_cellprofiler_adapter_resolves_source_metadata_from_runtime_context():
 
 
 def test_cellprofiler_adapter_resolves_singleton_step_input_selector_to_natural_2d_view():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias=DNA_IMAGE,
-                        selector=SourceSelector(
-                            components=(
-                                ComponentSelector(AllComponents.CHANNEL, "1"),
-                            ),
-                        ),
-                    ),
-                ))
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias=DNA_IMAGE,
+                selector=SourceSelector(
+                    components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+                ),
+            ),
+        )
+    )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=("A01_s001_w1_z001_t001.tif",)
     )
@@ -4384,9 +5108,7 @@ def test_cellprofiler_adapter_resolves_singleton_step_input_selector_to_natural_
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
     )
-    fallback_stack = np.stack(
-        [np.full((2, 2), 1.0, dtype=np.float32)]
-    )
+    fallback_stack = np.stack([np.full((2, 2), 1.0, dtype=np.float32)])
 
     resolved = adapter.resolve_source_image(DNA_IMAGE, fallback_stack)
 
@@ -4395,7 +5117,9 @@ def test_cellprofiler_adapter_resolves_singleton_step_input_selector_to_natural_
 
 
 def test_cellprofiler_adapter_resolves_singleton_alias_only_step_input_to_natural_2d_view():
-    source_bindings = StepSourceBindingsConfig(bindings=(NamedSourceBinding(alias=DNA_IMAGE),))
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(NamedSourceBinding(alias=DNA_IMAGE),)
+    )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=("A01_s001_w1_z001_t001.tif",)
     )
@@ -4409,9 +5133,7 @@ def test_cellprofiler_adapter_resolves_singleton_alias_only_step_input_to_natura
         processing_context=ContextStub(filemanager),
         filemanager=filemanager,
     )
-    fallback_stack = np.stack(
-        [np.full((2, 2), 1.0, dtype=np.float32)]
-    )
+    fallback_stack = np.stack([np.full((2, 2), 1.0, dtype=np.float32)])
 
     resolved = adapter.resolve_source_image(DNA_IMAGE, fallback_stack)
 
@@ -4420,17 +5142,17 @@ def test_cellprofiler_adapter_resolves_singleton_alias_only_step_input_to_natura
 
 
 def test_cellprofiler_adapter_resolves_pipeline_start_component_selector_with_inherited_scope():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="Actin",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            components=(
-                                ComponentSelector(AllComponents.CHANNEL, "2"),
-                            ),
-                        ),
-                    ),
-                ))
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="Actin",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    components=(ComponentSelector(AllComponents.CHANNEL, "2"),),
+                ),
+            ),
+        )
+    )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "A01_s001_w1_z001_t001.tif",
@@ -4492,16 +5214,16 @@ def test_cellprofiler_adapter_resolves_pipeline_start_component_selector_with_in
 
 
 def test_cellprofiler_adapter_matches_explicit_component_alias_metadata():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="TypeI",
-                        selector=SourceSelector(
-                            components=(
-                                ComponentSelector(AllComponents.CHANNEL, "00"),
-                            ),
-                        ),
-                    ),
-                ))
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="TypeI",
+                selector=SourceSelector(
+                    components=(ComponentSelector(AllComponents.CHANNEL, "00"),),
+                ),
+            ),
+        )
+    )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "source_s001_w1_z001_t001.tif",
@@ -4535,16 +5257,16 @@ def test_cellprofiler_adapter_matches_explicit_component_alias_metadata():
 
 
 def test_cellprofiler_adapter_explicit_component_overrides_inherited_scope():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="TypeI",
-                        selector=SourceSelector(
-                            components=(
-                                ComponentSelector(AllComponents.CHANNEL, "00"),
-                            ),
-                        ),
-                    ),
-                ))
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="TypeI",
+                selector=SourceSelector(
+                    components=(ComponentSelector(AllComponents.CHANNEL, "00"),),
+                ),
+            ),
+        )
+    )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
             "source_s001_w1_z001_t001.tif",
@@ -4584,15 +5306,17 @@ def test_cellprofiler_adapter_explicit_component_overrides_inherited_scope():
 
 
 def test_cellprofiler_adapter_rejects_metadata_selector_fields_not_exposed_by_parser():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="IllumBlue",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            metadata=(MetadataSelector("illum", "DAPI"),),
-                        ),
-                    ),
-                ))
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="IllumBlue",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    metadata=(MetadataSelector("illum", "DAPI"),),
+                ),
+            ),
+        )
+    )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=("A01_s001_w1_z001_t001.tif",),
         pipeline_input_files=("/plate/Images/A01_s001_w1_z001_t001.tif",),
@@ -4622,15 +5346,16 @@ def test_cellprofiler_adapter_rejects_metadata_selector_fields_not_exposed_by_pa
 
 
 def test_cellprofiler_adapter_resolves_metadata_selector_via_compiled_rules(tmp_path):
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="IllumBlue",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            metadata=(MetadataSelector("illum", "DAPI"),),
-                        ),
-                    ),
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="IllumBlue",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    metadata=(MetadataSelector("illum", "DAPI"),),
                 ),
+            ),
+        ),
         metadata_rules=(
             MetadataExtractionRule(
                 source=MetadataSource.FOLDER_NAME,
@@ -4709,33 +5434,28 @@ def test_cellprofiler_adapter_resolves_metadata_selector_via_compiled_rules(tmp_
 
 
 def test_cellprofiler_adapter_scopes_match_plan_values_by_source_alias_selector():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias=DNA_IMAGE,
-                        selector=SourceSelector(
-                            components=(
-                                ComponentSelector(AllComponents.CHANNEL, "1"),
-                            ),
-                        ),
-                    ),
-                    NamedSourceBinding(
-                        alias="Actin",
-                        selector=SourceSelector(
-                            components=(
-                                ComponentSelector(AllComponents.CHANNEL, "2"),
-                            ),
-                        ),
-                    ),
-                    NamedSourceBinding(
-                        alias="IllumBlue",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            components=(
-                                ComponentSelector(AllComponents.CHANNEL, "3"),
-                            ),
-                        ),
-                    ),
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias=DNA_IMAGE,
+                selector=SourceSelector(
+                    components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
                 ),
+            ),
+            NamedSourceBinding(
+                alias="Actin",
+                selector=SourceSelector(
+                    components=(ComponentSelector(AllComponents.CHANNEL, "2"),),
+                ),
+            ),
+            NamedSourceBinding(
+                alias="IllumBlue",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    components=(ComponentSelector(AllComponents.CHANNEL, "3"),),
+                ),
+            ),
+        ),
         match_plan=SourceBindingMatchPlan(
             method=SourceBindingMatchMethod.METADATA,
             dimensions=(
@@ -4798,21 +5518,22 @@ def test_cellprofiler_adapter_scopes_match_plan_values_by_source_alias_selector(
 
 
 def test_cellprofiler_adapter_ignores_unbound_match_plan_aliases():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="OrigDNA",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    subject=SourceFilterSubject.FILE,
-                                    match_type=SourceFilterMatchType.CONTAINS,
-                                    value="Ch1",
-                                ),
-                            ),
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigDNA",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            subject=SourceFilterSubject.FILE,
+                            match_type=SourceFilterMatchType.CONTAINS,
+                            value="Ch1",
                         ),
                     ),
                 ),
+            ),
+        ),
         metadata_rules=(
             MetadataExtractionRule(
                 source=MetadataSource.FILE_NAME,
@@ -4850,9 +5571,7 @@ def test_cellprofiler_adapter_ignores_unbound_match_plan_aliases():
         ),
     )
     files = tuple(
-        f"A14_site{site}_Ch{channel}.tif"
-        for site in (1, 2)
-        for channel in (1, 2)
+        f"A14_site{site}_Ch{channel}.tif" for site in (1, 2) for channel in (1, 2)
     )
     filemanager = FileManagerStub()
     for index, path in enumerate(files):
@@ -4888,15 +5607,16 @@ def test_cellprofiler_adapter_ignores_unbound_match_plan_aliases():
 
 
 def test_cellprofiler_adapter_matches_metadata_keys_by_semantic_identity(tmp_path):
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="IllumBlue",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            metadata=(MetadataSelector("Metadata_Illum", "DAPI"),),
-                        ),
-                    ),
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="IllumBlue",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    metadata=(MetadataSelector("Metadata_Illum", "DAPI"),),
                 ),
+            ),
+        ),
         metadata_rules=(
             MetadataExtractionRule(
                 source=MetadataSource.FILE_NAME,
@@ -4939,22 +5659,23 @@ def test_cellprofiler_adapter_resolves_pipeline_start_npy_source(tmp_path):
                 source=MetadataSource.FILE_NAME,
                 pattern=r"IllumCh(?P<channel>[0-9]+)\.npy",
             ),
-        ),bindings=(
-                    NamedSourceBinding(
-                        alias="IllumBlue",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    SourceFilterSubject.FILE,
-                                    SourceFilterMatchType.CONTAINS,
-                                    "IllumCh2",
-                                ),
-                            ),
-                            inherit_current_scope=False,
+        ),
+        bindings=(
+            NamedSourceBinding(
+                alias="IllumBlue",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "IllumCh2",
                         ),
                     ),
+                    inherit_current_scope=False,
                 ),
+            ),
+        ),
     )
     expected = np.full((2, 2), 31.0, dtype=np.float32)
     illum_path = tmp_path / "IllumCh2.npy"
@@ -4990,24 +5711,25 @@ def test_cellprofiler_adapter_resolves_pipeline_start_npy_source(tmp_path):
 
 
 def test_cellprofiler_adapter_resolves_step_input_source_filters_without_metadata():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="rawGFP",
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    subject=SourceFilterSubject.FILE,
-                                    match_type=SourceFilterMatchType.CONTAINS,
-                                    value="Channel1-",
-                                ),
-                                SourceFilterClause(
-                                    subject=SourceFilterSubject.EXTENSION,
-                                    match_type=SourceFilterMatchType.IS_TIF,
-                                ),
-                            ),
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="rawGFP",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            subject=SourceFilterSubject.FILE,
+                            match_type=SourceFilterMatchType.CONTAINS,
+                            value="Channel1-",
+                        ),
+                        SourceFilterClause(
+                            subject=SourceFilterSubject.EXTENSION,
+                            match_type=SourceFilterMatchType.IS_TIF,
                         ),
                     ),
                 ),
+            ),
+        ),
     )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
@@ -5035,20 +5757,21 @@ def test_cellprofiler_adapter_resolves_step_input_source_filters_without_metadat
 
 
 def test_cellprofiler_adapter_resolves_step_input_color_stack_source_filters():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="orig_color",
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    subject=SourceFilterSubject.FILE,
-                                    match_type=SourceFilterMatchType.CONTAINS,
-                                    value="t0",
-                                ),
-                            ),
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="orig_color",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            subject=SourceFilterSubject.FILE,
+                            match_type=SourceFilterMatchType.CONTAINS,
+                            value="t0",
                         ),
                     ),
                 ),
+            ),
+        ),
     )
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=(
@@ -5077,31 +5800,28 @@ def test_cellprofiler_adapter_resolves_step_input_color_stack_source_filters():
 
 
 def test_cellprofiler_adapter_resolves_order_based_pipeline_start_match_plan(tmp_path):
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias=DNA_IMAGE,
-                        selector=SourceSelector(
-                            components=(
-                                ComponentSelector(AllComponents.CHANNEL, "1"),
-                            ),
-                        ),
-                    ),
-                    NamedSourceBinding(
-                        alias="Actin",
-                        selector=SourceSelector(
-                            components=(
-                                ComponentSelector(AllComponents.CHANNEL, "2"),
-                            ),
-                        ),
-                    ),
-                    NamedSourceBinding(
-                        alias="IllumBlue",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            metadata=(MetadataSelector("illum", "DAPI"),),
-                        ),
-                    ),
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias=DNA_IMAGE,
+                selector=SourceSelector(
+                    components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
                 ),
+            ),
+            NamedSourceBinding(
+                alias="Actin",
+                selector=SourceSelector(
+                    components=(ComponentSelector(AllComponents.CHANNEL, "2"),),
+                ),
+            ),
+            NamedSourceBinding(
+                alias="IllumBlue",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    metadata=(MetadataSelector("illum", "DAPI"),),
+                ),
+            ),
+        ),
         metadata_rules=(
             MetadataExtractionRule(
                 source=MetadataSource.FILE_NAME,
@@ -5168,21 +5888,22 @@ def test_cellprofiler_adapter_resolves_order_based_pipeline_start_match_plan(tmp
 
 
 def test_cellprofiler_adapter_order_match_scopes_single_cross_channel_alias():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="rawGFP",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    SourceFilterSubject.FILE,
-                                    SourceFilterMatchType.CONTAINS,
-                                    "w2",
-                                ),
-                            ),
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="rawGFP",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "w2",
                         ),
                     ),
                 ),
+            ),
+        ),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     source_paths = (
@@ -5220,9 +5941,7 @@ def test_cellprofiler_adapter_order_match_scopes_single_cross_channel_alias():
         np.full((2, 2), 1.0, dtype=np.float32),
     )
 
-    expected = filemanager.saved[
-        ("memory", "/plate/Images/A01_s001_w2_z001_t001.tif")
-    ]
+    expected = filemanager.saved[("memory", "/plate/Images/A01_s001_w2_z001_t001.tif")]
     np.testing.assert_array_equal(resolved, expected)
     assert filemanager.loaded_batches == [
         (("/plate/Images/A01_s001_w2_z001_t001.tif",), "memory", {})
@@ -5230,47 +5949,48 @@ def test_cellprofiler_adapter_order_match_scopes_single_cross_channel_alias():
 
 
 def test_cellprofiler_adapter_order_match_returns_all_current_image_sets():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="BF_image",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    SourceFilterSubject.FILE,
-                                    SourceFilterMatchType.CONTAINS,
-                                    "Ch1",
-                                ),
-                            ),
-                        ),
-                    ),
-                    NamedSourceBinding(
-                        alias="DF_image",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    SourceFilterSubject.FILE,
-                                    SourceFilterMatchType.CONTAINS,
-                                    "Ch6",
-                                ),
-                            ),
-                        ),
-                    ),
-                    NamedSourceBinding(
-                        alias="Marker_image",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    SourceFilterSubject.FILE,
-                                    SourceFilterMatchType.CONTAINS,
-                                    "Ch7",
-                                ),
-                            ),
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="BF_image",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "Ch1",
                         ),
                     ),
                 ),
+            ),
+            NamedSourceBinding(
+                alias="DF_image",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "Ch6",
+                        ),
+                    ),
+                ),
+            ),
+            NamedSourceBinding(
+                alias="Marker_image",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "Ch7",
+                        ),
+                    ),
+                ),
+            ),
+        ),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     source_paths = (
@@ -5325,33 +6045,34 @@ def test_cellprofiler_adapter_order_match_returns_all_current_image_sets():
 
 
 def test_cellprofiler_adapter_uses_virtual_workspace_source_provenance_for_order_matching():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="Sytox",
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    SourceFilterSubject.FILE,
-                                    SourceFilterMatchType.CONTAINS,
-                                    "_w1",
-                                ),
-                            ),
-                        ),
-                    ),
-                    NamedSourceBinding(
-                        alias="BrightFieldImage",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    SourceFilterSubject.FILE,
-                                    SourceFilterMatchType.CONTAINS,
-                                    "_w2",
-                                ),
-                            ),
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="Sytox",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "_w1",
                         ),
                     ),
                 ),
+            ),
+            NamedSourceBinding(
+                alias="BrightFieldImage",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "_w2",
+                        ),
+                    ),
+                ),
+            ),
+        ),
         metadata_rules=(
             MetadataExtractionRule(
                 source=MetadataSource.FILE_NAME,
@@ -5406,21 +6127,22 @@ def test_cellprofiler_adapter_uses_virtual_workspace_source_provenance_for_order
 
 
 def test_cellprofiler_adapter_resolves_single_alias_order_source_from_current_scope():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="RawData",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    SourceFilterSubject.FILE,
-                                    SourceFilterMatchType.CONTAINS,
-                                    ".png",
-                                ),
-                            ),
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="RawData",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            ".png",
                         ),
                     ),
                 ),
+            ),
+        ),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     filemanager = FileManagerStub()
@@ -5465,21 +6187,22 @@ def test_cellprofiler_adapter_resolves_single_alias_order_source_from_current_sc
 
 
 def test_cellprofiler_adapter_attaches_source_metadata_to_pipeline_start_image():
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="RawData",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(
-                            filters=(
-                                SourceFilterClause(
-                                    SourceFilterSubject.FILE,
-                                    SourceFilterMatchType.CONTAINS,
-                                    ".png",
-                                ),
-                            ),
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="RawData",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            ".png",
                         ),
                     ),
                 ),
+            ),
+        ),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     filemanager = FileManagerStub()
@@ -5517,13 +6240,14 @@ def test_cellprofiler_adapter_attaches_source_metadata_to_pipeline_start_image()
 def test_cellprofiler_adapter_converts_declared_grayscale_rgb_sources():
     from skimage.color import rgb2gray
 
-    source_bindings = StepSourceBindingsConfig(bindings=(
-                    NamedSourceBinding(
-                        alias="RawData",
-                        origin=SourceBindingOrigin.PIPELINE_START,
-                        selector=SourceSelector(),
-                    ),
-                ),
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="RawData",
+                origin=SourceBindingOrigin.PIPELINE_START,
+                selector=SourceSelector(),
+            ),
+        ),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     filemanager = FileManagerStub()
@@ -5586,14 +6310,12 @@ def test_cellprofiler_source_image_semantics_materializes_full_validity_mask():
 
 
 def test_cellprofiler_module_executor_records_object_output_through_adapter():
-    adapter, _filemanager = _adapter(
-        {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
-    )
+    adapter, _filemanager = _adapter({NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)})
     image = ArrayLike()
     labels = ArrayLike()
     executor = _executor(
         IDENTIFY_PRIMARY_OBJECTS,
-        (ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        (ArtifactSpec.output(NUCLEI, ObjectLabelsArtifactType),),
     )
 
     @declared_processing_contract(ProcessingContract.PURE_2D)
@@ -5634,15 +6356,13 @@ def test_core_cellprofiler_functions_resolve_with_numpy_memory_contract(module_n
 
 
 def test_cellprofiler_module_executor_runs_resolved_identify_primary_objects():
-    adapter, filemanager = _adapter(
-        {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
-    )
+    adapter, filemanager = _adapter({NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)})
     image = np.zeros((64, 64), dtype=np.float32)
     image[18:28, 18:28] = 0.95
     image[40:50, 40:50] = 0.85
     executor = _executor(
         IDENTIFY_PRIMARY_OBJECTS,
-        (ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        (ArtifactSpec.output(NUCLEI, ObjectLabelsArtifactType),),
     )
     identify_primary_objects = get_function(IDENTIFY_PRIMARY_OBJECTS)
 
@@ -5666,10 +6386,10 @@ def test_cellprofiler_module_executor_runs_resolved_identify_primary_objects():
 def test_cellprofiler_module_executor_reads_objects_for_measurements():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
             NUCLEI_MEASUREMENTS: _plan(
                 NUCLEI_MEASUREMENTS,
-                ArtifactKind.MEASUREMENTS,
+                MeasurementsArtifactType,
             ),
         }
     )
@@ -5679,10 +6399,8 @@ def test_cellprofiler_module_executor_reads_objects_for_measurements():
     adapter.add_objects(NUCLEI, labels)
     executor = _executor(
         MEASURE_OBJECT_SIZE_SHAPE,
-        (ArtifactSpec(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
-        runtime_artifact_inputs=(
-            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
-        ),
+        (ArtifactSpec.output(NUCLEI_MEASUREMENTS, MeasurementsArtifactType),),
+        runtime_artifact_inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
     )
 
     @declared_processing_contract(ProcessingContract.FLEXIBLE)
@@ -5704,10 +6422,10 @@ def test_cellprofiler_module_executor_reads_objects_for_measurements():
 def test_cellprofiler_object_only_measurement_uses_label_domain_reference_image():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
             NUCLEI_MEASUREMENTS: _plan(
                 NUCLEI_MEASUREMENTS,
-                ArtifactKind.MEASUREMENTS,
+                MeasurementsArtifactType,
             ),
         }
     )
@@ -5718,11 +6436,9 @@ def test_cellprofiler_object_only_measurement_uses_label_domain_reference_image(
     adapter.add_objects(NUCLEI, labels)
     executor = _executor(
         MEASURE_OBJECT_SIZE_SHAPE,
-        (ArtifactSpec(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
-        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
-        runtime_artifact_inputs=(
-            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
-        ),
+        (ArtifactSpec.output(NUCLEI_MEASUREMENTS, MeasurementsArtifactType),),
+        inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
+        runtime_artifact_inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
     )
 
     @declared_processing_contract(ProcessingContract.PURE_2D)
@@ -5737,7 +6453,9 @@ def test_cellprofiler_object_only_measurement_uses_label_domain_reference_image(
     measurement_image, measurement_labels = seen[0]
     assert measurement_image.shape == labels.shape
     assert measurement_image.dtype == image.dtype
-    np.testing.assert_array_equal(measurement_image, np.zeros_like(labels, dtype=image.dtype))
+    np.testing.assert_array_equal(
+        measurement_image, np.zeros_like(labels, dtype=image.dtype)
+    )
     np.testing.assert_array_equal(measurement_labels, labels)
     assert _measurement_rows_for_assertion(measurements) == [
         {"object_id": 1, "area": float(labels.size), "slice_index": 0},
@@ -5748,10 +6466,10 @@ def test_cellprofiler_object_only_measurement_uses_label_domain_reference_image(
 def test_cellprofiler_object_only_pure_2d_module_executes_label_runtime_slices():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
             NUCLEI_MEASUREMENTS: _plan(
                 NUCLEI_MEASUREMENTS,
-                ArtifactKind.MEASUREMENTS,
+                MeasurementsArtifactType,
             ),
         }
     )
@@ -5775,11 +6493,9 @@ def test_cellprofiler_object_only_pure_2d_module_executes_label_runtime_slices()
     adapter.add_objects(NUCLEI, labels)
     executor = _executor(
         MEASURE_OBJECT_SIZE_SHAPE,
-        (ArtifactSpec(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
-        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
-        runtime_artifact_inputs=(
-            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
-        ),
+        (ArtifactSpec.output(NUCLEI_MEASUREMENTS, MeasurementsArtifactType),),
+        inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
+        runtime_artifact_inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
     )
 
     @declared_processing_contract(ProcessingContract.PURE_2D)
@@ -5819,30 +6535,30 @@ def test_cellprofiler_module_executor_measures_each_declared_image_for_single_ob
     nuclei = np.ones((4, 5), dtype=np.int32)
     adapter = _source_bound_image_adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         },
         {DNA_IMAGE: dna, "PH3": ph3},
     )
     adapter.add_objects(NUCLEI, nuclei)
     executor = _executor(
         MEASURE_OBJECT_INTENSITY,
-        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        (ArtifactSpec.output(MEASUREMENTS, MeasurementsArtifactType),),
         inputs=(
-            ArtifactSpec(DNA_IMAGE, ArtifactKind.IMAGE),
-            ArtifactSpec("PH3", ArtifactKind.IMAGE),
-            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec.input(DNA_IMAGE, ImageArtifactType),
+            ArtifactSpec.input("PH3", ImageArtifactType),
+            ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),
         ),
-        runtime_artifact_inputs=(
-            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
-        ),
+        runtime_artifact_inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
     )
     seen = []
 
     @declared_processing_contract(ProcessingContract.PURE_2D)
     def measure(image_arg, *, labels):
         seen.append((float(image_arg.mean()), int(labels.max())))
-        return image_arg, [{"mean": float(image_arg.mean()), "label": int(labels.max())}]
+        return image_arg, [
+            {"mean": float(image_arg.mean()), "label": int(labels.max())}
+        ]
 
     result = executor.run(
         measure,
@@ -5879,23 +6595,21 @@ def test_cellprofiler_module_executor_keeps_coupled_measurement_images_composed(
     nuclei = np.ones((4, 5), dtype=np.int32)
     adapter = _source_bound_image_adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         },
         {DNA_IMAGE: dna, "PH3": ph3},
     )
     adapter.add_objects(NUCLEI, nuclei)
     executor = _executor(
         MEASURE_COLOCALIZATION,
-        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        (ArtifactSpec.output(MEASUREMENTS, MeasurementsArtifactType),),
         inputs=(
-            ArtifactSpec(DNA_IMAGE, ArtifactKind.IMAGE),
-            ArtifactSpec("PH3", ArtifactKind.IMAGE),
-            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec.input(DNA_IMAGE, ImageArtifactType),
+            ArtifactSpec.input("PH3", ImageArtifactType),
+            ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),
         ),
-        runtime_artifact_inputs=(
-            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
-        ),
+        runtime_artifact_inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
     )
     seen = []
 
@@ -5923,9 +6637,9 @@ def test_cellprofiler_module_executor_keeps_coupled_measurement_images_composed(
 def test_cellprofiler_module_executor_combines_multi_object_measurements():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            CELLS: _plan(CELLS, ObjectLabelsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     image = ArrayLike()
@@ -5935,10 +6649,10 @@ def test_cellprofiler_module_executor_combines_multi_object_measurements():
     adapter.add_objects(CELLS, cells)
     executor = _executor(
         MEASURE_OBJECT_INTENSITY,
-        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        (ArtifactSpec.output(MEASUREMENTS, MeasurementsArtifactType),),
         runtime_artifact_inputs=(
-            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            ArtifactSpec(CELLS, ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),
+            ArtifactSpec.input(CELLS, ObjectLabelsArtifactType),
         ),
     )
 
@@ -5966,9 +6680,9 @@ def test_cellprofiler_module_executor_combines_multi_object_measurements():
 def test_measurement_lookup_filters_mixed_object_measurement_rows():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            CELLS: _plan(CELLS, ObjectLabelsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     adapter.add_objects(
@@ -6144,9 +6858,9 @@ def test_cellprofiler_child_count_lookup_uses_parent_row_domain():
 def test_adapter_batch_child_count_lookup_uses_parent_row_domain():
     adapter, _filemanager = _adapter(
         {
-            "PH3": _plan("PH3", ArtifactKind.OBJECT_LABELS),
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            "PH3": _plan("PH3", ObjectLabelsArtifactType),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     labels = np.array([[1, 2]], dtype=np.int32)
@@ -6204,7 +6918,7 @@ def test_relationship_plane_records_use_declared_group_order_not_key_spelling():
             ArtifactOutputPlan(
                 name=relationship_name,
                 path=group_paths[group_key],
-                kind=ArtifactKind.RELATIONSHIPS,
+                artifact_type=RelationshipsArtifactType,
                 group_keys=(group_key,),
                 paths_by_group={group_key: group_paths[group_key]},
             ),
@@ -6221,7 +6935,7 @@ def test_relationship_plane_records_use_declared_group_order_not_key_spelling():
             relationship_name: ArtifactInputPlan(
                 name=relationship_name,
                 path="/memory/relationships.pkl",
-                kind=ArtifactKind.RELATIONSHIPS,
+                artifact_type=RelationshipsArtifactType,
                 group_keys=("site_a", "site_b"),
                 paths_by_group=group_paths,
             )
@@ -6308,8 +7022,8 @@ def test_child_count_lookup_tolerates_heterogeneous_relationship_summary_rows():
 def test_adapter_feature_prefilter_scans_heterogeneous_wide_rows():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     labels = np.array([[1, 2]], dtype=np.int32)
@@ -6348,8 +7062,8 @@ def test_adapter_feature_prefilter_scans_heterogeneous_wide_rows():
 def test_adapter_measurement_vector_scope_uses_feature_bearing_axis_projection():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     labels = np.array([[1, 2]], dtype=np.int32)
@@ -6386,8 +7100,8 @@ def test_adapter_measurement_vector_scope_uses_feature_bearing_axis_projection()
 def test_adapter_multiplane_label_lookup_prefers_runtime_slice_axis():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     labels = np.array(
@@ -6438,8 +7152,8 @@ def test_adapter_measurement_vector_scope_searches_axis_when_group_has_no_table(
         axis_scope=runtime_axis_scope(AXIS_ID),
         group_key="producer",
         artifact_outputs={
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         },
         filemanager=filemanager,
     )
@@ -6867,9 +7581,9 @@ def test_measurement_lookup_rejects_missing_feature_for_nonempty_objects():
 def test_calculate_math_records_object_indexed_measurements():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            "PriorMeasurements": _plan("PriorMeasurements", MeasurementsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     labels = np.array([[1, 2], [0, 0]], dtype=np.int32)
@@ -6894,9 +7608,9 @@ def test_calculate_math_records_object_indexed_measurements():
     )
     executor = _executor(
         CALCULATE_MATH,
-        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
-        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
-        runtime_artifact_inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        (ArtifactSpec.output(MEASUREMENTS, MeasurementsArtifactType),),
+        inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
+        runtime_artifact_inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
     )
 
     result = executor.run(
@@ -6913,7 +7627,7 @@ def test_calculate_math_records_object_indexed_measurements():
     )
     measurements = adapter.get_measurements(MEASUREMENTS)
 
-    np.testing.assert_array_equal(result, np.zeros((2, 2), dtype=np.float32))
+    assert isinstance(result, NoMainFlowOutput)
     assert measurements.object_name == NUCLEI
     assert [row["object_name"] for row in measurements.rows] == [NUCLEI, NUCLEI]
     assert [row["object_label"] for row in measurements.rows] == [1, 2]
@@ -6957,9 +7671,9 @@ def test_current_shape_vector_source_derives_area_shape_vectors_from_label_stack
 def test_calculate_math_pads_missing_same_object_operand_values():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            "PriorMeasurements": _plan("PriorMeasurements", MeasurementsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     labels = np.array([[1, 2], [0, 0]], dtype=np.int32)
@@ -6983,9 +7697,9 @@ def test_calculate_math_pads_missing_same_object_operand_values():
     )
     executor = _executor(
         CALCULATE_MATH,
-        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
-        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
-        runtime_artifact_inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        (ArtifactSpec.output(MEASUREMENTS, MeasurementsArtifactType),),
+        inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
+        runtime_artifact_inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
     )
 
     executor.run(
@@ -7013,8 +7727,8 @@ def test_calculate_math_pads_missing_same_object_operand_values():
 def test_calculate_math_resolves_image_scoped_measurements_via_core_query():
     adapter, _filemanager = _adapter(
         {
-            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            "PriorMeasurements": _plan("PriorMeasurements", MeasurementsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     adapter.add_measurements(
@@ -7034,7 +7748,7 @@ def test_calculate_math_resolves_image_scoped_measurements_via_core_query():
     )
     executor = _executor(
         CALCULATE_MATH,
-        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        (ArtifactSpec.output(MEASUREMENTS, MeasurementsArtifactType),),
         inputs=(),
     )
 
@@ -7064,8 +7778,8 @@ def test_calculate_math_resolves_image_scoped_measurements_via_core_query():
 def test_calculate_math_aligns_image_scoped_measurements_by_slice():
     adapter, _filemanager = _adapter(
         {
-            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            "PriorMeasurements": _plan("PriorMeasurements", MeasurementsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     adapter.add_measurements(
@@ -7095,7 +7809,7 @@ def test_calculate_math_aligns_image_scoped_measurements_by_slice():
     )
     executor = _executor(
         CALCULATE_MATH,
-        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        (ArtifactSpec.output(MEASUREMENTS, MeasurementsArtifactType),),
         inputs=(),
     )
 
@@ -7126,9 +7840,9 @@ def test_calculate_math_aligns_image_scoped_measurements_by_slice():
 def test_classify_objects_binds_runtime_measurement_values():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            "PriorMeasurements": _plan("PriorMeasurements", MeasurementsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     labels = np.array([[1, 2], [0, 0]], dtype=np.int32)
@@ -7153,9 +7867,9 @@ def test_classify_objects_binds_runtime_measurement_values():
     )
     executor = _executor(
         "ClassifyObjectsSingleMeasurement",
-        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
-        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
-        runtime_artifact_inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        (ArtifactSpec.output(MEASUREMENTS, MeasurementsArtifactType),),
+        inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
+        runtime_artifact_inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
     )
 
     result = executor.run(
@@ -7197,9 +7911,9 @@ def test_classify_objects_binds_runtime_measurement_values():
 def test_classify_objects_area_shape_uses_current_label_domain():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            "PriorMeasurements": _plan("PriorMeasurements", MeasurementsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     labels = np.array([[1, 2], [0, 2]], dtype=np.int32)
@@ -7224,9 +7938,9 @@ def test_classify_objects_area_shape_uses_current_label_domain():
     )
     executor = _executor(
         "ClassifyObjectsSingleMeasurement",
-        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
-        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
-        runtime_artifact_inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        (ArtifactSpec.output(MEASUREMENTS, MeasurementsArtifactType),),
+        inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
+        runtime_artifact_inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
     )
 
     executor.run(
@@ -7254,9 +7968,9 @@ def test_classify_objects_area_shape_uses_current_label_domain():
 def test_classify_objects_binds_custom_threshold_and_named_low_high_bins():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            "PriorMeasurements": _plan("PriorMeasurements", MeasurementsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     labels = np.array([[1, 2], [3, 0]], dtype=np.int32)
@@ -7287,9 +8001,9 @@ def test_classify_objects_binds_custom_threshold_and_named_low_high_bins():
     )
     executor = _executor(
         "ClassifyObjectsSingleMeasurement",
-        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
-        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
-        runtime_artifact_inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        (ArtifactSpec.output(MEASUREMENTS, MeasurementsArtifactType),),
+        inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
+        runtime_artifact_inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
     )
 
     executor.run(
@@ -7331,9 +8045,9 @@ def test_classify_objects_binds_custom_threshold_and_named_low_high_bins():
 def test_classify_objects_binds_repeated_single_measurement_rules():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            "PriorMeasurements": _plan("PriorMeasurements", MeasurementsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     labels = np.array([[1, 2], [0, 0]], dtype=np.int32)
@@ -7370,9 +8084,9 @@ def test_classify_objects_binds_repeated_single_measurement_rules():
     )
     executor = _executor(
         "ClassifyObjectsSingleMeasurement",
-        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
-        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
-        runtime_artifact_inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        (ArtifactSpec.output(MEASUREMENTS, MeasurementsArtifactType),),
+        inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
+        runtime_artifact_inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
     )
 
     executor.run(
@@ -7428,9 +8142,9 @@ def test_classify_objects_binds_repeated_single_measurement_rules():
 def test_classify_objects_slices_runtime_measurements_with_label_stack():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            "PriorMeasurements": _plan("PriorMeasurements", MeasurementsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     labels = np.array(
@@ -7455,9 +8169,9 @@ def test_classify_objects_slices_runtime_measurements_with_label_stack():
     )
     executor = _executor(
         "ClassifyObjectsSingleMeasurement",
-        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
-        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
-        runtime_artifact_inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        (ArtifactSpec.output(MEASUREMENTS, MeasurementsArtifactType),),
+        inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
+        runtime_artifact_inputs=(ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),),
     )
 
     result = executor.run(
@@ -7503,9 +8217,9 @@ def test_classify_objects_slices_runtime_measurements_with_label_stack():
 def test_cellprofiler_module_executor_preserves_main_stack_for_measurements():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            CELLS: _plan(CELLS, ObjectLabelsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         }
     )
     image = np.stack(
@@ -7520,10 +8234,10 @@ def test_cellprofiler_module_executor_preserves_main_stack_for_measurements():
     adapter.add_objects(CELLS, cells)
     executor = _executor(
         MEASURE_OBJECT_INTENSITY,
-        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        (ArtifactSpec.output(MEASUREMENTS, MeasurementsArtifactType),),
         runtime_artifact_inputs=(
-            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            ArtifactSpec(CELLS, ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),
+            ArtifactSpec.input(CELLS, ObjectLabelsArtifactType),
         ),
     )
     seen_images = []
@@ -7575,9 +8289,9 @@ def test_cellprofiler_module_executor_measures_each_declared_image_and_object():
     cells = np.full((4, 5), 2, dtype=np.int32)
     adapter = _source_bound_image_adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            CELLS: _plan(CELLS, ObjectLabelsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         },
         {DNA_IMAGE: dna, "PH3": ph3},
     )
@@ -7585,16 +8299,16 @@ def test_cellprofiler_module_executor_measures_each_declared_image_and_object():
     adapter.add_objects(CELLS, cells)
     executor = _executor(
         MEASURE_OBJECT_INTENSITY,
-        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        (ArtifactSpec.output(MEASUREMENTS, MeasurementsArtifactType),),
         inputs=(
-            ArtifactSpec(DNA_IMAGE, ArtifactKind.IMAGE),
-            ArtifactSpec("PH3", ArtifactKind.IMAGE),
-            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            ArtifactSpec(CELLS, ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec.input(DNA_IMAGE, ImageArtifactType),
+            ArtifactSpec.input("PH3", ImageArtifactType),
+            ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),
+            ArtifactSpec.input(CELLS, ObjectLabelsArtifactType),
         ),
         runtime_artifact_inputs=(
-            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            ArtifactSpec(CELLS, ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),
+            ArtifactSpec.input(CELLS, ObjectLabelsArtifactType),
         ),
     )
     seen = []
@@ -7602,7 +8316,9 @@ def test_cellprofiler_module_executor_measures_each_declared_image_and_object():
     @declared_processing_contract(ProcessingContract.FLEXIBLE)
     def measure(image_arg, *, labels):
         seen.append((float(image_arg.mean()), int(labels.max())))
-        return image_arg, [{"mean": float(image_arg.mean()), "label": int(labels.max())}]
+        return image_arg, [
+            {"mean": float(image_arg.mean()), "label": int(labels.max())}
+        ]
 
     result = executor.run(
         measure,
@@ -7649,9 +8365,9 @@ def test_cellprofiler_module_executor_measures_each_declared_image_and_object():
 def test_cellprofiler_object_only_executor_does_not_iterate_image_stack():
     adapter, _filemanager = _adapter(
         {
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
-            "Cytoplasm": _plan("Cytoplasm", ArtifactKind.OBJECT_LABELS),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            CELLS: _plan(CELLS, ObjectLabelsArtifactType),
+            "Cytoplasm": _plan("Cytoplasm", ObjectLabelsArtifactType),
         }
     )
     nuclei = np.ones((4, 5), dtype=np.int32)
@@ -7660,14 +8376,14 @@ def test_cellprofiler_object_only_executor_does_not_iterate_image_stack():
     adapter.add_objects(CELLS, cells)
     executor = _executor(
         IDENTIFY_TERTIARY_OBJECTS,
-        (ArtifactSpec("Cytoplasm", ArtifactKind.OBJECT_LABELS),),
+        (ArtifactSpec.output("Cytoplasm", ObjectLabelsArtifactType),),
         inputs=(
-            ArtifactSpec(CELLS, ArtifactKind.OBJECT_LABELS),
-            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec.input(CELLS, ObjectLabelsArtifactType),
+            ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),
         ),
         runtime_artifact_inputs=(
-            ArtifactSpec(CELLS, ArtifactKind.OBJECT_LABELS),
-            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec.input(CELLS, ObjectLabelsArtifactType),
+            ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),
         ),
     )
     seen_images = []
@@ -7693,10 +8409,10 @@ def test_cellprofiler_object_only_executor_does_not_iterate_image_stack():
 def test_cellprofiler_module_executor_records_relationship_and_measurement_outputs():
     adapter, _filemanager = _adapter(
         {
-            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
-            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
-            PARENT_CHILD: _plan(PARENT_CHILD, ArtifactKind.RELATIONSHIPS),
-            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            CELLS: _plan(CELLS, ObjectLabelsArtifactType),
+            NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType),
+            PARENT_CHILD: _plan(PARENT_CHILD, RelationshipsArtifactType),
+            MEASUREMENTS: _plan(MEASUREMENTS, MeasurementsArtifactType),
         },
         source_bindings=StepSourceBindingsConfig(),
     )
@@ -7708,12 +8424,12 @@ def test_cellprofiler_module_executor_records_relationship_and_measurement_outpu
     executor = _executor(
         RELATE_OBJECTS,
         (
-            ArtifactSpec(PARENT_CHILD, ArtifactKind.RELATIONSHIPS),
-            ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+            ArtifactSpec.output(PARENT_CHILD, RelationshipsArtifactType),
+            ArtifactSpec.output(MEASUREMENTS, MeasurementsArtifactType),
         ),
         runtime_artifact_inputs=(
-            ArtifactSpec(CELLS, ArtifactKind.OBJECT_LABELS),
-            ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec.input(CELLS, ObjectLabelsArtifactType),
+            ArtifactSpec.input(NUCLEI, ObjectLabelsArtifactType),
         ),
         inputs=(),
     )

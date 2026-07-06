@@ -3,7 +3,7 @@ from __future__ import annotations
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtWidgets import QPushButton
 
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ImageArtifactType, MeasurementsArtifactType
 from openhcs.core.config import StreamingConfig
 from openhcs.core.debug import (
     DebugArtifactRef,
@@ -97,7 +97,7 @@ def test_debug_inspector_emits_typed_artifact_open_request() -> None:
     QtApplicationHarness.app()
     cursor = debug_cursor()
     artifact_ref = DebugArtifactRef(
-        kind=ArtifactKind.IMAGE,
+        kind=ImageArtifactType,
         name="Segmented",
         cursor=cursor,
         storage_ref="debug://segmented",
@@ -132,7 +132,7 @@ def test_debug_inspector_emits_typed_artifact_open_request() -> None:
 def test_debug_inspector_emits_typed_artifact_export_request() -> None:
     QtApplicationHarness.app()
     artifact_ref = DebugArtifactRef(
-        kind=ArtifactKind.MEASUREMENTS,
+        kind=MeasurementsArtifactType,
         name="Measurements",
         cursor=debug_cursor(),
         storage_ref="debug://measurements.csv",

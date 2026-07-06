@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from openhcs.core.artifacts import ArtifactKey, ArtifactKind, ArtifactScope
+from openhcs.core.artifacts import ArtifactKey, ArtifactScope, MeasurementsArtifactType
 from openhcs.core.runtime_execution_validation import (
     RuntimeArtifactExecutionExpectation,
     RuntimeArtifactExecutionObservation,
@@ -21,7 +21,7 @@ def test_runtime_execution_validation_detects_missing_artifact_kind() -> None:
 
     failures = runtime_artifact_execution_failures(
         RuntimeArtifactExecutionExpectation(
-            artifact_kinds=frozenset((ArtifactKind.MEASUREMENTS,)),
+            artifact_kinds=frozenset((MeasurementsArtifactType,)),
             exports=RuntimeExportExpectation.from_flags(
                 table_exports=False,
                 image_exports=False,
@@ -42,11 +42,11 @@ def test_runtime_execution_observation_reads_context_stores() -> None:
         RuntimeValue(
             key=ArtifactKey(
                 name="Measurements",
-                kind=ArtifactKind.MEASUREMENTS,
+                artifact_type=MeasurementsArtifactType,
                 scope=ArtifactScope(axis_id="A01"),
             ),
             data=(),
-            schema=RuntimeValueSchema(kind=ArtifactKind.MEASUREMENTS),
+            schema=RuntimeValueSchema(artifact_type=MeasurementsArtifactType),
         ),
         path="/memory/Measurements.pkl",
         backend="memory",
@@ -57,7 +57,7 @@ def test_runtime_execution_observation_reads_context_stores() -> None:
         output_root="/tmp/unused",
     )
 
-    assert observation.record_counts_by_axis["A01"][ArtifactKind.MEASUREMENTS] == 1
+    assert observation.record_counts_by_axis["A01"][MeasurementsArtifactType] == 1
 
 
 def test_runtime_execution_observation_uses_compiled_output_roots(tmp_path) -> None:

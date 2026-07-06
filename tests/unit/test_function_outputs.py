@@ -15,7 +15,7 @@ from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 
 from openhcs.constants.constants import AllComponents, Backend, VariableComponents
 from openhcs.core.aligned_image_payload import AlignedImageSliceContext
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     ImagePayloadSourceMetadataContext,
@@ -637,7 +637,7 @@ def test_stream_outputs_partitions_mixed_producer_identities():
         artifact_path,
         output_context=AlignedImageSliceContext.main_flow(
             "OverlayImage",
-            artifact_kind=ArtifactKind.IMAGE.value,
+            artifact_kind=ImageArtifactType.value,
         ),
     )
 
@@ -746,7 +746,7 @@ def test_stream_outputs_skips_object_label_main_flow_payloads():
         path,
         output_context=AlignedImageSliceContext.main_flow(
             output_key="Nuclei",
-            artifact_kind=ArtifactKind.OBJECT_LABELS.value,
+            artifact_kind=ObjectLabelsArtifactType.value,
         ),
     )
 

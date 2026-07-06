@@ -8,9 +8,17 @@ from openhcs.constants import DtypeConversion
 from openhcs.core.config import DtypeConfig
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
-    ArtifactKind,
     ArtifactOutputPlan,
+    ArtifactPlan,
     ArtifactSpec,
+    ArtifactSpecCollection,
+    ArtifactSpecRef,
+    ArtifactType,
+    GroupLineageSourceRelation,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    SpecialArtifactType,
 )
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.context.processing_context import ProcessingContext
@@ -30,6 +38,12 @@ from openhcs.core.module_artifact_contract import (
     ModuleArtifactContract,
     module_artifact_contract,
 )
+from openhcs.core.module_artifact_contract import (
+    DeclaredArtifactOutputPartition,
+    RecordedArtifactOutputPartition,
+    RuntimeArtifactInputPartition,
+    SourceArtifactInputPartition,
+)
 from openhcs.core.pipeline.function_contracts import (
     artifact_inputs,
     artifact_outputs,
@@ -44,6 +58,7 @@ from openhcs.core.runtime_invocation import (
     RuntimeParameterBinding,
 )
 from openhcs.core.runtime_adapters import runtime_adapter
+from openhcs.core.steps.function_runtime import ComponentArtifactPlans
 from openhcs.processing.materialization import csv_only
 
 
@@ -68,11 +83,15 @@ class ExampleInvocationOptions(RuntimeInvocationOptions):
     mode: str
 
 
-first.__artifact_outputs__ = {"positions": ArtifactSpec("positions")}
-second.__artifact_outputs__ = {"measurements": ArtifactSpec("measurements")}
+first.__artifact_outputs__ = {
+    "positions": ArtifactSpec.output("positions", SpecialArtifactType)
+}
+second.__artifact_outputs__ = {
+    "measurements": ArtifactSpec.output("measurements", SpecialArtifactType)
+}
 third.__artifact_outputs__ = {
-    "positions": ArtifactSpec("positions"),
-    "measurements": ArtifactSpec("measurements"),
+    "positions": ArtifactSpec.output("positions", SpecialArtifactType),
+    "measurements": ArtifactSpec.output("measurements", SpecialArtifactType),
 }
 
 
@@ -103,10 +122,7 @@ def test_invocation_positions_are_renumbered_per_dict_group():
         ],
     }
 
-    keys = [
-        invocation.key
-        for invocation in iter_enabled_function_invocations(pattern)
-    ]
+    keys = [invocation.key for invocation in iter_enabled_function_invocations(pattern)]
 
     assert keys == [
         FunctionInvocationKey("first", "DAPI", 0),
@@ -129,14 +145,14 @@ def test_artifact_planning_normalize_pattern_returns_tuple_api():
     ]
 
 
-def test_artifact_graph_tracks_kind_groups_and_invocation_ownership():
-    @artifact_outputs(ArtifactSpec("nuclei", ArtifactKind.OBJECT_LABELS))
+def test_artifact_graph_tracks_type_groups_and_invocation_ownership():
+    @artifact_outputs(ArtifactSpec.output("nuclei", ObjectLabelsArtifactType))
     def identify(image):
         return image
 
     graph = extract_artifact_declarations({"DAPI": identify})
 
-    assert graph.outputs["nuclei"].kind is ArtifactKind.OBJECT_LABELS
+    assert graph.outputs["nuclei"].artifact_type is ObjectLabelsArtifactType
     assert graph.output_groups["nuclei"] == {"DAPI"}
     assert graph.producers[0].invocation_keys == (
         FunctionInvocationKey("identify", "DAPI", 0),
@@ -150,13 +166,10 @@ def test_artifact_graph_accepts_invocation_aware_declaration_provider():
     def declarations_for(invocation, step_context):
         del step_context
         return InvocationArtifactDeclarations(
-            outputs=(
-                (
+            artifacts=(
+                ArtifactSpec.output(
                     invocation.kwargs_dict["output_name"],
-                    ArtifactSpec(
-                        invocation.kwargs_dict["output_name"],
-                        ArtifactKind.OBJECT_LABELS,
-                    ),
+                    ObjectLabelsArtifactType,
                 ),
             ),
         )
@@ -178,25 +191,25 @@ def test_artifact_graph_accepts_invocation_aware_declaration_provider():
     )
 
 
-def test_artifact_graph_rejects_conflicting_producer_kinds():
-    @artifact_outputs(ArtifactSpec("objects", ArtifactKind.OBJECT_LABELS))
+def test_artifact_graph_rejects_conflicting_producer_types():
+    @artifact_outputs(ArtifactSpec.output("objects", ObjectLabelsArtifactType))
     def identify(image):
         return image
 
-    @artifact_outputs(ArtifactSpec("objects", ArtifactKind.MEASUREMENTS))
+    @artifact_outputs(ArtifactSpec.output("objects", MeasurementsArtifactType))
     def measure(image):
         return image
 
-    with pytest.raises(ValueError, match="Conflicting producer artifact kind"):
+    with pytest.raises(ValueError, match="Conflicting producer artifact type"):
         extract_artifact_declarations([identify, measure])
 
 
 def test_artifact_graph_rejects_local_consumer_producer_kind_mismatch():
-    @artifact_outputs(ArtifactSpec("objects", ArtifactKind.OBJECT_LABELS))
+    @artifact_outputs(ArtifactSpec.output("objects", ObjectLabelsArtifactType))
     def identify(image):
         return image
 
-    @artifact_inputs(ArtifactSpec("objects", ArtifactKind.MEASUREMENTS))
+    @artifact_inputs(ArtifactSpec.input("objects", MeasurementsArtifactType))
     def measure(image, objects):
         return image
 
@@ -227,7 +240,9 @@ def test_normalize_function_pattern_is_grouped_source_of_truth():
 def test_callable_contract_is_nominal_source_for_callable_metadata():
     first.input_memory_type = "numpy"
     first.output_memory_type = "cupy"
-    first.__artifact_inputs__ = {"positions": ArtifactSpec("positions")}
+    first.__artifact_inputs__ = {
+        "positions": ArtifactSpec.input("positions", SpecialArtifactType)
+    }
 
     contract = CallableContract.from_callable(first)
 
@@ -236,11 +251,12 @@ def test_callable_contract_is_nominal_source_for_callable_metadata():
     assert contract.output_memory_type == "cupy"
     assert contract.artifact_input_names == ("positions",)
     assert contract.artifact_output_names == ("positions",)
-    assert contract.select_input_plan_keys(
+    assert contract.select_plan_keys(
+        ArtifactInputPlan,
         {
             "positions": ArtifactInputPlan("positions", "/tmp/positions.pkl"),
             "other": ArtifactInputPlan("other", "/tmp/other.pkl"),
-        }
+        },
     ) == ("positions",)
 
 
@@ -249,7 +265,9 @@ def test_compile_function_pattern_builds_invocation_source_of_truth():
     first.output_memory_type = "numpy"
     second.input_memory_type = "numpy"
     second.output_memory_type = "numpy"
-    first.__artifact_inputs__ = {"positions": ArtifactSpec("positions")}
+    first.__artifact_inputs__ = {
+        "positions": ArtifactSpec.input("positions", SpecialArtifactType)
+    }
 
     compiled = compile_function_pattern(
         {
@@ -298,7 +316,7 @@ def test_compile_function_pattern_uses_invocation_aware_declarations():
         del step_context
         output_name = invocation.kwargs_dict["output_name"]
         return InvocationArtifactDeclarations(
-            outputs=((output_name, ArtifactSpec(output_name)),)
+            artifacts=(ArtifactSpec.output(output_name, SpecialArtifactType),)
         )
 
     compiled = compile_function_pattern(
@@ -314,7 +332,10 @@ def test_compile_function_pattern_uses_invocation_aware_declarations():
         declaration_provider=declarations_for,
     )
 
-    assert [invocation.artifact_output_keys for invocation in compiled.default_group.invocations] == [
+    assert [
+        invocation.artifact_output_keys
+        for invocation in compiled.default_group.invocations
+    ] == [
         ("nuclei",),
         ("cells",),
     ]
@@ -323,11 +344,19 @@ def test_compile_function_pattern_uses_invocation_aware_declarations():
 def test_module_artifact_contract_drives_default_artifact_declarations():
     contract = ModuleArtifactContract(
         module_name="IdentifyPrimaryObjects",
-        runtime_artifact_inputs=(
-            ArtifactSpec("DNA", ArtifactKind.IMAGE),
-        ),
-        outputs=(
-            ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                RuntimeArtifactInputPartition,
+                (ArtifactSpec.input("DNA", ImageArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (ArtifactSpec.output("Nuclei", ObjectLabelsArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (ArtifactSpec.output("Nuclei", ObjectLabelsArtifactType),),
+            ),
         ),
     )
 
@@ -342,14 +371,14 @@ def test_module_artifact_contract_drives_default_artifact_declarations():
             "DNA": ArtifactInputPlan(
                 name="DNA",
                 path="/memory/DNA.pkl",
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
             ),
         },
         {
             "Nuclei": ArtifactOutputPlan(
                 name="Nuclei",
                 path="/memory/Nuclei.pkl",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_type=ObjectLabelsArtifactType,
             ),
         },
     )
@@ -361,8 +390,62 @@ def test_module_artifact_contract_drives_default_artifact_declarations():
     assert invocation.artifact_output_keys == ("Nuclei",)
 
 
+def test_module_artifact_contract_relation_sources_include_source_inputs():
+    source = ArtifactSpec.input("OrigWorms", ImageArtifactType)
+    runtime_input = ArtifactSpec.input("ShrunkenWell", ObjectLabelsArtifactType)
+    output = ArtifactSpec.output(
+        "MaskedOrigWorms",
+        ImageArtifactType,
+        relations=(GroupLineageSourceRelation(source=source.ref()),),
+    )
+    contract = ModuleArtifactContract(
+        module_name="MaskImage",
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                SourceArtifactInputPartition,
+                (source,),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                RuntimeArtifactInputPartition,
+                (runtime_input,),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (output,),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (output,),
+            ),
+        ),
+    )
+
+    declarations = InvocationArtifactDeclarations.from_module_contract(contract)
+
+    assert [name for name, _spec in declarations.inputs] == [
+        "OrigWorms",
+        "ShrunkenWell",
+    ]
+    assert [name for name, _spec in declarations.outputs] == ["MaskedOrigWorms"]
+    assert declarations.select_plan_keys(
+        ArtifactInputPlan,
+        {
+            "OrigWorms": ArtifactInputPlan(
+                name="OrigWorms",
+                path="/memory/OrigWorms.pkl",
+                artifact_type=ImageArtifactType,
+            ),
+            "ShrunkenWell": ArtifactInputPlan(
+                name="ShrunkenWell",
+                path="/memory/ShrunkenWell.pkl",
+                artifact_type=ObjectLabelsArtifactType,
+            ),
+        },
+    ) == ("ShrunkenWell",)
+
+
 def test_compiled_group_declares_managed_artifact_input_domain():
-    @artifact_inputs(ArtifactSpec("illum", ArtifactKind.IMAGE))
+    @artifact_inputs(ArtifactSpec.input("illum", ImageArtifactType))
     @runtime_adapter(
         "runtime",
         lambda _request: object(),
@@ -377,19 +460,147 @@ def test_compiled_group_declares_managed_artifact_input_domain():
             "illum": ArtifactInputPlan(
                 name="illum",
                 path="/memory/illum.pkl",
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
             ),
         },
         {},
     )
 
     group = compiled.default_group
-    assert group.invocations[0].runtime_domain is RuntimeInvocationDomain.ARTIFACT_MANAGED
+    assert (
+        group.invocations[0].runtime_domain is RuntimeInvocationDomain.ARTIFACT_MANAGED
+    )
     assert group.runtime_domain is RuntimeInvocationDomain.ARTIFACT_MANAGED
 
 
+def test_adapter_managed_invocation_keeps_full_declared_grouped_inputs():
+    @artifact_inputs(
+        ArtifactSpec.input("cross_channel", ImageArtifactType),
+        ArtifactSpec.input("current_channel", ImageArtifactType),
+    )
+    @runtime_adapter(
+        "runtime",
+        lambda _request: object(),
+        manages_artifact_inputs=True,
+    )
+    def consume_cross_channel(image, *, runtime):
+        return image
+
+    cross_channel_plan = ArtifactInputPlan(
+        name="cross_channel",
+        path="/memory/cross_channel.pkl",
+        artifact_type=ImageArtifactType,
+        group_keys=("3",),
+        paths_by_group={"3": "/memory/cross_channel__3.pkl"},
+    )
+    current_channel_plan = ArtifactInputPlan(
+        name="current_channel",
+        path="/memory/current_channel.pkl",
+        artifact_type=ImageArtifactType,
+        group_keys=("1",),
+        paths_by_group={"1": "/memory/current_channel__1.pkl"},
+    )
+    compiled = compile_function_pattern(
+        consume_cross_channel,
+        {
+            "cross_channel": cross_channel_plan,
+            "current_channel": current_channel_plan,
+        },
+        {},
+    )
+
+    invocation = compiled.default_group.invocations[0]
+    scoped_artifacts = ComponentArtifactPlans(
+        inputs={"current_channel": current_channel_plan.for_group("1")},
+        outputs={},
+    )
+
+    selected = scoped_artifacts.select_for_invocation(
+        invocation,
+        declared_inputs={
+            "cross_channel": cross_channel_plan,
+            "current_channel": current_channel_plan,
+        },
+    )
+
+    assert selected.inputs == {
+        "cross_channel": cross_channel_plan,
+        "current_channel": current_channel_plan,
+    }
+
+
+def test_adapter_recorded_outputs_use_declared_output_plans():
+    contract = ModuleArtifactContract(
+        module_name="RuntimeRecordsOutputs",
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (
+                    ArtifactSpec.output("Cells", ObjectLabelsArtifactType),
+                    ArtifactSpec.output("Measurements", MeasurementsArtifactType),
+                ),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (
+                    ArtifactSpec.output("Cells", ObjectLabelsArtifactType),
+                    ArtifactSpec.output("Measurements", MeasurementsArtifactType),
+                ),
+            ),
+        ),
+    )
+
+    @module_artifact_contract(contract)
+    @runtime_adapter("runtime", lambda _request: object())
+    def runtime_recorded_outputs(image, *, runtime):
+        return image
+
+    cells_output = ArtifactOutputPlan(
+        name="Cells",
+        path="/memory/Cells.pkl",
+        artifact_type=ObjectLabelsArtifactType,
+        group_keys=("3",),
+        paths_by_group={"3": "/memory/w3_Cells.pkl"},
+    )
+    measurement_output = ArtifactOutputPlan(
+        name="Measurements",
+        path="/memory/Measurements.pkl",
+        artifact_type=MeasurementsArtifactType,
+        group_keys=("1",),
+        paths_by_group={"1": "/memory/w1_Measurements.pkl"},
+    )
+    compiled = compile_function_pattern(
+        runtime_recorded_outputs,
+        {},
+        {
+            "Cells": cells_output,
+            "Measurements": measurement_output,
+        },
+    )
+
+    invocation = compiled.default_group.invocations[0]
+    scoped_artifacts = ComponentArtifactPlans(
+        inputs={},
+        outputs={"Measurements": measurement_output.for_group("1")},
+    )
+
+    selected = scoped_artifacts.select_for_invocation(
+        invocation,
+        declared_outputs={
+            "Cells": cells_output,
+            "Measurements": measurement_output,
+        },
+    )
+
+    assert invocation.adapter_records_artifact_outputs
+    assert selected.outputs == {
+        "Cells": cells_output,
+        "Measurements": measurement_output,
+    }
+
+
 def test_compiled_group_does_not_treat_plain_artifact_inputs_as_managed_domain():
-    @artifact_inputs(ArtifactSpec("illum", ArtifactKind.IMAGE))
+    @artifact_inputs(ArtifactSpec.input("illum", ImageArtifactType))
     def apply_illumination(image, illum):
         return image
 
@@ -399,14 +610,16 @@ def test_compiled_group_does_not_treat_plain_artifact_inputs_as_managed_domain()
             "illum": ArtifactInputPlan(
                 name="illum",
                 path="/memory/illum.pkl",
-                kind=ArtifactKind.IMAGE,
+                artifact_type=ImageArtifactType,
             ),
         },
         {},
     )
 
     group = compiled.default_group
-    assert group.invocations[0].runtime_domain is RuntimeInvocationDomain.SOURCE_ANCHORED
+    assert (
+        group.invocations[0].runtime_domain is RuntimeInvocationDomain.SOURCE_ANCHORED
+    )
     assert group.runtime_domain is RuntimeInvocationDomain.SOURCE_ANCHORED
 
 
@@ -470,6 +683,7 @@ def test_runtime_argument_plan_only_injects_options_when_invocation_declares_val
 
 def test_runtime_adapter_declaration_requires_signature_parameter():
     with pytest.raises(TypeError, match="runtime"):
+
         @runtime_adapter("runtime", lambda _request: object())
         def missing_runtime_parameter(image):
             return image
@@ -519,6 +733,21 @@ def test_compiled_function_pattern_filters_detected_groups_by_compiled_keys():
     assert grouped == {1: ["site1"]}
 
 
+def test_ungrouped_compiled_function_pattern_preserves_grouped_source_patterns():
+    compiled = compile_function_pattern(first, {}, {})
+    grouped_patterns = {
+        "1": ["A01_s001_w1_z001_t001.tif"],
+        "2": ["A01_s002_w1_z001_t001.tif"],
+    }
+
+    grouped = compiled.prepare_grouped_patterns(
+        grouped_patterns,
+        default_component="site",
+    )
+
+    assert grouped == grouped_patterns
+
+
 def test_contract_decorators_declare_artifact_specs():
     materialization = csv_only()
 
@@ -529,13 +758,18 @@ def test_contract_decorators_declare_artifact_specs():
 
     assert list(analyze.__artifact_inputs__) == ["positions"]
     assert list(analyze.__artifact_outputs__) == ["metadata", "measurements"]
-    assert analyze.__artifact_outputs__["metadata"] == ArtifactSpec("metadata")
-    assert analyze.__artifact_outputs__["measurements"].materialization is materialization
+    assert analyze.__artifact_outputs__["metadata"] == ArtifactSpec.output(
+        "metadata",
+        SpecialArtifactType,
+    )
+    assert (
+        analyze.__artifact_outputs__["measurements"].materialization is materialization
+    )
 
 
 def test_artifact_decorators_accept_typed_artifact_specs():
-    labels = ArtifactSpec("nuclei", ArtifactKind.OBJECT_LABELS)
-    measurements = ArtifactSpec("measurements", ArtifactKind.MEASUREMENTS)
+    labels = ArtifactSpec.output("nuclei", ObjectLabelsArtifactType)
+    measurements = ArtifactSpec.output("measurements", MeasurementsArtifactType)
 
     @artifact_inputs(labels)
     @artifact_outputs(measurements)
@@ -544,6 +778,75 @@ def test_artifact_decorators_accept_typed_artifact_specs():
 
     assert measure.__artifact_inputs__["nuclei"] == labels
     assert measure.__artifact_outputs__["measurements"] == measurements
+
+
+def test_artifact_spec_rejects_unregistered_plan_type():
+    class UnregisteredPlan(ArtifactPlan):
+        pass
+
+    with pytest.raises(ValueError, match="registered ArtifactPlan"):
+        ArtifactSpec("positions", UnregisteredPlan, SpecialArtifactType)
+
+
+def test_artifact_spec_rejects_unregistered_artifact_type():
+    class UnregisteredArtifactType(ArtifactType):
+        pass
+
+    with pytest.raises(ValueError, match="registered ArtifactType"):
+        ArtifactSpec("positions", ArtifactInputPlan, UnregisteredArtifactType)
+
+
+def test_artifact_spec_rejects_relation_target_role_mismatch():
+    source = ArtifactSpec.input("objects", ObjectLabelsArtifactType)
+
+    with pytest.raises(ValueError, match="requires target plan role output"):
+        ArtifactSpec.input(
+            "filtered",
+            ObjectLabelsArtifactType,
+            relations=(GroupLineageSourceRelation(source=source.ref()),),
+        )
+
+
+def test_artifact_spec_relation_sources_are_full_refs():
+    source_ref = ArtifactSpecRef.input("objects", ObjectLabelsArtifactType)
+    relation = GroupLineageSourceRelation(source=source_ref)
+
+    assert relation.source == source_ref
+    assert relation.payload()["source"] == source_ref.payload()
+
+
+def test_artifact_spec_collection_rejects_unknown_relation_sources():
+    output = ArtifactSpec.output(
+        "filtered",
+        ObjectLabelsArtifactType,
+        relations=(
+            GroupLineageSourceRelation(
+                source=ArtifactSpecRef.input("missing", ObjectLabelsArtifactType),
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="unknown artifact specs"):
+        ArtifactSpecCollection((output,)).validate_registered_relation_refs(
+            owner_name="test",
+        )
+
+
+def test_artifact_spec_collection_unique_keys_by_full_ref():
+    source_input = ArtifactSpec.input("objects", ObjectLabelsArtifactType)
+    source_output = ArtifactSpec.output("objects", ObjectLabelsArtifactType)
+    materialized_output = ArtifactSpec.output(
+        "objects",
+        ObjectLabelsArtifactType,
+        materialization=csv_only(),
+    )
+
+    assert ArtifactSpecCollection((source_input, source_output)).unique() == (
+        source_input,
+        source_output,
+    )
+    with pytest.raises(ValueError, match="Conflicting artifact spec"):
+        ArtifactSpecCollection((source_output, materialized_output)).unique()
 
 
 def test_strip_disabled_functions_removes_empty_pattern_branches():

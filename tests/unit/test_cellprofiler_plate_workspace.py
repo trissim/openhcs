@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import tifffile
 
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ObjectLabelsArtifactType
 from openhcs.interop.cellprofiler.plate_workspace import (
     CellProfilerPlateWorkspacePreparer,
 )
@@ -150,7 +150,7 @@ def test_prepare_cellprofiler_input_workspace_preserves_external_object_inputs(
     )
     assert any(
         binding.alias == "Nuclei"
-        and binding.artifact_kind is ArtifactKind.OBJECT_LABELS
+        and binding.artifact_kind is ObjectLabelsArtifactType
         for binding in bindings
     )
 

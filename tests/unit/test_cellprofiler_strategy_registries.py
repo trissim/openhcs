@@ -189,10 +189,34 @@ def test_measurement_label_execution_mode_follows_object_label_domain():
             ObjectLabelPayload(
                 labels=np.zeros((3, 8, 8), dtype=np.int32),
                 plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE,
-                )),
+                domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE),
+            ),
             ImagePayloadExecutionMode.FULL_STACK,
             runtime_slice_count=1,
+        )
+        is ImagePayloadExecutionMode.FULL_STACK
+    )
+    assert (
+        MeasurementLabelExecutionModeStrategy.resolve(
+            full_stack_measurement,
+            ObjectLabelPayload(
+                labels=np.zeros((3, 8, 8), dtype=np.int32),
+                plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+            ),
+            ImagePayloadExecutionMode.NATURAL,
+            runtime_slice_count=3,
+        )
+        is ImagePayloadExecutionMode.NATURAL
+    )
+    assert (
+        MeasurementLabelExecutionModeStrategy.resolve(
+            full_stack_measurement,
+            ObjectLabelPayload(
+                labels=np.zeros((3, 8, 8), dtype=np.int32),
+                plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+            ),
+            ImagePayloadExecutionMode.FULL_STACK,
+            runtime_slice_count=3,
         )
         is ImagePayloadExecutionMode.NATURAL
     )

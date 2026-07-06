@@ -10,7 +10,7 @@ from PIL import Image
 
 from openhcs.core import source_bindings as source_bindings_module
 from openhcs.constants import AllComponents
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
 from openhcs.core.pipeline_image_schema import (
     GroupingPlan,
     ImageAssignment,
@@ -448,7 +448,7 @@ def test_source_bound_anchor_filter_uses_declared_A01_selectors() -> None:
     ]
     binding = NamedSourceBinding(
         alias="phase",
-        artifact_kind=ArtifactKind.IMAGE,
+        artifact_kind=ImageArtifactType,
         selector=SourceSelector(
             components=(ComponentSelector(AllComponents.SITE, "1"),),
             filters=(
@@ -1256,7 +1256,7 @@ def test_order_matched_source_artifact_bindings_do_not_add_execution_anchors() -
     bindings = (
         NamedSourceBinding(
             alias="A",
-            artifact_kind=ArtifactKind.OBJECT_LABELS,
+            artifact_kind=ObjectLabelsArtifactType,
             selector=SourceSelector(
                 filters=(
                     SourceFilterClause(
@@ -1270,7 +1270,7 @@ def test_order_matched_source_artifact_bindings_do_not_add_execution_anchors() -
         ),
         NamedSourceBinding(
             alias="B",
-            artifact_kind=ArtifactKind.OBJECT_LABELS,
+            artifact_kind=ObjectLabelsArtifactType,
             selector=SourceSelector(
                 filters=(
                     SourceFilterClause(
@@ -1541,7 +1541,7 @@ def test_materialize_A01_schema_workspace_selects_sample_before_projection(
     assert set(result.primary_mappings) == set(primary["workspace_mapping"])
 
 
-def test_A01_schema_image_set_selection_keeps_all_sites_for_selected_sample() -> None:
+def test_A01_schema_image_set_selection_limits_image_sets() -> None:
     schema = PipelineImageSchema()
     image_sets = (
         ImageSetRecord(0, {}, {"ImageNumber": "1"}),
@@ -1554,7 +1554,7 @@ def test_A01_schema_image_set_selection_keeps_all_sites_for_selected_sample() ->
         image_sets,
     )
 
-    assert selected == image_sets
+    assert selected == image_sets[:1]
 
 
 def test_materialize_A01_schema_workspace_derives_well_match_field(
@@ -1847,6 +1847,73 @@ def test_materialize_A01_schema_workspace_projects_tiff_stack_pages_to_z_axis(
         "source_plane_group_key"
         not in primary["source_metadata"]["A01_s001_w1_z002_t001.tif"]
     )
+
+
+def test_source_schema_image_set_selection_preserves_tiff_stack_planes(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_tiff_stack(source_root / "stack_ch1.tif", (10, 20, 30))
+    _write_tiff_stack(source_root / "stack_ch2.tif", (40, 50, 60))
+
+    result = materialize_A01_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            assignments_by_alias={
+                "DNA": ImageAssignment(
+                    alias="DNA",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "ch1",
+                            ),
+                        ),
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+                "Actin": ImageAssignment(
+                    alias="Actin",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "ch2",
+                            ),
+                        ),
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        ),
+        image_set_selection=SourceSchemaImageSetSelection(max_image_set_count=1),
+    )
+
+    primary = json.loads(result.metadata_path.read_text())["subdirectories"]["."]
+
+    assert set(primary["workspace_mapping"]) == {
+        "A01_s001_w1_z001_t001.tif",
+        "A01_s001_w1_z002_t001.tif",
+        "A01_s001_w1_z003_t001.tif",
+        "A01_s001_w2_z001_t001.tif",
+        "A01_s001_w2_z002_t001.tif",
+        "A01_s001_w2_z003_t001.tif",
+    }
+    assert primary["sites"] == {"1": None}
+    assert primary["z_indexes"] == {"1": None, "2": None, "3": None}
+    assert primary["workspace_mapping"]["A01_s001_w2_z003_t001.tif"] == {
+        "backend": "disk",
+        "source_path": "../source/stack_ch2.tif",
+        "plane_index": 2,
+        "z": 3,
+    }
 
 
 def test_virtual_workspace_structured_disk_ref_loads_tiff_plane(
@@ -2830,7 +2897,7 @@ def test_materialize_A01_schema_workspace_skips_imported_metadata_partial_join(
             source_artifacts_by_alias={
                     "Illum": SourceArtifactAssignment(
                         alias="Illum",
-                        artifact_kind=ArtifactKind.IMAGE,
+                        artifact_kind=ImageArtifactType,
                     selector=SourceSelector(
                         filters=(
                             SourceFilterClause(
@@ -2938,7 +3005,7 @@ def test_materialize_A01_schema_workspace_supports_source_artifact_only_schema(
             source_artifacts_by_alias={
                 "A": SourceArtifactAssignment(
                     alias="A",
-                    artifact_kind=ArtifactKind.OBJECT_LABELS,
+                    artifact_kind=ObjectLabelsArtifactType,
                     selector=SourceSelector(
                         filters=(
                             SourceFilterClause(
@@ -2953,7 +3020,7 @@ def test_materialize_A01_schema_workspace_supports_source_artifact_only_schema(
                 ),
                 "B": SourceArtifactAssignment(
                     alias="B",
-                    artifact_kind=ArtifactKind.OBJECT_LABELS,
+                    artifact_kind=ObjectLabelsArtifactType,
                     selector=SourceSelector(
                         filters=(
                             SourceFilterClause(
