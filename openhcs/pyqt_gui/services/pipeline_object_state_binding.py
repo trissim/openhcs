@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from typing import Self
 
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from openhcs.core.function_patterns import (
+    COMPILE_TIME_FUNCTION_KWARGS_KEY,
+    CompileTimeFunctionKwarg,
+)
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.steps.function_step import FunctionSpec, FunctionStep
 from openhcs.pyqt_gui.services.plate_manager_root_state import (
@@ -265,7 +269,9 @@ class PipelineObjectStateBinding:
                     scope_id=func_scope_id,
                     parent_state=step_state,
                     exclude_params=exclude_params,
-                    initial_values=kwargs,
+                    initial_values=CompileTimeFunctionKwarg.strip_from_mapping(
+                        kwargs
+                    ),
                 )
             )
 
@@ -380,28 +386,52 @@ class PipelineObjectStateBinding:
         entry = FunctionPatternCodeDocumentService().child_scope_entry(child_scope_id)
         return cls.replace_function_entry(func_item, entry.func, entry.kwargs)
 
-    @staticmethod
+    @classmethod
     def replace_function_entry(
+        cls,
         func_item: PipelineFunctionPattern,
         func_obj: Callable,
         kwargs: dict,
     ) -> PipelineFunctionPattern:
         """Return one function-pattern entry with updated callable and kwargs."""
 
+        merged_kwargs = cls.merge_compile_time_kwargs(func_item, kwargs)
         if (
             isinstance(func_item, tuple)
             and len(func_item) == 3
             and callable(func_item[0])
             and isinstance(func_item[1], Mapping)
         ):
-            return (func_obj, kwargs, func_item[2])
+            return (func_obj, merged_kwargs, func_item[2])
         if (
             isinstance(func_item, tuple)
             and len(func_item) == 2
             and callable(func_item[0])
             and isinstance(func_item[1], Mapping)
         ):
-            return (func_obj, kwargs)
+            return (func_obj, merged_kwargs)
         if callable(func_item):
-            return (func_obj, kwargs) if kwargs else func_obj
+            return (func_obj, merged_kwargs) if merged_kwargs else func_obj
         return func_item
+
+    @staticmethod
+    def merge_compile_time_kwargs(
+        func_item: PipelineFunctionPattern,
+        kwargs: dict,
+    ) -> dict:
+        """Preserve hidden compile-time metadata while applying UI-edited kwargs."""
+        if (
+            isinstance(func_item, tuple)
+            and len(func_item) in {2, 3}
+            and callable(func_item[0])
+            and isinstance(func_item[1], Mapping)
+        ):
+            return {
+                **{
+                    key: value
+                    for key, value in func_item[1].items()
+                    if key == COMPILE_TIME_FUNCTION_KWARGS_KEY
+                },
+                **kwargs,
+            }
+        return kwargs

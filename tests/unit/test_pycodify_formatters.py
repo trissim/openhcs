@@ -314,8 +314,10 @@ def test_cellprofiler_runtime_callable_source_keeps_raw_hidden_parameters_hidden
     )
 
     ast.parse(source)
-    assert "cellprofiler_module_callable" in source
-    assert "MeasureColocalization_14_measurements" in source
+    assert "cellprofiler_module_callable" not in source
+    assert "ModuleArtifactContract(" not in source
+    assert "MeasureColocalization_14_measurements" not in source
+    assert "measure_colocalization_objects" in source
     assert "rank_provider" not in source
     assert "DirectObjectColocalizationRankProvider" not in source
 

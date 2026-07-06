@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 import pytest
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.module_processing_components import (
@@ -1052,6 +1053,8 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
     assert "CellProfilerModuleContractBinding" not in generated.code
     assert "_CELLPROFILER_RUNTIME_CONTRACTS_BY_MODULE_NUM = {" not in generated.code
     assert "ModuleArtifactContract(" not in generated.code
+    assert "CellProfilerModuleSettingsKwarg" in generated.code
+    assert "CellProfilerModuleSettingsPayload" in generated.code
     assert "source_bindings=LazyStepSourceBindingsConfig(" in generated.code
     assert "enabled=True" in generated.code
     assert "source_bindings=StepSourceBindingsConfig(" not in generated.code
@@ -1073,6 +1076,91 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
     assert "identify_primary_objects_1_runtime.input_memory_type" not in generated.code
     assert "func=identify_primary_objects_1_runtime" not in generated.code
     assert "func=identify_secondary_objects_2_runtime" not in generated.code
+
+
+def test_compiler_derives_cellprofiler_contracts_from_module_settings_kwargs():
+    from openhcs.core.function_patterns import (
+        COMPILE_TIME_FUNCTION_KWARGS_KEY,
+        CompileTimeFunctionKwargs,
+        normalize_function_pattern,
+    )
+    from openhcs.core.invocation_artifacts import (
+        ArtifactDeclarationStepContext,
+        PipelineInvocationContractProviderAuthority,
+    )
+    from openhcs.core.source_bindings import (
+        NamedSourceBinding,
+        StepSourceBindingsConfig,
+    )
+    from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.interop.cellprofiler.module_settings_payload import (
+        CellProfilerModuleSettingsKwarg,
+        CellProfilerModuleSettingsPayload,
+    )
+    from openhcs.processing.backends.cellprofiler import (
+        identify_primary_objects,
+        identify_secondary_objects,
+    )
+
+    primary_module = _identify_primary()
+    secondary_module = _identify_secondary()
+    steps = [
+        FunctionStep(
+            func=(
+                identify_primary_objects,
+                {
+                    COMPILE_TIME_FUNCTION_KWARGS_KEY: (
+                        CompileTimeFunctionKwargs.of(
+                            CellProfilerModuleSettingsKwarg,
+                            CellProfilerModuleSettingsPayload.from_module(
+                                primary_module
+                            ),
+                        )
+                    )
+                },
+            ),
+            name=primary_module.name,
+        ),
+        FunctionStep(
+            func=(
+                identify_secondary_objects,
+                {
+                    COMPILE_TIME_FUNCTION_KWARGS_KEY: (
+                        CompileTimeFunctionKwargs.of(
+                            CellProfilerModuleSettingsKwarg,
+                            CellProfilerModuleSettingsPayload.from_module(
+                                secondary_module
+                            ),
+                        )
+                    )
+                },
+            ),
+            name=secondary_module.name,
+        ),
+    ]
+    provider = PipelineInvocationContractProviderAuthority.provider_for_session(
+        SimpleNamespace(steps=steps, pipeline_metadata={})
+    )
+    secondary_item = next(normalize_function_pattern(steps[1].func).iter_items())
+
+    contract = provider(
+        secondary_item,
+        ArtifactDeclarationStepContext(
+            step_index=1,
+            source_bindings=StepSourceBindingsConfig(
+                enabled=True,
+                bindings=(NamedSourceBinding(alias="OrigGreen"),),
+            ),
+        ),
+    )
+
+    assert contract is not None
+    assert contract.module_artifact_contract is not None
+    assert contract.module_artifact_contract.module_name == "IdentifySecondaryObjects"
+    assert (
+        contract.module_artifact_contract.runtime_artifact_inputs[0].name
+        == "Nuclei"
+    )
 
 
 def test_pipeline_generator_resolves_object_measurement_function_variants():

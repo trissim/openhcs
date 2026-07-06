@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 from openhcs.core.artifact_key_selection import ArtifactPlanKeySelector
 from openhcs.core.artifacts import (
@@ -193,37 +193,38 @@ InvocationContractProviderLike = Callable[
 
 
 @dataclass(frozen=True, slots=True)
-class PipelineInvocationContractProviderMetadata:
-    """Typed metadata key for pipeline-owned compile-time contract providers."""
+class CompositeInvocationContractProvider:
+    """Try compile-time invocation-contract providers in declaration order."""
 
-    metadata_key: ClassVar[str] = "invocation_contract_provider"
+    providers: tuple[InvocationContractProviderLike, ...]
+
+    def __call__(
+        self,
+        invocation: Any,
+        step_context: ArtifactDeclarationStepContext,
+    ) -> "CallableContract | None":
+        for provider in self.providers:
+            contract = provider(invocation, step_context)
+            if contract is not None:
+                return contract
+        return None
+
+
+class PipelineInvocationContractProviderAuthority:
+    """Resolve all registered compile-time invocation-contract providers."""
 
     @classmethod
-    def from_metadata(
+    def provider_for_session(
         cls,
-        metadata: Mapping[str, object],
+        session: Any,
     ) -> InvocationContractProviderLike:
-        value = metadata.get(cls.metadata_key)
-        if value is None:
-            return public_callable_invocation_contract
-        if not callable(value):
-            raise TypeError(
-                "Pipeline invocation contract provider metadata must be callable, "
-                f"got {type(value).__name__}."
-            )
-        return value
+        providers: list[InvocationContractProviderLike] = []
+        from openhcs.core.function_patterns import CompileTimeFunctionKwarg
 
-    @classmethod
-    def with_provider(
-        cls,
-        metadata: Mapping[str, object],
-        provider: InvocationContractProviderLike,
-    ) -> dict[str, object]:
-        if not callable(provider):
-            raise TypeError(
-                "Pipeline invocation contract provider must be callable, "
-                f"got {type(provider).__name__}."
-            )
-        updated = dict(metadata)
-        updated[cls.metadata_key] = provider
-        return updated
+        for kwarg_type in CompileTimeFunctionKwarg.registered_keys():
+            provider = kwarg_type.invocation_contract_provider_for_session(session)
+            if provider is not None:
+                providers.append(provider)
+        if not providers:
+            return public_callable_invocation_contract
+        return CompositeInvocationContractProvider(tuple(providers))

@@ -44,6 +44,11 @@ from openhcs.core.pipeline_image_schema import (
     PipelineImageSchema,
     PipelineImageSchemaSourceBindingsRepresentability,
 )
+from openhcs.core.function_patterns import (
+    COMPILE_TIME_FUNCTION_KWARGS_KEY,
+    CompileTimeFunctionKwargs,
+)
+from openhcs.core.python_source_literal import PythonSourceLiteral
 from openhcs.core.vfs_protocol import FileManagerLike
 from openhcs.interop.cellprofiler.module_roles import (
     ArtifactSpecKey,
@@ -69,6 +74,10 @@ from openhcs.interop.cellprofiler.module_declarations import (
     CellProfilerModule,
     ModuleSettingCoverageRecord,
 )
+from openhcs.interop.cellprofiler.module_settings_payload import (
+    CellProfilerModuleSettingsKwarg,
+    CellProfilerModuleSettingsPayload,
+)
 from openhcs.processing.materialization import MaterializedFilenameIdentity, tiff_stack
 from openhcs.interop.cellprofiler.symbol_table import (
     CellProfilerSymbolTable,
@@ -77,6 +86,7 @@ from openhcs.interop.cellprofiler.symbol_table import (
 from openhcs.interop.cellprofiler.module_processing_components import (
     GeneratedLiteralValue,
     GeneratedParameterName,
+    GeneratedStepSettingKey,
     GeneratedStepSettings,
     ModuleProcessingComponentRequest,
     RuntimeArtifactLineageScope,
@@ -763,6 +773,17 @@ class PipelineGeneratorCodeEmitter:
                 param_mapping=param_mapping,
                 artifact_contract=artifact_contract,
             )
+            module_settings_payload = CellProfilerModuleSettingsPayload.from_module(
+                module
+            )
+            compile_time_kwargs = CompileTimeFunctionKwargs.of(
+                CellProfilerModuleSettingsKwarg,
+                module_settings_payload,
+            )
+            translated_kwargs = translated_kwargs.with_defaults(
+                {COMPILE_TIME_FUNCTION_KWARGS_KEY: compile_time_kwargs}
+            )
+            literal_imports.update(compile_time_kwargs.source_literal_imports())
             invocation_options_literal = (
                 module_type.generated_invocation_options_literal(
                     bound_settings.invocation_options, import_collector=literal_imports
@@ -797,7 +818,9 @@ class PipelineGeneratorCodeEmitter:
             if translated_kwargs:
                 kwargs_lines = ["{"]
                 for k, v in translated_kwargs.items():
-                    kwargs_lines.append(f"            {repr(k)}: {python_literal(v)},")
+                    kwargs_lines.append(
+                        f"            {self.kwarg_key_literal(k)}: {python_literal(v)},"
+                    )
                 kwargs_lines.append("        }")
                 kwargs_str = "\n".join(kwargs_lines)
                 if invocation_options_literal is None:
@@ -840,6 +863,11 @@ class PipelineGeneratorCodeEmitter:
             ]
             return ("\n".join((*import_lines, "", *lines)), tuple(setting_coverage))
         return ("\n".join(lines), tuple(setting_coverage))
+
+    @staticmethod
+    def kwarg_key_literal(key: GeneratedStepSettingKey) -> str:
+        """Render generated source for a CellProfiler step kwarg key."""
+        return repr(key)
 
     @staticmethod
     def backend_function_import_block(function_names: Iterable[str]) -> str:
@@ -1127,6 +1155,8 @@ class PipelineGenerator:
 
 def python_literal(value: GeneratedLiteralValue) -> str:
     """Render a deterministic generated-code literal for bound setting values."""
+    if isinstance(value, PythonSourceLiteral):
+        return value.source_literal()
     if isinstance(value, CellProfilerMeasurementTargetScope):
         return f"CellProfilerMeasurementTargetScope.{value.name}"
     if isinstance(value, CellProfilerBackendProvider):

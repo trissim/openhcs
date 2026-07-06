@@ -115,36 +115,7 @@ class CellProfilerRuntimeCallableFormatter(SourceFormatter):
         return isinstance(value, CellProfilerRuntimeCallable)
 
     def format(self, value, context: FormatContext) -> SourceFragment:
-        raw_func_frag = to_source(value.raw_func, context)
-        contract_frag = to_source(value.contract, context.indented())
-        import_pair = (
-            "openhcs.interop.cellprofiler.runtime.module_execution",
-            "cellprofiler_module_callable",
-        )
-        factory_name = NameMappingLookup.resolve(
-            context, import_pair, "cellprofiler_module_callable"
-        )
-        imports = set(raw_func_frag.imports | contract_frag.imports)
-        imports.add(import_pair)
-        args = [
-            raw_func_frag.code,
-            contract_frag.code,
-        ]
-        if value.declared_processing_contract is not None:
-            args.append(
-                f"declared_processing_contract={value.declared_processing_contract!r}"
-            )
-        if value.processing_contract is not None:
-            processing_contract_frag = to_source(value.processing_contract, context)
-            imports |= processing_contract_frag.imports
-            args.append(f"processing_contract={processing_contract_frag.code}")
-
-        field_ctx = context.indented()
-        inner = f",\n{field_ctx.indent_str}".join(args)
-        return SourceFragment(
-            f"{factory_name}(\n{field_ctx.indent_str}{inner}\n{context.indent_str})",
-            frozenset(imports),
-        )
+        return to_source(value.raw_func, context)
 
 
 class PythonSourceLiteralFormatter(SourceFormatter):

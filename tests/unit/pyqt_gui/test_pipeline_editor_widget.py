@@ -21,10 +21,18 @@ from openhcs.core.config import (
     LazyStepWellFilterConfig,
     PipelineConfig,
 )
+from openhcs.core.function_patterns import (
+    COMPILE_TIME_FUNCTION_KWARGS_KEY,
+    CompileTimeFunctionKwargs,
+)
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.debug import DebugCommandType
 from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.interop.cellprofiler.module_settings_payload import (
+    CellProfilerModuleSettingsKwarg,
+    CellProfilerModuleSettingsPayload,
+)
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.pyqt_gui.services.plate_scope_identity import (
     PipelineScopeIdentity,
@@ -522,6 +530,48 @@ def test_step_registration_persists_function_editor_scope_tokens() -> None:
         "plate::functionstep_0",
         "plate::functionstep_0::runtimecallable_0",
     ]
+
+
+def test_step_registration_hides_compile_time_kwargs_from_function_child_state() -> None:
+    ObjectStateRegistry._states.clear()
+    ScopeTokenService.clear_scope("plate::functionstep_0")
+
+    payload = CellProfilerModuleSettingsPayload(
+        "Crop",
+        1,
+        (("Select the input image", "input"),),
+    )
+    runtime_callable = RuntimeCallable()
+    step = FunctionStep(
+        func=(
+            runtime_callable,
+            {
+                "threshold": 3,
+                COMPILE_TIME_FUNCTION_KWARGS_KEY: CompileTimeFunctionKwargs.of(
+                    CellProfilerModuleSettingsKwarg,
+                    payload,
+                ),
+            },
+        ),
+        name="Crop",
+    )
+    binding = PipelineObjectStateBinding.for_plate("plate")
+    assert binding is not None
+
+    _step_state, states = binding.collect_step_registration_states(
+        step=step,
+        scope_id="plate::functionstep_0",
+        parent_state=None,
+    )
+    child_state = states[1]
+    for state in states:
+        ObjectStateRegistry.register(state, _skip_snapshot=True)
+    reconstructed_step = PipelineObjectStateBinding.step_from_state(states[0])
+    reconstructed_kwargs = reconstructed_step.func[1]
+
+    assert child_state.reconstruct_top_level_parameters() == {"threshold": 3}
+    assert reconstructed_kwargs["threshold"] == 3
+    assert COMPILE_TIME_FUNCTION_KWARGS_KEY in reconstructed_kwargs
 
 
 def test_pipeline_update_refreshes_existing_step_scope_state() -> None:

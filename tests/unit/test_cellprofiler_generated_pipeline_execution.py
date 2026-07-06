@@ -35,7 +35,6 @@ from openhcs.constants import Backend
 from openhcs.constants.constants import MEMORY_TYPE_NUMPY
 from openhcs.constants.input_source import InputSource
 from openhcs.core.callable_contract import CallableContract, CallableMetadata
-from openhcs.core.invocation_artifacts import PipelineInvocationContractProviderMetadata
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
     ArtifactOutputPlan,
@@ -509,7 +508,19 @@ def test_materialized_generated_pipeline_contract_sidecar_is_python_source(
         module,
         pipeline_name="contract-sidecar-smoke",
     )
-    assert PipelineInvocationContractProviderMetadata.metadata_key in pipeline.metadata
+    assert "invocation_contract_provider" not in pipeline.metadata
+    from pycodify import Assignment, generate_python_source
+
+    import openhcs.serialization.pycodify_formatters  # noqa: F401
+
+    pipeline_source = generate_python_source(
+        Assignment("pipeline_steps", pipeline.steps),
+        clean_mode=True,
+    )
+    assert "CellProfilerModuleSettingsKwarg" in pipeline_source
+    assert "CellProfilerModuleSettingsPayload" in pipeline_source
+    assert "cellprofiler_module_callable" not in pipeline_source
+    assert "ModuleArtifactContract(" not in pipeline_source
 
 
 def test_materialized_generated_pipeline_exports_semantic_contracts_as_python(

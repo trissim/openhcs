@@ -30,6 +30,7 @@ from openhcs.core.pipeline_image_schema import (
     PipelineImageSchema,
     SOURCE_SCHEMA_ORDERED_IMAGE_SET_COMPONENTS,
 )
+from openhcs.core.python_source_literal import PythonSourceLiteral
 from openhcs.core.source_bindings import (
     SourceBindingMatchMethod,
     SourceSelector,
@@ -49,12 +50,13 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 )
 
 
-GeneratedLiteralScalar: TypeAlias = str | int | float | bool | None | Enum
+GeneratedLiteralScalar: TypeAlias = str | int | float | bool | None | Enum | PythonSourceLiteral
 GeneratedLiteralValue: TypeAlias = (
     "GeneratedLiteralScalar | tuple[GeneratedLiteralValue, ...] | "
     "list[GeneratedLiteralValue] | "
     "dict[GeneratedLiteralValue, GeneratedLiteralValue]"
 )
+GeneratedStepSettingKey: TypeAlias = str
 GeneratedParameterName = str | list[str] | None
 GeneratedGroupByComponent: TypeAlias = (
     "AllComponents | GroupBy | GeneratedGroupByComponentState"
@@ -596,24 +598,24 @@ class RuntimeArtifactLineageScope:
 class GeneratedStepSettings:
     """Generated function kwargs with CellProfiler setting-value literal semantics."""
 
-    entries: tuple[tuple[str, GeneratedLiteralValue], ...] = ()
+    entries: tuple[tuple[GeneratedStepSettingKey, GeneratedLiteralValue], ...] = ()
 
     @classmethod
     def from_mapping(
         cls,
-        values: Mapping[str, GeneratedLiteralValue],
+        values: Mapping[GeneratedStepSettingKey, GeneratedLiteralValue],
     ) -> "GeneratedStepSettings":
         return cls(tuple(values.items()))
 
     def __bool__(self) -> bool:
         return bool(self.entries)
 
-    def items(self) -> Iterable[tuple[str, GeneratedLiteralValue]]:
+    def items(self) -> Iterable[tuple[GeneratedStepSettingKey, GeneratedLiteralValue]]:
         return self.entries
 
     def with_defaults(
         self,
-        values: Mapping[str, GeneratedLiteralValue],
+        values: Mapping[GeneratedStepSettingKey, GeneratedLiteralValue],
     ) -> "GeneratedStepSettings":
         """Return settings with source-derived defaults added when absent."""
         existing_names = {name for name, _value in self.entries}

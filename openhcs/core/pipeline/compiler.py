@@ -121,7 +121,7 @@ from openhcs.core.source_bindings import (
     StepSourceBindingsConfig,
 )
 from openhcs.core.source_load_plan import SourceLoadPlan
-from openhcs.core.invocation_artifacts import PipelineInvocationContractProviderMetadata
+from openhcs.core.invocation_artifacts import PipelineInvocationContractProviderAuthority
 from openhcs.core.pipeline.gpu_memory_validator import GPUMemoryTypeValidator
 from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
 from openhcs.core.function_reference import FunctionReferenceTransportAuthority
@@ -522,9 +522,7 @@ class PipelineCompiler:
         PipelinePathPlanner.prepare_pipeline_paths(
             session,
             invocation_contract_provider=(
-                PipelineInvocationContractProviderMetadata.from_metadata(
-                    session.pipeline_metadata
-                )
+                PipelineInvocationContractProviderAuthority.provider_for_session(session)
             ),
         )
 

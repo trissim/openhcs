@@ -15,10 +15,7 @@ from typing import Any, ClassVar
 
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
-from openhcs.core.invocation_artifacts import (
-    ArtifactDeclarationStepContext,
-    PipelineInvocationContractProviderMetadata,
-)
+from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
 from openhcs.core.artifact_contract_preview import SourceBindingRuntimeContractGuard
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.source_bindings import StepSourceBindingsConfig
@@ -343,26 +340,15 @@ class GeneratedPipelineRuntimeModule:
         self, module: ModuleType, *, pipeline_name: str
     ) -> Pipeline:
         """Build a Pipeline object from generated module exports."""
-        metadata: dict[str, object] = {}
-        invocation_contracts = (
-            CellProfilerGeneratedPipelineInvocationContracts.from_module(module)
-        )
-        if invocation_contracts is not None:
-            bind_generated_pipeline_runtime(
-                module,
-                invocation_contracts.contracts_by_module_num,
-            )
-            metadata = invocation_contracts.attach_to_metadata(metadata)
         pipeline_steps = GeneratedPipelineModuleExports(module).pipeline_steps
         if isinstance(pipeline_steps, Pipeline):
-            pipeline_steps.metadata.update(metadata)
             return pipeline_steps
         if not isinstance(pipeline_steps, list):
             raise TypeError(
                 f"Generated module {module.__name__}.pipeline_steps must be list or "
                 f"Pipeline, got {type(pipeline_steps).__name__}."
             )
-        return Pipeline(steps=pipeline_steps, name=pipeline_name, metadata=metadata)
+        return Pipeline(steps=pipeline_steps, name=pipeline_name)
 
 
 def bind_generated_pipeline_runtime(
@@ -434,14 +420,16 @@ class GeneratedPipelineRuntimeBindings:
                 source_bindings,
             )
         if isinstance(func_spec, tuple) and len(func_spec) in {2, 3}:
-            return (
-                self._bind_callable(
-                    func_spec[0],
-                    step_contract,
-                    source_bindings,
-                ),
-                *func_spec[1:],
+            bound_callable = self._bind_callable(
+                func_spec[0],
+                step_contract,
+                source_bindings,
             )
+            kwargs = self._runtime_kwargs(func_spec[1])
+            tail = func_spec[2:]
+            if kwargs or tail:
+                return (bound_callable, kwargs, *tail)
+            return bound_callable
         if isinstance(func_spec, list):
             return [
                 self._bind_func_spec(
@@ -452,6 +440,19 @@ class GeneratedPipelineRuntimeBindings:
                 for item in func_spec
             ]
         return func_spec
+
+    @staticmethod
+    def _runtime_kwargs(kwargs: Any) -> dict:
+        if not isinstance(kwargs, dict):
+            raise TypeError(
+                "Generated CellProfiler tuple function specs must carry a dict "
+                f"of kwargs, got {type(kwargs).__name__}."
+            )
+        from openhcs.core.function_patterns import CompileTimeFunctionKwarg
+
+        return dict(
+            CompileTimeFunctionKwarg.strip_from_items(tuple(kwargs.items()))
+        )
 
     def _bind_callable(
         self,
@@ -907,16 +908,6 @@ class CellProfilerGeneratedPipelineInvocationContracts:
         return CellProfilerGeneratedInvocationContractProvider(
             self.contracts_by_module_num
         )
-
-    def attach_to_metadata(
-        self,
-        metadata: Mapping[str, object],
-    ) -> dict[str, object]:
-        return PipelineInvocationContractProviderMetadata.with_provider(
-            metadata,
-            self.invocation_contract_provider,
-        )
-
 
 @dataclass(frozen=True, slots=True)
 class GeneratedPipelineModuleExports:

@@ -144,9 +144,7 @@ def test_transport_normalization_preserves_runtime_callable_contracts():
     pickle.dumps(normalized)
 
 
-def test_zmq_pipeline_transport_source_preserves_cellprofiler_contracts():
-    import inspect
-
+def test_zmq_pipeline_transport_source_omits_cellprofiler_runtime_contracts():
     contract = ModuleArtifactContract(
         module_name="Crop",
         items=(
@@ -184,19 +182,15 @@ def test_zmq_pipeline_transport_source_preserves_cellprofiler_contracts():
     restored_contract = CallableContract.from_callable(restored_func)
 
     assert "__openhcs_zmq_pipeline_payload__" not in source
-    assert "ModuleArtifactContract(" in source
-    assert "cellprofiler_module_callable" in source
+    assert "ModuleArtifactContract(" not in source
+    assert "cellprofiler_module_callable" not in source
     assert restored_func.__name__ == "crop"
-    assert "cellprofiler_runtime" in inspect.signature(restored_func).parameters
-    assert restored_contract.module_artifact_contract == contract
+    assert restored_contract.module_artifact_contract is None
     pickle.dumps(restored)
 
 
-def test_zmq_execution_submission_source_preserves_cellprofiler_runtime_callables():
+def test_zmq_execution_submission_source_omits_cellprofiler_runtime_contracts():
     from openhcs.core.config import GlobalPipelineConfig
-    from openhcs.interop.cellprofiler.runtime.module_execution import (
-        CellProfilerRuntimeCallable,
-    )
 
     contract = ModuleArtifactContract(
         module_name="IdentifySecondaryObjects",
@@ -237,10 +231,10 @@ def test_zmq_execution_submission_source_preserves_cellprofiler_runtime_callable
     restored_func = restored[0].func
     restored_contract = CallableContract.from_callable(restored_func)
 
-    assert "cellprofiler_module_callable" in source
-    assert "ModuleArtifactContract(" in source
-    assert isinstance(restored_func, CellProfilerRuntimeCallable)
-    assert restored_contract.module_artifact_contract == contract
+    assert "cellprofiler_module_callable" not in source
+    assert "ModuleArtifactContract(" not in source
+    assert restored_func.__name__ == "identify_secondary_objects"
+    assert restored_contract.module_artifact_contract is None
     pickle.dumps(restored.steps)
 
 
@@ -371,7 +365,7 @@ def test_cellprofiler_runtime_callable_is_function_step_picklable():
     assert restored_contract.module_artifact_contract == contract
 
 
-def test_cellprofiler_runtime_callable_source_derives_materialization_contract():
+def test_cellprofiler_runtime_callable_source_omits_materialization_contract():
     contract = ModuleArtifactContract(
         module_name="Crop",
         items=(
@@ -415,13 +409,10 @@ def test_cellprofiler_runtime_callable_source_derives_materialization_contract()
 
     restored = PipelineStepsNamespaceProjection(namespace).boundary_or_none()
     restored_contract = CallableContract.from_callable(restored[0].func)
-    restored_materialization = restored_contract.module_artifact_contract.outputs[
-        0
-    ].materialization
 
-    assert "MaterializationSpec(" in pipeline_source
-    assert "ModuleArtifactContract(" in pipeline_source
-    assert restored_materialization == contract.outputs[0].materialization
+    assert "MaterializationSpec(" not in pipeline_source
+    assert "ModuleArtifactContract(" not in pipeline_source
+    assert restored_contract.module_artifact_contract is None
 
 
 def test_zmq_pipeline_transport_uses_source_only_cellprofiler_catalog_identity_after_reload():
