@@ -13,7 +13,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import MeasurementsArtifactType, RelationshipsArtifactType
 from openhcs.core.runtime_semantics import MeasurementScope, measurement_row_mapping
 from openhcs.core.runtime_stores import RuntimeValueStore, StoredRuntimeValue
 from openhcs.core.runtime_table_projection import (
@@ -370,7 +370,7 @@ class CellProfilerAnalystProjectionBuilder:
         image_rows_by_number: dict[int, dict[str, Any]],
         object_rows_by_name: dict[str, list[Mapping[str, Any]]],
     ) -> None:
-        for record in store.find(kind=ArtifactKind.MEASUREMENTS, axis_id=axis_id):
+        for record in store.find(artifact_type=MeasurementsArtifactType, axis_id=axis_id):
             table = MeasurementTable.from_runtime_value(record.value)
             if table.subject is None:
                 raise ValueError(
@@ -426,7 +426,7 @@ class CellProfilerAnalystProjectionBuilder:
         row_projection: CPATableRowProjection,
         relationship_rows_by_name: dict[str, list[Mapping[str, Any]]],
     ) -> None:
-        for record in store.find(kind=ArtifactKind.RELATIONSHIPS, axis_id=axis_id):
+        for record in store.find(artifact_type=RelationshipsArtifactType, axis_id=axis_id):
             relationship = ObjectRelationship.from_runtime_value(record.value)
             rows = row_projection.relationship_rows(record, relationship)
             relationship_rows_by_name[record.key.name].extend(rows)

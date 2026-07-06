@@ -10,13 +10,25 @@ import time
 from types import MappingProxyType
 from typing import ClassVar
 
-from metaclass_registry import AutoRegisterMeta
 import numpy as np
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
+from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ArtifactSpecCollection,
+    ArtifactType,
+    ArtifactTypeValue,
+    ArtifactTypeStrategyMatchMixin,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+    SpatialGridArtifactType,
+)
+from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
 from openhcs.core.runtime_semantics import ParentChildRelationshipPayload
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 from openhcs.core.runtime_values import (
+    ObjectLabelValue,
     SpatialGrid,
     image_payload_metadata,
 )
@@ -63,7 +75,7 @@ class CellProfilerOutputRecordingPlan:
     """Prepared output order and recorders for one module contract."""
 
     ordered_outputs: tuple[ArtifactSpec, ...]
-    recorders: Mapping[ArtifactKind, CellProfilerOutputRecorder]
+    recorders: Mapping[type[ArtifactType], CellProfilerOutputRecorder]
 
     @classmethod
     def from_outputs(
@@ -75,31 +87,36 @@ class CellProfilerOutputRecordingPlan:
             ordered_outputs=ordered_outputs,
             recorders=MappingProxyType(
                 {
-                    kind: CellProfilerOutputRecorder.for_kind(kind)
-                    for kind in {spec.kind for spec in ordered_outputs}
+                    artifact_type: CellProfilerOutputRecorder.for_artifact_type(
+                        artifact_type
+                    )
+                    for artifact_type in {
+                        spec.artifact_type for spec in ordered_outputs
+                    }
                 }
             ),
         )
 
 
 class CellProfilerOutputRecorder(
+    ArtifactTypeStrategyMatchMixin,
+    MostDerivedContextStrategyMixin[type[ArtifactType]],
     ABC,
-    metaclass=AutoRegisterMeta,
 ):
-    """Nominal output writer selected by artifact kind."""
+    """Nominal output writer selected by artifact type."""
 
-    __registry_key__ = "kind"
-    __skip_if_no_key__ = True
-    stable_key_axis: ClassVar[str] = "kind"
-    kind: ClassVar[ArtifactKind | None] = None
+    artifact_type: ClassVar[type[ArtifactType] | None] = None
 
     @classmethod
     @lru_cache(maxsize=None)
-    def for_kind(cls, kind: ArtifactKind) -> "CellProfilerOutputRecorder":
-        recorder_type = cls.__registry__.get(kind)
-        if recorder_type is None:
-            raise TypeError(f"Unsupported CellProfiler output kind {kind.value}.")
-        return recorder_type()
+    def for_artifact_type(
+        cls,
+        artifact_type: ArtifactTypeValue,
+    ) -> "CellProfilerOutputRecorder":
+        return cls.for_context(
+            ArtifactType.coerce(artifact_type),
+            error_subject="CellProfiler output recorder",
+        )
 
     @classmethod
     def recording_dependency_depth(cls) -> int:
@@ -156,7 +173,7 @@ class CellProfilerOutputRecorder(
             if profile_enabled:
                 record_started_at = time.perf_counter()
             output_value = resolved_values.recorded_value(spec)
-            runtime_plan.output_recording_plan.recorders[spec.kind].record(
+            runtime_plan.output_recording_plan.recorders[spec.artifact_type].record(
                 CellProfilerOutputRecordRequest(
                     runtime_plan=runtime_plan,
                     adapter=adapter,
@@ -178,7 +195,7 @@ class CellProfilerOutputRecorder(
                         "module": contract.module_name,
                         "function": function_name,
                         "artifact": spec.name,
-                        "kind": spec.kind.value,
+                        "artifact_type": spec.artifact_type.value,
                         **cellprofiler_profile_payload_fields("value", output_value),
                     },
                 )
@@ -203,7 +220,7 @@ class MeasurementDependentOutputRecorder(RelationshipDependentOutputRecorder):
 class ImageOutputRecorder(ImmediateOutputRecorder):
     """Record image outputs."""
 
-    kind = ArtifactKind.IMAGE
+    artifact_type = ImageArtifactType
 
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
         output_value = request.runtime_plan.image_output_value_policy.output_value(
@@ -230,21 +247,24 @@ class ImageOutputRecorder(ImmediateOutputRecorder):
 class ObjectLabelsOutputRecorder(ImmediateOutputRecorder):
     """Record object-label outputs."""
 
-    kind = ArtifactKind.OBJECT_LABELS
+    artifact_type = ObjectLabelsArtifactType
 
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
-        source_payload = request.object_label_output_source_payload()
-        source_metadata = image_payload_metadata(source_payload)
+        output_policy = request.runtime_plan.object_label_output_source_context_policy
+        source_context = output_policy.source_context(request)
         if isinstance(request.output_value, np.ndarray):
+            source_image_names = (
+                request.source.source_aliases or source_context.source_metadata.source_image_names
+            )
             request.adapter.add_source_image_objects(
                 request.spec.name,
                 request.output_value,
                 source_image_name=request.source.source_image_name,
-                source_image_names=(
-                    request.source.source_aliases
-                    or source_metadata.source_image_names
+                source_image_names=source_image_names,
+                source_image_payload=source_context.source_payload,
+                parent_image_source_voxel_spacing=(
+                    source_context.parent_image_source_voxel_spacing
                 ),
-                source_image_payload=source_payload,
                 domain_scope=request.object_label_output_domain_scope(),
             )
             return
@@ -252,24 +272,30 @@ class ObjectLabelsOutputRecorder(ImmediateOutputRecorder):
             request.output_value
         ).runtime_object_label_value(
             request.output_value,
-            source_payload,
+            source_context.source_payload,
             request.object_label_output_domain_scope(),
         )
+        if (
+            source_context.parent_image_payload is not None
+            and isinstance(value, ObjectLabelValue)
+        ):
+            value = value.with_parent_image_context(source_context.parent_image_payload)
         request.adapter.add_objects(
             request.spec.name,
             value,
             source_image_name=request.source.source_image_name,
             source_image_names=(
-                request.source.source_aliases or source_metadata.source_image_names
+                request.source.source_aliases
+                or source_context.source_metadata.source_image_names
             ),
-            source_image_payload=source_payload,
+            source_image_payload=source_context.source_payload,
         )
 
 
 class MeasurementsOutputRecorder(MeasurementDependentOutputRecorder):
     """Record measurement outputs with inferred image/object ownership."""
 
-    kind = ArtifactKind.MEASUREMENTS
+    artifact_type = MeasurementsArtifactType
 
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
         function_name = request.function_name
@@ -355,7 +381,7 @@ class MeasurementsOutputRecorder(MeasurementDependentOutputRecorder):
 class RelationshipsOutputRecorder(RelationshipDependentOutputRecorder):
     """Record parent-child relationship artifacts."""
 
-    kind = ArtifactKind.RELATIONSHIPS
+    artifact_type = RelationshipsArtifactType
 
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
         if not isinstance(request.output_value, ParentChildRelationshipPayload):
@@ -387,7 +413,7 @@ class RelationshipsOutputRecorder(RelationshipDependentOutputRecorder):
 class SpatialGridOutputRecorder(ImmediateOutputRecorder):
     """Record spatial-grid outputs."""
 
-    kind = ArtifactKind.SPATIAL_GRID
+    artifact_type = SpatialGridArtifactType
 
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
         request.adapter.add_spatial_grid(
@@ -403,7 +429,7 @@ def _output_recording_order(
         sorted(
             output_specs,
             key=lambda spec: type(
-                CellProfilerOutputRecorder.for_kind(spec.kind)
+                CellProfilerOutputRecorder.for_artifact_type(spec.artifact_type)
             ).recording_dependency_depth(),
         )
     )

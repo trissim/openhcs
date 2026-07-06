@@ -1,20 +1,12 @@
 """Relationship measurement row authorities for CellProfiler runtime outputs."""
 
 from __future__ import annotations
-
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 import time
 from typing import TYPE_CHECKING
-
 import numpy as np
-
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-from openhcs.core.measurement_row_materialization import (
-    MEASUREMENT_OBJECT_LABEL_FIELD,
-    MEASUREMENT_OBJECT_NAME_FIELD,
-)
-from openhcs.core.registry_strategies import GeneratedEnumClassSpec
+from openhcs.core.artifacts import ArtifactSpec, RelationshipsArtifactType
 from openhcs.core.runtime_semantics import (
     MeasurementRowAxisField,
     ObjectLabelDomainMetadataStrategy,
@@ -37,7 +29,6 @@ from openhcs.interop.cellprofiler.relationship_measurements import (
 from openhcs.interop.cellprofiler.runtime.mapping_lookup import MappingValueLookup
 from openhcs.interop.cellprofiler.runtime.measurement_rows import (
     CellProfilerMeasurementRowProjection,
-    FormattingMeasurementFeatureTemplate,
     LABEL_PAYLOAD_FINAL,
     ObjectLabelCountAuthority,
 )
@@ -56,7 +47,6 @@ if TYPE_CHECKING:
     from openhcs.interop.cellprofiler.runtime.module_execution import (
         CellProfilerOutputRecordRequest,
     )
-
 RelationshipMeasurementValue = int | str | float
 
 
@@ -65,8 +55,7 @@ class RelationshipMeasurementRow(dict[str, RelationshipMeasurementValue]):
 
     @classmethod
     def from_mapping(
-        cls,
-        values: Mapping[str, RelationshipMeasurementValue],
+        cls, values: Mapping[str, RelationshipMeasurementValue]
     ) -> "RelationshipMeasurementRow":
         return cls(values)
 
@@ -74,10 +63,7 @@ class RelationshipMeasurementRow(dict[str, RelationshipMeasurementValue]):
         if slice_index is None:
             return self
         return type(self)(
-            {
-                **self,
-                MeasurementRowAxisField.SLICE_INDEX.value: slice_index,
-            }
+            {**self, MeasurementRowAxisField.SLICE_INDEX.value: slice_index}
         )
 
 
@@ -88,43 +74,20 @@ RelationshipObjectPairs = tuple[RelationshipObjectPair, ...]
 RelationshipObjectPairsBySlice = tuple[tuple[int, RelationshipObjectPairs], ...]
 
 
-for _measurement_feature_template_spec in (
-    GeneratedEnumClassSpec(
-        class_name="CellProfilerRelationshipMeasurementFeature",
-        base_type=FormattingMeasurementFeatureTemplate,
-        members={
-            "PARENT": "Parent_{parent_object_name}",
-        },
-    ),
-):
-    _measurement_feature_template_spec.declare_in(globals())
-
-
 @dataclass(frozen=True, slots=True)
-class RelationshipMeasurementRows(
-    CellProfilerMeasurementRowProjection,
-):
+class RelationshipMeasurementRows(CellProfilerMeasurementRowProjection):
     """Project parent-child relationship payloads into CP object measurement rows."""
 
     request: CellProfilerOutputRecordRequest
-    _object_number_cache: dict[
-        tuple[str, int | None, int | None],
-        dict[int, int],
-    ] = field(
-        default_factory=dict,
-        init=False,
-        repr=False,
-        compare=False,
+    _object_number_cache: dict[tuple[str, int | None, int | None], dict[int, int]] = (
+        field(default_factory=dict, init=False, repr=False, compare=False)
     )
 
     @classmethod
     def for_request(
-        cls,
-        request: CellProfilerOutputRecordRequest,
+        cls, request: CellProfilerOutputRecordRequest
     ) -> "RelationshipMeasurementRows":
-        from openhcs.processing.backends.cellprofiler.module_classes import (
-            CellProfilerModule,
-        )
+        from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
         module_type = CellProfilerModule.for_module(request.module_name)
         if module_type is None:
@@ -132,8 +95,7 @@ class RelationshipMeasurementRows(
         rows = module_type.relationship_measurement_rows(request)
         if not isinstance(rows, RelationshipMeasurementRows):
             raise TypeError(
-                f"{module_type.__name__}.relationship_measurement_rows must return "
-                "RelationshipMeasurementRows."
+                f"{module_type.__name__}.relationship_measurement_rows must return RelationshipMeasurementRows."
             )
         return rows
 
@@ -171,11 +133,13 @@ class RelationshipMeasurementRows(
         self,
     ) -> tuple[tuple[ArtifactSpec, ParentChildRelationshipPayload], ...]:
         entries = tuple(
-            (spec, value)
-            for spec in self.request.declared_outputs
-            if spec.kind is ArtifactKind.RELATIONSHIPS
-            for value in (self.request.output_values.get(spec.name),)
-            if isinstance(value, ParentChildRelationshipPayload)
+            (
+                (spec, value)
+                for spec in self.request.declared_outputs
+                if spec.artifact_type is RelationshipsArtifactType
+                for value in (self.request.output_values.get(spec.name),)
+                if isinstance(value, ParentChildRelationshipPayload)
+            )
         )
         return entries
 
@@ -188,14 +152,15 @@ class RelationshipMeasurementRows(
     ) -> tuple[RelationshipMeasurementRow, ...]:
         rows_started_at = time.perf_counter()
         sliced_pairs = self.payload_pairs_by_slice(
-            payload,
-            child_object_name=child_object_name,
+            payload, child_object_name=child_object_name
         )
         if sliced_pairs is not None:
             slice_count = len(sliced_pairs)
             rows: RelationshipMeasurementRowList = []
             for slice_index, pairs in sliced_pairs:
-                related_parent_ids = tuple(parent_id for parent_id, _child_id in pairs)
+                related_parent_ids = tuple(
+                    (parent_id for parent_id, _child_id in pairs)
+                )
                 rows.extend(
                     self.child_count_rows_for_ids(
                         parent_object_name=parent_object_name,
@@ -211,7 +176,7 @@ class RelationshipMeasurementRows(
                 parent_object_name=parent_object_name,
                 child_object_name=child_object_name,
                 related_parent_ids=tuple(
-                    int(parent_id) for parent_id in payload.parent_ids
+                    (int(parent_id) for parent_id in payload.parent_ids)
                 ),
                 slice_index=None,
             )
@@ -234,11 +199,9 @@ class RelationshipMeasurementRows(
         slice_index: int | None,
         slice_count: int | None = None,
     ) -> tuple[RelationshipMeasurementRow, ...]:
-        related_parent_ids = tuple(int(parent_id) for parent_id in related_parent_ids)
+        related_parent_ids = tuple((int(parent_id) for parent_id in related_parent_ids))
         parent_numbers = self.object_numbers_by_label_id(
-            parent_object_name,
-            slice_index=slice_index,
-            slice_count=slice_count,
+            parent_object_name, slice_index=slice_index, slice_count=slice_count
         )
         counts = {parent_number: 0 for parent_number in parent_numbers.values()}
         for parent_id in related_parent_ids:
@@ -251,15 +214,16 @@ class RelationshipMeasurementRows(
             child_object_name
         ).name
         return tuple(
-            self.axis_qualified_row(
-                {
-                    MEASUREMENT_OBJECT_NAME_FIELD: parent_object_name,
-                    MEASUREMENT_OBJECT_LABEL_FIELD: parent_id,
-                    feature_name: count,
-                },
-                slice_index=slice_index,
+            (
+                self.object_feature_row(
+                    object_name=parent_object_name,
+                    object_label=parent_id,
+                    feature_name=feature_name,
+                    value=count,
+                    slice_index=slice_index,
+                )
+                for parent_id, count in counts.items()
             )
-            for parent_id, count in counts.items()
         )
 
     def parent_rows(
@@ -271,8 +235,7 @@ class RelationshipMeasurementRows(
     ) -> tuple[RelationshipMeasurementRow, ...]:
         rows_started_at = time.perf_counter()
         sliced_pairs = self.payload_pairs_by_slice(
-            payload,
-            child_object_name=child_object_name,
+            payload, child_object_name=child_object_name
         )
         if sliced_pairs is not None:
             slice_count = len(sliced_pairs)
@@ -293,11 +256,11 @@ class RelationshipMeasurementRows(
                 parent_object_name=parent_object_name,
                 child_object_name=child_object_name,
                 pairs=tuple(
-                    (int(parent_id), int(child_id))
-                    for parent_id, child_id in zip(
-                        payload.parent_ids,
-                        payload.child_ids,
-                        strict=True,
+                    (
+                        (int(parent_id), int(child_id))
+                        for parent_id, child_id in zip(
+                            payload.parent_ids, payload.child_ids, strict=True
+                        )
                     )
                 ),
                 slice_index=None,
@@ -322,14 +285,10 @@ class RelationshipMeasurementRows(
         slice_count: int | None = None,
     ) -> tuple[RelationshipMeasurementRow, ...]:
         parent_numbers = self.object_numbers_by_label_id(
-            parent_object_name,
-            slice_index=slice_index,
-            slice_count=slice_count,
+            parent_object_name, slice_index=slice_index, slice_count=slice_count
         )
         child_numbers = self.object_numbers_by_label_id(
-            child_object_name,
-            slice_index=slice_index,
-            slice_count=slice_count,
+            child_object_name, slice_index=slice_index, slice_count=slice_count
         )
         parent_by_child = {}
         for parent_id, child_id in pairs:
@@ -337,23 +296,24 @@ class RelationshipMeasurementRows(
             parent_number = parent_numbers.get(int(parent_id))
             if child_number is not None and parent_number is not None:
                 parent_by_child[child_number] = parent_number
-        feature_name = CellProfilerRelationshipMeasurementFeature.PARENT.feature_name(
-            parent_object_name=parent_object_name
-        )
+        feature_name = self.parent_feature_name(parent_object_name)
         return tuple(
-            self.axis_qualified_row(
-                {
-                    MEASUREMENT_OBJECT_NAME_FIELD: child_object_name,
-                    MEASUREMENT_OBJECT_LABEL_FIELD: child_id,
-                    feature_name: MappingValueLookup(
-                        parent_by_child,
-                        child_id,
-                    ).value_or(0),
-                },
-                slice_index=slice_index,
+            (
+                self.object_feature_row(
+                    object_name=child_object_name,
+                    object_label=child_id,
+                    feature_name=feature_name,
+                    value=MappingValueLookup(parent_by_child, child_id).value_or(0),
+                    slice_index=slice_index,
+                )
+                for child_id in child_numbers.values()
             )
-            for child_id in child_numbers.values()
         )
+
+    @staticmethod
+    def parent_feature_name(parent_object_name: str) -> str:
+        """Return the CellProfiler parent-object feature for a relationship row."""
+        return f"Parent_{parent_object_name}"
 
     def object_numbers_by_label_id(
         self,
@@ -368,9 +328,7 @@ class RelationshipMeasurementRows(
             return cached
         started_at = time.perf_counter()
         labels = self.object_label_domain_value(
-            object_name,
-            slice_index=slice_index,
-            slice_count=slice_count,
+            object_name, slice_index=slice_index, slice_count=slice_count
         )
         if labels is None:
             label_ids = ()
@@ -409,44 +367,30 @@ class RelationshipMeasurementRows(
             slice_count=slice_count,
             source_description=f"object labels {object_name!r}",
         )
-        return RuntimeSliceProjection.object_label_endpoint(
-            labels,
-            context=context,
-        )
+        return RuntimeSliceProjection.object_label_endpoint(labels, context=context)
 
     def object_label_count(
-        self,
-        object_name: str,
-        *,
-        slice_index: int | None = None,
+        self, object_name: str, *, slice_index: int | None = None
     ) -> int:
         if object_name in self.request.output_values:
             return ObjectLabelCountAuthority.count_from_value(
-                self.request.output_values[object_name],
-                slice_index=slice_index,
+                self.request.output_values[object_name], slice_index=slice_index
             )
         return ObjectLabelCountAuthority.count_from_adapter(
-            self.request.adapter,
-            object_name,
-            slice_index=slice_index,
+            self.request.adapter, object_name, slice_index=slice_index
         )
 
     def payload_pairs_by_slice(
-        self,
-        payload: ParentChildRelationshipPayload,
-        *,
-        child_object_name: str,
+        self, payload: ParentChildRelationshipPayload, *, child_object_name: str
     ) -> RelationshipObjectPairsBySlice | None:
-        if payload.slice_count is None and not payload.slice_indices:
+        if payload.slice_count is None and (not payload.slice_indices):
             measurement_sliced_pairs = self._payload_pairs_by_measurement_slice(
-                payload,
-                child_object_name=child_object_name,
+                payload, child_object_name=child_object_name
             )
             if measurement_sliced_pairs is not None:
                 return measurement_sliced_pairs
             return self._payload_pairs_by_child_label_slices(
-                payload,
-                child_object_name=child_object_name,
+                payload, child_object_name=child_object_name
             )
         if payload.slice_count is None:
             slice_count = 0
@@ -468,43 +412,40 @@ class RelationshipMeasurementRows(
         elif payload.parent_ids:
             if slice_count != 1:
                 raise ValueError(
-                    "ParentChildRelationshipPayload with multiple slices must carry "
-                    "slice_indices for non-empty relationships."
+                    "ParentChildRelationshipPayload with multiple slices must carry slice_indices for non-empty relationships."
                 )
             pairs_by_slice[0].extend(
                 zip(payload.parent_ids, payload.child_ids, strict=True)
             )
         return tuple(
-            (slice_index, tuple(pairs))
-            for slice_index, pairs in enumerate(pairs_by_slice)
+            (
+                (slice_index, tuple(pairs))
+                for slice_index, pairs in enumerate(pairs_by_slice)
+            )
         )
 
     def _payload_pairs_by_measurement_slice(
-        self,
-        payload: ParentChildRelationshipPayload,
-        *,
-        child_object_name: str,
+        self, payload: ParentChildRelationshipPayload, *, child_object_name: str
     ) -> RelationshipObjectPairsBySlice | None:
         child_label_slice_count = self._object_label_stack_slice_count(
-            child_object_name,
+            child_object_name
         )
         if child_label_slice_count is None:
             return None
         measurement_payloads = tuple(
-            measurement
-            for value in (
-                self.request.output_value,
-                *self.request.output_values.values(),
-            )
-            for measurement in (
-                CellProfilerRelationshipMeasurementPayloads
-                .from_value(value)
-                .values
+            (
+                measurement
+                for value in (
+                    self.request.output_value,
+                    *self.request.output_values.values(),
+                )
+                for measurement in CellProfilerRelationshipMeasurementPayloads.from_value(
+                    value
+                ).values
             )
         )
         slice_indices = {
-            int(measurement.slice_index)
-            for measurement in measurement_payloads
+            int(measurement.slice_index) for measurement in measurement_payloads
         }
         if len(slice_indices) != 1:
             return None
@@ -514,16 +455,15 @@ class RelationshipMeasurementRows(
             [] for _slice_index in range(slice_count)
         ]
         pairs_by_slice[slice_index].extend(
-            (int(parent_id), int(child_id))
-            for parent_id, child_id in zip(
-                payload.parent_ids,
-                payload.child_ids,
-                strict=True,
+            (
+                (int(parent_id), int(child_id))
+                for parent_id, child_id in zip(
+                    payload.parent_ids, payload.child_ids, strict=True
+                )
             )
         )
         return tuple(
-            (index, tuple(pairs))
-            for index, pairs in enumerate(pairs_by_slice)
+            ((index, tuple(pairs)) for index, pairs in enumerate(pairs_by_slice))
         )
 
     def _object_label_stack_slice_count(self, object_name: str) -> int | None:
@@ -533,16 +473,13 @@ class RelationshipMeasurementRows(
         return ObjectLabelRuntimeSliceStackContract.runtime_slice_count(labels)
 
     def _payload_pairs_by_child_label_slices(
-        self,
-        payload: ParentChildRelationshipPayload,
-        *,
-        child_object_name: str,
+        self, payload: ParentChildRelationshipPayload, *, child_object_name: str
     ) -> RelationshipObjectPairsBySlice | None:
         child_value = self.unprojected_object_labels(child_object_name)
         if child_value is None:
             return None
         child_domain = ObjectLabelDomainMetadataStrategy.for_value(
-            child_value,
+            child_value
         ).object_label_domain(child_value)
         if child_domain.scope is not ObjectLabelDomainScope.PLANE:
             return None
@@ -556,9 +493,7 @@ class RelationshipMeasurementRows(
         parent_by_child = {
             int(child_id): int(parent_id)
             for parent_id, child_id in zip(
-                payload.parent_ids,
-                payload.child_ids,
-                strict=True,
+                payload.parent_ids, payload.child_ids, strict=True
             )
         }
         for slice_index, label_plane in enumerate(label_stack):
@@ -568,18 +503,55 @@ class RelationshipMeasurementRows(
                 if parent_id is not None:
                     pairs_by_slice[slice_index].append((parent_id, int(child_id)))
         return tuple(
-            (slice_index, tuple(pairs))
-            for slice_index, pairs in enumerate(pairs_by_slice)
+            (
+                (slice_index, tuple(pairs))
+                for slice_index, pairs in enumerate(pairs_by_slice)
+            )
         )
 
     @staticmethod
     def axis_qualified_row(
-        row: Mapping[str, RelationshipMeasurementValue],
-        *,
-        slice_index: int | None,
+        row: Mapping[str, RelationshipMeasurementValue], *, slice_index: int | None
     ) -> RelationshipMeasurementRow:
         return RelationshipMeasurementRow.from_mapping(row).with_axis(
             slice_index=slice_index
+        )
+
+    @classmethod
+    def object_feature_row(
+        cls,
+        *,
+        object_name: str,
+        object_label: int,
+        feature_name: str,
+        value: RelationshipMeasurementValue,
+        slice_index: int | None,
+    ) -> RelationshipMeasurementRow:
+        return cls.axis_qualified_row(
+            {
+                MeasurementRowAxisField.OBJECT_NAME.value: object_name,
+                MeasurementRowAxisField.OBJECT_LABEL.value: object_label,
+                feature_name: value,
+            },
+            slice_index=slice_index,
+        )
+
+    @classmethod
+    def object_feature_values_row(
+        cls,
+        *,
+        object_name: str,
+        object_label: int,
+        feature_values: Mapping[str, RelationshipMeasurementValue],
+        slice_index: int | None,
+    ) -> RelationshipMeasurementRow:
+        return cls.axis_qualified_row(
+            {
+                MeasurementRowAxisField.OBJECT_NAME.value: object_name,
+                MeasurementRowAxisField.OBJECT_LABEL.value: object_label,
+                **dict(feature_values),
+            },
+            slice_index=slice_index,
         )
 
     def object_labels(
@@ -590,9 +562,7 @@ class RelationshipMeasurementRows(
         slice_count: int | None = None,
     ) -> CellProfilerRuntimeValue | None:
         labels = self.object_label_domain_value(
-            object_name,
-            slice_index=slice_index,
-            slice_count=slice_count,
+            object_name, slice_index=slice_index, slice_count=slice_count
         )
         if labels is None:
             return None
@@ -604,7 +574,9 @@ class RelationshipMeasurementRows(
             return None
         return LABEL_PAYLOAD_FINAL.value(value)
 
-    def unprojected_object_labels(self, object_name: str) -> CellProfilerRuntimeValue | None:
+    def unprojected_object_labels(
+        self, object_name: str
+    ) -> CellProfilerRuntimeValue | None:
         value = self.request.output_values.get(object_name)
         if value is None:
             value = self.request.adapter.get_objects(object_name)
@@ -622,7 +594,9 @@ class CellProfilerRelationshipMeasurementPayloads:
     values: tuple[RelationshipMeasurements, ...]
 
     @classmethod
-    def from_value(cls, value: CellProfilerRuntimeValue) -> "CellProfilerRelationshipMeasurementPayloads":
+    def from_value(
+        cls, value: CellProfilerRuntimeValue
+    ) -> "CellProfilerRelationshipMeasurementPayloads":
         """Normalize scalar or slice-aligned relationship measurement payloads."""
         match value:
             case RelationshipMeasurements() as measurements:
@@ -636,19 +610,20 @@ class CellProfilerRelationshipMeasurementPayloads:
 
     @classmethod
     def from_values(
-        cls,
-        values: CellProfilerRuntimeValueSequence,
+        cls, values: CellProfilerRuntimeValueSequence
     ) -> "CellProfilerRelationshipMeasurementPayloads":
         """Normalize a sequence of candidate relationship measurement payloads."""
         return cls(
             tuple(
-                value
-                for value in values
-                if isinstance(value, RelationshipMeasurements)
+                (
+                    value
+                    for value in values
+                    if isinstance(value, RelationshipMeasurements)
+                )
             )
         )
 
     @property
     def declares_distance_measurements(self) -> bool:
         """Return whether any payload declares distance measurements."""
-        return any(value.declares_distance_measurements for value in self.values)
+        return any((value.declares_distance_measurements for value in self.values))

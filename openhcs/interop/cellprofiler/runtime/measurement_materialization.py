@@ -15,13 +15,15 @@ from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttr
 
 from openhcs.core.artifacts import ArtifactSpec
 from openhcs.core.measurement_row_materialization import (
-    MEASUREMENT_OBJECT_NAME_FIELD,
+    ConcatenatedColumnarRows,
     MEASUREMENT_SPARSE_CELL,
     MeasurementProjectedColumnarRows,
     MeasurementRowsAxisProjection,
     MeasurementSparseColumnarRows,
     MeasurementSliceIndexImageNumberProjection,
+    MeasurementSourceImageNumberProjection,
     ProjectedMeasurementRows,
+    measurement_row_object_name,
 )
 from openhcs.core.pipeline.function_contracts import special_output_specs_from_callable
 from openhcs.core.runtime_identifier import normalize_runtime_identifier
@@ -49,9 +51,6 @@ from openhcs.interop.cellprofiler.runtime.adapter import (
     CellProfilerRuntimeAdapter,
 )
 from openhcs.interop.cellprofiler.runtime.artifact_binding import _callable_type_hints
-from openhcs.interop.cellprofiler.runtime.measurement_rows import (
-    ConcatenatedMeasurementColumnarRows,
-)
 from openhcs.interop.cellprofiler.runtime.payload_types import (
     CellProfilerFunction,
     CellProfilerKwargDict,
@@ -136,13 +135,9 @@ class CellProfilerMeasurementFieldSchema:
     def rows_declare_object_name(rows: MeasurementRowsInput) -> bool:
         """Return whether rows carry explicit object ownership."""
         if isinstance(rows, ColumnarRows):
-            return MEASUREMENT_OBJECT_NAME_FIELD in rows.columns
+            return MeasurementRowAxisField.OBJECT_NAME.value in rows.columns
         return any(
-            measurement_row_mapping(row).get(MEASUREMENT_OBJECT_NAME_FIELD)
-            not in (
-                None,
-                "",
-            )
+            measurement_row_object_name(measurement_row_mapping(row)) is not None
             for row in rows
         )
 
@@ -245,7 +240,13 @@ class CellProfilerMeasurementOutputProjection:
     def project_columnar_rows(cls, rows: ColumnarRows) -> ColumnarRows:
         columns = CellProfilerProjectedColumnarRowColumns(rows.columns)
         if isinstance(rows, MeasurementSparseColumnarRows):
-            return MeasurementSparseColumnarRows(columns)
+            return MeasurementSparseColumnarRows(
+                columns,
+                missing_cell=rows.missing_cell,
+                declared_object_measurement_domain_covered=(
+                    rows.covers_declared_object_measurement_domain
+                ),
+            )
         return MeasurementProjectedColumnarRows(
             columns,
             declared_object_measurement_domain_covered=(
@@ -527,6 +528,7 @@ class CellProfilerMeasurementRecord:
         return CellProfilerMeasurementProjectionRequest(
             adapter=adapter,
             rows=self.rows,
+            fields=self.fields,
             source_context=self.source_context,
             source_resolver=CellProfilerMeasurementSourceResolver(
                 object_source_lookup=AdapterObjectLabelSourceLookup(
@@ -653,7 +655,7 @@ class AdapterObjectLabelSourceLookup(ObjectLabelSourceLookup):
         object_labels = self.object_labels(object_name)
         if not image_payload_metadata(object_labels).source_image_paths:
             return source_context
-        return source_context.with_ownership(
+        return CellProfilerMeasurementSourceContext(
             source_image_name=object_labels.source_image_name,
             source_image_payload=object_labels,
         )
@@ -710,10 +712,7 @@ class CellProfilerMeasurementSourceResolver:
             source_context,
             object_name=object_name,
         )
-        if (
-            resolved_context.source_image_name is None
-            and self.has_object_owner(object_name)
-        ):
+        if self.has_object_owner(object_name):
             return self.object_source_lookup.source_context_for(
                 resolved_context,
                 object_name,
@@ -775,18 +774,15 @@ class CellProfilerMeasurementProjectionRequest(CellProfilerMeasurementRecord):
             time.perf_counter() - phase_started_at,
             rows=projection.row_count,
         )
-        source_qualified_image_number_start = None
-        if (
-            self.source_context.source_image_payload is not None
-            and self.object_name in (_MISSING_MEASUREMENT_OBJECT_NAME, None)
-        ):
-            source_qualified_image_number_start = start
+        source_image_numbers = self.source_image_number_projection(
+            projection,
+            source_paths,
+            start=start,
+        )
         phase_started_at = time.perf_counter()
         projected_rows = projection.apply(
             image_numbers,
-            image_number_start_for_source_qualified_image_rows=(
-                source_qualified_image_number_start
-            ),
+            source_image_numbers=source_image_numbers,
         )
         RuntimeProfileLogger.log(
             logger,
@@ -799,6 +795,86 @@ class CellProfilerMeasurementProjectionRequest(CellProfilerMeasurementRecord):
         if self.need_row_mappings:
             row_mappings = rows
         return rows, row_mappings
+
+    def source_image_number_projection(
+        self,
+        projection: MeasurementRowsAxisProjection,
+        source_paths: tuple[str, ...],
+        *,
+        start: int,
+    ) -> MeasurementSourceImageNumberProjection | None:
+        """Return per-source ImageNumber projection for source-qualified image rows."""
+        if not projection.has_source_qualified_image_rows:
+            return None
+        if self.object_name not in (_MISSING_MEASUREMENT_OBJECT_NAME, None):
+            return None
+
+        source_context = self.source_resolver.projection_source_context(
+            self.source_context,
+            object_name=self.object_name,
+        )
+        source_metadata = source_context.payload_metadata()
+        source_image_names = source_metadata.source_image_names
+        if not source_image_names:
+            if len(source_paths) <= 1:
+                source_image_name_field = MeasurementRowAxisField.SOURCE_IMAGE_NAME.value
+                row_source_names = tuple(
+                    dict.fromkeys(
+                        str(row_mapping[source_image_name_field])
+                        for row in self.rows
+                        for row_mapping in (measurement_row_mapping(row),)
+                        if source_image_name_field in row_mapping
+                        and row_mapping[source_image_name_field] not in (None, "", "None")
+                    )
+                )
+                return MeasurementSourceImageNumberProjection(
+                    MappingProxyType(
+                        {source_image_name: int(start) for source_image_name in row_source_names}
+                    )
+                )
+            raise ValueError(
+                "Cannot project source-qualified measurement rows because source "
+                "payload metadata does not declare source_image_names."
+            )
+
+        image_numbers_by_slice = self.image_numbers_by_slice(source_paths, start=start)
+        image_numbers_by_source_name: dict[str, int] = {}
+        for source_index, source_image_name in enumerate(source_image_names):
+            if source_index in image_numbers_by_slice:
+                image_number = image_numbers_by_slice[source_index]
+            elif len(source_paths) <= 1:
+                image_number = start
+            else:
+                source_name_paths = self.adapter.cellprofiler_source_paths_for_image_name(
+                    str(source_image_name)
+                )
+                image_number = self.source_image_number_for_paths(source_name_paths)
+                if image_number is None:
+                    raise ValueError(
+                        "Cannot project source-qualified measurement rows because "
+                        f"source plane {source_index} for {source_image_name!r} has no "
+                        "CellProfiler ImageNumber. "
+                        f"payload_source_paths={source_paths!r}; "
+                        f"source_name_paths={source_name_paths!r}; "
+                        f"source_image_names={source_image_names!r}."
+                    )
+            image_numbers_by_source_name[str(source_image_name)] = int(image_number)
+        return MeasurementSourceImageNumberProjection(
+            MappingProxyType(image_numbers_by_source_name)
+        )
+
+    def source_image_number_for_name(self, source_image_name: str) -> int | None:
+        """Return the CP ImageNumber for a named source image, when resolvable."""
+        source_paths = self.adapter.cellprofiler_source_paths_for_image_name(
+            source_image_name
+        )
+        return self.source_image_number_for_paths(source_paths)
+
+    def source_image_number_for_paths(self, source_paths: tuple[str, ...]) -> int | None:
+        """Return the CP ImageNumber for source paths, when resolvable."""
+        if not source_paths:
+            return None
+        return self.adapter.cellprofiler_image_number_for_source_paths(source_paths)
 
     @property
     def start(self) -> int:
@@ -837,18 +913,9 @@ class CellProfilerMeasurementProjectionRequest(CellProfilerMeasurementRecord):
                 source_paths=len(source_paths),
             )
         phase_started_at = time.perf_counter()
-        if self.adapter.can_resolve_source_candidates:
-            start = (
-                CellProfilerImageNumberResolver.for_adapter(
-                    self.adapter
-                ).image_number_start_for_paths(source_paths)
-            )
-            if start is None:
-                start = self.adapter.cellprofiler_axis_image_number_start()
-        else:
-            start = self.adapter.cellprofiler_image_number_start_for_source_paths(
-                source_paths
-            )
+        start = self.adapter.cellprofiler_image_number_start_for_source_paths(
+            source_paths
+        )
         RuntimeProfileLogger.log(
             logger,
             "measurement_axis_image_number_start",
@@ -1072,20 +1139,11 @@ class CellProfilerMeasurementOutputAxisState:
         cls,
         rows: MeasurementRowsInput,
     ) -> MeasurementRowAxisState:
-        if isinstance(rows, ColumnarRows):
-            return cls.for_columnar_rows(rows)
-        return cls.for_row_sequence(rows)
-
-    @staticmethod
-    def for_columnar_rows(rows: ColumnarRows) -> MeasurementRowAxisState:
-        columns = tuple(str(column) for column in rows.columns)
-        return MeasurementRowAxisState.for_field_names(columns)
-
-    @staticmethod
-    def for_row_sequence(rows: CellProfilerRuntimeValueSequence) -> MeasurementRowAxisState:
         projection = MeasurementRowsAxisProjection.from_rows(
             rows,
         )
+        if projection.has_slice_index:
+            return MeasurementRowAxisState.RUNTIME_AXES
         return MeasurementRowAxisState.for_image_number_presence(
             has_image_number=projection.has_image_number,
         )
@@ -1187,6 +1245,7 @@ class CellProfilerMeasurementMaterializer:
                     contains_image_measurement_rows=bool(image_measurement_rows),
                 ),
                 source_context=source_context,
+                measurement_row_policy=measurement_row_policy,
             )
         if not combined_rows and not columnar_rows:
             cls.record_table(
@@ -1196,13 +1255,22 @@ class CellProfilerMeasurementMaterializer:
                 rows=(),
                 object_name=measurement_row_policy.table_object_owner(object_inputs),
                 source_context=source_context,
+                measurement_row_policy=measurement_row_policy,
             )
         if columnar_rows:
-            columnar_table: MeasurementRowsInput = (
-                columnar_rows[0]
-                if len(columnar_rows) == 1
-                else ConcatenatedMeasurementColumnarRows(tuple(columnar_rows))
-            )
+            columnar_batches = tuple(columnar_rows)
+            if len(columnar_batches) == 1:
+                columnar_table: MeasurementRowsInput = columnar_batches[0]
+            elif cls.columnar_batches_have_matching_columns(columnar_batches):
+                columnar_table = ConcatenatedColumnarRows(columnar_batches)
+            else:
+                columnar_table = MeasurementSparseColumnarRows.from_columnar_batches(
+                    columnar_batches,
+                    declared_object_measurement_domain_covered=all(
+                        rows.covers_declared_object_measurement_domain
+                        for rows in columnar_batches
+                    ),
+                )
             cls.record_table(
                 adapter=adapter,
                 spec=spec,
@@ -1210,7 +1278,21 @@ class CellProfilerMeasurementMaterializer:
                 rows=columnar_table,
                 object_name=measurement_row_policy.table_object_owner(object_inputs),
                 source_context=source_context,
+                measurement_row_policy=measurement_row_policy,
             )
+
+    @staticmethod
+    def columnar_batches_have_matching_columns(
+        batches: Sequence[ColumnarRows],
+    ) -> bool:
+        """Return whether batches can be concatenated without sparse coalescing."""
+        if not batches:
+            return False
+        first_columns = tuple(str(column) for column in batches[0].columns)
+        return all(
+            tuple(str(column) for column in batch.columns) == first_columns
+            for batch in batches[1:]
+        )
 
     @classmethod
     def record_table(
@@ -1223,24 +1305,46 @@ class CellProfilerMeasurementMaterializer:
         object_name: MeasurementObjectName,
         source_context: CellProfilerMeasurementSourceContext,
         axis_state: MeasurementRowAxisState | None = None,
+        measurement_row_policy: "CellProfilerObjectMeasurementRowPolicy | None" = None,
     ) -> None:
-        cls.record(
-            CellProfilerMeasurementRecord(
-                rows=rows,
-                fields=CellProfilerMeasurementFieldSchema.for_record(
-                    spec,
-                    rows,
-                    func,
-                ),
-                object_name=object_name,
-                source_context=source_context,
-                clear_source_when_rows_declare_object_name=False,
-            ).materialization_request(
-                adapter=adapter,
-                name=spec.name,
-                axis_state=axis_state,
-            )
+        record = CellProfilerMeasurementRecord(
+            rows=rows,
+            fields=CellProfilerMeasurementFieldSchema.for_record(
+                spec,
+                rows,
+                func,
+            ),
+            object_name=object_name,
+            source_context=source_context,
+            clear_source_when_rows_declare_object_name=False,
         )
+        if (
+            measurement_row_policy is not None
+            and isinstance(record.rows, ColumnarRows)
+            and measurement_row_policy.record_rows_declare_ownership(record)
+        ):
+            record = record.with_ownership(
+                rows=record.rows,
+                object_name=None,
+                source_image_name=record.source_context.source_image_name,
+                source_image_payload=record.source_context.source_image_payload,
+            )
+        records = (record,)
+        if (
+            measurement_row_policy is not None
+            and object_name is None
+            and not isinstance(record.rows, ColumnarRows)
+            and measurement_row_policy.record_rows_declare_ownership(record)
+        ):
+            records = measurement_row_policy.record_partitions(record)
+        for partition in records:
+            cls.record(
+                partition.materialization_request(
+                    adapter=adapter,
+                    name=spec.name,
+                    axis_state=axis_state,
+                )
+            )
 
     @staticmethod
     def record(request: CellProfilerMeasurementMaterializationRequest) -> None:

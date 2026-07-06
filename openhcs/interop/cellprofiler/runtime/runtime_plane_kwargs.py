@@ -7,7 +7,6 @@ from dataclasses import dataclass
 import numpy as np
 
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
-from openhcs.core.callable_contract import CallableContract
 from openhcs.core.runtime_semantics import RuntimePlaneAxis, RuntimePlaneAxisProjector
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 from openhcs.core.runtime_values import (
@@ -25,13 +24,18 @@ from openhcs.interop.cellprofiler.runtime.payload_types import (
     CellProfilerKwargs,
     CellProfilerRuntimeValue,
 )
-from openhcs.interop.cellprofiler.runtime.processing_contracts import (
-    CellProfilerProcessingContractAuthority,
+from openhcs.interop.cellprofiler.runtime.projection_requirements import (
+    CellProfilerRuntimePlaneProjectionCapability,
+    RuntimeArtifactImageInputProjectionCapability,
+    RuntimePlaneProjectionRequirement,
+    RuntimePlaneProjectionRequirementContext,
+    RuntimeSliceKwargProjectionCapability,
+    projection_capabilities_include,
 )
 from openhcs.interop.cellprofiler.runtime.runtime_special_values import (
     CellProfilerRuntimePlaneKwargValue,
 )
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+
 
 @dataclass(frozen=True, slots=True)
 class CurrentRuntimePlaneKwargValue:
@@ -82,28 +86,34 @@ class CurrentRuntimePlaneKwargProjectionContract:
     func: CellProfilerFunction
     default_execution_mode: ImagePayloadExecutionMode
 
-    def projects_runtime_slice_kwargs(self) -> bool:
-        return self.projects_runtime_slice_values()
-
-    def projects_runtime_artifact_image_inputs(self) -> bool:
-        return self.projects_runtime_artifact_values()
-
-    def projects_runtime_artifact_values(self) -> bool:
-        if self.default_execution_mode is not ImagePayloadExecutionMode.NATURAL:
-            return False
-        callable_contract = CallableContract.from_callable(self.func)
-        if (
-            callable_contract.runtime_image_execution_mode
-            is ImagePayloadExecutionMode.FULL_STACK
-        ):
-            return False
-        return (
-            CellProfilerProcessingContractAuthority.for_callable(self.func)
-            is not ProcessingContract.PURE_3D
+    def projection_capabilities(
+        self,
+    ) -> frozenset[type[CellProfilerRuntimePlaneProjectionCapability]]:
+        return RuntimePlaneProjectionRequirement.capabilities_for_context(
+            RuntimePlaneProjectionRequirementContext(
+                self.func,
+                self.default_execution_mode,
+            )
         )
 
-    def projects_runtime_slice_values(self) -> bool:
-        return self.projects_runtime_artifact_values()
+    def requires_projection_capability(
+        self,
+        capability_type: type[CellProfilerRuntimePlaneProjectionCapability],
+    ) -> bool:
+        return projection_capabilities_include(
+            self.projection_capabilities(),
+            capability_type,
+        )
+
+    def projects_runtime_slice_kwargs(self) -> bool:
+        return self.requires_projection_capability(
+            RuntimeSliceKwargProjectionCapability
+        )
+
+    def projects_runtime_artifact_image_inputs(self) -> bool:
+        return self.requires_projection_capability(
+            RuntimeArtifactImageInputProjectionCapability
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -224,8 +224,13 @@ def prepare_cellprofiler_source_schema_workspace(
             prepared_pipeline=prepared,
         )
     pipeline_config = prepared.generated_pipeline.pipeline_config
+    selection_constrains_image_sets = (
+        request.image_set_selection is not None
+        and request.image_set_selection.constrains_image_sets()
+    )
     if (
         not request.force_materialization
+        and not selection_constrains_image_sets
         and
         pipeline_config is not None
         and pipeline_config.microscope is Microscope.SOURCE_BINDINGS

@@ -12,10 +12,6 @@ from metaclass_registry import AutoRegisterMeta
 import numpy as np
 
 from openhcs.core.measurement_row_materialization import (
-    MEASUREMENT_OBJECT_ID_FIELD,
-    MEASUREMENT_OBJECT_LABEL_FIELD,
-    MEASUREMENT_OBJECT_NUMBER_FIELD,
-    MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD,
     measurement_object_label,
 )
 from openhcs.core.runtime_semantics import (
@@ -24,7 +20,6 @@ from openhcs.core.runtime_semantics import (
     ObjectLabelDomainMetadataStrategy,
     dense_object_label_id_domain,
     measurement_row_mapping,
-    measurement_row_axis_field_names,
 )
 from openhcs.core.runtime_slice_projection import (
     RuntimeSliceProjection,
@@ -70,11 +65,6 @@ ObjectMeasurementRowsByName = dict[str, list[CellProfilerRuntimeValue]]
 
 MeasurementSourceFieldPairs = CellProfilerProfileFields
 
-MEASUREMENT_COMPLETION_OBJECT_ID_FIELDS = (
-    MEASUREMENT_OBJECT_LABEL_FIELD,
-    MEASUREMENT_OBJECT_NUMBER_FIELD,
-    MEASUREMENT_OBJECT_ID_FIELD,
-)
 MISSING_MEASUREMENT_ROW_VALUE = object()
 
 
@@ -244,19 +234,19 @@ class ObjectMeasurementRowCompletionSchema:
     @staticmethod
     def object_id_field_from_fields(field_names: Sequence[str]) -> str:
         for field_name in field_names:
-            if field_name in MEASUREMENT_COMPLETION_OBJECT_ID_FIELDS:
+            if field_name in MeasurementRowAxisField.object_id_field_names():
                 return field_name
-        return MEASUREMENT_OBJECT_LABEL_FIELD
+        return MeasurementRowAxisField.OBJECT_LABEL.value
 
     @staticmethod
     def axis_fields_from_fields(field_names: Sequence[str]) -> tuple[str, ...]:
-        axis_field_names = measurement_row_axis_field_names()
+        axis_field_names = MeasurementRowAxisField.field_names()
         return tuple(
             field_name
             for field_name in field_names
             if (
                 field_name in axis_field_names
-                and field_name not in MEASUREMENT_COMPLETION_OBJECT_ID_FIELDS
+                and field_name not in MeasurementRowAxisField.object_id_field_names()
             )
         )
 
@@ -267,6 +257,23 @@ class ObjectMeasurementRowCompletionSchema:
         object_identity: MeasurementObjectRowIdentity,
         axis_key: CellProfilerRuntimeValues,
     ) -> tuple[int, ...]:
+        label_ids = self.label_ids_for_axis(
+            label_payload=label_payload,
+            axis_key=axis_key,
+        )
+        return (
+            MeasurementObjectRowIdentityProjectionStrategy
+            .for_enum_member(object_identity)
+            .object_ids_for_label_ids(label_ids)
+        )
+
+    def label_ids_for_axis(
+        self,
+        *,
+        label_payload: CellProfilerRuntimeValue,
+        axis_key: CellProfilerRuntimeValues,
+    ) -> tuple[int, ...]:
+        """Return source label IDs in the declared domain for one measurement axis."""
         axis_payload = self.label_payload_for_axis(label_payload, axis_key=axis_key)
         label_domain = ObjectLabelDomainMetadataStrategy.for_value(
             axis_payload
@@ -274,11 +281,7 @@ class ObjectMeasurementRowCompletionSchema:
         label_ids = label_domain.explicit_id_domain()
         if label_ids is None:
             label_ids = dense_object_label_id_domain(axis_payload)
-        return (
-            MeasurementObjectRowIdentityProjectionStrategy
-            .for_enum_member(object_identity)
-            .object_ids_for_label_ids(label_ids)
-        )
+        return tuple(label_ids)
 
     def label_payload_for_axis(
         self,
@@ -444,7 +447,7 @@ class ObjectMeasurementRowCompletionSchema:
         row: CellProfilerKwargDict = {}
         for field_name in self.field_names:
             if (
-                field_name in MEASUREMENT_COMPLETION_OBJECT_ID_FIELDS
+                field_name in MeasurementRowAxisField.object_id_field_names()
                 or field_name in axis_values
             ):
                 continue
@@ -461,7 +464,7 @@ class ObjectMeasurementRowCompletionSchema:
         row[self.object_id_field] = object_id
         object_identity = row_policy.object_identity_for_label_payload(label_payload)
         if object_identity is not MeasurementObjectRowIdentity.LABEL_ID:
-            row[MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD] = object_identity.value
+            row[MeasurementRowAxisField.OBJECT_ROW_IDENTITY.value] = object_identity.value
         return row
 
     def axis_values_for_key(self, axis_key: CellProfilerRuntimeValueSequence) -> CellProfilerKwargDict:
@@ -782,7 +785,7 @@ class MeasurementObjectRowIdentityProjectionStrategy(
             measurement_row_mapping(projected_row),
             object_identity=type(self).object_identity,
         ):
-            projected_row[MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD] = (
+            projected_row[MeasurementRowAxisField.OBJECT_ROW_IDENTITY.value] = (
                 type(self).object_identity.value
             )
         return projected_row

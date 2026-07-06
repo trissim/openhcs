@@ -6,7 +6,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ArtifactSpec,
+    ImageArtifactType,
+    GroupLineageSourceRelation,
+    ObjectLabelsArtifactType,
+    RelationshipsArtifactType,
+)
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.runtime_semantics import FieldSpec, ObjectLabelDomainScope
 from openhcs.core.runtime_values import (
@@ -78,15 +85,15 @@ class CellProfilerOutputRecordContext(
 
     @property
     def runtime_image_names(self) -> tuple[str, ...]:
-        return self.contract.runtime_input_names(ArtifactKind.IMAGE)
+        return self.contract.runtime_input_names(ImageArtifactType)
 
     @property
     def runtime_image_name_set(self) -> frozenset[str]:
-        return self.contract.runtime_input_name_set(ArtifactKind.IMAGE)
+        return self.contract.runtime_input_name_set(ImageArtifactType)
 
     @property
     def external_source_object_names(self) -> tuple[str, ...]:
-        return self.contract.external_input_names(ArtifactKind.OBJECT_LABELS)
+        return self.contract.external_input_names(ObjectLabelsArtifactType)
 
     def fields_for_rows(self, rows: MeasurementRowsInput) -> tuple[FieldSpec, ...]:
         """Return measurement field schema for rows emitted by this context."""
@@ -114,6 +121,9 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
         self,
     ) -> CellProfilerRuntimeValue | None:
         """Resolve the declared primary-image source for this image output."""
+        relation_payload = self.group_lineage_source_payload()
+        if relation_payload is not None:
+            return relation_payload
         ordinal_payload = self.ordinal_primary_image_output_source_payload()
         if ordinal_payload is not None:
             return ordinal_payload
@@ -121,6 +131,26 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
         if unique_payload is not None:
             return unique_payload
         return self.source.payload
+
+    def group_lineage_source_payload(self) -> CellProfilerRuntimeValue | None:
+        """Resolve source payload from this output's declared group-lineage source."""
+        source_specs = tuple(
+            self.contract.declared_input_collection().by_ref(relation.source)
+            for relation in self.spec.relations
+            if (
+                isinstance(relation, GroupLineageSourceRelation)
+                and relation.source.plan_type is ArtifactInputPlan
+                and relation.source.artifact_type is ImageArtifactType
+            )
+        )
+        resolved_specs = tuple(spec for spec in source_specs if spec is not None)
+        if len(resolved_specs) != 1:
+            return None
+        source_spec = resolved_specs[0]
+        invocation_payload = self.invocation_primary_image_source_payload(source_spec)
+        if invocation_payload is not None:
+            return invocation_payload
+        return self.input_image_source_payload(source_spec)
 
     def ordinal_primary_image_output_source_payload(
         self,
@@ -157,7 +187,12 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
         spec: ArtifactSpec,
     ) -> CellProfilerRuntimeValue | None:
         """Return invocation payload when it already owns the primary input source."""
-        return self.source.source_payload_for_name(spec.name)
+        payload = self.source.source_payload_for_name(spec.name)
+        if payload is None:
+            return None
+        if image_payload_metadata(payload).has_values:
+            return payload
+        return None
 
     def runtime_input_image_payload(
         self,
@@ -190,7 +225,7 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
 
     def image_outputs(self) -> tuple[ArtifactSpec, ...]:
         """Return declared image outputs in contract order."""
-        return self.contract.output_collection().of_kind(ArtifactKind.IMAGE)
+        return self.contract.output_collection().of_artifact_type(ImageArtifactType)
 
     def image_output_index(self) -> int | None:
         """Return this output's declared image-output ordinal, when unique."""
@@ -203,10 +238,26 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
             return None
         return matches[0]
 
-    def object_label_output_source_payload(self) -> CellProfilerRuntimeValue:
-        """Resolve source context for object-label outputs from semantic inputs."""
-        object_inputs = self.contract.declared_input_collection().of_kind(
-            ArtifactKind.OBJECT_LABELS
+    def metadata_bearing_primary_image_source_payload(
+        self,
+    ) -> CellProfilerRuntimeValue | None:
+        """Resolve the unique primary image input when it carries metadata."""
+        if len(self.runtime_plan.primary_image_inputs) != 1:
+            return None
+        primary_input = self.runtime_plan.primary_image_inputs[0]
+        input_payload = self.invocation_primary_image_source_payload(primary_input)
+        if input_payload is None:
+            input_payload = self.input_image_source_payload(primary_input)
+        if input_payload is None:
+            return None
+        if image_payload_metadata(input_payload).has_values:
+            return input_payload
+        return None
+
+    def default_object_label_output_source_payload(self) -> CellProfilerRuntimeValue:
+        """Resolve default source context for object-label outputs."""
+        object_inputs = self.contract.declared_input_collection().of_artifact_type(
+            ObjectLabelsArtifactType
         )
         if object_inputs and not self.runtime_plan.primary_image_inputs:
             relationship_source_spec = (
@@ -221,6 +272,26 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
         if primary_image_source is not None:
             return primary_image_source
         return self.object_label_source_payload_for_current_invocation()
+
+    def input_object_label_output_source_payload(self) -> CellProfilerRuntimeValue:
+        """Resolve source context from the declared object-label input."""
+        object_inputs = self.contract.declared_input_collection().of_artifact_type(
+            ObjectLabelsArtifactType
+        )
+        if not object_inputs:
+            raise ValueError(
+                f"{self.module_name} requested input-object source context for "
+                f"object-label output {self.spec.name!r}, but declares no object "
+                "inputs."
+            )
+        relationship_source_spec = self.relationship_derived_object_label_source_spec(
+            object_inputs
+        )
+        if relationship_source_spec is None:
+            source_spec = object_inputs[0]
+        else:
+            source_spec = relationship_source_spec
+        return self.object_label_source_payload_for_spec(source_spec)
 
     def object_label_output_domain_scope(self) -> ObjectLabelDomainScope | None:
         """Return the declared object-label output domain for this invocation."""
@@ -248,8 +319,8 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
     def relationship_parent_specs_for_output_child(self) -> tuple[ArtifactSpec, ...]:
         """Return parent object specs from relationships that target this output."""
         endpoint_resolver = RelationshipEndpointResolver.for_request(self)
-        relationship_outputs = self.contract.output_collection().of_kind(
-            ArtifactKind.RELATIONSHIPS
+        relationship_outputs = self.contract.output_collection().of_artifact_type(
+            RelationshipsArtifactType
         )
         return tuple(
             parent_spec
@@ -344,8 +415,8 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
 
     def single_output_object_name(self) -> str:
         """Return the unique object-label output owned by this record request."""
-        object_outputs = self.contract.output_collection().of_kind(
-            ArtifactKind.OBJECT_LABELS
+        object_outputs = self.contract.output_collection().of_artifact_type(
+            ObjectLabelsArtifactType
         )
         if len(object_outputs) != 1:
             raise NotImplementedError(

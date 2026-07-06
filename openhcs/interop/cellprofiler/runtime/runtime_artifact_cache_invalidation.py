@@ -4,38 +4,38 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
-
-from openhcs.core.artifacts import ArtifactKind
-from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.artifacts import (
+    ArtifactType,
+    ArtifactTypeStrategyMatchMixin,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+)
+from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
 from openhcs.interop.cellprofiler.runtime.object_label_measurements import (
     object_label_measurement_values_cache,
 )
 from openhcs.interop.cellprofiler.runtime.runtime_artifact_records import (
-    RuntimeArtifactKindPolicyMixin,
+    RuntimeArtifactTypePolicyMixin,
 )
 
 
 class RuntimeArtifactCacheInvalidationPolicy(
-    RuntimeArtifactKindPolicyMixin,
-    EnumKeyedStrategyMixin[ArtifactKind],
+    RuntimeArtifactTypePolicyMixin,
+    ArtifactTypeStrategyMatchMixin,
+    MostDerivedContextStrategyMixin[type[ArtifactType]],
     ABC,
-    metaclass=AutoRegisterMeta,
 ):
     """Nominal cache invalidation policy for one runtime artifact domain."""
 
-    __registry_family__ = RegistryFamily(
-        RegistryKeyAttribute.STRATEGY_LABEL,
-        registry_name="runtime_artifact_cache_invalidation_policy",
-    )
-
     @abstractmethod
     def invalidate(self, adapter: "CellProfilerRuntimeAdapter") -> None:
-        """Invalidate adapter caches affected by this artifact kind."""
+        """Invalidate adapter caches affected by this artifact type."""
 
 
 class FullRuntimeArtifactCacheInvalidationPolicy(RuntimeArtifactCacheInvalidationPolicy):
-    """Conservative invalidation for artifact kinds without narrower semantics."""
+    """Conservative invalidation for artifact types without narrower semantics."""
 
     def invalidate(self, adapter: "CellProfilerRuntimeAdapter") -> None:
         adapter.clear_runtime_query_caches()
@@ -49,7 +49,7 @@ RuntimeArtifactCacheInvalidationPolicy.default_policy_type = (
 class ImageRuntimeArtifactCacheInvalidationPolicy(FullRuntimeArtifactCacheInvalidationPolicy):
     """Image writes may affect image reads and image-derived measurement alignment."""
 
-    kind = ArtifactKind.IMAGE
+    artifact_type = ImageArtifactType
 
     def invalidate(self, adapter: "CellProfilerRuntimeAdapter") -> None:
         adapter._image_cache.clear()
@@ -63,7 +63,7 @@ class ObjectLabelRuntimeArtifactCacheInvalidationPolicy(
 ):
     """Object writes may affect label reads, label domains, and measurement alignment."""
 
-    kind = ArtifactKind.OBJECT_LABELS
+    artifact_type = ObjectLabelsArtifactType
 
     def invalidate(self, adapter: "CellProfilerRuntimeAdapter") -> None:
         adapter._object_cache.clear()
@@ -77,7 +77,7 @@ class MeasurementRuntimeArtifactCacheInvalidationPolicy(
 ):
     """Measurement writes invalidate measurement queries without discarding labels/images."""
 
-    kind = ArtifactKind.MEASUREMENTS
+    artifact_type = MeasurementsArtifactType
 
     def invalidate(self, adapter: "CellProfilerRuntimeAdapter") -> None:
         adapter.clear_measurement_query_cache()
@@ -88,7 +88,7 @@ class RelationshipRuntimeArtifactCacheInvalidationPolicy(
 ):
     """Relationship writes are independent of image/object/measurement read caches."""
 
-    kind = ArtifactKind.RELATIONSHIPS
+    artifact_type = RelationshipsArtifactType
 
     def invalidate(self, adapter: "CellProfilerRuntimeAdapter") -> None:
         return None

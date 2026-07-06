@@ -17,9 +17,9 @@ from typing import ClassVar, TypeAlias
 
 from metaclass_registry import AutoRegisterMeta
 
-from openhcs.constants.constants import AllComponents, VariableComponents
+from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import MeasurementsArtifactType
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.component_set import ComponentSet
 from openhcs.core.pipeline.function_contracts import (
@@ -43,7 +43,10 @@ from openhcs.interop.cellprofiler.symbol_table import (
 from openhcs.processing.backends.cellprofiler.library import (
     require_function,
 )
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.backends.lib_registry.unified_registry import (
+    ProcessingContract,
+    SliceBySliceRuntimeParameter,
+)
 
 
 GeneratedLiteralScalar: TypeAlias = str | int | float | bool | None | Enum
@@ -53,13 +56,21 @@ GeneratedLiteralValue: TypeAlias = (
     "dict[GeneratedLiteralValue, GeneratedLiteralValue]"
 )
 GeneratedParameterName = str | list[str] | None
-
-_INPUTLESS_ARTIFACT_ONLY_KINDS = frozenset(
-    {
-        ArtifactKind.MEASUREMENTS,
-        ArtifactKind.RELATIONSHIPS,
-    }
+GeneratedGroupByComponent: TypeAlias = (
+    "AllComponents | GroupBy | GeneratedGroupByComponentState"
 )
+
+
+class GeneratedGroupByComponentState(Enum):
+    """Internal state for group_by before module defaults are applied."""
+
+    UNRESOLVED = "unresolved"
+
+
+def group_by_is_unresolved(group_by: GeneratedGroupByComponent) -> bool:
+    return group_by is GeneratedGroupByComponentState.UNRESOLVED
+
+
 def variable_component_literal(component: AllComponents) -> str:
     return f"VariableComponents.{component.name}"
 
@@ -83,10 +94,22 @@ def all_component_tuple_literal(components: tuple[AllComponents, ...]) -> str:
     return "(" + ", ".join(literals) + ")"
 
 
-def group_by_literal(component: AllComponents | None) -> str:
-    if component is None:
-        return "GroupBy.NONE"
-    return f"GroupBy.{component.name}"
+def group_by_literal(group_by: GeneratedGroupByComponent) -> str | None:
+    if group_by_is_unresolved(group_by):
+        return None
+    return f"GroupBy.{group_by.name}"
+
+
+def group_by_component_axis(
+    group_by: GeneratedGroupByComponent,
+) -> AllComponents | None:
+    if group_by_is_unresolved(group_by):
+        return None
+    if isinstance(group_by, AllComponents):
+        return group_by
+    if group_by.value is None:
+        return None
+    return AllComponents(group_by.value)
 
 
 class SourceProcessingAxisRole(Enum):
@@ -280,6 +303,17 @@ class SourceProcessingComponentSemantics:
 
     def source_alias_components(self) -> tuple[AllComponents, ...]:
         """Return image-set axes that select between named source aliases."""
+        selector_components = (
+            ComponentSet(self.assignment_selector_components())
+            .excluding(
+                ComponentSet(self.source_schema.source_stack_components),
+                ComponentSet(self.grouping_components()),
+            )
+            .variable()
+            .as_tuple()
+        )
+        if selector_components:
+            return selector_components
         image_set_components = ComponentSet(self.image_set_components())
         explicit_components = (
             ComponentSet(self.assignment_selector_components())
@@ -295,11 +329,23 @@ class SourceProcessingComponentSemantics:
         return ()
 
     def assignment_selector_components(self) -> tuple[AllComponents, ...]:
+        selectors = tuple(
+            assignment.selector
+            for assignment in self.source_schema.assignments_by_alias.values()
+        )
+        if self.source_bindings is not None:
+            selectors = (
+                *selectors,
+                *(
+                    binding.selector
+                    for binding in self.source_bindings.binding_declarations
+                ),
+            )
         return tuple(
             dict.fromkeys(
                 component
-                for assignment in self.source_schema.assignments_by_alias.values()
-                for component in self.selector_components(assignment.selector)
+                for selector in selectors
+                for component in self.selector_components(selector)
             )
         )
 
@@ -321,6 +367,11 @@ class SourceProcessingComponentSemantics:
         if match_plan is not None and match_plan.method is not SourceBindingMatchMethod.ORDER:
             return False
         if self.source_metadata_components():
+            return False
+        if (
+            self.source_bindings is not None
+            and not self.source_bindings.image_stack_bindings
+        ):
             return False
         if match_plan is not None:
             return True
@@ -411,75 +462,17 @@ class SourceProcessingComponentSemantics:
         return self.source_schema.match_plan
 
 
-class CategoryVariableComponentProvider(ABC, metaclass=AutoRegisterMeta):
-    """Nominal provider for absorbed-module category execution axes."""
-
-    __registry_key__ = "category"
-    __skip_if_no_key__ = True
-    category: ClassVar[str | None] = None
-
-    @classmethod
-    def components_for_category(
-        cls,
-        category: str,
-        axis_plan: SourceProcessingAxisPlan,
-    ) -> tuple[AllComponents, ...]:
-        provider_type = cls.__registry__.get(category)
-        if provider_type is None:
-            return SourceProcessingAxisRolePolicy.for_role(
-                SourceProcessingAxisRole.SAMPLE_GROUP
-            ).components(axis_plan)
-        return provider_type().components(axis_plan)
-
-    @abstractmethod
-    def roles(self) -> tuple[SourceProcessingAxisRole, ...]:
-        """Return variable components for this absorbed-module category."""
-
-    def components(
-        self,
-        axis_plan: SourceProcessingAxisPlan,
-    ) -> tuple[AllComponents, ...]:
-        return ComponentSet.collect(
-            *(
-                SourceProcessingAxisRolePolicy.for_role(role).components(axis_plan)
-                for role in self.roles()
-            )
-        ).as_tuple()
-
-
-class ImageOperationCategoryVariableComponentProvider(CategoryVariableComponentProvider):
-    """CellProfiler image-operation category executes over sample sites."""
-
-    category = "image_operation"
-
-    def roles(self) -> tuple[SourceProcessingAxisRole, ...]:
-        return (SourceProcessingAxisRole.SAMPLE_GROUP,)
-
-
-class ZProjectionCategoryVariableComponentProvider(CategoryVariableComponentProvider):
-    """CellProfiler z-projection category executes over source Z planes."""
-
-    category = "z_projection"
-
-    def roles(self) -> tuple[SourceProcessingAxisRole, ...]:
-        return (SourceProcessingAxisRole.SOURCE_STACK,)
-
-
-class ChannelOperationCategoryVariableComponentProvider(CategoryVariableComponentProvider):
-    """CellProfiler channel-operation category executes over image-set channels."""
-
-    category = "channel_operation"
-
-    def roles(self) -> tuple[SourceProcessingAxisRole, ...]:
-        return (SourceProcessingAxisRole.IMAGE_SET,)
-
-
 @dataclass(frozen=True, slots=True)
 class ModuleProcessingComponents:
     """Generated OpenHCS processing-component literals for one module."""
 
     variable_components: tuple[AllComponents, ...]
-    group_by_component: AllComponents | None
+    group_by_component: GeneratedGroupByComponent = (
+        GeneratedGroupByComponentState.UNRESOLVED
+    )
+
+    def has_group_by_resolution(self) -> bool:
+        return not group_by_is_unresolved(self.group_by_component)
 
     @property
     def variable_component_literals(self) -> tuple[str, ...]:
@@ -489,14 +482,14 @@ class ModuleProcessingComponents:
         )
 
     @property
-    def group_by_literal(self) -> str:
+    def group_by_literal(self) -> str | None:
         return group_by_literal(self.group_by_component)
 
     def execution_components(self) -> ComponentSet:
         """Return every component that can split this module invocation."""
         return ComponentSet.collect(
             self.variable_components,
-            (self.group_by_component,),
+            (group_by_component_axis(self.group_by_component),),
         )
 
     def with_variable_components(
@@ -507,6 +500,16 @@ class ModuleProcessingComponents:
         return ModuleProcessingComponents(
             tuple(coerce_all_component(component) for component in components),
             self.group_by_component,
+        )
+
+    def with_group_by(
+        self,
+        group_by: AllComponents | GroupBy,
+    ) -> "ModuleProcessingComponents":
+        """Return this declaration with generated group_by semantics applied."""
+        return ModuleProcessingComponents(
+            self.variable_components,
+            group_by,
         )
 
     def with_required_variable_components(
@@ -608,6 +611,21 @@ class GeneratedStepSettings:
     def items(self) -> Iterable[tuple[str, GeneratedLiteralValue]]:
         return self.entries
 
+    def with_defaults(
+        self,
+        values: Mapping[str, GeneratedLiteralValue],
+    ) -> "GeneratedStepSettings":
+        """Return settings with source-derived defaults added when absent."""
+        existing_names = {name for name, _value in self.entries}
+        additions = tuple(
+            (name, value)
+            for name, value in values.items()
+            if name not in existing_names
+        )
+        if not additions:
+            return self
+        return GeneratedStepSettings((*self.entries, *additions))
+
     def value(
         self,
         name: str,
@@ -664,11 +682,15 @@ class GeneratedParameterTarget:
 class ModuleProcessingComponentRequest:
     """Typed request for lowering CellProfiler module semantics to OpenHCS axes."""
 
-    category: str
+    module_type: type[object]
     function_name: str
     runtime_lineage: RuntimeArtifactLineageScope
     bound_settings: GeneratedStepSettings
     source_schema: PipelineImageSchema
+
+    def has_direct_source_bindings(self) -> bool:
+        """Return whether this module's CPPipe source bindings own axis selection."""
+        return not self.runtime_lineage.contract.source_bindings.is_empty
 
     def object_label_measurement_execution(self) -> ObjectLabelMeasurementExecution:
         return object_label_measurement_execution_from_callable(
@@ -677,6 +699,23 @@ class ModuleProcessingComponentRequest:
 
     def processing_contract(self) -> ProcessingContract | None:
         return CallableContract.from_callable(self.resolved_callable()).processing_contract
+
+    def generated_semantic_control_defaults(self) -> Mapping[str, GeneratedLiteralValue]:
+        """Return source-schema defaults for callable semantic-control parameters."""
+        if self.processing_contract() is not ProcessingContract.FLEXIBLE:
+            return {}
+        return {
+            SliceBySliceRuntimeParameter.require_parameter_name(): (
+                not self.uses_volumetric_source_semantics()
+            )
+        }
+
+    def uses_volumetric_source_semantics(self) -> bool:
+        """Return whether CP setup declares true source-stack semantics."""
+        source_bindings = self.runtime_lineage.contract.source_bindings
+        if source_bindings.is_empty:
+            return bool(self.source_stack_components())
+        return bool(self.source_stack_components(source_bindings))
 
     def runtime_image_execution_mode(self) -> ImagePayloadExecutionMode | None:
         return CallableContract.from_callable(
@@ -705,10 +744,10 @@ class ModuleProcessingComponentRequest:
             function_name=self.function_name,
         )
 
-    def category_default_components(self) -> tuple[AllComponents, ...]:
-        return CategoryVariableComponentProvider.components_for_category(
-            self.category,
-            self.axis_plan(),
+    def module_default_components(self) -> tuple[AllComponents, ...]:
+        return tuple(
+            coerce_all_component(component)
+            for component in self.module_type.default_variable_components
         )
 
     def source_stack_components(
@@ -766,7 +805,7 @@ class RuntimeArtifactProcessingScope:
             self.axis_plan
         )
         return self.with_runtime_source_identity(
-            ModuleProcessingComponents(variable_components, None),
+            ModuleProcessingComponents(variable_components),
         )
 
     def with_runtime_source_identity(
@@ -780,18 +819,18 @@ class RuntimeArtifactProcessingScope:
         object_domain_inputs = tuple(
             spec
             for spec in self.lineage.contract.runtime_artifact_inputs
-            if spec.kind.participates_in_pairwise_object_domain_input
+            if spec.artifact_type.participates_in_pairwise_object_domain_input
         )
         object_domain_outputs = tuple(
             spec
             for spec in self.lineage.contract.outputs
-            if spec.kind.participates_in_object_domain_scope
+            if spec.artifact_type.participates_in_object_domain_scope
         )
         return len(object_domain_inputs) > 1 and bool(object_domain_outputs)
 
     def uses_measurement_only_runtime_inputs(self) -> bool:
         return bool(self.lineage.contract.runtime_artifact_inputs) and all(
-            spec.kind is ArtifactKind.MEASUREMENTS
+            spec.artifact_type is MeasurementsArtifactType
             for spec in self.lineage.contract.runtime_artifact_inputs
         )
 
@@ -811,22 +850,26 @@ class SourceBindingProcessingScope:
             self.source_bindings,
         ).variable_components()
         if self.requires_image_set_stack():
-            return ModuleProcessingComponents(
-                ComponentSet.collect(
-                    (self.axis_plan.sample_group_component,),
-                    self.axis_plan.image_set_components,
-                    self.source_stack_components,
-                ).as_tuple(),
-                None,
+            source_alias_components = (
+                self.axis_plan.source_alias_components
+                or self.axis_plan.image_set_components
+            )
+            return self.with_source_identity_grouping(
+                ModuleProcessingComponents(
+                    ComponentSet.collect(
+                        source_alias_components,
+                        self.source_stack_components,
+                    ).as_tuple(),
+                )
             )
         if self.source_bindings.requires_pipeline_start_resolution:
             source_stack_scope = self.source_stack_processing_scope(declared_components)
             if source_stack_scope is not None:
-                return source_stack_scope
+                return self.with_source_identity_grouping(source_stack_scope)
             return self.scalar_source_binding_components(declared_components)
         source_stack_scope = self.source_stack_processing_scope(declared_components)
         if source_stack_scope is not None:
-            return source_stack_scope
+            return self.with_source_identity_grouping(source_stack_scope)
         return self.scalar_source_binding_components(declared_components)
 
     def scalar_source_binding_components(
@@ -842,9 +885,8 @@ class SourceBindingProcessingScope:
             )
             .as_tuple()
         )
-        return ModuleProcessingComponents(
-            variable_components,
-            None,
+        return self.with_source_identity_grouping(
+            ModuleProcessingComponents(variable_components)
         )
 
     def source_stack_processing_scope(
@@ -853,15 +895,51 @@ class SourceBindingProcessingScope:
     ) -> ModuleProcessingComponents | None:
         if not self.source_stack_components:
             return None
-        source_stack_components = ComponentSet.collect(
-            declared_components,
+        source_stack_components = ComponentSet(
             self.source_stack_components,
         ).excluding(
             ComponentSet(self.axis_plan.source_alias_components),
         ).as_tuple()
         return ModuleProcessingComponents(
             source_stack_components,
-            None,
+        )
+
+    def with_source_identity_grouping(
+        self,
+        components: ModuleProcessingComponents,
+    ) -> ModuleProcessingComponents:
+        """Preserve source identity outside the generated stack axis."""
+        group_by_component = self.source_identity_group_by_component(
+            components.variable_components
+        )
+        if group_by_component is None:
+            return components
+        return components.with_group_by(group_by_component)
+
+    def source_identity_group_by_component(
+        self,
+        variable_components: tuple[AllComponents, ...],
+    ) -> AllComponents | None:
+        """Return the remaining source axis after bindings choose stack axes."""
+        variable_component_set = ComponentSet(variable_components)
+        group_by_candidates = (
+            ComponentSet.collect(
+                self.axis_plan.source_alias_components,
+                self.axis_plan.image_set_components,
+            )
+            .excluding(variable_component_set)
+            .as_tuple()
+        )
+        if not group_by_candidates and self.axis_plan.sample_group_component is not None:
+            group_by_candidates = (
+                ComponentSet.collect((self.axis_plan.sample_group_component,))
+                .excluding(variable_component_set)
+                .as_tuple()
+            )
+        return ComponentSet(group_by_candidates).single_or_none(
+            "CellProfiler source bindings cannot infer one group_by component from "
+            "multiple remaining source identity axes: "
+            f"{tuple(component.value for component in group_by_candidates)!r}."
         )
 
     def requires_image_set_stack(self) -> bool:
@@ -891,12 +969,12 @@ def default_module_requires_pairwise_object_domain_scope(
     object_domain_inputs = tuple(
         spec
         for spec in contract.runtime_artifact_inputs
-        if spec.kind.participates_in_pairwise_object_domain_input
+        if spec.artifact_type.participates_in_pairwise_object_domain_input
     )
     object_domain_outputs = tuple(
         spec
         for spec in contract.outputs
-        if spec.kind.participates_in_object_domain_scope
+        if spec.artifact_type.participates_in_object_domain_scope
     )
     return len(object_domain_inputs) > 1 and bool(object_domain_outputs)
 
@@ -976,7 +1054,10 @@ class RuntimeArtifactModuleProcessingScopePolicy(ModuleProcessingScopePolicy):
     policy_name = "runtime_artifact"
 
     def matches(self, request: ModuleProcessingComponentRequest) -> bool:
-        return bool(request.runtime_lineage.contract.runtime_artifact_inputs)
+        return (
+            bool(request.runtime_lineage.contract.runtime_artifact_inputs)
+            and request.runtime_lineage.contract.source_bindings.is_empty
+        )
 
     def components(
         self,
@@ -984,11 +1065,14 @@ class RuntimeArtifactModuleProcessingScopePolicy(ModuleProcessingScopePolicy):
         *,
         module_requires_pairwise_object_domain_scope: bool,
     ) -> ModuleProcessingComponents:
-        return request.runtime_artifact_scope(
+        components = request.runtime_artifact_scope(
             module_requires_pairwise_object_domain_scope=(
                 module_requires_pairwise_object_domain_scope
             ),
         ).components()
+        if components.variable_components:
+            return components
+        return components.with_variable_components(request.module_default_components())
 
 
 class SourceBindingModuleProcessingScopePolicy(ModuleProcessingScopePolicy):
@@ -1032,15 +1116,14 @@ class InputlessArtifactModuleProcessingScopePolicy(ModuleProcessingScopePolicy):
     ) -> ModuleProcessingComponents:
         del module_requires_pairwise_object_domain_scope
         return ModuleProcessingComponents(
-            request.category_default_components(),
-            None,
+            request.module_default_components(),
         )
 
 
-class CategoryDefaultModuleProcessingScopePolicy(ModuleProcessingScopePolicy):
-    """Absorbed module category defaults fill the remaining pure image cases."""
+class ModuleDefaultProcessingScopePolicy(ModuleProcessingScopePolicy):
+    """Module declaration defaults fill the remaining pure image cases."""
 
-    policy_name = "category_default"
+    policy_name = "module_default"
 
     def matches(self, request: ModuleProcessingComponentRequest) -> bool:
         del request
@@ -1054,8 +1137,7 @@ class CategoryDefaultModuleProcessingScopePolicy(ModuleProcessingScopePolicy):
     ) -> ModuleProcessingComponents:
         del module_requires_pairwise_object_domain_scope
         return ModuleProcessingComponents(
-            tuple(request.category_default_components()),
-            None,
+            tuple(request.module_default_components()),
         )
 
 
@@ -1087,13 +1169,14 @@ def generated_function_step_semantic_argument_lines(
     *,
     processing_components: ModuleProcessingComponents,
     artifact_contract: ModuleArtifactContracts,
+    import_collector: set[tuple[str, str]] | None = None,
 ) -> tuple[str, ...]:
     """Return generated FunctionStep arguments owned by source semantics."""
     lines: list[str] = []
     if not artifact_contract.source_bindings.is_empty:
         lines.append(
             "        source_bindings="
-            f"{step_source_bindings_literal(artifact_contract.source_bindings)},"
+            f"{step_source_bindings_literal(artifact_contract.source_bindings, import_collector=import_collector)},"
         )
     return tuple(lines)
 
@@ -1134,20 +1217,19 @@ class RuntimeArtifactSourceLineage:
         seen_module_nums.add(contract.module_num)
 
         if not contract.source_bindings.is_empty:
-            self._extend_unique(
-                components,
-                ComponentSet.collect(
-                    SourceProcessingComponentSemantics(
-                        self.source_schema,
-                        contract.source_bindings,
-                    ).variable_components(),
-                    (
-                        self.source_schema.source_stack_components
-                        if contract.source_bindings.image_stack_bindings
-                        else ()
-                    ),
-                ).as_tuple(),
+            source_semantics = SourceProcessingComponentSemantics(
+                self.source_schema,
+                contract.source_bindings,
             )
+            source_components = (
+                self.source_schema.source_stack_components
+                if (
+                    contract.source_bindings.image_stack_bindings
+                    and self.source_schema.source_stack_components
+                )
+                else source_semantics.variable_components()
+            )
+            self._extend_unique(components, source_components)
 
         for symbol in contract.input_symbols:
             producer_module_num = symbol.producer_module_num
@@ -1198,5 +1280,8 @@ def _is_inputless_artifact_only_contract(contract: ModuleArtifactContracts) -> b
         not contract.inputs
         and not contract.runtime_artifact_inputs
         and bool(contract.outputs)
-        and all(spec.kind in _INPUTLESS_ARTIFACT_ONLY_KINDS for spec in contract.outputs)
+        and all(
+            spec.artifact_type.supports_inputless_artifact_only_execution
+            for spec in contract.outputs
+        )
     )

@@ -12,7 +12,6 @@ from weakref import WeakKeyDictionary
 
 from metaclass_registry import AutoRegisterMeta
 
-from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.measurement_row_materialization import measurement_table_object_id_field
 from openhcs.core.runtime_artifact_queries import (
     MeasurementTableUnion,

@@ -1,12 +1,9 @@
 """Compatibility CellProfiler module semantics derived from declarations."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass
 from enum import Enum
-
 from openhcs.core.alias_property import AliasProperty
-
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
@@ -38,13 +35,11 @@ class CellProfilerModuleDimensionality(Enum):
     PLANAR = ProcessingContract.PURE_2D
     VOLUMETRIC = ProcessingContract.PURE_3D
     PLANAR_AND_VOLUMETRIC = ProcessingContract.FLEXIBLE
-
     processing_contract = AliasProperty[ProcessingContract]("value")
 
     @classmethod
     def from_processing_contract(
-        cls,
-        contract: ProcessingContract,
+        cls, contract: ProcessingContract
     ) -> "CellProfilerModuleDimensionality":
         """Return manual-facing dimensionality for an execution contract."""
         for dimensionality in cls:
@@ -128,17 +123,16 @@ def cellprofiler_module_semantics_family(
     if semantics is None:
         return None
     family_members = tuple(
-        candidate.module_name
-        for candidate in _declared_semantics()
-        if candidate.category is semantics.category
-        and candidate.dimensionality is semantics.dimensionality
-        and candidate.respects_masks is semantics.respects_masks
+        (
+            candidate.module_name
+            for candidate in _declared_semantics()
+            if candidate.category is semantics.category
+            and candidate.dimensionality is semantics.dimensionality
+            and (candidate.respects_masks is semantics.respects_masks)
+        )
     )
     return CellProfilerModuleSemanticFamily(
-        family_name=(
-            f"{semantics.category.value} / "
-            f"{semantics.dimensionality.processing_contract.declared_name}"
-        ),
+        family_name=f"{semantics.category.value} / {semantics.dimensionality.processing_contract.declared_name}",
         category=semantics.category,
         dimensionality=semantics.dimensionality,
         respects_masks=semantics.respects_masks,
@@ -146,15 +140,16 @@ def cellprofiler_module_semantics_family(
     )
 
 
-def _declared_dimensionality(contract_name: str) -> CellProfilerModuleDimensionality:
-    contract = ProcessingContract.from_declared_name(contract_name)
+def _declared_dimensionality(
+    contract: ProcessingContract | None,
+) -> CellProfilerModuleDimensionality:
     if contract is None:
         return CellProfilerModuleDimensionality.PLANAR_AND_VOLUMETRIC
     return CellProfilerModuleDimensionality.from_processing_contract(contract)
 
 
 def _declared_category(module_type: type[object]) -> CellProfilerModuleCategory:
-    from openhcs.processing.backends.cellprofiler.module_classes import (
+    from openhcs.interop.cellprofiler.module_declarations import (
         InfrastructureCellProfilerModule,
         ObjectMeasurementRowsModule,
         ScopedMeasurementModule,
@@ -164,46 +159,45 @@ def _declared_category(module_type: type[object]) -> CellProfilerModuleCategory:
         return CellProfilerModuleCategory.FILE_PROCESSING
     if issubclass(module_type, (ObjectMeasurementRowsModule, ScopedMeasurementModule)):
         return CellProfilerModuleCategory.MEASUREMENT
-    declared_category = module_type.category
-    if declared_category in {"image_operation", "channel_operation", "z_projection"}:
-        return CellProfilerModuleCategory.IMAGE_PROCESSING
-    return CellProfilerModuleCategory.OTHER
+    return CellProfilerModuleCategory.IMAGE_PROCESSING
 
 
 def _declared_semantics() -> tuple[CellProfilerModuleSemantics, ...]:
     from openhcs.interop.cellprofiler.source_schema import SetupModuleCompiler
-    from openhcs.processing.backends.cellprofiler.module_classes import (
-        CellProfilerModule,
-    )
+    from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
     backend_semantics = tuple(
-        CellProfilerModuleSemantics(
-            module_name=str(module_type.module_name),
-            category=_declared_category(module_type),
-            dimensionality=_declared_dimensionality(module_type.contract),
-            respects_masks=False,
+        (
+            CellProfilerModuleSemantics(
+                module_name=str(module_type.module_name),
+                category=_declared_category(module_type),
+                dimensionality=_declared_dimensionality(module_type.contract),
+                respects_masks=False,
+            )
+            for module_type in CellProfilerModule.__registry__.values()
         )
-        for module_type in CellProfilerModule.__registry__.values()
     )
     setup_semantics = tuple(
-        CellProfilerModuleSemantics(
-            module_name=str(module_name),
-            category=CellProfilerModuleCategory.INPUT,
-            dimensionality=CellProfilerModuleDimensionality.PLANAR_AND_VOLUMETRIC,
-            respects_masks=False,
+        (
+            CellProfilerModuleSemantics(
+                module_name=str(module_name),
+                category=CellProfilerModuleCategory.INPUT,
+                dimensionality=CellProfilerModuleDimensionality.PLANAR_AND_VOLUMETRIC,
+                respects_masks=False,
+            )
+            for module_name in SetupModuleCompiler.__registry__
         )
-        for module_name in SetupModuleCompiler.__registry__
     )
     return (*backend_semantics, *setup_semantics)
 
 
 def _declared_aliases() -> tuple[tuple[str, str], ...]:
-    from openhcs.processing.backends.cellprofiler.module_classes import (
-        CellProfilerModule,
-    )
+    from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
     return tuple(
-        (alias, str(module_type.module_name))
-        for module_type in CellProfilerModule.__registry__.values()
-        for alias in module_type.aliases
+        (
+            (alias, str(module_type.module_name))
+            for module_type in CellProfilerModule.__registry__.values()
+            for alias in module_type.aliases
+        )
     )

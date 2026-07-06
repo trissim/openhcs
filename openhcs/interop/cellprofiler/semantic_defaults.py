@@ -5,7 +5,6 @@ rather than in the underlying library function signature.
 """
 
 from __future__ import annotations
-
 import ast
 import inspect
 from abc import ABC, abstractmethod
@@ -13,12 +12,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
-
 from metaclass_registry import AutoRegisterMeta
-
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.callable_contract import CallableContract
-
 
 SOURCE_MODULE_ROOT = (
     Path(__file__).resolve().parents[3]
@@ -58,7 +54,9 @@ class SourceModuleSemantics:
         for statement in self.syntax_tree.body:
             if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
                 target = statement.targets[0]
-                if isinstance(target, ast.Name) and isinstance(statement.value, ast.Constant):
+                if isinstance(target, ast.Name) and isinstance(
+                    statement.value, ast.Constant
+                ):
                     values[target.id] = statement.value.value
         return values
 
@@ -72,10 +70,14 @@ class SourceModuleSemantics:
             if not isinstance(target, ast.Name) or target.id != variable_name:
                 continue
             if not isinstance(statement.value, ast.Dict):
-                raise TypeError(f"{variable_name} is not a literal dict in {self.source_path}")
+                raise TypeError(
+                    f"{variable_name} is not a literal dict in {self.source_path}"
+                )
             return {
                 self.literal_value(key): self.literal_value(value)
-                for key, value in zip(statement.value.keys, statement.value.values, strict=True)
+                for key, value in zip(
+                    statement.value.keys, statement.value.values, strict=True
+                )
             }
         raise KeyError(f"{variable_name} not found in {self.source_path}")
 
@@ -131,10 +133,7 @@ class SourceModuleSemantics:
         return frozenset(names)
 
     def is_pixel_data_expression(self, node: ast.AST) -> bool:
-        return (
-            isinstance(node, ast.Attribute)
-            and node.attr == "pixel_data"
-        )
+        return isinstance(node, ast.Attribute) and node.attr == "pixel_data"
 
     def literal_value(self, node: ast.AST | None) -> object:
         if isinstance(node, ast.Constant):
@@ -149,8 +148,7 @@ class SourceModuleSemantics:
         if isinstance(node, ast.Name):
             return self.constant_values[node.id]
         raise TypeError(
-            f"Unsupported semantic default expression in {self.source_path}: "
-            f"{ast.dump(node)}"
+            f"Unsupported semantic default expression in {self.source_path}: {ast.dump(node)}"
         )
 
 
@@ -159,21 +157,20 @@ class CellProfilerSemanticDefaultContract(ABC, metaclass=AutoRegisterMeta):
 
     __registry_key__ = "contract_key"
     __skip_if_no_key__ = True
-
     contract_key: ClassVar[str | None] = None
     module_name: ClassVar[str | None] = None
     source_filename: ClassVar[str | None] = None
 
     @classmethod
     def registered_contracts(cls) -> tuple["CellProfilerSemanticDefaultContract", ...]:
-        from openhcs.processing.backends.cellprofiler.module_classes import (
-            CellProfilerModule,
-        )
+        from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
         return tuple(
-            contract
-            for module_type in CellProfilerModule.__registry__.values()
-            for contract in module_type.semantic_default_contracts()
+            (
+                contract
+                for module_type in CellProfilerModule.__registry__.values()
+                for contract in module_type.semantic_default_contracts()
+            )
         )
 
     def validate(self) -> None:
@@ -190,11 +187,12 @@ class CellProfilerSemanticDefaultContract(ABC, metaclass=AutoRegisterMeta):
     def validate_against_source(self, semantics: SourceModuleSemantics) -> None:
         """Raise if absorbed semantics diverge from vendored CellProfiler source."""
 
-    def require_equal(self, label: str, source_value: object, absorbed_value: object) -> None:
+    def require_equal(
+        self, label: str, source_value: object, absorbed_value: object
+    ) -> None:
         if source_value != absorbed_value:
             raise AssertionError(
-                f"{type(self).__name__} mismatch for {label}: "
-                f"source={source_value!r}, absorbed={absorbed_value!r}"
+                f"{type(self).__name__} mismatch for {label}: source={source_value!r}, absorbed={absorbed_value!r}"
             )
 
 
@@ -235,19 +233,15 @@ class SourceCallKeywordDefaultContract(CellProfilerSemanticDefaultContract):
     def validate_against_source(self, semantics: SourceModuleSemantics) -> None:
         for keyword in self.source_call_keywords():
             source_value = semantics.call_keyword_value(
-                keyword.callable_name,
-                keyword.keyword_name,
+                keyword.callable_name, keyword.keyword_name
             )
             absorbed_default = self.callable_default(
-                keyword.absorbed_callable,
-                keyword.keyword_name,
+                keyword.absorbed_callable, keyword.keyword_name
             )
             self.require_equal(keyword.keyword_name, source_value, absorbed_default)
 
     def callable_default(
-        self,
-        absorbed_callable: Callable[..., Any],
-        keyword_name: str,
+        self, absorbed_callable: Callable[..., Any], keyword_name: str
     ) -> object:
         signature = inspect.signature(inspect.unwrap(absorbed_callable))
         parameter = signature.parameters[keyword_name]

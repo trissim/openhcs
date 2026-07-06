@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import logging
 
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ArtifactType, ObjectLabelsArtifactType
 from openhcs.core.runtime_profile import RuntimeProfileLogger
 from openhcs.core.runtime_values import ObjectLabelValue
 from openhcs.core.source_image_provenance import SourceComponentMetadata
@@ -67,14 +67,14 @@ class AdapterProfileLog:
         seconds: float,
         *,
         artifact_name: str,
-        kind: ArtifactKind | str | None = None,
+        kind: ArtifactType | str | None = None,
         payload_type: str | None = None,
         group_key: str | None = None,
         extra_fields: Mapping[str, AdapterProfileFieldValue] | None = None,
     ) -> None:
         fields: AdapterProfileFields = {"artifact": artifact_name}
         if kind is not None:
-            fields["kind"] = kind.value if isinstance(kind, ArtifactKind) else kind
+            fields["kind"] = ArtifactType.coerce(kind).value
         if payload_type is not None:
             fields["payload_type"] = payload_type
         if group_key is not None:
@@ -112,7 +112,7 @@ class AdapterProfileLog:
             label,
             seconds,
             artifact_name=artifact_name,
-            kind=ArtifactKind.OBJECT_LABELS,
+            kind=ObjectLabelsArtifactType,
             payload_type=payload_type,
             extra_fields=object_label_artifact_profile_fields(labels),
         )
@@ -173,7 +173,7 @@ class NativeRecordProfileContext:
     """Profiling context for one native artifact materialization."""
 
     artifact_name: str
-    kind: ArtifactKind
+    kind: ArtifactType
 
     def event(
         self,

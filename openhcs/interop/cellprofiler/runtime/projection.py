@@ -9,7 +9,10 @@ from typing import ClassVar, cast
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
-from openhcs.core.aligned_image_payload import project_singleton_stack_image_domain
+from openhcs.core.aligned_image_payload import (
+    AlignedImageStack,
+    project_singleton_stack_image_domain,
+)
 from openhcs.core.image_shapes import is_color_image_slice, is_image_stack
 from openhcs.core.runtime_semantics import (
     RuntimePlaneAxis,
@@ -125,12 +128,26 @@ class RuntimePlaneCurrentImageContext:
         return self.current_image
 
     def current_image_is_planar(self) -> bool:
+        current_image = self.require_image()
+        if isinstance(current_image, AlignedImageStack):
+            return all(
+                self._image_payload_is_planar(slice_payload)
+                for slice_payload in current_image.slices
+            )
         current_data = image_payload_data(
-            project_singleton_stack_image_domain(self.require_image())
+            project_singleton_stack_image_domain(current_image)
         )
-        if is_color_image_slice(current_data):
+        return self._image_data_is_planar(current_data)
+
+    @classmethod
+    def _image_payload_is_planar(cls, payload: ImagePayloadMetadataInput) -> bool:
+        return cls._image_data_is_planar(image_payload_data(payload))
+
+    @staticmethod
+    def _image_data_is_planar(data: ImagePayloadValue) -> bool:
+        if is_color_image_slice(data):
             return True
-        current_array = np.asarray(current_data)
+        current_array = np.asarray(data)
         return current_array.ndim == 2
 
 @dataclass(frozen=True, slots=True)

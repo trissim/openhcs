@@ -11,7 +11,7 @@ from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta, extract_key_from_class_name
 
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import RelationshipsArtifactType
 from openhcs.core.runtime_stores import StoredRuntimeValue
 from openhcs.core.runtime_values import (
     ImagePayloadMetadataInput,
@@ -398,7 +398,7 @@ class RuntimeRecordSourceImageSetSelector:
                 policy=policy,
             )
         )
-        if record.value.kind is ArtifactKind.RELATIONSHIPS:
+        if record.value.artifact_type is RelationshipsArtifactType:
             identities.update(
                 self.relationship_source_identities(
                     ObjectRelationship.from_runtime_value(record.value),

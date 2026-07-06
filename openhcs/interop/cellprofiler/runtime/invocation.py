@@ -139,6 +139,15 @@ class CellProfilerSourceIdentityMixin:
                 pass
         return frozenset(names)
 
+    @property
+    def source_surface_count(self) -> int:
+        """Return how many CellProfiler source-image surfaces this record names."""
+        if len(self.source_aliases) > 1:
+            return len(self.source_aliases)
+        if self.source_image_name is not None or self.source_aliases:
+            return 1
+        return 0
+
     def validate_source_identity(self) -> None:
         """Validate source alias declarations without module-level helper escape."""
         if not isinstance(self.source_aliases, tuple):
@@ -675,18 +684,13 @@ class SecondFirstCellProfilerSourcePairFeature(CellProfilerSourcePairFeature):
         return source_pair.second.name, source_pair.first.name
 
 
-class CellProfilerCorrelationFeature(SecondFirstCellProfilerSourcePairFeature):
+class CellProfilerCorrelationFeature(FirstSecondCellProfilerSourcePairFeature):
     source_field = "correlation"
     feature_family = "Correlation"
 
 
 class CellProfilerSlopeFeature(FirstSecondCellProfilerSourcePairFeature):
     source_field = "slope"
-    feature_family = "Slope"
-
-
-class CellProfilerReverseSlopeFeature(SecondFirstCellProfilerSourcePairFeature):
-    source_field = "slope_reverse"
     feature_family = "Slope"
 
 

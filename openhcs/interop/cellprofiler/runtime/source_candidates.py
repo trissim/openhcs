@@ -80,6 +80,10 @@ SOURCE_CANDIDATE_PROCESS_CACHE: ProcessLocalBoundedCache[
     tuple[Hashable, ...],
     tuple["ParsedSourceCandidate", ...],
 ] = ProcessLocalBoundedCache(max_entries=64)
+SOURCE_CANDIDATE_PATH_PROCESS_CACHE: ProcessLocalBoundedCache[
+    tuple[Hashable, ...],
+    tuple["ParsedSourceCandidate", ...],
+] = ProcessLocalBoundedCache(max_entries=8192)
 SOURCE_CANDIDATE_METADATA_PROCESS_CACHE: ProcessLocalBoundedCache[
     tuple[Hashable, ...],
     tuple[ParsedSourceMetadata, ParsedSourceMetadata],
@@ -92,6 +96,28 @@ SOURCE_CANDIDATE_MATCH_PROCESS_CACHE: ProcessLocalBoundedCache[
     tuple[Hashable, ...],
     tuple["ParsedSourceCandidate", ...],
 ] = ProcessLocalBoundedCache(max_entries=4096)
+
+
+def source_candidate_process_cache_key(
+    *,
+    file_paths: tuple[str, ...],
+    context: SourceBindingRuntimeContext,
+    plan: CompiledSourceBindingPlan,
+    parser: CellProfilerFilenameParser,
+) -> tuple[Hashable, ...]:
+    """Return the semantic cache key for one source-candidate universe."""
+    projects_virtual_paths = not (
+        bool(context.pipeline_input_files)
+        and file_paths == context.pipeline_input_files
+    )
+    return (
+        file_paths,
+        context.process_semantic_identity,
+        projects_virtual_paths,
+        plan.metadata_rules,
+        parser.semantic_identity(),
+    )
+
 
 @dataclass(frozen=True, slots=True)
 class SourceCandidateRuntimeCache:
@@ -124,22 +150,7 @@ class SourceCandidateRuntimeCache:
 
     def cache_key(self) -> tuple[Hashable, ...]:
         """Return the semantic cache key for this source-candidate projection."""
-        context = self.adapter.source_binding_context
-        parser = RequireProcessingContextBoundaryPolicy(
-            self.adapter
-        ).context.microscope_handler.parser
-        universe = self.universe()
-        path_identities = tuple(
-            path_resolution.cache_identity(context)
-            for file_path in self.file_paths
-            for path_resolution in universe.path_projection(file_path).paths()
-        )
-        return (
-            path_identities,
-            universe.projects_virtual_paths,
-            self.adapter.source_binding_plan.metadata_rules,
-            parser.semantic_identity(),
-        )
+        return self.adapter.source_candidate_process_cache_key(tuple(self.file_paths))
 
     def universe(self) -> "SourceCandidateRuntimeUniverse":
         """Return the path-projection universe for this source-candidate request."""
@@ -347,6 +358,17 @@ class CellProfilerImageNumberMap:
             self.by_source_order_path.get(source_order_path)
         )
 
+    def image_number_for_source_order_paths(
+        self,
+        source_order_paths: tuple[str, ...],
+    ) -> CellProfilerImageNumberResolution:
+        """Return the first CP image number matching any source-order path spelling."""
+        for source_order_path in source_order_paths:
+            image_number = self.by_source_order_path.get(source_order_path)
+            if image_number is not None:
+                return CellProfilerImageNumberResolution(int(image_number))
+        return CellProfilerImageNumberResolution()
+
     def source_path_for_image_number(self, image_number: int) -> str | None:
         return self.source_path_by_image_number.get(int(image_number))
 
@@ -391,7 +413,14 @@ class CellProfilerImageNumberResolver:
         axis_scope: SourceAxisMetadataScope,
     ) -> int:
         """Return the first CP ImageNumber matching the adapter axis scope."""
+        axis_scope = axis_scope.image_set_identity_scope()
         pipeline_paths = self.pipeline_paths()
+        image_number = self.image_number_start_for_axis_scope_from_metadata(
+            axis_scope,
+            pipeline_paths,
+        )
+        if image_number is not None:
+            return image_number
         if axis_scope.has_component and self.adapter.can_resolve_source_candidates:
             candidates = self.adapter.source_candidates(pipeline_paths)
             image_numbers = self.image_numbers_by_set(candidates)
@@ -403,11 +432,6 @@ class CellProfilerImageNumberResolver:
                 image_number = image_numbers.get(candidate.source_identity)
                 if image_number is not None:
                     return image_number
-
-        for index, path in enumerate(sorted(pipeline_paths), start=1):
-            metadata = self.source_metadata_for_path(path)
-            if metadata is not None and axis_scope.matches_metadata(metadata):
-                return index
 
         if not self.adapter.can_resolve_source_candidates:
             return 1
@@ -422,6 +446,29 @@ class CellProfilerImageNumberResolver:
             if axis_scope.matches_metadata(parsed):
                 return index
         return 1
+
+    def image_number_start_for_axis_scope_from_metadata(
+        self,
+        axis_scope: SourceAxisMetadataScope,
+        pipeline_paths: tuple[str, ...],
+    ) -> int | None:
+        """Return image-set numbering from declared source metadata when possible."""
+        image_numbers: dict[SourceImageSetIdentity, int] = {}
+        for path in sorted(pipeline_paths):
+            metadata = self.source_metadata_for_path(path)
+            if metadata is None:
+                continue
+            source_identity = SourceImageSetIdentity.from_metadata(
+                metadata,
+                fallback_source_path=self.adapter.cellprofiler_source_order_path(path),
+            )
+            image_number = image_numbers.setdefault(
+                source_identity,
+                len(image_numbers) + 1,
+            )
+            if axis_scope.matches_metadata(metadata):
+                return image_number
+        return None
 
     def source_path_for_image_number(self, image_number: int) -> str | None:
         """Return a representative source path for one CellProfiler ImageNumber."""
@@ -448,12 +495,9 @@ class CellProfilerImageNumberResolver:
         """Return CP ImageNumbers keyed by source-path tuple index."""
         if not source_paths:
             return MappingProxyType({})
-        image_number_map = self.image_number_map()
         image_numbers: dict[int, int] = {}
         for index, source_path in enumerate(source_paths):
-            image_number = image_number_map.image_number_for_source_order_path(
-                self.adapter.cellprofiler_source_order_path(source_path)
-            ).value
+            image_number = self.image_number_resolution(source_path).value
             if image_number is not None:
                 image_numbers[index] = int(image_number)
         return MappingProxyType(image_numbers)
@@ -469,11 +513,45 @@ class CellProfilerImageNumberResolver:
             return CellProfilerImageNumberResolution()
         if not self.adapter.can_resolve_source_candidates:
             return CellProfilerImageNumberResolution()
-        return self.image_number_map().image_number_for_source_order_path(
-            self.adapter.cellprofiler_source_order_path(source_path)
+        lookup_paths = self.source_order_lookup_paths(source_path)
+        scoped = self.image_number_map(
+            axis_scoped=True
+        ).image_number_for_source_order_paths(lookup_paths)
+        if scoped.value is not None:
+            return scoped
+        return self.image_number_map(
+            axis_scoped=False
+        ).image_number_for_source_order_paths(
+            lookup_paths
         )
 
-    def image_number_map(self) -> CellProfilerImageNumberMap:
+    def source_order_lookup_paths(self, source_path: str) -> tuple[str, ...]:
+        """Return source-order path spellings that may identify one runtime path."""
+        context = self.adapter.source_binding_context
+        path_identities = SourceBindingRuntimeContext.source_path_identities(source_path)
+        virtual_paths: list[str] = []
+        for path_identity in path_identities:
+            if path_identity not in context.virtual_source_paths_by_identity:
+                continue
+            virtual_paths.extend(context.virtual_source_paths_by_identity[path_identity])
+        candidate_paths = tuple(
+            dict.fromkeys(
+                (
+                    source_path,
+                    str(Path(source_path).resolve(strict=False)),
+                    *path_identities,
+                    *virtual_paths,
+                )
+            )
+        )
+        return tuple(
+            dict.fromkeys(
+                self.adapter.cellprofiler_source_order_path(path)
+                for path in candidate_paths
+            )
+        )
+
+    def image_number_map(self, *, axis_scoped: bool = True) -> CellProfilerImageNumberMap:
         """Return the cached source-order path to CP ImageNumber map."""
         pipeline_paths = self.pipeline_paths()
         if not pipeline_paths:
@@ -481,9 +559,10 @@ class CellProfilerImageNumberResolver:
                 MappingProxyType({}),
                 MappingProxyType({}),
             )
-        axis_scope = self.adapter.source_axis_metadata_scope()
+        axis_scope = self.adapter.source_axis_metadata_scope().image_set_identity_scope()
         cache_key = (
             "image_number_map",
+            axis_scoped,
             SourceCandidateRuntimeCache(self.adapter, pipeline_paths).cache_key(),
             axis_scope.component_values,
             cellprofiler_source_order_identity(self.adapter),
@@ -493,11 +572,15 @@ class CellProfilerImageNumberResolver:
         if cached is not None:
             return cached
 
-        candidates = SourceCandidateMatcher.axis_scoped_candidates(
-            self.adapter.source_candidates(pipeline_paths),
-            axis_scope,
-            metadata_for_candidate=self.candidate_metadata,
-        )
+        pipeline_candidates = self.adapter.source_candidates(pipeline_paths)
+        if axis_scoped:
+            candidates = SourceCandidateMatcher.axis_scoped_candidates(
+                pipeline_candidates,
+                axis_scope,
+                metadata_for_candidate=self.candidate_metadata,
+            )
+        else:
+            candidates = pipeline_candidates
         image_numbers = self.image_numbers_by_set(candidates)
         by_source_order_path: dict[str, int] = {}
         source_path_by_image_number: dict[int, str] = {}
@@ -647,6 +730,8 @@ class SourceBindingPlaneCandidateContext:
         cls,
         adapter: CellProfilerRuntimeAdapter,
         alias: str,
+        *,
+        axis_scope: SourceAxisMetadataScope | None = None,
     ) -> "SourceBindingPlaneCandidateContext | None":
         binding = adapter.source_binding_plan.binding_for_alias(alias)
         if binding is None:
@@ -664,6 +749,7 @@ class SourceBindingPlaneCandidateContext:
             adapter=adapter,
             step_candidates=step_candidates,
             pipeline_candidates=pipeline_candidates,
+            axis_scope=axis_scope,
         )
         return cls(
             request=SourceBindingRequestBase(alias=alias, binding=binding),
@@ -720,6 +806,7 @@ class SourceBindingPlaneCandidateUniverse:
         adapter: CellProfilerRuntimeAdapter,
         step_candidates: tuple["ParsedSourceCandidate", ...],
         pipeline_candidates: tuple["ParsedSourceCandidate", ...],
+        axis_scope: SourceAxisMetadataScope | None = None,
     ) -> "SourceBindingPlaneCandidateUniverse":
         candidate_source = (
             pipeline_candidates
@@ -734,7 +821,8 @@ class SourceBindingPlaneCandidateUniverse:
             ordered_candidates,
             adapter.source_binding_context,
         )
-        axis_scope = adapter.source_axis_metadata_scope()
+        if axis_scope is None:
+            axis_scope = adapter.source_axis_metadata_scope()
         candidate_universe = SourceBindingMatchCandidateUniverse(
             step_input_candidates=step_candidates,
             target_candidates=candidate_source,
@@ -1226,18 +1314,67 @@ def _parse_source_candidates(
     metadata_resolver = SourceCandidateMetadataResolver(adapter=adapter, parser=parser)
     candidates: list[ParsedSourceCandidate] = []
     for file_path in file_paths:
-        for path_resolution in universe.path_projection(file_path).paths():
-            metadata = metadata_resolver.metadata(path_resolution)
-            candidates.append(
-                ParsedSourceCandidate(
-                    path=path_resolution.path,
-                    resolved_path=path_resolution.resolved_path,
-                    virtual_path=path_resolution.virtual_path,
-                    filename=Path(path_resolution.resolved_path).name,
-                    metadata=MappingProxyType(dict(metadata)),
-                )
+        candidates.extend(
+            _parse_source_path_candidates(
+                file_path,
+                adapter,
+                universe=universe,
+                parser=parser,
+                metadata_resolver=metadata_resolver,
             )
+        )
     return ParsedSourceCandidateCollection(tuple(candidates)).deduplicated()
+
+
+def _parse_source_path_candidates(
+    file_path: str,
+    adapter: CellProfilerRuntimeAdapter,
+    *,
+    universe: SourceCandidateRuntimeUniverse,
+    parser: CellProfilerFilenameParser,
+    metadata_resolver: "SourceCandidateMetadataResolver",
+) -> tuple[ParsedSourceCandidate, ...]:
+    cache_key = _source_path_candidate_cache_key(file_path, adapter, universe, parser)
+    cache = SOURCE_CANDIDATE_PATH_PROCESS_CACHE
+    cached = cache.cached_value(cache_key)
+    if cached is not None:
+        return cached
+    candidates = tuple(
+        _parsed_source_candidate(path_resolution, metadata_resolver)
+        for path_resolution in universe.path_projection(file_path).paths()
+    )
+    return cache.store_value(cache_key, candidates)
+
+
+def _parsed_source_candidate(
+    path_resolution: "SourceCandidatePathResolution",
+    metadata_resolver: "SourceCandidateMetadataResolver",
+) -> ParsedSourceCandidate:
+    metadata = metadata_resolver.metadata(path_resolution)
+    return ParsedSourceCandidate(
+        path=path_resolution.path,
+        resolved_path=path_resolution.resolved_path,
+        virtual_path=path_resolution.virtual_path,
+        filename=Path(path_resolution.resolved_path).name,
+        metadata=MappingProxyType(dict(metadata)),
+    )
+
+
+def _source_path_candidate_cache_key(
+    file_path: str,
+    adapter: CellProfilerRuntimeAdapter,
+    universe: SourceCandidateRuntimeUniverse,
+    parser: CellProfilerFilenameParser,
+) -> tuple[Hashable, ...]:
+    context = adapter.source_binding_context
+    return (
+        str(file_path),
+        context.source_order_identity,
+        context.source_metadata_identity,
+        universe.projects_virtual_paths,
+        adapter.source_binding_plan.metadata_rules,
+        parser.semantic_identity(),
+    )
 
 @dataclass(frozen=True, slots=True)
 class SourceCandidatePathProjection:
@@ -1324,12 +1461,16 @@ class SourceCandidateMetadataResolver(SourceCandidateMetadataRequest):
         metadata: MutableParsedSourceMetadata = {}
         context = self.adapter.source_binding_context
         context_paths = path_resolution.metadata_paths(context)
-        if ContextSourceMetadataAuthority.has_metadata_for_any(context_paths, context):
+        context_metadata = ContextSourceMetadataAuthority.metadata_entries(
+            context_paths,
+            context,
+        )
+        if context_metadata:
             return self.metadata_from_context(
                 metadata,
                 path_resolution=path_resolution,
                 context=context,
-                context_paths=context_paths,
+                context_metadata=context_metadata,
             )
         return self.metadata_from_paths(
             metadata,
@@ -1344,9 +1485,9 @@ class SourceCandidateMetadataResolver(SourceCandidateMetadataRequest):
         *,
         path_resolution: SourceCandidatePathResolution,
         context: SourceBindingRuntimeContext,
-        context_paths: tuple[str, ...],
+        context_metadata: tuple[tuple[str, Mapping[str, Any]], ...],
     ) -> MutableParsedSourceMetadata:
-        ContextSourceMetadataAuthority.merge_into(metadata, context_paths, context)
+        ContextSourceMetadataAuthority.merge_entries_into(metadata, context_metadata)
         self.merge_rule_metadata(metadata, path_resolution.resolved_path)
         if not source_paths_equal(path_resolution.path, path_resolution.resolved_path):
             self.merge_rule_metadata(metadata, path_resolution.path)
@@ -1443,14 +1584,21 @@ class ContextSourceMetadataAuthority:
         paths: tuple[str, ...],
         context: SourceBindingRuntimeContext,
     ) -> bool:
-        return any(
-            SourceRuntimePathLookup(path, context.step_input_dir).first_value(
-                context.source_metadata_by_path,
-                include_native_path_fallback=True,
-            )
-            is not None
-            for path in paths
-        )
+        return bool(cls.metadata_entries(paths, context))
+
+    @classmethod
+    def metadata_entries(
+        cls,
+        paths: tuple[str, ...],
+        context: SourceBindingRuntimeContext,
+    ) -> tuple[tuple[str, Mapping[str, Any]], ...]:
+        """Return context metadata entries for the requested path spellings."""
+        entries: list[tuple[str, Mapping[str, Any]]] = []
+        for path in dict.fromkeys(paths):
+            context_metadata = context.source_metadata_for_runtime_path(path)
+            if context_metadata is not None:
+                entries.append((path, context_metadata))
+        return tuple(entries)
 
     @classmethod
     def merge_into(
@@ -1459,16 +1607,16 @@ class ContextSourceMetadataAuthority:
         paths: tuple[str, ...],
         context: SourceBindingRuntimeContext,
     ) -> None:
-        for path in dict.fromkeys(paths):
-            context_metadata = SourceRuntimePathLookup(
-                path,
-                context.step_input_dir,
-            ).first_value(
-                context.source_metadata_by_path,
-                include_native_path_fallback=True,
-            )
-            if context_metadata is not None:
-                merge_source_metadata(metadata, context_metadata, path=path)
+        cls.merge_entries_into(metadata, cls.metadata_entries(paths, context))
+
+    @staticmethod
+    def merge_entries_into(
+        metadata: MutableParsedSourceMetadata,
+        entries: tuple[tuple[str, Mapping[str, Any]], ...],
+    ) -> None:
+        """Merge already-resolved context metadata entries into candidate metadata."""
+        for path, context_metadata in entries:
+            merge_source_metadata(metadata, context_metadata, path=path)
 
 def _merge_candidate_path_metadata(
     metadata: MutableParsedSourceMetadata,
@@ -1642,14 +1790,10 @@ class SourceCandidateMatcher:
 
     @staticmethod
     def source_filter_paths(candidate: ParsedSourceCandidate) -> tuple[str, ...]:
-        return tuple(
-            dict.fromkeys(
-                (
-                    *candidate.paths,
-                    *SourceMetadataRoleView(candidate.metadata).source_filter_paths(),
-                )
-            )
-        )
+        source_filter_paths = SourceMetadataRoleView(candidate.metadata).source_filter_paths()
+        if source_filter_paths:
+            return source_filter_paths
+        return candidate.paths
 
     @staticmethod
     def match_candidates_cache_key(

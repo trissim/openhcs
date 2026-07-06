@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -13,27 +13,28 @@ from typing import ClassVar
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
+from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ArtifactSpecCollection,
+    MeasurementsArtifactType,
+)
 from openhcs.core.measurement_row_materialization import (
-    MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
     measurement_row_has_object_identity,
 )
 from openhcs.core.runtime_artifact_queries import (
+    MeasurementLabelSliceFeatureQuery,
     MeasurementLabelSliceFeatureBatchQuery,
     MeasurementTableAxisProjection,
 )
 from openhcs.core.measurement_feature_queries import (
-    MEASUREMENT_FEATURE_NAME_FIELD,
     MeasurementFeatureAxisScopeSelection,
     MeasurementFeatureQuery,
 )
 from openhcs.core.measurement_row_materialization import measurement_rows
-from openhcs.core.runtime_identifier import normalize_runtime_identifier
 from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 from openhcs.core.runtime_semantics import (
     MeasurementRowAxisField,
     ObjectLabelMeasurementValues,
-    ObjectShapeMeasurementFeature,
     dense_object_label_id_domain,
     measurement_row_mapping,
 )
@@ -45,7 +46,7 @@ from openhcs.interop.cellprofiler.measurement_dialect import (
     CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
 )
 from openhcs.interop.cellprofiler.runtime.artifact_binding import (
-    RuntimeArtifactKindStrategy,
+    RuntimeArtifactTypeStrategy,
     RuntimeInputBindingRequestBase,
 )
 from openhcs.interop.cellprofiler.runtime.invocation import (
@@ -142,49 +143,6 @@ class ObjectInputBindingRequest(RuntimeInputBindingRequestBase):
             return ()
         return object_measurement_tables_for_object(self.adapter, primary_object.name)
 
-    @property
-    def declared_measurement_specs(self) -> tuple[ArtifactSpec, ...]:
-        return tuple(
-            spec
-            for spec in self.runtime_inputs
-            if spec.kind is ArtifactKind.MEASUREMENTS
-        )
-
-    @property
-    def declared_measurement_input_cache_key(self) -> CellProfilerRuntimeValues:
-        return (
-            "declared_measurement_inputs",
-            self.adapter.runtime_value_store.revision,
-            self.adapter.axis_scope.axis_id,
-            self.adapter.group_key,
-            tuple(
-                (spec.name, spec.kind.value)
-                for spec in self.declared_measurement_specs
-            ),
-        )
-
-    def declared_measurement_tables(self) -> tuple[MeasurementTable, ...]:
-        measurement_specs = self.declared_measurement_specs
-        if not measurement_specs:
-            return ()
-        cache_key = self.declared_measurement_input_cache_key
-        cached = self.adapter._measurement_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        tables: list[MeasurementTable] = []
-        for spec in measurement_specs:
-            for record in RuntimeArtifactRecordResolver(
-                adapter=self.adapter,
-                name=spec.name,
-                kind=ArtifactKind.MEASUREMENTS,
-                group_key=None,
-                current_image=None,
-            ).resolve():
-                tables.append(MeasurementTable.from_runtime_value(record.value))
-        resolved = tuple(tables)
-        self.adapter._measurement_cache[cache_key] = resolved
-        return resolved
-
 
 @dataclass(slots=True)
 class CellProfilerMeasurementVector:
@@ -237,8 +195,8 @@ class MeasurementImageOperandRow:
     def source_text(table_name: str, row_mapping: MeasurementRowMapping) -> str:
         return (
             f"{table_name}:"
-            f"{MeasurementImageOperandRow.field_text(row_mapping, MEASUREMENT_SOURCE_IMAGE_NAME_FIELD, '<none>')}:"
-            f"{MeasurementImageOperandRow.field_text(row_mapping, MEASUREMENT_FEATURE_NAME_FIELD, '<wide>')}:"
+            f"{MeasurementImageOperandRow.field_text(row_mapping, MeasurementRowAxisField.SOURCE_IMAGE_NAME.value, '<none>')}:"
+            f"{MeasurementImageOperandRow.field_text(row_mapping, MeasurementRowAxisField.FEATURE_NAME.value, '<wide>')}:"
             "image_number="
             f"{MeasurementImageOperandRow.field_text(row_mapping, MeasurementRowAxisField.IMAGE_NUMBER.value, '<none>')}"
         )
@@ -300,9 +258,7 @@ class MeasurementImageOperandAxisResolution:
     def axis_values(self, axis: MeasurementRowAxisField) -> tuple[int, ...]:
         return tuple(
             dict.fromkeys(
-                row.axis_value(axis)
-                for row in self.rows
-                if row.has_axis(axis)
+                row.axis_value(axis) for row in self.rows if row.has_axis(axis)
             )
         )
 
@@ -417,25 +373,15 @@ class MeasurementImageOperandVectorResolution:
         if cached is not None:
             return cached
 
-        query_context = runtime_scope.artifact_query_context()
-        input_records = []
-        for input_plan in adapter.artifact_inputs.values():
-            if input_plan.kind is not ArtifactKind.MEASUREMENTS:
-                continue
-            input_records.extend(
-                RuntimeArtifactRecordResolver(
-                    adapter=adapter,
-                    name=input_plan.name,
-                    kind=ArtifactKind.MEASUREMENTS,
-                    group_key=group_key,
-                    current_image=current_image,
-                ).resolve()
-            )
-        source_records = (
-            tuple({id(record): record for record in input_records}.values())
-            if input_records
-            else query_context.find(kind=ArtifactKind.MEASUREMENTS)
+        source_records = adapter.declared_measurement_input_records(
+            group_key=group_key,
+            match_group=match_group,
+            current_image=current_image,
         )
+        if not source_records:
+            source_records = runtime_scope.artifact_query_context().find(
+                artifact_type=MeasurementsArtifactType
+            )
         table_records = []
         for record in source_records:
             table = MeasurementTable.from_runtime_value(record.value)
@@ -497,12 +443,9 @@ class MeasurementImageOperandVectorResolution:
         rows: tuple[MeasurementImageOperandRow, ...],
         row_axis: MeasurementRowAxisField,
     ) -> MeasurementImageOperandRowsBySlice:
-        axis_values = tuple(
-            dict.fromkeys(row.axis_value(row_axis) for row in rows)
-        )
+        axis_values = tuple(dict.fromkeys(row.axis_value(row_axis) for row in rows))
         axis_to_slice = {
-            axis_value: index
-            for index, axis_value in enumerate(sorted(axis_values))
+            axis_value: index for index, axis_value in enumerate(sorted(axis_values))
         }
         rows_by_slice: dict[int, list[MeasurementImageOperandRow]] = {}
         for row in rows:
@@ -649,22 +592,6 @@ class CurrentObjectShapeFeatureVectorSourceStrategy(
 
     source = CellProfilerObjectMeasurementVectorSource.CURRENT_OBJECT_SHAPE_FEATURE
 
-    def shape_feature(
-        self,
-        feature_name: str,
-    ) -> ObjectShapeMeasurementFeature | None:
-        field_candidates = frozenset(
-            MeasurementFeatureQuery(
-                feature_name,
-                dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-            ).field_candidates
-        )
-        for feature in ObjectShapeMeasurementFeature:
-            normalized = normalize_runtime_identifier(feature.value)
-            if normalized in field_candidates:
-                return feature
-        return None
-
     def vector(
         self,
         binding: "CellProfilerObjectMeasurementVectorBinding",
@@ -687,7 +614,9 @@ class CurrentObjectShapeFeatureVectorSourceStrategy(
     ) -> bool:
         """Return whether persisted runtime rows can own this shape feature."""
         tables = binding.measurement_tables(binding.request.adapter)
-        return any(binding.feature_query.table_may_carry_feature(table) for table in tables)
+        return any(
+            binding.feature_query.table_may_carry_feature(table) for table in tables
+        )
 
     def runtime_current_image_vector(
         self,
@@ -764,7 +693,9 @@ class CurrentObjectShapeFeatureVectorSourceStrategy(
         tables = binding.measurement_tables(binding.request.adapter)
         for table in tables:
             if isinstance(table.rows, ColumnarRows):
-                if image_number_field in tuple(str(column) for column in table.rows.columns):
+                if image_number_field in tuple(
+                    str(column) for column in table.rows.columns
+                ):
                     return True
                 continue
             if any(
@@ -779,68 +710,56 @@ class CurrentObjectShapeFeatureVectorSourceStrategy(
         feature_name: str,
         label_array: np.ndarray,
     ) -> CurrentObjectShapeFeatureVectorResult:
-        if label_array.ndim == 3:
-            shape_feature = self.shape_feature(feature_name)
-            if shape_feature is None:
-                return CurrentObjectShapeFeatureVectorResult.unavailable(
-                    CurrentObjectShapeFeatureVectorStatus.UNKNOWN_SHAPE_FEATURE
-                )
-            return CurrentObjectShapeFeatureVectorResult.available(
-                CellProfilerMeasurementVector(
-                    tuple(
-                        self.current_label_shape_plane_values(
-                            shape_feature,
-                            label_array[slice_index],
-                        )
-                        for slice_index in range(label_array.shape[0])
-                    )
-                )
-            )
-        if label_array.ndim != 2:
-            return CurrentObjectShapeFeatureVectorResult.unavailable(
-                CurrentObjectShapeFeatureVectorStatus.UNSUPPORTED_LABEL_DIMENSION
-            )
-        shape_feature = self.shape_feature(feature_name)
-        if shape_feature is None:
-            return CurrentObjectShapeFeatureVectorResult.unavailable(
-                CurrentObjectShapeFeatureVectorStatus.UNKNOWN_SHAPE_FEATURE
-            )
-        return CurrentObjectShapeFeatureVectorResult.available(
-            CellProfilerMeasurementVector(
-                (self.current_label_shape_plane_values(shape_feature, label_array),)
-            )
+        from openhcs.interop.cellprofiler.module_declarations import (
+            CellProfilerModule,
+            CurrentObjectFeatureVectorAuthority,
         )
 
-    def current_label_shape_plane_values(
-        self,
-        shape_feature: ObjectShapeMeasurementFeature,
-        label_plane: np.ndarray,
-    ) -> np.ndarray:
-        """Return one AreaShape vector aligned to positive labels in a 2D plane."""
-        from openhcs.processing.backends.cellprofiler.shape import (
-            measure_object_size_shape_feature_arrays,
+        for module_type in CellProfilerModule.__registry__.values():
+            if not issubclass(module_type, CurrentObjectFeatureVectorAuthority):
+                continue
+            result = module_type.current_object_feature_vector(
+                feature_name,
+                label_array,
+            )
+            if not isinstance(result, CurrentObjectShapeFeatureVectorResult):
+                raise TypeError(
+                    f"{module_type.__name__}.current_object_feature_vector must "
+                    "return CurrentObjectShapeFeatureVectorResult."
+                )
+            if (
+                result.status
+                is not CurrentObjectShapeFeatureVectorStatus.UNKNOWN_SHAPE_FEATURE
+            ):
+                return result
+        return CurrentObjectShapeFeatureVectorResult.unavailable(
+            CurrentObjectShapeFeatureVectorStatus.UNKNOWN_SHAPE_FEATURE
         )
 
-        feature_arrays, measured_labels = measure_object_size_shape_feature_arrays(
-            label_plane.astype(np.int32, copy=False),
-            calculate_advanced=True,
-            calculate_zernikes=False,
-        )
-        values = feature_arrays.get(shape_feature.value)
-        if values is None:
-            raise ValueError(
-                f"Current object-label shape vector does not include "
-                f"{shape_feature.value!r}."
-            )
-        values_by_label = {
-            int(label): float(value)
-            for label, value in zip(measured_labels, values, strict=True)
-        }
-        object_ids = dense_object_label_id_domain(label_plane)
-        return ObjectLabelMeasurementValues.from_value_mapping(
-            object_ids,
-            values_by_label,
-        ).values
+
+def current_object_label_measurement_vector(
+    value_slices: tuple[np.ndarray, ...],
+) -> CellProfilerMeasurementVector:
+    """Return a measurement vector from current object-label value slices."""
+    return CellProfilerMeasurementVector(value_slices)
+
+
+def dense_object_label_values(
+    label_plane: np.ndarray,
+    *,
+    measured_labels: np.ndarray,
+    values: np.ndarray,
+) -> np.ndarray:
+    """Align measured object values to the dense label id domain of one plane."""
+    values_by_label = {
+        int(label): float(value)
+        for label, value in zip(measured_labels, values, strict=True)
+    }
+    object_ids = dense_object_label_id_domain(label_plane)
+    return ObjectLabelMeasurementValues.from_value_mapping(
+        object_ids,
+        values_by_label,
+    ).values
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -879,8 +798,8 @@ class CellProfilerObjectMeasurementVectorBinding(ObjectLabelMeasurementSliceRequ
             )
         resolved_image_number = image_number
         if resolved_image_number is None and object_ref_is_spec:
-            resolved_image_number = RuntimeArtifactKindStrategy.for_kind(
-                object_spec.kind
+            resolved_image_number = RuntimeArtifactTypeStrategy.for_artifact_type(
+                object_spec.artifact_type
             ).cellprofiler_image_number(request.artifact_input_request(object_spec))
         label_payload = labels
         if label_payload is None:
@@ -903,6 +822,21 @@ class CellProfilerObjectMeasurementVectorBinding(ObjectLabelMeasurementSliceRequ
             object_name=self.object_name,
             dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
         )
+
+    def values(
+        self,
+        adapter: "CellProfilerRuntimeAdapter",
+    ) -> CellProfilerMeasurementSliceValues:
+        declared_measurement_tables = self.request.declared_measurement_tables()
+        if declared_measurement_tables:
+            return MeasurementLabelSliceFeatureQuery(
+                measurement_tables=declared_measurement_tables,
+                feature_name=self.feature_name,
+                object_name=self.object_name,
+                row_axis=MeasurementRowAxisField.SLICE_INDEX,
+                dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+            ).values_for_labels(self.labels)
+        return ObjectLabelMeasurementSliceRequest.values(self, adapter)
 
     def vector(self) -> CellProfilerMeasurementVector:
         source_vector = (
@@ -1023,16 +957,14 @@ class CellProfilerObjectMeasurementVectorBatchBinding:
         )
         if not measurement_tables:
             return {
-                binding.object_name: binding.values(adapter)
-                for binding in bindings
+                binding.object_name: binding.values(adapter) for binding in bindings
             }
         query_started_at = time.perf_counter()
         vectors = MeasurementLabelSliceFeatureBatchQuery(
             measurement_tables=measurement_tables,
             feature_name=feature_name,
             labels_by_object={
-                binding.object_name: binding.labels
-                for binding in bindings
+                binding.object_name: binding.labels for binding in bindings
             },
             row_axis_starts_by_object={
                 binding.object_name: binding.table_scope_image_number

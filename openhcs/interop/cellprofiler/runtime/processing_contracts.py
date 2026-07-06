@@ -9,12 +9,6 @@ from typing import ClassVar
 import numpy as np
 
 from openhcs.core.callable_contract import CallableContract
-from openhcs.core.measurement_row_materialization import (
-    MEASUREMENT_OBJECT_ID_FIELD,
-    MEASUREMENT_OBJECT_LABEL_FIELD,
-    MEASUREMENT_OBJECT_NAME_FIELD,
-    MEASUREMENT_OBJECT_NUMBER_FIELD,
-)
 from openhcs.core.runtime_profile import RuntimeProfileLogger
 from openhcs.core.runtime_semantics import (
     MeasurementRowAxisField,
@@ -143,10 +137,8 @@ class MeasurementTableFeatureRowsAuthority:
         (
             MeasurementRowAxisField.SLICE_INDEX.value,
             MeasurementRowAxisField.IMAGE_NUMBER.value,
-            MEASUREMENT_OBJECT_NAME_FIELD,
-            MEASUREMENT_OBJECT_LABEL_FIELD,
-            MEASUREMENT_OBJECT_NUMBER_FIELD,
-            MEASUREMENT_OBJECT_ID_FIELD,
+            MeasurementRowAxisField.OBJECT_NAME.value,
+            *MeasurementRowAxisField.object_id_field_names(),
         )
     )
 

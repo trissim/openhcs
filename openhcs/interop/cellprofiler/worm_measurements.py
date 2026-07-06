@@ -1,6 +1,7 @@
 """CellProfiler worm measurement schema semantics."""
 
 from __future__ import annotations
+from openhcs.core.runtime_semantics import MeasurementRowAxisField
 
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -9,10 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from openhcs.core.measurement_row_materialization import (
-    MEASUREMENT_OBJECT_NAME_FIELD,
-    MEASUREMENT_OBJECT_NUMBER_FIELD,
-)
+
 
 WormMeasurementRows = tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]]
 
@@ -34,13 +32,13 @@ class WormMeasurementRowSelection:
             row
             for row in rows
             if object_name is None
-            or row.get(MEASUREMENT_OBJECT_NAME_FIELD) == object_name
+            or row.get(MeasurementRowAxisField.OBJECT_NAME.value) == object_name
         )
         return cls(
             tuple(
                 sorted(
                     filtered_rows,
-                    key=lambda row: int(row.get(MEASUREMENT_OBJECT_NUMBER_FIELD, 0)),
+                    key=lambda row: int(row.get(MeasurementRowAxisField.OBJECT_NUMBER.value, 0)),
                 )
             )
         )

@@ -157,10 +157,33 @@ class CellProfilerRuntimeScope(RuntimeGroupMatchScope):
         *,
         requested_group_key: str | None,
     ) -> str | None:
-        return input_plan.group_key_for_axis(
-            axis_id=self.adapter.axis_scope.axis_id,
+        for group_key in self.artifact_group_key_candidates(
+            input_plan,
             requested_group_key=requested_group_key,
+        ):
+            if input_plan.for_group(group_key) is not None:
+                return group_key
+        return None
+
+    def artifact_group_key_candidates(
+        self,
+        input_plan: ArtifactInputPlan,
+        *,
+        requested_group_key: str | None,
+    ) -> tuple[str | None, ...]:
+        candidates: list[str | None] = []
+        input_group_keys = set(input_plan.group_keys or ())
+        if requested_group_key is not None and requested_group_key in input_group_keys:
+            candidates.append(requested_group_key)
+        scoped_group_key = self.adapter.axis_scope.value_text_for_component(
+            input_plan.group_component
         )
+        if requested_group_key is None and scoped_group_key in input_group_keys:
+            candidates.append(scoped_group_key)
+        single_group_key = input_plan.single_group_key
+        if single_group_key not in candidates:
+            candidates.append(single_group_key)
+        return tuple(candidates)
 
     def input_plan_query(
         self,

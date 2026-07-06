@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
+from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ArtifactSpecCollection,
+    ObjectLabelsArtifactType,
+    RelationshipsArtifactType,
+)
 from openhcs.core.runtime_semantics import (
     parent_child_relationship_artifact_endpoints,
     parent_child_relationship_artifact_name,
@@ -79,20 +84,20 @@ class RelationshipEndpointResolver:
 
     @property
     def object_inputs(self) -> tuple[ArtifactSpec, ...]:
-        return self.request.contract.declared_input_collection().of_kind(
-            ArtifactKind.OBJECT_LABELS
+        return self.request.contract.declared_input_collection().of_artifact_type(
+            ObjectLabelsArtifactType
         )
 
     @property
     def object_outputs(self) -> tuple[ArtifactSpec, ...]:
-        return self.request.contract.output_collection().of_kind(
-            ArtifactKind.OBJECT_LABELS
+        return self.request.contract.output_collection().of_artifact_type(
+            ObjectLabelsArtifactType
         )
 
     @property
     def relationship_outputs(self) -> tuple[ArtifactSpec, ...]:
-        return self.request.contract.declared_output_collection().of_kind(
-            ArtifactKind.RELATIONSHIPS
+        return self.request.contract.declared_output_collection().of_artifact_type(
+            RelationshipsArtifactType
         )
 
     def endpoint_specs(
@@ -137,9 +142,9 @@ class RelationshipEndpointResolver:
                 return RelationshipEndpointContract(
                     parent_spec,
                     child_spec
-                    or ArtifactSpec(
+                    or ArtifactSpec.output(
                         child_name,
-                        ArtifactKind.OBJECT_LABELS,
+                        ObjectLabelsArtifactType,
                     ),
                 )
         module_contract = self.module_relationship_endpoint_contract(relationship_spec)

@@ -9,11 +9,16 @@ from enum import Enum
 from types import MappingProxyType
 from typing import ClassVar, TypeVar, cast
 
-from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
-
-from openhcs.core.artifacts import ArtifactInputPlan, ArtifactKind, ArtifactSidecarRole
-from openhcs.core.function_patterns import DEFAULT_GROUP_KEY
-from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ArtifactSidecarRole,
+    ArtifactType,
+    ArtifactTypeStrategyMatchMixin,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+)
+from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
 from openhcs.core.runtime_stores import StoredRuntimeValue
 from openhcs.interop.cellprofiler.runtime.adapter_scope import (
     RuntimeGroupMatchScope,
@@ -22,12 +27,6 @@ from openhcs.interop.cellprofiler.runtime.source_identity import (
     CellProfilerCurrentImage,
     RuntimeRecordSourceImageSetSelector,
 )
-
-_DEFAULT_RUNTIME_GROUP_KEYS = frozenset((None, DEFAULT_GROUP_KEY))
-
-def _is_default_runtime_group_key(group_key: str | None) -> bool:
-    """Return whether a runtime group key addresses the compiled default group."""
-    return group_key in _DEFAULT_RUNTIME_GROUP_KEYS
 
 RuntimeArtifactRecordResolution = tuple[StoredRuntimeValue, ...] | None
 
@@ -110,7 +109,7 @@ class RuntimeArtifactCurrentSourceScopeResolution:
             return scoped_records
         message = (
             f"{self.stage_spec.error_subject} {self.request.name!r} "
-            f"({self.request.kind.value}) has records, but none match the "
+            f"({self.request.artifact_type.value}) has records, but none match the "
             "current source image scope."
         )
         if self.stage_spec.include_scope_diagnostics:
@@ -123,46 +122,37 @@ class RuntimeArtifactCurrentSourceScopeResolution:
             )
         raise RuntimeError(message)
 
-RuntimeArtifactKindPolicyT = TypeVar(
-    "RuntimeArtifactKindPolicyT",
-    bound="RuntimeArtifactKindPolicyMixin",
+RuntimeArtifactTypePolicyT = TypeVar(
+    "RuntimeArtifactTypePolicyT",
+    bound="RuntimeArtifactTypePolicyMixin",
 )
 
-class RuntimeArtifactKindPolicyMixin:
-    """Shared ArtifactKind registry lookup template for runtime artifact policies."""
+class RuntimeArtifactTypePolicyMixin:
+    """Shared ArtifactType registry lookup template for runtime artifact policies."""
 
-    __enum_member_attr__ = "kind"
-    kind: ClassVar[ArtifactKind | None] = None
-    default_policy_type: ClassVar[type["RuntimeArtifactKindPolicyMixin"] | None] = None
+    artifact_type: ClassVar[type[ArtifactType] | None] = None
+    default_policy_type: ClassVar[type["RuntimeArtifactTypePolicyMixin"] | None] = None
 
     @classmethod
-    def for_kind(
-        cls: type[RuntimeArtifactKindPolicyT],
-        kind: ArtifactKind,
-    ) -> RuntimeArtifactKindPolicyT:
-        policy_types = tuple(
-            policy_type
-            for policy_type in (
-                cls.__registry__.get(kind.value),
-                cls.default_policy_type,
+    def for_artifact_type(
+        cls: type[RuntimeArtifactTypePolicyT],
+        artifact_type: ArtifactType,
+    ) -> RuntimeArtifactTypePolicyT:
+        policy = cls.for_context(ArtifactType.coerce(artifact_type), required=False)
+        if policy is not None:
+            return cast(RuntimeArtifactTypePolicyT, policy)
+        if cls.default_policy_type is None:
+            raise LookupError(
+                f"No runtime artifact policy registered for {artifact_type!r}."
             )
-            if policy_type is not None
-        )
-        if not policy_types:
-            raise LookupError(f"No runtime artifact policy registered for {kind!r}.")
-        return cast(type[RuntimeArtifactKindPolicyT], policy_types[0])()
+        return cast(type[RuntimeArtifactTypePolicyT], cls.default_policy_type)()
 
 class RuntimeArtifactSourceScopePolicy(
-    RuntimeArtifactKindPolicyMixin,
-    EnumKeyedStrategyMixin[ArtifactKind],
-    metaclass=AutoRegisterMeta,
+    RuntimeArtifactTypePolicyMixin,
+    ArtifactTypeStrategyMatchMixin,
+    MostDerivedContextStrategyMixin[type[ArtifactType]],
 ):
     """Resolve runtime artifact records according to source-scope semantics."""
-
-    __registry_family__ = RegistryFamily(
-        RegistryKeyAttribute.STRATEGY_LABEL,
-        registry_name="runtime_artifact_source_scope_policy",
-    )
 
     def grouped_input_records(
         self,
@@ -276,7 +266,7 @@ RuntimeArtifactSourceScopePolicy.default_policy_type = RuntimeArtifactGlobalScop
 class ImageRuntimeArtifactSourceScopePolicy(RuntimeArtifactCurrentSourceScopePolicy):
     """Image records are scoped to the current source image when possible."""
 
-    kind = ArtifactKind.IMAGE
+    artifact_type = ImageArtifactType
 
     def axis_records_after_query_miss(
         self,
@@ -292,14 +282,14 @@ class ObjectLabelRuntimeArtifactSourceScopePolicy(
 ):
     """Object-label records are scoped to the current source image when possible."""
 
-    kind = ArtifactKind.OBJECT_LABELS
+    artifact_type = ObjectLabelsArtifactType
 
 class MeasurementRuntimeArtifactSourceScopePolicy(
     RuntimeArtifactCurrentSourceScopePolicy
 ):
     """Measurement records are scoped to the current source image when possible."""
 
-    kind = ArtifactKind.MEASUREMENTS
+    artifact_type = MeasurementsArtifactType
 
 @dataclass(frozen=True, slots=True)
 class RuntimeArtifactRecordResolver:
@@ -309,15 +299,20 @@ class RuntimeArtifactRecordResolver:
     group_key: str | None
     current_image: CellProfilerCurrentImage | None
     name: str
-    kind: ArtifactKind
+    artifact_type: type[ArtifactType]
+    match_group: bool = True
 
     def resolve(self) -> tuple[StoredRuntimeValue, ...]:
         input_plan = self.adapter.artifact_inputs.get(self.name)
-        resolved_group_key = self.adapter.runtime_input_group_key(
-            name=self.name,
-            kind=self.kind,
-            group_key=self.group_key,
-            current_image=self.current_image,
+        resolved_group_key = (
+            self.adapter.runtime_input_group_key(
+                name=self.name,
+                artifact_type=self.artifact_type,
+                group_key=self.group_key,
+                current_image=self.current_image,
+            )
+            if self.match_group
+            else None
         )
         declared = RuntimeArtifactDeclaredInputResolution(
             request=self,
@@ -333,7 +328,9 @@ class RuntimeArtifactRecordResolver:
 
     @property
     def source_scope_policy(self) -> RuntimeArtifactSourceScopePolicy:
-        return RuntimeArtifactSourceScopePolicy.for_kind(self.kind)
+        return RuntimeArtifactSourceScopePolicy.for_artifact_type(
+            self.artifact_type
+        )
 
     @property
     def sidecar_role(self) -> ArtifactSidecarRole | None:
@@ -342,12 +339,16 @@ class RuntimeArtifactRecordResolver:
             return None
         return input_plan.sidecar_role
 
-    def validate_input_plan_kind(self, input_plan: ArtifactInputPlan) -> None:
-        if input_plan.kind is self.kind:
+    def validate_input_plan_artifact_type(
+        self,
+        input_plan: ArtifactInputPlan,
+    ) -> None:
+        if input_plan.artifact_type is self.artifact_type:
             return
         raise ValueError(
-            f"CellProfiler artifact input '{self.name}' expected kind "
-            f"{self.kind.value}, got compiled kind {input_plan.kind.value}."
+            f"CellProfiler artifact input '{self.name}' expected artifact type "
+            f"{self.artifact_type.value}, got compiled artifact type "
+            f"{input_plan.artifact_type.value}."
         )
 
 @dataclass(frozen=True, slots=True)
@@ -362,7 +363,7 @@ class RuntimeArtifactDeclaredInputResolution:
         input_plan = self.input_plan
         if input_plan is None:
             return None
-        self.request.validate_input_plan_kind(input_plan)
+        self.request.validate_input_plan_artifact_type(input_plan)
         grouped_resolution = self.grouped_resolution(input_plan)
         if grouped_resolution is not None:
             return grouped_resolution
@@ -380,24 +381,73 @@ class RuntimeArtifactDeclaredInputResolution:
         group_keys = input_plan.group_keys
         if group_keys is None:
             return None
-        records = RuntimeArtifactRecordDeduplication(
-            tuple(
-                self.request.adapter.runtime_value_store.resolve(
-                    RuntimeGroupMatchScope(
-                        group_key=input_group_key
-                    ).runtime_scope(self.request.adapter).input_plan_query(
-                        input_plan,
-                        group_key=input_group_key,
-                        backend=self.request.adapter.backend,
-                    ),
-                    purpose="CellProfiler grouped runtime artifact input",
+        records_by_group = tuple(
+            self.request.adapter.runtime_value_store.find_matching(
+                RuntimeGroupMatchScope(
+                    group_key=input_group_key
+                ).runtime_scope(self.request.adapter).input_plan_query(
+                    input_plan,
+                    group_key=input_group_key,
+                    backend=self.request.adapter.backend,
                 )
-                for input_group_key in group_keys
             )
-        ).unique_by_location()
+            for input_group_key in group_keys
+        )
+        if all(records_by_group):
+            records = RuntimeArtifactRecordDeduplication(
+                tuple(record for records in records_by_group for record in records)
+            ).unique_by_location()
+            return self.request.source_scope_policy.grouped_input_records(
+                self.request,
+                records,
+            )
+        if any(records_by_group):
+            realized_records = RuntimeArtifactRecordDeduplication(
+                tuple(record for records in records_by_group for record in records)
+            ).unique_by_location()
+            return self.request.source_scope_policy.grouped_input_records(
+                self.request,
+                realized_records,
+            )
+        identity_records = self.identity_group_resolution(input_plan)
+        if identity_records is not None:
+            return identity_records
+
+        first_group_key = group_keys[0]
+        self.request.adapter.runtime_value_store.resolve(
+            RuntimeGroupMatchScope(
+                group_key=first_group_key
+            ).runtime_scope(self.request.adapter).input_plan_query(
+                input_plan,
+                group_key=first_group_key,
+                backend=self.request.adapter.backend,
+            ),
+            purpose="CellProfiler grouped runtime artifact input",
+        )
+        return None
+
+    def identity_group_resolution(
+        self,
+        input_plan: ArtifactInputPlan,
+    ) -> RuntimeArtifactRecordResolution:
+        """Resolve a collapsed identity-scoped producer for grouped consumers."""
+        records = self.request.adapter.runtime_value_store.find_matching(
+            RuntimeGroupMatchScope(group_key=None)
+            .runtime_scope(self.request.adapter)
+            .input_plan_query(
+                input_plan,
+                group_key=None,
+                backend=self.request.adapter.backend,
+            )
+        )
+        identity_records = tuple(
+            record for record in records if record.key.scope.group_key is None
+        )
+        if len(identity_records) != 1:
+            return None
         return self.request.source_scope_policy.grouped_input_records(
             self.request,
-            records,
+            identity_records,
         )
 
     def query_resolution(
@@ -494,7 +544,7 @@ class RuntimeArtifactDeclaredInputResolution:
             return scoped_records
         raise RuntimeError(
             f"Runtime artifact input {self.request.name!r} "
-            f"({self.request.kind.value}) has producer-group records, but none "
+            f"({self.request.artifact_type.value}) has producer-group records, but none "
             "match the current source image scope."
         )
 
@@ -507,7 +557,7 @@ class RuntimeArtifactDeclaredInputResolution:
             current_image=self.request.current_image,
         ).artifact_query_context().find(
             name=self.request.name,
-            kind=self.request.kind,
+            artifact_type=self.request.artifact_type,
         )
         if len(candidate_records) == 1:
             return (candidate_records[0],)
@@ -533,7 +583,7 @@ class RuntimeArtifactUndeclaredInputResolution:
                     current_image=self.request.current_image,
                 ).artifact_query_context().resolve(
                     name=self.request.name,
-                    kind=self.request.kind,
+                    artifact_type=self.request.artifact_type,
                 ),
             )
         except RuntimeError:
@@ -545,9 +595,9 @@ class RuntimeArtifactUndeclaredInputResolution:
                 current_image=self.request.current_image,
             ).artifact_query_context().find(
                 name=self.request.name,
-                kind=self.request.kind,
+                artifact_type=self.request.artifact_type,
             )
-            if records and _is_default_runtime_group_key(self.resolved_group_key):
+            if records and self.resolved_group_key is None:
                 scoped_resolution = (
                     self.request.source_scope_policy.axis_records_after_query_miss(
                         self.request,
@@ -605,4 +655,4 @@ def _is_global_grouped_input_request(
     paths_by_group = input_plan.paths_by_group
     if paths_by_group is None:
         paths_by_group = {}
-    return _is_default_runtime_group_key(group_key) and group_key not in paths_by_group
+    return group_key is None and group_key not in paths_by_group

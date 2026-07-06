@@ -1,14 +1,11 @@
 """Object-measurement execution domain and label argument policies."""
 
 from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import ClassVar
-
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 import numpy as np
-
 from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
     ImagePayloadExecutionMode,
@@ -19,7 +16,6 @@ from openhcs.core.pipeline.function_contracts import (
     object_label_measurement_execution_from_callable,
 )
 from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
-from openhcs.core.runtime_semantics import RuntimePlaneAxis
 from openhcs.core.runtime_values import (
     ObjectLabelDenseDataStrategy,
     ObjectLabelRuntimeSliceStackContract,
@@ -35,45 +31,38 @@ from openhcs.interop.cellprofiler.runtime.policy_registry import (
 )
 
 
-
 class CellProfilerPerObjectMeasurementPolicy:
     """Predicate for modules that need one absorbed call per object set."""
 
     @classmethod
-    def matches(
-        cls,
-        module_name: str,
-        object_inputs: tuple[ArtifactSpec, ...],
-    ) -> bool:
-        from openhcs.processing.backends.cellprofiler.module_classes import (
+    def matches(cls, module_name: str, object_inputs: tuple[ArtifactSpec, ...]) -> bool:
+        from openhcs.interop.cellprofiler.module_declarations import (
             CellProfilerModule,
             PerObjectMeasurementExecutionModule,
         )
 
         module_type = CellProfilerModule.for_module(module_name)
-        return bool(object_inputs) and module_type is not None and issubclass(
-            module_type,
-            PerObjectMeasurementExecutionModule,
+        return (
+            bool(object_inputs)
+            and module_type is not None
+            and issubclass(module_type, PerObjectMeasurementExecutionModule)
         )
 
     @classmethod
     def measures_images_independently(cls, module_name: str) -> bool:
-        from openhcs.processing.backends.cellprofiler.module_classes import (
+        from openhcs.interop.cellprofiler.module_declarations import (
             CellProfilerModule,
             ComposedImageObjectMeasurementExecutionModule,
         )
 
         module_type = CellProfilerModule.for_module(module_name)
         return module_type is None or not issubclass(
-            module_type,
-            ComposedImageObjectMeasurementExecutionModule,
+            module_type, ComposedImageObjectMeasurementExecutionModule
         )
 
 
 class MeasurementLabelExecutionModeStrategy(
-    NominalTypeKeyedStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    NominalTypeKeyedStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Choose object-measurement execution mode from the label domain shape."""
 
@@ -108,10 +97,7 @@ class MeasurementLabelExecutionModeStrategy(
         if strategy is None:
             return default
         return strategy.execution_mode(
-            func,
-            labels,
-            default,
-            runtime_slice_count=runtime_slice_count,
+            func, labels, default, runtime_slice_count=runtime_slice_count
         )
 
 
@@ -153,14 +139,17 @@ class ObjectLabelValueMeasurementLabelExecutionModeStrategy(
             raise TypeError(
                 "Object-label execution strategy requires an object-label runtime value."
             )
-        if labels.plane_axis is RuntimePlaneAxis.SOURCE_BINDING:
-            return ImagePayloadExecutionMode.NATURAL
-        if ObjectLabelRuntimeSliceStackContract.runtime_slice_count(labels) is not None:
-            return ImagePayloadExecutionMode.NATURAL
+        if runtime_slice_count is not None:
+            if ObjectLabelRuntimeSliceStackContract.preserves_runtime_slice_stack(
+                labels,
+                slice_count=runtime_slice_count,
+            ):
+                return ImagePayloadExecutionMode.NATURAL
         return MeasurementLabelExecutionModeStrategy.resolve(
             func,
             ObjectLabelDenseDataStrategy.for_payload(labels).data(labels),
             default,
+            runtime_slice_count=runtime_slice_count,
         )
 
 
@@ -187,15 +176,12 @@ class SparseIJVMeasurementLabelExecutionModeStrategy(
         return default
 
 
-class CellProfilerObjectMeasurementExecutionDomainPolicy(
-    ABC,
-):
+class CellProfilerObjectMeasurementExecutionDomainPolicy(ABC):
     """Choose CellProfiler object-measurement execution domain by module semantics."""
 
     @classmethod
     def for_module(
-        cls,
-        module_name: str,
+        cls, module_name: str
     ) -> "CellProfilerObjectMeasurementExecutionDomainPolicy":
         del module_name
         return DefaultObjectMeasurementExecutionDomainPolicy()
@@ -226,10 +212,7 @@ class DefaultObjectMeasurementExecutionDomainPolicy(
         runtime_slice_count: int | None = None,
     ) -> ImagePayloadExecutionMode:
         return MeasurementLabelExecutionModeStrategy.resolve(
-            func,
-            labels,
-            default,
-            runtime_slice_count=runtime_slice_count,
+            func, labels, default, runtime_slice_count=runtime_slice_count
         )
 
 
@@ -243,9 +226,7 @@ class CellProfilerObjectMeasurementLabelArgumentRequest:
 
 
 class SliceAlignedLabelArgumentStrategy(
-    NominalTypeKeyedStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    NominalTypeKeyedStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Choose the executor-facing label payload for slice-aligned measurements."""
 
@@ -253,8 +234,7 @@ class SliceAlignedLabelArgumentStrategy(
 
     @abstractmethod
     def label_argument(
-        self,
-        request: CellProfilerObjectMeasurementLabelArgumentRequest,
+        self, request: CellProfilerObjectMeasurementLabelArgumentRequest
     ) -> CellProfilerRuntimeValue:
         """Return the label value visible to the execution strategy."""
 
@@ -263,8 +243,7 @@ class DenseSliceAlignedLabelArgumentStrategy(SliceAlignedLabelArgumentStrategy):
     """Default slice-aligned functions consume already-projected dense labels."""
 
     def label_argument(
-        self,
-        request: CellProfilerObjectMeasurementLabelArgumentRequest,
+        self, request: CellProfilerObjectMeasurementLabelArgumentRequest
     ) -> CellProfilerRuntimeValue:
         return request.dense_labels
 
@@ -273,15 +252,13 @@ class SemanticLabelPayloadArgumentMixin:
     """Return the semantic label payload rather than the dense execution plane."""
 
     def label_argument(
-        self,
-        request: CellProfilerObjectMeasurementLabelArgumentRequest,
+        self, request: CellProfilerObjectMeasurementLabelArgumentRequest
     ) -> CellProfilerRuntimeValue:
         return request.label_payload
 
 
 class AlignedStackSliceAlignedLabelArgumentStrategy(
-    SemanticLabelPayloadArgumentMixin,
-    SliceAlignedLabelArgumentStrategy,
+    SemanticLabelPayloadArgumentMixin, SliceAlignedLabelArgumentStrategy
 ):
     """Defer object-label projection until each aligned image slice is selected."""
 
@@ -289,19 +266,16 @@ class AlignedStackSliceAlignedLabelArgumentStrategy(
 
 
 class CellProfilerObjectMeasurementLabelArgumentPolicy(
-    EnumStrategyLabelRegistryMixin,
-    metaclass=AutoRegisterMeta,
+    EnumStrategyLabelRegistryMixin, metaclass=AutoRegisterMeta
 ):
     """Bind object-measurement labels from the declared callable domain contract."""
 
     __enum_member_attr__ = "execution_mode"
-
     execution_mode: ClassVar[ObjectLabelMeasurementExecution]
 
     @abstractmethod
     def label_argument(
-        self,
-        request: CellProfilerObjectMeasurementLabelArgumentRequest,
+        self, request: CellProfilerObjectMeasurementLabelArgumentRequest
     ) -> CellProfilerRuntimeValue:
         """Return the labels object passed to the absorbed measurement function."""
 
@@ -314,8 +288,7 @@ class SliceAlignedObjectMeasurementLabelArgumentPolicy(
     execution_mode = ObjectLabelMeasurementExecution.SLICE_ALIGNED
 
     def label_argument(
-        self,
-        request: CellProfilerObjectMeasurementLabelArgumentRequest,
+        self, request: CellProfilerObjectMeasurementLabelArgumentRequest
     ) -> CellProfilerRuntimeValue:
         strategy = SliceAlignedLabelArgumentStrategy.for_nominal_value(
             request.measurement_image_payload
@@ -326,8 +299,7 @@ class SliceAlignedObjectMeasurementLabelArgumentPolicy(
 
 
 class FullStackObjectMeasurementLabelArgumentPolicy(
-    SemanticLabelPayloadArgumentMixin,
-    CellProfilerObjectMeasurementLabelArgumentPolicy
+    SemanticLabelPayloadArgumentMixin, CellProfilerObjectMeasurementLabelArgumentPolicy
 ):
     """Full-stack measurement functions consume labels with semantic domains."""
 

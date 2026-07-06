@@ -32,7 +32,7 @@ from openhcs.processing.backends.cellprofiler.thresholding import (
     normalize_cellprofiler_image,
     threshold_histogram_bin_width as _threshold_histogram_bin_width,
     threshold_multiotsu as _threshold_multiotsu,
-    unit_interval_scale_for_threshold_diagnostics,
+    unit_interval_scale_for_threshold_selection,
 )
 
 
@@ -142,5 +142,5 @@ __all__ = [
     "normalize_cellprofiler_image",
     "threshold_application_smoothed_image",
     "threshold_profile_enabled",
-    "unit_interval_scale_for_threshold_diagnostics",
+    "unit_interval_scale_for_threshold_selection",
 ]

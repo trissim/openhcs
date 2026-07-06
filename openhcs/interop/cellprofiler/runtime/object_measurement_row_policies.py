@@ -1,23 +1,16 @@
 """CellProfiler object-measurement row ownership and completion policies."""
 
 from __future__ import annotations
-
 from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from typing import ClassVar
-
 from metaclass_registry import RegistryFamily, RegistryKeyAttribute
-
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpecCollection
+from openhcs.core.artifacts import ArtifactSpecCollection
 from openhcs.core.measurement_row_materialization import (
-    MEASUREMENT_OBJECT_ID_FIELDS,
-    MEASUREMENT_OBJECT_LABEL_FIELD,
-    MEASUREMENT_OBJECT_NAME_FIELD,
-    MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD,
-    MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
+    MeasurementSparseColumnarRows,
     MeasurementRowOwnership,
     measurement_object_label,
     measurement_row_object_name,
@@ -25,8 +18,9 @@ from openhcs.core.measurement_row_materialization import (
 )
 from openhcs.core.runtime_semantics import (
     MeasurementObjectRowIdentity,
+    MeasurementRowAxisField,
+    RuntimeMeasurementFeature,
     MeasurementScalarLiteral,
-    ObjectShapeMeasurementFeature,
     dense_object_label_id_domain,
     measurement_row_mapping,
 )
@@ -77,6 +71,7 @@ from openhcs.interop.cellprofiler.runtime.runtime_profile import (
     CellProfilerRuntimeProfileLogger,
 )
 
+
 @dataclass(frozen=True, slots=True)
 class ObjectMeasurementInvocation:
     """One semantic object-measurement function invocation."""
@@ -126,10 +121,9 @@ class ObjectMeasurementResultPayloadRequest:
         return frozenset(
             (
                 self.object_id_field,
-                *MEASUREMENT_OBJECT_ID_FIELDS,
+                *MeasurementRowAxisField.object_id_field_names(),
                 *self.axis_fields,
-                MEASUREMENT_OBJECT_NAME_FIELD,
-                MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
+                *MeasurementRowAxisField.object_ownership_field_names(),
             )
         )
 
@@ -144,13 +138,17 @@ class ExplicitMeasurementRowOwnershipGroups:
 
     @classmethod
     def from_record(
-        cls,
-        record: CellProfilerMeasurementRecord,
+        cls, record: CellProfilerMeasurementRecord
     ) -> "ExplicitMeasurementRowOwnershipGroups":
         object_rows: ObjectMeasurementRowsByName = {}
         image_rows: ObjectMeasurementRowsByName = {}
         unowned_rows: list[CellProfilerRuntimeValue] = []
-        for row in record.rows:
+        rows = (
+            record.rows.iter_row_mappings()
+            if isinstance(record.rows, ColumnarRows)
+            else record.rows
+        )
+        for row in rows:
             row_mapping = measurement_row_mapping(row)
             object_name = measurement_row_object_name(row_mapping)
             source_image_name = measurement_row_source_image_name(row_mapping)
@@ -195,21 +193,16 @@ class CellProfilerObjectMeasurementRowPolicy(
     @classmethod
     @lru_cache(maxsize=None)
     def for_module(
-        cls,
-        module_name: str,
+        cls, module_name: str
     ) -> CellProfilerObjectMeasurementRowPolicy | None:
         """Return the row policy carried by the module declaration."""
-        from openhcs.processing.backends.cellprofiler.module_classes import (
-            CellProfilerModule,
-        )
+        from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
         module_type = CellProfilerModule.for_module(module_name)
         if module_type is not None and issubclass(module_type, cls):
             return module_type()
         policy_type = CellProfilerModulePolicyRegistryLookup(
-            cls.__registry__,
-            module_name,
-            cls.fallback_registry_key,
+            cls.__registry__, module_name, cls.fallback_registry_key
         ).policy_type_or_none()
         if policy_type is None:
             return None
@@ -220,8 +213,7 @@ class CellProfilerObjectMeasurementRowPolicy(
         return MeasurementObjectRowIdentity(type(self).row_identity)
 
     def object_identity_for_label_payload(
-        self,
-        label_payload: CellProfilerRuntimeValue,
+        self, label_payload: CellProfilerRuntimeValue
     ) -> MeasurementObjectRowIdentity:
         """Return row identity for a concrete object-measurement label domain."""
         del label_payload
@@ -234,8 +226,43 @@ class CellProfilerObjectMeasurementRowPolicy(
         label_payload: CellProfilerRuntimeValue,
     ) -> MeasurementObjectRowIdentity:
         """Return row identity for the concrete rows emitted by a module."""
-        del rows
+        explicit_identity = self.explicit_object_identity_for_rows(rows)
+        if explicit_identity is not None:
+            return explicit_identity
         return self.object_identity_for_label_payload(label_payload)
+
+    @staticmethod
+    def explicit_object_identity_for_rows(
+        rows: CellProfilerRuntimeValueSequence,
+    ) -> MeasurementObjectRowIdentity | None:
+        """Return the uniform explicit object-row identity declared by rows."""
+        field_name = MeasurementRowAxisField.OBJECT_ROW_IDENTITY.value
+        if isinstance(rows, ColumnarRows):
+            if field_name not in rows.columns:
+                return None
+            identity_values = rows.columns[field_name]
+            identities = tuple(
+                dict.fromkeys(
+                    MeasurementObjectRowIdentity(value) for value in identity_values
+                )
+            )
+        else:
+            identities = tuple(
+                dict.fromkeys(
+                    MeasurementObjectRowIdentity(row_mapping[field_name])
+                    for row in rows
+                    for row_mapping in (measurement_row_mapping(row),)
+                    if field_name in row_mapping
+                )
+            )
+        if not identities:
+            return None
+        if len(identities) != 1:
+            raise ValueError(
+                "Object measurement rows declare multiple object-row identities: "
+                f"{tuple(identity.value for identity in identities)!r}."
+            )
+        return identities[0]
 
     def annotates_projected_object_identity(
         self,
@@ -267,9 +294,7 @@ class CellProfilerObjectMeasurementRowPolicy(
         return (ObjectMeasurementInvocation(kwargs=kwargs),)
 
     def project_rows(
-        self,
-        rows: MeasurementRowsInput,
-        invocation: ObjectMeasurementInvocation,
+        self, rows: MeasurementRowsInput, invocation: ObjectMeasurementInvocation
     ) -> MeasurementRowsInput:
         """Return emitted rows projected into this module's feature namespace."""
         del invocation
@@ -278,12 +303,11 @@ class CellProfilerObjectMeasurementRowPolicy(
         return list(rows)
 
     def split_scoped_rows(
-        self,
-        rows: MeasurementRowsInput,
+        self, rows: MeasurementRowsInput
     ) -> tuple[MeasurementRowsInput, CellProfilerRuntimeValueSequence]:
         """Partition object-scoped measurement rows from image-scoped rows."""
         if isinstance(rows, ColumnarRows):
-            return rows, ()
+            return (rows, ())
         object_rows: list[CellProfilerRuntimeValue] = []
         non_object_rows: list[CellProfilerRuntimeValue] = []
         for row in rows:
@@ -291,7 +315,7 @@ class CellProfilerObjectMeasurementRowPolicy(
                 object_rows.append(row)
             else:
                 non_object_rows.append(row)
-        return object_rows, non_object_rows
+        return (object_rows, non_object_rows)
 
     def table_source_image_name(
         self,
@@ -314,13 +338,14 @@ class CellProfilerObjectMeasurementRowPolicy(
         return None
 
     def source_metadata_composition_mode(
-        self,
-        measurement_images: tuple[CellProfilerMeasurementImage, ...],
+        self, measurement_images: tuple[CellProfilerMeasurementImage, ...]
     ) -> ImagePayloadMetadataCompositionMode | None:
         """Return source metadata topology for this policy's measurement rows."""
         if any(
-            self.row_source_owner(measurement_image, measurement_images) is not None
-            for measurement_image in measurement_images
+            (
+                self.row_source_owner(measurement_image, measurement_images) is not None
+                for measurement_image in measurement_images
+            )
         ):
             return ImagePayloadMetadataCompositionMode.STACK
         return None
@@ -346,8 +371,7 @@ class CellProfilerObjectMeasurementRowPolicy(
         return MeasurementRowOwnership(
             object_name=row_object_name,
             source_image_name=self.row_source_owner(
-                measurement_image,
-                measurement_images,
+                measurement_image, measurement_images
             ),
         )
 
@@ -379,7 +403,6 @@ class CellProfilerObjectMeasurementRowPolicy(
         if (
             contains_image_measurement_rows
             or len(object_inputs) != 1
-            or self.requires_explicit_row_ownership()
         ):
             return None
         return object_inputs[0].name
@@ -389,19 +412,16 @@ class CellProfilerObjectMeasurementRowPolicy(
         return type(self).explicit_row_ownership_required
 
     def record_partitions(
-        self,
-        record: CellProfilerMeasurementRecord,
+        self, record: CellProfilerMeasurementRecord
     ) -> tuple[CellProfilerMeasurementRecord, ...]:
         """Return single-owner measurement table partitions for a record."""
         if self.requires_explicit_row_ownership():
             return self.explicit_owner_record_partitions(
-                record,
-                require_declared_ownership=True,
+                record, require_declared_ownership=True
             )
         if self.record_rows_declare_ownership(record):
             return self.explicit_owner_record_partitions(
-                record,
-                require_declared_ownership=False,
+                record, require_declared_ownership=False
             )
         return (
             record.with_ownership(
@@ -413,23 +433,21 @@ class CellProfilerObjectMeasurementRowPolicy(
         )
 
     @staticmethod
-    def record_rows_declare_ownership(
-        record: CellProfilerMeasurementRecord,
-    ) -> bool:
+    def record_rows_declare_ownership(record: CellProfilerMeasurementRecord) -> bool:
         """Return whether row-level object/source ownership is present."""
         if isinstance(record.rows, ColumnarRows):
-            columns = tuple(str(column) for column in record.rows.columns)
-            return (
-                MEASUREMENT_OBJECT_NAME_FIELD in columns
-                or MEASUREMENT_SOURCE_IMAGE_NAME_FIELD in columns
+            columns = tuple((str(column) for column in record.rows.columns))
+            return any(
+                field_name in columns
+                for field_name in MeasurementRowAxisField.object_ownership_field_names()
             )
         return any(
             (
                 measurement_row_object_name(row_mapping) is not None
                 or measurement_row_source_image_name(row_mapping) is not None
+                for row in record.rows
+                for row_mapping in (measurement_row_mapping(row),)
             )
-            for row in record.rows
-            for row_mapping in (measurement_row_mapping(row),)
         )
 
     def unowned_record_partitions(
@@ -444,15 +462,14 @@ class CellProfilerObjectMeasurementRowPolicy(
             return ()
         if require_declared_ownership:
             raise ValueError(
-                f"{type(self).__name__} requires every mixed-scope measurement row "
-                "to declare object or source-image ownership."
+                f"{type(self).__name__} requires every mixed-scope measurement row to declare object or source-image ownership."
             )
         return (
             record.with_ownership(
                 rows=rows,
                 object_name=record.object_name,
-                source_image_name=None,
-                source_image_payload=None,
+                source_image_name=record.source_context.source_image_name,
+                source_image_payload=record.source_context.source_image_payload,
             ),
         )
 
@@ -482,8 +499,7 @@ class CellProfilerObjectMeasurementRowPolicy(
         """Return a table-level object partition for mixed explicit owners."""
         if len(groups.object_rows) != 1:
             raise ValueError(
-                f"{type(self).__name__} requires one table-level object owner "
-                f"for mixed measurement rows, got {tuple(groups.object_rows)}."
+                f"{type(self).__name__} requires one table-level object owner for mixed measurement rows, got {tuple(groups.object_rows)}."
             )
         object_name = next(iter(groups.object_rows))
         return (
@@ -538,7 +554,7 @@ class CellProfilerObjectMeasurementRowPolicy(
                 record.with_ownership(
                     rows=rows,
                     object_name=object_name,
-                    source_image_name=None,
+                    source_image_name=record.source_context.source_image_name,
                     source_image_payload=record.source_context.source_image_payload,
                 )
                 for object_name, rows in groups.object_rows.items()
@@ -566,9 +582,7 @@ class CellProfilerObjectMeasurementRowPolicy(
             return list(rows)
         return [
             self.annotate_record_row(
-                row,
-                object_name=object_name,
-                source_image_name=source_image_name,
+                row, object_name=object_name, source_image_name=source_image_name
             )
             for row in rows
         ]
@@ -593,13 +607,10 @@ class CellProfilerObjectMeasurementRowPolicy(
                 f"{type(self).__name__} requires a source image name for image rows."
             )
         return MeasurementRowOwnership(
-            source_image_name=resolved_source_image_name,
+            source_image_name=resolved_source_image_name
         ).annotate_row(row)
 
-    def image_row_source_image_name(
-        self,
-        source_image_name: str | None,
-    ) -> str | None:
+    def image_row_source_image_name(self, source_image_name: str | None) -> str | None:
         """Return the source owner for image-scoped rows emitted by this module."""
         return source_image_name
 
@@ -618,22 +629,21 @@ class CellProfilerObjectMeasurementRowPolicy(
         """Return whether a source row should consume an object row identity."""
         return self.row_has_result_payload(
             ObjectMeasurementResultPayloadRequest(
-                row_mapping,
-                object_id_field,
-                tuple(axis_fields),
+                row_mapping, object_id_field, tuple(axis_fields)
             )
         )
 
     def row_has_result_payload(
-        self,
-        request: ObjectMeasurementResultPayloadRequest,
+        self, request: ObjectMeasurementResultPayloadRequest
     ) -> bool:
         """Return whether a row carries result values, not just identity padding."""
         metadata_fields = request.metadata_fields
         return any(
-            field_name not in metadata_fields
-            and self.measurement_value_is_present(value)
-            for field_name, value in request.row_mapping.items()
+            (
+                field_name not in metadata_fields
+                and self.measurement_value_is_present(value)
+                for field_name, value in request.row_mapping.items()
+            )
         )
 
     def measurement_value_is_present(self, value: CellProfilerRuntimeValue) -> bool:
@@ -664,7 +674,7 @@ class CellProfilerObjectMeasurementRowPolicy(
         """Return object row IDs required by this policy for one measurement axis."""
         del projected_rows, object_id_field
         schema = ObjectMeasurementRowCompletionSchema.for_completion_fields(
-            object_id_field=MEASUREMENT_OBJECT_LABEL_FIELD,
+            object_id_field=MeasurementRowAxisField.OBJECT_LABEL.value,
             axis_fields=axis_fields,
         )
         return schema.object_ids_for_axis(
@@ -685,15 +695,13 @@ class CellProfilerObjectMeasurementRowPolicy(
     ) -> ObjectMeasurementIdsByAxis:
         """Return required object row IDs for every measurement axis."""
         schema = ObjectMeasurementRowCompletionSchema.for_completion_fields(
-            object_id_field=object_id_field,
-            axis_fields=axis_fields,
+            object_id_field=object_id_field, axis_fields=axis_fields
         )
         object_ids_by_label_axis: ObjectMeasurementIdsByAxis = {}
         object_ids_by_axis: ObjectMeasurementIdsByAxis = {}
         for axis_key in axis_keys:
             label_axis_key = schema.label_domain_axis_key(
-                label_payload=label_payload,
-                axis_key=axis_key,
+                label_payload=label_payload, axis_key=axis_key
             )
             object_ids = object_ids_by_label_axis.get(label_axis_key)
             if object_ids is None:
@@ -719,14 +727,9 @@ class CellProfilerObjectMeasurementRowPolicy(
         """Pad per-object measurement rows across this policy's object domain."""
         if isinstance(rows, ColumnarRows):
             rows = tuple(rows.row_mappings())
-        schema = self.completion_schema(
-            rows,
-            func,
-            label_payload=label_payload,
-        )
+        schema = self.completion_schema(rows, func, label_payload=label_payload)
         object_identity = self.object_identity_for_rows(
-            rows,
-            label_payload=label_payload,
+            rows, label_payload=label_payload
         )
         completed_rows = self.already_complete_dense_domain_rows(
             rows,
@@ -735,20 +738,19 @@ class CellProfilerObjectMeasurementRowPolicy(
             label_payload=label_payload,
         )
         if completed_rows is not None:
-            return completed_rows
+            return self.complete_object_domain_rows(completed_rows)
         projection_request = self.completion_projection_request(rows, schema)
         projection = self.project_completion_rows(
             projection_request,
             object_identity,
+            label_payload=label_payload,
             original_row_count=len(rows),
         )
         projected_rows = projection.rows
         if self.projected_rows_have_no_object_ids(projection):
             return list(projected_rows)
         axis_keys = self.completion_axis_keys(
-            projection_request,
-            projection,
-            label_payload=label_payload,
+            projection_request, projection, label_payload=label_payload
         )
         object_ids_by_axis = self.required_object_ids_by_axis(
             label_payload=label_payload,
@@ -764,31 +766,40 @@ class CellProfilerObjectMeasurementRowPolicy(
         if not object_ids:
             return list(projected_rows)
         bounded_projection = projection.within_axis_domain(
-            axis_keys=axis_keys,
-            object_ids_by_axis=object_ids_by_axis,
+            axis_keys=axis_keys, object_ids_by_axis=object_ids_by_axis
         )
         missing_row_keys = bounded_projection.row_keys.missing_from_axis_domain(
-            axis_keys,
-            object_ids_by_axis,
+            axis_keys, object_ids_by_axis
         )
         if not missing_row_keys:
-            return bounded_projection.ordered_rows(
-                object_ids=object_ids,
-                axis_keys=axis_keys,
+            return self.complete_object_domain_rows(
+                bounded_projection.ordered_rows(
+                    object_ids=object_ids, axis_keys=axis_keys
+                )
             )
         missing_rows = schema.missing_rows(
             missing_row_keys=missing_row_keys,
             label_payload=label_payload,
             row_policy=self,
-            measured_positive_extent_by_axis=(
-                bounded_projection.measured_positive_extent_by_axis()
-            ),
+            measured_positive_extent_by_axis=bounded_projection.measured_positive_extent_by_axis(),
         )
-        return bounded_projection.ordered_rows(
-            rows=(*bounded_projection.rows, *missing_rows),
-            row_keys=bounded_projection.row_keys.appended(missing_row_keys),
-            object_ids=object_ids,
-            axis_keys=axis_keys,
+        return self.complete_object_domain_rows(
+            bounded_projection.ordered_rows(
+                rows=(*bounded_projection.rows, *missing_rows),
+                row_keys=bounded_projection.row_keys.appended(missing_row_keys),
+                object_ids=object_ids,
+                axis_keys=axis_keys,
+            )
+        )
+
+    def complete_object_domain_rows(
+        self,
+        rows: CellProfilerRuntimeValueSequence,
+    ) -> MeasurementSparseColumnarRows:
+        """Return rows marked as covering this policy's declared object domain."""
+        return MeasurementSparseColumnarRows.from_rows(
+            rows,
+            declared_object_measurement_domain_covered=True,
         )
 
     def already_complete_dense_domain_rows(
@@ -821,11 +832,10 @@ class CellProfilerObjectMeasurementRowPolicy(
             )
             for axis_key in axis_keys
         }
-        if any(not object_ids for object_ids in object_ids_by_axis.values()):
+        if any((not object_ids for object_ids in object_ids_by_axis.values())):
             return None
         required_row_keys = ObjectMeasurementProjectedRowKeys.required_axis_domain(
-            tuple(axis_keys),
-            object_ids_by_axis,
+            tuple(axis_keys), object_ids_by_axis
         )
         if tuple(row_keys) != tuple(required_row_keys):
             return None
@@ -841,8 +851,7 @@ class CellProfilerObjectMeasurementRowPolicy(
         """Return row-completion schema after policy-specific identity projection."""
         schema = ObjectMeasurementRowCompletionSchema.from_rows(rows, func)
         identity_axis_fields = self.row_identity_axis_fields(
-            schema.axis_fields,
-            label_payload=label_payload,
+            schema.axis_fields, label_payload=label_payload
         )
         return ObjectMeasurementRowCompletionSchema.for_completion_fields(
             field_names=schema.field_names,
@@ -868,9 +877,11 @@ class CellProfilerObjectMeasurementRowPolicy(
         request: "ObjectMeasurementRowIdentityProjectionRequest",
         object_identity: MeasurementObjectRowIdentity,
         *,
+        label_payload: CellProfilerRuntimeValue,
         original_row_count: int,
     ) -> "ObjectMeasurementRowIdentityProjectionResult":
         """Project emitted rows into this policy's object identity domain."""
+        del label_payload
         projection = MeasurementObjectRowIdentityProjectionStrategy.for_enum_member(
             object_identity
         ).project_rows(request)
@@ -890,7 +901,7 @@ class CellProfilerObjectMeasurementRowPolicy(
     def projected_rows_have_no_object_ids(
         projection: "ObjectMeasurementRowIdentityProjectionResult",
     ) -> bool:
-        return bool(projection.rows) and not projection.row_keys.has_object_ids()
+        return bool(projection.rows) and (not projection.row_keys.has_object_ids())
 
     def completion_axis_keys(
         self,
@@ -901,8 +912,7 @@ class CellProfilerObjectMeasurementRowPolicy(
     ) -> tuple[CellProfilerRuntimeValues, ...]:
         """Return measurement axis keys used to complete missing object rows."""
         axis_keys = request.axis_keys_for_label_payload(
-            projection,
-            label_payload=label_payload,
+            projection, label_payload=label_payload
         )
         if axis_keys:
             return axis_keys
@@ -917,7 +927,9 @@ class CellProfilerObjectMeasurementRowPolicy(
         positive_label_extent: int | None = None,
     ) -> float:
         """Return the value to use for a missing object measurement field."""
-        value_policy = MissingObjectMeasurementValuePolicy(type(self).missing_value_policy)
+        value_policy = MissingObjectMeasurementValuePolicy(
+            type(self).missing_value_policy
+        )
         strategy = MissingObjectMeasurementValueStrategy.for_enum_member(value_policy)
         return strategy.missing_value(
             MissingObjectMeasurementValueRequest(
@@ -927,6 +939,7 @@ class CellProfilerObjectMeasurementRowPolicy(
                 positive_label_extent=positive_label_extent,
             )
         )
+
 
 class DeclaredObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPolicy):
     """Generated base for modules with declared measurement-row identity."""
@@ -938,7 +951,9 @@ class CompactObjectMeasurementRowIdentityPolicy(DeclaredObjectMeasurementRowPoli
     row_identity = MeasurementObjectRowIdentity.ROW_ORDINAL
 
 
-class CompactMeasuredObjectMeasurementRowPolicy(CompactObjectMeasurementRowIdentityPolicy):
+class CompactMeasuredObjectMeasurementRowPolicy(
+    CompactObjectMeasurementRowIdentityPolicy
+):
     """Complete rows against the compact ordinal domain emitted by CP."""
 
     def required_object_ids_for_axis(
@@ -960,11 +975,13 @@ class CompactMeasuredObjectMeasurementRowPolicy(CompactObjectMeasurementRowIdent
             row_policy=self,
         )
         object_ids = tuple(
-            object_id
-            for row in projected_rows
-            if projection_request.axis_key(row) == axis_key
-            for object_id in (projection_request.object_label(row),)
-            if object_id is not None
+            (
+                object_id
+                for row in projected_rows
+                if projection_request.axis_key(row) == axis_key
+                for object_id in (projection_request.object_label(row),)
+                if object_id is not None
+            )
         )
         if not object_ids:
             return ()
@@ -982,8 +999,7 @@ class CompactMeasuredObjectMeasurementRowPolicy(CompactObjectMeasurementRowIdent
     ) -> ObjectMeasurementIdsByAxis:
         """Compact CP rows are dense over emitted row ordinals per axis."""
         schema = ObjectMeasurementRowCompletionSchema.for_completion_fields(
-            object_id_field=object_id_field,
-            axis_fields=axis_fields,
+            object_id_field=object_id_field, axis_fields=axis_fields
         )
         declared_ids_by_axis = {
             axis_key: schema.object_ids_for_axis(
@@ -993,20 +1009,35 @@ class CompactMeasuredObjectMeasurementRowPolicy(CompactObjectMeasurementRowIdent
             )
             for axis_key in axis_keys
         }
-        max_object_id_by_axis = {axis_key: 0 for axis_key in axis_keys}
-        for axis_key, declared_ids in declared_ids_by_axis.items():
-            if declared_ids:
-                max_object_id_by_axis[axis_key] = max(declared_ids)
+        max_object_id_by_axis = {
+            axis_key: 0
+            for axis_key, declared_ids in declared_ids_by_axis.items()
+            if not declared_ids
+        }
         for object_id, axis_key in projection.row_keys:
-            if object_id is None or axis_key not in max_object_id_by_axis:
+            if object_id is None:
+                continue
+            declared_ids = declared_ids_by_axis.get(axis_key, ())
+            if declared_ids:
+                if object_id not in declared_ids:
+                    raise ValueError(
+                        f"{type(self).__name__} projected object {object_id} "
+                        f"outside declared object domain {declared_ids!r} for "
+                        f"axis {axis_key!r}."
+                    )
+                continue
+            if axis_key not in max_object_id_by_axis:
                 continue
             max_object_id_by_axis[axis_key] = max(
-                max_object_id_by_axis[axis_key],
-                object_id,
+                max_object_id_by_axis[axis_key], object_id
             )
         return {
-            axis_key: tuple(range(1, max_object_id + 1))
-            for axis_key, max_object_id in max_object_id_by_axis.items()
+            axis_key: (
+                declared_ids_by_axis[axis_key]
+                if declared_ids_by_axis[axis_key]
+                else tuple(range(1, max_object_id_by_axis[axis_key] + 1))
+            )
+            for axis_key in axis_keys
         }
 
 
@@ -1014,6 +1045,123 @@ class DeclaredDomainCompactMeasuredObjectMeasurementRowPolicy(
     CompactObjectMeasurementRowIdentityPolicy
 ):
     """Compact measured rows, then pad to the declared object-label domain."""
+
+    def project_completion_rows(
+        self,
+        request: "ObjectMeasurementRowIdentityProjectionRequest",
+        object_identity: MeasurementObjectRowIdentity,
+        *,
+        label_payload: CellProfilerRuntimeValue,
+        original_row_count: int,
+    ) -> "ObjectMeasurementRowIdentityProjectionResult":
+        """Project label IDs to ordinals from the declared label domain."""
+        if object_identity is not MeasurementObjectRowIdentity.ROW_ORDINAL:
+            return super().project_completion_rows(
+                request,
+                object_identity,
+                label_payload=label_payload,
+                original_row_count=original_row_count,
+            )
+        schema = ObjectMeasurementRowCompletionSchema.for_completion_fields(
+            object_id_field=request.object_id_field,
+            axis_fields=request.axis_fields,
+        )
+        ordinal_by_axis_label: dict[CellProfilerRuntimeValues, dict[int, int]] = {}
+        rows: list[CellProfilerRuntimeValue] = []
+        row_keys: list[tuple[int, CellProfilerRuntimeValues]] = []
+        measured_row_keys: list[tuple[int, CellProfilerRuntimeValues]] = []
+        axis_keys: list[CellProfilerRuntimeValues] = []
+        for row in request.rows:
+            row_mapping = measurement_row_mapping(row)
+            axis_key = request.axis_key_from_mapping(row_mapping)
+            if axis_key not in ordinal_by_axis_label:
+                label_ids = schema.label_ids_for_axis(
+                    label_payload=label_payload,
+                    axis_key=axis_key,
+                )
+                ordinal_by_axis_label[axis_key] = {
+                    label_id: ordinal
+                    for ordinal, label_id in enumerate(label_ids, start=1)
+                }
+            if axis_key not in axis_keys:
+                axis_keys.append(axis_key)
+            measured = self.row_has_measured_object(
+                row_mapping,
+                object_id_field=request.object_id_field,
+                axis_fields=request.axis_fields,
+            )
+            if not measured and not self.retains_unmeasured_compact_row(
+                row_mapping,
+                object_id_field=request.object_id_field,
+                axis_fields=request.axis_fields,
+            ):
+                continue
+            source_object_id = request.object_label(row)
+            if source_object_id is None:
+                raise ValueError(
+                    f"{type(self).__name__} cannot project a compact "
+                    "declared-domain row without an object ID."
+                )
+            if source_object_id not in ordinal_by_axis_label[axis_key]:
+                raise ValueError(
+                    f"{type(self).__name__} cannot project source object "
+                    f"{source_object_id} on axis {axis_key!r}; it is absent from "
+                    "the declared label domain."
+                )
+            ordinal = ordinal_by_axis_label[axis_key][source_object_id]
+            rows.append(
+                MeasurementObjectRowIdentityProjectionStrategy
+                .for_enum_member(object_identity)
+                .row_with_object_id(request, row, ordinal)
+            )
+            row_key = (ordinal, axis_key)
+            row_keys.append(row_key)
+            if measured:
+                measured_row_keys.append(row_key)
+        projection = ObjectMeasurementRowIdentityProjectionResult(
+            rows=tuple(rows),
+            row_keys=ObjectMeasurementProjectedRowKeys(tuple(row_keys)),
+            measured_row_keys=ObjectMeasurementProjectedRowKeys(
+                tuple(measured_row_keys)
+            ),
+            axis_keys=tuple(axis_keys),
+        )
+        object_ids = tuple(
+            sorted(dict.fromkeys(object_id for object_id, _axis_key in row_keys))
+        )
+        object_order = {
+            object_id: index for index, object_id in enumerate(object_ids)
+        }
+        axis_order = {axis_key: index for index, axis_key in enumerate(axis_keys)}
+        ordered_entries = tuple(
+            sorted(
+                enumerate(zip(projection.rows, projection.row_keys, strict=True)),
+                key=lambda item: projection.row_order_key(
+                    item[1][1],
+                    item[0],
+                    object_order=object_order,
+                    axis_order=axis_order,
+                ),
+            )
+        )
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "declared_domain_object_measurement_row_identity_projection",
+            0.0,
+            policy=type(self).__name__,
+            object_identity=object_identity.value,
+            rows=original_row_count,
+            projected_rows=len(rows),
+            axis_count=len(axis_keys),
+            max_object_id=projection.row_keys.max_object_id_or_none(),
+        )
+        return ObjectMeasurementRowIdentityProjectionResult(
+            rows=tuple(row for _index, (row, _row_key) in ordered_entries),
+            row_keys=ObjectMeasurementProjectedRowKeys(
+                tuple(row_key for _index, (_row, row_key) in ordered_entries)
+            ),
+            measured_row_keys=projection.measured_row_keys,
+            axis_keys=tuple(axis_keys),
+        )
 
 
 class PreserveCompleteDenseDomainRowsMixin:
@@ -1048,9 +1196,9 @@ class FeatureAnchoredCompactObjectMeasurementRowPolicy(
 ):
     """Compact rows whose measuredness is anchored by declared feature fields."""
 
-    measured_object_features: ClassVar[tuple[ObjectShapeMeasurementFeature, ...]] = ()
+    measured_object_features: ClassVar[tuple[RuntimeMeasurementFeature, ...]] = ()
     retained_unmeasured_compact_features: ClassVar[
-        tuple[ObjectShapeMeasurementFeature, ...]
+        tuple[RuntimeMeasurementFeature, ...]
     ] = ()
 
     def object_identity_for_rows(
@@ -1076,30 +1224,29 @@ class FeatureAnchoredCompactObjectMeasurementRowPolicy(
 
     @classmethod
     def rows_use_declared_compact_identity(
-        cls,
-        rows: CellProfilerRuntimeValueSequence,
+        cls, rows: CellProfilerRuntimeValueSequence
     ) -> bool:
         return any(
-            cls.row_uses_declared_compact_identity(measurement_row_mapping(row))
-            for row in rows
+            (
+                cls.row_uses_declared_compact_identity(measurement_row_mapping(row))
+                for row in rows
+            )
         )
 
     @classmethod
     def row_uses_declared_compact_identity(
-        cls,
-        row_mapping: MeasurementRowMapping,
+        cls, row_mapping: MeasurementRowMapping
     ) -> bool:
         compact_fields = frozenset(
-            feature.value
-            for feature in (
-                *cls.measured_object_features,
-                *cls.retained_unmeasured_compact_features,
+            (
+                feature.value
+                for feature in (
+                    *cls.measured_object_features,
+                    *cls.retained_unmeasured_compact_features,
+                )
             )
         )
-        return any(
-            field_name in compact_fields
-            for field_name in row_mapping
-        )
+        return any((field_name in compact_fields for field_name in row_mapping))
 
     def row_has_measured_object(
         self,
@@ -1108,48 +1255,31 @@ class FeatureAnchoredCompactObjectMeasurementRowPolicy(
         object_id_field: str,
         axis_fields: Sequence[str],
     ) -> bool:
-        anchor_fields = tuple(feature.value for feature in type(self).measured_object_features)
-        if any(field_name in row_mapping for field_name in anchor_fields):
+        anchor_fields = tuple(
+            (feature.value for feature in type(self).measured_object_features)
+        )
+        if any((field_name in row_mapping for field_name in anchor_fields)):
             return any(
-                self.measurement_value_is_present(row_mapping.get(field_name))
-                for field_name in anchor_fields
+                (
+                    self.measurement_value_is_present(row_mapping.get(field_name))
+                    for field_name in anchor_fields
+                )
             )
         retained_fields = tuple(
-            feature.value
-            for feature in type(self).retained_unmeasured_compact_features
+            (
+                feature.value
+                for feature in type(self).retained_unmeasured_compact_features
+            )
         )
-        if any(field_name in row_mapping for field_name in retained_fields):
+        if any((field_name in row_mapping for field_name in retained_fields)):
             return False
         return super().row_has_measured_object(
-            row_mapping,
-            object_id_field=object_id_field,
-            axis_fields=axis_fields,
+            row_mapping, object_id_field=object_id_field, axis_fields=axis_fields
         )
-
-
-class DenseEmittedObjectMeasurementRowsMixin:
-    """Policy mixin for modules that already emit their complete object row domain."""
-
-    def complete_rows(
-        self,
-        rows: MeasurementRowsInput,
-        *,
-        label_payload: CellProfilerRuntimeValue,
-        func: CellProfilerFunction,
-    ) -> MeasurementRowsInput:
-        if isinstance(rows, ColumnarRows):
-            if rows.covers_declared_object_measurement_domain:
-                return rows
-            return super().complete_rows(
-                rows,
-                label_payload=label_payload,
-                func=func,
-            )
-        return list(rows)
 
 
 class DenseColumnarObjectMeasurementRowsMixin:
-    """Policy mixin for modules that emit complete rows only through carriers."""
+    """Policy mixin for columnar rows that already match the label-id domain."""
 
     def complete_rows(
         self,
@@ -1161,18 +1291,13 @@ class DenseColumnarObjectMeasurementRowsMixin:
         if (
             isinstance(rows, ColumnarRows)
             and rows.covers_declared_object_measurement_domain
-            and self.object_identity_for_rows(
-                rows,
-                label_payload=label_payload,
+            and (
+                self.object_identity_for_rows(rows, label_payload=label_payload)
+                is MeasurementObjectRowIdentity.LABEL_ID
             )
-            is MeasurementObjectRowIdentity.LABEL_ID
         ):
             return rows
-        return super().complete_rows(
-            rows,
-            label_payload=label_payload,
-            func=func,
-        )
+        return super().complete_rows(rows, label_payload=label_payload, func=func)
 
 
 class DefaultObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPolicy):

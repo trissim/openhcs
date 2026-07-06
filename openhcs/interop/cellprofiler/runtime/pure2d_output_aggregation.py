@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, is_dataclass
 from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
@@ -16,6 +16,7 @@ from openhcs.core.aligned_image_payload import (
 )
 from openhcs.core.image_shapes import is_color_image_slice, is_color_image_stack
 from openhcs.core.image_stack_layout import ImageStackLayout, ImageStackLayoutUnstackRequest
+from openhcs.core.measurement_row_materialization import MeasurementRowsAxisProjection
 from openhcs.core.memory import convert_memory, detect_memory_type
 from openhcs.core.runtime_semantics import ParentChildRelationshipPayload, RuntimePlaneAxis
 from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
@@ -26,10 +27,13 @@ from openhcs.core.runtime_values import (
     ObjectLabelPayload,
     ObjectLabelPure2DSliceAggregator,
     ObjectLabelSet,
+    SourceImagePlaneAxisPolicy,
+    SourceImagePlaneAxisRequest,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
 )
+from openhcs.core.source_image_semantics import source_image_payload_role
 from openhcs.interop.cellprofiler.runtime.image_payload_collapse import (
     SINGLETON_STACK_OUTPUT_COLLAPSE,
 )
@@ -127,6 +131,115 @@ class CellProfilerPure2DOutputAggregationRequest:
     plane_axis: RuntimePlaneAxis = RuntimePlaneAxis.RUNTIME_SLICE
 
 
+@dataclass(frozen=True, slots=True)
+class CellProfilerPure2DImagePlaneSemantics:
+    """Source-plane semantics for CellProfiler PURE_2D image execution."""
+
+    image: CellProfilerRuntimeValue
+
+    @classmethod
+    def from_image(
+        cls,
+        image: CellProfilerRuntimeValue,
+    ) -> "CellProfilerPure2DImagePlaneSemantics":
+        image_data = image_payload_data(image)
+        image_mask = image_payload_mask(image)
+        image_metadata = image_payload_metadata(image)
+        image_data_semantics = ImageArrayShapeSemantics(image_data)
+        if image_data_semantics.is_pairwise_slice_grid:
+            image_data = image_data_semantics.collapse_pairwise_slice_grid()
+            if (
+                image_mask is not None
+                and isinstance(image_mask, np.ndarray)
+                and ImageArrayShapeSemantics(image_mask).shares_pairwise_slice_grid_axes_with(
+                    image_data_semantics.value
+                )
+            ):
+                image_mask = ImageArrayShapeSemantics(
+                    image_mask
+                ).collapse_pairwise_slice_grid()
+            image = image_metadata.payload_with(image_data, image_mask)
+        return cls(image)
+
+    @property
+    def data(self) -> CellProfilerRuntimeValue:
+        return image_payload_data(self.image)
+
+    @property
+    def mask(self) -> CellProfilerRuntimeValue | None:
+        return image_payload_mask(self.image)
+
+    @property
+    def metadata(self):
+        return image_payload_metadata(self.image)
+
+    @property
+    def source_role(self):
+        return source_image_payload_role(self.image)
+
+    @property
+    def plane_axis(self) -> RuntimePlaneAxis | None:
+        return SourceImagePlaneAxisPolicy.for_request(
+            SourceImagePlaneAxisRequest(self.image)
+        ).axis()
+
+    def is_single_source_plane(self) -> bool:
+        if is_color_image_slice(self.data):
+            return True
+        if self.plane_axis is not None:
+            return False
+        source_role = self.source_role
+        return (
+            source_role is not None
+            and source_role.is_channel_last_source_plane(self.data)
+        )
+
+    def slices(self, memory_type: str) -> CellProfilerRuntimeValues:
+        if self.is_single_source_plane():
+            return (self.image,)
+        slice_projector = ImagePayloadSliceProjector(
+            mask=self.mask,
+            metadata=self.metadata,
+        )
+        source_role = self.source_role
+        if (
+            is_color_image_stack(self.data)
+            or (
+                source_role is not None
+                and source_role.is_channel_last_source_stack(self.data)
+            )
+        ):
+            image_data = self.data
+            source_type = detect_memory_type(image_data)
+            if source_type != memory_type:
+                image_data = convert_memory(
+                    data=image_data,
+                    source_type=source_type,
+                    target_type=memory_type,
+                    gpu_id=0,
+                )
+            return tuple(
+                slice_projector.payload_for_slice(image_data[index], index)
+                for index in range(image_data.shape[0])
+            )
+        if (
+            plane_stack := RuntimeSliceProjection.grayscale_plane_stack_view(
+                self.data,
+                flatten_high_rank=True,
+            )
+        ) is not None:
+            return tuple(
+                slice_projector.payload_for_slice(plane_stack[index], index)
+                for index in range(plane_stack.shape[0])
+            )
+        return tuple(
+            slice_projector.payload_for_slice(slice_data, index)
+            for index, slice_data in enumerate(
+                ImageStackLayoutUnstackRequest(self.data, memory_type, 0).slices()
+            )
+        )
+
+
 class ObjectLabelValuePure2DOutputAggregator(CellProfilerPure2DOutputAggregator):
     """Aggregate typed object-label outputs."""
 
@@ -184,6 +297,50 @@ class ParentChildRelationshipPure2DOutputAggregator(CellProfilerPure2DOutputAggr
         )
 
 
+class MeasurementRowSequencePure2DOutputAggregator(CellProfilerPure2DOutputAggregator):
+    """Aggregate per-slice measurement rows with the outer PURE_2D slice identity."""
+
+    output_type = tuple
+
+    @classmethod
+    def supports(cls, slice_outputs: CellProfilerRuntimeValueSequence) -> bool:
+        return bool(slice_outputs) and all(
+            cls.row_sequence_for_value(output) is not None
+            for output in slice_outputs
+        )
+
+    def aggregate_outputs(
+        self,
+        request: CellProfilerPure2DOutputAggregationRequest,
+    ) -> CellProfilerRuntimeValue:
+        rows: list[CellProfilerRuntimeValue] = []
+        for slice_index, output in enumerate(request.slice_outputs):
+            row_sequence = self.row_sequence_for_value(output)
+            if row_sequence is None:
+                raise TypeError(
+                    f"{type(self).__name__} got non-row output "
+                    f"{type(output).__name__}."
+                )
+            projection = MeasurementRowsAxisProjection.from_rows(row_sequence)
+            rows.extend(projection.project_runtime_slice_index(slice_index))
+        return rows
+
+    @staticmethod
+    def row_sequence_for_value(
+        value: CellProfilerRuntimeValue,
+    ) -> tuple[CellProfilerRuntimeValue, ...] | None:
+        if isinstance(value, (str, bytes, np.ndarray)):
+            return None
+        if not isinstance(value, Sequence):
+            return None
+        rows = tuple(value)
+        if not rows:
+            return ()
+        if all(is_dataclass(row) or isinstance(row, Mapping) for row in rows):
+            return rows
+        return None
+
+
 class ObjectLabelPayloadPure2DOutputAggregator(
     ObjectLabelValuePure2DOutputAggregator
 ):
@@ -236,55 +393,7 @@ def _stack_cellprofiler_slice_outputs(
 
 
 def _unstack_cellprofiler_image_slices(image: CellProfilerRuntimeValue, memory_type: str) -> CellProfilerRuntimeValues:
-    image_data = image_payload_data(image)
-    image_mask = image_payload_mask(image)
-    image_metadata = image_payload_metadata(image)
-    image_data_semantics = ImageArrayShapeSemantics(image_data)
-    if image_data_semantics.is_pairwise_slice_grid:
-        image_data = image_data_semantics.collapse_pairwise_slice_grid()
-        if (
-            image_mask is not None
-            and isinstance(image_mask, np.ndarray)
-            and ImageArrayShapeSemantics(image_mask).shares_pairwise_slice_grid_axes_with(
-                image_data_semantics.value
-            )
-        ):
-            image_mask = ImageArrayShapeSemantics(image_mask).collapse_pairwise_slice_grid()
-    slice_projector = ImagePayloadSliceProjector(
-        mask=image_mask,
-        metadata=image_metadata,
-    )
-    if is_color_image_slice(image_data):
-        return (image,)
-    if is_color_image_stack(image_data):
-        source_type = detect_memory_type(image_data)
-        if source_type != memory_type:
-            image_data = convert_memory(
-                data=image_data,
-                source_type=source_type,
-                target_type=memory_type,
-                gpu_id=0,
-            )
-        return tuple(
-            slice_projector.payload_for_slice(image_data[index], index)
-            for index in range(image_data.shape[0])
-        )
-    if (
-        plane_stack := RuntimeSliceProjection.grayscale_plane_stack_view(
-            image_data,
-            flatten_high_rank=True,
-        )
-    ) is not None:
-        return tuple(
-            slice_projector.payload_for_slice(plane_stack[index], index)
-            for index in range(plane_stack.shape[0])
-        )
-    return tuple(
-        slice_projector.payload_for_slice(slice_data, index)
-        for index, slice_data in enumerate(
-            ImageStackLayoutUnstackRequest(image_data, memory_type, 0).slices()
-        )
-    )
+    return CellProfilerPure2DImagePlaneSemantics.from_image(image).slices(memory_type)
 
 
 def _with_stacked_output_context(

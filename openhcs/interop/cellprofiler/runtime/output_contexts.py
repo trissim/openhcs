@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
@@ -10,6 +11,7 @@ import numpy as np
 
 from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
 from openhcs.core.runtime_semantics import ObjectLabelDomainScope
+from openhcs.core.source_metadata import SourceVoxelSpacing
 from openhcs.core.runtime_values import (
     DerivedImagePayloadContext,
     ImagePayloadMetadataCarrier,
@@ -21,6 +23,7 @@ from openhcs.core.runtime_values import (
     ObjectLabelVariantData,
     RuntimeArrayPayload,
     SourceImageObjectLabelBuildRequest,
+    image_payload_metadata,
 )
 from openhcs.interop.cellprofiler.runtime.image_payload_collapse import (
     SINGLETON_STACK_OUTPUT_COLLAPSE,
@@ -122,6 +125,98 @@ class DefaultImageOutputValuePolicy(CellProfilerImageOutputValuePolicy):
 
     def output_value(self, request: CellProfilerOutputRecordRequest) -> CellProfilerRuntimeValue:
         return request.output_value
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerObjectLabelOutputSourceContext:
+    """Source provenance and CP parent-image context for one object-label output."""
+
+    source_payload: CellProfilerRuntimeValue
+    parent_image_payload: CellProfilerRuntimeValue | None
+
+    @property
+    def source_metadata(self):
+        """Return metadata for the declared source payload."""
+        return image_payload_metadata(self.source_payload)
+
+    @property
+    def parent_image_source_voxel_spacing(self) -> SourceVoxelSpacing:
+        """Return spacing stamped from the CP parent image, or absence."""
+        if self.parent_image_payload is None:
+            return SourceVoxelSpacing()
+        return image_payload_metadata(self.parent_image_payload).source_voxel_spacing
+
+
+class CellProfilerObjectLabelOutputSourceContextPolicyMixin(ABC):
+    """Declaration-owned source-payload policy for object-label outputs."""
+
+    @abstractmethod
+    def source_context(
+        self,
+        request: CellProfilerOutputRecordRequest,
+    ) -> CellProfilerObjectLabelOutputSourceContext:
+        """Return source and CP parent-image context for one object-label output."""
+
+
+class CellProfilerObjectLabelOutputSourceContextPolicy(
+    CellProfilerModulePolicyLookupMixin,
+    CellProfilerObjectLabelOutputSourceContextPolicyMixin,
+    ABC,
+    metaclass=CellProfilerModulePolicyAutoRegisterMeta,
+):
+    """Resolve metadata-bearing source payloads for declared object-label outputs."""
+
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
+    declaration_policy_bases = (CellProfilerObjectLabelOutputSourceContextPolicyMixin,)
+
+
+class DefaultObjectLabelOutputSourceContextPolicy(
+    CellProfilerObjectLabelOutputSourceContextPolicy
+):
+    """Use the default declared source context for object-label outputs."""
+
+    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
+
+    def source_context(
+        self,
+        request: CellProfilerOutputRecordRequest,
+    ) -> CellProfilerObjectLabelOutputSourceContext:
+        source_payload = request.default_object_label_output_source_payload()
+        parent_payload = request.metadata_bearing_primary_image_source_payload()
+        return CellProfilerObjectLabelOutputSourceContext(
+            source_payload,
+            parent_payload or source_payload,
+        )
+
+
+class InputObjectLabelOutputSourceContextPolicyMixin(
+    CellProfilerObjectLabelOutputSourceContextPolicyMixin,
+    ABC,
+):
+    """Use input object-label context for object-label outputs derived from objects."""
+
+    def source_context(
+        self,
+        request: CellProfilerOutputRecordRequest,
+    ) -> CellProfilerObjectLabelOutputSourceContext:
+        source_payload = request.input_object_label_output_source_payload()
+        return CellProfilerObjectLabelOutputSourceContext(source_payload, source_payload)
+
+
+class InputObjectLabelWithoutParentImageOutputSourceContextPolicyMixin(
+    InputObjectLabelOutputSourceContextPolicyMixin,
+    ABC,
+):
+    """Use input object-label provenance without declaring a CP parent image."""
+
+    def source_context(
+        self,
+        request: CellProfilerOutputRecordRequest,
+    ) -> CellProfilerObjectLabelOutputSourceContext:
+        return CellProfilerObjectLabelOutputSourceContext(
+            request.input_object_label_output_source_payload(),
+            None,
+        )
 
 
 class CellProfilerImageOutputContextStrategy(

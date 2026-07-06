@@ -31,7 +31,7 @@ class CellProfilerCallableOutputSpecs:
             return ()
         raw_outputs = self.callable_special_outputs(self.func)
         return tuple(
-            ArtifactSpec(
+            ArtifactSpec.output(
                 special_output_name(output_spec),
                 SpecialOutputKindClassifier.kind_for(output_spec),
             )

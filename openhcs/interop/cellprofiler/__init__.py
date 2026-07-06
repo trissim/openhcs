@@ -8,7 +8,6 @@ canonical owner of `.cppipe` import or CellProfiler measurement semantics.
 from openhcs.core.public_api import exported_public_names
 from openhcs.interop.cellprofiler.measurement_dialect import (
     BENCHMARK_CACHE_DOMAINS,
-    CELLPROFILER_FEATURE_NUMERIC_TOLERANCES,
     CELLPROFILER_MEASUREMENT_DIALECT,
     CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
     cellprofiler_runtime_equivalence_policy,
@@ -32,8 +31,6 @@ from openhcs.interop.cellprofiler.import_service import (
     CellProfilerPipelineImportRequest,
 )
 from openhcs.interop.cellprofiler.artifact_semantics import (
-    ArtifactSettingDirection,
-    ArtifactSettingRole,
     ArtifactSettingSymbol,
     FunctionSpecialOutput,
     artifact_setting_symbols,

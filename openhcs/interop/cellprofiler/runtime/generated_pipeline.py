@@ -5,36 +5,24 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import inspect
-import json
 import sys
 from collections.abc import Sequence
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
 from typing import Any, ClassVar
 
-from openhcs.constants.constants import VariableComponents
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.core.invocation_artifacts import (
     ArtifactDeclarationStepContext,
     PipelineInvocationContractProviderMetadata,
 )
-from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
-from openhcs.core.artifacts import ArtifactKind, ArtifactSidecarRole, ArtifactSpec
 from openhcs.core.artifact_contract_preview import SourceBindingRuntimeContractGuard
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.source_bindings import StepSourceBindingsConfig
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.processing.materialization import (
-    CsvOptions,
-    JsonOptions,
-    MaterializationSpec,
-    ROIOptions,
-    TextOptions,
-    TiffStackOptions,
-)
 from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
 from openhcs.processing.backends.lib_registry.registry_service import RegistryService
 from openhcs.processing.backends.lib_registry.unified_registry import (
@@ -49,239 +37,51 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
 from openhcs.interop.cellprofiler.symbol_table import ModuleArtifactContracts
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.processing.backends.cellprofiler import (
-    cellprofiler_function_runtime_metadata,
+    CellProfilerFunctionCatalog,
 )
-
-_CONTRACT_SIDECAR_SCHEMA = "openhcs.cellprofiler.generated_contracts"
-_CONTRACT_SIDECAR_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
 class GeneratedPipelineContractSidecar:
-    """Versioned JSON persistence facade for generated CP runtime contracts."""
+    """Generated Python persistence for CellProfiler runtime artifact contracts."""
 
     contracts_by_module_num: Mapping[int, ModuleArtifactContract]
+    export_name: ClassVar[str] = "CELLPROFILER_ARTIFACT_CONTRACTS"
 
     def write(self, path: Path) -> None:
-        """Write contracts to a deterministic JSON sidecar."""
-        codec = GeneratedPipelineContractSidecarCodec()
-        payload = {
-            "schema": _CONTRACT_SIDECAR_SCHEMA,
-            "version": _CONTRACT_SIDECAR_VERSION,
-            "contracts": [
-                codec.payload(module_num, contract)
-                for module_num, contract in sorted(
-                    self.contracts_by_module_num.items()
-                )
-            ],
-        }
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
+        """Write runtime artifact contracts as importable Python source."""
+        import openhcs.serialization.pycodify_formatters  # noqa: F401
+        from pycodify import Assignment, generate_python_source
+
+        source = generate_python_source(
+            Assignment(
+                self.export_name,
+                dict(sorted(self.contracts_by_module_num.items())),
+            ),
+            header="# Generated CellProfiler runtime artifact contracts.",
+            clean_mode=False,
         )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists() or path.read_text(encoding="utf-8") != source:
+            path.write_text(source, encoding="utf-8")
 
     @classmethod
     def read(cls, path: Path) -> dict[int, ModuleArtifactContract]:
-        """Read contracts from a versioned JSON sidecar."""
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if payload.get("schema") != _CONTRACT_SIDECAR_SCHEMA:
-            raise ValueError(
-                f"Unsupported CellProfiler contract sidecar schema: "
-                f"{payload.get('schema')!r}."
+        """Load runtime artifact contracts from a generated Python sidecar."""
+        sidecar_path = Path(path)
+        module_name = f"_openhcs_{sidecar_path.stem}_artifact_contracts"
+        spec = importlib.util.spec_from_file_location(module_name, sidecar_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(
+                f"Unable to create artifact contract module spec for {sidecar_path}."
             )
-        if payload.get("version") != _CONTRACT_SIDECAR_VERSION:
-            raise ValueError(
-                f"Unsupported CellProfiler contract sidecar version: "
-                f"{payload.get('version')!r}."
-            )
-        codec = GeneratedPipelineContractSidecarCodec()
-        contracts: dict[int, ModuleArtifactContract] = {}
-        for contract_payload in payload.get("contracts", ()):
-            module_num = int(contract_payload["module_num"])
-            contracts[module_num] = codec.from_payload(contract_payload)
-        return contracts
-
-@dataclass(frozen=True, slots=True)
-class GeneratedPipelineContractSidecarCodec:
-    """Codec for one ModuleArtifactContract sidecar record."""
-
-    spec_codec: "GeneratedPipelineArtifactSpecSidecarCodec" = field(
-        default_factory=lambda: GeneratedPipelineArtifactSpecSidecarCodec()
-    )
-
-    def payload(
-        self,
-        module_num: int,
-        contract: ModuleArtifactContract,
-    ) -> dict[str, Any]:
-        if not isinstance(contract, ModuleArtifactContract):
-            raise TypeError(
-                "GeneratedPipelineContractSidecar requires ModuleArtifactContract "
-                f"values, got {type(contract).__name__}."
-            )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        contracts = vars(module)[cls.export_name]
         return {
-            "module_num": module_num,
-            "module_name": contract.module_name,
-            "inputs": self.spec_codec.sequence_payload(contract.inputs),
-            "runtime_artifact_inputs": self.spec_codec.sequence_payload(
-                contract.runtime_artifact_inputs
-            ),
-            "outputs": self.spec_codec.sequence_payload(contract.outputs),
-            "declared_outputs": self.spec_codec.sequence_payload(
-                contract.declared_outputs
-            ),
-            "required_variable_components": [
-                component.value
-                for component in contract.required_variable_components
-            ],
+            int(module_num): contract
+            for module_num, contract in dict(contracts).items()
         }
-
-    def from_payload(
-        self,
-        payload: Mapping[str, Any],
-    ) -> ModuleArtifactContract:
-        return ModuleArtifactContract(
-            module_name=str(payload["module_name"]),
-            inputs=self.spec_codec.sequence_from_payload(payload.get("inputs", ())),
-            runtime_artifact_inputs=self.spec_codec.sequence_from_payload(
-                payload.get("runtime_artifact_inputs", ())
-            ),
-            outputs=self.spec_codec.sequence_from_payload(payload.get("outputs", ())),
-            declared_outputs=self.spec_codec.sequence_from_payload(
-                payload.get("declared_outputs", ())
-            ),
-            required_variable_components=tuple(
-                VariableComponents(component)
-                for component in payload.get("required_variable_components", ())
-            ),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class GeneratedPipelineArtifactSpecSidecarCodec:
-    """Codec for ArtifactSpec sequences inside generated contract sidecars."""
-
-    materialization_codec: "GeneratedPipelineMaterializationSidecarCodec" = field(
-        default_factory=lambda: GeneratedPipelineMaterializationSidecarCodec()
-    )
-
-    def sequence_payload(
-        self,
-        specs: tuple[ArtifactSpec, ...],
-    ) -> list[dict[str, Any]]:
-        return [self.payload(spec) for spec in specs]
-
-    def sequence_from_payload(self, payload: Any) -> tuple[ArtifactSpec, ...]:
-        return tuple(self.from_payload(spec_payload) for spec_payload in payload)
-
-    def payload(self, spec: ArtifactSpec) -> dict[str, Any]:
-        return {
-            "name": spec.name,
-            "kind": spec.kind.value,
-            "required": spec.required,
-            "sidecar_role": (
-                None if spec.sidecar_role is None else spec.sidecar_role.value
-            ),
-            "materialization": self.materialization_codec.payload(
-                spec.materialization
-            ),
-        }
-
-    def from_payload(self, payload: Mapping[str, Any]) -> ArtifactSpec:
-        sidecar_role = payload.get("sidecar_role")
-        return ArtifactSpec(
-            name=str(payload["name"]),
-            kind=ArtifactKind(str(payload["kind"])),
-            required=bool(payload.get("required", True)),
-            sidecar_role=(
-                None
-                if sidecar_role is None
-                else ArtifactSidecarRole(str(sidecar_role))
-            ),
-            materialization=self.materialization_codec.from_payload(
-                payload.get("materialization")
-            ),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class GeneratedPipelineMaterializationSidecarCodec:
-    """Codec for materialization policy values inside generated sidecars."""
-
-    option_types: ClassVar[Mapping[str, type[Any]]] = {
-        option_cls.__name__: option_cls
-        for option_cls in (
-            CsvOptions,
-            JsonOptions,
-            ROIOptions,
-            TextOptions,
-            TiffStackOptions,
-        )
-    }
-
-    def payload(self, materialization: Any) -> Any:
-        if materialization is None:
-            return None
-        if materialization is NO_ARTIFACT_MATERIALIZATION:
-            return {"type": "none"}
-        if not isinstance(materialization, MaterializationSpec):
-            raise TypeError(
-                "Generated CellProfiler contract sidecars only support "
-                "MaterializationSpec or NO_ARTIFACT_MATERIALIZATION values, "
-                f"got {type(materialization).__name__}."
-            )
-        return {
-            "type": "materialization_spec",
-            "allowed_backends": materialization.allowed_backends,
-            "primary": materialization.primary,
-            "outputs": [
-                self.option_payload(option)
-                for option in materialization.outputs
-            ],
-        }
-
-    def from_payload(self, payload: Any) -> Any:
-        if payload is None:
-            return None
-        payload_type = payload.get("type")
-        if payload_type == "none":
-            return NO_ARTIFACT_MATERIALIZATION
-        if payload_type != "materialization_spec":
-            raise ValueError(f"Unsupported materialization payload: {payload!r}.")
-        return MaterializationSpec(
-            tuple(
-                self.option_from_payload(option_payload)
-                for option_payload in payload["outputs"]
-            ),
-            allowed_backends=payload.get("allowed_backends"),
-            primary=int(payload.get("primary", 0)),
-        )
-
-    def option_payload(self, option: Any) -> dict[str, Any]:
-        if not is_dataclass(option):
-            raise TypeError(
-                "Materialization options in generated sidecars must be dataclass "
-                f"instances, got {type(option).__name__}."
-            )
-        payload = asdict(option)
-        if any(callable(value) for value in payload.values()):
-            raise TypeError(
-                "Generated CellProfiler contract sidecars cannot serialize "
-                f"callable materialization options on {type(option).__name__}."
-            )
-        return {"type": type(option).__name__, "fields": payload}
-
-    def option_from_payload(self, payload: Mapping[str, Any]) -> Any:
-        option_type = str(payload["type"])
-        option_fields = dict(payload.get("fields", {}))
-        try:
-            option_cls = self.option_types[option_type]
-        except KeyError as exc:
-            raise ValueError(
-                f"Unsupported generated materialization option type {option_type!r}."
-            ) from exc
-        return option_cls(**option_fields)
 
 
 @dataclass(frozen=True, slots=True)
@@ -482,18 +282,17 @@ class GeneratedPipelineRuntimeModule:
         """Write an importable module that restores generated declarations on import."""
         output_dir = importable_path.parent
         output_dir.mkdir(parents=True, exist_ok=True)
-        contract_sidecar = output_dir / f"{self.module_name}.cellprofiler_contracts.json"
+        contract_sidecar = output_dir / (
+            f"{self.module_name}.cellprofiler_contracts.py"
+        )
         contract_prelude = ""
         if artifact_contracts:
-            GeneratedPipelineContractSidecar(artifact_contracts).write(
-                contract_sidecar
-            )
+            GeneratedPipelineContractSidecar(artifact_contracts).write(contract_sidecar)
             contract_prelude = (
                 "    from openhcs.interop.cellprofiler.runtime.generated_pipeline import "
                 "GeneratedPipelineContractSidecar as _openhcs_cp_contract_sidecar\n"
-                "    from pathlib import Path as _openhcs_generated_path\n"
                 "    _openhcs_cp_contract_values = _openhcs_cp_contract_sidecar.read("
-                f"_openhcs_generated_path({str(contract_sidecar)!r}))\n"
+                f"{str(contract_sidecar)!r})\n"
             )
         semantic_sidecar = output_dir / (
             f"{self.module_name}.cellprofiler_semantic_contracts.py"
@@ -540,15 +339,21 @@ class GeneratedPipelineRuntimeModule:
             sys.path.insert(0, output_dir_text)
         return importable_path
 
-    def pipeline_from_module(self, module: ModuleType, *, pipeline_name: str) -> Pipeline:
+    def pipeline_from_module(
+        self, module: ModuleType, *, pipeline_name: str
+    ) -> Pipeline:
         """Build a Pipeline object from generated module exports."""
-        pipeline_steps = GeneratedPipelineModuleExports(module).pipeline_steps
         metadata: dict[str, object] = {}
         invocation_contracts = (
             CellProfilerGeneratedPipelineInvocationContracts.from_module(module)
         )
         if invocation_contracts is not None:
+            bind_generated_pipeline_runtime(
+                module,
+                invocation_contracts.contracts_by_module_num,
+            )
             metadata = invocation_contracts.attach_to_metadata(metadata)
+        pipeline_steps = GeneratedPipelineModuleExports(module).pipeline_steps
         if isinstance(pipeline_steps, Pipeline):
             pipeline_steps.metadata.update(metadata)
             return pipeline_steps
@@ -654,7 +459,7 @@ class GeneratedPipelineRuntimeBindings:
         step_contract: "CellProfilerGeneratedStepContract",
         source_bindings: StepSourceBindingsConfig,
     ) -> Callable[..., Any]:
-        metadata = cellprofiler_function_runtime_metadata(func)
+        metadata = CellProfilerFunctionCatalog.runtime_metadata(func)
         if metadata is None:
             return func
         step_contract.validate_callable_metadata(metadata)
@@ -839,12 +644,12 @@ class CellProfilerGeneratedStepFunctionSpec:
 
     def _metadata_items(self, func_spec: Any) -> Iterator[Any]:
         if isinstance(func_spec, CellProfilerRuntimeCallable):
-            metadata = cellprofiler_function_runtime_metadata(func_spec.raw_func)
+            metadata = CellProfilerFunctionCatalog.runtime_metadata(func_spec.raw_func)
             if metadata is not None:
                 yield metadata
             return
         if callable(func_spec):
-            metadata = cellprofiler_function_runtime_metadata(func_spec)
+            metadata = CellProfilerFunctionCatalog.runtime_metadata(func_spec)
             if metadata is not None:
                 yield metadata
             return
@@ -883,7 +688,9 @@ class CellProfilerGeneratedStepContractMatcher:
             if SourceBindingRuntimeContractGuard(
                 candidate.contract,
                 source_bindings,
-            ).alignment().ok
+            )
+            .alignment()
+            .ok
         )
         if not aligned:
             self._raise_no_matching_contract(metadata, source_bindings, candidates)
@@ -939,7 +746,9 @@ class CellProfilerGeneratedStepContractMatcher:
             SourceBindingRuntimeContractGuard(
                 candidate.contract,
                 source_bindings,
-            ).alignment().message
+            )
+            .alignment()
+            .message
             for candidate in candidates
         )
         raise ValueError(
@@ -966,7 +775,7 @@ class CellProfilerGeneratedInvocationContractProvider:
         if isinstance(raw_callable, CellProfilerRuntimeCallable):
             return invocation.contract
 
-        metadata = cellprofiler_function_runtime_metadata(raw_callable)
+        metadata = CellProfilerFunctionCatalog.runtime_metadata(raw_callable)
         if metadata is None:
             return None
 
@@ -997,7 +806,9 @@ class CellProfilerGeneratedInvocationContractProvider:
             if SourceBindingRuntimeContractGuard(
                 candidate.contract,
                 step_context.source_bindings,
-            ).alignment().ok
+            )
+            .alignment()
+            .ok
         )
         if len(aligned) == 1:
             return aligned[0]
@@ -1022,9 +833,7 @@ class CellProfilerGeneratedInvocationContractProvider:
         if step_index is None:
             return None
         ordered = tuple(
-            CellProfilerGeneratedStepContracts(
-                self.contracts_by_module_num
-            ).ordered()
+            CellProfilerGeneratedStepContracts(self.contracts_by_module_num).ordered()
         )
         if not 0 <= step_index < len(ordered):
             return None
@@ -1254,7 +1063,9 @@ class GeneratedPipelineFunction:
 
 def generated_pipeline_module_name(module_path: Path, code: str) -> str:
     """Compatibility facade for generated module identity projection."""
-    return GeneratedPipelineModuleIdentity(module_path=module_path, code=code).module_name
+    return GeneratedPipelineModuleIdentity(
+        module_path=module_path, code=code
+    ).module_name
 
 
 def load_generated_pipeline_module(

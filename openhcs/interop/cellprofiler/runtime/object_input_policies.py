@@ -7,7 +7,7 @@ from typing import ClassVar
 
 from metaclass_registry import RegistryFamily, RegistryKeyAttribute
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.artifacts import ArtifactSpec, ArtifactType
 from openhcs.interop.cellprofiler.runtime.bound_parameters import (
     MeasurementTableCollectionParameterName,
     RuntimeBoundParameterName,
@@ -30,7 +30,7 @@ class CellProfilerObjectInputPolicyMixin(ABC):
     """Declaration-owned object-label input binding behavior."""
 
     binds_without_declared_inputs: ClassVar[bool] = False
-    supported_non_object_input_kinds: ClassVar[frozenset[ArtifactKind]] = frozenset()
+    supported_non_object_input_kinds: ClassVar[frozenset[ArtifactType]] = frozenset()
 
     @abstractmethod
     def bind(

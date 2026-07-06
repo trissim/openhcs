@@ -8,6 +8,7 @@ from openhcs.core.image_shapes import is_color_image_stack, is_grayscale_image_s
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.runtime_values import object_label_dense_array
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
 class DisplayMode(Enum):
@@ -23,6 +24,12 @@ class ObjectsOrImage(Enum):
 class ColorMapScale(Enum):
     USE_MEASUREMENT_RANGE = "use_measurement_range"
     MANUAL = "manual"
+
+    @property
+    def cellprofiler_literals(self) -> tuple[str, ...]:
+        if self is type(self).USE_MEASUREMENT_RANGE:
+            return ("Use this image's measurement range",)
+        return ()
 
 
 class SavedImageContents(Enum):
@@ -227,7 +234,7 @@ class DisplayDataOnImageRenderer:
         return background
 
 
-@numpy
+@numpy(contract=ProcessingContract.FLEXIBLE)
 @special_inputs("labels", "measurements")
 def display_data_on_image(
     image: np.ndarray,

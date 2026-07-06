@@ -1,7 +1,6 @@
 """CellProfiler setup-module lowering onto the core pipeline image schema."""
 
 from __future__ import annotations
-
 import ast
 import re
 from abc import ABC, abstractmethod
@@ -9,11 +8,13 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar, Mapping
-
 from metaclass_registry import AutoRegisterMeta
-
 from openhcs.constants.constants import AllComponents
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import (
+    ArtifactType,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+)
 from openhcs.core.pipeline_image_schema import (
     GroupingPlan,
     GrayscaleImageTypeSourceRole,
@@ -45,7 +46,7 @@ from openhcs.core.source_bindings import (
     SourceSelector,
 )
 from openhcs.core.source_matching import source_metadata_component
-
+from openhcs.core.source_metadata import SourceVoxelSpacing
 from .parser import ModuleBlock, ModuleSetting
 from .setting_names import (
     block_setting_value,
@@ -57,19 +58,14 @@ from .setting_names import (
 ModuleSettingBlock = tuple[ModuleSetting, ...]
 ModuleSettingBlocks = tuple[ModuleSettingBlock, ...]
 CELLPROFILER_SOURCE_SCHEMA_POLICY_KEY = "cellprofiler"
-
 _METADATA_MATCH_PATTERN = re.compile(
-    r"\(metadata does (?P<field>[A-Za-z0-9_]+) \"(?P<value>[^\"]+)\"\)"
+    '\\(metadata does (?P<field>[A-Za-z0-9_]+) \\"(?P<value>[^\\"]+)\\"\\)'
 )
 _FILTER_CLAUSE_PATTERN = re.compile(
-    r"\((?P<subject>file|directory|extension) "
-    r"does\s*(?P<negation>not)?\s*"
-    r"(?P<operator>containregexp|contain|startwith|endwith|is[a-z0-9]+|eq)"
-    r"(?: \"(?P<value>[^\"]*)\")?\)"
+    '\\((?P<subject>file|directory|extension) does\\s*(?P<negation>not)?\\s*(?P<operator>containregexp|contain|startwith|endwith|is[a-z0-9]+|eq)(?: \\"(?P<value>[^\\"]*)\\")?\\)'
 )
 _SOURCE_FILTER_SUBJECT_PATTERN = re.compile(
-    r"\((file|directory|extension) does",
-    re.IGNORECASE,
+    "\\((file|directory|extension) does", re.IGNORECASE
 )
 _LOAD_IMAGES_MATCH_TEXT_SETTING = (
     "Type the text that these images have in common (case-sensitive)"
@@ -142,8 +138,7 @@ class SourceFilterOperatorLiteral(SourceSchemaLiteralResolver):
         if negated:
             if self.negated_match_type is None:
                 raise ValueError(
-                    "Unsupported source filter operator/negation pair: "
-                    f"{self.literal!r}, negated=True."
+                    f"Unsupported source filter operator/negation pair: {self.literal!r}, negated=True."
                 )
             return self.negated_match_type
         return self.match_type
@@ -223,8 +218,7 @@ class SourceFilterCriteriaParser(ABC, metaclass=AutoRegisterMeta):
 
     @abstractmethod
     def filter_clauses_from_criteria(
-        self,
-        criteria: str,
+        self, criteria: str
     ) -> tuple[SourceFilterClause, ...]:
         """Parse CellProfiler source-filter clauses from one criteria string."""
 
@@ -235,8 +229,7 @@ class CellProfilerSourceFilterCriteriaParser(SourceFilterCriteriaParser):
     parser_key = CELLPROFILER_SOURCE_SCHEMA_POLICY_KEY
 
     def filter_clauses_from_criteria(
-        self,
-        criteria: str,
+        self, criteria: str
     ) -> tuple[SourceFilterClause, ...]:
         decoded_criteria = decode_cellprofiler_setting_literal(criteria)
         stripped = decoded_criteria.strip()
@@ -247,18 +240,18 @@ class CellProfilerSourceFilterCriteriaParser(SourceFilterCriteriaParser):
             if not _SOURCE_FILTER_SUBJECT_PATTERN.search(decoded_criteria):
                 return ()
             raise ValueError(
-                "Unsupported CellProfiler source filter criteria: "
-                f"{criteria!r}."
+                f"Unsupported CellProfiler source filter criteria: {criteria!r}."
             )
         return tuple(
-            clause
-            for match in matches
-            if (clause := self.filter_clause_from_match(match)) is not None
+            (
+                clause
+                for match in matches
+                if (clause := self.filter_clause_from_match(match)) is not None
+            )
         )
 
     def filter_clause_from_match(
-        self,
-        match: re.Match[str],
+        self, match: re.Match[str]
     ) -> SourceFilterClause | None:
         """Return one source-filter clause for a regex match."""
         subject = self.filter_subject(match.group("subject"))
@@ -269,9 +262,9 @@ class CellProfilerSourceFilterCriteriaParser(SourceFilterCriteriaParser):
             return None
         if (
             subject is SourceFilterSubject.EXTENSION
-            and not negated
+            and (not negated)
             and operator.startswith("is")
-            and operator not in {"isimage", "istif"}
+            and (operator not in {"isimage", "istif"})
         ):
             return SourceFilterClause(
                 subject=subject,
@@ -280,10 +273,7 @@ class CellProfilerSourceFilterCriteriaParser(SourceFilterCriteriaParser):
             )
         return SourceFilterClause(
             subject=subject,
-            match_type=self.filter_match_type(
-                operator=operator,
-                negated=negated,
-            ),
+            match_type=self.filter_match_type(operator=operator, negated=negated),
             value=value,
         )
 
@@ -293,23 +283,17 @@ class CellProfilerSourceFilterCriteriaParser(SourceFilterCriteriaParser):
         resolver = SourceFilterSubjectLiteral.for_literal(value)
         if not isinstance(resolver, SourceFilterSubjectLiteral):
             raise TypeError(
-                "Expected source-filter subject resolver, got "
-                f"{type(resolver).__name__}."
+                f"Expected source-filter subject resolver, got {type(resolver).__name__}."
             )
         return resolver.subject
 
     @staticmethod
-    def filter_match_type(
-        *,
-        operator: str,
-        negated: bool,
-    ) -> SourceFilterMatchType:
+    def filter_match_type(*, operator: str, negated: bool) -> SourceFilterMatchType:
         """Resolve a CellProfiler source-filter operator literal."""
         resolver = SourceFilterOperatorLiteral.for_literal(operator)
         if not isinstance(resolver, SourceFilterOperatorLiteral):
             raise TypeError(
-                "Expected source-filter operator resolver, got "
-                f"{type(resolver).__name__}."
+                f"Expected source-filter operator resolver, got {type(resolver).__name__}."
             )
         return resolver.match_type_for_negation(negated)
 
@@ -332,15 +316,13 @@ class SourceBindingMatchMetadataParser(ABC, metaclass=AutoRegisterMeta):
 
     @abstractmethod
     def match_dimensions(
-        self,
-        raw_match_metadata: str,
+        self, raw_match_metadata: str
     ) -> tuple[SourceBindingMatchDimension, ...]:
         """Parse one CellProfiler match-metadata declaration."""
 
     @abstractmethod
     def merge_match_dimensions_from_blocks(
-        self,
-        blocks: Sequence[Sequence[ModuleSetting]],
+        self, blocks: Sequence[Sequence[ModuleSetting]]
     ) -> tuple[SourceBindingMatchDimension, ...]:
         """Merge repeated assignment-block match-metadata declarations."""
 
@@ -351,8 +333,7 @@ class CellProfilerSourceBindingMatchMetadataParser(SourceBindingMatchMetadataPar
     parser_key = CELLPROFILER_SOURCE_SCHEMA_POLICY_KEY
 
     def match_dimensions(
-        self,
-        raw_match_metadata: str,
+        self, raw_match_metadata: str
     ) -> tuple[SourceBindingMatchDimension, ...]:
         try:
             records = ast.literal_eval(
@@ -360,13 +341,11 @@ class CellProfilerSourceBindingMatchMetadataParser(SourceBindingMatchMetadataPar
             )
         except (SyntaxError, ValueError) as exc:
             raise ValueError(
-                "Invalid NamesAndTypes 'Match metadata' value: "
-                f"{raw_match_metadata!r}."
+                f"Invalid NamesAndTypes 'Match metadata' value: {raw_match_metadata!r}."
             ) from exc
         if not isinstance(records, list):
             raise TypeError(
-                "NamesAndTypes 'Match metadata' must parse to a list of "
-                "alias-field maps."
+                "NamesAndTypes 'Match metadata' must parse to a list of alias-field maps."
             )
         dimensions: list[SourceBindingMatchDimension] = []
         for record in records:
@@ -375,17 +354,18 @@ class CellProfilerSourceBindingMatchMetadataParser(SourceBindingMatchMetadataPar
                     "NamesAndTypes 'Match metadata' entries must be dictionaries."
                 )
             fields = tuple(
-                SourceBindingMatchField(alias=str(alias), metadata_field=str(field))
-                for alias, field in record.items()
-                if field is not None
+                (
+                    SourceBindingMatchField(alias=str(alias), metadata_field=str(field))
+                    for alias, field in record.items()
+                    if field is not None
+                )
             )
             if fields:
                 dimensions.append(SourceBindingMatchDimension(fields=fields))
         return tuple(dimensions)
 
     def merge_match_dimensions_from_blocks(
-        self,
-        blocks: Sequence[Sequence[ModuleSetting]],
+        self, blocks: Sequence[Sequence[ModuleSetting]]
     ) -> tuple[SourceBindingMatchDimension, ...]:
         merged_dimensions: list[list[SourceBindingMatchField]] = []
         for block in blocks:
@@ -397,15 +377,16 @@ class CellProfilerSourceBindingMatchMetadataParser(SourceBindingMatchMetadataPar
                 merged_dimensions = [[] for _ in block_dimensions]
             if len(merged_dimensions) != len(block_dimensions):
                 raise ValueError(
-                    "NamesAndTypes declared incompatible image-set match dimensions "
-                    "across repeated image assignments."
+                    "NamesAndTypes declared incompatible image-set match dimensions across repeated image assignments."
                 )
             for index, dimension in enumerate(block_dimensions):
                 merged_dimensions[index].extend(dimension.fields)
         return tuple(
-            SourceBindingMatchDimension(fields=tuple(fields))
-            for fields in merged_dimensions
-            if fields
+            (
+                SourceBindingMatchDimension(fields=tuple(fields))
+                for fields in merged_dimensions
+                if fields
+            )
         )
 
 
@@ -435,10 +416,7 @@ class SourceBindingOriginPolicy(ABC, metaclass=AutoRegisterMeta):
 
     @abstractmethod
     def origin_for_source_artifact(
-        self,
-        artifact_kind: ArtifactKind,
-        image_type: str,
-        selector: SourceSelector,
+        self, artifact_kind: ArtifactType, image_type: str, selector: SourceSelector
     ) -> SourceBindingOrigin:
         """Return the source origin implied by an artifact assignment."""
 
@@ -451,22 +429,22 @@ class CellProfilerSourceBindingOriginPolicy(SourceBindingOriginPolicy):
     def origin_for_selector(self, selector: SourceSelector) -> SourceBindingOrigin:
         if selector.filters:
             return SourceBindingOrigin.PIPELINE_START
-        if selector.metadata and not all(
-            source_metadata_component(metadata.field) is not None
-            for metadata in selector.metadata
+        if selector.metadata and (
+            not all(
+                (
+                    source_metadata_component(metadata.field) is not None
+                    for metadata in selector.metadata
+                )
+            )
         ):
             return SourceBindingOrigin.PIPELINE_START
         return SourceBindingOrigin.STEP_INPUT
 
     def origin_for_source_artifact(
-        self,
-        artifact_kind: ArtifactKind,
-        image_type: str,
-        selector: SourceSelector,
+        self, artifact_kind: ArtifactType, image_type: str, selector: SourceSelector
     ) -> SourceBindingOrigin:
-        if (
-            artifact_kind is ArtifactKind.IMAGE
-            and not image_type_participates_in_image_stack(image_type)
+        if artifact_kind is ImageArtifactType and (
+            not image_type_participates_in_image_stack(image_type)
         ):
             return SourceBindingOrigin.PIPELINE_START
         return self.origin_for_selector(selector)
@@ -487,10 +465,12 @@ class SourceImageStackPlanDeclaration(ABC, metaclass=AutoRegisterMeta):
     @classmethod
     def plans_for_module(cls, module: ModuleBlock) -> tuple[SourceImageStackPlan, ...]:
         return tuple(
-            declaration.stack_plan(module)
-            for declaration_type in cls.__registry__.values()
-            for declaration in (declaration_type(),)
-            if declaration.matches(module)
+            (
+                declaration.stack_plan(module)
+                for declaration_type in cls.__registry__.values()
+                for declaration in (declaration_type(),)
+                if declaration.matches(module)
+            )
         )
 
     @abstractmethod
@@ -518,12 +498,9 @@ class NamesAndTypesProcessAs3DStackPlanDeclaration(SourceImageStackPlanDeclarati
         return SourceImageStackPlan((AllComponents.Z_INDEX,))
 
 
-_LOAD_IMAGES_ALIAS_SETTING = (
-    "What do you want to call this image in CellProfiler?"
-)
+_LOAD_IMAGES_ALIAS_SETTING = "What do you want to call this image in CellProfiler?"
 _LOAD_IMAGES_METADATA_MODE_SETTING = (
-    "Do you want to extract metadata from the file name, "
-    "the subfolder path or both?"
+    "Do you want to extract metadata from the file name, the subfolder path or both?"
 )
 _LOAD_IMAGES_FILE_PATTERN_SETTING_PREFIX = (
     "Type the regular expression that finds metadata in the file name"
@@ -548,11 +525,7 @@ class SetupModuleCompiler(ABC, metaclass=AutoRegisterMeta):
         return compiler_type()
 
     @abstractmethod
-    def compile(
-        self,
-        module: ModuleBlock,
-        state: PipelineImageSchemaBuilder,
-    ) -> None:
+    def compile(self, module: ModuleBlock, state: PipelineImageSchemaBuilder) -> None:
         """Lower one setup module into schema state."""
 
 
@@ -572,12 +545,8 @@ def compile_image_schema(modules: Iterable[ModuleBlock]) -> PipelineImageSchema:
     return builder.build()
 
 
-def _source_image_types_by_alias(
-    modules: Sequence[ModuleBlock],
-) -> Mapping[str, str]:
-    from openhcs.processing.backends.cellprofiler.module_classes import (
-        CellProfilerModule,
-    )
+def _source_image_types_by_alias(modules: Sequence[ModuleBlock]) -> Mapping[str, str]:
+    from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
     image_types: dict[str, str] = {}
     for module in modules:
@@ -586,20 +555,20 @@ def _source_image_types_by_alias(
         module_type = CellProfilerModule.for_module(module.name)
         if module_type is None:
             continue
-        for alias, image_type in module_type.source_image_types_by_alias(module).items():
+        for alias, image_type in module_type.source_image_types_by_alias(
+            module
+        ).items():
             existing = image_types.get(alias)
             if existing is not None and existing != image_type:
                 raise ValueError(
-                    f"Source image alias {alias!r} has conflicting image-type "
-                    f"declarations: {existing!r} != {image_type!r}."
+                    f"Source image alias {alias!r} has conflicting image-type declarations: {existing!r} != {image_type!r}."
                 )
             image_types[alias] = image_type
     return image_types
 
 
 def _compile_embedded_image_plane_sources(
-    modules: Sequence[ModuleBlock],
-    state: PipelineImageSchemaBuilder,
+    modules: Sequence[ModuleBlock], state: PipelineImageSchemaBuilder
 ) -> None:
     for module in modules:
         source_rows = module.metadata.get("image_plane_sources")
@@ -632,11 +601,7 @@ def _optional_image_plane_value(value: object) -> str | None:
 class ImagesModuleCompiler(SetupModuleCompiler):
     module_name = "Images"
 
-    def compile(
-        self,
-        module: ModuleBlock,
-        state: PipelineImageSchemaBuilder,
-    ) -> None:
+    def compile(self, module: ModuleBlock, state: PipelineImageSchemaBuilder) -> None:
         filters = _images_rule_filters(
             filtering_mode=module.get_setting("Filter images?", ""),
             criteria=module.get_setting("Select the rule criteria", ""),
@@ -648,11 +613,7 @@ class ImagesModuleCompiler(SetupModuleCompiler):
 class LoadImagesModuleCompiler(SetupModuleCompiler):
     module_name = "LoadImages"
 
-    def compile(
-        self,
-        module: ModuleBlock,
-        state: PipelineImageSchemaBuilder,
-    ) -> None:
+    def compile(self, module: ModuleBlock, state: PipelineImageSchemaBuilder) -> None:
         _require_legacy_load_images_source_type(module)
         _declare_load_images_grouping(module, state)
         for block in _load_images_blocks(module.iter_settings()):
@@ -662,8 +623,7 @@ class LoadImagesModuleCompiler(SetupModuleCompiler):
             filters = _load_images_source_filters(module, block)
             selector = SourceSelector(filters=filters)
             image_type = state.source_image_type_for_alias(
-                alias,
-                GrayscaleImageTypeSourceRole.image_type(),
+                alias, GrayscaleImageTypeSourceRole.image_type()
             )
             if image_type_participates_in_image_stack(image_type):
                 state.declare_assignment(
@@ -671,9 +631,8 @@ class LoadImagesModuleCompiler(SetupModuleCompiler):
                         alias=alias,
                         image_type=image_type,
                         selector=selector,
-                        origin=(
-                            cellprofiler_source_binding_origin_policy()
-                            .origin_for_selector(selector)
+                        origin=cellprofiler_source_binding_origin_policy().origin_for_selector(
+                            selector
                         ),
                     )
                 )
@@ -683,13 +642,8 @@ class LoadImagesModuleCompiler(SetupModuleCompiler):
                         alias=alias,
                         artifact_kind=image_type_artifact_kind(image_type),
                         selector=selector,
-                        origin=(
-                            cellprofiler_source_binding_origin_policy()
-                            .origin_for_source_artifact(
-                                image_type_artifact_kind(image_type),
-                                image_type,
-                                selector,
-                            )
+                        origin=cellprofiler_source_binding_origin_policy().origin_for_source_artifact(
+                            image_type_artifact_kind(image_type), image_type, selector
                         ),
                         payload_type=image_type,
                     )
@@ -700,32 +654,28 @@ class LoadImagesModuleCompiler(SetupModuleCompiler):
 class MetadataModuleCompiler(SetupModuleCompiler):
     module_name = "Metadata"
 
-    def compile(
-        self,
-        module: ModuleBlock,
-        state: PipelineImageSchemaBuilder,
-    ) -> None:
+    def compile(self, module: ModuleBlock, state: PipelineImageSchemaBuilder) -> None:
         for block in repeating_setting_blocks(
-            module.iter_settings(),
-            start_name="Metadata extraction method",
+            module.iter_settings(), start_name="Metadata extraction method"
         ):
             _compile_metadata_block(
-                block,
-                state,
-                require_enabled=_metadata_extraction_enabled(module),
+                block, state, require_enabled=_metadata_extraction_enabled(module)
             )
 
 
 class NamesAndTypesModuleCompiler(SetupModuleCompiler):
     module_name = "NamesAndTypes"
 
-    def compile(
-        self,
-        module: ModuleBlock,
-        state: PipelineImageSchemaBuilder,
-    ) -> None:
+    def compile(self, module: ModuleBlock, state: PipelineImageSchemaBuilder) -> None:
         for stack_plan in SourceImageStackPlanDeclaration.plans_for_module(module):
             state.declare_source_image_stack(stack_plan)
+        state.declare_source_voxel_spacing(
+            SourceVoxelSpacing.from_cellprofiler_xyz(
+                x=_float_setting(module, "Relative pixel spacing in X", 1.0),
+                y=_float_setting(module, "Relative pixel spacing in Y", 1.0),
+                z=_float_setting(module, "Relative pixel spacing in Z", 1.0),
+            )
+        )
         assignment_blocks = NamesAndTypesAssignmentBlockStrategy.blocks_for(
             module.iter_settings()
         )
@@ -734,9 +684,7 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
             state.declare_match_plan(match_plan)
         for block in assignment_blocks:
             image_type = block_setting_value(
-                block,
-                "Select the image type",
-                default="Grayscale image",
+                block, "Select the image type", default="Grayscale image"
             )
             artifact_kind = image_type_artifact_kind(image_type)
             alias = _assignment_alias(block, artifact_kind)
@@ -746,7 +694,7 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
                 block_setting_value(block, "Select the rule criteria")
             )
             if (
-                artifact_kind is ArtifactKind.OBJECT_LABELS
+                artifact_kind is ObjectLabelsArtifactType
                 or not image_type_participates_in_image_stack(image_type)
             ):
                 state.declare_source_artifact(
@@ -754,13 +702,8 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
                         alias=alias,
                         artifact_kind=artifact_kind,
                         selector=selector,
-                        origin=(
-                            cellprofiler_source_binding_origin_policy()
-                            .origin_for_source_artifact(
-                                artifact_kind,
-                                image_type,
-                                selector,
-                            )
+                        origin=cellprofiler_source_binding_origin_policy().origin_for_source_artifact(
+                            artifact_kind, image_type, selector
                         ),
                         payload_type=image_type,
                     )
@@ -771,9 +714,8 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
                     alias=alias,
                     image_type=image_type,
                     selector=selector,
-                    origin=(
-                        cellprofiler_source_binding_origin_policy()
-                        .origin_for_selector(selector)
+                    origin=cellprofiler_source_binding_origin_policy().origin_for_selector(
+                        selector
                     ),
                 )
             )
@@ -782,16 +724,11 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
 class GroupsModuleCompiler(SetupModuleCompiler):
     module_name = "Groups"
 
-    def compile(
-        self,
-        module: ModuleBlock,
-        state: PipelineImageSchemaBuilder,
-    ) -> None:
+    def compile(self, module: ModuleBlock, state: PipelineImageSchemaBuilder) -> None:
         if module.get_setting("Do you want to group your images?", "No") != "Yes":
             return
         metadata_fields = tuple(
-            setting.value
-            for setting in module.iter_settings("Metadata category")
+            (setting.value for setting in module.iter_settings("Metadata category"))
         )
         state.grouping = GroupingPlan(metadata_fields=metadata_fields)
 
@@ -810,51 +747,35 @@ class NamesAndTypesAssignmentLayout:
     def __post_init__(self) -> None:
         if (self.exact_count is None) == (self.minimum_count is None):
             raise ValueError(
-                "NamesAndTypesAssignmentLayout must define exactly one of "
-                "exact_count or minimum_count."
+                "NamesAndTypesAssignmentLayout must define exactly one of exact_count or minimum_count."
             )
 
     def matches(self, settings: Sequence[ModuleSetting]) -> bool:
         """Whether this layout applies to the ordered NamesAndTypes settings."""
-        count = self.setting_count(
-            settings,
-            self.match_setting,
-        )
+        count = self.setting_count(settings, self.match_setting)
         if self.exact_count is not None:
             return self.matches_blocks(settings, count == self.exact_count)
         return self.matches_blocks(settings, count >= self.minimum_count)
 
     def matches_blocks(
-        self,
-        settings: Sequence[ModuleSetting],
-        count_matches: bool,
+        self, settings: Sequence[ModuleSetting], count_matches: bool
     ) -> bool:
         if not count_matches:
             return False
         if not self.require_block_source_alias:
             return True
         return all(
-            self.block_declares_source_alias(block)
-            for block in self.blocks(settings)
+            (self.block_declares_source_alias(block) for block in self.blocks(settings))
         )
 
-    def blocks(
-        self,
-        settings: Sequence[ModuleSetting],
-    ) -> ModuleSettingBlocks:
+    def blocks(self, settings: Sequence[ModuleSetting]) -> ModuleSettingBlocks:
         """Return ordered assignment blocks for this layout."""
-        return repeating_setting_blocks(
-            settings,
-            start_name=self.block_start_name,
-        )
+        return repeating_setting_blocks(settings, start_name=self.block_start_name)
 
     @staticmethod
-    def setting_count(
-        settings: Sequence[ModuleSetting],
-        name: str,
-    ) -> int:
+    def setting_count(settings: Sequence[ModuleSetting], name: str) -> int:
         """Return how often a setting appears in the candidate layout."""
-        return sum(1 for setting in settings if setting.name == name)
+        return sum((1 for setting in settings if setting.name == name))
 
     @staticmethod
     def block_declares_source_alias(block: Sequence[ModuleSetting]) -> bool:
@@ -903,22 +824,16 @@ class NamesAndTypesAssignmentBlockStrategy:
     )
 
     @classmethod
-    def blocks_for(
-        cls,
-        settings: Sequence[ModuleSetting],
-    ) -> ModuleSettingBlocks:
+    def blocks_for(cls, settings: Sequence[ModuleSetting]) -> ModuleSettingBlocks:
         for layout in cls.layouts:
             if layout.matches(settings):
                 return layout.blocks(settings)
         return ()
 
 
-def _load_images_blocks(
-    settings: Sequence[ModuleSetting],
-) -> ModuleSettingBlocks:
+def _load_images_blocks(settings: Sequence[ModuleSetting]) -> ModuleSettingBlocks:
     return repeating_setting_blocks(
-        settings,
-        start_name=_LOAD_IMAGES_MATCH_TEXT_SETTING,
+        settings, start_name=_LOAD_IMAGES_MATCH_TEXT_SETTING
     )
 
 
@@ -926,15 +841,12 @@ def _require_legacy_load_images_source_type(module: ModuleBlock) -> None:
     file_type = module.get_setting("What type of files are you loading?", "")
     if file_type and "individual" not in file_type.strip().lower():
         raise ValueError(
-            "LoadImages setup lowering only supports individual-image source "
-            f"declarations, got {file_type!r}."
+            f"LoadImages setup lowering only supports individual-image source declarations, got {file_type!r}."
         )
 
 
 def _images_rule_filters(
-    *,
-    filtering_mode: str,
-    criteria: str,
+    *, filtering_mode: str, criteria: str
 ) -> tuple[SourceFilterClause, ...]:
     filters = list(
         cellprofiler_source_filter_criteria_parser().filter_clauses_from_criteria(
@@ -942,16 +854,12 @@ def _images_rule_filters(
         )
     )
     if _criteria_is_multi_clause_disjunction(criteria, filters):
-        # PipelineImageSchema.ImagesRule is intentionally conjunctive. A
-        # multi-clause CP Images disjunction is a source-universe prefilter, so
-        # lowering it as AND is incorrect and can exclude valid per-alias
-        # matches. Preserve correctness by not applying a global prefilter; the
-        # NamesAndTypes selectors still bind the concrete aliases.
         return ()
     normalized_mode = filtering_mode.strip().lower()
-    if "images" in normalized_mode and not any(
-        clause.match_type is SourceFilterMatchType.IS_IMAGE
-        for clause in filters
+    if "images" in normalized_mode and (
+        not any(
+            (clause.match_type is SourceFilterMatchType.IS_IMAGE for clause in filters)
+        )
     ):
         filters.insert(
             0,
@@ -959,43 +867,43 @@ def _images_rule_filters(
                 subject=SourceFilterSubject.FILE,
                 match_type=SourceFilterMatchType.IS_IMAGE,
             ),
-    )
+        )
     return tuple(dict.fromkeys(filters))
 
 
 def _criteria_is_multi_clause_disjunction(
-    criteria: str,
-    filters: Sequence[SourceFilterClause],
+    criteria: str, filters: Sequence[SourceFilterClause]
 ) -> bool:
     stripped = criteria.strip().lower()
     return (
-        (stripped.startswith("or ") and stripped.count("(") > 1)
+        stripped.startswith("or ")
+        and stripped.count("(") > 1
         or "(or " in stripped
         or stripped.count("(") > len(filters)
     )
 
 
 def _declare_load_images_grouping(
-    module: ModuleBlock,
-    state: PipelineImageSchemaBuilder,
+    module: ModuleBlock, state: PipelineImageSchemaBuilder
 ) -> None:
     if module.get_setting("Do you want to group image sets by metadata?", "") != "Yes":
         return
     fields = tuple(
-        field.strip()
-        for field in re.split(
-            r"[,;]",
-            module.get_setting("What metadata fields do you want to group by?", ""),
+        (
+            field.strip()
+            for field in re.split(
+                "[,;]",
+                module.get_setting("What metadata fields do you want to group by?", ""),
+            )
+            if field.strip()
         )
-        if field.strip()
     )
     if fields:
         state.grouping = GroupingPlan(metadata_fields=fields)
 
 
 def _load_images_source_filters(
-    module: ModuleBlock,
-    block: Sequence[ModuleSetting],
+    module: ModuleBlock, block: Sequence[ModuleSetting]
 ) -> tuple[SourceFilterClause, ...]:
     filters: list[SourceFilterClause] = []
     match_text = block_setting_value(block, _LOAD_IMAGES_MATCH_TEXT_SETTING)
@@ -1009,8 +917,7 @@ def _load_images_source_filters(
         )
     if module.get_setting("Do you want to exclude certain files?", "") == "Yes":
         exclusion_text = module.get_setting(
-            "Type the text that the excluded images have in common",
-            "",
+            "Type the text that the excluded images have in common", ""
         )
         if exclusion_text:
             filters.append(
@@ -1021,6 +928,21 @@ def _load_images_source_filters(
                 )
             )
     return tuple(filters)
+
+
+def _float_setting(module: ModuleBlock, name: str, default: float) -> float:
+    value = module.get_setting(name, str(default)).strip()
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{module.name} setting {name!r} must be a float, got {value!r}."
+        ) from exc
+    if parsed <= 0:
+        raise ValueError(
+            f"{module.name} setting {name!r} must be positive, got {value!r}."
+        )
+    return parsed
 
 
 def _load_images_match_type(module: ModuleBlock) -> SourceFilterMatchType:
@@ -1060,7 +982,7 @@ def _load_images_metadata_sources(mode: str) -> tuple[MetadataSource, ...]:
         "folder" in normalized
         or "subfolder" in normalized
         or "path" in normalized
-        or "both" in normalized
+        or ("both" in normalized)
     ):
         sources.append(MetadataSource.FOLDER_NAME)
     if sources:
@@ -1069,8 +991,7 @@ def _load_images_metadata_sources(mode: str) -> tuple[MetadataSource, ...]:
 
 
 def _required_load_images_metadata_pattern(
-    block: Sequence[ModuleSetting],
-    source: MetadataSource,
+    block: Sequence[ModuleSetting], source: MetadataSource
 ) -> str:
     prefix = (
         _LOAD_IMAGES_FOLDER_PATTERN_SETTING_PREFIX
@@ -1082,17 +1003,15 @@ def _required_load_images_metadata_pattern(
     )
     if not pattern or pattern.strip().lower() == "none":
         raise ValueError(
-            "LoadImages metadata extraction requires a non-empty "
-            f"{source.value} regular expression."
+            f"LoadImages metadata extraction requires a non-empty {source.value} regular expression."
         )
     return pattern
 
 
 def _assignment_alias(
-    block: Sequence[ModuleSetting],
-    artifact_kind: ArtifactKind,
+    block: Sequence[ModuleSetting], artifact_kind: ArtifactType
 ) -> str:
-    if artifact_kind is ArtifactKind.OBJECT_LABELS:
+    if artifact_kind is ObjectLabelsArtifactType:
         return block_setting_value(block, "Name to assign these objects", default="")
     return block_setting_value(block, "Name to assign these images", default="")
 
@@ -1125,27 +1044,26 @@ def _compile_metadata_block(
         state.add_imported_metadata_table(_imported_metadata_table(block))
         return
     if not _is_path_metadata_extraction_method(method):
-        raise ValueError(f"Unsupported CellProfiler metadata extraction method: {method!r}.")
-
-    if not require_enabled and not DisabledPathMetadataRulePolicy.for_block(block).preserve:
+        raise ValueError(
+            f"Unsupported CellProfiler metadata extraction method: {method!r}."
+        )
+    if not require_enabled and (
+        not DisabledPathMetadataRulePolicy.for_block(block).preserve
+    ):
         return
-
     source = _metadata_source(
         block_setting_value(block, "Metadata source", default="File name")
     )
     pattern_block = CellProfilerMetadataPatternBlock(block, source)
     pattern = pattern_block.pattern
-    if not require_enabled and not pattern:
+    if not require_enabled and (not pattern):
         return
     state.add_metadata_rule(
         MetadataExtractionRule(
             source=source,
             pattern=pattern_block.required_pattern if require_enabled else pattern,
-            filters=(
-                cellprofiler_source_filter_criteria_parser()
-                .filter_clauses_from_criteria(
-                    block_setting_value(block, "Select the filtering criteria")
-                )
+            filters=cellprofiler_source_filter_criteria_parser().filter_clauses_from_criteria(
+                block_setting_value(block, "Select the filtering criteria")
             ),
         )
     )
@@ -1162,15 +1080,13 @@ class CellProfilerMetadataPatternBlock:
     def pattern(self) -> str:
         if self.source is MetadataSource.FOLDER_NAME:
             folder_pattern = block_setting_value(
-                self.block,
-                "Regular expression to extract from folder name",
+                self.block, "Regular expression to extract from folder name"
             )
             return decode_cellprofiler_setting_literal(
                 folder_pattern or _legacy_regex_value(self.block, index=1)
             )
         file_pattern = block_setting_value(
-            self.block,
-            "Regular expression to extract from file name",
+            self.block, "Regular expression to extract from file name"
         )
         return decode_cellprofiler_setting_literal(
             file_pattern or _legacy_regex_value(self.block, index=0)
@@ -1181,8 +1097,7 @@ class CellProfilerMetadataPatternBlock:
         pattern = self.pattern
         if not pattern:
             raise ValueError(
-                "CellProfiler path metadata extraction requires a non-empty "
-                f"{self.source.value} regular expression."
+                f"CellProfiler path metadata extraction requires a non-empty {self.source.value} regular expression."
             )
         return pattern
 
@@ -1195,8 +1110,7 @@ class DisabledPathMetadataRulePolicy:
 
     @classmethod
     def for_block(
-        cls,
-        block: Sequence[ModuleSetting],
+        cls, block: Sequence[ModuleSetting]
     ) -> "DisabledPathMetadataRulePolicy":
         source = _metadata_source(
             block_setting_value(block, "Metadata source", default="File name")
@@ -1208,12 +1122,13 @@ class DisabledPathMetadataRulePolicy:
         fields = self.capture_fields
         if not fields:
             return False
-        components = tuple(source_metadata_component(field) for field in fields)
-        return (
-            any(component is None for component in components)
-            and not any(
-                DisabledMetadataAxisComponents().contains(component)
-                for component in components
+        components = tuple((source_metadata_component(field) for field in fields))
+        return any((component is None for component in components)) and (
+            not any(
+                (
+                    DisabledMetadataAxisComponents().contains(component)
+                    for component in components
+                )
             )
         )
 
@@ -1240,9 +1155,7 @@ class DisabledMetadataAxisComponents:
 def _is_path_metadata_extraction_method(value: str) -> bool:
     normalized = value.strip().lower()
     return "extract" in normalized and (
-        "file/folder" in normalized
-        or "file" in normalized
-        or "folder" in normalized
+        "file/folder" in normalized or "file" in normalized or "folder" in normalized
     )
 
 
@@ -1265,10 +1178,7 @@ def _imported_metadata_table(block: Sequence[ModuleSetting]) -> ImportedMetadata
     )
 
 
-def _imported_metadata_table_path(
-    location: str | None,
-    file_name: str,
-) -> str | None:
+def _imported_metadata_table_path(location: str | None, file_name: str) -> str | None:
     if not file_name:
         return location
     if location is None:
@@ -1285,8 +1195,7 @@ def _imported_metadata_location(value: str) -> str | None:
     location_kind, location_path = decoded.split("|", 1)
     if location_kind.strip().lower() != "default input folder":
         raise ValueError(
-            "Metadata imported-table lowering only supports Default Input Folder "
-            f"locations, got {location_kind!r}."
+            f"Metadata imported-table lowering only supports Default Input Folder locations, got {location_kind!r}."
         )
     normalized_path = location_path.strip()
     return normalized_path or None
@@ -1304,20 +1213,16 @@ def _imported_metadata_joins(
         )
     except (SyntaxError, ValueError) as exc:
         raise ValueError(
-            "Invalid Metadata 'Match file and image metadata' value: "
-            f"{raw_match_metadata!r}."
+            f"Invalid Metadata 'Match file and image metadata' value: {raw_match_metadata!r}."
         ) from exc
     if not isinstance(records, list):
         raise TypeError(
-            "Metadata 'Match file and image metadata' must parse to a list "
-            "of join records."
+            "Metadata 'Match file and image metadata' must parse to a list of join records."
         )
     joins: list[ImportedMetadataJoin] = []
     for record in records:
         if not isinstance(record, Mapping):
-            raise TypeError(
-                "Metadata imported-table join records must be mappings."
-            )
+            raise TypeError("Metadata imported-table join records must be mappings.")
         image_field = record.get("Image Metadata")
         imported_field = record.get("CSV Metadata")
         if image_field is None or imported_field is None:
@@ -1331,15 +1236,9 @@ def _imported_metadata_joins(
     return tuple(joins)
 
 
-def _legacy_regex_value(
-    block: Sequence[ModuleSetting],
-    *,
-    index: int,
-) -> str:
+def _legacy_regex_value(block: Sequence[ModuleSetting], *, index: int) -> str:
     values = tuple(
-        setting.value
-        for setting in block
-        if setting.name == "Regular expression"
+        (setting.value for setting in block if setting.name == "Regular expression")
     )
     if index < len(values):
         return values[index]
@@ -1354,28 +1253,30 @@ def _selector_from_rule_criteria(rule_criteria: str) -> SourceSelector:
         metadata_selectors.append(MetadataSelector(field, value))
     return SourceSelector(
         metadata=tuple(metadata_selectors),
-        filters=(
-            cellprofiler_source_filter_criteria_parser()
-            .filter_clauses_from_criteria(rule_criteria)
+        filters=cellprofiler_source_filter_criteria_parser().filter_clauses_from_criteria(
+            rule_criteria
         ),
     )
 
 
 def _match_plan_from_names_and_types(
-    module: ModuleBlock,
-    blocks: Sequence[Sequence[ModuleSetting]],
+    module: ModuleBlock, blocks: Sequence[Sequence[ModuleSetting]]
 ) -> SourceBindingMatchPlan | None:
     method_values = tuple(
-        value.strip()
-        for value in module.get_setting_values("Image set matching method")
-        if value.strip()
+        (
+            value.strip()
+            for value in module.get_setting_values("Image set matching method")
+            if value.strip()
+        )
     )
     if not method_values:
         return None
     method = _source_binding_match_method(method_values[0])
     if any(
-        _source_binding_match_method(value) is not method
-        for value in method_values[1:]
+        (
+            _source_binding_match_method(value) is not method
+            for value in method_values[1:]
+        )
     ):
         raise ValueError(
             "NamesAndTypes declared conflicting image set matching methods."
@@ -1383,25 +1284,25 @@ def _match_plan_from_names_and_types(
     if method is SourceBindingMatchMethod.ORDER:
         return SourceBindingMatchPlan(method=method)
     raw_match_metadata_values = tuple(
-        value.strip()
-        for value in module.get_setting_values("Match metadata")
-        if value.strip()
+        (
+            value.strip()
+            for value in module.get_setting_values("Match metadata")
+            if value.strip()
+        )
     )
     if not raw_match_metadata_values:
         return SourceBindingMatchPlan(method=method)
     if len(raw_match_metadata_values) == 1:
         return SourceBindingMatchPlan(
             method=method,
-            dimensions=(
-                cellprofiler_source_binding_match_metadata_parser()
-                .match_dimensions(raw_match_metadata_values[0])
+            dimensions=cellprofiler_source_binding_match_metadata_parser().match_dimensions(
+                raw_match_metadata_values[0]
             ),
         )
     return SourceBindingMatchPlan(
         method=method,
-        dimensions=(
-            cellprofiler_source_binding_match_metadata_parser()
-            .merge_match_dimensions_from_blocks(blocks)
+        dimensions=cellprofiler_source_binding_match_metadata_parser().merge_match_dimensions_from_blocks(
+            blocks
         ),
     )
 
@@ -1410,7 +1311,6 @@ def _source_binding_match_method(value: str) -> SourceBindingMatchMethod:
     resolver = SourceBindingMatchMethodLiteral.for_literal(value)
     if not isinstance(resolver, SourceBindingMatchMethodLiteral):
         raise TypeError(
-            "Expected source-binding match-method resolver, got "
-            f"{type(resolver).__name__}."
+            f"Expected source-binding match-method resolver, got {type(resolver).__name__}."
         )
     return resolver.method

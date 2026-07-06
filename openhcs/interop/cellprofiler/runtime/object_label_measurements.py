@@ -10,7 +10,7 @@ from weakref import WeakKeyDictionary
 
 import numpy as np
 
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import MeasurementsArtifactType, RelationshipsArtifactType
 from openhcs.core.runtime_artifact_queries import (
     MeasurementLabelSliceFeatureQuery,
     MeasurementTableAxisProjection,
@@ -454,7 +454,7 @@ class ObjectLabelMeasurementSliceRequest(ObjectFeatureMeasurementContext):
             adapter,
             current_image=self.current_image,
         ).artifact_query_context().find(
-            kind=ArtifactKind.MEASUREMENTS,
+            artifact_type=MeasurementsArtifactType,
         )
         scoped_tables: list[tuple[str | None, MeasurementTable]] = []
         feature_query = MeasurementFeatureQuery(
@@ -600,7 +600,7 @@ class RelationshipChildCountLabelMeasurement(ObjectLabelMeasurementSliceRequest)
             records = RuntimeArtifactRecordResolver(
                 adapter=self.adapter,
                 name=relationship_name,
-                kind=ArtifactKind.RELATIONSHIPS,
+                artifact_type=RelationshipsArtifactType,
                 group_key=self.group_key,
                 current_image=self.current_image,
             ).resolve()
@@ -609,7 +609,7 @@ class RelationshipChildCountLabelMeasurement(ObjectLabelMeasurementSliceRequest)
                 group_key=self.group_key
             ).runtime_scope(self.adapter).artifact_query_context().find(
                 name=relationship_name,
-                kind=ArtifactKind.RELATIONSHIPS,
+                artifact_type=RelationshipsArtifactType,
             )
         return RuntimeRecordSourceImageSetSelector(
             self.adapter,

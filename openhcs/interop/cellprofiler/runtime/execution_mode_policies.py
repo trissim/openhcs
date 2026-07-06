@@ -77,8 +77,6 @@ class DefaultInvocationExecutionModePolicy(CellProfilerInvocationExecutionModePo
     registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
 
 
-
-
 class CellProfilerPayloadSpatialRankStrategy(
     NominalTypeKeyedStrategyMixin,
     ABC,

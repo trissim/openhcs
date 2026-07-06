@@ -11,7 +11,6 @@ from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttr
 
 from openhcs.constants.constants import AllComponents, VariableComponents
 from openhcs.core.aligned_image_payload import (
-    compose_aligned_image_payload,
     flatten_aligned_image_payload_slices,
     payload_slice_count,
 )
@@ -21,7 +20,6 @@ from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.memory import detect_memory_type
 from openhcs.core.runtime_values import (
     DerivedImagePayloadContext,
-    ImagePayloadMetadataCompositionMode,
     RuntimeImagePayloadContext,
     RuntimeImageSourceIdentityCompleteness,
     image_payload_data,
@@ -94,7 +92,10 @@ class MeasurementSourceImageCardinality(IntEnum):
         cls,
         source_images: tuple[CellProfilerMeasurementImage, ...],
     ) -> "MeasurementSourceImageCardinality":
-        return cls(min(len(source_images), cls.MULTIPLE.value))
+        source_surface_count = sum(
+            image.source_surface_count for image in source_images
+        )
+        return cls(min(source_surface_count, cls.MULTIPLE.value))
 
 
 class CellProfilerMeasurementMainFlowSurface(ABC, metaclass=AutoRegisterMeta):
@@ -173,7 +174,7 @@ class SingleSourceMeasurementMainFlowSurface(CellProfilerMeasurementMainFlowSurf
 
 
 class MultipleSourceMeasurementMainFlowSurface(CellProfilerMeasurementMainFlowSurface):
-    """Publish the composed source image surface measured by CellProfiler."""
+    """Keep current OpenHCS main flow for multi-source measurements."""
 
     cardinality = MeasurementSourceImageCardinality.MULTIPLE
 
@@ -186,18 +187,7 @@ class MultipleSourceMeasurementMainFlowSurface(CellProfilerMeasurementMainFlowSu
         parser: FilenameParser | None,
         identity_cache: FunctionOutputIdentityCache,
     ) -> CellProfilerRuntimeValue:
-        composed = compose_aligned_image_payload(
-            "CellProfilerMeasurementMainFlow",
-            tuple(image.payload for image in source_images),
-            metadata_mode=ImagePayloadMetadataCompositionMode.STACK,
-        ).payload
-        if MainFlowSurfaceAddressability(
-            composed,
-            variable_components=variable_components,
-            parser=parser,
-            identity_cache=identity_cache,
-        ).addressable:
-            return composed
+        del source_images, variable_components, parser, identity_cache
         return input_image
 
 

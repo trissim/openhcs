@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import time
 
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
+from openhcs.core.artifacts import ArtifactSpec, ArtifactSpecCollection, ObjectLabelsArtifactType
 from openhcs.interop.cellprofiler.runtime.adapter import CellProfilerRuntimeAdapter
 from openhcs.interop.cellprofiler.runtime.artifact_binding import cellprofiler_image_payload
 from openhcs.interop.cellprofiler.runtime.invocation import (
@@ -192,6 +192,7 @@ class CellProfilerMeasurementImageResolver:
                 source_aliases=source_aliases,
                 payload=payloads_by_name[spec.name],
                 reference_domain=reference_domain,
+                execution_mode=image_request.execution_mode,
             )
             for spec in image_inputs
         )
@@ -230,7 +231,7 @@ class CellProfilerMeasurementImageResolver:
         measurement_image: CellProfilerRuntimeValue,
     ) -> CellProfilerRuntimeValue:
         if spec.name in self.executor.contract.external_input_names(
-            ArtifactKind.OBJECT_LABELS
+            ObjectLabelsArtifactType
         ):
             return adapter.resolve_source_objects(
                 spec.name,
@@ -245,7 +246,6 @@ class CellProfilerMeasurementImageResolver:
         measurement_image: "CellProfilerMeasurementImage",
         object_spec: ArtifactSpec,
         adapter: CellProfilerRuntimeAdapter,
-        current_image: CellProfilerRuntimeValue,
     ) -> tuple[
         CellProfilerRuntimeValue,
         CellProfilerRuntimeValue,
@@ -267,5 +267,4 @@ class CellProfilerMeasurementImageResolver:
                 measurement_image.payload,
             ),
             adapter=adapter,
-            current_image=current_image,
         )

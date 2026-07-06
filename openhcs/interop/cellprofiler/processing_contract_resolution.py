@@ -8,7 +8,7 @@ from enum import Enum
 from inspect import unwrap
 
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
-from openhcs.processing.backends.cellprofiler import require_cellprofiler_function
+from openhcs.processing.backends.cellprofiler import CellProfilerFunctionCatalog
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
@@ -33,9 +33,10 @@ class ResolvedProcessingContract:
 def resolve_processing_contract(
     module_name: str,
     function_name: str,
-    declared_contract: str,
     *,
-    function_resolver: Callable[..., Callable[..., object]] = require_cellprofiler_function,
+    function_resolver: Callable[
+        ..., Callable[..., object]
+    ] = CellProfilerFunctionCatalog.require_function,
 ) -> ResolvedProcessingContract:
     """Resolve one absorbed module to an executable OpenHCS contract."""
     callable_contract = _callable_processing_contract(

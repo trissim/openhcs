@@ -15,13 +15,22 @@ from typing import Any, cast
 import numpy as np
 
 from openhcs.constants.constants import (
+    AllComponents,
     Backend,
     FileFormat,
     VariableComponents,
     get_multiprocessing_axis,
 )
-from openhcs.core.artifacts import ArtifactInputPlan, ArtifactKind, ArtifactOutputPlan
-from openhcs.core.function_patterns import DEFAULT_GROUP_KEY
+from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ArtifactOutputPlan,
+    ArtifactType,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+    SpatialGridArtifactType,
+)
 from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.memory import detect_memory_type, stack_slices
@@ -41,6 +50,7 @@ from openhcs.core.source_bindings import (
     SourceRuntimePathLookup,
 )
 from openhcs.core.source_load_plan import SourceLoadPlan
+from openhcs.core.source_metadata import SourceMetadataRoleView, SourceVoxelSpacing
 from openhcs.core.source_schema_workspace import source_schema_auxiliary_payload
 from openhcs.core.source_matching import (
     SourceAxisMetadataScope,
@@ -102,6 +112,7 @@ from openhcs.core.runtime_values import (
     ImagePayloadSourceMetadataContext,
     MeasurementTable,
     NamedImage,
+    NativeRuntimeValue,
     ObjectLabelData,
     ObjectLabelPure2DSliceAggregator,
     ObjectLabelRepresentation,
@@ -175,6 +186,12 @@ from openhcs.interop.cellprofiler.runtime.projection import (
     RuntimePlaneImagePayloadProjection,
     RuntimePlaneProjectionContext,
 )
+from openhcs.interop.cellprofiler.runtime.projection_requirements import (
+    CellProfilerRuntimePlaneProjectionCapability,
+    CurrentSourceImagePayloadProjectionCapability,
+    RuntimeArtifactImageInputProjectionCapability,
+    projection_capabilities_include,
+)
 from openhcs.interop.cellprofiler.runtime.adapter_scope import (
     CellProfilerRuntimeScope,
     CurrentSourceIdentityCacheScope,
@@ -200,7 +217,6 @@ from openhcs.interop.cellprofiler.runtime.object_measurement_tables import (
 from openhcs.interop.cellprofiler.runtime.runtime_artifact_records import (
     CurrentSourceRuntimeInputGroupResolution,
     RuntimeArtifactRecordResolver,
-    _is_default_runtime_group_key,
 )
 from openhcs.interop.cellprofiler.runtime.runtime_artifact_cache_invalidation import (
     FullRuntimeArtifactCacheInvalidationPolicy,
@@ -223,6 +239,7 @@ from openhcs.interop.cellprofiler.runtime.source_candidates import (
     SourceBindingPlaneCandidateContext,
     SourceCandidateRuntimeCache,
     cellprofiler_source_order_identity,
+    source_candidate_process_cache_key,
 )
 from openhcs.interop.cellprofiler.runtime.source_binding_runtime import (
     SourceBindingAxisResolutionAuthority,
@@ -341,7 +358,15 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         repr=False,
         compare=False,
     )
-
+    _source_candidate_process_key_cache: dict[
+        tuple[str, ...],
+        tuple[Hashable, ...],
+    ] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
     def __post_init__(self) -> None:
         if not isinstance(self.runtime_value_store, RuntimeValueStore):
             raise TypeError(
@@ -453,8 +478,34 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
             ),
         )
 
+    def cellprofiler_current_step_source_paths(self) -> tuple[str, ...]:
+        """Return source-path identities represented by this step invocation."""
+        source_context = self.source_binding_context
+        step_input_source_paths = source_context.step_input_source_paths
+        return tuple(
+            dict.fromkeys(
+                path
+                for current_path in source_context.current_step_input_files
+                for path in (
+                    current_path,
+                    step_input_source_paths.get(current_path),
+                )
+                if path is not None
+            )
+        )
+
     def cellprofiler_axis_image_number_start(self) -> int:
         """Return CP's 1-based image number for this runtime axis."""
+        return self._cellprofiler_axis_image_number_start(
+            use_current_step_source_paths=True,
+        )
+
+    def _cellprofiler_axis_image_number_start(
+        self,
+        *,
+        use_current_step_source_paths: bool,
+    ) -> int:
+        """Return CP's axis ImageNumber, optionally using current step provenance."""
         if self.processing_context is None:
             cache_key = (
                 "axis_image_number_start",
@@ -467,12 +518,22 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
                 return int(cached)
             return int(cache.store_value(cache_key, 1))
 
+        current_step_source_paths = (
+            self.cellprofiler_current_step_source_paths()
+            if use_current_step_source_paths
+            else ()
+        )
+        axis_scope = self.source_axis_metadata_scope()
+        if not current_step_source_paths and not axis_scope.has_component:
+            return 1
+
         parser_identity = RequireProcessingContextBoundaryPolicy(
             self
         ).context.microscope_handler.parser.semantic_identity()
         cache_key = (
             "axis_image_number_start",
             self.axis_scope.cache_key,
+            current_step_source_paths,
             self.source_binding_context.pipeline_input_files_identity,
             tuple(sorted(self.source_binding_context.step_input_source_paths.items())),
             self.source_binding_plan.metadata_rules,
@@ -483,10 +544,12 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         if cached is not None:
             return int(cached)
 
-        axis_scope = self.source_axis_metadata_scope()
-        image_number = CellProfilerImageNumberResolver.for_adapter(
-            self
-        ).image_number_start_for_axis_scope(axis_scope)
+        resolver = CellProfilerImageNumberResolver.for_adapter(self)
+        image_number = resolver.image_number_start_for_paths(current_step_source_paths)
+        if image_number is not None:
+            return int(cache.store_value(cache_key, image_number))
+
+        image_number = resolver.image_number_start_for_axis_scope(axis_scope)
         return int(cache.store_value(cache_key, image_number))
 
     def cellprofiler_image_number_start_for_source_paths(
@@ -497,7 +560,9 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         image_number = self.cellprofiler_image_number_for_source_paths(source_paths)
         if image_number is not None:
             return image_number
-        return self.cellprofiler_axis_image_number_start()
+        return self._cellprofiler_axis_image_number_start(
+            use_current_step_source_paths=False,
+        )
 
     def cellprofiler_image_number_for_source_paths(
         self,
@@ -561,17 +626,39 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         """Return source paths carried by a runtime image with this source name."""
         if image_name is None:
             return ()
+        if self.has_source_binding(image_name, ImageArtifactType):
+            candidate_context = SourceBindingPlaneCandidateContext.from_adapter(
+                self,
+                image_name,
+                axis_scope=self.source_axis_metadata_scope().image_set_identity_scope(),
+            )
+            if candidate_context is not None:
+                match = candidate_context.match()
+                if match is not None:
+                    source_paths = tuple(
+                        dict.fromkeys(
+                            path
+                            for candidate_index in match.index_set.indexes
+                            for path in (
+                                match.universe.plane_candidates.candidate_at(
+                                    candidate_index
+                                ).paths
+                            )
+                        )
+                    )
+                    if source_paths:
+                        return source_paths
         cache_key = (self.runtime_value_store.revision, image_name)
         cached = self._source_paths_by_image_name_cache.get(cache_key)
         if cached is not None:
             return cached
         direct_records = self.runtime_value_store.find(
             name=image_name,
-            kind=ArtifactKind.IMAGE,
+            artifact_type=ImageArtifactType,
             axis_id=self.axis_scope.axis_id,
         )
         lineage_records = self.runtime_value_store.find(
-            kind=ArtifactKind.IMAGE,
+            artifact_type=ImageArtifactType,
             axis_id=self.axis_scope.axis_id,
         )
         for record in (*direct_records, *lineage_records):
@@ -595,21 +682,26 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         """Resolve an image name through source bindings or runtime image records."""
         if current_image is not None and self.has_source_binding(
             image_name,
-            ArtifactKind.IMAGE,
+            ImageArtifactType,
         ):
             return cast(
                 ImagePayloadValue,
                 self.resolve_source_image(image_name, current_image),
             )
-        if not self.has_runtime_artifact(name=image_name, kind=ArtifactKind.IMAGE):
+        if not self.has_runtime_artifact(name=image_name, kind=ImageArtifactType):
             return None
         return cast(ImagePayloadValue, self.get_image(image_name).data)
 
-    def invalidate_runtime_query_caches_for_kind(self, kind: ArtifactKind) -> None:
-        """Invalidate adapter caches whose semantic domain can change for ``kind``."""
-        RuntimeArtifactCacheInvalidationPolicy.for_kind(kind).invalidate(self)
+    def invalidate_runtime_query_caches_for_artifact_type(
+        self,
+        artifact_type: type[ArtifactType],
+    ) -> None:
+        """Invalidate adapter caches whose semantic domain can change for ``artifact_type``."""
+        RuntimeArtifactCacheInvalidationPolicy.for_artifact_type(
+            artifact_type
+        ).invalidate(self)
 
-    def require_artifact_available(self, *, name: str, kind: ArtifactKind) -> None:
+    def require_artifact_available(self, *, name: str, kind: ArtifactType) -> None:
         """Fail loudly unless an artifact is declared, bound, or resolvable."""
         cache_key = (
             "artifact_available",
@@ -629,26 +721,26 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         RuntimeArtifactRecordResolver(
             adapter=self,
             name=name,
-            kind=kind,
+            artifact_type=kind,
             group_key=None,
             current_image=None,
         ).resolve()
         self._artifact_availability_cache[cache_key] = True
 
-    def has_runtime_artifact(self, *, name: str, kind: ArtifactKind) -> bool:
+    def has_runtime_artifact(self, *, name: str, kind: ArtifactType) -> bool:
         """Return whether this execution scope contains a runtime artifact."""
         return bool(
             RuntimeGroupMatchScope(group_key=None)
             .runtime_scope(self)
             .artifact_query_context()
-            .find(name=name, kind=kind)
+            .find(name=name, artifact_type=kind)
         )
 
     def requires_declared_source_image_domain(self, image_name: str) -> bool:
         """Return whether object labels must inherit source metadata from an image."""
         input_plan = self.artifact_inputs.get(image_name)
         if input_plan is not None:
-            return input_plan.kind is ArtifactKind.IMAGE
+            return input_plan.artifact_type is ImageArtifactType
         return False
 
     def resolve_source_image(
@@ -658,7 +750,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
     ) -> ImagePayloadValue:
         request = self._source_resolution_request(
             alias,
-            ArtifactKind.IMAGE,
+            ImageArtifactType,
             current_image,
         )
         image = SourceBindingResolver.for_origin(request.binding.origin).resolve_image(
@@ -687,15 +779,34 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         payload: ImagePayloadValue,
         *,
         current_image: ImagePayloadValue | None,
-        match_current_source: bool = False,
+        projection_capabilities: frozenset[
+            type[CellProfilerRuntimePlaneProjectionCapability]
+        ]
+        | None = None,
     ) -> ImagePayloadValue:
         """Return image payload data projected to this invocation's runtime plane."""
+        capabilities = (
+            projection_capabilities
+            if projection_capabilities is not None
+            else frozenset((RuntimeArtifactImageInputProjectionCapability,))
+        )
         projected: ImagePayloadValue = payload
-        if match_current_source and current_image is not None:
+        if (
+            projection_capabilities_include(
+                capabilities,
+                CurrentSourceImagePayloadProjectionCapability,
+            )
+            and current_image is not None
+        ):
             projected = CurrentSourceImagePayloadProjection(
                 self,
                 current_image,
             ).project(projected)
+        if not projection_capabilities_include(
+            capabilities,
+            RuntimeArtifactImageInputProjectionCapability,
+        ):
+            return projected
         return cast(
             ImagePayloadValue,
             RuntimePlaneImagePayloadProjection(
@@ -769,7 +880,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
     ) -> ObjectLabelSet:
         request = self._source_resolution_request(
             alias,
-            ArtifactKind.OBJECT_LABELS,
+            ObjectLabelsArtifactType,
             current_image,
         )
         labels = SourceBindingResolver.for_origin(request.binding.origin).resolve_image(
@@ -800,7 +911,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
     def _source_resolution_request(
         self,
         alias: str,
-        kind: ArtifactKind,
+        kind: ArtifactType,
         current_image: CellProfilerCurrentImage,
     ) -> "SourceBindingResolutionRequest":
         return SourceBindingResolutionRequest(
@@ -815,12 +926,12 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         aliases: tuple[str, ...],
     ) -> None:
         for alias in aliases:
-            self._require_source_binding(alias, ArtifactKind.IMAGE)
+            self._require_source_binding(alias, ImageArtifactType)
 
     def has_source_binding(
         self,
         alias: str,
-        kind: ArtifactKind | None = None,
+        kind: ArtifactType | None = None,
     ) -> bool:
         binding = self.source_binding_plan.binding_for_alias(alias)
         return binding is not None and (
@@ -830,7 +941,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
     def _require_source_binding(
         self,
         alias: str,
-        kind: ArtifactKind,
+        kind: ArtifactType,
     ) -> NamedSourceBinding:
         binding = self.source_binding_plan.binding_for_alias(alias)
         if binding is None:
@@ -855,7 +966,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
     ) -> StoredRuntimeValue:
         return self._record_native_value(
             name,
-            ArtifactKind.IMAGE,
+            ImageArtifactType,
             NamedImage(
                 name=name,
                 data=data,
@@ -890,7 +1001,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         records = RuntimeArtifactRecordResolver(
             adapter=self,
             name=name,
-            kind=ArtifactKind.IMAGE,
+            artifact_type=ImageArtifactType,
             group_key=group_key,
             current_image=current_image,
         ).resolve()
@@ -903,7 +1014,14 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         data = self.image_payload_for_current_runtime_plane(
             data,
             current_image=current_image,
-            match_current_source=current_image is not None,
+            projection_capabilities=frozenset(
+                (
+                    RuntimeArtifactImageInputProjectionCapability,
+                    CurrentSourceImagePayloadProjectionCapability,
+                )
+            )
+            if current_image is not None
+            else None,
         )
         schema = record.value.schema
         image = NamedImage(
@@ -992,7 +1110,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
                 )
                 if requires_source_coordinate or self.has_runtime_artifact(
                     name=source_image_name,
-                    kind=ArtifactKind.IMAGE,
+                    kind=ImageArtifactType,
                 ):
                     source_image = self.get_image(source_image_name)
                     metadata = image_payload_metadata(source_image.data)
@@ -1051,7 +1169,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         )
         return self._record_native_value(
             name,
-            ArtifactKind.OBJECT_LABELS,
+            ObjectLabelsArtifactType,
             object_labels,
         )
 
@@ -1061,6 +1179,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         labels: ObjectLabelData,
         *,
         source_image_payload: ImagePayloadMetadataInput,
+        parent_image_source_voxel_spacing: SourceVoxelSpacing | None = None,
         domain_scope: ObjectLabelDomainScope | None = None,
         source_image_name: str | None = None,
         source_image_names: tuple[str, ...] = (),
@@ -1077,6 +1196,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
             image=source_image_payload,
             labels=cast(ObjectLabelData, normalized_labels),
             domain_scope=domain_scope,
+            parent_image_source_voxel_spacing=parent_image_source_voxel_spacing,
         )
         construction_context = build_request.construction_context()
         provenance_source_names = (
@@ -1113,7 +1233,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         )
         return self._record_native_value(
             name,
-            ArtifactKind.OBJECT_LABELS,
+            ObjectLabelsArtifactType,
             object_labels,
         )
 
@@ -1126,7 +1246,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
     ) -> ObjectLabelSet:
         resolved_group_key = self.runtime_input_group_key(
             name=name,
-            kind=ArtifactKind.OBJECT_LABELS,
+            artifact_type=ObjectLabelsArtifactType,
             group_key=group_key,
             current_image=current_image,
         )
@@ -1138,7 +1258,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         records = RuntimeArtifactRecordResolver(
             adapter=self,
             name=name,
-            kind=ArtifactKind.OBJECT_LABELS,
+            artifact_type=ObjectLabelsArtifactType,
             group_key=group_key,
             current_image=current_image,
         ).resolve()
@@ -1163,7 +1283,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
             match_group=False,
         ).runtime_scope(self).artifact_query_context().find(
             name=name,
-            kind=ArtifactKind.OBJECT_LABELS,
+            artifact_type=ObjectLabelsArtifactType,
         )
         if not records:
             raise RuntimeError(
@@ -1178,14 +1298,14 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         self,
         *,
         name: str,
-        kind: ArtifactKind,
+        artifact_type: ArtifactType,
         group_key: str | None = None,
         current_image: CellProfilerCurrentImage | None = None,
     ) -> str | None:
         """Return the artifact input group for this adapter/runtime context."""
         requested_group_key = self.group_key if group_key is None else group_key
         input_plan = self.artifact_inputs.get(name)
-        if input_plan is None or input_plan.kind is not kind:
+        if input_plan is None or input_plan.artifact_type is not artifact_type:
             return requested_group_key
         selected = RuntimeGroupMatchScope(group_key=None).runtime_scope(
             self
@@ -1193,7 +1313,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
             input_plan,
             requested_group_key=requested_group_key,
         )
-        if not _is_default_runtime_group_key(selected) or current_image is None:
+        if selected is not None or current_image is None:
             return selected
         input_group_keys = input_plan.group_keys
         if input_group_keys is None:
@@ -1260,6 +1380,107 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         )
         if len(matched_groups) == 1:
             return matched_groups[0]
+        return None
+
+    def runtime_group_key_from_source_payload(
+        self,
+        group_keys: frozenset[str],
+        source_payload: SourceScopedPayload,
+        *,
+        group_component: AllComponents | None = None,
+    ) -> str | None:
+        """Infer a runtime group from an artifact payload's source identity."""
+        metadata = image_payload_metadata(source_payload)
+        metadata_group_key = self.runtime_group_key_from_payload_metadata(
+            group_keys,
+            metadata,
+            group_component=group_component,
+        )
+        if metadata_group_key is not None:
+            return metadata_group_key
+        source_paths = metadata.source_image_paths
+        if not source_paths:
+            return None
+        candidates = self.source_candidates(source_paths)
+        if not candidates:
+            return None
+        universe_files = (
+            self.source_binding_context.pipeline_input_files
+            or self.source_binding_context.step_input_files
+            or source_paths
+        )
+        field_values = self.current_source_group_field_values(
+            candidates,
+            self.source_candidates(universe_files),
+            set(group_keys),
+        )
+        matched_groups = tuple(
+            value
+            for values in field_values.values()
+            if len(values) == 1
+            for value in values
+        )
+        if len(matched_groups) == 1:
+            return matched_groups[0]
+        return None
+
+    @staticmethod
+    def runtime_group_key_from_payload_metadata(
+        group_keys: frozenset[str],
+        metadata: ImagePayloadMetadata,
+        *,
+        group_component: AllComponents | None,
+    ) -> str | None:
+        """Return a group key carried by source-component payload metadata."""
+        if group_component is None:
+            return None
+        metadata_values = (
+            (metadata.source_component_metadata,)
+            + metadata.source_image_provenance_planes.component_metadata
+        )
+        original_group_key = CellProfilerRuntimeAdapter.runtime_group_key_from_values(
+            group_keys,
+            (
+                value
+                for source_metadata in metadata_values
+                if source_metadata is not None
+                for field_name, value in SourceMetadataRoleView(
+                    source_metadata
+                ).original_items()
+                if source_metadata_component(field_name) is group_component
+            ),
+        )
+        if original_group_key is not None:
+            return original_group_key
+        return CellProfilerRuntimeAdapter.runtime_group_key_from_values(
+            group_keys,
+            (
+                value
+                for source_metadata in metadata_values
+                if source_metadata is not None
+                for value in source_component_metadata_values(
+                    source_metadata,
+                    group_component,
+                )
+            ),
+        )
+
+    @staticmethod
+    def runtime_group_key_from_values(
+        group_keys: frozenset[str],
+        values: Iterable[str],
+    ) -> str | None:
+        """Return one planned group key matching source metadata values."""
+        matched_group_keys = tuple(
+            dict.fromkeys(
+                group_key
+                for value in values
+                for group_key in group_keys
+                if source_metadata_values_equal(value, group_key)
+            )
+        )
+        if len(matched_group_keys) == 1:
+            return matched_group_keys[0]
         return None
 
     @staticmethod
@@ -1336,7 +1557,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         if object_name is not None:
             self.require_artifact_available(
                 name=object_name,
-                kind=ArtifactKind.OBJECT_LABELS,
+                kind=ObjectLabelsArtifactType,
             )
         AdapterProfileLog.measurement_artifact(
             "adapter_measurement_subject_validation",
@@ -1371,7 +1592,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         record_started_at = time.perf_counter()
         stored_value = self._record_native_value(
             name,
-            ArtifactKind.MEASUREMENTS,
+            MeasurementsArtifactType,
             measurement_table,
         )
         AdapterProfileLog.measurement_artifact(
@@ -1392,7 +1613,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         records = RuntimeArtifactRecordResolver(
             adapter=self,
             name=name,
-            kind=ArtifactKind.MEASUREMENTS,
+            artifact_type=MeasurementsArtifactType,
             group_key=group_key,
             current_image=current_image,
         ).resolve()
@@ -1455,7 +1676,13 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         if cached is not None:
             return cached
         query_context = runtime_scope.artifact_query_context()
-        records = query_context.find(kind=ArtifactKind.MEASUREMENTS)
+        records = self.declared_measurement_input_records(
+            group_key=group_key,
+            match_group=match_group,
+            current_image=current_image,
+        )
+        if not records:
+            records = query_context.find(artifact_type=MeasurementsArtifactType)
         records = RuntimeRecordSourceImageSetSelector(
             self,
             current_image,
@@ -1470,6 +1697,30 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
             )
         self._measurement_cache[cache_key] = tables
         return tables
+
+    def declared_measurement_input_records(
+        self,
+        *,
+        group_key: str | None = None,
+        match_group: bool = True,
+        current_image: CellProfilerCurrentImage | None = None,
+    ) -> tuple[StoredRuntimeValue, ...]:
+        """Return records for measurement artifacts declared by the runtime step."""
+        records: list[StoredRuntimeValue] = []
+        for input_plan in self.artifact_inputs.values():
+            if input_plan.artifact_type is not MeasurementsArtifactType:
+                continue
+            records.extend(
+                RuntimeArtifactRecordResolver(
+                    adapter=self,
+                    name=input_plan.name,
+                    artifact_type=MeasurementsArtifactType,
+                    group_key=group_key,
+                    match_group=match_group,
+                    current_image=current_image,
+                ).resolve()
+            )
+        return tuple({id(record): record for record in records}.values())
 
     def add_relationship(
         self,
@@ -1487,15 +1738,15 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
     ) -> StoredRuntimeValue:
         if not self._declared_output_resolution(
             name,
-            ArtifactKind.RELATIONSHIPS,
+            RelationshipsArtifactType,
         ).is_declared:
             self.require_artifact_available(
                 name=parent_object_name,
-                kind=ArtifactKind.OBJECT_LABELS,
+                kind=ObjectLabelsArtifactType,
             )
             self.require_artifact_available(
                 name=child_object_name,
-                kind=ArtifactKind.OBJECT_LABELS,
+                kind=ObjectLabelsArtifactType,
             )
         semantics = RelationshipSemantics.parent_child(
             parent_object_name,
@@ -1503,7 +1754,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         )
         return self._record_native_value(
             name,
-            ArtifactKind.RELATIONSHIPS,
+            RelationshipsArtifactType,
             ObjectRelationship(
                 name=name,
                 source=semantics.source,
@@ -1530,19 +1781,18 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         group_key: str | None = None,
         current_image: CellProfilerCurrentImage | None = None,
     ) -> ObjectRelationship:
+        records = RuntimeArtifactRecordResolver(
+            adapter=self,
+            name=name,
+            artifact_type=RelationshipsArtifactType,
+            group_key=group_key,
+            current_image=current_image,
+        ).resolve()
+        if len(records) == 1:
+            return ObjectRelationship.from_runtime_value(records[0].value)
         query_context = RuntimeGroupMatchScope(
             group_key=group_key
         ).runtime_scope(self).artifact_query_context()
-        records = query_context.find(
-            name=name,
-            kind=ArtifactKind.RELATIONSHIPS,
-        )
-        records = RuntimeRecordSourceImageSetSelector(
-            self,
-            current_image,
-        ).select_runtime_scope(records)
-        if len(records) == 1:
-            return ObjectRelationship.from_runtime_value(records[0].value)
         return runtime_relationship(
             query_context,
             name=name,
@@ -1555,7 +1805,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
     ) -> StoredRuntimeValue:
         return self._record_native_value(
             name,
-            ArtifactKind.SPATIAL_GRID,
+            SpatialGridArtifactType,
             SpatialGridValueAuthority.input_value(name, grid),
         )
 
@@ -1568,7 +1818,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         records = RuntimeArtifactRecordResolver(
             adapter=self,
             name=name,
-            kind=ArtifactKind.SPATIAL_GRID,
+            artifact_type=SpatialGridArtifactType,
             group_key=group_key,
             current_image=None,
         ).resolve()
@@ -1581,7 +1831,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
     def _record_native_value(
         self,
         name: str,
-        expected_kind: ArtifactKind,
+        expected_kind: ArtifactType,
         native_value: RuntimeArtifactPayloadValue,
     ) -> StoredRuntimeValue:
         total_started_at = time.perf_counter()
@@ -1589,9 +1839,19 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         plan_started_at = time.perf_counter()
         output_plan = self._require_output_plan(name, expected_kind)
         slice_count = RuntimeSliceProjection.slice_count_from_values((native_value,))
-        output_group_keys = output_plan.runtime_slice_group_keys(
+        scoped_group_key = self.runtime_record_scoped_group_key(
+            output_plan,
+            native_value,
+        )
+        output_group_keys = output_plan.runtime_record_group_keys(
             requested_group_key=self.group_key,
+            scoped_group_key=scoped_group_key,
             slice_count=slice_count,
+        )
+        project_runtime_slices = (
+            slice_count is not None
+            and slice_count > 1
+            and len(output_group_keys) == slice_count
         )
         profile.event(
             "adapter_require_output_plan",
@@ -1609,7 +1869,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
                         extent=slice_count,
                     ),
                 )
-                if slice_count is not None and len(output_group_keys) > 1
+                if project_runtime_slices
                 else native_value
             )
             normalize_started_at = time.perf_counter()
@@ -1643,7 +1903,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
                 time.perf_counter() - replace_started_at,
                 output_group_key,
             )
-            if expected_kind is ArtifactKind.MEASUREMENTS:
+            if expected_kind is MeasurementsArtifactType:
                 table_started_at = time.perf_counter()
                 measurement_table = MeasurementTable.from_runtime_value(runtime_value)
                 profile.group_event(
@@ -1661,10 +1921,11 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         if stored_value is None:
             raise RuntimeError(
                 f"No runtime artifact groups were selected for '{name}' "
-                f"({expected_kind.value})."
+                f"({expected_kind.value}); "
+                f"{self._runtime_record_failure_context(output_plan, native_value, scoped_group_key, slice_count)}"
             )
         invalidation_started_at = time.perf_counter()
-        self.invalidate_runtime_query_caches_for_kind(expected_kind)
+        self.invalidate_runtime_query_caches_for_artifact_type(expected_kind)
         profile.event(
             "adapter_runtime_query_cache_invalidation",
             time.perf_counter() - invalidation_started_at,
@@ -1678,6 +1939,78 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
             time.perf_counter() - total_started_at,
         )
         return stored_value
+
+    def _runtime_record_failure_context(
+        self,
+        output_plan: ArtifactOutputPlan,
+        native_value: RuntimeArtifactPayloadValue,
+        scoped_group_key: str | None,
+        slice_count: int | None,
+    ) -> str:
+        """Return generic runtime-record diagnostics when no output group matches."""
+        payload = (
+            native_value.runtime_payload()
+            if isinstance(native_value, NativeRuntimeValue)
+            else native_value
+        )
+        try:
+            metadata = image_payload_metadata(payload)
+            source_paths = metadata.source_image_paths
+            source_component_metadata = metadata.source_component_metadata
+            source_plane_component_metadata = (
+                metadata.source_image_provenance_planes.component_metadata
+            )
+        except Exception:
+            source_paths = ()
+            source_component_metadata = None
+            source_plane_component_metadata = ()
+        try:
+            payload_shape = tuple(np.shape(payload))
+        except Exception:
+            payload_shape = ()
+        return (
+            f"requested_group_key={self.group_key!r}, "
+            f"scoped_group_key={scoped_group_key!r}, "
+            f"axis_group_key={self.axis_scope.value_text_for_component(output_plan.group_component)!r}, "
+            f"output_group_keys={tuple(output_plan.group_keys or (None,))!r}, "
+            f"slice_count={slice_count!r}, "
+            f"native_value_type={type(native_value).__name__}, "
+            f"payload_type={type(payload).__name__}, "
+            f"payload_shape={payload_shape!r}, "
+            f"source_paths={source_paths!r}, "
+            f"source_component_metadata={source_component_metadata!r}, "
+            f"source_plane_component_metadata={source_plane_component_metadata!r}."
+        )
+
+    def runtime_record_scoped_group_key(
+        self,
+        output_plan: ArtifactOutputPlan,
+        native_value: RuntimeArtifactPayloadValue,
+    ) -> str | None:
+        """Return the group key that should scope recording for this output."""
+        axis_group_key = self.axis_scope.value_text_for_component(
+            output_plan.group_component
+        )
+        group_keys = frozenset(
+            str(group_key)
+            for group_key in (output_plan.group_keys or ())
+            if group_key is not None
+        )
+        if not group_keys:
+            return axis_group_key
+        source_payload = (
+            native_value.runtime_payload()
+            if isinstance(native_value, NativeRuntimeValue)
+            else native_value
+        )
+        source_group_key = self.runtime_group_key_from_source_payload(
+            group_keys,
+            source_payload,
+            group_component=output_plan.group_component,
+        )
+        if source_group_key is not None:
+            return source_group_key
+        return axis_group_key
 
     def clear_runtime_query_caches(self) -> None:
         """Clear every runtime query cache owned by this adapter."""
@@ -1703,7 +2036,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
     def _require_output_plan(
         self,
         name: str,
-        expected_kind: ArtifactKind,
+        expected_kind: ArtifactType,
     ) -> ArtifactOutputPlan:
         plan = self.artifact_outputs.get(name)
         if plan is None:
@@ -1711,17 +2044,17 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
                 f"No compiled output plan for CellProfiler artifact '{name}' "
                 f"({expected_kind.value})."
             )
-        if plan.kind is not expected_kind:
+        if plan.artifact_type is not expected_kind:
             raise ValueError(
                 f"CellProfiler artifact '{name}' expected output kind "
-                f"{expected_kind.value}, got compiled kind {plan.kind.value}."
+                f"{expected_kind.value}, got compiled kind {plan.artifact_type.value}."
             )
         return plan
 
     def _declared_output_resolution(
         self,
         name: str,
-        kind: ArtifactKind,
+        kind: ArtifactType,
     ) -> DeclaredOutputResolution:
         """Return a declared output plan, or absence, without masking invalid plans."""
         if name not in self.artifact_outputs:
@@ -1762,6 +2095,26 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         candidates = SourceCandidateRuntimeCache(self, file_paths).candidates()
         self._source_candidate_cache[file_paths] = candidates
         return candidates
+
+    def source_candidate_process_cache_key(
+        self,
+        file_paths: tuple[str, ...],
+    ) -> tuple[Hashable, ...]:
+        """Return the semantic cache key for one source-candidate universe."""
+        file_paths = tuple(file_paths)
+        cached = self._source_candidate_process_key_cache.get(file_paths)
+        if cached is not None:
+            return cached
+        cache_key = source_candidate_process_cache_key(
+            file_paths=file_paths,
+            context=self.source_binding_context,
+            plan=self.source_binding_plan,
+            parser=RequireProcessingContextBoundaryPolicy(
+                self
+            ).context.microscope_handler.parser,
+        )
+        self._source_candidate_process_key_cache[file_paths] = cache_key
+        return cache_key
 
     def prepare_source_resolution(self) -> None:
         """Prepare source-resolution caches owned by this adapter's source context."""

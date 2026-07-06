@@ -7,29 +7,20 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 import json
-from typing import ClassVar, TYPE_CHECKING
+from typing import ClassVar, TYPE_CHECKING, TypeVar
 
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 from openhcs.core.alias_property import AliasProperty
 import numpy as np
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
-from openhcs.core.registry_strategies import (
-    GeneratedEnumClassSpec,
-    RegisteredEnumMeta,
-)
+from openhcs.core.artifacts import ArtifactSpec, ArtifactSpecCollection, ObjectLabelsArtifactType
+from openhcs.core.registry_strategies import RegisteredEnumMeta
 from openhcs.core.measurement_row_materialization import (
-    MEASUREMENT_OBJECT_LABEL_FIELD,
-    MEASUREMENT_OBJECT_NAME_FIELD,
-    MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
     ConcatenatedColumnarRows,
-)
-from openhcs.core.measurement_feature_queries import (
-    MEASUREMENT_FEATURE_NAME_FIELD,
-    MEASUREMENT_RESULT_VALUE_FIELD,
 )
 from openhcs.core.runtime_semantics import (
     MeasurementRowAxisField,
+    MeasurementRowValueField,
     ObjectLabelDomainScope,
     ObjectLocationMeasurementFeature,
     ObjectLabelRepresentation,
@@ -61,81 +52,39 @@ if TYPE_CHECKING:
     from openhcs.interop.cellprofiler.runtime.adapter import CellProfilerRuntimeAdapter
 
 
+NestedDeclarationT = TypeVar("NestedDeclarationT")
+
+
 ObjectLocationFeatureValues = tuple[
     tuple[ObjectLocationMeasurementFeature, float],
     ...,
 ]
 
 
-class CellProfilerMeasurementStatField(str, Enum):
+from openhcs.interop.cellprofiler.module_declarations import (
+    CellProfilerModule,
+    CellProfilerModuleAuthority,
+)
+
+
+class CellProfilerMeasurementStatField(str, CellProfilerModuleAuthority, Enum):
     """Base for generated absorbed-result stat-field enums."""
 
     field_name = AliasProperty[str]("value")
 
 
-for _measurement_stat_field_spec in (
-    GeneratedEnumClassSpec(
-        class_name="ClassifyObjectsMeasurementStatField",
-        base_type=CellProfilerMeasurementStatField,
-        members={
-            "BIN_COUNTS": "bin_counts",
-            "BIN_PERCENTAGES": "bin_percentages",
-            "OBJECT_CLASSES": "object_classes",
-            "TOTAL_OBJECTS": "total_objects",
-            "SLICE_INDEX": MeasurementRowAxisField.SLICE_INDEX.value,
-        },
-    ),
+class FormattingMeasurementFeatureTemplate(
+    str,
+    CellProfilerModuleAuthority,
+    Enum,
+    metaclass=RegisteredEnumMeta,
 ):
-    _measurement_stat_field_spec.declare_in(globals())
-
-
-class FormattingMeasurementFeatureTemplate(str, Enum, metaclass=RegisteredEnumMeta):
     """Shared feature-name formatting contract for templated measurement names."""
 
     __registry_key__ = "__name__"
 
     def feature_name(self, **values: CellProfilerRuntimeValue) -> str:
         return self.value.format(**values)
-
-
-for _measurement_feature_template_spec in (
-    GeneratedEnumClassSpec(
-        class_name="ClassifyObjectsMeasurementFeatureTemplate",
-        base_type=FormattingMeasurementFeatureTemplate,
-        members={
-            "OBJECTS_PER_BIN": "Classify_{bin_name}_NumObjectsPerBin",
-            "PERCENT_PER_BIN": "Classify_{bin_name}_PctObjectsPerBin",
-            "OBJECT_CLASS": "Classify_{bin_name}",
-        },
-    ),
-):
-    _measurement_feature_template_spec.declare_in(globals())
-
-
-for _measurement_stat_field_spec in (
-    GeneratedEnumClassSpec(
-        class_name="AlignMeasurementStatField",
-        base_type=CellProfilerMeasurementStatField,
-        members={
-            "OUTPUT_INDEX": "output_index",
-            "SLICE_INDEX": MeasurementRowAxisField.SLICE_INDEX.value,
-            "X_SHIFT": "x_shift",
-            "Y_SHIFT": "y_shift",
-        },
-    ),
-):
-    _measurement_stat_field_spec.declare_in(globals())
-
-
-class AlignMeasurementFeature(str, Enum):
-    """CellProfiler Align feature names."""
-
-    X_SHIFT = "Align_Xshift"
-    Y_SHIFT = "Align_Yshift"
-
-    @property
-    def source_field(self) -> AlignMeasurementStatField:
-        return AlignMeasurementStatField[self.name]
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +94,65 @@ class CellProfilerMeasurementRowProjection(ABC):
     @abstractmethod
     def rows(self) -> list[CellProfilerKwargDict]:
         """Return long/tall measurement rows."""
+
+    @staticmethod
+    def measurement_row(
+        *,
+        feature_name: str,
+        value: CellProfilerRuntimeValue,
+        axis_values: Mapping[str, CellProfilerRuntimeValue] | None = None,
+        value_field: MeasurementRowValueField = MeasurementRowValueField.RESULT_VALUE,
+    ) -> CellProfilerKwargDict:
+        resolved_axis_values = {} if axis_values is None else dict(axis_values)
+        return {
+            **resolved_axis_values,
+            MeasurementRowAxisField.FEATURE_NAME.value: feature_name,
+            value_field.value: value,
+        }
+
+    @classmethod
+    def object_measurement_row(
+        cls,
+        *,
+        object_name: str,
+        object_label: int,
+        feature_name: str,
+        value: CellProfilerRuntimeValue,
+        axis_values: Mapping[str, CellProfilerRuntimeValue] | None = None,
+        value_field: MeasurementRowValueField = MeasurementRowValueField.RESULT_VALUE,
+    ) -> CellProfilerKwargDict:
+        resolved_axis_values = {} if axis_values is None else dict(axis_values)
+        return cls.measurement_row(
+            axis_values={
+                MeasurementRowAxisField.OBJECT_NAME.value: object_name,
+                MeasurementRowAxisField.OBJECT_LABEL.value: object_label,
+                **resolved_axis_values,
+            },
+            feature_name=feature_name,
+            value=value,
+            value_field=value_field,
+        )
+
+    @classmethod
+    def source_image_measurement_row(
+        cls,
+        *,
+        source_image_name: str,
+        feature_name: str,
+        value: CellProfilerRuntimeValue,
+        axis_values: Mapping[str, CellProfilerRuntimeValue] | None = None,
+        value_field: MeasurementRowValueField = MeasurementRowValueField.RESULT_VALUE,
+    ) -> CellProfilerKwargDict:
+        resolved_axis_values = {} if axis_values is None else dict(axis_values)
+        return cls.measurement_row(
+            axis_values={
+                MeasurementRowAxisField.SOURCE_IMAGE_NAME.value: source_image_name,
+                **resolved_axis_values,
+            },
+            feature_name=feature_name,
+            value=value,
+            value_field=value_field,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +166,15 @@ class CellProfilerMeasurementRows(
 
     stable_key_axis: ClassVar[str] = RegistryKeyAttribute.REGISTRY_KEY.value
     registry_key: ClassVar[str | None] = None
+
+    @classmethod
+    def for_request(
+        cls,
+        module_type: type[object],
+        request: object,
+    ) -> "CellProfilerMeasurementRows":
+        del module_type, request
+        raise NotImplementedError(f"{cls.__name__} must implement for_request().")
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,274 +213,52 @@ class CellProfilerResultMeasurementRows(CellProfilerMeasurementRows):
 
 
 @dataclass(frozen=True, slots=True)
-class ClassifyObjectsMeasurementRows(CellProfilerResultMeasurementRows):
-    """Project absorbed ClassifyObjects results into CP measurement rows."""
+class ModuleOwnedResultMeasurementRows(CellProfilerResultMeasurementRows):
+    """Result rows whose semantic declarations live on the owning module MRO."""
 
-    registry_key = "classify_objects"
+    module_type: type[object]
 
-    object_name: str | None
-
-    def rows(self) -> list[CellProfilerKwargDict]:
-        rows: list[CellProfilerKwargDict] = []
-        for result in self.source_rows():
-            bin_counts = self.json_object_mapping(
-                self.row_value(
-                    result, ClassifyObjectsMeasurementStatField.BIN_COUNTS, {}
-                )
+    @classmethod
+    def nested_declarations(
+        cls,
+        module_type: type[object],
+        base_type: type[NestedDeclarationT],
+    ) -> tuple[type[NestedDeclarationT], ...]:
+        if not issubclass(module_type, CellProfilerModule):
+            raise TypeError(
+                f"{cls.__name__} requires a CellProfilerModule owner, "
+                f"got {module_type.__name__}."
             )
-            bin_percentages = self.json_object_mapping(
-                self.row_value(
-                    result,
-                    ClassifyObjectsMeasurementStatField.BIN_PERCENTAGES,
-                    {},
-                )
+        return module_type.declared_authority_types(base_type)
+
+    @classmethod
+    def single_nested_declaration(
+        cls,
+        module_type: type[object],
+        base_type: type[NestedDeclarationT],
+    ) -> type[NestedDeclarationT]:
+        declarations = cls.nested_declarations(module_type, base_type)
+        if len(declarations) != 1:
+            raise ValueError(
+                f"{module_type.__name__} must declare exactly one "
+                f"{base_type.__name__} nested type for {cls.__name__}, "
+                f"got {[declaration.__name__ for declaration in declarations]!r}."
             )
-            object_classes = self.json_object_mapping(
-                self.row_value(
-                    result,
-                    ClassifyObjectsMeasurementStatField.OBJECT_CLASSES,
-                    {},
-                )
-            )
-            slice_index = int(
-                self.row_value(
-                    result, ClassifyObjectsMeasurementStatField.SLICE_INDEX, 0
-                )
-            )
-            bin_names = tuple(str(name) for name in bin_counts)
-            for bin_name, count in bin_counts.items():
-                rows.append(
-                    {
-                        MeasurementRowAxisField.SLICE_INDEX.value: slice_index,
-                        MEASUREMENT_FEATURE_NAME_FIELD: (
-                            ClassifyObjectsMeasurementFeatureTemplate.OBJECTS_PER_BIN.feature_name(
-                                bin_name=str(bin_name)
-                            )
-                        ),
-                        MEASUREMENT_RESULT_VALUE_FIELD: count,
-                    }
-                )
-                rows.append(
-                    {
-                        MeasurementRowAxisField.SLICE_INDEX.value: slice_index,
-                        MEASUREMENT_FEATURE_NAME_FIELD: (
-                            ClassifyObjectsMeasurementFeatureTemplate.PERCENT_PER_BIN.feature_name(
-                                bin_name=str(bin_name)
-                            )
-                        ),
-                        MEASUREMENT_RESULT_VALUE_FIELD: MappingValueLookup(
-                            bin_percentages,
-                            bin_name,
-                        ).value_or(0.0),
-                    }
-                )
-            rows.extend(
-                self.object_class_rows(
-                    object_classes=object_classes,
-                    bin_names=bin_names,
-                    result=result,
-                    slice_index=slice_index,
-                )
-            )
-        return rows
+        return declarations[0]
 
-    def object_class_rows(
-        self,
-        *,
-        object_classes: CellProfilerKwargs,
-        bin_names: tuple[str, ...],
-        result: CellProfilerRuntimeValue,
-        slice_index: int,
-    ) -> list[CellProfilerKwargDict]:
-        if self.object_name is None:
-            return []
-        total_objects = int(
-            self.row_value(
-                result,
-                ClassifyObjectsMeasurementStatField.TOTAL_OBJECTS,
-                0,
-            )
-        )
-        class_labels = tuple(sorted(int(label) for label in object_classes))
-        dense_labels = tuple(range(1, total_objects + 1))
-        object_labels = tuple(dict.fromkeys((*dense_labels, *class_labels)))
-        return [
-            {
-                MEASUREMENT_OBJECT_NAME_FIELD: self.object_name,
-                MEASUREMENT_OBJECT_LABEL_FIELD: object_label,
-                MeasurementRowAxisField.SLICE_INDEX.value: slice_index,
-                MEASUREMENT_FEATURE_NAME_FIELD: (
-                    ClassifyObjectsMeasurementFeatureTemplate.OBJECT_CLASS.feature_name(
-                        bin_name=bin_name
-                    )
-                ),
-                MEASUREMENT_RESULT_VALUE_FIELD: int(
-                    object_classes.get(str(object_label)) == bin_name
-                ),
-            }
-            for object_label in object_labels
-            for bin_name in bin_names
-        ]
-
-
-@dataclass(frozen=True, slots=True)
-class AlignMeasurementRows(CellProfilerResultMeasurementRows):
-    """Project absorbed Align results into CP image measurement rows."""
-
-    registry_key = "align"
-
-    output_names: tuple[str, ...]
-    features: ClassVar[tuple[AlignMeasurementFeature, ...]] = (
-        AlignMeasurementFeature.X_SHIFT,
-        AlignMeasurementFeature.Y_SHIFT,
-    )
-
-    def rows(self) -> list[CellProfilerKwargDict]:
-        rows: list[CellProfilerKwargDict] = []
-        for result in self.source_rows():
-            output_index = int(
-                self.row_value(result, AlignMeasurementStatField.OUTPUT_INDEX, 0)
-            )
-            if output_index < 0 or output_index >= len(self.output_names):
-                raise ValueError(
-                    f"Align measurement output_index {output_index} does not match "
-                    f"declared image outputs {self.output_names!r}."
-                )
-            slice_index = int(
-                self.row_value(result, AlignMeasurementStatField.SLICE_INDEX, 0)
-            )
-            source_image_name = self.output_names[output_index]
-            rows.extend(
-                {
-                    MeasurementRowAxisField.SLICE_INDEX.value: slice_index,
-                    MEASUREMENT_SOURCE_IMAGE_NAME_FIELD: source_image_name,
-                    MEASUREMENT_FEATURE_NAME_FIELD: feature.value,
-                    MEASUREMENT_RESULT_VALUE_FIELD: float(
-                        self.row_value(result, feature.source_field, 0.0)
-                    ),
-                }
-                for feature in type(self).features
-            )
-        return rows
-
-
-for _measurement_stat_field_spec in (
-    GeneratedEnumClassSpec(
-        class_name="ThresholdMeasurementStatField",
-        base_type=CellProfilerMeasurementStatField,
-        members={
-            "SLICE_INDEX": "slice_index",
-            "THRESHOLD_USED": "threshold_used",
-            "THRESHOLD_VALUE": "threshold_value",
-            "FINAL_THRESHOLD": "final_threshold",
-            "ORIGINAL_THRESHOLD": "original_threshold",
-            "WEIGHTED_VARIANCE": "weighted_variance",
-            "SUM_OF_ENTROPIES": "sum_of_entropies",
-        },
-    ),
-):
-    _measurement_stat_field_spec.declare_in(globals())
-
-
-for _measurement_feature_template_spec in (
-    GeneratedEnumClassSpec(
-        class_name="ThresholdMeasurementFeatureTemplate",
-        base_type=FormattingMeasurementFeatureTemplate,
-        members={
-            "FINAL_THRESHOLD": "FinalThreshold_{object_name}",
-            "ORIGINAL_THRESHOLD": "OrigThreshold_{object_name}",
-            "WEIGHTED_VARIANCE": "WeightedVariance_{object_name}",
-            "SUM_OF_ENTROPIES": "SumOfEntropies_{object_name}",
-        },
-    ),
-):
-    _measurement_feature_template_spec.declare_in(globals())
-
-
-@dataclass(frozen=True, slots=True)
-class ThresholdMeasurementStatSchema:
-    """Nominal mapping from supported threshold stat rows to CP features."""
-
-    final_threshold_fields: tuple[ThresholdMeasurementStatField, ...] = (
-        ThresholdMeasurementStatField.THRESHOLD_USED,
-        ThresholdMeasurementStatField.THRESHOLD_VALUE,
-        ThresholdMeasurementStatField.FINAL_THRESHOLD,
-    )
-
-    def final_threshold(self, row: CellProfilerKwargs) -> CellProfilerRuntimeValue:
-        for field in self.final_threshold_fields:
-            if field.value in row:
-                return row[field.value]
-        raise KeyError(
-            "Threshold measurement row does not expose any known final-threshold "
-            f"field: {tuple(field.value for field in self.final_threshold_fields)!r}."
+    @property
+    def stat_field_type(self) -> type[CellProfilerMeasurementStatField]:
+        return self.single_nested_declaration(
+            self.module_type,
+            CellProfilerMeasurementStatField,
         )
 
-    def value_or_default(
-        self,
-        row: CellProfilerKwargs,
-        field: ThresholdMeasurementStatField,
-        default: CellProfilerRuntimeValue,
-    ) -> CellProfilerRuntimeValue:
-        if field.value in row:
-            return row[field.value]
-        return default
-
-
-@dataclass(frozen=True, slots=True)
-class ThresholdMeasurementRows(CellProfilerResultMeasurementRows):
-    """Project absorbed threshold stats into CP image measurement rows."""
-
-    registry_key = "threshold"
-
-    object_name: str
-    schema: ThresholdMeasurementStatSchema = ThresholdMeasurementStatSchema()
-
-    def rows(self) -> list[CellProfilerKwargDict]:
-        rows: list[CellProfilerKwargDict] = []
-        for slice_stats in self.source_rows():
-            stat_row = measurement_row_mapping(slice_stats)
-            slice_index = self.schema.value_or_default(
-                stat_row,
-                ThresholdMeasurementStatField.SLICE_INDEX,
-                0,
-            )
-            final_threshold = self.schema.final_threshold(stat_row)
-            values = {
-                ThresholdMeasurementFeatureTemplate.FINAL_THRESHOLD.feature_name(
-                    object_name=self.object_name
-                ): final_threshold,
-                ThresholdMeasurementFeatureTemplate.ORIGINAL_THRESHOLD.feature_name(
-                    object_name=self.object_name
-                ): self.schema.value_or_default(
-                    stat_row,
-                    ThresholdMeasurementStatField.ORIGINAL_THRESHOLD,
-                    final_threshold,
-                ),
-                ThresholdMeasurementFeatureTemplate.WEIGHTED_VARIANCE.feature_name(
-                    object_name=self.object_name
-                ): self.schema.value_or_default(
-                    stat_row,
-                    ThresholdMeasurementStatField.WEIGHTED_VARIANCE,
-                    0.0,
-                ),
-                ThresholdMeasurementFeatureTemplate.SUM_OF_ENTROPIES.feature_name(
-                    object_name=self.object_name
-                ): self.schema.value_or_default(
-                    stat_row,
-                    ThresholdMeasurementStatField.SUM_OF_ENTROPIES,
-                    0.0,
-                ),
-            }
-            rows.extend(
-                {
-                    MeasurementRowAxisField.SLICE_INDEX.value: slice_index,
-                    MEASUREMENT_FEATURE_NAME_FIELD: feature_name,
-                    MEASUREMENT_RESULT_VALUE_FIELD: value,
-                }
-                for feature_name, value in values.items()
-            )
-        return rows
+    @property
+    def feature_template_type(self) -> type[FormattingMeasurementFeatureTemplate]:
+        return self.single_nested_declaration(
+            self.module_type,
+            FormattingMeasurementFeatureTemplate,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -520,13 +315,13 @@ class ObjectLocationMeasurementRows(CellProfilerMeasurementRows):
         feature_values: ObjectLocationFeatureValues,
     ) -> tuple[CellProfilerKwargDict, ...]:
         return tuple(
-            {
-                MeasurementRowAxisField.SLICE_INDEX.value: slice_index,
-                MEASUREMENT_OBJECT_NAME_FIELD: self.object_name,
-                MEASUREMENT_OBJECT_LABEL_FIELD: object_label,
-                MEASUREMENT_FEATURE_NAME_FIELD: feature.value,
-                MEASUREMENT_RESULT_VALUE_FIELD: value,
-            }
+            self.object_measurement_row(
+                object_name=self.object_name,
+                object_label=object_label,
+                axis_values={MeasurementRowAxisField.SLICE_INDEX.value: slice_index},
+                feature_name=feature.value,
+                value=value,
+            )
             for feature, value in feature_values
         )
 
@@ -915,7 +710,7 @@ class SparseLabelRowsCoercion:
 def _measurement_object_name(
     inputs: tuple[ArtifactSpec, ...],
 ) -> str | None:
-    object_inputs = ArtifactSpecCollection(inputs).of_kind(ArtifactKind.OBJECT_LABELS)
+    object_inputs = ArtifactSpecCollection(inputs).of_artifact_type(ObjectLabelsArtifactType)
     if len(object_inputs) == 1:
         return object_inputs[0].name
     return None

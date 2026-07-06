@@ -16,12 +16,15 @@ from openhcs.core.aligned_image_payload import (
     aligned_image_stack_kwargs,
     project_singleton_stack_image_domain,
 )
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+)
 from openhcs.core.callable_contract import CallableContract
-from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.measurement_lookup_dialect import runtime_measurement_lookup_dialect
 from openhcs.core.memory import detect_memory_type, stack_slices
-from openhcs.core.runtime_output_matching import RuntimeOutputRole
+from openhcs.core.runtime_output_matching import artifact_spec_participates_in_main_flow
 from openhcs.core.pipeline.function_contracts import (
     Pure2DSliceBatchExecutor,
     RuntimeBatchExecutionDomain,
@@ -31,7 +34,11 @@ from openhcs.core.runtime_invocation import (
     RuntimeBatchInvocationRequest,
     SliceIndexRuntimeParameter,
 )
-from openhcs.core.runtime_semantics import RuntimePlaneAxis
+from openhcs.core.runtime_semantics import (
+    ObjectLabelDomain,
+    ObjectLabelDomainScope,
+    RuntimePlaneAxis,
+)
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 from openhcs.core.runtime_slice_projection import (
     RuntimeSliceProjection,
@@ -65,10 +72,12 @@ from openhcs.interop.cellprofiler.runtime.payload_types import (
     CellProfilerRuntimeValueSequence,
 )
 from openhcs.interop.cellprofiler.runtime.processing_contracts import (
+    CellProfilerProcessingContractAuthority,
     Pure2DSliceCountPolicy,
     RuntimeShapeInspection,
 )
 from openhcs.interop.cellprofiler.runtime.pure2d_output_aggregation import (
+    CellProfilerPure2DImagePlaneSemantics,
     CellProfilerPure2DOutputAggregator,
     _unstack_cellprofiler_image_slices,
 )
@@ -76,6 +85,7 @@ from openhcs.interop.cellprofiler.runtime.runtime_profile import (
     CellProfilerRuntimeProfileLogger,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import (
+    ProcessingContract,
     Pure2DSliceResultBatch,
     RuntimeCallablePolicy,
     RuntimeCallableView,
@@ -111,12 +121,12 @@ class CellProfilerFunctionOutputAggregationContract:
     def main_output_spec(self) -> ArtifactSpec | None:
         if not self.declared_output_specs:
             return (
-                ArtifactSpec("<main>", ArtifactKind.IMAGE)
+                ArtifactSpec.output("<main>", ImageArtifactType)
                 if self.main_output_replaces_runtime_flow
                 else None
             )
         first_spec = self.declared_output_specs[0]
-        if RuntimeOutputRole.for_spec(first_spec) is RuntimeOutputRole.MAIN_FLOW:
+        if artifact_spec_participates_in_main_flow(first_spec):
             return first_spec
         return None
 
@@ -175,9 +185,85 @@ class CellProfilerFunctionOutputAggregationContract:
         *,
         plane_axis: RuntimePlaneAxis,
     ) -> CellProfilerRuntimeValue:
+        if spec is not None and spec.artifact_type is ObjectLabelsArtifactType:
+            if all(isinstance(output, ObjectLabelValue) for output in slice_outputs):
+                return CellProfilerPure2DOutputAggregator.aggregate(
+                    slice_outputs,
+                    memory_type,
+                    plane_axis=plane_axis,
+                )
+            labels = stack_slices(
+                [object_label_dense_array(output) for output in slice_outputs],
+                memory_type,
+                0,
+            )
+            return ObjectLabelPayload(
+                labels=labels,
+                plane_axis=plane_axis,
+                domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE),
+            )
         return CellProfilerPure2DOutputAggregator.aggregate(
             slice_outputs,
             memory_type,
+            plane_axis=plane_axis,
+        )
+
+    def full_stack_output_spec(self, index: int) -> ArtifactSpec | None:
+        """Return the declared output spec at a raw full-stack tuple position."""
+        if index == 0:
+            return self.main_output_spec or ArtifactSpec.output(
+                "<main>",
+                ImageArtifactType,
+            )
+        return self.auxiliary_spec(index - 1)
+
+    def aggregate_full_stack_pure_2d_outputs(
+        self,
+        result: CellProfilerRuntimeValue,
+        memory_type: str,
+        *,
+        plane_axis: RuntimePlaneAxis,
+    ) -> CellProfilerRuntimeValue:
+        """Restore declared PURE_2D output domains after one full-stack call."""
+        if isinstance(result, tuple):
+            return tuple(
+                self.aggregate_full_stack_pure_2d_output_value(
+                    value,
+                    self.full_stack_output_spec(index),
+                    memory_type,
+                    plane_axis=plane_axis,
+                )
+                for index, value in enumerate(result)
+            )
+        return self.aggregate_full_stack_pure_2d_output_value(
+            result,
+            self.full_stack_output_spec(0),
+            memory_type,
+            plane_axis=plane_axis,
+        )
+
+    def aggregate_full_stack_pure_2d_output_value(
+        self,
+        value: CellProfilerRuntimeValue,
+        spec: ArtifactSpec | None,
+        memory_type: str,
+        *,
+        plane_axis: RuntimePlaneAxis,
+    ) -> CellProfilerRuntimeValue:
+        if spec is None or spec.artifact_type is not ObjectLabelsArtifactType:
+            return value
+        labels = object_label_dense_array(value)
+        if isinstance(value, ObjectLabelValue):
+            return value
+        if labels.ndim == 2:
+            labels = stack_slices([labels], memory_type, 0)
+            return ObjectLabelPayload(
+                labels=labels,
+                plane_axis=plane_axis,
+                domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE),
+            )
+        return ObjectLabelPayload(
+            labels=labels,
             plane_axis=plane_axis,
         )
 
@@ -353,7 +439,11 @@ class CellProfilerFunctionContractExecutor:
         projection_started_at = time.perf_counter()
         projected_image = project_singleton_stack_image_domain(image)
         projected_kwargs = {
-            key: project_singleton_stack_image_domain(value)
+            key: (
+                value
+                if isinstance(value, ObjectLabelValue)
+                else project_singleton_stack_image_domain(value)
+            )
             for key, value in kwargs.items()
         }
         label_value = projected_kwargs.get("labels")
@@ -390,7 +480,21 @@ class CellProfilerFunctionContractExecutor:
         **kwargs: CellProfilerRuntimeValue,
     ) -> CellProfilerRuntimeValue:
         """Execute one full-stack invocation, preserving volumetric semantics."""
-        return self.execute_pure_3d(func, image, **kwargs)
+        result = self.execute_pure_3d(func, image, **kwargs)
+        contract = CallableContract.from_callable(func)
+        if contract.processing_contract is not ProcessingContract.PURE_2D:
+            return result
+        plane_axis = (
+            CellProfilerPure2DImagePlaneSemantics.from_image(image).plane_axis
+            or RuntimePlaneAxis.RUNTIME_SLICE
+        )
+        return (
+            self.output_aggregation_contract.aggregate_full_stack_pure_2d_outputs(
+                result,
+                detect_memory_type(image_payload_data(image)),
+                plane_axis=plane_axis,
+            )
+        )
 
     def _execute_aligned_multi_image_stack(
         self,
@@ -492,7 +596,7 @@ class CellProfilerFunctionContractExecutor:
                     kwargs,
                 ).call()
             slices_2d = tuple(image for _ in range(slice_count))
-        elif is_color_image_slice(image_data):
+        elif _is_cellprofiler_single_source_image_plane(image):
             slice_count = Pure2DSliceCountPolicy.slice_count_from_kwargs(
                 kwargs,
                 runtime_slice_sequence_parameter_names=(
@@ -629,6 +733,14 @@ def _callable_declares_slice_index(func: CellProfilerFunction) -> bool:
     )
 
 
+def _is_cellprofiler_single_source_image_plane(image: CellProfilerRuntimeValue) -> bool:
+    """Return whether PURE_2D should treat this payload as one image plane."""
+
+    return CellProfilerPure2DImagePlaneSemantics.from_image(
+        image
+    ).is_single_source_plane()
+
+
 def _trace_pure_2d_slice(
     trace_path: str,
     func: CellProfilerFunction,
@@ -638,11 +750,33 @@ def _trace_pure_2d_slice(
     slice_count: int,
 ) -> None:
     function_name = CallableContract.from_callable(func).function_name
+    plane_semantics = CellProfilerPure2DImagePlaneSemantics.from_image(image)
+    metadata = plane_semantics.metadata
+    source_role = plane_semantics.source_role
+    plane_axis = plane_semantics.plane_axis
     record: CellProfilerKwargDict = {
         "function": function_name,
         "slice_index": slice_index,
         "slice_count": slice_count,
         "image": Pure2DTraceArrayStats.from_value(image).record(),
+        "source_role": (
+            None if source_role is None else type(source_role).__name__
+        ),
+        "source_component_metadata": (
+            None
+            if metadata.source_component_metadata is None
+            else dict(metadata.source_component_metadata)
+        ),
+        "source_provenance_plane_count": (
+            metadata.source_image_provenance_planes.count
+        ),
+        "source_provenance_plane_metadata": (
+            tuple(
+                None if item is None else dict(item)
+                for item in metadata.source_image_provenance_planes.component_metadata
+            )
+        ),
+        "plane_axis": None if plane_axis is None else plane_axis.value,
         "kwargs": {},
     }
     for name, value in kwargs.items():
@@ -689,7 +823,7 @@ def _trace_pure_2d_slice(
         elif isinstance(value, np.ndarray):
             record["kwargs"][name] = Pure2DTraceArrayStats.from_value(value).record()
     with open(trace_path, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, sort_keys=True) + "\n")
+        handle.write(json.dumps(record, default=str, sort_keys=True) + "\n")
 
 
 @dataclass(frozen=True, slots=True)

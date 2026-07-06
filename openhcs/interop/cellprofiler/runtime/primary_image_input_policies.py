@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from metaclass_registry import RegistryFamily, RegistryKeyAttribute
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
+from openhcs.core.artifacts import ArtifactSpec, ArtifactSpecCollection, ImageArtifactType
 from openhcs.interop.cellprofiler.runtime.adapter import CellProfilerRuntimeAdapter
 from openhcs.interop.cellprofiler.runtime.invocation import CellProfilerImageRequest
 from openhcs.interop.cellprofiler.runtime.payload_types import (
@@ -101,8 +101,8 @@ class DefaultPrimaryImageInputPolicy(CellProfilerPrimaryImageInputPolicy):
         *,
         special_input_policy: "CellProfilerSpecialInputPolicy",
     ) -> tuple[ArtifactSpec, ...]:
-        image_inputs = ArtifactSpecCollection(declared_inputs).of_kind(
-            ArtifactKind.IMAGE
+        image_inputs = ArtifactSpecCollection(declared_inputs).of_artifact_type(
+            ImageArtifactType
         )
         special_image_count = len(
             special_input_policy.special_image_inputs(

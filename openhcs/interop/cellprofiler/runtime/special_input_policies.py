@@ -10,7 +10,12 @@ from typing import TYPE_CHECKING
 from metaclass_registry import RegistryFamily, RegistryKeyAttribute
 import numpy as np
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
+from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ArtifactSpecCollection,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+)
 from openhcs.core.pipeline.function_contracts import special_input_names_from_callable
 from openhcs.core.runtime_values import (
     ImagePayloadMetadataInput,
@@ -19,7 +24,7 @@ from openhcs.core.runtime_values import (
     object_label_dense_array,
 )
 from openhcs.interop.cellprofiler.runtime.artifact_binding import (
-    RuntimeArtifactKindStrategy,
+    RuntimeArtifactTypeStrategy,
     RuntimeInputBindingRequestBase,
 )
 from openhcs.interop.cellprofiler.runtime.bound_parameters import (
@@ -67,14 +72,14 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
 
     @property
     def object_inputs(self) -> tuple[ArtifactSpec, ...]:
-        return ArtifactSpecCollection(self.special_input_specs).of_kind(
-            ArtifactKind.OBJECT_LABELS
+        return ArtifactSpecCollection(self.special_input_specs).of_artifact_type(
+            ObjectLabelsArtifactType
         )
 
     @property
     def image_inputs(self) -> tuple[ArtifactSpec, ...]:
-        return ArtifactSpecCollection(self.special_input_specs).of_kind(
-            ArtifactKind.IMAGE
+        return ArtifactSpecCollection(self.special_input_specs).of_artifact_type(
+            ImageArtifactType
         )
 
     def runtime_value(
@@ -85,12 +90,12 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
             CellProfilerSpecialInputPayloadSemantics.INTENSITY_IMAGE
         ),
     ) -> CellProfilerRuntimeValue:
-        if spec.kind is ArtifactKind.OBJECT_LABELS:
+        if spec.artifact_type is ObjectLabelsArtifactType:
             if parameter_name is not None:
                 return self.label_argument_for(spec, parameter_name)
             return self.object_label_runtime_value(spec, semantics)
         request = self.artifact_input_request(spec)
-        artifact_strategy = RuntimeArtifactKindStrategy.for_kind(spec.kind)
+        artifact_strategy = RuntimeArtifactTypeStrategy.for_artifact_type(spec.artifact_type)
         if semantics.dense_label_domain:
             started_at = time.perf_counter()
             value = object_label_dense_array(
@@ -102,7 +107,7 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
                 time.perf_counter() - started_at,
                 module=self.module_name,
                 spec=spec.name,
-                kind=spec.kind.value,
+                kind=spec.artifact_type.value,
                 semantics=semantics.value,
             )
             return value
@@ -113,7 +118,7 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
             time.perf_counter() - started_at,
             module=self.module_name,
             spec=spec.name,
-            kind=spec.kind.value,
+            kind=spec.artifact_type.value,
             semantics=semantics.value,
         )
         return value
@@ -124,7 +129,7 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
     ) -> CellProfilerSpecialInputValue:
         """Return a runtime artifact input without ambient source-image narrowing."""
         request = replace(self.artifact_input_request(spec), current_image=None)
-        return RuntimeArtifactKindStrategy.for_kind(spec.kind).runtime_input_value(request)
+        return RuntimeArtifactTypeStrategy.for_artifact_type(spec.artifact_type).runtime_input_value(request)
 
     def object_label_runtime_value(
         self,
@@ -132,7 +137,7 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
         semantics: CellProfilerSpecialInputPayloadSemantics,
     ) -> ObjectLabelData:
         """Return an object-label special input in the invocation's artifact domain."""
-        payload = RuntimeArtifactKindStrategy.for_kind(spec.kind).runtime_input_value(
+        payload = RuntimeArtifactTypeStrategy.for_artifact_type(spec.artifact_type).runtime_input_value(
             self.artifact_input_request(spec)
         )
         del semantics
@@ -281,8 +286,8 @@ class TrailingImageSpecialInputPolicy(CellProfilerSpecialInputPolicyMixin):
         declared_inputs: tuple[ArtifactSpec, ...],
     ) -> tuple[ArtifactSpec, ...]:
         del module_name, func
-        image_inputs = ArtifactSpecCollection(declared_inputs).of_kind(
-            ArtifactKind.IMAGE
+        image_inputs = ArtifactSpecCollection(declared_inputs).of_artifact_type(
+            ImageArtifactType
         )
         return image_inputs[1:]
 
@@ -305,10 +310,10 @@ def _signature_special_image_inputs(
     func: CellProfilerFunction,
     declared_inputs: tuple[ArtifactSpec, ...],
 ) -> tuple[ArtifactSpec, ...]:
-    image_inputs = ArtifactSpecCollection(declared_inputs).of_kind(ArtifactKind.IMAGE)
+    image_inputs = ArtifactSpecCollection(declared_inputs).of_artifact_type(ImageArtifactType)
     special_input_count = len(special_input_names_from_callable(func))
     non_image_count = len(
-        tuple(spec for spec in declared_inputs if spec.kind is not ArtifactKind.IMAGE)
+        tuple(spec for spec in declared_inputs if spec.artifact_type is not ImageArtifactType)
     )
     special_image_count = max(0, special_input_count - non_image_count)
     if special_image_count == 0:

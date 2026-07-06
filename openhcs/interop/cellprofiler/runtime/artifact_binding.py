@@ -13,12 +13,23 @@ from typing import ClassVar, get_args, get_origin, get_type_hints
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 import numpy as np
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ArtifactType,
+    ArtifactTypeStrategyMatchMixin,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+    SpatialGridArtifactType,
+)
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.runtime_values import (
     ImagePayloadMetadataInput,
+    MeasurementTable,
     ObjectLabelPayload,
     ObjectLabelRepresentation,
+    ObjectLabelRuntimeSliceStackContract,
     ObjectLabelSet,
     ObjectLabelValue,
     SingletonObjectLabelStackCollapseStrategy,
@@ -26,8 +37,14 @@ from openhcs.core.runtime_values import (
     normalize_image_payload_intensity,
     object_label_dense_array,
 )
+from openhcs.interop.cellprofiler.image_normalization import (
+    normalize_cellprofiler_image_payload,
+)
 from openhcs.interop.cellprofiler.runtime.runtime_plane_kwargs import (
     CurrentPlaneObjectLabelProjection,
+)
+from openhcs.interop.cellprofiler.runtime.runtime_artifact_records import (
+    RuntimeArtifactRecordResolver,
 )
 from openhcs.interop.cellprofiler.runtime.adapter import (
     CellProfilerRuntimeAdapter,
@@ -44,15 +61,15 @@ from openhcs.interop.cellprofiler.runtime.payload_types import (
     CellProfilerRuntimeValue,
 )
 from openhcs.interop.cellprofiler.runtime.policy_registry import (
-    ArtifactKindRegistryMixin,
     EnumStrategyLabelRegistryMixin,
     NoSourceImageNameMixin,
 )
+from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
 
 
 def cellprofiler_image_payload(payload: CellProfilerRuntimeValue) -> CellProfilerRuntimeValue:
     """Return payload in CellProfiler's float image intensity domain."""
-    return normalize_image_payload_intensity(payload, dtype=np.float32)
+    return normalize_cellprofiler_image_payload(payload, dtype=np.float32)
 
 
 @lru_cache(maxsize=256)
@@ -86,12 +103,12 @@ class RuntimeArtifactBindingScope:
         """Return artifact binding scope declared by a module contract."""
         return cls(
             external_image_names=frozenset(
-                contract.external_input_names(ArtifactKind.IMAGE)
+                contract.external_input_names(ImageArtifactType)
             ),
             external_object_names=frozenset(
-                contract.external_input_names(ArtifactKind.OBJECT_LABELS)
+                contract.external_input_names(ObjectLabelsArtifactType)
             ),
-            runtime_image_names=contract.runtime_input_name_set(ArtifactKind.IMAGE),
+            runtime_image_names=contract.runtime_input_name_set(ImageArtifactType),
         )
 
     def image_origin(self, spec: ArtifactSpec) -> RuntimeImageInputOrigin:
@@ -125,7 +142,8 @@ class RuntimeArtifactInputRequest(ArtifactSpec, CellProfilerOptionalCurrentImage
     ) -> "RuntimeArtifactInputRequest":
         return cls(
             name=spec.name,
-            kind=spec.kind,
+            plan_type=spec.plan_type,
+            artifact_type=spec.artifact_type,
             materialization=spec.materialization,
             required=spec.required,
             sidecar_role=spec.sidecar_role,
@@ -135,23 +153,23 @@ class RuntimeArtifactInputRequest(ArtifactSpec, CellProfilerOptionalCurrentImage
         )
 
 
-class RuntimeArtifactKindStrategy(
-    ArtifactKindRegistryMixin,
+class RuntimeArtifactTypeStrategy(
+    ArtifactTypeStrategyMatchMixin,
+    MostDerivedContextStrategyMixin[type[ArtifactType]],
     ABC,
-    metaclass=AutoRegisterMeta,
 ):
-    """Nominal strategy family for ArtifactKind-specific runtime semantics."""
+    """Nominal strategy family for ArtifactType-specific runtime semantics."""
 
     @classmethod
     @lru_cache(maxsize=None)
-    def for_kind(cls, kind: ArtifactKind) -> "RuntimeArtifactKindStrategy":
-        try:
-            strategy_type = cls.__registry__[kind]
-        except KeyError as exc:
-            raise TypeError(
-                f"No CellProfiler artifact kind strategy registered for {kind.value}."
-            ) from exc
-        return strategy_type()
+    def for_artifact_type(
+        cls,
+        artifact_type: ArtifactType,
+    ) -> "RuntimeArtifactTypeStrategy":
+        return cls.for_context(
+            ArtifactType.coerce(artifact_type),
+            error_subject="CellProfiler runtime artifact type strategy",
+        )
 
     @abstractmethod
     def runtime_input_value(self, request: RuntimeArtifactInputRequest) -> CellProfilerRuntimeValue:
@@ -197,9 +215,9 @@ class RuntimeArtifactKindStrategy(
         )
 
 
-class NoSourceImageArtifactKindStrategy(
+class NoSourceImageArtifactTypeStrategy(
     NoSourceImageNameMixin,
-    RuntimeArtifactKindStrategy,
+    RuntimeArtifactTypeStrategy,
 ):
     """Artifact-kind strategy for runtime payloads with no source image owner."""
 
@@ -295,10 +313,10 @@ class StoredImageArtifactInputOriginStrategy(
         return request.adapter.get_image(request.name).data
 
 
-class ImageArtifactKindStrategy(RuntimeArtifactKindStrategy):
+class ImageArtifactTypeStrategy(RuntimeArtifactTypeStrategy):
     """Resolve image artifact payloads and source-image lineage."""
 
-    kind = ArtifactKind.IMAGE
+    artifact_type = ImageArtifactType
 
     def raw_runtime_input_value(self, request: RuntimeArtifactInputRequest) -> CellProfilerRuntimeValue:
         return ImageArtifactInputOriginStrategy.for_enum_member(
@@ -323,10 +341,10 @@ class ImageArtifactKindStrategy(RuntimeArtifactKindStrategy):
         return self.raw_runtime_input_value(request)
 
 
-class ObjectLabelsArtifactKindStrategy(RuntimeArtifactKindStrategy):
+class ObjectLabelsArtifactTypeStrategy(RuntimeArtifactTypeStrategy):
     """Resolve object-label payloads and lineage."""
 
-    kind = ArtifactKind.OBJECT_LABELS
+    artifact_type = ObjectLabelsArtifactType
 
     def runtime_input_value(self, request: RuntimeArtifactInputRequest) -> CellProfilerRuntimeValue:
         if request.binding_scope.is_external_object(request):
@@ -341,18 +359,14 @@ class ObjectLabelsArtifactKindStrategy(RuntimeArtifactKindStrategy):
                     request.current_image,
                 )
             )
-            return SingletonObjectLabelStackCollapseStrategy.for_labels(payload).collapse(
-                payload
-            )
+            return payload
         payload = _object_label_runtime_payload(
             request.adapter.get_objects(
                 request.name,
                 current_image=request.current_image,
             )
         )
-        return SingletonObjectLabelStackCollapseStrategy.for_labels(payload).collapse(
-            payload
-        )
+        return payload
 
     def source_image_name(
         self,
@@ -378,10 +392,10 @@ class ObjectLabelsArtifactKindStrategy(RuntimeArtifactKindStrategy):
         )
 
 
-class MeasurementsArtifactKindStrategy(RuntimeArtifactKindStrategy):
+class MeasurementsArtifactTypeStrategy(RuntimeArtifactTypeStrategy):
     """Resolve measurement payloads and lineage."""
 
-    kind = ArtifactKind.MEASUREMENTS
+    artifact_type = MeasurementsArtifactType
 
     def runtime_input_value(self, request: RuntimeArtifactInputRequest) -> CellProfilerRuntimeValue:
         return request.adapter.get_measurements(
@@ -399,10 +413,10 @@ class MeasurementsArtifactKindStrategy(RuntimeArtifactKindStrategy):
         ).source_image_name
 
 
-class RelationshipsArtifactKindStrategy(NoSourceImageArtifactKindStrategy):
+class RelationshipsArtifactTypeStrategy(NoSourceImageArtifactTypeStrategy):
     """Resolve relationship payloads."""
 
-    kind = ArtifactKind.RELATIONSHIPS
+    artifact_type = RelationshipsArtifactType
 
     def runtime_input_value(self, request: RuntimeArtifactInputRequest) -> CellProfilerRuntimeValue:
         return request.adapter.get_relationship(
@@ -410,10 +424,10 @@ class RelationshipsArtifactKindStrategy(NoSourceImageArtifactKindStrategy):
             current_image=request.current_image,
         )
 
-class SpatialGridArtifactKindStrategy(NoSourceImageArtifactKindStrategy):
+class SpatialGridArtifactTypeStrategy(NoSourceImageArtifactTypeStrategy):
     """Resolve spatial-grid payloads."""
 
-    kind = ArtifactKind.SPATIAL_GRID
+    artifact_type = SpatialGridArtifactType
 
     def runtime_input_value(self, request: RuntimeArtifactInputRequest) -> CellProfilerRuntimeValue:
         return request.adapter.get_spatial_grid(request.name)
@@ -435,7 +449,53 @@ class RuntimeInputBindingRequestBase(
     adapter: CellProfilerRuntimeAdapter
     kwargs: CellProfilerKwargs
     binding_scope: RuntimeArtifactBindingScope
+    runtime_inputs: tuple[ArtifactSpec, ...] = ()
     project_object_labels_to_current_plane: bool = True
+
+    @property
+    def declared_measurement_specs(self) -> tuple[ArtifactSpec, ...]:
+        """Return measurement artifacts explicitly declared for this runtime binding."""
+        return tuple(
+            spec
+            for spec in self.runtime_inputs
+            if spec.artifact_type is MeasurementsArtifactType
+        )
+
+    @property
+    def declared_measurement_input_cache_key(self) -> tuple[object, ...]:
+        return (
+            "declared_measurement_inputs",
+            self.adapter.runtime_value_store.revision,
+            self.adapter.axis_scope.axis_id,
+            self.adapter.group_key,
+            tuple(
+                (spec.name, spec.artifact_type.value)
+                for spec in self.declared_measurement_specs
+            ),
+        )
+
+    def declared_measurement_tables(self) -> tuple[MeasurementTable, ...]:
+        """Return measurement tables from artifacts explicitly declared as inputs."""
+        measurement_specs = self.declared_measurement_specs
+        if not measurement_specs:
+            return ()
+        cache_key = self.declared_measurement_input_cache_key
+        cached = self.adapter._measurement_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        tables: list[MeasurementTable] = []
+        for spec in measurement_specs:
+            for record in RuntimeArtifactRecordResolver(
+                adapter=self.adapter,
+                name=spec.name,
+                artifact_type=MeasurementsArtifactType,
+                group_key=None,
+                current_image=None,
+            ).resolve():
+                tables.append(MeasurementTable.from_runtime_value(record.value))
+        resolved = tuple(tables)
+        self.adapter._measurement_cache[cache_key] = resolved
+        return resolved
 
     def label_domain_payload_for(self, spec: ArtifactSpec) -> CellProfilerRuntimeValue:
         """Return object labels retaining nominal domain metadata."""
@@ -452,6 +512,15 @@ class RuntimeInputBindingRequestBase(
             if isinstance(payload, (ObjectLabelPayload, ObjectLabelSet))
             else payload
         )
+        if (
+            not self.project_object_labels_to_current_plane
+            and (
+                ObjectLabelRuntimeSliceStackContract.runtime_slice_count(payload)
+                is not None
+                or (isinstance(labels, np.ndarray) and labels.ndim == 3)
+            )
+        ):
+            return payload if isinstance(payload, ObjectLabelValue) else labels
         return SingletonObjectLabelStackCollapseStrategy.for_labels(labels).collapse(
             labels
         )

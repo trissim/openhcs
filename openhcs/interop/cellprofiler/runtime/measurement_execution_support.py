@@ -9,6 +9,7 @@ import time
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode, payload_slice_count
 from openhcs.core.artifacts import ArtifactSpec
 from openhcs.core.pipeline.function_contracts import (
+    ObjectLabelMeasurementExecution,
     object_label_measurement_execution_from_callable,
 )
 from openhcs.core.runtime_profile import RuntimeProfileTimer
@@ -60,6 +61,7 @@ ObjectMeasurementBatchExecutor = Callable[
     Sequence[CellProfilerRuntimeValue],
 ]
 
+
 def project_object_label_payload_for_measurement_image(
     measurement_image: CellProfilerMeasurementImage,
     payload: CellProfilerRuntimeValue,
@@ -82,7 +84,6 @@ def object_measurement_runtime_inputs(
     measurement_image: CellProfilerMeasurementImage,
     object_spec: ArtifactSpec,
     label_payload: CellProfilerRuntimeValue,
-    current_image: CellProfilerRuntimeValue,
     adapter: CellProfilerRuntimeAdapter,
 ) -> tuple[
     CellProfilerRuntimeValue,
@@ -156,13 +157,19 @@ def object_measurement_runtime_inputs(
                 completion_label_payload,
             )
         )
+    object_label_execution = object_label_measurement_execution_from_callable(func)
+    semantic_label_payload = (
+        prepared_labels.source_projected_payload
+        if object_label_execution is ObjectLabelMeasurementExecution.FULL_STACK
+        else completion_label_payload
+    )
     executable_labels = (
         CellProfilerObjectMeasurementLabelArgumentPolicy.for_enum_member(
-            object_label_measurement_execution_from_callable(func)
+            object_label_execution
         ).label_argument(
             CellProfilerObjectMeasurementLabelArgumentRequest(
                 dense_labels=measurement_labels,
-                label_payload=completion_label_payload,
+                label_payload=semantic_label_payload,
                 measurement_image_payload=measurement_image.payload,
             )
         )
@@ -182,9 +189,9 @@ def object_measurement_runtime_inputs(
             module_name
         ).execution_mode(
             func,
-            completion_label_payload,
+            semantic_label_payload,
             measurement_image.execution_mode,
-            runtime_slice_count=payload_slice_count(current_image),
+            runtime_slice_count=payload_slice_count(measurement_image.payload),
         )
     )
     return (
@@ -207,7 +214,7 @@ def object_measurement_batch_group_key(
     if not isinstance(labels, ObjectLabelValue):
         return None
     return (
-        ("object_artifact", (object_spec.name, object_spec.kind)),
+        ("object_artifact", (object_spec.name, object_spec.artifact_type)),
         ("object_labels", labels.object_label_semantic_identity()),
     )
 

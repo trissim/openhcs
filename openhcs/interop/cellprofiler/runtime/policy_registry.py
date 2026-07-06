@@ -1,16 +1,12 @@
 """Registry contracts shared by CellProfiler runtime policy families."""
 
 from __future__ import annotations
-
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from typing import ClassVar, Generic, TypeVar
-
 from metaclass_registry import AutoRegisterMeta
-
-from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
     StrategyLabelRegistryMixin,
@@ -41,11 +37,11 @@ class CellProfilerModulePolicyRegistryDefaults:
 
     def applies_to_root_bases(self, bases: tuple[type, ...]) -> bool:
         """Return whether a class declaration starts a new policy registry."""
-        return not any(self.mro_declares_registry(base) for base in bases)
+        return not any((self.mro_declares_registry(base) for base in bases))
 
     def mro_declares_registry(self, cls: type) -> bool:
         """Return whether a class already belongs to an AutoRegisterMeta family."""
-        return any("__registry__" in vars(mro_type) for mro_type in cls.__mro__)
+        return any(("__registry__" in vars(mro_type) for mro_type in cls.__mro__))
 
     def registry_key_for_class(self, name: str, cls: type) -> str | None:
         """Derive the declared registry key for one policy class."""
@@ -53,7 +49,7 @@ class CellProfilerModulePolicyRegistryDefaults:
         registry_key = vars(cls).get(self.registry_key_attr)
         if registry_key is not None:
             return str(registry_key)
-        module_name = cls.module_name  # type: ignore[attr-defined]
+        module_name = cls.module_name
         if module_name is None:
             return f"{cls.__module__}.{cls.__qualname__}"
         return str(module_name)
@@ -62,10 +58,7 @@ class CellProfilerModulePolicyRegistryDefaults:
         """Install AutoRegisterMeta attributes for one policy root."""
         attrs.setdefault("__registry_key__", self.registry_key_attr)
         attrs.setdefault("__skip_if_no_key__", True)
-        attrs.setdefault(
-            "__key_extractor__",
-            staticmethod(self.registry_key_for_class),
-        )
+        attrs.setdefault("__key_extractor__", staticmethod(self.registry_key_for_class))
         attrs.setdefault(self.registry_key_attr, None)
         attrs.setdefault(self.module_name_attr, None)
         attrs.setdefault(
@@ -74,17 +67,17 @@ class CellProfilerModulePolicyRegistryDefaults:
         )
 
     def clear_inherited_fallback_key(
-        self,
-        bases: tuple[type, ...],
-        attrs: CellProfilerKwargDict,
+        self, bases: tuple[type, ...], attrs: CellProfilerKwargDict
     ) -> None:
         """Keep fallback registry keys on the class that declares them."""
         if self.registry_key_attr in attrs:
             return
         inherited_fallback = any(
-            vars(base).get(self.registry_key_attr)
-            == CellProfilerModulePolicyRegistryKey.DEFAULT.value
-            for base in bases
+            (
+                vars(base).get(self.registry_key_attr)
+                == CellProfilerModulePolicyRegistryKey.DEFAULT.value
+                for base in bases
+            )
         )
         if inherited_fallback:
             attrs[self.registry_key_attr] = None
@@ -114,8 +107,7 @@ class CellProfilerModulePolicyRegistryConfigContext:
 
 CELLPROFILER_MODULE_POLICY_IMPLICIT_REGISTRY_CONTEXT = (
     CellProfilerModulePolicyRegistryConfigContext(
-        raw_registry_config=None,
-        defaults=CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS,
+        raw_registry_config=None, defaults=CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS
     )
 )
 
@@ -133,7 +125,7 @@ class CellProfilerModulePolicyRegistryLookup:
         fallback_key = self.fallback_registry_key
         if fallback_key is None:
             return (primary_key,)
-        return primary_key, fallback_key
+        return (primary_key, fallback_key)
 
     def policy_type_or_none(self) -> type | None:
         for registry_key in self.candidate_keys():
@@ -150,26 +142,18 @@ class CellProfilerModulePolicyAutoRegisterMeta(AutoRegisterMeta):
         name: str,
         bases: tuple[type, ...],
         attrs: CellProfilerKwargDict,
-        registry_config: CellProfilerModulePolicyRegistryConfigContext = (
-            CELLPROFILER_MODULE_POLICY_IMPLICIT_REGISTRY_CONTEXT
-        ),
+        registry_config: CellProfilerModulePolicyRegistryConfigContext = CELLPROFILER_MODULE_POLICY_IMPLICIT_REGISTRY_CONTEXT,
     ):
         registry_config.apply_root_defaults(bases, attrs)
         return super().__new__(
-            mcs,
-            name,
-            bases,
-            attrs,
-            registry_config.raw_registry_config,
+            mcs, name, bases, attrs, registry_config.raw_registry_config
         )
 
     @lru_cache(maxsize=None)
     def for_module(cls, module_name: str) -> CellProfilerRuntimeValue:
         """Return the policy registered for a module, or the root's fallback."""
         policy_type = CellProfilerModulePolicyRegistryLookup(
-            cls.__registry__,
-            module_name,
-            cls.fallback_registry_key,
+            cls.__registry__, module_name, cls.fallback_registry_key
         ).policy_type_or_none()
         if policy_type is None:
             return None
@@ -189,64 +173,61 @@ class CellProfilerModulePolicyLookupMixin:
     @lru_cache(maxsize=None)
     def for_module(cls, module_name: str) -> CellProfilerRuntimeValue:
         """Return the policy registered for a module, or the root's fallback."""
-        from openhcs.processing.backends.cellprofiler.module_classes import (
-            CellProfilerModule,
-        )
+        from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
         module_type = CellProfilerModule.for_module(module_name)
         if module_type is not None:
-            declaration_policy_type = cls.declaration_policy_type_or_none(
-                module_type
-            )
+            declaration_policy_type = cls.declaration_policy_type_or_none(module_type)
             if declaration_policy_type is not None:
                 return cls.declaration_policy_instance(
-                    module_type,
-                    declaration_policy_type,
+                    module_type, declaration_policy_type
                 )
         policy_type = CellProfilerModulePolicyRegistryLookup(
-            cls.__registry__,
-            module_name,
-            cls.fallback_registry_key,
+            cls.__registry__, module_name, cls.fallback_registry_key
         ).policy_type_or_none()
         if policy_type is None:
             return None
         return policy_type()
 
     @classmethod
-    def declaration_policy_type_or_none(
-        cls,
-        module_type: type,
-    ) -> type | None:
+    def declaration_policy_type_or_none(cls, module_type: type) -> type | None:
         """Return the most-derived policy inherited by a module declaration."""
-        from openhcs.processing.backends.cellprofiler.module_classes import (
-            CellProfilerModule,
-        )
+        from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
         matching_policy_types = tuple(
-            policy_type
-            for policy_type in module_type.__mro__[1:]
-            if policy_type is not cls
-            and isinstance(policy_type, type)
-            and not issubclass(policy_type, CellProfilerModule)
-            and any(
-                issubclass(policy_type, policy_base)
-                for policy_base in cls.declaration_policy_bases
+            (
+                policy_type
+                for policy_type in module_type.__mro__[1:]
+                if policy_type is not cls
+                and isinstance(policy_type, type)
+                and (not issubclass(policy_type, CellProfilerModule))
+                and any(
+                    (
+                        issubclass(policy_type, policy_base)
+                        for policy_base in cls.declaration_policy_bases
+                    )
+                )
             )
         )
         owning_policy_types = tuple(
-            candidate_type
-            for candidate_type in matching_policy_types
-            if not any(
-                other_type is not candidate_type
-                and issubclass(other_type, candidate_type)
-                for other_type in matching_policy_types
+            (
+                candidate_type
+                for candidate_type in matching_policy_types
+                if not any(
+                    (
+                        other_type is not candidate_type
+                        and issubclass(other_type, candidate_type)
+                        for other_type in matching_policy_types
+                    )
+                )
             )
         )
         if len(owning_policy_types) > 1:
-            names = tuple(policy_type.__qualname__ for policy_type in owning_policy_types)
+            names = tuple(
+                (policy_type.__qualname__ for policy_type in owning_policy_types)
+            )
             raise ValueError(
-                f"{module_type.__name__} inherits multiple {cls.__name__} "
-                f"policies: {names!r}."
+                f"{module_type.__name__} inherits multiple {cls.__name__} policies: {names!r}."
             )
         if owning_policy_types:
             return owning_policy_types[0]
@@ -254,9 +235,7 @@ class CellProfilerModulePolicyLookupMixin:
 
     @classmethod
     def declaration_policy_instance(
-        cls,
-        module_type: type,
-        policy_type: type,
+        cls, module_type: type, policy_type: type
     ) -> object:
         """Return a policy view carrying module declaration class attributes."""
         return cls.declaration_policy_instance_type(module_type, policy_type)()
@@ -264,29 +243,25 @@ class CellProfilerModulePolicyLookupMixin:
     @classmethod
     @lru_cache(maxsize=None)
     def declaration_policy_instance_type(
-        cls,
-        module_type: type,
-        policy_type: type,
+        cls, module_type: type, policy_type: type
     ) -> type:
         """Create a policy type whose methods come from the owning policy base."""
         attrs = {
             "__module__": module_type.__module__,
-            "__qualname__": (
-                f"{module_type.__qualname__}.{policy_type.__name__}View"
-            ),
+            "__qualname__": f"{module_type.__qualname__}.{policy_type.__name__}View",
         }
         for name, value in vars(module_type).items():
             if name.startswith("__"):
                 continue
             if name in vars(policy_type):
                 continue
-            if callable(value) or isinstance(value, (staticmethod, classmethod, property)):
+            if callable(value) or isinstance(
+                value, (staticmethod, classmethod, property)
+            ):
                 continue
             attrs[name] = value
         return type(
-            f"{module_type.__name__}{policy_type.__name__}View",
-            (policy_type,),
-            attrs,
+            f"{module_type.__name__}{policy_type.__name__}View", (policy_type,), attrs
         )
 
 
@@ -301,21 +276,9 @@ class EnumStrategyLabelRegistryMixin(
     stable_key_axis: ClassVar[str] = "strategy_label"
 
 
-class ArtifactKindRegistryMixin:
-    """Shared AutoRegister protocol for artifact-kind strategy roots."""
-
-    __registry_key__ = "kind"
-    __skip_if_no_key__ = True
-    stable_key_axis: ClassVar[str] = "kind"
-    kind: ClassVar[ArtifactKind | None] = None
-
-
 class NoSourceImageNameMixin:
     """Policy mixin for objects that intentionally do not qualify by source image."""
 
-    def source_image_name(
-        self,
-        request: CellProfilerRuntimeValue,
-    ) -> str | None:
+    def source_image_name(self, request: CellProfilerRuntimeValue) -> str | None:
         del request
         return None
