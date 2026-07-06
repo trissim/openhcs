@@ -28,7 +28,8 @@ except ImportError:
 # Import simple cell counting
 try:
     from openhcs.processing.backends.analysis.count_cells_simple import \
-        count_cells_simple, ThresholdMethod, Foreground
+        count_cells_simple, count_cells_simple_dual_channel, \
+        ThresholdMethod, Foreground, SimpleColocalizationMethod
 except ImportError:
     pass
 
@@ -41,6 +42,8 @@ __all__ = [
 
     # Simple cell counting
     "count_cells_simple",
+    "count_cells_simple_dual_channel",
     "ThresholdMethod",
     "Foreground",
+    "SimpleColocalizationMethod",
 ]
