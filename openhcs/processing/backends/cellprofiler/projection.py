@@ -1,30 +1,25 @@
 """CellProfiler-compatible image projection backend."""
 
 from __future__ import annotations
-from openhcs.processing.backends.cellprofiler.module_classes import CellProfilerModule
-
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
+    CellProfilerModule,
+)
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar
-
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
-
+from openhcs.constants.constants import VariableComponents
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
-from openhcs.processing.materialization import csv_materializer
-
-PROJECTION_STATS_FIELDS = [
-    "projection_type",
-    "input_slices",
-    "output_min",
-    "output_max",
-    "output_mean",
-]
+from openhcs.processing.materialization import (
+    csv_dataclass_materializer,
+)
 
 
 class ProjectionType(Enum):
@@ -70,9 +65,7 @@ class ProjectionRequest:
 
 
 class ProjectionStrategy(
-    EnumKeyedStrategyMixin[ProjectionType],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[ProjectionType], ABC, metaclass=AutoRegisterMeta
 ):
     """Apply one CellProfiler MakeProjection operation."""
 
@@ -84,7 +77,9 @@ class ProjectionStrategy(
     projection_type_label: ClassVar[str | None] = None
 
     @classmethod
-    def for_projection_type(cls, projection_type: ProjectionType) -> "ProjectionStrategy":
+    def for_projection_type(
+        cls, projection_type: ProjectionType
+    ) -> "ProjectionStrategy":
         return cls.for_enum_member(projection_type)
 
     @abstractmethod
@@ -181,12 +176,12 @@ class MaskProjectionStrategy(Float32ProjectionStrategy):
         return np.all(request.stack > 0, axis=0)
 
 
-@numpy
+@numpy(contract=ProcessingContract.VOLUMETRIC_TO_SLICE)
 @special_outputs(
     (
         "projection_stats",
-        csv_materializer(
-            fields=PROJECTION_STATS_FIELDS,
+        csv_dataclass_materializer(
+            ProjectionStats,
             analysis_type="projection",
         ),
     )
@@ -199,21 +194,20 @@ def make_projection(
     """Combine a stack of 2-D images into a single 2-D projection image."""
     projection_type = coerce_cellprofiler_enum(ProjectionType, projection_type)
     request = ProjectionRequest(
-        image=image,
-        projection_type=projection_type,
-        frequency=frequency,
+        image=image, projection_type=projection_type, frequency=frequency
     )
     result = ProjectionStrategy.for_projection_type(projection_type).apply(request)
-    return result, request.stats(result)
+    return (result, request.stats(result))
 
 
 class MakeProjectionModule(CellProfilerModule):
-    module_name = 'MakeProjection'
-    function_name = 'make_projection'
+    module_name = "MakeProjection"
+    function_name = "make_projection"
     validated = True
-    contract = 'volumetric_to_slice'
-    category = 'z_projection'
+    contract = ProcessingContract.VOLUMETRIC_TO_SLICE
+    default_variable_components = (VariableComponents.Z_INDEX,)
     confidence = 1.0
+
 
 __all__ = public_names_from_objects(
     AverageProjectionStrategy,
@@ -221,7 +215,6 @@ __all__ = public_names_from_objects(
     MaskProjectionStrategy,
     MaximumProjectionStrategy,
     MinimumProjectionStrategy,
-    "PROJECTION_STATS_FIELDS",
     PowerProjectionStrategy,
     ProjectionRequest,
     ProjectionStats,

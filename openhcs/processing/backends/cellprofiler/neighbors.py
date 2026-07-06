@@ -1,7 +1,6 @@
 """Neighbor-measurement backends for CellProfiler-compatible processing."""
 
 from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
@@ -10,11 +9,9 @@ import logging
 import os
 import time
 from typing import ClassVar
-
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
-
 from openhcs.constants.constants import MemoryType
 from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import runtime_bound_parameters
@@ -51,11 +48,16 @@ from openhcs.interop.cellprofiler.runtime.payload_types import (
     CellProfilerFunction,
     CellProfilerKwargDict,
 )
-from openhcs.processing.backends.cellprofiler.module_classes import (
-    ArtifactContractModule,
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
     BoundModuleSettings,
     CellProfilerModule,
-    )
+    ImageArtifactOutputCapability,
+    ImageArtifactOutputModule,
+    MeasurementArtifactOutputModule,
+    ObjectArtifactInputModule,
+    ObjectLabelArtifactInputCapability,
+)
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -76,7 +78,7 @@ def _runtime_profile_enabled() -> bool:
 def _log_runtime_profile(label: str, seconds: float, **fields: object) -> None:
     if not _runtime_profile_enabled():
         return
-    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    field_text = " ".join((f"{key}={value}" for key, value in fields.items()))
     logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
@@ -90,9 +92,7 @@ class DistanceMethod(Enum):
     """CellProfiler MeasureObjectNeighbors distance method."""
 
     def __new__(
-        cls,
-        absorbed_value: str,
-        *cellprofiler_literals: str,
+        cls, absorbed_value: str, *cellprofiler_literals: str
     ) -> "DistanceMethod":
         obj = object.__new__(cls)
         obj._value_ = absorbed_value
@@ -130,9 +130,7 @@ class NeighborDistancePlan:
 
 
 class NeighborDistancePlanner(
-    EnumKeyedStrategyMixin[DistanceMethod],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[DistanceMethod], ABC, metaclass=AutoRegisterMeta
 ):
     """Prepare neighbor-distance state for one closed distance method."""
 
@@ -148,11 +146,7 @@ class NeighborDistancePlanner(
         return cls.for_enum_member(coerce_cellprofiler_enum(DistanceMethod, method))
 
     @abstractmethod
-    def plan(
-        self,
-        labels: np.ndarray,
-        neighbor_distance: int,
-    ) -> NeighborDistancePlan:
+    def plan(self, labels: np.ndarray, neighbor_distance: int) -> NeighborDistancePlan:
         """Return working labels and neighborhood distance."""
 
 
@@ -161,11 +155,7 @@ class AdjacentNeighborDistancePlanner(NeighborDistancePlanner):
 
     method = DistanceMethod.ADJACENT
 
-    def plan(
-        self,
-        labels: np.ndarray,
-        neighbor_distance: int,
-    ) -> NeighborDistancePlan:
+    def plan(self, labels: np.ndarray, neighbor_distance: int) -> NeighborDistancePlan:
         del neighbor_distance
         return NeighborDistancePlan(labels.copy(), 1, "Adjacent")
 
@@ -175,18 +165,12 @@ class ExpandedNeighborDistancePlanner(NeighborDistancePlanner):
 
     method = DistanceMethod.EXPAND
 
-    def plan(
-        self,
-        labels: np.ndarray,
-        neighbor_distance: int,
-    ) -> NeighborDistancePlan:
+    def plan(self, labels: np.ndarray, neighbor_distance: int) -> NeighborDistancePlan:
         del neighbor_distance
         from scipy.ndimage import distance_transform_edt
 
         i, j = distance_transform_edt(
-            labels == 0,
-            return_distances=False,
-            return_indices=True,
+            labels == 0, return_distances=False, return_indices=True
         )
         return NeighborDistancePlan(labels[i, j], 1, "Expanded")
 
@@ -196,15 +180,9 @@ class WithinNeighborDistancePlanner(NeighborDistancePlanner):
 
     method = DistanceMethod.WITHIN
 
-    def plan(
-        self,
-        labels: np.ndarray,
-        neighbor_distance: int,
-    ) -> NeighborDistancePlan:
+    def plan(self, labels: np.ndarray, neighbor_distance: int) -> NeighborDistancePlan:
         return NeighborDistancePlan(
-            labels.copy(),
-            neighbor_distance,
-            int(neighbor_distance),
+            labels.copy(), neighbor_distance, int(neighbor_distance)
         )
 
 
@@ -217,7 +195,6 @@ class MeasureObjectNeighborsObjectInputParameters:
     neighbor_labels: str
     small_removed_neighbor_labels: str
     neighbors_are_same_objects: str
-
     primary_image_parameter_count: ClassVar[int] = 1
     object_binding_parameter_count: ClassVar[int] = 5
     supported_parameter_kinds: ClassVar[frozenset] = frozenset(
@@ -226,8 +203,7 @@ class MeasureObjectNeighborsObjectInputParameters:
 
     @classmethod
     def from_callable(
-        cls,
-        func: CellProfilerFunction,
+        cls, func: CellProfilerFunction
     ) -> "MeasureObjectNeighborsObjectInputParameters":
         parameters = tuple(signature(func).parameters.values())
         start = cls.primary_image_parameter_count
@@ -235,18 +211,18 @@ class MeasureObjectNeighborsObjectInputParameters:
         object_parameters = parameters[start:stop]
         if len(object_parameters) != cls.object_binding_parameter_count:
             raise TypeError(
-                "MeasureObjectNeighbors callable must declare contiguous "
-                "object-binding parameters after its primary image parameter."
+                "MeasureObjectNeighbors callable must declare contiguous object-binding parameters after its primary image parameter."
             )
         unsupported = tuple(
-            parameter
-            for parameter in object_parameters
-            if parameter.kind not in cls.supported_parameter_kinds
+            (
+                parameter
+                for parameter in object_parameters
+                if parameter.kind not in cls.supported_parameter_kinds
+            )
         )
         if unsupported:
             raise TypeError(
-                "MeasureObjectNeighbors object-binding parameters must be "
-                "positional-or-keyword or keyword-only parameters."
+                "MeasureObjectNeighbors object-binding parameters must be positional-or-keyword or keyword-only parameters."
             )
         return cls(*(parameter.name for parameter in object_parameters))
 
@@ -265,27 +241,19 @@ class MeasureObjectNeighborsInputPolicy(CellProfilerObjectInputPolicyMixin):
     """Bind MeasureObjectNeighbors object-label inputs."""
 
     def bound_parameter_names(
-        self,
-        plan: "CellProfilerModuleRuntimePlan",
+        self, plan: "CellProfilerModuleRuntimePlan"
     ) -> tuple[str, ...]:
         if not plan.object_inputs:
             return ()
-        return (
-            MeasureObjectNeighborsObjectInputParameters
-            .from_callable(plan.func)
-            .bound_parameter_names
-        )
+        return MeasureObjectNeighborsObjectInputParameters.from_callable(
+            plan.func
+        ).bound_parameter_names
 
-    def bind(
-        self,
-        request: ObjectInputBindingRequest,
-    ) -> CellProfilerKwargDict:
+    def bind(self, request: ObjectInputBindingRequest) -> CellProfilerKwargDict:
         if len(request.object_inputs) not in (1, 2):
             raise NotImplementedError(
-                "MeasureObjectNeighbors requires one or two object runtime "
-                f"inputs, got {[spec.name for spec in request.object_inputs]}."
+                f"MeasureObjectNeighbors requires one or two object runtime inputs, got {[spec.name for spec in request.object_inputs]}."
             )
-
         parameters = MeasureObjectNeighborsObjectInputParameters.from_callable(
             request.func
         )
@@ -305,7 +273,6 @@ class MeasureObjectNeighborsInputPolicy(CellProfilerObjectInputPolicyMixin):
             small_removed_neighbor_labels = _label_payload_small_removed(
                 neighbor_payload
             )
-
         return {
             parameters.measured_labels: LABEL_PAYLOAD_FINAL.value(measured_payload),
             parameters.small_removed_labels: _label_payload_small_removed(
@@ -344,35 +311,28 @@ class NeighborRetainedImageRequest:
         )
         if retained:
             return (*retained, measurements)
-        return image, measurements
+        return (image, measurements)
 
     def retained_images(
-        self,
-        *,
-        neighbor_count_image: np.ndarray,
-        percent_touching_image: np.ndarray,
+        self, *, neighbor_count_image: np.ndarray, percent_touching_image: np.ndarray
     ) -> tuple[np.ndarray, ...]:
         retained: list[np.ndarray] = []
         if self.retain_neighbor_count_image:
             retained.append(
                 self.colored_metric_image(
-                    neighbor_count_image,
-                    self.neighbor_count_colormap,
+                    neighbor_count_image, self.neighbor_count_colormap
                 )
             )
         if self.retain_percent_touching_image:
             retained.append(
                 self.colored_metric_image(
-                    percent_touching_image,
-                    self.percent_touching_colormap,
+                    percent_touching_image, self.percent_touching_colormap
                 )
             )
         return tuple(retained)
 
     def colored_metric_image(
-        self,
-        metric_image: np.ndarray,
-        colormap_name: str,
+        self, metric_image: np.ndarray, colormap_name: str
     ) -> np.ndarray:
         """Color one object metric image using CellProfiler-style masked RGB output."""
         import matplotlib.cm
@@ -399,47 +359,36 @@ def variant_numbers_for_final_labels(
     return backend.variant_numbers_for_final_labels(final_labels, variant_labels)
 
 
-def labels_or_default(
-    labels: np.ndarray | None,
-    default: np.ndarray,
-) -> np.ndarray:
+def labels_or_default(labels: np.ndarray | None, default: np.ndarray) -> np.ndarray:
     """Return a semantic label variant or the final labels when absent."""
     return default if labels is None else labels
 
 
 def _labels_aligned_to_image_plane(
-    labels: np.ndarray,
-    image: np.ndarray,
-    slice_index: int,
+    labels: np.ndarray, image: np.ndarray, slice_index: int
 ) -> np.ndarray:
     """Project leading label-stack axes when a pure-2D image is being measured."""
     image_array = np.asarray(image)
     if (
         image_array.ndim == 2
         and labels.ndim > 2
-        and labels.shape[-2:] == image_array.shape
+        and (labels.shape[-2:] == image_array.shape)
     ):
         if 0 <= slice_index < labels.shape[0]:
             labels = labels[slice_index]
         if labels.ndim > 2:
             labels = np.max(labels, axis=tuple(range(labels.ndim - 2)))
-        return labels.astype(
-            labels.dtype,
-            copy=False,
-        )
+        return labels.astype(labels.dtype, copy=False)
     return labels
 
 
 def require_matching_shape(
-    labels: np.ndarray,
-    variant: np.ndarray,
-    variant_name: str,
+    labels: np.ndarray, variant: np.ndarray, variant_name: str
 ) -> None:
     """Validate that one neighbor label variant shares the final label shape."""
     if labels.shape != variant.shape:
         raise ValueError(
-            f"{variant_name} shape {variant.shape!r} does not match final "
-            f"labels shape={labels.shape!r}."
+            f"{variant_name} shape {variant.shape!r} does not match final labels shape={labels.shape!r}."
         )
 
 
@@ -465,9 +414,7 @@ class NeighborClosestArrays:
 
 
 class NeighborTopologyBackendStrategy(
-    CellProfilerBackendStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    CellProfilerBackendStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Neighbor topology operations keyed by OpenHCS memory type/provider."""
 
@@ -493,18 +440,13 @@ class NeighborTopologyBackendStrategy(
 
     @abstractmethod
     def variant_numbers_for_final_labels(
-        self,
-        final_labels: np.ndarray,
-        variant_labels: np.ndarray,
+        self, final_labels: np.ndarray, variant_labels: np.ndarray
     ) -> np.ndarray:
         """Map final object IDs to their dominant variant object ID."""
 
     @abstractmethod
     def perimeter_counts(
-        self,
-        perimeter_outlines: np.ndarray,
-        *,
-        variant_object_count: int,
+        self, perimeter_outlines: np.ndarray, *, variant_object_count: int
     ) -> np.ndarray:
         """Return per-object perimeter pixel counts."""
 
@@ -530,8 +472,7 @@ class NumbaNumpyNeighborTopologyBackendStrategy(NeighborTopologyBackendStrategy)
     """Numba-accelerated NumPy backend for neighbor topology."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.NUMBA,
+        MemoryType.NUMPY, CellProfilerBackendProvider.NUMBA
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
@@ -590,18 +531,15 @@ class NumbaNumpyNeighborTopologyBackendStrategy(NeighborTopologyBackendStrategy)
         object_numbers_array = np.ascontiguousarray(object_numbers, dtype=np.int32)
         if working_array.ndim > 2:
             working_array = np.max(
-                working_array,
-                axis=tuple(range(working_array.ndim - 2)),
+                working_array, axis=tuple(range(working_array.ndim - 2))
             )
         if neighbor_array.ndim > 2:
             neighbor_array = np.max(
-                neighbor_array,
-                axis=tuple(range(neighbor_array.ndim - 2)),
+                neighbor_array, axis=tuple(range(neighbor_array.ndim - 2))
             )
         if outline_array.ndim > 2:
             outline_array = np.max(
-                outline_array,
-                axis=tuple(range(outline_array.ndim - 2)),
+                outline_array, axis=tuple(range(outline_array.ndim - 2))
             )
         if working_array.ndim != 2:
             raise NotImplementedError(
@@ -609,14 +547,12 @@ class NumbaNumpyNeighborTopologyBackendStrategy(NeighborTopologyBackendStrategy)
             )
         if neighbor_array.shape != working_array.shape:
             raise ValueError(
-                "Neighbor topology labels must share a shape; got "
-                f"{working_array.shape!r} and {neighbor_array.shape!r}."
+                f"Neighbor topology labels must share a shape; got {working_array.shape!r} and {neighbor_array.shape!r}."
             )
         measured_object_mask = np.zeros(int(variant_object_count) + 1, dtype=np.bool_)
         for object_number in object_numbers_array:
             if 0 < object_number <= int(variant_object_count):
                 measured_object_mask[int(object_number)] = True
-
         offset_y, offset_x = _footprint_offsets(footprint)
         touching_offset_y, touching_offset_x = _footprint_offsets(touching_footprint)
         neighbor_count, touching_pixel_count = _measure_neighbor_topology_numba(
@@ -633,41 +569,30 @@ class NumbaNumpyNeighborTopologyBackendStrategy(NeighborTopologyBackendStrategy)
             int(variant_neighbor_count),
         )
         return NeighborTopologyArrays(
-            neighbor_count=neighbor_count,
-            touching_pixel_count=touching_pixel_count,
+            neighbor_count=neighbor_count, touching_pixel_count=touching_pixel_count
         )
 
     def variant_numbers_for_final_labels(
-        self,
-        final_labels: np.ndarray,
-        variant_labels: np.ndarray,
+        self, final_labels: np.ndarray, variant_labels: np.ndarray
     ) -> np.ndarray:
         final_array = np.ascontiguousarray(final_labels, dtype=np.int32)
         variant_array = np.ascontiguousarray(variant_labels, dtype=np.int32)
         if final_array.shape != variant_array.shape:
             raise ValueError(
-                "Final and variant labels must share a shape; got "
-                f"{final_array.shape!r} and {variant_array.shape!r}."
+                f"Final and variant labels must share a shape; got {final_array.shape!r} and {variant_array.shape!r}."
             )
         final_count = int(final_array.max()) if final_array.size else 0
         variant_count = int(variant_array.max()) if variant_array.size else 0
         return _variant_numbers_for_final_labels_numba(
-            final_array.ravel(),
-            variant_array.ravel(),
-            final_count,
-            variant_count,
+            final_array.ravel(), variant_array.ravel(), final_count, variant_count
         )
 
     def perimeter_counts(
-        self,
-        perimeter_outlines: np.ndarray,
-        *,
-        variant_object_count: int,
+        self, perimeter_outlines: np.ndarray, *, variant_object_count: int
     ) -> np.ndarray:
         outline_array = np.ascontiguousarray(perimeter_outlines, dtype=np.int32)
         return np.maximum(
-            _perimeter_counts_numba(outline_array.ravel(), int(variant_object_count)),
-            1,
+            _perimeter_counts_numba(outline_array.ravel(), int(variant_object_count)), 1
         )
 
     def closest_neighbors(
@@ -700,13 +625,11 @@ class NumbaNumpyNeighborTopologyBackendStrategy(NeighborTopologyBackendStrategy)
 
 
 def neighbor_topology_backend(
-    *,
-    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    *, backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
 ) -> NeighborTopologyBackendStrategy:
     """Return the selected neighbor topology backend."""
     return NeighborTopologyBackendStrategy.for_memory_type(
-        MemoryType.NUMPY,
-        backend_provider=backend_provider,
+        MemoryType.NUMPY, backend_provider=backend_provider
     )
 
 
@@ -749,8 +672,8 @@ def measure_object_neighbors(
     if (
         slice_index is None
         and np.asarray(image).ndim == 2
-        and label_array.ndim == 3
-        and label_array.shape[-2:] == np.asarray(image).shape
+        and (label_array.ndim == 3)
+        and (label_array.shape[-2:] == np.asarray(image).shape)
     ):
         rows: list = []
         for plane_index in range(label_array.shape[0]):
@@ -775,14 +698,9 @@ def measure_object_neighbors(
                 slice_index=plane_index,
             )
             rows.extend(plane_rows)
-        return image, rows
-
+        return (image, rows)
     slice_index = 0 if slice_index is None else int(slice_index)
-    labels = _labels_aligned_to_image_plane(
-        label_array,
-        image,
-        slice_index,
-    )
+    labels = _labels_aligned_to_image_plane(label_array, image, slice_index)
     final_labels = labels
     retained_image_request = NeighborRetainedImageRequest(
         labels=final_labels,
@@ -801,42 +719,46 @@ def measure_object_neighbors(
         )
     )
     measured_variant_labels = labels_or_default(
-        None
-        if small_removed_labels is None
+        (
+            None
+            if small_removed_labels is None
             else _labels_aligned_to_image_plane(
                 object_label_dense_array(small_removed_labels, dtype=np.int32),
                 image,
                 slice_index,
-            ),
+            )
+        ),
         final_labels,
     )
     neighbor_variant_labels = (
         measured_variant_labels
         if neighbors_are_same_objects and small_removed_neighbor_labels is None
         else labels_or_default(
-            None
-            if small_removed_neighbor_labels is None
-            else _labels_aligned_to_image_plane(
-                object_label_dense_array(small_removed_neighbor_labels, dtype=np.int32),
-                image,
-                slice_index,
+            (
+                None
+                if small_removed_neighbor_labels is None
+                else _labels_aligned_to_image_plane(
+                    object_label_dense_array(
+                        small_removed_neighbor_labels, dtype=np.int32
+                    ),
+                    image,
+                    slice_index,
+                )
             ),
             neighbor_final_labels,
         )
     )
-
-    require_matching_shape(final_labels, measured_variant_labels, "small_removed_labels")
     require_matching_shape(
-        neighbor_final_labels,
-        neighbor_variant_labels,
-        "small_removed_neighbor_labels",
+        final_labels, measured_variant_labels, "small_removed_labels"
+    )
+    require_matching_shape(
+        neighbor_final_labels, neighbor_variant_labels, "small_removed_neighbor_labels"
     )
     profile_mark = _profile_elapsed(
         "measure_object_neighbors.normalize_inputs",
         profile_mark,
         shape=final_labels.shape,
     )
-
     final_object_count = int(final_labels.max()) if final_labels.size else 0
     if final_object_count == 0:
         empty_metric_image = retained_image_request.empty_metric_image()
@@ -846,19 +768,15 @@ def measure_object_neighbors(
             neighbor_count_image=empty_metric_image,
             percent_touching_image=empty_metric_image,
         )
-
     measured_topology_labels = measured_variant_labels
     neighbor_topology_labels = neighbor_variant_labels.copy()
     if not consider_discarded_objects:
         neighbor_topology_labels[neighbor_final_labels <= 0] = 0
-
     neighbor_backend = neighbor_topology_backend(
-        backend_provider=neighbor_topology_backend_provider,
+        backend_provider=neighbor_topology_backend_provider
     )
     object_numbers = variant_numbers_for_final_labels(
-        final_labels,
-        measured_variant_labels,
-        neighbor_backend=neighbor_backend,
+        final_labels, measured_variant_labels, neighbor_backend=neighbor_backend
     )
     neighbor_numbers = (
         object_numbers
@@ -887,11 +805,10 @@ def measure_object_neighbors(
         final_has_pixels
         if neighbors_are_same_objects
         else np.bincount(
-            neighbor_final_labels.ravel(),
-            minlength=neighbor_final_count + 1,
-        )[1:] > 0
+            neighbor_final_labels.ravel(), minlength=neighbor_final_count + 1
+        )[1:]
+        > 0
     )
-
     variant_object_count = (
         int(measured_topology_labels.max()) if measured_topology_labels.size else 0
     )
@@ -921,7 +838,6 @@ def measure_object_neighbors(
             neighbor_count_image=empty_metric_image,
             percent_touching_image=empty_metric_image,
         )
-
     neighbor_count = np.zeros(variant_object_count)
     first_x_vector = np.zeros(variant_object_count)
     second_x_vector = np.zeros(variant_object_count)
@@ -931,16 +847,11 @@ def measure_object_neighbors(
     percent_touching = np.zeros(variant_object_count)
     final_first_object_number = np.zeros(final_object_count, dtype=int)
     final_second_object_number = np.zeros(final_object_count, dtype=int)
-
     normalized_distance_method = coerce_cellprofiler_enum(
-        DistanceMethod,
-        distance_method,
+        DistanceMethod, distance_method
     )
-    distance_plan = NeighborDistancePlanner.for_method(
-        normalized_distance_method
-    ).plan(
-        measured_topology_labels,
-        neighbor_distance,
+    distance_plan = NeighborDistancePlanner.for_method(normalized_distance_method).plan(
+        measured_topology_labels, neighbor_distance
     )
     profile_mark = _profile_elapsed(
         "measure_object_neighbors.distance_plan",
@@ -952,17 +863,15 @@ def measure_object_neighbors(
     working_labels = distance_plan.working_labels
     distance = distance_plan.distance
     measurement_scale = distance_plan.measurement_scale
-
     neighbor_working_labels = (
         working_labels.copy()
         if neighbors_are_same_objects
         and normalized_distance_method is DistanceMethod.EXPAND
         else neighbor_topology_labels
     )
-
     if variant_neighbor_count > (1 if neighbors_are_same_objects else 0):
         relationship_backend = ObjectRelationshipBackendStrategy.for_memory_type(
-            backend_provider=relationship_backend_provider,
+            backend_provider=relationship_backend_provider
         )
         ocenters = relationship_backend.label_centers(measured_variant_labels)
         ncenters = relationship_backend.label_centers(neighbor_variant_labels)
@@ -972,20 +881,17 @@ def measure_object_neighbors(
             variant_object_count=variant_object_count,
             variant_neighbor_count=variant_neighbor_count,
         )
-
         perimeter_outlines = ObjectOutlineBackendStrategy.for_memory_type(
-            backend_provider=outline_backend_provider,
+            backend_provider=outline_backend_provider
         ).outline(working_labels)
         perimeters = neighbor_backend.perimeter_counts(
-            perimeter_outlines,
-            variant_object_count=variant_object_count,
+            perimeter_outlines, variant_object_count=variant_object_count
         )
         profile_mark = _profile_elapsed(
             "measure_object_neighbors.outline_perimeters",
             profile_mark,
             shape=working_labels.shape,
         )
-
         if variant_neighbor_count >= (2 if neighbors_are_same_objects else 1):
             closest = neighbor_backend.closest_neighbors(
                 ocenters,
@@ -1012,9 +918,8 @@ def measure_object_neighbors(
                 variant_object_count=variant_object_count,
                 variant_neighbor_count=variant_neighbor_count,
             )
-
         morphology_backend = MorphologyBackendStrategy.for_memory_type(
-            backend_provider=morphology_backend_provider,
+            backend_provider=morphology_backend_provider
         )
         topology = neighbor_backend.measure_topology(
             working_labels,
@@ -1031,11 +936,8 @@ def measure_object_neighbors(
         neighbor_count = topology.neighbor_count
         percent_touching = topology.touching_pixel_count * 100 / perimeters
         profile_mark = _profile_elapsed(
-            "measure_object_neighbors.topology",
-            profile_mark,
-            distance=distance,
+            "measure_object_neighbors.topology", profile_mark, distance=distance
         )
-
     neighbor_count_image = np.zeros(final_labels.shape, dtype=float)
     percent_touching_image = np.zeros(final_labels.shape, dtype=float)
     object_mask = final_labels > 0
@@ -1055,7 +957,6 @@ def measure_object_neighbors(
         profile_mark,
         final_object_count=final_object_count,
     )
-
     measurements = []
     for i in range(final_object_count):
         object_number = object_numbers[i]
@@ -1082,7 +983,6 @@ def measure_object_neighbors(
         second_dist = np.sqrt(
             second_x_vector[object_index] ** 2 + second_y_vector[object_index] ** 2
         )
-
         measurements.append(
             NeighborMeasurements(
                 slice_index=slice_index,
@@ -1098,12 +998,9 @@ def measure_object_neighbors(
             )
         )
     profile_mark = _profile_elapsed(
-        "measure_object_neighbors.rows",
-        profile_mark,
-        row_count=len(measurements),
+        "measure_object_neighbors.rows", profile_mark, row_count=len(measurements)
     )
     del profile_mark
-
     _log_runtime_profile(
         "measure_object_neighbors.total",
         time.perf_counter() - profile_start,
@@ -1148,7 +1045,7 @@ def _footprint_offsets(footprint: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         np.column_stack((coords[:, 0] - center_y, coords[:, 1] - center_x)),
         dtype=np.int64,
     )
-    return offsets[:, 0], offsets[:, 1]
+    return (offsets[:, 0], offsets[:, 1])
 
 
 @njit(cache=True)
@@ -1167,18 +1064,16 @@ def _measure_neighbor_topology_numba(
 ) -> tuple[np.ndarray, np.ndarray]:
     height, width = working_labels.shape
     adjacency = np.zeros(
-        (variant_object_count, variant_neighbor_count + 1),
-        dtype=np.bool_,
+        (variant_object_count, variant_neighbor_count + 1), dtype=np.bool_
     )
     touching_pixel_count = np.zeros(variant_object_count, dtype=np.float64)
-
     for y in range(height):
         for x in range(width):
             object_number = working_labels[y, x]
             if (
                 object_number <= 0
                 or object_number > variant_object_count
-                or not measured_object_mask[object_number]
+                or (not measured_object_mask[object_number])
             ):
                 continue
             object_index = object_number - 1
@@ -1191,7 +1086,7 @@ def _measure_neighbor_topology_numba(
                     neighbor_y < 0
                     or neighbor_y >= height
                     or neighbor_x < 0
-                    or neighbor_x >= width
+                    or (neighbor_x >= width)
                 ):
                     continue
                 neighbor_number = neighbor_working_labels[neighbor_y, neighbor_x]
@@ -1200,7 +1095,6 @@ def _measure_neighbor_topology_numba(
                 if neighbors_are_same_objects and neighbor_number == object_number:
                     continue
                 adjacency[object_index, neighbor_number] = True
-
             for offset_index in range(touching_offset_y.size):
                 neighbor_y = y + touching_offset_y[offset_index]
                 neighbor_x = x + touching_offset_x[offset_index]
@@ -1208,7 +1102,7 @@ def _measure_neighbor_topology_numba(
                     neighbor_y < 0
                     or neighbor_y >= height
                     or neighbor_x < 0
-                    or neighbor_x >= width
+                    or (neighbor_x >= width)
                 ):
                     continue
                 if neighbors_are_same_objects:
@@ -1221,7 +1115,6 @@ def _measure_neighbor_topology_numba(
                 if touches:
                     touching_pixel_count[object_index] += 1.0
                     break
-
     neighbor_count = np.zeros(variant_object_count, dtype=np.float64)
     for object_index in range(variant_object_count):
         count = 0.0
@@ -1229,7 +1122,7 @@ def _measure_neighbor_topology_numba(
             if adjacency[object_index, neighbor_number]:
                 count += 1.0
         neighbor_count[object_index] = count
-    return neighbor_count, touching_pixel_count
+    return (neighbor_count, touching_pixel_count)
 
 
 @njit(cache=True)
@@ -1249,8 +1142,8 @@ def _variant_numbers_for_final_labels_numba(
         if (
             final_number > 0
             and final_number <= final_count
-            and variant_number > 0
-            and variant_number <= variant_count
+            and (variant_number > 0)
+            and (variant_number <= variant_count)
         ):
             overlaps[final_number, variant_number] += 1
     for final_number in range(1, final_count + 1):
@@ -1267,8 +1160,7 @@ def _variant_numbers_for_final_labels_numba(
 
 @njit(cache=True)
 def _perimeter_counts_numba(
-    perimeter_outlines_flat: np.ndarray,
-    variant_object_count: int,
+    perimeter_outlines_flat: np.ndarray, variant_object_count: int
 ) -> np.ndarray:
     counts = np.zeros(variant_object_count, dtype=np.float64)
     for index in range(perimeter_outlines_flat.size):
@@ -1290,7 +1182,9 @@ def _closest_neighbors_numba(
     variant_object_count: int,
     variant_neighbor_count: int,
     final_object_count: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[
+    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
+]:
     first_x_vector = np.zeros(variant_object_count, dtype=np.float64)
     first_y_vector = np.zeros(variant_object_count, dtype=np.float64)
     second_x_vector = np.zeros(variant_object_count, dtype=np.float64)
@@ -1298,7 +1192,6 @@ def _closest_neighbors_numba(
     angle = np.zeros(variant_object_count, dtype=np.float64)
     final_first_object_number = np.zeros(final_object_count, dtype=np.int64)
     final_second_object_number = np.zeros(final_object_count, dtype=np.int64)
-
     for object_index in range(variant_object_count):
         if object_index >= object_centers.shape[0]:
             continue
@@ -1344,7 +1237,6 @@ def _closest_neighbors_numba(
             second_y_vector[object_index] = (
                 neighbor_centers[second_neighbor, 0] - object_y
             )
-
         norm1 = np.sqrt(
             first_x_vector[object_index] * first_x_vector[object_index]
             + first_y_vector[object_index] * first_y_vector[object_index]
@@ -1363,7 +1255,6 @@ def _closest_neighbors_numba(
             elif dot > 1.0:
                 dot = 1.0
             angle[object_index] = np.arccos(dot) * 180.0 / np.pi
-
     for final_object_index in range(final_object_count):
         if (
             final_object_index >= final_has_pixels.size
@@ -1382,7 +1273,6 @@ def _closest_neighbors_numba(
         object_x = object_centers[object_index, 1]
         if not (np.isfinite(object_y) and np.isfinite(object_x)):
             continue
-
         first_distance = np.inf
         second_distance = np.inf
         first_final_neighbor = 0
@@ -1393,7 +1283,10 @@ def _closest_neighbors_numba(
                 or not neighbor_has_pixels[final_neighbor_index]
             ):
                 continue
-            if neighbors_are_same_objects and final_neighbor_index == final_object_index:
+            if (
+                neighbors_are_same_objects
+                and final_neighbor_index == final_object_index
+            ):
                 continue
             neighbor_number = neighbor_numbers[final_neighbor_index]
             neighbor_index = neighbor_number - 1
@@ -1420,7 +1313,6 @@ def _closest_neighbors_numba(
                 second_final_neighbor = final_neighbor_index + 1
         final_first_object_number[final_object_index] = first_final_neighbor
         final_second_object_number[final_object_index] = second_final_neighbor
-
     return (
         first_x_vector,
         first_y_vector,
@@ -1437,12 +1329,16 @@ class MeasureObjectNeighborsModule(
     TableMeasurementRecordRowsMixin,
     NoSourceMeasurementRecordMixin,
     ColumnarFieldsMeasurementRecordMixin,
+    ObjectArtifactInputModule,
+    ImageArtifactOutputModule,
+    MeasurementArtifactOutputModule,
     CellProfilerModule,
 ):
-    module_name = 'MeasureObjectNeighbors'
-    function_name = 'measure_object_neighbors'
+    module_name = "MeasureObjectNeighbors"
+    function_name = "measure_object_neighbors"
     validated = True
     confidence = 1.0
+    measurement_category_prefixes = (("neighbors",),)
     ignored_settings = (
         "Select objects to measure",
         "Select neighboring objects to measure",
@@ -1452,14 +1348,9 @@ class MeasureObjectNeighborsModule(
         "Select colormap",
     )
     setting_bindings = (
+        SettingToKeywordBinding("Method to determine neighbors", "distance_method"),
         SettingToKeywordBinding(
-            "Method to determine neighbors",
-            "distance_method",
-        ),
-        SettingToKeywordBinding(
-            "Neighbor distance",
-            "neighbor_distance",
-            parse_cellprofiler_int,
+            "Neighbor distance", "neighbor_distance", parse_cellprofiler_int
         ),
         SettingToKeywordBinding(
             "Consider objects discarded for touching image border?",
@@ -1470,17 +1361,14 @@ class MeasureObjectNeighborsModule(
 
     @classmethod
     def postprocess_bound_settings(
-        cls,
-        module: "ModuleBlock",
-        bound: "BoundModuleSettings",
+        cls, module: "ModuleBlock", bound: "BoundModuleSettings"
     ) -> "BoundModuleSettings":
         colormaps = module.get_setting_values("Select colormap")
         kwargs = {
             **dict(bound.kwargs),
             "retain_neighbor_count_image": parse_cellprofiler_bool(
                 module.get_setting(
-                    "Retain the image of objects colored by numbers of neighbors?",
-                    "No",
+                    "Retain the image of objects colored by numbers of neighbors?", "No"
                 )
             ),
             "neighbor_count_colormap": colormaps[0] if colormaps else "Default",
@@ -1505,24 +1393,26 @@ class MeasureObjectNeighborsModule(
 
     @classmethod
     def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-
-        measured = builder.require_artifact(
-            ArtifactSpec(required_setting_value(module, "Select objects to measure"), ArtifactKind.OBJECT_LABELS),
-            module,
-        )
-        neighbors = builder.require_artifact(
-            ArtifactSpec(required_setting_value(module, "Select neighboring objects to measure"), ArtifactKind.OBJECT_LABELS),
-            module,
-        )
+        measured = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(required_setting_value(module, "Select objects to measure")))
+        neighbors = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(required_setting_value(module, "Select neighboring objects to measure")))
         output_names = setting_values(module, "Name the output image")
         outputs = []
-        if optional_setting_value(module, "Retain the image of objects colored by numbers of neighbors?") in {"Yes", "yes", "True", "true"}:
-            outputs.append(builder.declare_artifact(ArtifactSpec(output_names[0], ArtifactKind.IMAGE), module))
-        if optional_setting_value(module, "Retain the image of objects colored by percent of touching pixels?") in {"Yes", "yes", "True", "true"}:
-            outputs.append(builder.declare_artifact(ArtifactSpec(output_names[1], ArtifactKind.IMAGE), module))
-        outputs.append(builder.declare_artifact(ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS), module))
-        return assembler.assemble_contract(module, builder, inputs=[measured, neighbors], outputs=outputs)
+        if optional_setting_value(
+            module, "Retain the image of objects colored by numbers of neighbors?"
+        ) in {"Yes", "yes", "True", "true"}:
+            outputs.append(
+                ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(output_names[0]))
+            )
+        if optional_setting_value(
+            module, "Retain the image of objects colored by percent of touching pixels?"
+        ) in {"Yes", "yes", "True", "true"}:
+            outputs.append(
+                ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(output_names[1]))
+            )
+        outputs.append(cls.measurement_output_artifact(builder, module))
+        return assembler.assemble_contract(
+            module, builder, inputs=[measured, neighbors], outputs=outputs
+        )
 
 
 __all__ = [

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import ClassVar, TypeVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
+import skimage.measure
 
 from openhcs.constants.constants import MemoryType
 
@@ -18,6 +19,7 @@ class AnalysisBackendProvider(str, Enum):
     """Typed provider identifiers for reusable OpenHCS analysis primitives."""
 
     NUMBA = "numba"
+    SKIMAGE = "skimage"
 
 
 DEFAULT_ANALYSIS_BACKEND_PROVIDER = AnalysisBackendProvider.NUMBA
@@ -247,7 +249,212 @@ class NumbaNumpyLabelRegionPropertiesBackendStrategy(
             np.ascontiguousarray(label_array),
             bool(include_advanced),
         )
-        return DenseLabelRegionProperties(*arrays)
+        props = DenseLabelRegionProperties(*arrays)
+        return replace(
+            props,
+            orientation=_skimage018_orientation_2d_numpy(
+                label_array,
+                props.label,
+                props.bbox_min_y,
+                props.bbox_min_x,
+                props.bbox_max_y,
+                props.bbox_max_x,
+            ),
+        )
+
+
+class SkimageNumpyLabelRegionPropertiesBackendStrategy(
+    LabelRegionPropertiesBackendStrategy
+):
+    """scikit-image region-property backend for native CellProfiler parity."""
+
+    backend_key = analysis_backend_key(
+        MemoryType.NUMPY,
+        AnalysisBackendProvider.SKIMAGE,
+    )
+    memory_type = MemoryType.NUMPY
+    backend_provider = AnalysisBackendProvider.SKIMAGE
+    is_default_backend = False
+
+    def measure_2d(
+        self,
+        labels: np.ndarray,
+        *,
+        include_advanced: bool = False,
+    ) -> DenseLabelRegionProperties:
+        label_array = np.asarray(labels, dtype=np.int32)
+        if label_array.ndim != 2:
+            raise NotImplementedError(
+                "scikit-image label-region properties currently support 2-D labels."
+            )
+        props = skimage.measure.regionprops_table(
+            label_array,
+            properties=_skimage_region_properties(include_advanced),
+        )
+        return DenseLabelRegionProperties(
+            label=np.asarray(props["label"], dtype=np.int64),
+            area=np.asarray(props["area"], dtype=np.float64),
+            perimeter=np.asarray(props["perimeter"], dtype=np.float64),
+            bbox_min_y=np.asarray(props["bbox-0"], dtype=np.int64),
+            bbox_min_x=np.asarray(props["bbox-1"], dtype=np.int64),
+            bbox_max_y=np.asarray(props["bbox-2"], dtype=np.int64),
+            bbox_max_x=np.asarray(props["bbox-3"], dtype=np.int64),
+            bbox_area=np.asarray(props["bbox_area"], dtype=np.float64),
+            centroid_y=np.asarray(props["centroid-0"], dtype=np.float64),
+            centroid_x=np.asarray(props["centroid-1"], dtype=np.float64),
+            equivalent_diameter=np.asarray(
+                props["equivalent_diameter"], dtype=np.float64
+            ),
+            extent=np.asarray(props["extent"], dtype=np.float64),
+            major_axis_length=np.asarray(
+                props["major_axis_length"], dtype=np.float64
+            ),
+            minor_axis_length=np.asarray(
+                props["minor_axis_length"], dtype=np.float64
+            ),
+            eccentricity=np.asarray(props["eccentricity"], dtype=np.float64),
+            orientation=np.asarray(props["orientation"], dtype=np.float64),
+            euler_number=np.asarray(props["euler_number"], dtype=np.int64),
+            moments=_regionprops_matrix(props, "moments", 4, 4, include_advanced),
+            moments_central=_regionprops_matrix(
+                props, "moments_central", 4, 4, include_advanced
+            ),
+            moments_normalized=_regionprops_matrix(
+                props, "moments_normalized", 4, 4, include_advanced
+            ),
+            moments_hu=_regionprops_vector(props, "moments_hu", 7, include_advanced),
+            inertia_tensor=_regionprops_matrix(
+                props, "inertia_tensor", 2, 2, include_advanced
+            ),
+            inertia_tensor_eigvals=_regionprops_vector(
+                props, "inertia_tensor_eigvals", 2, include_advanced
+            ),
+        )
+
+
+def _skimage_region_properties(include_advanced: bool) -> tuple[str, ...]:
+    properties = (
+        "label",
+        "area",
+        "perimeter",
+        "bbox",
+        "bbox_area",
+        "centroid",
+        "equivalent_diameter",
+        "extent",
+        "major_axis_length",
+        "minor_axis_length",
+        "eccentricity",
+        "orientation",
+        "euler_number",
+    )
+    if not include_advanced:
+        return properties
+    return (
+        *properties,
+        "moments",
+        "moments_central",
+        "moments_normalized",
+        "moments_hu",
+        "inertia_tensor",
+        "inertia_tensor_eigvals",
+    )
+
+
+def _regionprops_matrix(
+    props: dict[str, np.ndarray],
+    name: str,
+    rows: int,
+    columns: int,
+    include_advanced: bool,
+) -> np.ndarray:
+    count = len(props["label"])
+    values = np.zeros((count, rows, columns), dtype=np.float64)
+    if not include_advanced:
+        return values
+    for row in range(rows):
+        for column in range(columns):
+            values[:, row, column] = np.asarray(
+                props[f"{name}-{row}-{column}"], dtype=np.float64
+            )
+    return values
+
+
+def _regionprops_vector(
+    props: dict[str, np.ndarray],
+    name: str,
+    length: int,
+    include_advanced: bool,
+) -> np.ndarray:
+    count = len(props["label"])
+    values = np.zeros((count, length), dtype=np.float64)
+    if not include_advanced:
+        return values
+    for index in range(length):
+        values[:, index] = np.asarray(props[f"{name}-{index}"], dtype=np.float64)
+    return values
+
+
+def _skimage018_orientation_2d_numpy(
+    labels: np.ndarray,
+    label_ids: np.ndarray,
+    bbox_min_y: np.ndarray,
+    bbox_min_x: np.ndarray,
+    bbox_max_y: np.ndarray,
+    bbox_max_x: np.ndarray,
+) -> np.ndarray:
+    """Return skimage 0.18-compatible 2-D orientation values."""
+    orientation = np.empty(len(label_ids), dtype=np.float64)
+    for index, label_id in enumerate(label_ids):
+        crop = (
+            labels[
+                int(bbox_min_y[index]) : int(bbox_max_y[index]),
+                int(bbox_min_x[index]) : int(bbox_max_x[index]),
+            ]
+            == int(label_id)
+        ).astype(np.uint8)
+        moments = _skimage018_moments_central_numpy(crop, (0.0, 0.0), order=3)
+        m00 = moments[0, 0]
+        if m00 == 0.0:
+            orientation[index] = 0.0
+            continue
+        center = (moments[1, 0] / m00, moments[0, 1] / m00)
+        central = _skimage018_moments_central_numpy(crop, center, order=3)
+        mu0 = central[0, 0]
+        mu20 = central[2, 0]
+        mu02 = central[0, 2]
+        mu11 = central[1, 1]
+        diagonal_sum = np.sum(np.asarray((mu20, mu02), dtype=np.float64))
+        tensor_a = (diagonal_sum - mu20) / mu0
+        tensor_b = -mu11 / mu0
+        tensor_c = (diagonal_sum - mu02) / mu0
+        if tensor_a - tensor_c == 0.0:
+            orientation[index] = (
+                -0.25 * np.pi if tensor_b < 0.0 else 0.25 * np.pi
+            )
+        else:
+            orientation[index] = 0.5 * np.arctan2(
+                -2.0 * tensor_b,
+                tensor_c - tensor_a,
+            )
+    return orientation
+
+
+def _skimage018_moments_central_numpy(
+    image: np.ndarray,
+    center: tuple[float, float],
+    *,
+    order: int,
+) -> np.ndarray:
+    """Compute central moments using skimage 0.18 axis reduction order."""
+    calc = image.astype(float)
+    for dim, dim_length in enumerate(image.shape):
+        delta = np.arange(dim_length, dtype=float) - center[dim]
+        powers_of_delta = delta[:, np.newaxis] ** np.arange(order + 1)
+        calc = np.rollaxis(calc, dim, image.ndim)
+        calc = np.dot(calc, powers_of_delta)
+        calc = np.rollaxis(calc, -1, dim)
+    return calc
 
 
 def label_region_properties_backend(
@@ -464,12 +671,16 @@ def _dense_label_region_properties_2d_numba(
         mu20 = moments_central[index, 2, 0] / m00
         mu02 = moments_central[index, 0, 2] / m00
         mu11 = moments_central[index, 1, 1] / m00
-        inertia_tensor[index, 0, 0] = mu02
+        inertia_diagonal_sum = mu20 + mu02
+        inertia_tensor[index, 0, 0] = inertia_diagonal_sum - mu20
         inertia_tensor[index, 0, 1] = -mu11
         inertia_tensor[index, 1, 0] = -mu11
-        inertia_tensor[index, 1, 1] = mu20
-        trace_half = 0.5 * (mu20 + mu02)
-        delta = np.sqrt(0.25 * (mu20 - mu02) ** 2 + mu11**2)
+        inertia_tensor[index, 1, 1] = inertia_diagonal_sum - mu02
+        trace_half = 0.5 * (
+            inertia_tensor[index, 0, 0] + inertia_tensor[index, 1, 1]
+        )
+        diagonal_delta = inertia_tensor[index, 1, 1] - inertia_tensor[index, 0, 0]
+        delta = np.sqrt(0.25 * diagonal_delta**2 + mu11**2)
         eig0 = trace_half + delta
         eig1 = trace_half - delta
         if eig0 < eig1:
@@ -688,31 +899,44 @@ def _label_orientation_tensor_components_2d(
     centroid_y = sum_y / m00
     centroid_x = sum_x / m00
 
-    # skimage 0.18 computes central moments by applying one dot reduction per
-    # axis to the binary crop. The reduction order is observable for symmetric
+    # skimage 0.18 computes central moments by reducing the binary crop over
+    # rows first, then columns. The reduction order is observable for symmetric
     # objects because orientation tie-breaking depends on signed zeros and ulps.
-    reduced_y = np.zeros((3, local_width), dtype=np.float64)
+    powers_y1 = np.empty(local_height, dtype=np.float64)
+    powers_y2 = np.empty(local_height, dtype=np.float64)
+    for row in range(local_height):
+        delta_y = float(row) - centroid_y
+        powers_y1[row] = delta_y
+        powers_y2[row] = delta_y**2.0
+
+    reduced_y0 = np.zeros(local_width, dtype=np.float64)
+    reduced_y1 = np.zeros(local_width, dtype=np.float64)
+    reduced_y2 = np.zeros(local_width, dtype=np.float64)
     for col in range(local_width):
         for row in range(local_height):
             if int(labels[min_y + row, min_x + col]) != int(label_id):
                 continue
-            delta_y = float(row) - centroid_y
-            reduced_y[0, col] += 1.0
-            reduced_y[1, col] += delta_y
-            reduced_y[2, col] += delta_y * delta_y
+            reduced_y0[col] += 1.0
+            reduced_y1[col] += powers_y1[row]
+            reduced_y2[col] += powers_y2[row]
 
-    powers_x = np.empty((local_width, 3), dtype=np.float64)
+    powers_x1 = np.empty(local_width, dtype=np.float64)
+    powers_x2 = np.empty(local_width, dtype=np.float64)
     for col in range(local_width):
         delta_x = float(col) - centroid_x
-        powers_x[col, 0] = 1.0
-        powers_x[col, 1] = delta_x
-        powers_x[col, 2] = delta_x * delta_x
-    central = np.dot(reduced_y, powers_x)
-    mu20 = central[2, 0]
-    mu02 = central[0, 2]
-    mu11 = central[1, 1]
+        powers_x1[col] = delta_x
+        powers_x2[col] = delta_x**2.0
 
-    return mu02 / m00, -mu11 / m00, mu20 / m00
+    mu20 = 0.0
+    mu02 = 0.0
+    mu11 = 0.0
+    for col in range(local_width):
+        mu20 += reduced_y2[col]
+        mu02 += reduced_y0[col] * powers_x2[col]
+        mu11 += reduced_y1[col] * powers_x1[col]
+
+    diagonal_sum = mu20 + mu02
+    return (diagonal_sum - mu20) / m00, -mu11 / m00, (diagonal_sum - mu02) / m00
 
 
 @njit(cache=True)
@@ -888,5 +1112,6 @@ __all__ = [
     "label_area_and_rounded_perimeter_2d",
     "LabelRegionPropertiesBackendStrategy",
     "NumbaNumpyLabelRegionPropertiesBackendStrategy",
+    "SkimageNumpyLabelRegionPropertiesBackendStrategy",
     "label_region_properties_backend",
 ]

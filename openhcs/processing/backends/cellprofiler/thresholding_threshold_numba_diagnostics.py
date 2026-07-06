@@ -101,6 +101,57 @@ def _threshold_weighted_variance_from_sums(
 
 
 @njit(cache=True)
+def _threshold_weighted_variance_unmasked_finite_numba(
+    image: np.ndarray,
+    binary_image: np.ndarray,
+) -> float:
+    height, width = image.shape
+    if height == 0 or width == 0:
+        return 0.0
+
+    max_value = image[0, 0]
+    for y in range(height):
+        for x in range(width):
+            value = image[y, x]
+            if value > max_value:
+                max_value = value
+
+    minval = max_value / 256.0
+    if minval == 0.0:
+        return 0.0
+
+    fg_count = 0
+    bg_count = 0
+    fg_sum = 0.0
+    bg_sum = 0.0
+    fg_sumsq = 0.0
+    bg_sumsq = 0.0
+    for y in range(height):
+        for x in range(width):
+            value = image[y, x]
+            if value < minval:
+                value = minval
+            log_value = math.log2(value)
+            if binary_image[y, x]:
+                fg_count += 1
+                fg_sum += log_value
+                fg_sumsq += log_value * log_value
+            else:
+                bg_count += 1
+                bg_sum += log_value
+                bg_sumsq += log_value * log_value
+
+    return _threshold_weighted_variance_from_sums(
+        fg_count,
+        bg_count,
+        fg_sum,
+        bg_sum,
+        fg_sumsq,
+        bg_sumsq,
+    )
+
+
+@njit(cache=True)
 def _threshold_diagnostics_unmasked_finite_numba(
     image: np.ndarray,
     binary_image: np.ndarray,

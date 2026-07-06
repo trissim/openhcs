@@ -9,6 +9,9 @@ while producing the same FunctionMetadata format as external libraries.
 import logging
 import numpy as np
 from pathlib import Path
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+from types import ModuleType
 from typing import Dict, List, Tuple, Any
 import ast
 import importlib
@@ -21,6 +24,14 @@ from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.processing.backends.lib_registry.unified_registry import LibraryRegistryBase, FunctionMetadata
 
 logger = logging.getLogger(__name__)
+
+
+class OpenHCSFunctionCatalogModule(ModuleType, ABC):
+    """Module type that exposes OpenHCS registry functions through a catalog."""
+
+    @abstractmethod
+    def openhcs_registry_functions(self) -> tuple[Callable[..., Any], ...]:
+        """Return processing functions owned by this module's catalog."""
 
 _MEMORY_DECORATOR_NAMES: Dict[str, str] = {
     "numpy": MemoryType.NUMPY.value,
@@ -250,66 +261,39 @@ class OpenHCSRegistry(LibraryRegistryBase):
             import inspect
             module_function_count = 0
 
+            if isinstance(module, OpenHCSFunctionCatalogModule):
+                for func in module.openhcs_registry_functions():
+                    metadata = self._metadata_for_function(
+                        func.__name__,
+                        func,
+                        module_name,
+                        module,
+                        ProcessingContract,
+                    )
+                    if metadata is None:
+                        continue
+                    functions[metadata.name] = metadata
+                    module_function_count += 1
+                logger.debug(f"  📦 {module_name}: Found {module_function_count} OpenHCS functions")
+                continue
+
             for name, func in inspect.getmembers(module, inspect.isfunction):
                 # Only include functions actually defined in this module (not imported)
                 if func.__module__ != module_name:
                     logger.debug(f"Skipping {name} from {module_name} - defined in {func.__module__}")
                     continue
 
-                callable_contract = CallableContract.from_callable(func)
-
-                # Look for functions with memory type attributes (added by @numpy, @cupy, etc.)
-                if (
-                    callable_contract.input_memory_type is not None
-                    and callable_contract.output_memory_type is not None
-                ):
-                    input_type = callable_contract.input_memory_type
-                    output_type = callable_contract.output_memory_type
-
-                    if input_type not in VALID_MEMORY_TYPES or output_type not in VALID_MEMORY_TYPES:
-                        logger.debug(f"Skipping {name} - invalid memory types: {input_type} -> {output_type}")
-                        continue
-
-                    # Check if function's backend is available before including it
-                    if not self._is_function_backend_available(input_type):
-                        logger.debug(f"Skipping {name} - backend not available")
-                        continue
-
-                    contract = self._processing_contract_for_function(
-                        callable_contract,
-                        ProcessingContract,
-                    )
-
-                    # Attach nominal contract metadata for downstream authorities.
-                    vars(func)[FunctionContractAttribute.processing_contract] = contract
-
-                    # Apply nominal contract wrapper.
-                    wrapped_func = self.apply_contract_wrapper(func, contract)
-
-                    # Override the function in the module with the wrapped version
-                    # so imports see the callable-control signature.
-                    setattr(module, name, wrapped_func)
-
-                    # Generate unique function name using module information
-                    unique_name = self._generate_function_name(name, module_name)
-
-                    # Extract full docstring, not just first line
-                    doc = self._extract_function_docstring(func)
-
-                    metadata = FunctionMetadata(
-                        name=unique_name,
-                        func=wrapped_func,
-                        contract=contract,
-                        registry=self,
-                        module=func.__module__ or "",
-                        doc=doc,
-                        tags=self._generate_tags(module_name),
-                        original_name=name,
-                        memory_type=input_type,
-                    )
-
-                    functions[unique_name] = metadata
-                    module_function_count += 1
+                metadata = self._metadata_for_function(
+                    name,
+                    func,
+                    module_name,
+                    module,
+                    ProcessingContract,
+                )
+                if metadata is None:
+                    continue
+                functions[metadata.name] = metadata
+                module_function_count += 1
 
             logger.debug(f"  📦 {module_name}: Found {module_function_count} OpenHCS functions")
 
@@ -320,6 +304,72 @@ class OpenHCSRegistry(LibraryRegistryBase):
         # Custom functions will be registered via register_function() which wraps them with contracts
 
         return functions
+
+    def _metadata_for_function(
+        self,
+        name: str,
+        func,
+        module_name: str,
+        module,
+        ProcessingContract,
+    ) -> FunctionMetadata | None:
+        callable_contract = CallableContract.from_callable(func)
+
+        # Look for functions with memory type attributes (added by @numpy, @cupy, etc.)
+        if (
+            callable_contract.input_memory_type is None
+            or callable_contract.output_memory_type is None
+        ):
+            return None
+
+        input_type = callable_contract.input_memory_type
+        output_type = callable_contract.output_memory_type
+
+        if input_type not in VALID_MEMORY_TYPES or output_type not in VALID_MEMORY_TYPES:
+            logger.debug(
+                f"Skipping {name} - invalid memory types: {input_type} -> {output_type}"
+            )
+            return None
+
+        # Check if function's backend is available before including it
+        if not self._is_function_backend_available(input_type):
+            logger.debug(f"Skipping {name} - backend not available")
+            return None
+
+        contract = self._processing_contract_for_function(
+            callable_contract,
+            ProcessingContract,
+        )
+
+        # Attach nominal contract metadata for downstream authorities.
+        vars(func)[FunctionContractAttribute.processing_contract] = contract
+
+        # Apply nominal contract wrapper.
+        wrapped_func = self.apply_contract_wrapper(func, contract)
+
+        # Ordinary backend modules expose the runtime-control wrapper directly.
+        # Catalog modules own their public export surface; mutating their globals
+        # poisons the catalog with registry wrapper controls.
+        if not isinstance(module, OpenHCSFunctionCatalogModule):
+            setattr(module, name, wrapped_func)
+
+        # Generate unique function name using module information
+        unique_name = self._generate_function_name(name, module_name)
+
+        # Extract full docstring, not just first line
+        doc = self._extract_function_docstring(func)
+
+        return FunctionMetadata(
+            name=unique_name,
+            func=wrapped_func,
+            contract=contract,
+            registry=self,
+            module=func.__module__ or "",
+            doc=doc,
+            tags=self._generate_tags(module_name),
+            original_name=name,
+            memory_type=input_type,
+        )
 
     def _processing_contract_for_function(self, callable_contract, ProcessingContract):
         """Return the function's declared contract, defaulting to FLEXIBLE."""

@@ -1,22 +1,21 @@
 """Image-quality backends for CellProfiler-compatible processing."""
 
 from __future__ import annotations
-
 from enum import Enum
-
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ImageArtifactType
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     cellprofiler_enum_value_setting_parser,
     parse_cellprofiler_bool,
     parse_cellprofiler_int,
 )
-
-from openhcs.processing.backends.cellprofiler.module_classes import (
-    ArtifactContractModule,
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
+    ImageArtifactInputCapability,
+    MeasurementArtifactOutputModule,
     ModuleSettingsSourceModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
@@ -27,7 +26,9 @@ from openhcs.interop.cellprofiler.setting_names import (
     setting_values,
     split_symbol_names,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.interop.cellprofiler.cellprofiler_literals import (
+    cellprofiler_enum_from_literal,
+)
 
 
 class ImageQualityThresholdMethod(Enum):
@@ -43,13 +44,16 @@ class ImageQualityThresholdMethod(Enum):
 
 
 class MeasureImageQualityModule(
+    MeasurementArtifactOutputModule,
     CellProfilerModule,
-    ArtifactContractModule,
+    ImageArtifactInputCapability,
 ):
-    module_name = 'MeasureImageQuality'
-    function_name = 'measure_image_quality'
+    module_name = "MeasureImageQuality"
+    function_name = "measure_image_quality"
     validated = True
     confidence = 1.0
+    measurement_category_prefixes = (("image", "quality"), ("quality",))
+    scale_qualified_measurement_feature_prefixes = (("local", "focus", "score"),)
     image_selection_setting = "Calculate metrics for which images?"
     all_loaded_images_selection = "All loaded images"
     selected_images_selection = "Select..."
@@ -68,9 +72,7 @@ class MeasureImageQualityModule(
     )
     setting_bindings = (
         SettingToKeywordBinding(
-            "Calculate blur metrics?",
-            "calculate_blur",
-            parse_cellprofiler_bool,
+            "Calculate blur metrics?", "calculate_blur", parse_cellprofiler_bool
         ),
         SettingToKeywordBinding(
             "Calculate saturation metrics?",
@@ -83,14 +85,10 @@ class MeasureImageQualityModule(
             parse_cellprofiler_bool,
         ),
         SettingToKeywordBinding(
-            "Calculate thresholds?",
-            "calculate_threshold",
-            parse_cellprofiler_bool,
+            "Calculate thresholds?", "calculate_threshold", parse_cellprofiler_bool
         ),
         SettingToKeywordBinding(
-            "Spatial scale for blur measurements",
-            "blur_scale",
-            parse_cellprofiler_int,
+            "Spatial scale for blur measurements", "blur_scale", parse_cellprofiler_int
         ),
         SettingToKeywordBinding(
             "Select a thresholding method",
@@ -101,8 +99,7 @@ class MeasureImageQualityModule(
 
     @classmethod
     def ignored_settings_for(
-        cls,
-        module: "ModuleBlock",
+        cls, module: "ModuleBlock"
     ) -> tuple[str | "SettingNameFamily", ...]:
         ignored = tuple(cls.unsupported_settings)
         if (
@@ -114,9 +111,7 @@ class MeasureImageQualityModule(
 
     @classmethod
     def artifact_inputs(
-        cls,
-        module: "ModuleBlock",
-        source_schema: "PipelineImageSchema | None",
+        cls, module: "ModuleBlock", source_schema: "PipelineImageSchema | None"
     ) -> tuple["ModuleArtifactInput", ...]:
         from openhcs.interop.cellprofiler.module_artifact_inputs import (
             ModuleArtifactInput,
@@ -126,47 +121,38 @@ class MeasureImageQualityModule(
         selection = required_setting_value(module, cls.image_selection_setting)
         if selection == cls.selected_images_selection:
             return tuple(
-                ModuleArtifactInput(name, ArtifactKind.IMAGE)
-                for value in setting_values(module, cls.selected_images_setting)
-                for name in split_symbol_names(value)
+                (
+                    ModuleArtifactInput(name, ImageArtifactType)
+                    for value in setting_values(module, cls.selected_images_setting)
+                    for name in split_symbol_names(value)
+                )
             )
         if selection != cls.all_loaded_images_selection:
             raise ValueError(
-                f"Unsupported MeasureImageQuality image-selection mode "
-                f"{selection!r} in module {module.name}({module.module_num})."
+                f"Unsupported MeasureImageQuality image-selection mode {selection!r} in module {module.name}({module.module_num})."
             )
         if source_schema is None:
             return ()
         loaded_image_aliases = source_schema.loaded_image_aliases
         if not loaded_image_aliases:
             raise ValueError(
-                "MeasureImageQuality requested all loaded images, but the "
-                "pipeline source schema has no loaded image aliases."
+                "MeasureImageQuality requested all loaded images, but the pipeline source schema has no loaded image aliases."
             )
         return tuple(
-            ModuleArtifactInput(alias, ArtifactKind.IMAGE)
-            for alias in loaded_image_aliases
+            (
+                ModuleArtifactInput(alias, ImageArtifactType)
+                for alias in loaded_image_aliases
+            )
         )
 
     @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import ArtifactSpec
-
-        inputs = tuple(
-            builder.require_artifact(ArtifactSpec(input_.name, input_.kind), module)
-            for input_ in cls.artifact_inputs(module, builder.source_schema)
+    def artifact_contract_inputs(cls, builder, module):
+        return tuple(
+            (
+                ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(input_.name))
+                for input_ in cls.artifact_inputs(module, builder.source_schema)
+            )
         )
-        measurements = builder.declare_artifact(
-            ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS),
-            module,
-        )
-        return assembler.assemble_contract(
-            module,
-            builder,
-            inputs=inputs,
-            outputs=[measurements],
-        )
-
 
 
 from abc import ABC, abstractmethod
@@ -177,11 +163,9 @@ from enum import Enum
 import logging
 import time
 from typing import ClassVar
-
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
-
 from openhcs.constants.constants import MemoryType
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
@@ -201,14 +185,14 @@ from openhcs.processing.backends.cellprofiler.thresholding import threshold_prim
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
 
-
 logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
-
 from openhcs.processing.backends.cellprofiler.thresholding import (
     ThresholdSettingsModule,
     threshold_primitives,
 )
+
+
 class ThresholdMethod(Enum):
     OTSU = "otsu"
     LI = "li"
@@ -260,16 +244,13 @@ class ImageQualityMetrics:
 
 
 _RADIAL_SPECTRUM_GEOMETRY_CACHE: OrderedDict[
-    tuple[int, int],
-    _RadialSpectrumGeometry,
+    tuple[int, int], _RadialSpectrumGeometry
 ] = OrderedDict()
 _RADIAL_SPECTRUM_GEOMETRY_CACHE_MAX_ENTRIES = 16
 
 
 class ImageQualityBackendStrategy(
-    CellProfilerBackendStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    CellProfilerBackendStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Image-quality primitives keyed by OpenHCS memory type/provider."""
 
@@ -282,8 +263,7 @@ class ImageQualityBackendStrategy(
 
     @abstractmethod
     def radial_power_spectrum(
-        self,
-        image: np.ndarray,
+        self, image: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Return CP-style radial Fourier spectrum bins."""
 
@@ -358,20 +338,17 @@ class NumpyImageQualityBackendStrategy(ImageQualityBackendStrategy):
         image_array = np.asarray(image, dtype=np.float32)
         if image_array.ndim != 2:
             raise NotImplementedError(
-                "Image-quality Haralick correlation currently supports 2-D "
-                f"NumPy planes, got shape {image_array.shape!r}."
+                f"Image-quality Haralick correlation currently supports 2-D NumPy planes, got shape {image_array.shape!r}."
             )
         return _haralick_h3_numpy(image_array, int(scale))
 
     def radial_power_spectrum(
-        self,
-        image: np.ndarray,
+        self, image: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         image_array = np.asarray(image, dtype=np.float64)
         if image_array.ndim != 2:
             raise NotImplementedError(
-                "Image-quality radial power spectrum currently supports 2-D "
-                f"NumPy planes, got shape {image_array.shape!r}."
+                f"Image-quality radial power spectrum currently supports 2-D NumPy planes, got shape {image_array.shape!r}."
             )
         return _radial_power_spectrum_numpy(image_array)
 
@@ -380,8 +357,7 @@ class NumbaNumpyImageQualityBackendStrategy(NumpyImageQualityBackendStrategy):
     """Numba-accelerated NumPy image-quality backend."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.NUMBA,
+        MemoryType.NUMPY, CellProfilerBackendProvider.NUMBA
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
@@ -395,13 +371,11 @@ class NumbaNumpyImageQualityBackendStrategy(NumpyImageQualityBackendStrategy):
         image_array = np.asarray(image, dtype=np.float32)
         if image_array.ndim != 2:
             raise NotImplementedError(
-                "Numba image-quality Haralick correlation currently supports "
-                f"2-D NumPy planes, got shape {image_array.shape!r}."
+                f"Numba image-quality Haralick correlation currently supports 2-D NumPy planes, got shape {image_array.shape!r}."
             )
         return float(
             _haralick_h3_numba(
-                np.ascontiguousarray(image_array, dtype=np.float32),
-                int(scale),
+                np.ascontiguousarray(image_array, dtype=np.float32), int(scale)
             )
         )
 
@@ -410,8 +384,7 @@ class CentrosomeNumpyImageQualityBackendStrategy(ImageQualityBackendStrategy):
     """Explicit centrosome provider for image-quality primitives."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.CENTROSOME,
+        MemoryType.NUMPY, CellProfilerBackendProvider.CENTROSOME
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.CENTROSOME
@@ -422,37 +395,27 @@ class CentrosomeNumpyImageQualityBackendStrategy(ImageQualityBackendStrategy):
 
         image_array = np.asarray(image, dtype=np.float32)
         value = centrosome.haralick.Haralick(
-            image_array,
-            np.ones(image_array.shape, dtype=int),
-            0,
-            int(scale),
+            image_array, np.ones(image_array.shape, dtype=int), 0, int(scale)
         ).H3()
         return _finite_scalar(value)
 
     def radial_power_spectrum(
-        self,
-        image: np.ndarray,
+        self, image: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         import centrosome.radial_power_spectrum
 
         radii, magnitude, power = centrosome.radial_power_spectrum.rps(
             np.asarray(image)
         )
-        return (
-            np.asarray(radii),
-            np.asarray(magnitude),
-            np.asarray(power),
-        )
+        return (np.asarray(radii), np.asarray(magnitude), np.asarray(power))
 
 
 def image_quality_backend(
-    *,
-    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    *, backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
 ) -> ImageQualityBackendStrategy:
     """Return the selected image-quality backend."""
     return ImageQualityBackendStrategy.for_memory_type(
-        MemoryType.NUMPY,
-        backend_provider=backend_provider,
+        MemoryType.NUMPY, backend_provider=backend_provider
     )
 
 
@@ -460,11 +423,7 @@ def image_quality_focus_score(pixel_data: np.ndarray) -> float:
     """Calculate CP normalized-variance focus score."""
     if pixel_data.size == 0:
         return 0.0
-    return float(
-        _focus_score_numba(
-            np.ascontiguousarray(pixel_data, dtype=np.float64),
-        )
-    )
+    return float(_focus_score_numba(np.ascontiguousarray(pixel_data, dtype=np.float64)))
 
 
 def image_quality_local_focus_score(pixel_data: np.ndarray, scale: int) -> float:
@@ -473,8 +432,7 @@ def image_quality_local_focus_score(pixel_data: np.ndarray, scale: int) -> float
         return 0.0
     return float(
         _local_focus_score_numba(
-            np.ascontiguousarray(pixel_data, dtype=np.float64),
-            int(scale),
+            np.ascontiguousarray(pixel_data, dtype=np.float64), int(scale)
         )
     )
 
@@ -488,9 +446,9 @@ def image_quality_haralick_correlation(
     """Calculate CellProfiler's Haralick H3 image-quality correlation."""
     if pixel_data.size == 0:
         return 0.0
-    return image_quality_backend(
-        backend_provider=backend_provider,
-    ).haralick_h3(pixel_data, scale=scale)
+    return image_quality_backend(backend_provider=backend_provider).haralick_h3(
+        pixel_data, scale=scale
+    )
 
 
 def image_quality_power_spectrum_slope(
@@ -501,19 +459,16 @@ def image_quality_power_spectrum_slope(
     """Calculate CellProfiler's log-log radial power spectrum slope."""
     if pixel_data.size == 0 or not image_quality_has_multiple_unique_values(pixel_data):
         return 0.0
-
     radii, magnitude, power = image_quality_backend(
-        backend_provider=backend_provider,
+        backend_provider=backend_provider
     ).radial_power_spectrum(pixel_data)
     if np.sum(magnitude) <= 0:
         return 0.0
-
     valid = magnitude > 0
     radii = radii[valid].reshape((-1, 1))
     power = power[valid].reshape((-1, 1))
     if radii.shape[0] <= 1:
         return 0.0
-
     slope_value = _least_squares_log_log_slope_numba(
         np.ascontiguousarray(radii.ravel(), dtype=np.float64),
         np.ascontiguousarray(power.ravel(), dtype=np.float64),
@@ -524,8 +479,7 @@ def image_quality_power_spectrum_slope(
 def image_quality_saturation(pixel_data: np.ndarray) -> tuple[float, float]:
     """Calculate percent of pixels at max and min values."""
     if pixel_data.size == 0:
-        return 0.0, 0.0
-
+        return (0.0, 0.0)
     pixel_count = pixel_data.size
     max_val = np.max(pixel_data)
     min_val = np.min(pixel_data)
@@ -552,7 +506,6 @@ def image_quality_intensity_metrics(
             min_intensity=0.0,
             max_intensity=0.0,
         )
-
     pixel_median = np.median(pixel_data)
     return ImageQualityIntensityMetrics(
         total_area=int(pixel_data.size),
@@ -578,7 +531,7 @@ def image_quality_has_multiple_unique_values(pixel_data: np.ndarray) -> bool:
     """Return whether ``np.unique(pixel_data)`` would contain more than one value."""
     return bool(
         _has_multiple_unique_values_numba(
-            np.ascontiguousarray(pixel_data, dtype=np.float32),
+            np.ascontiguousarray(pixel_data, dtype=np.float32)
         )
     )
 
@@ -586,26 +539,25 @@ def image_quality_has_multiple_unique_values(pixel_data: np.ndarray) -> bool:
 def _haralick_h3_numpy(image: np.ndarray, scale: int) -> float:
     if image.size == 0 or scale < 1 or image.shape[1] <= scale:
         return 0.0
-
     minimum = float(np.min(image))
     maximum = float(np.max(image))
     divisor = maximum - minimum if maximum > minimum else 1.0
-    quantized = np.floor(((image - minimum) / divisor) * 8.0).astype(np.int16)
+    quantized = np.floor((image - minimum) / divisor * 8.0).astype(np.int16)
     quantized = np.clip(quantized, 0, 7)
     level_count = int(np.max(quantized)) + 1
     if level_count <= 0:
         return 0.0
-
     left = quantized[:, :-scale].ravel()
     right = quantized[:, scale:].ravel()
     pair_count = left.size
     if pair_count == 0:
         return 0.0
     flat_indexes = level_count * left + right
-    matrix = np.bincount(
-        flat_indexes,
-        minlength=level_count * level_count,
-    ).reshape(level_count, level_count).astype(float)
+    matrix = (
+        np.bincount(flat_indexes, minlength=level_count * level_count)
+        .reshape(level_count, level_count)
+        .astype(float)
+    )
     return _haralick_h3_from_matrix(matrix / float(pair_count))
 
 
@@ -625,8 +577,8 @@ def _haralick_h3_from_matrix(matrix: np.ndarray) -> float:
     levels = np.arange(matrix.shape[0], dtype=float) + 1.0
     mux = float(np.sum(levels * px))
     muy = float(np.sum(levels * py))
-    sigmax = float(np.sqrt(np.sum(((levels - mux) ** 2) * px)))
-    sigmay = float(np.sqrt(np.sum(((levels - muy) ** 2) * py)))
+    sigmax = float(np.sqrt(np.sum((levels - mux) ** 2 * px)))
+    sigmay = float(np.sqrt(np.sum((levels - muy) ** 2 * py)))
     if sigmax <= 0.0 or sigmay <= 0.0:
         return 0.0
     summed = float(np.sum(np.outer(levels, levels) * matrix))
@@ -645,7 +597,6 @@ def _radial_power_spectrum_numpy(
         mad_value = float(np.median(np.abs(working - mean_value)))
         with np.errstate(divide="ignore", invalid="ignore"):
             working = working / mad_value
-
     centered = working - np.mean(working)
     magnitude = np.abs(fft2(centered))
     power = magnitude**2
@@ -661,15 +612,11 @@ def _radial_power_spectrum_numpy(
     return (
         labels,
         np.bincount(
-            radii_flat,
-            weights=magnitude.ravel(),
-            minlength=int(labels[-1]) + 1,
+            radii_flat, weights=magnitude.ravel(), minlength=int(labels[-1]) + 1
         )[labels],
-        np.bincount(
-            radii_flat,
-            weights=power.ravel(),
-            minlength=int(labels[-1]) + 1,
-        )[labels],
+        np.bincount(radii_flat, weights=power.ravel(), minlength=int(labels[-1]) + 1)[
+            labels
+        ],
     )
 
 
@@ -679,7 +626,6 @@ def _radial_spectrum_geometry(shape: tuple[int, int]) -> _RadialSpectrumGeometry
     if geometry is not None:
         _RADIAL_SPECTRUM_GEOMETRY_CACHE.move_to_end(key)
         return geometry
-
     height, width = key
     row2 = np.arange(height).reshape((height, 1)) ** 2
     col2 = np.arange(width) ** 2
@@ -688,12 +634,15 @@ def _radial_spectrum_geometry(shape: tuple[int, int]) -> _RadialSpectrumGeometry
     radii2 = np.minimum(radii2, np.fliplr(radii2))
     max_width = min(height, width) / 8.0
     geometry = _RadialSpectrumGeometry(
-        radii=(np.floor(np.sqrt(radii2)).astype(int) + 1),
+        radii=np.floor(np.sqrt(radii2)).astype(int) + 1,
         labels=np.arange(2, int(np.floor(max_width)), dtype=int),
     )
     _RADIAL_SPECTRUM_GEOMETRY_CACHE[key] = geometry
     _RADIAL_SPECTRUM_GEOMETRY_CACHE.move_to_end(key)
-    while len(_RADIAL_SPECTRUM_GEOMETRY_CACHE) > _RADIAL_SPECTRUM_GEOMETRY_CACHE_MAX_ENTRIES:
+    while (
+        len(_RADIAL_SPECTRUM_GEOMETRY_CACHE)
+        > _RADIAL_SPECTRUM_GEOMETRY_CACHE_MAX_ENTRIES
+    ):
         _RADIAL_SPECTRUM_GEOMETRY_CACHE.popitem(last=False)
     return geometry
 
@@ -712,14 +661,12 @@ def _focus_score_numba(pixel_data: np.ndarray) -> float:
     count = flat.size
     if count == 0:
         return 0.0
-
     total = 0.0
     for index in range(count):
         total += flat[index]
     mean_value = total / float(count)
     if mean_value <= 0.0:
         return 0.0
-
     squared_sum = 0.0
     for index in range(count):
         diff = flat[index] - mean_value
@@ -732,11 +679,9 @@ def _local_focus_score_numba(pixel_data: np.ndarray, scale: int) -> float:
     height, width = pixel_data.shape
     if height == 0 or width == 0 or scale <= 0:
         return 0.0
-
     grid_rows = (height + scale - 1) // scale
     grid_cols = (width + scale - 1) // scale
     grid_count = grid_rows * grid_cols
-
     sums = np.zeros(grid_count, dtype=np.float64)
     counts = np.zeros(grid_count, dtype=np.int64)
     for row in range(height):
@@ -750,7 +695,6 @@ def _local_focus_score_numba(pixel_data: np.ndarray, scale: int) -> float:
             grid_index = grid_row * grid_cols + grid_col
             sums[grid_index] += pixel_data[row, col]
             counts[grid_index] += 1
-
     means = np.zeros(grid_count, dtype=np.float64)
     valid_count = 0
     for grid_index in range(grid_count):
@@ -761,10 +705,8 @@ def _local_focus_score_numba(pixel_data: np.ndarray, scale: int) -> float:
         if mean_value != 0.0 and np.isfinite(mean_value):
             means[grid_index] = mean_value
             valid_count += 1
-
     if valid_count == 0:
         return 0.0
-
     squared_sums = np.zeros(grid_count, dtype=np.float64)
     for row in range(height):
         grid_row = int(row * float(grid_rows) / float(height))
@@ -778,7 +720,6 @@ def _local_focus_score_numba(pixel_data: np.ndarray, scale: int) -> float:
             mean_value = means[grid_index]
             diff = pixel_data[row, col] - mean_value
             squared_sums[grid_index] += diff * diff
-
     local_norm_var = np.empty(valid_count, dtype=np.float64)
     output_index = 0
     for grid_index in range(grid_count):
@@ -789,20 +730,16 @@ def _local_focus_score_numba(pixel_data: np.ndarray, scale: int) -> float:
         if np.isfinite(value):
             local_norm_var[output_index] = value
             output_index += 1
-
     if output_index == 0:
         return 0.0
-
     values = local_norm_var[:output_index]
     median_value = np.median(values)
-    if (not np.isfinite(median_value)) or median_value <= 0.0:
+    if not np.isfinite(median_value) or median_value <= 0.0:
         return 0.0
-
     mean_value = 0.0
     for index in range(output_index):
         mean_value += values[index]
     mean_value /= output_index
-
     variance = 0.0
     for index in range(output_index):
         diff = values[index] - mean_value
@@ -812,10 +749,7 @@ def _local_focus_score_numba(pixel_data: np.ndarray, scale: int) -> float:
 
 
 @njit(cache=True)
-def _least_squares_log_log_slope_numba(
-    radii: np.ndarray,
-    power: np.ndarray,
-) -> float:
+def _least_squares_log_log_slope_numba(radii: np.ndarray, power: np.ndarray) -> float:
     count = 0
     sum_x = 0.0
     sum_y = 0.0
@@ -865,9 +799,8 @@ def _has_multiple_unique_values_numba(pixel_data: np.ndarray) -> bool:
 @njit(cache=True)
 def _haralick_h3_numba(image: np.ndarray, scale: int) -> float:
     height, width = image.shape
-    if height == 0 or width == 0 or scale < 1 or width <= scale:
+    if height == 0 or width == 0 or scale < 1 or (width <= scale):
         return 0.0
-
     minimum = image[0, 0]
     maximum = image[0, 0]
     for y in range(height):
@@ -880,48 +813,43 @@ def _haralick_h3_numba(image: np.ndarray, scale: int) -> float:
     divisor = maximum - minimum
     if divisor <= 0.0:
         divisor = 1.0
-
     level_count = 1
     for y in range(height):
         for x in range(width):
-            level = int(((image[y, x] - minimum) / divisor) * 8.0)
+            level = int((image[y, x] - minimum) / divisor * 8.0)
             if level < 0:
                 level = 0
             elif level > 7:
                 level = 7
             if level + 1 > level_count:
                 level_count = level + 1
-
     matrix = np.zeros((level_count, level_count), dtype=np.float64)
     pair_count = 0
     for y in range(height):
         for x in range(width - scale):
-            left = int(((image[y, x] - minimum) / divisor) * 8.0)
+            left = int((image[y, x] - minimum) / divisor * 8.0)
             if left < 0:
                 left = 0
             elif left > 7:
                 left = 7
-            right = int(((image[y, x + scale] - minimum) / divisor) * 8.0)
+            right = int((image[y, x + scale] - minimum) / divisor * 8.0)
             if right < 0:
                 right = 0
             elif right > 7:
                 right = 7
             matrix[left, right] += 1.0
             pair_count += 1
-
     if pair_count == 0:
         return 0.0
     for y in range(level_count):
         for x in range(level_count):
             matrix[y, x] /= pair_count
-
     px = np.zeros(level_count, dtype=np.float64)
     py = np.zeros(level_count, dtype=np.float64)
     for y in range(level_count):
         for x in range(level_count):
             px[y] += matrix[y, x]
             py[x] += matrix[y, x]
-
     px_total = 0.0
     py_total = 0.0
     for index in range(level_count):
@@ -932,14 +860,12 @@ def _haralick_h3_numba(image: np.ndarray, scale: int) -> float:
     for index in range(level_count):
         px[index] /= px_total
         py[index] /= py_total
-
     mux = 0.0
     muy = 0.0
     for index in range(level_count):
         level_value = index + 1.0
         mux += level_value * px[index]
         muy += level_value * py[index]
-
     sigmax2 = 0.0
     sigmay2 = 0.0
     for index in range(level_count):
@@ -952,7 +878,6 @@ def _haralick_h3_numba(image: np.ndarray, scale: int) -> float:
         return 0.0
     sigmax = np.sqrt(sigmax2)
     sigmay = np.sqrt(sigmay2)
-
     summed = 0.0
     for y in range(level_count):
         for x in range(level_count):
@@ -1003,7 +928,6 @@ def measure_image_quality(
     """Measure CellProfiler-compatible image-quality metrics."""
     total_started_at = time.perf_counter()
     metrics = ImageQualityMetrics(slice_index=0)
-
     phase_started_at = time.perf_counter()
     pixel_data = np.asarray(image, dtype=np.float32)
     runtime_profiler.log(
@@ -1011,7 +935,6 @@ def measure_image_quality(
         time.perf_counter() - phase_started_at,
         function="measure_image_quality",
     )
-
     if calculate_blur:
         phase_started_at = time.perf_counter()
         metrics.focus_score = image_quality_focus_score(pixel_data)
@@ -1022,8 +945,7 @@ def measure_image_quality(
         )
         phase_started_at = time.perf_counter()
         metrics.local_focus_score = image_quality_local_focus_score(
-            pixel_data,
-            blur_scale,
+            pixel_data, blur_scale
         )
         runtime_profiler.log(
             "miq_local_focus_score",
@@ -1032,9 +954,7 @@ def measure_image_quality(
         )
         phase_started_at = time.perf_counter()
         metrics.correlation = image_quality_haralick_correlation(
-            pixel_data,
-            blur_scale,
-            backend_provider=backend_provider,
+            pixel_data, blur_scale, backend_provider=backend_provider
         )
         runtime_profiler.log(
             "miq_correlation",
@@ -1043,15 +963,13 @@ def measure_image_quality(
         )
         phase_started_at = time.perf_counter()
         metrics.power_log_log_slope = image_quality_power_spectrum_slope(
-            pixel_data,
-            backend_provider=backend_provider,
+            pixel_data, backend_provider=backend_provider
         )
         runtime_profiler.log(
             "miq_power_log_log_slope",
             time.perf_counter() - phase_started_at,
             function="measure_image_quality",
         )
-
     if calculate_saturation:
         phase_started_at = time.perf_counter()
         metrics.percent_maximal, metrics.percent_minimal = image_quality_saturation(
@@ -1062,7 +980,6 @@ def measure_image_quality(
             time.perf_counter() - phase_started_at,
             function="measure_image_quality",
         )
-
     if calculate_intensity:
         phase_started_at = time.perf_counter()
         intensity_metrics = image_quality_intensity_metrics(pixel_data)
@@ -1079,7 +996,6 @@ def measure_image_quality(
             time.perf_counter() - phase_started_at,
             function="measure_image_quality",
         )
-
     if calculate_threshold:
         phase_started_at = time.perf_counter()
         threshold_method = coerce_cellprofiler_enum(ThresholdMethod, threshold_method)
@@ -1090,27 +1006,22 @@ def measure_image_quality(
             function="measure_image_quality",
             method=threshold_method.value,
         )
-
     runtime_profiler.log(
         "miq_total",
         time.perf_counter() - total_started_at,
         function="measure_image_quality",
     )
-    return image, metrics
+    return (image, metrics)
 
 
 def _prepare_measure_image_quality() -> None:
     sample = (
-        (np.arange(64 * 64, dtype=np.uint16) % 256)
-        .astype(np.float32)
-        .reshape((64, 64))
+        (np.arange(64 * 64, dtype=np.uint16) % 256).astype(np.float32).reshape((64, 64))
     )
     measure_image_quality.__wrapped__(sample)
 
 
 measure_image_quality.__openhcs_prepare__ = _prepare_measure_image_quality
-
-
 __all__ = [
     "CentrosomeNumpyImageQualityBackendStrategy",
     "ImageQualityBackendStrategy",

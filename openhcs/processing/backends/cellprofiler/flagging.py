@@ -1,10 +1,11 @@
 """FlagImage backend entrypoints for CellProfiler-compatible processing."""
 
 from __future__ import annotations
-from openhcs.processing.backends.cellprofiler.module_classes import CellProfilerModule
-
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
+    CellProfilerModule,
+)
 import numpy as np
-
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.interop.cellprofiler.flag_image import (
@@ -69,11 +70,11 @@ def flag_image_intensity(
 
 
 class FlagImageModule(CellProfilerModule):
-    module_name = 'FlagImage'
-    function_name = 'flag_image'
+    module_name = "FlagImage"
+    function_name = "flag_image"
     validated = True
-    contract = 'unknown'
     confidence = 1.0
+
 
 __all__ = public_names_from_objects(
     CombinationChoice,

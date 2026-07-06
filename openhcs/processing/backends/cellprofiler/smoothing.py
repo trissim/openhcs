@@ -1,14 +1,13 @@
 """Shared CellProfiler mask-normalized smoothing primitives."""
 
 from __future__ import annotations
-
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     parse_cellprofiler_float,
     parse_cellprofiler_int,
 )
-
-from openhcs.processing.backends.cellprofiler.module_classes import (
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
@@ -24,39 +23,33 @@ from openhcs.interop.cellprofiler.setting_names import (
     setting_values,
     split_symbol_names,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.interop.cellprofiler.cellprofiler_literals import (
+    cellprofiler_enum_from_literal,
+)
 from openhcs.processing.backends.cellprofiler.thresholding import (
     ThresholdSettingsModule,
 )
 
+
 class ReducenoiseModule(CellProfilerModule):
-    module_name = 'Reducenoise'
-    function_name = 'reducenoise'
+    module_name = "Reducenoise"
+    function_name = "reducenoise"
     validated = True
-    contract = 'unknown'
     confidence = 1.0
     setting_bindings = (
         SettingToKeywordBinding("Size", "patch_size", parse_cellprofiler_int),
+        SettingToKeywordBinding("Distance", "patch_distance", parse_cellprofiler_int),
         SettingToKeywordBinding(
-            "Distance",
-            "patch_distance",
-            parse_cellprofiler_int,
-        ),
-        SettingToKeywordBinding(
-            "Cut-off distance",
-            "cutoff_distance",
-            parse_cellprofiler_float,
+            "Cut-off distance", "cutoff_distance", parse_cellprofiler_float
         ),
     )
 
 
 class SmoothModule(
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
-    CellProfilerModule,
+    ImageArtifactInputModule, ImageArtifactOutputModule, CellProfilerModule
 ):
-    module_name = 'Smooth'
-    function_name = 'smooth'
+    module_name = "Smooth"
+    function_name = "smooth"
     validated = True
     confidence = 1.0
     image_input_settings = ("Select the input image",)
@@ -64,20 +57,14 @@ class SmoothModule(
     setting_bindings = (
         SettingToKeywordBinding("Select smoothing method", "smoothing_method"),
         SettingToKeywordBinding(
-            "Calculate artifact diameter automatically?",
-            "auto_object_size",
+            "Calculate artifact diameter automatically?", "auto_object_size"
         ),
         SettingToKeywordBinding("Typical artifact diameter", "object_size"),
         SettingToKeywordBinding(
-            "Edge intensity difference",
-            "edge_intensity_difference",
+            "Edge intensity difference", "edge_intensity_difference"
         ),
-        SettingToKeywordBinding(
-            "Clip intensities to 0 and 1?",
-            "clip_polynomial",
-        ),
+        SettingToKeywordBinding("Clip intensities to 0 and 1?", "clip_polynomial"),
     )
-
 
 
 from abc import ABC, abstractmethod
@@ -85,11 +72,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, ClassVar
-
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
-
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy as numpy_decorator
 from openhcs.core.pipeline.function_contracts import (
@@ -97,9 +82,7 @@ from openhcs.core.pipeline.function_contracts import (
     pure_2d_batch_executor,
 )
 from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.registry_strategies import (
-    EnumKeyedStrategyMixin,
-)
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_values import (
     RuntimeImagePayloadContext,
     image_payload_data,
@@ -179,16 +162,13 @@ class SmoothingBackendSelectionRequest:
 
 
 class SmoothingBackendProviderPolicy(
-    EnumKeyedStrategyMixin[SmoothingMethod],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[SmoothingMethod], ABC, metaclass=AutoRegisterMeta
 ):
     """Nominal SSOT for CellProfiler Smooth default backend semantics."""
 
     __registry_key__ = "strategy_label"
     __skip_if_no_key__ = True
     __enum_member_attr__ = "method"
-
     method: ClassVar[SmoothingMethod]
     strategy_label: ClassVar[str | None] = None
 
@@ -206,8 +186,7 @@ class SmoothingBackendProviderPolicy(
 
     @abstractmethod
     def default_provider(
-        self,
-        selection_request: SmoothingBackendSelectionRequest | None,
+        self, selection_request: SmoothingBackendSelectionRequest | None
     ) -> CellProfilerBackendProvider:
         """Return CP-compatible default provider for this Smooth method."""
 
@@ -216,8 +195,7 @@ class NativeSmoothingBackendProviderPolicy(SmoothingBackendProviderPolicy):
     """Smooth methods whose CP reference implementation is the native Python path."""
 
     def default_provider(
-        self,
-        selection_request: SmoothingBackendSelectionRequest | None,
+        self, selection_request: SmoothingBackendSelectionRequest | None
     ) -> CellProfilerBackendProvider:
         del selection_request
         return CellProfilerBackendProvider.NATIVE
@@ -230,8 +208,7 @@ class GaussianSmoothingBackendProviderPolicy(SmoothingBackendProviderPolicy):
     opencv_equivalent_min_sigma: ClassVar[float] = 4.0
 
     def default_provider(
-        self,
-        selection_request: SmoothingBackendSelectionRequest | None,
+        self, selection_request: SmoothingBackendSelectionRequest | None
     ) -> CellProfilerBackendProvider:
         if (
             selection_request is not None
@@ -245,7 +222,9 @@ class MedianSmoothingBackendProviderPolicy(NativeSmoothingBackendProviderPolicy)
     method = SmoothingMethod.MEDIAN_FILTER
 
 
-class EdgePreservingSmoothingBackendProviderPolicy(NativeSmoothingBackendProviderPolicy):
+class EdgePreservingSmoothingBackendProviderPolicy(
+    NativeSmoothingBackendProviderPolicy
+):
     method = SmoothingMethod.SMOOTH_KEEPING_EDGES
 
 
@@ -253,7 +232,9 @@ class PolynomialSmoothingBackendProviderPolicy(NativeSmoothingBackendProviderPol
     method = SmoothingMethod.FIT_POLYNOMIAL
 
 
-class CircularAverageSmoothingBackendProviderPolicy(NativeSmoothingBackendProviderPolicy):
+class CircularAverageSmoothingBackendProviderPolicy(
+    NativeSmoothingBackendProviderPolicy
+):
     method = SmoothingMethod.CIRCULAR_AVERAGE_FILTER
 
 
@@ -278,9 +259,7 @@ class SmoothingStrategy(ABC, metaclass=AutoRegisterMeta):
         strategy_type = cls.__registry__.get(strategy_key.label)
         if strategy_type is None:
             raise NotImplementedError(
-                "No CellProfiler smoothing backend is registered for provider "
-                f"{strategy_key.backend_provider.value!r} and method "
-                f"{strategy_key.method.value!r}."
+                f"No CellProfiler smoothing backend is registered for provider {strategy_key.backend_provider.value!r} and method {strategy_key.method.value!r}."
             )
         return strategy_type()
 
@@ -289,10 +268,7 @@ class SmoothingStrategy(ABC, metaclass=AutoRegisterMeta):
         return False
 
     def smooth_stack(
-        self,
-        pixel_stack: np.ndarray,
-        mask_stack: np.ndarray | None,
-        sigma: float,
+        self, pixel_stack: np.ndarray, mask_stack: np.ndarray | None, sigma: float
     ) -> np.ndarray:
         raise NotImplementedError(
             f"{type(self).__name__} does not declare stack-batch smoothing support."
@@ -382,8 +358,7 @@ class OpenCVMaskedGaussianFilterRequest(MaskedFilterRequest):
         mask_bool = np.asarray(self.mask, dtype=bool)
         if mask_bool.shape != image_array.shape:
             raise ValueError(
-                "Smoothing mask must match image shape; got "
-                f"{mask_bool.shape!r} for image {image_array.shape!r}."
+                f"Smoothing mask must match image shape; got {mask_bool.shape!r} for image {image_array.shape!r}."
             )
         return np.ascontiguousarray(mask_bool.astype(np.float32))
 
@@ -396,27 +371,16 @@ class OpenCVMaskedGaussianFilterRequest(MaskedFilterRequest):
         masked_image = np.zeros(image_array.shape, dtype=np.float32)
         np.copyto(masked_image, image_array, where=mask_array.astype(bool, copy=False))
         filtered = cv2.sepFilter2D(
-            masked_image,
-            cv2.CV_32F,
-            kernel,
-            kernel,
-            borderType=cv2.BORDER_CONSTANT,
+            masked_image, cv2.CV_32F, kernel, kernel, borderType=cv2.BORDER_CONSTANT
         )
         weights = cv2.sepFilter2D(
-            mask_array,
-            cv2.CV_32F,
-            kernel,
-            kernel,
-            borderType=cv2.BORDER_CONSTANT,
+            mask_array, cv2.CV_32F, kernel, kernel, borderType=cv2.BORDER_CONSTANT
         )
         return filtered / (weights + np.finfo(np.float32).eps)
 
     @classmethod
     def apply_stack(
-        cls,
-        pixel_stack: np.ndarray,
-        mask_stack: np.ndarray | None,
-        sigma: float,
+        cls, pixel_stack: np.ndarray, mask_stack: np.ndarray | None, sigma: float
     ) -> np.ndarray:
         return np.stack(
             [
@@ -454,18 +418,12 @@ class NumpyGaussianSmoothingStrategy(SmoothingStrategyLeaf):
             pixels=request.pixel_data,
             mask=request.mask,
             operation=lambda image: gaussian_filter(
-                image,
-                request.sigma,
-                mode="constant",
-                cval=0,
+                image, request.sigma, mode="constant", cval=0
             ),
         ).apply()
 
     def smooth_stack(
-        self,
-        pixel_stack: np.ndarray,
-        mask_stack: np.ndarray | None,
-        sigma: float,
+        self, pixel_stack: np.ndarray, mask_stack: np.ndarray | None, sigma: float
     ) -> np.ndarray:
         from scipy.ndimage import gaussian_filter
 
@@ -473,10 +431,7 @@ class NumpyGaussianSmoothingStrategy(SmoothingStrategyLeaf):
             pixels=pixel_stack,
             mask=mask_stack,
             operation=lambda image: gaussian_filter(
-                image,
-                (0.0, sigma, sigma),
-                mode="constant",
-                cval=0,
+                image, (0.0, sigma, sigma), mode="constant", cval=0
             ),
         ).apply()
 
@@ -491,21 +446,14 @@ class OpenCVGaussianSmoothingStrategy(SmoothingStrategyLeaf):
 
     def smooth(self, request: SmoothingRequest) -> np.ndarray:
         return OpenCVMaskedGaussianFilterRequest(
-            request.pixel_data,
-            request.mask,
-            request.sigma,
+            request.pixel_data, request.mask, request.sigma
         ).apply()
 
     def smooth_stack(
-        self,
-        pixel_stack: np.ndarray,
-        mask_stack: np.ndarray | None,
-        sigma: float,
+        self, pixel_stack: np.ndarray, mask_stack: np.ndarray | None, sigma: float
     ) -> np.ndarray:
         return OpenCVMaskedGaussianFilterRequest.apply_stack(
-            pixel_stack,
-            mask_stack,
-            sigma,
+            pixel_stack, mask_stack, sigma
         )
 
 
@@ -517,9 +465,7 @@ class MedianSmoothingStrategy(SmoothingStrategyLeaf):
         import centrosome.filter
 
         return centrosome.filter.median_filter(
-            request.pixel_data,
-            request.mask,
-            request.object_size / 2 + 1,
+            request.pixel_data, request.mask, request.object_size / 2 + 1
         )
 
 
@@ -544,9 +490,7 @@ class PolynomialSmoothingStrategy(SmoothingStrategyLeaf):
 
     def smooth(self, request: SmoothingRequest) -> np.ndarray:
         return _fit_polynomial(
-            request.pixel_data,
-            request.mask,
-            request.clip_polynomial,
+            request.pixel_data, request.mask, request.clip_polynomial
         )
 
 
@@ -558,9 +502,7 @@ class CircularAverageSmoothingStrategy(SmoothingStrategyLeaf):
         import centrosome.filter
 
         return centrosome.filter.circular_average_filter(
-            request.pixel_data,
-            request.object_size / 2 + 1,
-            request.mask,
+            request.pixel_data, request.object_size / 2 + 1, request.mask
         )
 
 
@@ -577,9 +519,7 @@ class SmoothToAverageStrategy(SmoothingStrategyLeaf):
 
 
 def _gaussian_filter_numba(
-    image: np.ndarray,
-    mask: np.ndarray | None,
-    sigma: float,
+    image: np.ndarray, mask: np.ndarray | None, sigma: float
 ) -> np.ndarray:
     image_array = np.asarray(image, dtype=np.float32)
     if image_array.ndim != 2:
@@ -590,27 +530,21 @@ def _gaussian_filter_numba(
     contiguous_image = np.ascontiguousarray(image_array)
     if mask is None:
         return _separable_gaussian_normalized_constant_2d_numba(
-            contiguous_image,
-            kernel,
+            contiguous_image, kernel
         )
-
     mask_array = np.asarray(mask, dtype=np.bool_)
     if mask_array.shape != image_array.shape:
         raise ValueError(
-            "Smoothing mask must match image shape; got "
-            f"{mask_array.shape!r} for image {image_array.shape!r}."
+            f"Smoothing mask must match image shape; got {mask_array.shape!r} for image {image_array.shape!r}."
         )
     return _masked_separable_gaussian_constant_2d_numba(
-        contiguous_image,
-        np.ascontiguousarray(mask_array),
-        kernel,
+        contiguous_image, np.ascontiguousarray(mask_array), kernel
     )
 
 
 @njit(cache=True)
 def _separable_gaussian_normalized_constant_2d_numba(
-    image: np.ndarray,
-    kernel: np.ndarray,
+    image: np.ndarray, kernel: np.ndarray
 ) -> np.ndarray:
     height, width = image.shape
     radius = kernel.size // 2
@@ -618,7 +552,6 @@ def _separable_gaussian_normalized_constant_2d_numba(
     x_weights = np.zeros(width, dtype=np.float64)
     y_weights = np.zeros(height, dtype=np.float64)
     output = np.zeros((height, width), dtype=np.float32)
-
     for row in range(height):
         for col in range(width):
             value = 0.0
@@ -632,7 +565,6 @@ def _separable_gaussian_normalized_constant_2d_numba(
             temp[row, col] = value
             if row == 0:
                 x_weights[col] = weight
-
     for row in range(height):
         y_weight = 0.0
         for offset in range(kernel.size):
@@ -654,9 +586,7 @@ def _separable_gaussian_normalized_constant_2d_numba(
 
 @njit(cache=True)
 def _masked_separable_gaussian_constant_2d_numba(
-    image: np.ndarray,
-    mask: np.ndarray,
-    kernel: np.ndarray,
+    image: np.ndarray, mask: np.ndarray, kernel: np.ndarray
 ) -> np.ndarray:
     height, width = image.shape
     radius = kernel.size // 2
@@ -664,7 +594,6 @@ def _masked_separable_gaussian_constant_2d_numba(
     temp_weights = np.zeros((height, width), dtype=np.float64)
     output = np.zeros((height, width), dtype=np.float32)
     eps = np.finfo(np.float64).eps
-
     for row in range(height):
         for col in range(width):
             weighted_value = 0.0
@@ -677,7 +606,6 @@ def _masked_separable_gaussian_constant_2d_numba(
                     weight += kernel_value
             temp_values[row, col] = weighted_value
             temp_weights[row, col] = weight
-
     for row in range(height):
         for col in range(width):
             weighted_value = 0.0
@@ -693,16 +621,13 @@ def _masked_separable_gaussian_constant_2d_numba(
 
 
 def _fit_polynomial(
-    image: np.ndarray,
-    mask: np.ndarray | None,
-    clip: bool,
+    image: np.ndarray, mask: np.ndarray | None, clip: bool
 ) -> np.ndarray:
     if mask is None:
         mask = np.ones(image.shape, dtype=bool)
     valid = np.asarray(mask, dtype=bool) & (image > 0)
     if not np.any(valid):
         return image
-
     x, y = np.mgrid[0 : image.shape[0], 0 : image.shape[1]]
     terms = (x, y, x * x, y * y, x * y, np.ones(image.shape))
     design = np.column_stack([term[valid].ravel() for term in terms])
@@ -732,18 +657,17 @@ def smooth_image(
             method=smoothing_method,
             auto_object_size=auto_object_size,
             object_size=float(object_size),
-            image_shape=tuple(int(axis) for axis in pixel_data.shape),
+            image_shape=tuple((int(axis) for axis in pixel_data.shape)),
         ),
     )
     mask = image_payload_mask(image)
     if mask is not None:
         mask = np.asarray(mask, dtype=bool)
-
     selection = SmoothingBackendSelectionRequest(
         method=smoothing_method,
         auto_object_size=auto_object_size,
         object_size=float(object_size),
-        image_shape=tuple(int(axis) for axis in pixel_data.shape),
+        image_shape=tuple((int(axis) for axis in pixel_data.shape)),
     )
     request = SmoothingRequest(
         pixel_data=pixel_data,
@@ -756,7 +680,6 @@ def smooth_image(
         clip_polynomial=bool(clip_polynomial),
     )
     output = SmoothingStrategy.for_request(request).smooth(request)
-
     return RuntimeImagePayloadContext(
         np.asarray(output, dtype=np.float32),
         mask=mask,
@@ -799,7 +722,6 @@ def reducenoise(
     image_data = image
     if image_data.dtype != np.float32 and image_data.dtype != np.float64:
         image_data = image_data.astype(np.float32)
-
     sigma_estimate = estimate_sigma(image_data)
     h_value = cutoff_distance if cutoff_distance > 0.01 else sigma_estimate * 1.15
     denoised = denoise_nl_means(
@@ -817,8 +739,7 @@ def smooth_batch(request: RuntimePure2DSliceBatchRequest) -> list[Any]:
     slices_2d = request.slices_2d
     kwargs = request.kwargs
     smoothing_method = coerce_cellprofiler_enum(
-        SmoothingMethod,
-        kwargs.get("smoothing_method", SmoothingMethod.GAUSSIAN_FILTER),
+        SmoothingMethod, kwargs.get("smoothing_method", SmoothingMethod.GAUSSIAN_FILTER)
     )
     pixel_stack = np.ascontiguousarray(
         np.stack(
@@ -827,19 +748,18 @@ def smooth_batch(request: RuntimePure2DSliceBatchRequest) -> list[Any]:
                 for slice_2d in slices_2d
             ],
             axis=0,
-        ),
+        )
     )
     selection_request = SmoothingBackendSelectionRequest(
         method=smoothing_method,
         auto_object_size=bool(kwargs.get("auto_object_size", True)),
         object_size=float(kwargs.get("object_size", 16.0)),
-        image_shape=tuple(int(axis) for axis in pixel_stack.shape[1:]),
+        image_shape=tuple((int(axis) for axis in pixel_stack.shape[1:])),
     )
     backend_provider = SmoothingBackendProviderPolicy.resolve(
         smoothing_method,
         kwargs.get(
-            "smoothing_backend_provider",
-            DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+            "smoothing_backend_provider", DEFAULT_CELLPROFILER_BACKEND_SELECTION
         ),
         selection_request,
     )
@@ -851,29 +771,23 @@ def smooth_batch(request: RuntimePure2DSliceBatchRequest) -> list[Any]:
             request.execute_one(slice_index)
             for slice_index in range(request.slice_count)
         ]
-
-    masks = tuple(image_payload_mask(slice_2d) for slice_2d in slices_2d)
+    masks = tuple((image_payload_mask(slice_2d) for slice_2d in slices_2d))
     mask_stack = None
-    if any(mask is not None for mask in masks):
+    if any((mask is not None for mask in masks)):
         mask_stack = np.stack(
             [
-                np.ones(pixel_stack.shape[1:], dtype=bool)
-                if mask is None
-                else np.asarray(mask, dtype=bool)
+                (
+                    np.ones(pixel_stack.shape[1:], dtype=bool)
+                    if mask is None
+                    else np.asarray(mask, dtype=bool)
+                )
                 for mask in masks
             ],
             axis=0,
         )
-
     output_stack = strategy.smooth_stack(
-        pixel_stack,
-        mask_stack,
-        float(selection_request.sigma),
-    ).astype(
-        np.float32,
-        copy=False,
-    )
-
+        pixel_stack, mask_stack, float(selection_request.sigma)
+    ).astype(np.float32, copy=False)
     return [
         RuntimeImagePayloadContext(
             output_stack[slice_index],
@@ -894,8 +808,6 @@ def prepare_smooth() -> None:
 
 
 pure_2d_batch_executor(smooth_batch)(smooth)
-
-
 __all__ = public_names_from_objects(
     CircularAverageSmoothingBackendProviderPolicy,
     EdgePreservingSmoothingBackendProviderPolicy,

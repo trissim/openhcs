@@ -62,6 +62,7 @@ from openhcs.core.runtime_values import (
 )
 from openhcs.core.runtime_invocation import RuntimeOutputBundle
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
+from openhcs.core.runtime_slice_projection import RuntimeProjectionAxis, RuntimeSliceProjection
 from openhcs.core.runtime_batch_contracts import (
     Pure2DSliceBatchExecutor,
     RuntimeBatchExecutionDomain,
@@ -498,7 +499,8 @@ class ImagePayloadPure2DInputSlicer(Pure2DInputSlicer):
     value_type = None
 
     def is_single_plane_value(self, value: Any) -> bool:
-        return image_payload_data(value).ndim == 2
+        data = image_payload_data(value)
+        return data.ndim == 2 or is_color_image_slice(data)
 
     def slice_value(self, value: Any, memory_type: str) -> tuple[Any, ...]:
         data = image_payload_data(value)
@@ -888,6 +890,12 @@ class ProcessingContractDeclaration(ABC):
         """Return runtime control parameter declarations owned by this contract."""
         return ()
 
+    def injected_runtime_parameter_types(
+        self,
+    ) -> tuple[type["ContractRuntimeParameter"], ...]:
+        """Return contract controls that belong on the public wrapper signature."""
+        return ()
+
     def execution_parameter_names(self) -> frozenset[str]:
         """Runtime controls that should remain present for contract execution."""
         return frozenset(
@@ -901,6 +909,14 @@ class ProcessingContractDeclaration(ABC):
         return frozenset(
             parameter_type.require_parameter_name()
             for parameter_type in self.runtime_parameter_types()
+            if parameter_type.is_semantic_control
+        )
+
+    def injected_semantic_control_parameter_names(self) -> frozenset[str]:
+        """Semantic controls that this contract may inject into public callables."""
+        return frozenset(
+            parameter_type.require_parameter_name()
+            for parameter_type in self.injected_runtime_parameter_types()
             if parameter_type.is_semantic_control
         )
 
@@ -973,6 +989,11 @@ class FlexibleProcessingContract(SemanticControlVariableComponentStackProcessing
         self,
     ) -> tuple[type["ContractRuntimeParameter"], ...]:
         return (SliceBySliceRuntimeParameter,)
+
+    def injected_runtime_parameter_types(
+        self,
+    ) -> tuple[type["ContractRuntimeParameter"], ...]:
+        return self.runtime_parameter_types()
 
     def execute(self, registry, func, image, *args, **kwargs):
         if self.consume_semantic_control(kwargs):
@@ -1225,11 +1246,26 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
 
         declaration = contract.declaration
         original_sig = inspect.signature(func)
-        param_names = {p.name for p in original_sig.parameters.values()}
+        allowed_semantic_control_names = (
+            declaration.injected_semantic_control_parameter_names()
+        )
+        semantic_control_names = {
+            parameter_type.require_parameter_name()
+            for parameter_type in ContractRuntimeParameter.registered_parameter_types()
+            if parameter_type.is_semantic_control
+        }
+        params_to_strip = semantic_control_names - allowed_semantic_control_names
+        public_original_parameters = tuple(
+            parameter
+            for parameter in original_sig.parameters.values()
+            if parameter.name not in params_to_strip
+        )
+        public_sig = original_sig.replace(parameters=public_original_parameters)
+        param_names = {p.name for p in public_sig.parameters.values()}
 
         runtime_parameter_types = (
             *CallableRuntimeConfig.runtime_parameter_types(),
-            *declaration.runtime_parameter_types(),
+            *declaration.injected_runtime_parameter_types(),
         )
         signature_parameter_types = (
             Enableable,
@@ -1247,7 +1283,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             seen_param_names.add(parameter.name)
 
         # If nothing to inject, return original function
-        if not params_to_add:
+        if not params_to_add and not params_to_strip:
             # Still brand the callable as Enableable metadata.
             from python_introspect import mark_enableable
             from openhcs.core.callable_contract import attach_callable_contract_metadata
@@ -1264,7 +1300,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             return func
 
         # Build new parameter list (insert before **kwargs)
-        new_params = list(original_sig.parameters.values())
+        new_params = list(public_sig.parameters.values())
         insert_index = next(
             (
                 i
@@ -1281,6 +1317,13 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         # Create wrapper
         @wraps(func)
         def wrapper(image, *args, **kwargs):
+            if params_to_strip:
+                kwargs = {
+                    name: value
+                    for name, value in kwargs.items()
+                    if name not in params_to_strip
+                }
+
             # Populate missing wrapper controls with their defaults from the signature
             # This is critical for internal calls between OpenHCS functions where
             # wrapper controls may not be explicitly passed (e.g., create_projection calling max_projection)
@@ -1310,7 +1353,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
 
             return contract.execute(self, func, image, *args, **filtered_kwargs)
 
-        wrapper.__signature__ = original_sig.replace(parameters=new_params)
+        wrapper.__signature__ = public_sig.replace(parameters=new_params)
         wrapper.__annotations__ = inspect.get_annotations(func, eval_str=False).copy()
         for parameter_type in signature_parameter_types:
             parameter = parameter_type.parameter()
@@ -1422,11 +1465,17 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             slice_index: int,
             slice_count: int,
         ) -> Any:
-            del slice_index, slice_count
+            projected_kwargs = RuntimeSliceProjection.kwargs_for_slice(
+                slice_kwargs,
+                RuntimeProjectionAxis(
+                    slice_index=slice_index,
+                    extent=slice_count,
+                ),
+            )
             return RuntimeCallablePolicy().invocation(
                 slice_func,
                 (slice_2d, *args),
-                slice_kwargs,
+                projected_kwargs,
             ).call()
 
         slice_results = batch_executor(

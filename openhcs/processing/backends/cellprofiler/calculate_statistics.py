@@ -1,14 +1,11 @@
 """CellProfiler CalculateStatistics module declaration."""
 
 from __future__ import annotations
-
-from openhcs.processing.backends.cellprofiler.module_classes import (
-    CellProfilerModule,
-    )
+from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
 
 class CalculateStatisticsModule(CellProfilerModule):
-    module_name = 'CalculateStatistics'
-    function_name = 'calculate_statistics'
+    module_name = "CalculateStatistics"
+    function_name = "calculate_statistics"
     validated = True
     confidence = 1.0

@@ -1,17 +1,16 @@
 """Crop geometry semantics for CellProfiler-compatible processing."""
 
 from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, ClassVar
-
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
-
-from openhcs.core.artifacts import ArtifactKind
-from openhcs.interop.cellprofiler.runtime.bound_parameters import RuntimeBoundParameterName
+from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
+from openhcs.interop.cellprofiler.runtime.bound_parameters import (
+    RuntimeBoundParameterName,
+)
 from openhcs.interop.cellprofiler.runtime.payload_types import CellProfilerKwargDict
 from openhcs.interop.cellprofiler.runtime.special_input_policies import (
     SpecialInputBindingRequest,
@@ -25,13 +24,22 @@ from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     RuntimeImagePayloadContext,
     image_payload_data,
+    image_payload_mask,
     image_payload_metadata,
     object_label_dense_array,
 )
-from openhcs.processing.backends.cellprofiler.module_classes import (
-    ArtifactContractModule,
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
     BinderSettingsSourceModule,
-    )
+    CellProfilerArtifactCapability,
+    ImageArtifactInputCapability,
+    ImageArtifactInputModule,
+    ImageArtifactOutputCapability,
+    ImageArtifactOutputModule,
+    MeasurementArtifactOutputModule,
+    ObjectArtifactInputModule,
+    ObjectLabelArtifactInputCapability,
+)
 from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
     required_setting_value,
@@ -50,36 +58,30 @@ from openhcs.processing.backends.lib_registry.unified_registry import Processing
 class CropSpecialInputPolicy(TrailingImageSpecialInputPolicy):
     """Bind Crop side inputs without making them primary image domains."""
 
-    mask_plane_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName("mask_plane")
+    mask_plane_kwarg: ClassVar[RuntimeBoundParameterName] = RuntimeBoundParameterName(
+        "mask_plane"
     )
     cropping_labels_kwarg: ClassVar[RuntimeBoundParameterName] = (
         RuntimeBoundParameterName("cropping_labels")
     )
 
     def extra_bound_parameter_names(
-        self,
-        plan: CellProfilerModuleRuntimePlan,
+        self, plan: CellProfilerModuleRuntimePlan
     ) -> tuple[str, ...]:
         if not plan.object_inputs:
             return ()
         return super().extra_bound_parameter_names(plan)
 
-    def bind(
-        self,
-        request: SpecialInputBindingRequest,
-    ) -> CellProfilerKwargDict:
+    def bind(self, request: SpecialInputBindingRequest) -> CellProfilerKwargDict:
         image_inputs = request.image_inputs
         object_inputs = request.object_inputs
         if len(image_inputs) > 1:
             raise NotImplementedError(
-                f"{request.module_name} supports at most one image mask input; "
-                f"got {[spec.name for spec in image_inputs]}."
+                f"{request.module_name} supports at most one image mask input; got {[spec.name for spec in image_inputs]}."
             )
         if len(object_inputs) > 1:
             raise NotImplementedError(
-                f"{request.module_name} supports at most one object mask input; "
-                f"got {[spec.name for spec in object_inputs]}."
+                f"{request.module_name} supports at most one object mask input; got {[spec.name for spec in object_inputs]}."
             )
         bound: CellProfilerKwargDict = {}
         if image_inputs:
@@ -97,12 +99,25 @@ class CropModule(
     TableMeasurementRecordRowsMixin,
     NoObjectNameMeasurementRecordMixin,
     ProducedImageMeasurementRecordMixin,
+    ImageArtifactInputModule,
+    ObjectArtifactInputModule,
+    ImageArtifactOutputModule,
+    MeasurementArtifactOutputModule,
     BinderSettingsSourceModule,
 ):
-    module_name = 'Crop'
-    function_name = 'crop'
+    module_name = "Crop"
+    function_name = "crop"
     validated = True
+    contract = ProcessingContract.PURE_2D
     confidence = 1.0
+    measurement_feature_part_rewrites = {
+        ("area", "retained"): ("crop", "area", "retained", "after", "cropping"),
+        ("original", "area"): ("crop", "original", "image", "area"),
+    }
+    measurement_source_feature_prefixes = (
+        ("crop", "area", "retained", "after", "cropping"),
+        ("crop", "original", "image", "area"),
+    )
     shape_setting = "Select the cropping shape"
     method_setting = "Select the cropping method"
     removal_setting = "Remove empty rows and columns?"
@@ -147,9 +162,7 @@ class CropModule(
 
     @classmethod
     def settings_source(
-        cls,
-        module: "ModuleBlock",
-        binder: "SettingsBinder",
+        cls, module: "ModuleBlock", binder: "SettingsBinder"
     ) -> "CellProfilerKwargs":
         kwargs: dict[str, Any] = {
             "crop_shape": cls.shape(module).value,
@@ -198,13 +211,20 @@ class CropModule(
         return required_setting_value(module, cls.output_image_setting)
 
     @classmethod
+    def image_input_setting_names(cls):
+        return (cls.input_image_setting,)
+
+    @classmethod
+    def image_output_setting_names(cls):
+        return (cls.output_image_setting,)
+
+    @classmethod
     def previous_mask_artifact_name(cls, module: "ModuleBlock") -> str | None:
         from openhcs.core.artifacts import CROP_MASK_ARTIFACT_SIDECAR
         from openhcs.interop.cellprofiler.setting_names import OptionalSettingSymbol
 
         previous_image_name = OptionalSettingSymbol(
-            module,
-            cls.previous_image_setting,
+            module, cls.previous_image_setting
         ).value
         if previous_image_name is None:
             return None
@@ -231,51 +251,85 @@ class CropModule(
         shape = cls.shape(module)
         if shape is cls.Shape.CROPPING:
             name = cls.previous_mask_artifact_name(module)
-            kind = ArtifactKind.IMAGE
+            kind = ImageArtifactType
             description = "previous cropping"
         elif shape is cls.Shape.IMAGE:
             name = cls.mask_image_name(module)
-            kind = ArtifactKind.IMAGE
+            kind = ImageArtifactType
             description = "image-mask cropping"
         elif shape is cls.Shape.OBJECTS:
             name = cls.objects_name(module)
-            kind = ArtifactKind.OBJECT_LABELS
+            kind = ObjectLabelsArtifactType
             description = "object-mask cropping"
         else:
             return ()
-
         if name is None:
             raise ValueError(
-                f"Crop({module.module_num}) uses {description} but does not "
-                "declare the required masking artifact."
+                f"Crop({module.module_num}) uses {description} but does not declare the required masking artifact."
             )
         return (ModuleArtifactInput(name, kind),)
 
     @classmethod
+    def input_capability_for_mask(
+        cls, artifact_input: "ModuleArtifactInput"
+    ) -> type[CellProfilerArtifactCapability]:
+        if artifact_input.artifact_type is ImageArtifactType:
+            return ImageArtifactInputCapability
+        if artifact_input.artifact_type is ObjectLabelsArtifactType:
+            return ObjectLabelArtifactInputCapability
+        raise TypeError(
+            f"Crop mask input {artifact_input.name!r} has unsupported artifact type {artifact_input.artifact_type.__name__}."
+        )
+
+    @classmethod
     def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, CROP_MASK_ARTIFACT_SIDECAR
+        from openhcs.core.artifacts import CROP_MASK_ARTIFACT_SIDECAR
 
         output_name = cls.output_image_name(module)
         inputs = [
-            builder.require_artifact(ArtifactSpec(cls.input_image_name(module), ArtifactKind.IMAGE), module),
-            *(builder.require_artifact(ArtifactSpec(spec.name, spec.kind), module) for spec in cls.mask_inputs(module)),
+            ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(cls.input_image_name(module))),
+            *(
+                cls.input_capability_for_mask(spec).bind_artifact(cls, builder, module, cls.input_capability_for_mask(spec).spec(spec.name))
+                for spec in cls.mask_inputs(module)
+            ),
         ]
         outputs = [
-            builder.declare_artifact(ArtifactSpec(output_name, ArtifactKind.IMAGE), module),
-            builder.declare_artifact(
-                ArtifactSpec(
-                    CROP_MASK_ARTIFACT_SIDECAR.name_for(output_name),
-                    ArtifactKind.IMAGE,
-                    sidecar_role=CROP_MASK_ARTIFACT_SIDECAR.role,
+            ImageArtifactOutputCapability.bind_artifact(
+                cls,
+                builder,
+                module,
+                ImageArtifactOutputCapability.spec(
+                    output_name,
+                    relations=cls.declared_output_artifact_relations(
+                        builder,
+                        module,
+                        setting=cls.output_image_setting,
+                        capability_type=ImageArtifactOutputCapability,
+                        name=output_name,
+                    ),
                 ),
-                module,
             ),
-            builder.declare_artifact(
-                ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS),
+            ImageArtifactOutputCapability.bind_artifact(
+                cls,
+                builder,
                 module,
+                ImageArtifactOutputCapability.spec(
+                    CROP_MASK_ARTIFACT_SIDECAR.name_for(output_name),
+                    sidecar_role=CROP_MASK_ARTIFACT_SIDECAR.role,
+                    relations=cls.declared_output_artifact_relations(
+                        builder,
+                        module,
+                        setting=cls.output_image_setting,
+                        capability_type=ImageArtifactOutputCapability,
+                        name=output_name,
+                    ),
+                ),
             ),
+            cls.measurement_output_artifact(builder, module),
         ]
-        return assembler.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
+        return assembler.assemble_contract(
+            module, builder, inputs=inputs, outputs=outputs
+        )
 
 
 from openhcs.processing.materialization import csv_materializer
@@ -318,9 +372,7 @@ class CropMaskRequest:
             self,
             "cropping_method",
             coerce_enum(
-                CropModule.Method,
-                self.cropping_method,
-                "Crop.cropping_method",
+                CropModule.Method, self.cropping_method, "Crop.cropping_method"
             ),
         )
 
@@ -355,17 +407,12 @@ class CropShapeMaskStrategy(ABC, metaclass=AutoRegisterMeta):
     def mask(self, request: CropMaskRequest) -> np.ndarray:
         """Return a boolean crop mask for one shape mode."""
 
-    def validate_crop_mask(
-        self,
-        mask: np.ndarray,
-        image: np.ndarray,
-    ) -> np.ndarray:
+    def validate_crop_mask(self, mask: np.ndarray, image: np.ndarray) -> np.ndarray:
         """Validate and normalize a shape-mode crop mask against input image XY."""
         crop_mask = np.asarray(mask).astype(bool)
         if crop_mask.shape != image.shape[:2]:
             raise ValueError(
-                "Crop mask shape must match input image XY shape; "
-                f"got mask {crop_mask.shape!r} for image {image.shape[:2]!r}."
+                f"Crop mask shape must match input image XY shape; got mask {crop_mask.shape!r} for image {image.shape[:2]!r}."
             )
         return crop_mask
 
@@ -391,7 +438,9 @@ class ImageMaskCropMaskStrategy(CropShapeMaskStrategy):
     def mask(self, request: CropMaskRequest) -> np.ndarray:
         if request.mask_plane is None:
             raise ValueError("Crop image-mask mode requires a mask-image plane.")
-        return self.validate_crop_mask(request.mask_plane > 0, request.orig_image_pixels)
+        return self.validate_crop_mask(
+            request.mask_plane > 0, request.orig_image_pixels
+        )
 
 
 class ObjectMaskCropMaskStrategy(CropShapeMaskStrategy):
@@ -418,17 +467,12 @@ class RectangleCropMaskStrategy(CropShapeMaskStrategy):
     def mask(self, request: CropMaskRequest) -> np.ndarray:
         require_coordinate_cropping(request)
         left, right = rectangle_pair(
-            request.left_right_rectangle_positions,
-            "left_right_rectangle_positions",
+            request.left_right_rectangle_positions, "left_right_rectangle_positions"
         )
         top, bottom = rectangle_pair(
-            request.top_bottom_rectangle_positions,
-            "top_bottom_rectangle_positions",
+            request.top_bottom_rectangle_positions, "top_bottom_rectangle_positions"
         )
-        return rectangle_cropping(
-            request.orig_image_pixels,
-            (left, right, top, bottom),
-        )
+        return rectangle_cropping(request.orig_image_pixels, (left, right, top, bottom))
 
 
 class EllipseCropMaskStrategy(CropShapeMaskStrategy):
@@ -471,7 +515,6 @@ class CropImageRequest:
             i_keep = np.argwhere(i_histogram > 0).flatten()
             j_keep = np.argwhere(j_histogram > 0).flatten()
             return self.image[i_keep, :][:, j_keep].copy()
-
         i_first = int(np.argwhere(i_cumsum == 1)[0][0])
         i_last = int(np.argwhere(i_cumsum == i_cumsum.max())[0][0])
         j_first = int(np.argwhere(j_cumsum == 1)[0][0])
@@ -497,8 +540,12 @@ class CropRequest:
 
     def execute(self) -> tuple[np.ndarray, np.ndarray, CropMeasurement]:
         input_pixels = image_payload_data(self.image)
+        input_image_mask = image_payload_mask(self.image)
         input_metadata = image_payload_metadata(self.image)
         orig_image_pixels, input_mask_plane = split_crop_input(input_pixels)
+        orig_image_mask = (
+            None if input_image_mask is None else np.asarray(input_image_mask, dtype=bool)
+        )
         if self.mask_plane is not None:
             input_mask_plane = image_payload_data(self.mask_plane)
         request = CropMaskRequest(
@@ -514,26 +561,21 @@ class CropRequest:
             cropping_labels=self.cropping_labels,
         )
         removal_method = coerce_enum(
-            CropModule.RemovalMethod,
-            self.removal_method,
-            "Crop.removal_method",
+            CropModule.RemovalMethod, self.removal_method, "Crop.removal_method"
         )
         cropping = CropShapeMaskStrategy.for_shape(request.crop_shape).mask(request)
         cropped_mask = cropped_mask_for(cropping, None, removal_method)
-        cropped_pixel_data = cropped_image_pixels(
-            orig_image_pixels,
-            cropping,
-            cropped_mask,
-            removal_method,
+        output_image_mask = cropped_image_mask(
+            cropping, cropped_mask, orig_image_mask, removal_method
         )
-        input_shape_yx = tuple(int(value) for value in orig_image_pixels.shape[:2])
+        cropped_pixel_data = cropped_image_pixels(
+            orig_image_pixels, cropping, cropped_mask, removal_method
+        )
+        input_shape_yx = tuple((int(value) for value in orig_image_pixels.shape[:2]))
         crop_bounds = crop_spatial_bounds(cropping, removal_method)
         output_metadata = crop_output_metadata(
-            input_metadata,
-            input_shape_yx=input_shape_yx,
-            bounds=crop_bounds,
+            input_metadata, input_shape_yx=input_shape_yx, bounds=crop_bounds
         )
-
         original_area = int(np.prod(orig_image_pixels.shape[:2]))
         area_retained = int(np.sum(cropping))
         measurements = CropMeasurement(
@@ -546,9 +588,7 @@ class CropRequest:
             output_metadata = replace(output_metadata, mask_defines_border=False)
         return (
             RuntimeImagePayloadContext(
-                cropped_pixel_data,
-                mask=cropped_mask,
-                metadata=output_metadata,
+                cropped_pixel_data, mask=output_image_mask, metadata=output_metadata
             ).payload(),
             cropping,
             measurements,
@@ -560,8 +600,7 @@ def require_coordinate_cropping(request: CropMaskRequest) -> None:
     if request.cropping_method.is_coordinate_based:
         return
     raise NotImplementedError(
-        f"Headless OpenHCS execution supports coordinate Crop, not "
-        f"{request.cropping_method.value!r}."
+        f"Headless OpenHCS execution supports coordinate Crop, not {request.cropping_method.value!r}."
     )
 
 
@@ -583,7 +622,6 @@ def ellipse_cropping(
         dist_x = 0
         dist_y = np.sqrt(y_radius**2 - x_radius**2)
         major_radius = y_radius
-
     focus_1_x, focus_1_y = (x_center - dist_x, y_center - dist_y)
     focus_2_x, focus_2_y = (x_center + dist_x, y_center + dist_y)
     y, x = np.mgrid[0:y_max, 0:x_max]
@@ -648,28 +686,44 @@ def cropped_image_pixels(
     return cropped_pixel_data
 
 
-def crop_spatial_bounds(
+def cropped_image_mask(
     cropping: np.ndarray,
+    mask: np.ndarray | None,
+    orig_image_mask: np.ndarray | None,
     removal_method: CropModule.RemovalMethod,
+) -> np.ndarray:
+    """Return the output image mask using CellProfiler Crop semantics."""
+    crop_mask = cropped_mask_for(cropping, mask, removal_method)
+    if orig_image_mask is None:
+        return crop_mask
+    if not removal_method.removes_empty_rows_or_columns:
+        return np.asarray(orig_image_mask, dtype=bool) & crop_mask
+    crop_internal = removal_method.removes_internal_empty_rows_or_columns
+    cropped_parent_mask = CropImageRequest(
+        image=np.asarray(orig_image_mask, dtype=bool),
+        crop_mask=cropping,
+        crop_internal=crop_internal,
+    ).cropped_pixels()
+    return np.asarray(cropped_parent_mask, dtype=bool) & crop_mask
+
+
+def crop_spatial_bounds(
+    cropping: np.ndarray, removal_method: CropModule.RemovalMethod
 ) -> CropSpatialBounds:
     """Return crop bounds in parent-image coordinates."""
-    input_shape = tuple(int(value) for value in cropping.shape[:2])
+    input_shape = tuple((int(value) for value in cropping.shape[:2]))
     if not removal_method.removes_empty_rows_or_columns:
         return CropSpatialBounds(
             offset_yx=(0, 0),
             output_shape_yx=input_shape,
             first_last_yx=(0, input_shape[0] - 1, 0, input_shape[1] - 1),
         )
-
     row_indexes = np.flatnonzero(np.sum(cropping, axis=1) > 0)
     column_indexes = np.flatnonzero(np.sum(cropping, axis=0) > 0)
     if row_indexes.size == 0 or column_indexes.size == 0:
         return CropSpatialBounds(
-            offset_yx=(0, 0),
-            output_shape_yx=(0, 0),
-            first_last_yx=None,
+            offset_yx=(0, 0), output_shape_yx=(0, 0), first_last_yx=None
         )
-
     first_row = int(row_indexes[0])
     last_row = int(row_indexes[-1])
     first_column = int(column_indexes[0])
@@ -677,10 +731,7 @@ def crop_spatial_bounds(
     if removal_method.removes_internal_empty_rows_or_columns:
         output_shape = (int(row_indexes.size), int(column_indexes.size))
     else:
-        output_shape = (
-            last_row - first_row + 1,
-            last_column - first_column + 1,
-        )
+        output_shape = (last_row - first_row + 1, last_column - first_column + 1)
     return CropSpatialBounds(
         offset_yx=(first_row, first_column),
         output_shape_yx=output_shape,
@@ -719,19 +770,18 @@ def crop_output_metadata(
 def split_crop_input(image: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
     """Split an image/mask stack accepted by the CP Crop wrapper."""
     if image.ndim == 2:
-        return image, None
+        return (image, None)
     if is_color_image_slice(image):
-        return image, None
+        return (image, None)
     if image.ndim == 3 and image.shape[0] >= 1:
         mask_plane = image[1].astype(bool) if image.shape[0] >= 2 else None
-        return image[0], mask_plane
+        return (image[0], mask_plane)
     raise ValueError(
-        "Crop expects a 2D image or a stacked image/mask payload; "
-        f"got shape {getattr(image, 'shape', None)!r}."
+        f"Crop expects a 2D image or a stacked image/mask payload; got shape {getattr(image, 'shape', None)!r}."
     )
 
 
-@numpy_decorator
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
 @special_inputs("mask_plane")
 @special_outputs(
     (
@@ -806,26 +856,20 @@ def object_label_crop_mask(labels: Any, image: np.ndarray) -> np.ndarray:
     return label_array > 0
 
 
-def rectangle_pair(
-    value: CropBoundaryPair,
-    name: str,
-) -> tuple[int | None, int | None]:
+def rectangle_pair(value: CropBoundaryPair, name: str) -> tuple[int | None, int | None]:
     """Validate and normalize a rectangle boundary pair."""
     if value is None:
-        return None, None
+        return (None, None)
     if len(value) != 2:
         raise ValueError(f"{name} must contain exactly two values, got {value!r}.")
-    return value[0], value[1]
+    return (value[0], value[1])
 
 
-def float_pair(
-    value: tuple[float, float],
-    name: str,
-) -> tuple[float, float]:
+def float_pair(value: tuple[float, float], name: str) -> tuple[float, float]:
     """Validate and normalize a coordinate pair."""
     if len(value) != 2:
         raise ValueError(f"{name} must contain exactly two values, got {value!r}.")
-    return float(value[0]), float(value[1])
+    return (float(value[0]), float(value[1]))
 
 
 __all__ = [

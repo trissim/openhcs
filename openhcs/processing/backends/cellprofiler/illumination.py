@@ -1,16 +1,12 @@
 """Illumination backends for CellProfiler-compatible processing."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar
-
 import numpy as np
-
-from openhcs.constants.constants import GroupBy
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
-from openhcs.core.artifacts import ArtifactSpec
+from openhcs.core.artifacts import ArtifactSpec, ArtifactType, ImageArtifactType
 from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from openhcs.core.runtime_values import (
@@ -36,7 +32,6 @@ from openhcs.interop.cellprofiler.runtime.payload_types import (
     CellProfilerRuntimeValue,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
-
 from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
@@ -45,12 +40,15 @@ from openhcs.interop.cellprofiler.settings_binder import (
     parse_cellprofiler_float,
     parse_cellprofiler_int,
 )
-
-from openhcs.processing.backends.cellprofiler.module_classes import (
-    ArtifactContractModule,
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
+    ImageArtifactInputCapability,
+    ImageArtifactInputModule,
+    ImageArtifactOutputCapability,
+    ImageArtifactOutputModule,
     ModuleSettingsSourceModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
@@ -61,8 +59,9 @@ from openhcs.interop.cellprofiler.setting_names import (
     setting_values,
     split_symbol_names,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
-
+from openhcs.interop.cellprofiler.cellprofiler_literals import (
+    cellprofiler_enum_from_literal,
+)
 
 
 class IlluminationIntensityChoice(Enum):
@@ -122,10 +121,7 @@ class CorrectIlluminationApplyMainFlowReplacementMixin(
 ):
     """CorrectIlluminationApply publishes corrected image outputs to main flow."""
 
-    def replaces_main_flow(
-        self,
-        image_outputs: tuple[ArtifactSpec, ...],
-    ) -> bool:
+    def replaces_main_flow(self, image_outputs: tuple[ArtifactSpec, ...]) -> bool:
         return bool(image_outputs)
 
 
@@ -134,10 +130,7 @@ class CorrectIlluminationCalculateMainFlowReplacementMixin(
 ):
     """CorrectIlluminationCalculate records image artifacts without replacing flow."""
 
-    def replaces_main_flow(
-        self,
-        image_outputs: tuple[ArtifactSpec, ...],
-    ) -> bool:
+    def replaces_main_flow(self, image_outputs: tuple[ArtifactSpec, ...]) -> bool:
         del image_outputs
         return False
 
@@ -148,8 +141,7 @@ class CorrectIlluminationApplyImageOutputSourcePayloadMixin(
     """Use the corrected channel's original image as output provenance."""
 
     def source_payload(
-        self,
-        request: CellProfilerOutputRecordRequest,
+        self, request: CellProfilerOutputRecordRequest
     ) -> CellProfilerRuntimeValue | None:
         source_spec = self.source_spec(request)
         if source_spec is None:
@@ -157,8 +149,7 @@ class CorrectIlluminationApplyImageOutputSourcePayloadMixin(
         return request.input_image_source_payload(source_spec)
 
     def source_spec(
-        self,
-        request: CellProfilerOutputRecordRequest,
+        self, request: CellProfilerOutputRecordRequest
     ) -> ArtifactSpec | None:
         """Return the original source image input for a corrected image output."""
         original_inputs = self.original_image_inputs(request)
@@ -176,14 +167,15 @@ class CorrectIlluminationApplyImageOutputSourcePayloadMixin(
         return None
 
     def original_image_inputs(
-        self,
-        request: CellProfilerOutputRecordRequest,
+        self, request: CellProfilerOutputRecordRequest
     ) -> tuple[ArtifactSpec, ...]:
         """Return declared primary image inputs with CellProfiler Orig* semantics."""
         return tuple(
-            spec
-            for spec in request.runtime_plan.primary_image_inputs
-            if CorrectIlluminationOriginalImageName(spec.name).is_original_source()
+            (
+                spec
+                for spec in request.runtime_plan.primary_image_inputs
+                if CorrectIlluminationOriginalImageName(spec.name).is_original_source()
+            )
         )
 
 
@@ -192,7 +184,6 @@ class CorrectIlluminationOriginalImageName:
     """Original-image naming rule used by CorrectIlluminationApply outputs."""
 
     name: str
-
     prefix: ClassVar[str] = "Orig"
 
     def is_original_source(self) -> bool:
@@ -227,15 +218,16 @@ class CorrectedImageOutputPlaneStack:
         return len(frozenset(identities)) == 1
 
     def plane_identities(
-        self,
-        plane_count: int,
+        self, plane_count: int
     ) -> tuple[tuple[str | None, tuple[tuple[str, str], ...] | None], ...]:
         provenance = image_payload_metadata(self.value).source_provenance
         if provenance.source_plane_count != plane_count:
             return ()
         return tuple(
-            provenance.for_source_plane(plane_index).identity()
-            for plane_index in range(plane_count)
+            (
+                provenance.for_source_plane(plane_index).identity()
+                for plane_index in range(plane_count)
+            )
         )
 
 
@@ -245,25 +237,29 @@ class CorrectIlluminationApplyImageOutputValueMixin(
     """Collapse duplicate grouped-plane stacks emitted for one corrected source."""
 
     def output_value(
-        self,
-        request: CellProfilerOutputRecordRequest,
+        self, request: CellProfilerOutputRecordRequest
     ) -> CellProfilerRuntimeValue:
         plane_index = CorrectedImageOutputPlaneStack(request.output_value).plane_index()
         if plane_index is None:
             return request.output_value
         output_data = np.asarray(image_payload_data(request.output_value))[plane_index]
-        return image_payload_slice_context(request.output_value, output_data, plane_index)
+        return image_payload_slice_context(
+            request.output_value, output_data, plane_index
+        )
 
 
 class CorrectIlluminationApplyModule(
     CorrectIlluminationApplyMainFlowReplacementMixin,
     CorrectIlluminationApplyImageOutputSourcePayloadMixin,
     CorrectIlluminationApplyImageOutputValueMixin,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
     CellProfilerModule,
 ):
-    module_name = 'CorrectIlluminationApply'
-    function_name = 'correct_illumination_apply'
+    module_name = "CorrectIlluminationApply"
+    function_name = "correct_illumination_apply"
     validated = True
+    contract = ProcessingContract.PURE_3D
     confidence = 1.0
     ignored_settings = ("Select the illumination function",)
     setting_bindings = (
@@ -303,24 +299,19 @@ class CorrectIlluminationApplyModule(
 
     @classmethod
     def postprocess_bound_settings(
-        cls,
-        module: "ModuleBlock",
-        bound: "BoundModuleSettings",
+        cls, module: "ModuleBlock", bound: "BoundModuleSettings"
     ) -> "BoundModuleSettings":
         repeated_kwargs: dict[str, Any] = {}
         method_values = setting_values(
-            module,
-            "Select how the illumination function is applied",
+            module, "Select how the illumination function is applied"
         )
         if len(method_values) > 1:
             repeated_kwargs["method"] = tuple(
-                coerce_cellprofiler_enum(
-                    IlluminationCorrectionMethod,
-                    value,
-                ).value
-                for value in method_values
+                (
+                    coerce_cellprofiler_enum(IlluminationCorrectionMethod, value).value
+                    for value in method_values
+                )
             )
-
         repeated_kwargs.update(
             cls._repeated_bool_setting(
                 module,
@@ -339,25 +330,21 @@ class CorrectIlluminationApplyModule(
 
     @staticmethod
     def _repeated_bool_setting(
-        module: "ModuleBlock",
-        setting_name: str,
-        parameter_name: str,
+        module: "ModuleBlock", setting_name: str, parameter_name: str
     ) -> dict[str, tuple[bool, ...]]:
         values = setting_values(module, setting_name)
         if len(values) <= 1:
             return {}
         return {
-            parameter_name: tuple(parse_cellprofiler_bool(value) for value in values)
+            parameter_name: tuple((parse_cellprofiler_bool(value) for value in values))
         }
 
     @classmethod
     def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-
         image_names = setting_values(module, "Select the input image")
         illumination_names = setting_values(module, "Select the illumination function")
         output_names = setting_values(module, "Name the output image")
-        if not image_names or not illumination_names or not output_names:
+        if not image_names or not illumination_names or (not output_names):
             raise ValueError(
                 f"Module {module.name}({module.module_num}) requires image, illumination-function, and output-image settings."
             )
@@ -367,12 +354,26 @@ class CorrectIlluminationApplyModule(
             )
         inputs = []
         outputs = []
-        for image_name, illumination_name, output_name in zip(image_names, illumination_names, output_names, strict=True):
-            inputs.append(builder.require_artifact(ArtifactSpec(image_name, ArtifactKind.IMAGE), module))
-            inputs.append(builder.require_artifact(ArtifactSpec(illumination_name, ArtifactKind.IMAGE), module))
-            outputs.append(builder.declare_artifact(ArtifactSpec(output_name, ArtifactKind.IMAGE), module))
-        return assembler.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
-class IlluminationCalculationScopeExecutionModePolicy(CellProfilerInvocationExecutionModePolicyMixin):
+        for image_name, illumination_name, output_name in zip(
+            image_names, illumination_names, output_names, strict=True
+        ):
+            inputs.append(
+                ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(image_name))
+            )
+            inputs.append(
+                ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(illumination_name))
+            )
+            outputs.append(
+                ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(output_name))
+            )
+        return assembler.assemble_contract(
+            module, builder, inputs=inputs, outputs=outputs
+        )
+
+
+class IlluminationCalculationScopeExecutionModePolicy(
+    CellProfilerInvocationExecutionModePolicyMixin
+):
     """Run all-image illumination calculation once over the full image stack."""
 
     def execution_mode(
@@ -396,13 +397,14 @@ class IlluminationCalculationScopeExecutionModePolicy(CellProfilerInvocationExec
 class CorrectIlluminationCalculateModule(
     CorrectIlluminationCalculateMainFlowReplacementMixin,
     IlluminationCalculationScopeExecutionModePolicy,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
     CellProfilerModule,
 ):
-    module_name = 'CorrectIlluminationCalculate'
-    function_name = 'correct_illumination_calculate'
-    allowed_group_by = (GroupBy.NONE, GroupBy.CHANNEL)
+    module_name = "CorrectIlluminationCalculate"
+    function_name = "correct_illumination_calculate"
     validated = True
-    contract = 'flexible'
+    contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
     ignored_settings = (
         "Retain the averaged image?",
@@ -410,6 +412,8 @@ class CorrectIlluminationCalculateModule(
         "Retain the dilated image?",
         "Name the dilated image",
     )
+    image_input_settings = ("Select the input image",)
+    image_output_settings = ("Name the output image",)
 
     def calculation_scope_literal(value: str) -> str:
         cleaned = (
@@ -432,9 +436,7 @@ class CorrectIlluminationCalculateModule(
             parse_cellprofiler_bool,
         ),
         SettingToKeywordBinding(
-            "Dilation radius",
-            "object_dilation_radius",
-            parse_cellprofiler_int,
+            "Dilation radius", "object_dilation_radius", parse_cellprofiler_int
         ),
         SettingToKeywordBinding("Block size", "block_size", parse_cellprofiler_int),
         SettingToKeywordBinding(
@@ -459,16 +461,13 @@ class CorrectIlluminationCalculateModule(
         ),
         SettingToKeywordBinding(
             SettingNameFamily(
-                "Approximate object diameter",
-                aliases=("Approximate object size",),
+                "Approximate object diameter", aliases=("Approximate object size",)
             ),
             "object_width",
             parse_cellprofiler_int,
         ),
         SettingToKeywordBinding(
-            "Smoothing filter size",
-            "manual_filter_size",
-            parse_cellprofiler_int,
+            "Smoothing filter size", "manual_filter_size", parse_cellprofiler_int
         ),
         SettingToKeywordBinding(
             "Automatically calculate spline parameters?",
@@ -481,19 +480,13 @@ class CorrectIlluminationCalculateModule(
             cellprofiler_enum_value_setting_parser(IlluminationSplineBackgroundMode),
         ),
         SettingToKeywordBinding(
-            "Number of spline points",
-            "spline_points",
-            parse_cellprofiler_int,
+            "Number of spline points", "spline_points", parse_cellprofiler_int
         ),
         SettingToKeywordBinding(
-            "Background threshold",
-            "spline_threshold",
-            parse_cellprofiler_float,
+            "Background threshold", "spline_threshold", parse_cellprofiler_float
         ),
         SettingToKeywordBinding(
-            "Image resampling factor",
-            "spline_rescale",
-            parse_cellprofiler_float,
+            "Image resampling factor", "spline_rescale", parse_cellprofiler_float
         ),
         SettingToKeywordBinding(
             "Maximum number of iterations",
@@ -509,14 +502,11 @@ class CorrectIlluminationCalculateModule(
 
     @classmethod
     def postprocess_bound_settings(
-        cls,
-        module: "ModuleBlock",
-        bound: "BoundModuleSettings",
+        cls, module: "ModuleBlock", bound: "BoundModuleSettings"
     ) -> "BoundModuleSettings":
         del module
         raw_scope = bound.kwargs.get(
-            "calculation_scope",
-            IlluminationCalculationScope.EACH,
+            "calculation_scope", IlluminationCalculationScope.EACH
         )
         scope = coerce_cellprofiler_enum(IlluminationCalculationScope, raw_scope)
         return bound.with_kwargs(
@@ -525,8 +515,7 @@ class CorrectIlluminationCalculateModule(
 
     @classmethod
     def processing_components(
-        cls,
-        request: "ModuleProcessingComponentRequest",
+        cls, request: "ModuleProcessingComponentRequest"
     ) -> "ModuleProcessingComponents":
         """Lower all-image illumination scope to a site stack per channel."""
         from openhcs.interop.cellprofiler.module_processing_components import (
@@ -536,40 +525,26 @@ class CorrectIlluminationCalculateModule(
         )
 
         raw_scope = request.bound_settings.value(
-            "calculation_scope",
-            IlluminationCalculationScope.EACH,
+            "calculation_scope", IlluminationCalculationScope.EACH
         )
         scope = coerce_cellprofiler_enum(IlluminationCalculationScope, raw_scope)
         if not scope.requires_channel_grouping:
             return super().processing_components(request)
-
         axis_plan = request.axis_plan()
         sample_group_components = SourceProcessingAxisRolePolicy.for_role(
             SourceProcessingAxisRole.SAMPLE_GROUP
         ).components(axis_plan)
+        group_by_component = axis_plan.optional_single_image_set_component(
+            f"CorrectIlluminationCalculate all-image scope cannot infer one group-by component from multiple image-set axes: {tuple((component.value for component in axis_plan.image_set_components))!r}."
+        )
+        if group_by_component is None:
+            return cls.with_generated_group_by(
+                ModuleProcessingComponents(sample_group_components)
+            )
         return ModuleProcessingComponents(
             sample_group_components,
-            axis_plan.optional_single_image_set_component(
-                "CorrectIlluminationCalculate all-image scope cannot infer one "
-                "group-by component from multiple image-set axes: "
-                f"{tuple(component.value for component in axis_plan.image_set_components)!r}."
-            ),
+            group_by_component,
         )
-
-    @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-
-        image = builder.require_artifact(
-            ArtifactSpec(required_setting_value(module, "Select the input image"), ArtifactKind.IMAGE),
-            module,
-        )
-        output = builder.declare_artifact(
-            ArtifactSpec(required_setting_value(module, "Name the output image"), ArtifactKind.IMAGE),
-            module,
-        )
-        return assembler.assemble_contract(module, builder, inputs=[image], outputs=[output])
-
 
 
 from abc import ABC, abstractmethod
@@ -582,7 +557,6 @@ from typing import ClassVar
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
-
 from openhcs.constants.constants import MemoryType
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
@@ -610,9 +584,15 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     CellProfilerBackendAuthority,
 )
-from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
+from openhcs.processing.backends.cellprofiler.morphology import (
+    MorphologyBackendStrategy,
+)
 from openhcs.processing.backends.cellprofiler.granularity import (
     CellProfilerRuntimeProfiler,
+)
+from openhcs.processing.backends.cellprofiler.perf_fixtures import (
+    capture_array_fixture,
+    capture_enabled,
 )
 from openhcs.processing.backends.cellprofiler.smoothing import MaskedLinearFilterRequest
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -628,26 +608,20 @@ logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
 
 
-class IlluminationMaskNormalizationStrategy(
-    MostDerivedContextStrategyMixin,
-    ABC,
-):
+class IlluminationMaskNormalizationStrategy(MostDerivedContextStrategyMixin, ABC):
     """Nominal matcher for closed illumination mask shape normalization cases."""
 
     __registry_key__ = "registry_key"
     __skip_if_no_key__ = True
-
     registry_key: ClassVar[str | None] = None
     strategy_key_attr: ClassVar[str] = "registry_key"
 
     @classmethod
     def for_request(
-        cls,
-        request: "IlluminationCalculationRequest",
+        cls, request: "IlluminationCalculationRequest"
     ) -> "IlluminationMaskNormalizationStrategy":
         strategy = cls.for_context(
-            request,
-            error_subject="illumination mask normalization",
+            request, error_subject="illumination mask normalization"
         )
         if strategy is None:
             raise ValueError("Illumination mask normalization requires a strategy.")
@@ -699,7 +673,9 @@ class ExactIlluminationMaskNormalizationStrategy(
     registry_key = "exact"
 
     def matches(self, request: "IlluminationCalculationRequest") -> bool:
-        return request.mask is not None and request.mask.shape == request.image_data.shape
+        return (
+            request.mask is not None and request.mask.shape == request.image_data.shape
+        )
 
 
 class SingletonPlaneIlluminationMaskNormalizationStrategy(
@@ -715,7 +691,7 @@ class SingletonPlaneIlluminationMaskNormalizationStrategy(
         return (
             request.image_data.ndim == 2
             and request.mask.ndim == 3
-            and request.mask.shape[0] == 1
+            and (request.mask.shape[0] == 1)
         )
 
     def normalize(self, request: "IlluminationCalculationRequest") -> np.ndarray:
@@ -725,28 +701,18 @@ class SingletonPlaneIlluminationMaskNormalizationStrategy(
 
 
 def illumination_gaussian_filter(
-    pixel_data: np.ndarray,
-    mask: np.ndarray | None,
-    sigma: float,
+    pixel_data: np.ndarray, mask: np.ndarray | None, sigma: float
 ) -> np.ndarray:
     """Apply CellProfiler-compatible Gaussian filtering with optional masking."""
     from scipy.ndimage import gaussian_filter
 
     if mask is None:
-        return gaussian_filter(
-            pixel_data,
-            sigma,
-            mode=NDIMAGE_CONSTANT_MODE,
-            cval=0,
-        )
+        return gaussian_filter(pixel_data, sigma, mode=NDIMAGE_CONSTANT_MODE, cval=0)
     return MaskedLinearFilterRequest(
         pixels=pixel_data,
         mask=mask,
         operation=lambda image: gaussian_filter(
-            image,
-            sigma,
-            mode=NDIMAGE_CONSTANT_MODE,
-            cval=0,
+            image, sigma, mode=NDIMAGE_CONSTANT_MODE, cval=0
         ),
     ).apply()
 
@@ -820,8 +786,7 @@ class IlluminationStats:
 
 
 IlluminationCalculationResult = tuple[
-    RuntimeArrayData,
-    IlluminationStats | list[IlluminationStats],
+    RuntimeArrayData, IlluminationStats | list[IlluminationStats]
 ]
 
 
@@ -833,14 +798,11 @@ class IlluminationCorrectionStrategy(
     """Nominal correction implementation for one CellProfiler method."""
 
     __enum_member_attr__ = "method"
-
     method: ClassVar[IlluminationCorrectionMethod]
 
     @abstractmethod
     def apply(
-        self,
-        image_pixels: np.ndarray,
-        illumination_function: np.ndarray,
+        self, image_pixels: np.ndarray, illumination_function: np.ndarray
     ) -> np.ndarray:
         """Apply the correction method."""
 
@@ -849,29 +811,15 @@ class DivideIlluminationCorrectionStrategy(IlluminationCorrectionStrategy):
     method = IlluminationCorrectionMethod.DIVIDE
 
     def apply(
-        self,
-        image_pixels: np.ndarray,
-        illumination_function: np.ndarray,
+        self, image_pixels: np.ndarray, illumination_function: np.ndarray
     ) -> np.ndarray:
-        output_dtype = np.result_type(
-            image_pixels,
-            illumination_function,
-            1e-10,
-        )
+        output_dtype = np.result_type(image_pixels, illumination_function, 1e-10)
         output = np.empty(image_pixels.shape, dtype=output_dtype)
         nonzero = illumination_function != 0
-        np.divide(
-            image_pixels,
-            illumination_function,
-            out=output,
-            where=nonzero,
-        )
+        np.divide(image_pixels, illumination_function, out=output, where=nonzero)
         if not np.all(nonzero):
             np.divide(
-                image_pixels,
-                output_dtype.type(1e-10),
-                out=output,
-                where=~nonzero,
+                image_pixels, output_dtype.type(1e-10), out=output, where=~nonzero
             )
         return output
 
@@ -880,23 +828,13 @@ class SubtractIlluminationCorrectionStrategy(IlluminationCorrectionStrategy):
     method = IlluminationCorrectionMethod.SUBTRACT
 
     def apply(
-        self,
-        image_pixels: np.ndarray,
-        illumination_function: np.ndarray,
+        self, image_pixels: np.ndarray, illumination_function: np.ndarray
     ) -> np.ndarray:
         output = np.empty(
             image_pixels.shape,
-            dtype=np.result_type(
-                image_pixels,
-                illumination_function,
-                0.0,
-            ),
+            dtype=np.result_type(image_pixels, illumination_function, 0.0),
         )
-        np.subtract(
-            image_pixels,
-            illumination_function,
-            out=output,
-        )
+        np.subtract(image_pixels, illumination_function, out=output)
         return output
 
 
@@ -923,14 +861,10 @@ class IlluminationCorrectionSettingSequence:
         return cls(
             methods=cls.methods_for_pair_count(method, pair_count),
             truncate_low=cls.bool_setting_for_pair_count(
-                truncate_low,
-                pair_count,
-                parameter_name="truncate_low",
+                truncate_low, pair_count, parameter_name="truncate_low"
             ),
             truncate_high=cls.bool_setting_for_pair_count(
-                truncate_high,
-                pair_count,
-                parameter_name="truncate_high",
+                truncate_high, pair_count, parameter_name="truncate_high"
             ),
         )
 
@@ -946,32 +880,27 @@ class IlluminationCorrectionSettingSequence:
         if isinstance(value, tuple):
             if len(value) != pair_count:
                 raise ValueError(
-                    "CorrectIlluminationApply method count must match "
-                    f"image/function pair count; got {len(value)} methods for "
-                    f"{pair_count} pairs."
+                    f"CorrectIlluminationApply method count must match image/function pair count; got {len(value)} methods for {pair_count} pairs."
                 )
             return tuple(
-                coerce_cellprofiler_enum(IlluminationCorrectionMethod, method)
-                for method in value
+                (
+                    coerce_cellprofiler_enum(IlluminationCorrectionMethod, method)
+                    for method in value
+                )
             )
         method = coerce_cellprofiler_enum(IlluminationCorrectionMethod, value)
         return (method,) * pair_count
 
     @staticmethod
     def bool_setting_for_pair_count(
-        value: bool | tuple[bool, ...],
-        pair_count: int,
-        *,
-        parameter_name: str,
+        value: bool | tuple[bool, ...], pair_count: int, *, parameter_name: str
     ) -> tuple[bool, ...]:
         if isinstance(value, tuple):
             if len(value) != pair_count:
                 raise ValueError(
-                    f"CorrectIlluminationApply {parameter_name} count must match "
-                    f"image/function pair count; got {len(value)} values for "
-                    f"{pair_count} pairs."
+                    f"CorrectIlluminationApply {parameter_name} count must match image/function pair count; got {len(value)} values for {pair_count} pairs."
                 )
-            return tuple(bool(item) for item in value)
+            return tuple((bool(item) for item in value))
         return (bool(value),) * pair_count
 
 
@@ -984,14 +913,12 @@ class IlluminationCorrectionInputStack:
 
     @classmethod
     def from_image(
-        cls,
-        image: ImagePayloadMetadataInput,
+        cls, image: ImagePayloadMetadataInput
     ) -> "IlluminationCorrectionInputStack":
         pixel_stack = np.asarray(image_payload_data(image))
         if pixel_stack.ndim < 3 or pixel_stack.shape[0] % 2 != 0:
             raise ValueError(
-                "CorrectIlluminationApply requires stacked image/function pairs "
-                f"with shape (2*N, ...), got {pixel_stack.shape!r}."
+                f"CorrectIlluminationApply requires stacked image/function pairs with shape (2*N, ...), got {pixel_stack.shape!r}."
             )
         return cls(image=image, pixel_stack=pixel_stack)
 
@@ -1041,26 +968,21 @@ class IlluminationCorrectionInputStack:
         illumination_function = self.illumination_function(pair_index)
         if image_pixels.shape != illumination_function.shape:
             raise ValueError(
-                f"Input image shape {image_pixels.shape} and illumination function "
-                f"shape {illumination_function.shape} must be equal."
+                f"Input image shape {image_pixels.shape} and illumination function shape {illumination_function.shape} must be equal."
             )
-
         output_pixels = IlluminationCorrectionStrategy.for_enum_member(method).apply(
-            image_pixels,
-            illumination_function,
+            image_pixels, illumination_function
         )
         if truncate_low:
             np.maximum(output_pixels, 0.0, out=output_pixels)
         if truncate_high:
             np.minimum(output_pixels, 1.0, out=output_pixels)
         return RuntimeImagePayloadContext(
-            output_pixels.astype(np.float32, copy=False),
+            output_pixels,
             mask=self.input_mask(pair_index),
-            metadata=(
-                image_payload_metadata(self.image)
-                .for_source_plane(self.input_index(pair_index))
-                .without_unit_interval_intensity_scale()
-            ),
+            metadata=image_payload_metadata(self.image)
+            .for_source_plane(self.input_index(pair_index))
+            .without_unit_interval_intensity_scale(),
         ).payload()
 
 
@@ -1137,10 +1059,7 @@ class IlluminationCalculationRequest:
             smoothing_method=self.smoothing_method.value,
         )
 
-    def for_stack_slice(
-        self,
-        slice_index: int,
-    ) -> "IlluminationCalculationRequest":
+    def for_stack_slice(self, slice_index: int) -> "IlluminationCalculationRequest":
         return replace(
             self,
             image_data=np.asarray(self.image_data[slice_index]),
@@ -1155,7 +1074,7 @@ class IlluminationCalculationRequest:
         avg_image = self.average_image()
         dilated_image = self.apply_dilation(avg_image)
         smoothed_image = self.smooth(dilated_image, filter_size)
-        output_image = self.apply_scaling(smoothed_image).astype(np.float32)
+        output_image = self.apply_scaling(smoothed_image)
         runtime_profiler.log(
             "cic_total",
             time.perf_counter() - total_started_at,
@@ -1168,12 +1087,12 @@ class IlluminationCalculationRequest:
             time.perf_counter() - stats_started_at,
             function=CORRECT_ILLUMINATION_CALCULATE_NAME,
         )
-        return output_image, stats
+        return (output_image, stats)
 
     def filter_size(self) -> float:
         phase_started_at = time.perf_counter()
         filter_size = SmoothingFilterSizeStrategy.for_enum_member(
-            self.filter_size_method,
+            self.filter_size_method
         ).calculate(self)
         runtime_profiler.log(
             "cic_filter_size",
@@ -1217,23 +1136,16 @@ class IlluminationCalculationRequest:
                 result[~self.mask] = 0
             return result
         return self.morphology.blockwise_minimum(
-            self.image_data,
-            self.mask,
-            self.block_size,
+            self.image_data, self.mask, self.block_size
         )
 
-    def apply_dilation(
-        self,
-        pixel_data: np.ndarray,
-    ) -> np.ndarray:
+    def apply_dilation(self, pixel_data: np.ndarray) -> np.ndarray:
         phase_started_at = time.perf_counter()
         if not self.dilate_objects:
             result = pixel_data
         else:
             result = illumination_gaussian_filter(
-                pixel_data,
-                self.mask,
-                self.object_dilation_radius,
+                pixel_data, self.mask, self.object_dilation_radius
             )
             if self.mask is not None:
                 result[~self.mask] = 0
@@ -1245,19 +1157,11 @@ class IlluminationCalculationRequest:
         )
         return result
 
-    def smooth(
-        self,
-        pixel_data: np.ndarray,
-        filter_size: float,
-    ) -> np.ndarray:
+    def smooth(self, pixel_data: np.ndarray, filter_size: float) -> np.ndarray:
         phase_started_at = time.perf_counter()
         smoothed_image = SmoothingPlaneStrategy.for_enum_member(
             self.smoothing_method
-        ).smooth(
-            self,
-            pixel_data,
-            filter_size,
-        )
+        ).smooth(self, pixel_data, filter_size)
         runtime_profiler.log(
             "cic_smoothing",
             time.perf_counter() - phase_started_at,
@@ -1266,10 +1170,7 @@ class IlluminationCalculationRequest:
         )
         return smoothed_image
 
-    def apply_scaling(
-        self,
-        pixel_data: np.ndarray,
-    ) -> np.ndarray:
+    def apply_scaling(self, pixel_data: np.ndarray) -> np.ndarray:
         phase_started_at = time.perf_counter()
         if self.rescale_option == RescaleOption.NO:
             result = pixel_data
@@ -1279,7 +1180,6 @@ class IlluminationCalculationRequest:
                 sorted_data = pixel_data[(pixel_data > 0) & projected_mask]
             else:
                 sorted_data = pixel_data[pixel_data > 0]
-
             if sorted_data.size == 0:
                 result = pixel_data
             elif self.rescale_option == RescaleOption.YES:
@@ -1304,17 +1204,15 @@ class IlluminationCalculationRequest:
         return result
 
     def calculate_payload(
-        self,
-        metadata: ImagePayloadMetadata,
+        self, metadata: ImagePayloadMetadata
     ) -> IlluminationCalculationResult:
-        if self.is_multi_image_stack and not self.calculation_scope.uses_all_images:
+        if self.is_multi_image_stack and (not self.calculation_scope.uses_all_images):
             slice_results = [
                 self.for_stack_slice(slice_index).calculate()
                 for slice_index in range(self.image_data.shape[0])
             ]
             illumination_stack = np.stack(
-                [result[0] for result in slice_results],
-                axis=0,
+                [result[0] for result in slice_results], axis=0
             ).astype(np.float32)
             return (
                 RuntimeImagePayloadContext(
@@ -1324,13 +1222,10 @@ class IlluminationCalculationRequest:
                 ).payload(),
                 [result[1] for result in slice_results],
             )
-
         illumination, stats = self.calculate()
         return (
             RuntimeImagePayloadContext(
-                illumination,
-                mask=self.mask_for_output(illumination),
-                metadata=metadata,
+                illumination, mask=self.mask_for_output(illumination), metadata=metadata
             ).payload(),
             stats,
         )
@@ -1382,15 +1277,10 @@ def correct_illumination_calculate(
     filter_size_method = coerce_cellprofiler_enum(FilterSizeMethod, filter_size_method)
     spline_bg_mode = coerce_cellprofiler_enum(SplineBgMode, spline_bg_mode)
     calculation_scope = coerce_cellprofiler_enum(CalculationScope, calculation_scope)
-
-    morphology = MorphologyBackendStrategy.for_callable(
-        correct_illumination_calculate,
-    )
-
+    morphology = MorphologyBackendStrategy.for_callable(correct_illumination_calculate)
     pixel_data = np.asarray(image_payload_data(image))
     raw_mask = image_payload_mask(image)
     metadata = image_payload_metadata(image).without_unit_interval_intensity_scale()
-
     request = IlluminationCalculationRequest(
         image_data=pixel_data,
         mask=None if raw_mask is None else np.asarray(raw_mask, dtype=bool),
@@ -1421,6 +1311,8 @@ def correct_illumination_calculate(
 @processing_prepare(correct_illumination_calculate)
 def _prepare_correct_illumination_calculate() -> None:
     """Compile common illumination kernels outside measured step execution."""
+    RankMedianSmoothingBackendStrategy.prepare_registered_family()
+    ConvexHullSmoothingBackendStrategy.prepare_registered_family()
     image = np.linspace(0.0, 1.0, 64 * 64, dtype=np.float32).reshape((64, 64))
     correct_illumination_calculate.__wrapped__(
         image,
@@ -1428,12 +1320,9 @@ def _prepare_correct_illumination_calculate() -> None:
         filter_size_method=FilterSizeMethod.AUTOMATIC,
         rescale_option=RescaleOption.YES,
     )
-    convex_hull_image = np.linspace(
-        0.0,
-        1.0,
-        32 * 32,
-        dtype=np.float32,
-    ).reshape((32, 32))
+    convex_hull_image = np.linspace(0.0, 1.0, 32 * 32, dtype=np.float32).reshape(
+        (32, 32)
+    )
     correct_illumination_calculate.__wrapped__(
         convex_hull_image,
         smoothing_method=SmoothingMethod.CONVEX_HULL,
@@ -1451,12 +1340,9 @@ def _prepare_correct_illumination_calculate() -> None:
         manual_filter_size=32,
         rescale_option=RescaleOption.NO,
     )
-    nonconstant_background = np.linspace(
-        0.0,
-        1.0,
-        96 * 96,
-        dtype=np.float32,
-    ).reshape((96, 96))
+    nonconstant_background = np.linspace(0.0, 1.0, 96 * 96, dtype=np.float32).reshape(
+        (96, 96)
+    )
     correct_illumination_calculate.__wrapped__(
         nonconstant_background,
         intensity_choice=IntensityChoice.REGULAR,
@@ -1465,7 +1351,9 @@ def _prepare_correct_illumination_calculate() -> None:
         manual_filter_size=96,
         rescale_option=RescaleOption.NO,
     )
-@numpy
+
+
+@numpy(contract=ProcessingContract.PURE_3D)
 def correct_illumination_apply(
     image: ImagePayloadMetadataInput,
     method: (
@@ -1479,19 +1367,18 @@ def correct_illumination_apply(
     """Apply illumination correction to stacked image/function pairs."""
     source = IlluminationCorrectionInputStack.from_image(image)
     settings = IlluminationCorrectionSettingSequence.from_settings(
-        method,
-        truncate_low,
-        truncate_high,
-        source.pair_count,
+        method, truncate_low, truncate_high, source.pair_count
     )
     outputs = tuple(
-        source.apply_pair(
-            pair_index,
-            method=settings.methods[pair_index],
-            truncate_low=settings.truncate_low[pair_index],
-            truncate_high=settings.truncate_high[pair_index],
+        (
+            source.apply_pair(
+                pair_index,
+                method=settings.methods[pair_index],
+                truncate_low=settings.truncate_low[pair_index],
+                truncate_high=settings.truncate_high[pair_index],
+            )
+            for pair_index in range(source.pair_count)
         )
-        for pair_index in range(source.pair_count)
     )
     if source.pair_count == 1:
         return outputs[0]
@@ -1509,19 +1396,15 @@ def _prepare_correct_illumination_apply() -> None:
         axis=0,
     )
     correct_illumination_apply.__wrapped__(
-        pixels,
-        method=IlluminationCorrectionMethod.DIVIDE,
+        pixels, method=IlluminationCorrectionMethod.DIVIDE
     )
     correct_illumination_apply.__wrapped__(
-        pixels,
-        method=IlluminationCorrectionMethod.SUBTRACT,
+        pixels, method=IlluminationCorrectionMethod.SUBTRACT
     )
 
 
 class SmoothingFilterSizeStrategy(
-    EnumKeyedStrategyMixin[FilterSizeMethod],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[FilterSizeMethod], ABC, metaclass=AutoRegisterMeta
 ):
     """Nominal filter-size derivation for one closed CellProfiler mode."""
 
@@ -1555,9 +1438,7 @@ class AutomaticSmoothingFilterSizeStrategy(SmoothingFilterSizeStrategy):
 
 
 class SmoothingPlaneStrategy(
-    EnumKeyedStrategyMixin[SmoothingMethod],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[SmoothingMethod], ABC, metaclass=AutoRegisterMeta
 ):
     """Nominal smoothing implementation for one closed CellProfiler mode."""
 
@@ -1597,10 +1478,7 @@ class FitPolynomialSmoothingPlaneStrategy(SmoothingPlaneStrategy):
         filter_size: float,
     ) -> np.ndarray:
         del filter_size
-        return fit_polynomial_surface(
-            pixel_data,
-            request.mask,
-        )
+        return fit_polynomial_surface(pixel_data, request.mask)
 
 
 class GaussianFilterSmoothingPlaneStrategy(SmoothingPlaneStrategy):
@@ -1613,9 +1491,7 @@ class GaussianFilterSmoothingPlaneStrategy(SmoothingPlaneStrategy):
         filter_size: float,
     ) -> np.ndarray:
         return illumination_gaussian_filter(
-            pixel_data,
-            request.mask,
-            filter_size / 2.35,
+            pixel_data, request.mask, filter_size / 2.35
         )
 
 
@@ -1630,7 +1506,7 @@ class MedianFilterSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     ) -> np.ndarray:
         filter_sigma = max(1, int(filter_size / 2.35 + 0.5))
         return RankMedianSmoothingBackendStrategy.for_memory_type(
-            backend_provider=request.rank_median_backend_provider,
+            backend_provider=request.rank_median_backend_provider
         ).smooth_background_plane(
             pixel_data,
             mask=request.mask,
@@ -1653,11 +1529,7 @@ class AverageSmoothingPlaneStrategy(SmoothingPlaneStrategy):
             mean_val = np.mean(pixel_data[request.mask])
         else:
             mean_val = np.mean(pixel_data)
-        return np.full(
-            pixel_data.shape,
-            mean_val,
-            dtype=pixel_data.dtype,
-        )
+        return np.full(pixel_data.shape, mean_val, dtype=pixel_data.dtype)
 
 
 class ConvexHullSmoothingPlaneStrategy(SmoothingPlaneStrategy):
@@ -1670,7 +1542,7 @@ class ConvexHullSmoothingPlaneStrategy(SmoothingPlaneStrategy):
         filter_size: float,
     ) -> np.ndarray:
         return ConvexHullSmoothingBackendStrategy.for_memory_type(
-            backend_provider=request.convex_hull_backend_provider,
+            backend_provider=request.convex_hull_backend_provider
         ).smooth_background_plane(
             pixel_data,
             mask=request.mask,
@@ -1706,16 +1578,9 @@ class SplinesSmoothingPlaneStrategy(SmoothingPlaneStrategy):
         yi = np.clip(np.round(y_points).astype(int), 0, dh - 1)
         xi = np.clip(np.round(x_points).astype(int), 0, dw - 1)
         spline = RectBivariateSpline(
-            y_points,
-            x_points,
-            downsampled[np.ix_(yi, xi)],
-            kx=3,
-            ky=3,
+            y_points, x_points, downsampled[np.ix_(yi, xi)], kx=3, ky=3
         )
-        result = spline(
-            np.linspace(0, dh - 1, h),
-            np.linspace(0, dw - 1, w),
-        )
+        result = spline(np.linspace(0, dh - 1, h), np.linspace(0, dw - 1, w))
         if request.mask is not None:
             result[request.mask] -= np.mean(result[request.mask])
         else:
@@ -1724,15 +1589,13 @@ class SplinesSmoothingPlaneStrategy(SmoothingPlaneStrategy):
 
 
 def fit_polynomial_surface(
-    pixel_data: np.ndarray,
-    mask: np.ndarray | None,
+    pixel_data: np.ndarray, mask: np.ndarray | None
 ) -> np.ndarray:
     """Fit CP's quadratic illumination surface without dense design matrices."""
     image = np.ascontiguousarray(pixel_data, dtype=np.float64)
     if image.ndim != 2:
         raise NotImplementedError(
-            "Fit-polynomial illumination smoothing currently supports 2-D "
-            f"NumPy planes, got shape {image.shape!r}."
+            f"Fit-polynomial illumination smoothing currently supports 2-D NumPy planes, got shape {image.shape!r}."
         )
     mask_array = (
         np.empty((0, 0), dtype=np.bool_)
@@ -1741,23 +1604,16 @@ def fit_polynomial_surface(
     )
     if mask is not None and mask_array.shape != image.shape:
         raise ValueError(
-            "Fit-polynomial illumination mask must match the image shape; got "
-            f"mask {mask_array.shape!r} for image {image.shape!r}."
+            f"Fit-polynomial illumination mask must match the image shape; got mask {mask_array.shape!r} for image {image.shape!r}."
         )
     if mask is None:
         gram = fit_polynomial_unmasked_gram(image.shape[0], image.shape[1])
         rhs = _fit_polynomial_unmasked_rhs_numba(image)
     else:
-        gram, rhs = _fit_polynomial_normal_equations_numba(
-            image,
-            mask_array,
-            True,
-        )
+        gram, rhs = _fit_polynomial_normal_equations_numba(image, mask_array, True)
     coeffs = np.linalg.lstsq(gram, rhs, rcond=None)[0]
     return _evaluate_polynomial_surface_numba(
-        image.shape[0],
-        image.shape[1],
-        np.ascontiguousarray(coeffs, dtype=np.float64),
+        image.shape[0], image.shape[1], np.ascontiguousarray(coeffs, dtype=np.float64)
     )
 
 
@@ -1808,9 +1664,7 @@ def _fit_polynomial_unmasked_rhs_numba(pixel_data: np.ndarray) -> np.ndarray:
 
 @njit(cache=True)
 def _fit_polynomial_normal_equations_numba(
-    pixel_data: np.ndarray,
-    mask: np.ndarray,
-    has_mask: bool,
+    pixel_data: np.ndarray, mask: np.ndarray, has_mask: bool
 ) -> tuple[np.ndarray, np.ndarray]:
     height, width = pixel_data.shape
     gram = np.zeros((6, 6), dtype=np.float64)
@@ -1820,7 +1674,7 @@ def _fit_polynomial_normal_equations_numba(
         y_value = row / height - 0.5
         y2 = y_value * y_value
         for col in range(width):
-            if has_mask and not mask[row, col]:
+            if has_mask and (not mask[row, col]):
                 continue
             x_value = col / width - 0.5
             features[0] = x_value * x_value
@@ -1834,14 +1688,12 @@ def _fit_polynomial_normal_equations_numba(
                 rhs[i] += features[i] * value
                 for j in range(6):
                     gram[i, j] += features[i] * features[j]
-    return gram, rhs
+    return (gram, rhs)
 
 
 @njit(cache=True)
 def _evaluate_polynomial_surface_numba(
-    height: int,
-    width: int,
-    coeffs: np.ndarray,
+    height: int, width: int, coeffs: np.ndarray
 ) -> np.ndarray:
     output = np.empty((height, width), dtype=np.float64)
     for row in range(height):
@@ -1861,9 +1713,7 @@ def _evaluate_polynomial_surface_numba(
 
 
 class ConvexHullSmoothingBackendStrategy(
-    CellProfilerBackendStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    CellProfilerBackendStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Convex-hull illumination smoothing keyed by OpenHCS memory/provider."""
 
@@ -1883,9 +1733,7 @@ class ConvexHullSmoothingBackendStrategy(
 
 
 class RankMedianSmoothingBackendStrategy(
-    CellProfilerBackendStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    CellProfilerBackendStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Rank-median illumination smoothing keyed by OpenHCS memory/provider."""
 
@@ -1905,10 +1753,7 @@ class RankMedianSmoothingBackendStrategy(
                 continue
             rows.append(y - center_y)
             radii.append(int(np.max(np.abs(xs - center_x))))
-        return (
-            np.asarray(rows, dtype=np.int64),
-            np.asarray(radii, dtype=np.int64),
-        )
+        return (np.asarray(rows, dtype=np.int64), np.asarray(radii, dtype=np.int64))
 
     @abstractmethod
     def smooth_background_plane(
@@ -1942,14 +1787,11 @@ class RankMedianProfilerPhase:
         )
 
 
-class NumbaNumpyRankMedianSmoothingBackendStrategy(
-    RankMedianSmoothingBackendStrategy,
-):
+class NumbaNumpyRankMedianSmoothingBackendStrategy(RankMedianSmoothingBackendStrategy):
     """NumPy-memory rank median matching skimage rank median border semantics."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.NUMBA,
+        MemoryType.NUMPY, CellProfilerBackendProvider.NUMBA
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
@@ -1962,24 +1804,14 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
         scaled = np.arange(16, dtype=np.uint16).reshape((4, 4))
         code_image = np.arange(16, dtype=np.int32).reshape((4, 4))
         mask = np.ones(scaled.shape, dtype=np.bool_)
-
         _rank_median_global_minimum_is_majority_everywhere_numba(
-            scaled,
-            row_offsets_y,
-            row_radii_x,
-            np.uint16(0),
+            scaled, row_offsets_y, row_radii_x, np.uint16(0)
         )
         _rank_median_codes_2d_sliding_histogram_numba(
-            code_image,
-            row_offsets_y,
-            row_radii_x,
-            int(code_image.size),
+            code_image, row_offsets_y, row_radii_x, int(code_image.size)
         )
         _rank_median_uint16_2d_sliding_histogram_numba(
-            scaled,
-            mask,
-            row_offsets_y,
-            row_radii_x,
+            scaled, mask, row_offsets_y, row_radii_x
         )
 
     def smooth_background_plane(
@@ -1993,15 +1825,13 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
         image = np.asarray(pixel_data, dtype=np.float32)
         if image.ndim != 2:
             raise NotImplementedError(
-                "Rank-median illumination smoothing currently supports 2-D "
-                f"NumPy planes, got shape {image.shape!r}."
+                f"Rank-median illumination smoothing currently supports 2-D NumPy planes, got shape {image.shape!r}."
             )
         mask = project_image_mask_to_data_domain(mask, image)
         if mask is not None and np.asarray(mask).shape != image.shape:
             raise ValueError(
-                "Rank-median illumination mask must match the image shape; got "
-                f"mask {np.asarray(mask).shape!r} for image {image.shape!r}."
-        )
+                f"Rank-median illumination mask must match the image shape; got mask {np.asarray(mask).shape!r} for image {image.shape!r}."
+            )
         footprint = np.asarray(morphology.disk_footprint(radius), dtype=np.bool_)
         row_offsets_y, row_radii_x = self.disk_rows(footprint)
         scaled = (image * 65535.0).astype(np.uint16)
@@ -2018,7 +1848,6 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
             phase.log("rank_median_constant_minimum")
             return np.full(image.shape, minimum_value, dtype=np.float32) / 65535.0
         phase.log("rank_median_constant_minimum")
-
         phase = RankMedianProfilerPhase.start(radius)
         if _rank_median_global_minimum_is_majority_everywhere_numba(
             np.ascontiguousarray(effective_scaled),
@@ -2029,13 +1858,9 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
             phase.log("rank_median_minimum_majority", result=True)
             return np.full(image.shape, minimum_value, dtype=np.float32) / 65535.0
         phase.log("rank_median_minimum_majority", result=False)
-
         phase = RankMedianProfilerPhase.start(radius)
         values, inverse = np.unique(effective_scaled, return_inverse=True)
-        phase.log(
-            "rank_median_unique_codes",
-            value_count=int(values.size),
-        )
+        phase.log("rank_median_unique_codes", value_count=int(values.size))
         phase = RankMedianProfilerPhase.start(radius)
         code_image = inverse.reshape(image.shape).astype(np.int32, copy=False)
         result_codes = _rank_median_codes_2d_sliding_histogram_numba(
@@ -2044,22 +1869,16 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
             row_radii_x,
             int(values.size),
         )
-        phase.log(
-            "rank_median_numba_codes",
-            value_count=int(values.size),
-        )
+        phase.log("rank_median_numba_codes", value_count=int(values.size))
         result = values[result_codes]
         return result.astype(np.float32) / 65535.0
 
 
-class NativeNumpyRankMedianSmoothingBackendStrategy(
-    RankMedianSmoothingBackendStrategy,
-):
+class NativeNumpyRankMedianSmoothingBackendStrategy(RankMedianSmoothingBackendStrategy):
     """Compact-domain skimage rank-median backend for NumPy planes."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.NATIVE,
+        MemoryType.NUMPY, CellProfilerBackendProvider.NATIVE
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NATIVE
@@ -2071,10 +1890,16 @@ class NativeNumpyRankMedianSmoothingBackendStrategy(
         footprint = np.ones((3, 3), dtype=np.bool_)
         row_offsets_y, row_radii_x = self.disk_rows(footprint)
         _rank_median_small_codes_2d_sliding_histogram_numba(
-            code_image,
-            row_offsets_y,
-            row_radii_x,
-            int(code_image.size),
+            code_image, row_offsets_y, row_radii_x, int(code_image.size)
+        )
+        _rank_median_small_codes_minimum_majority_hybrid_numba(
+            code_image, row_offsets_y, row_radii_x, int(code_image.size)
+        )
+        exact_mask = _rank_median_zero_exact_mask_fft(
+            code_image, footprint, row_offsets_y, row_radii_x
+        )
+        _rank_median_small_codes_exact_mask_runs_numba(
+            code_image, exact_mask, row_offsets_y, row_radii_x, int(code_image.size)
         )
 
     def smooth_background_plane(
@@ -2088,50 +1913,49 @@ class NativeNumpyRankMedianSmoothingBackendStrategy(
         image = np.asarray(pixel_data, dtype=np.float32)
         projected_mask = project_image_mask_to_data_domain(mask, image)
         mask_array = (
-            None if projected_mask is None else np.asarray(projected_mask, dtype=np.bool_)
+            None
+            if projected_mask is None
+            else np.asarray(projected_mask, dtype=np.bool_)
         )
         if mask_array is not None and mask_array.shape != image.shape:
             raise ValueError(
-                "Rank-median illumination mask must match the image shape; got "
-                f"mask {mask_array.shape!r} for image {image.shape!r}."
-        )
+                f"Rank-median illumination mask must match the image shape; got mask {mask_array.shape!r} for image {image.shape!r}."
+            )
         footprint = np.asarray(morphology.disk_footprint(radius), dtype=np.bool_)
         row_offsets_y, row_radii_x = self.disk_rows(footprint)
         scaled = (image * 65535.0).astype(np.uint16)
         effective_scaled = scaled if mask_array is None else scaled.copy()
         if mask_array is not None:
             effective_scaled[~mask_array] = np.uint16(0)
-        minimum_value = np.min(effective_scaled)
-        if not np.all(effective_scaled == minimum_value) and (
-            _rank_median_global_minimum_is_majority_everywhere_numba(
-                np.ascontiguousarray(effective_scaled),
-                row_offsets_y,
-                row_radii_x,
-                minimum_value,
-            )
-        ):
-            return np.full(image.shape, minimum_value, dtype=np.float32) / 65535.0
-        return self._smooth_compact_rank_median(
-            effective_scaled,
-            footprint,
-        )
+        return self._smooth_compact_rank_median(effective_scaled, footprint)
 
     @staticmethod
     def _smooth_compact_rank_median(
-        scaled: np.ndarray,
-        footprint: np.ndarray,
+        scaled: np.ndarray, footprint: np.ndarray
     ) -> np.ndarray:
-        import skimage.filters
-
         effective_scaled = np.asarray(scaled, dtype=np.uint16)
-        values, inverse = np.unique(effective_scaled, return_inverse=True)
-        if values.size == 1:
-            result = skimage.filters.median(
-                effective_scaled,
-                footprint,
-                behavior="rank",
+        if capture_enabled():
+            capture_array_fixture(
+                "rank_median_compact_domain",
+                scaled=effective_scaled,
+                footprint=np.asarray(footprint, dtype=np.bool_),
             )
-            return result.astype(np.float32) / 65535.0
+        values, inverse, counts = np.unique(
+            effective_scaled, return_inverse=True, return_counts=True
+        )
+        profile_started_at = time.perf_counter()
+        if values.size == 1:
+            runtime_profiler.log(
+                "rank_median_compact_domain",
+                time.perf_counter() - profile_started_at,
+                value_count=int(values.size),
+                branch="constant",
+                minimum_count=int(counts[0]),
+                pixel_count=int(effective_scaled.size),
+            )
+            return np.full(
+                effective_scaled.shape, values[0], dtype=np.float32
+            ) / 65535.0
         code_dtype = (
             np.uint8 if values.size <= np.iinfo(np.uint8).max + 1 else np.uint16
         )
@@ -2140,33 +1964,87 @@ class NativeNumpyRankMedianSmoothingBackendStrategy(
             row_offsets_y, row_radii_x = RankMedianSmoothingBackendStrategy.disk_rows(
                 footprint
             )
-            result_codes = _rank_median_small_codes_2d_sliding_histogram_numba(
-                np.ascontiguousarray(code_image),
-                row_offsets_y,
-                row_radii_x,
-                int(values.size),
-            )
+            contiguous_codes = np.ascontiguousarray(code_image)
+            if counts[0] > effective_scaled.size // 2:
+                use_fft_zero_mask = _rank_median_fft_zero_mask_candidate(
+                    contiguous_codes, footprint
+                )
+                if use_fft_zero_mask:
+                    exact_mask = _rank_median_zero_exact_mask_fft(
+                        contiguous_codes,
+                        np.asarray(footprint, dtype=np.bool_),
+                        row_offsets_y,
+                        row_radii_x,
+                    )
+                    result_codes = _rank_median_small_codes_exact_mask_runs_numba(
+                        contiguous_codes,
+                        exact_mask,
+                        row_offsets_y,
+                        row_radii_x,
+                        int(values.size),
+                    )
+                else:
+                    result_codes = (
+                        _rank_median_small_codes_minimum_majority_hybrid_numba(
+                            contiguous_codes,
+                            row_offsets_y,
+                            row_radii_x,
+                            int(values.size),
+                        )
+                    )
+                runtime_profiler.log(
+                    "rank_median_compact_domain",
+                    time.perf_counter() - profile_started_at,
+                    value_count=int(values.size),
+                    branch=(
+                        "minimum_majority_fft_runs"
+                        if use_fft_zero_mask
+                        else "minimum_majority_hybrid"
+                    ),
+                    minimum_count=int(counts[0]),
+                    pixel_count=int(effective_scaled.size),
+                )
+            else:
+                result_codes = _rank_median_small_codes_2d_sliding_histogram_numba(
+                    contiguous_codes,
+                    row_offsets_y,
+                    row_radii_x,
+                    int(values.size),
+                )
+                runtime_profiler.log(
+                    "rank_median_compact_domain",
+                    time.perf_counter() - profile_started_at,
+                    value_count=int(values.size),
+                    branch="small_sliding_histogram",
+                    minimum_count=int(counts[0]),
+                    pixel_count=int(effective_scaled.size),
+                )
             return values[result_codes].astype(np.float32) / 65535.0
-        result_codes = skimage.filters.median(
-            code_image,
-            footprint,
-            behavior="rank",
+        import skimage.filters
+
+        result_codes = skimage.filters.median(code_image, footprint, behavior="rank")
+        runtime_profiler.log(
+            "rank_median_compact_domain",
+            time.perf_counter() - profile_started_at,
+            value_count=int(values.size),
+            branch="skimage_rank",
+            minimum_count=int(counts[0]),
+            pixel_count=int(effective_scaled.size),
         )
         return values[result_codes].astype(np.float32) / 65535.0
 
 
 class CentrosomeNumpyConvexHullSmoothingBackendStrategy(
-    ConvexHullSmoothingBackendStrategy,
+    ConvexHullSmoothingBackendStrategy
 ):
     """CellProfiler/centrosome reference convex-hull smoothing for NumPy planes."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.CENTROSOME,
+        MemoryType.NUMPY, CellProfilerBackendProvider.CENTROSOME
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.CENTROSOME
-    is_default_backend = False
+    is_default_backend = True
 
     def smooth_background_plane(
         self,
@@ -2180,39 +2058,20 @@ class CentrosomeNumpyConvexHullSmoothingBackendStrategy(
         import centrosome.cpmorphology
         import centrosome.filter
 
-        image = np.asarray(pixel_data, dtype=np.float32)
-        mask_array = (
-            None
-            if mask is None
-            else np.asarray(mask, dtype=bool)
-        )
-        eroded = centrosome.cpmorphology.grey_erosion(
-            image,
-            2,
-            mask_array,
-        )
-        transformed = centrosome.filter.convex_hull_transform(
-            eroded,
-            mask=mask_array,
-        )
-        return np.asarray(
-            centrosome.cpmorphology.grey_dilation(
-                transformed,
-                2,
-                mask_array,
-            ),
-            dtype=np.float32,
-        )
+        image = np.asarray(pixel_data)
+        mask_array = None if mask is None else np.asarray(mask, dtype=bool)
+        eroded = centrosome.cpmorphology.grey_erosion(image, 2, mask_array)
+        transformed = centrosome.filter.convex_hull_transform(eroded, mask=mask_array)
+        return centrosome.cpmorphology.grey_dilation(transformed, 2, mask_array)
 
 
 class LegacyFastNumpyConvexHullSmoothingBackendStrategy(
-    ConvexHullSmoothingBackendStrategy,
+    ConvexHullSmoothingBackendStrategy
 ):
     """Fast CP3-compatible convex-hull smoothing for NumPy planes."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.LEGACY_FAST,
+        MemoryType.NUMPY, CellProfilerBackendProvider.LEGACY_FAST
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.LEGACY_FAST
@@ -2232,14 +2091,10 @@ class LegacyFastNumpyConvexHullSmoothingBackendStrategy(
         image = np.asarray(pixel_data, dtype=np.float32)
         if image.ndim != 2:
             raise NotImplementedError(
-                "Legacy-fast convex-hull smoothing currently supports 2-D "
-                f"NumPy planes, got shape {image.shape!r}."
+                f"Legacy-fast convex-hull smoothing currently supports 2-D NumPy planes, got shape {image.shape!r}."
             )
         result = grey_dilation(
-            maximum_filter(
-                grey_erosion(image, size=3),
-                size=max(1, int(filter_size)),
-            ),
+            maximum_filter(grey_erosion(image, size=3), size=max(1, int(filter_size))),
             size=3,
         )
         if mask is not None:
@@ -2249,17 +2104,16 @@ class LegacyFastNumpyConvexHullSmoothingBackendStrategy(
 
 
 class ExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
-    ConvexHullSmoothingBackendStrategy,
+    ConvexHullSmoothingBackendStrategy
 ):
-    """Numba-accelerated exact level-set convex-hull reconstruction."""
+    """Numba-accelerated level-set convex-hull reconstruction."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.NUMBA,
+        MemoryType.NUMPY, CellProfilerBackendProvider.NUMBA
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
-    is_default_backend = True
+    is_default_backend = False
 
     def prepare_backend(self) -> None:
         """Compile exact convex-hull smoothing kernels during compiler preparation."""
@@ -2267,10 +2121,7 @@ class ExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
         mask = np.ones(image.shape, dtype=np.bool_)
         morphology = MorphologyBackendStrategy.for_memory_type()
         self.smooth_background_plane(
-            image,
-            mask=mask,
-            filter_size=3,
-            morphology=morphology,
+            image, mask=mask, filter_size=3, morphology=morphology
         )
 
     def smooth_background_plane(
@@ -2285,8 +2136,7 @@ class ExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
         image = np.asarray(pixel_data, dtype=np.float32)
         if image.ndim != 2:
             raise NotImplementedError(
-                "Exact convex-hull smoothing currently supports 2-D NumPy "
-                f"planes, got shape {image.shape!r}."
+                f"Exact convex-hull smoothing currently supports 2-D NumPy planes, got shape {image.shape!r}."
             )
         valid_mask = (
             np.ones(image.shape, dtype=bool)
@@ -2295,16 +2145,11 @@ class ExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
         )
         if valid_mask.shape != image.shape:
             raise ValueError(
-                "Convex-hull smoothing requires a mask matching the 2-D "
-                f"image plane, got mask {valid_mask.shape!r} for image "
-                f"{image.shape!r}."
+                f"Convex-hull smoothing requires a mask matching the 2-D image plane, got mask {valid_mask.shape!r} for image {image.shape!r}."
             )
         if not np.any(valid_mask):
             return np.zeros(image.shape, dtype=np.float32)
-
-        grey_morphology = CellProfilerMaskedGreyMorphology.for_convex_hull(
-            morphology,
-        )
+        grey_morphology = CellProfilerMaskedGreyMorphology.for_convex_hull(morphology)
         eroded = grey_morphology.erode(image, valid_mask)
         valid_values = eroded[valid_mask]
         thresholds = np.linspace(
@@ -2322,13 +2167,12 @@ class ExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
 
 
 class NativeExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
-    ConvexHullSmoothingBackendStrategy,
+    ConvexHullSmoothingBackendStrategy
 ):
     """Reference exact level-set convex-hull reconstruction for NumPy planes."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.NATIVE,
+        MemoryType.NUMPY, CellProfilerBackendProvider.NATIVE
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NATIVE
@@ -2351,14 +2195,11 @@ class NativeExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
 
 
 def _native_exact_level_set_convex_hull_smoothing(
-    image: np.ndarray,
-    mask: np.ndarray | None,
-    morphology: MorphologyBackendStrategy,
+    image: np.ndarray, mask: np.ndarray | None, morphology: MorphologyBackendStrategy
 ) -> np.ndarray:
     if image.ndim != 2:
         raise NotImplementedError(
-            "Native exact convex-hull smoothing currently supports 2-D NumPy "
-            f"planes, got shape {image.shape!r}."
+            f"Native exact convex-hull smoothing currently supports 2-D NumPy planes, got shape {image.shape!r}."
         )
     valid_mask = (
         np.ones(image.shape, dtype=bool)
@@ -2367,15 +2208,11 @@ def _native_exact_level_set_convex_hull_smoothing(
     )
     if valid_mask.shape != image.shape:
         raise ValueError(
-            "Convex-hull smoothing requires a mask matching the 2-D image "
-            f"plane, got mask {valid_mask.shape!r} for image {image.shape!r}."
+            f"Convex-hull smoothing requires a mask matching the 2-D image plane, got mask {valid_mask.shape!r} for image {image.shape!r}."
         )
     if not np.any(valid_mask):
         return np.zeros(image.shape, dtype=np.float32)
-
-    grey_morphology = CellProfilerMaskedGreyMorphology.for_convex_hull(
-        morphology,
-    )
+    grey_morphology = CellProfilerMaskedGreyMorphology.for_convex_hull(morphology)
     eroded = grey_morphology.erode(image, valid_mask)
     valid_values = eroded[valid_mask]
     minimum = float(np.min(valid_values))
@@ -2384,7 +2221,6 @@ def _native_exact_level_set_convex_hull_smoothing(
     output[~valid_mask] = 0
     if maximum <= minimum:
         return grey_morphology.dilate(output, valid_mask)
-
     for threshold in np.linspace(minimum, maximum, 256, dtype=np.float32)[1:]:
         level_mask = valid_mask & (eroded >= float(threshold))
         if not np.any(level_mask):
@@ -2401,8 +2237,7 @@ class CellProfilerMaskedGreyMorphology:
 
     @classmethod
     def for_convex_hull(
-        cls,
-        morphology: MorphologyBackendStrategy,
+        cls, morphology: MorphologyBackendStrategy
     ) -> "CellProfilerMaskedGreyMorphology":
         """Build CP's radius-2 disk morphology for convex-hull smoothing."""
         return cls(np.asarray(morphology.disk_footprint(2), dtype=bool))
@@ -2434,20 +2269,15 @@ class CellProfilerMaskedGreyMorphology:
         return self._restore_masked_pixels(dilated, image, mask)
 
     def _padding_radius(self) -> int:
-        return max(
-            1,
-            int(np.ceil(np.max(np.asarray(self.footprint.shape)) / 2 - 0.5)),
-        )
+        return max(1, int(np.ceil(np.max(np.asarray(self.footprint.shape)) / 2 - 0.5)))
 
     @staticmethod
     def _core_slice(image: np.ndarray, radius: int) -> tuple[slice, ...]:
-        return tuple(slice(radius, -radius) for _axis in image.shape)
+        return tuple((slice(radius, -radius) for _axis in image.shape))
 
     @staticmethod
     def _restore_masked_pixels(
-        morphed: np.ndarray,
-        image: np.ndarray,
-        mask: np.ndarray,
+        morphed: np.ndarray, image: np.ndarray, mask: np.ndarray
     ) -> np.ndarray:
         result = np.asarray(morphed, dtype=np.float32)
         result[~mask] = image[~mask]
@@ -2456,9 +2286,7 @@ class CellProfilerMaskedGreyMorphology:
 
 @njit(cache=True)
 def _exact_level_set_convex_hull_smoothing_numba(
-    image: np.ndarray,
-    valid_mask: np.ndarray,
-    thresholds: np.ndarray,
+    image: np.ndarray, valid_mask: np.ndarray, thresholds: np.ndarray
 ) -> np.ndarray:
     height, width = image.shape
     minimum = np.float32(0.0)
@@ -2480,14 +2308,12 @@ def _exact_level_set_convex_hull_smoothing_numba(
                     minimum = value
                 if value > maximum:
                     maximum = value
-
     output = np.empty((height, width), dtype=np.float32)
     for y in range(height):
         for x in range(width):
             output[y, x] = minimum if valid_mask[y, x] else np.float32(0.0)
-    if (not found_valid) or maximum <= minimum:
+    if not found_valid or maximum <= minimum:
         return output
-
     row_count2 = height * 2 + 1
     min_col_by_row = np.empty(row_count2, dtype=np.int64)
     max_col_by_row = np.empty(row_count2, dtype=np.int64)
@@ -2496,17 +2322,12 @@ def _exact_level_set_convex_hull_smoothing_numba(
     point_y = np.empty(point_capacity, dtype=np.int64)
     hull_x = np.empty(point_capacity * 2, dtype=np.int64)
     hull_y = np.empty(point_capacity * 2, dtype=np.int64)
-
     bucket_counts = np.zeros(thresholds.size, dtype=np.int64)
     active_pixel_count = _count_convex_hull_threshold_buckets(
-        image,
-        valid_mask,
-        thresholds,
-        bucket_counts,
+        image, valid_mask, thresholds, bucket_counts
     )
     if active_pixel_count == 0:
         return output
-
     bucket_offsets = np.empty(thresholds.size + 1, dtype=np.int64)
     offset = 0
     for bucket_index in range(thresholds.size):
@@ -2514,7 +2335,6 @@ def _exact_level_set_convex_hull_smoothing_numba(
         offset += bucket_counts[bucket_index]
         bucket_counts[bucket_index] = 0
     bucket_offsets[thresholds.size] = offset
-
     bucket_rows = np.empty(active_pixel_count, dtype=np.int64)
     bucket_cols = np.empty(active_pixel_count, dtype=np.int64)
     _fill_convex_hull_threshold_buckets(
@@ -2526,12 +2346,10 @@ def _exact_level_set_convex_hull_smoothing_numba(
         bucket_rows,
         bucket_cols,
     )
-
     assigned = np.zeros((height, width), dtype=np.bool_)
     for row_index in range(row_count2):
         min_col_by_row[row_index] = 9223372036854775807
         max_col_by_row[row_index] = -9223372036854775807
-
     assigned_count = 0
     for level_index in range(thresholds.size - 1, -1, -1):
         start = bucket_offsets[level_index]
@@ -2552,22 +2370,12 @@ def _exact_level_set_convex_hull_smoothing_numba(
                 changed_extrema = True
         if not changed_extrema:
             continue
-
         point_count = _emit_diamond_extreme_points(
-            min_col_by_row,
-            max_col_by_row,
-            point_x,
-            point_y,
+            min_col_by_row, max_col_by_row, point_x, point_y
         )
         if point_count == 0:
             continue
-        hull_count = _monotone_chain_hull(
-            point_x,
-            point_y,
-            point_count,
-            hull_x,
-            hull_y,
-        )
+        hull_count = _monotone_chain_hull(point_x, point_y, point_count, hull_x, hull_y)
         assigned_count += _paint_convex_hull(
             output,
             assigned,
@@ -2597,8 +2405,7 @@ def _count_convex_hull_threshold_buckets(
             if not valid_mask[y, x]:
                 continue
             bucket_index = _last_threshold_index_not_greater_than(
-                thresholds,
-                image[y, x],
+                thresholds, image[y, x]
             )
             if bucket_index < 0:
                 continue
@@ -2623,8 +2430,7 @@ def _fill_convex_hull_threshold_buckets(
             if not valid_mask[y, x]:
                 continue
             bucket_index = _last_threshold_index_not_greater_than(
-                thresholds,
-                image[y, x],
+                thresholds, image[y, x]
             )
             if bucket_index < 0:
                 continue
@@ -2636,8 +2442,7 @@ def _fill_convex_hull_threshold_buckets(
 
 @njit(cache=True)
 def _last_threshold_index_not_greater_than(
-    thresholds: np.ndarray,
-    value: np.float32,
+    thresholds: np.ndarray, value: np.float32
 ) -> int:
     low = 0
     high = thresholds.size
@@ -2689,7 +2494,6 @@ def _collect_diamond_extreme_points(
     for row_index in range(row_count2):
         min_col_by_row[row_index] = 9223372036854775807
         max_col_by_row[row_index] = -9223372036854775807
-
     for y in range(height):
         for x in range(width):
             if valid_mask[y, x] and image[y, x] >= threshold:
@@ -2697,20 +2501,14 @@ def _collect_diamond_extreme_points(
                 _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y + 1, 2 * x)
                 _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y, 2 * x - 1)
                 _add_diamond_vertex(min_col_by_row, max_col_by_row, 2 * y, 2 * x + 1)
-
     return _emit_diamond_extreme_points(
-        min_col_by_row,
-        max_col_by_row,
-        point_x,
-        point_y,
+        min_col_by_row, max_col_by_row, point_x, point_y
     )
 
 
 @njit(cache=True)
 def _exact_level_set_convex_hull_smoothing_reference_numba(
-    image: np.ndarray,
-    valid_mask: np.ndarray,
-    thresholds: np.ndarray,
+    image: np.ndarray, valid_mask: np.ndarray, thresholds: np.ndarray
 ) -> np.ndarray:
     height, width = image.shape
     minimum = np.float32(0.0)
@@ -2730,14 +2528,12 @@ def _exact_level_set_convex_hull_smoothing_reference_numba(
                     minimum = value
                 if value > maximum:
                     maximum = value
-
     output = np.empty((height, width), dtype=np.float32)
     for y in range(height):
         for x in range(width):
             output[y, x] = minimum if valid_mask[y, x] else np.float32(0.0)
-    if (not found_valid) or maximum <= minimum:
+    if not found_valid or maximum <= minimum:
         return output
-
     row_count2 = height * 2 + 1
     min_col_by_row = np.empty(row_count2, dtype=np.int64)
     max_col_by_row = np.empty(row_count2, dtype=np.int64)
@@ -2760,32 +2556,16 @@ def _exact_level_set_convex_hull_smoothing_reference_numba(
         )
         if point_count == 0:
             continue
-        hull_count = _monotone_chain_hull(
-            point_x,
-            point_y,
-            point_count,
-            hull_x,
-            hull_y,
-        )
+        hull_count = _monotone_chain_hull(point_x, point_y, point_count, hull_x, hull_y)
         _paint_convex_hull(
-            output,
-            assigned,
-            True,
-            valid_mask,
-            threshold,
-            hull_x,
-            hull_y,
-            hull_count,
+            output, assigned, True, valid_mask, threshold, hull_x, hull_y, hull_count
         )
     return output
 
 
 @njit(cache=True)
 def _add_diamond_vertex(
-    min_col_by_row: np.ndarray,
-    max_col_by_row: np.ndarray,
-    row2: int,
-    col2: int,
+    min_col_by_row: np.ndarray, max_col_by_row: np.ndarray, row2: int, col2: int
 ) -> bool:
     row_index = row2 + 1
     changed = False
@@ -2799,14 +2579,7 @@ def _add_diamond_vertex(
 
 
 @njit(cache=True)
-def _cross_points(
-    ax: int,
-    ay: int,
-    bx: int,
-    by: int,
-    cx: int,
-    cy: int,
-) -> int:
+def _cross_points(ax: int, ay: int, bx: int, by: int, cx: int, cy: int) -> int:
     return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
 
 
@@ -2823,41 +2596,46 @@ def _monotone_chain_hull(
             hull_x[0] = point_x[0]
             hull_y[0] = point_y[0]
         return point_count
-
     hull_count = 0
     for index in range(point_count):
         px = point_x[index]
         py = point_y[index]
-        while hull_count >= 2 and _cross_points(
-            hull_x[hull_count - 2],
-            hull_y[hull_count - 2],
-            hull_x[hull_count - 1],
-            hull_y[hull_count - 1],
-            px,
-            py,
-        ) <= 0:
+        while (
+            hull_count >= 2
+            and _cross_points(
+                hull_x[hull_count - 2],
+                hull_y[hull_count - 2],
+                hull_x[hull_count - 1],
+                hull_y[hull_count - 1],
+                px,
+                py,
+            )
+            <= 0
+        ):
             hull_count -= 1
         hull_x[hull_count] = px
         hull_y[hull_count] = py
         hull_count += 1
-
     lower_count = hull_count
     for index in range(point_count - 2, -1, -1):
         px = point_x[index]
         py = point_y[index]
-        while hull_count > lower_count and _cross_points(
-            hull_x[hull_count - 2],
-            hull_y[hull_count - 2],
-            hull_x[hull_count - 1],
-            hull_y[hull_count - 1],
-            px,
-            py,
-        ) <= 0:
+        while (
+            hull_count > lower_count
+            and _cross_points(
+                hull_x[hull_count - 2],
+                hull_y[hull_count - 2],
+                hull_x[hull_count - 1],
+                hull_y[hull_count - 1],
+                px,
+                py,
+            )
+            <= 0
+        ):
             hull_count -= 1
         hull_x[hull_count] = px
         hull_y[hull_count] = py
         hull_count += 1
-
     if hull_count > 1:
         hull_count -= 1
     return hull_count
@@ -2884,8 +2662,8 @@ def _paint_convex_hull(
         if (
             y >= 0
             and y < valid_mask.shape[0]
-            and x >= 0
-            and x < valid_mask.shape[1]
+            and (x >= 0)
+            and (x < valid_mask.shape[1])
             and valid_mask[y, x]
             and (overwrite_assigned or not assigned[y, x])
         ):
@@ -2894,7 +2672,6 @@ def _paint_convex_hull(
             assigned[y, x] = True
             return 1 if was_unassigned else 0
         return 0
-
     min_row2 = hull_x[0]
     max_row2 = hull_x[0]
     min_col2 = hull_y[0]
@@ -2910,7 +2687,6 @@ def _paint_convex_hull(
             min_col2 = col2
         if col2 > max_col2:
             max_col2 = col2
-
     if hull_count == 2:
         return _paint_line_hull(
             output,
@@ -2927,13 +2703,11 @@ def _paint_convex_hull(
             min_col2,
             max_col2,
         )
-
     image_height, image_width = output.shape
     min_y = max(0, _ceil_div2(min_row2))
     max_y = min(image_height - 1, _floor_div2(max_row2))
     min_x = max(0, _ceil_div2(min_col2))
     max_x = min(image_width - 1, _floor_div2(max_col2))
-
     return _paint_polygon_hull_scanlines(
         output,
         assigned,
@@ -2975,7 +2749,6 @@ def _paint_polygon_hull_scanlines(
             next_index = index + 1
             if next_index == hull_count:
                 next_index = 0
-
             row0 = hull_x[index]
             col0 = hull_y[index]
             row1 = hull_x[next_index]
@@ -2995,12 +2768,10 @@ def _paint_polygon_hull_scanlines(
                     if edge_right > right_col2:
                         right_col2 = edge_right
                 continue
-
             row_min = min(row0, row1)
             row_max = max(row0, row1)
             if query_row2 < row_min or query_row2 > row_max:
                 continue
-
             row_fraction = (query_row2 - row0) / (row1 - row0)
             intersection_col2 = col0 + row_fraction * (col1 - col0)
             if not found_intersection:
@@ -3012,16 +2783,14 @@ def _paint_polygon_hull_scanlines(
                     left_col2 = intersection_col2
                 if intersection_col2 > right_col2:
                     right_col2 = intersection_col2
-
         if not found_intersection:
             continue
-
-        scan_min_x = max(min_x, int(np.ceil(left_col2 / 2.0 - 1e-9)))
-        scan_max_x = min(max_x, int(np.floor(right_col2 / 2.0 + 1e-9)))
+        scan_min_x = max(min_x, int(np.ceil(left_col2 / 2.0 - 1e-09)))
+        scan_max_x = min(max_x, int(np.floor(right_col2 / 2.0 + 1e-09)))
         for x in range(scan_min_x, scan_max_x + 1):
             if not valid_mask[y, x]:
                 continue
-            if (not overwrite_assigned) and assigned[y, x]:
+            if not overwrite_assigned and assigned[y, x]:
                 continue
             output[y, x] = threshold
             if not assigned[y, x]:
@@ -3081,7 +2850,7 @@ def _paint_line_hull(
         for x in range(min_x, max_x + 1):
             if not valid_mask[y, x]:
                 continue
-            if (not overwrite_assigned) and assigned[y, x]:
+            if not overwrite_assigned and assigned[y, x]:
                 continue
             query_col2 = x * 2
             dot = (query_row2 - x0) * dx + (query_col2 - y0) * dy
@@ -3107,7 +2876,6 @@ def _rank_median_global_minimum_is_majority_everywhere_numba(
     for y in range(height):
         total_count = 0
         minimum_count = 0
-
         for row_index in range(row_offsets_y.shape[0]):
             yy = y + row_offsets_y[row_index]
             if yy < 0 or yy >= height:
@@ -3120,29 +2888,24 @@ def _rank_median_global_minimum_is_majority_everywhere_numba(
                 total_count += 1
                 if image[yy, xx] == minimum_value:
                     minimum_count += 1
-
         if minimum_count <= total_count // 2:
             return False
-
         for x in range(1, width):
             for row_index in range(row_offsets_y.shape[0]):
                 yy = y + row_offsets_y[row_index]
                 if yy < 0 or yy >= height:
                     continue
                 radius_x = row_radii_x[row_index]
-
                 remove_x = x - 1 - radius_x
                 if remove_x >= 0 and remove_x < width:
                     total_count -= 1
                     if image[yy, remove_x] == minimum_value:
                         minimum_count -= 1
-
                 add_x = x + radius_x
                 if add_x >= 0 and add_x < width:
                     total_count += 1
                     if image[yy, add_x] == minimum_value:
                         minimum_count += 1
-
             if minimum_count <= total_count // 2:
                 return False
     return True
@@ -3160,7 +2923,6 @@ def _rank_median_codes_2d_sliding_histogram_numba(
     for y in range(height):
         tree = np.zeros(value_count + 1, dtype=np.int64)
         count = 0
-
         for row_index in range(row_offsets_y.shape[0]):
             yy = y + row_offsets_y[row_index]
             if yy < 0 or yy >= height:
@@ -3172,29 +2934,24 @@ def _rank_median_codes_2d_sliding_histogram_numba(
             for xx in range(0, right + 1):
                 _fenwick_add_code(tree, int(code_image[yy, xx]), 1)
                 count += 1
-
         if count == 0:
             output[y, 0] = 0
         else:
             output[y, 0] = _fenwick_select_code(tree, count // 2)
-
         for x in range(1, width):
             for row_index in range(row_offsets_y.shape[0]):
                 yy = y + row_offsets_y[row_index]
                 if yy < 0 or yy >= height:
                     continue
                 radius_x = row_radii_x[row_index]
-
                 remove_x = x - 1 - radius_x
                 if remove_x >= 0 and remove_x < width:
                     _fenwick_add_code(tree, int(code_image[yy, remove_x]), -1)
                     count -= 1
-
                 add_x = x + radius_x
                 if add_x >= 0 and add_x < width:
                     _fenwick_add_code(tree, int(code_image[yy, add_x]), 1)
                     count += 1
-
             if count == 0:
                 output[y, x] = 0
             else:
@@ -3214,7 +2971,6 @@ def _rank_median_small_codes_2d_sliding_histogram_numba(
     for y in range(height):
         histogram = np.zeros(value_count, dtype=np.int32)
         count = 0
-
         for row_index in range(row_offsets_y.shape[0]):
             yy = y + row_offsets_y[row_index]
             if yy < 0 or yy >= height:
@@ -3226,28 +2982,260 @@ def _rank_median_small_codes_2d_sliding_histogram_numba(
             for xx in range(0, right + 1):
                 histogram[int(code_image[yy, xx])] += 1
                 count += 1
-
         output[y, 0] = _rank_median_select_small_code(histogram, count)
-
         for x in range(1, width):
             for row_index in range(row_offsets_y.shape[0]):
                 yy = y + row_offsets_y[row_index]
                 if yy < 0 or yy >= height:
                     continue
                 radius_x = row_radii_x[row_index]
-
                 remove_x = x - 1 - radius_x
                 if remove_x >= 0 and remove_x < width:
-                    histogram[int(code_image[yy, remove_x])] -= 1
+                    remove_code = int(code_image[yy, remove_x])
+                    histogram[remove_code] -= 1
                     count -= 1
-
                 add_x = x + radius_x
                 if add_x >= 0 and add_x < width:
-                    histogram[int(code_image[yy, add_x])] += 1
+                    add_code = int(code_image[yy, add_x])
+                    histogram[add_code] += 1
                     count += 1
-
             output[y, x] = _rank_median_select_small_code(histogram, count)
     return output
+
+
+@njit(cache=True)
+def _rank_median_small_codes_minimum_majority_hybrid_numba(
+    code_image: np.ndarray,
+    row_offsets_y: np.ndarray,
+    row_radii_x: np.ndarray,
+    value_count: int,
+) -> np.ndarray:
+    height, width = code_image.shape
+    output = np.zeros((height, width), dtype=np.int32)
+    for y in range(height):
+        total_count = 0
+        minimum_count = 0
+        run_start = -1
+        for row_index in range(row_offsets_y.shape[0]):
+            yy = y + row_offsets_y[row_index]
+            if yy < 0 or yy >= height:
+                continue
+            radius_x = row_radii_x[row_index]
+            right = radius_x
+            if right >= width:
+                right = width - 1
+            for xx in range(0, right + 1):
+                total_count += 1
+                if code_image[yy, xx] == 0:
+                    minimum_count += 1
+        if minimum_count <= total_count // 2:
+            run_start = 0
+        for x in range(1, width):
+            for row_index in range(row_offsets_y.shape[0]):
+                yy = y + row_offsets_y[row_index]
+                if yy < 0 or yy >= height:
+                    continue
+                radius_x = row_radii_x[row_index]
+                remove_x = x - 1 - radius_x
+                if remove_x >= 0 and remove_x < width:
+                    total_count -= 1
+                    if code_image[yy, remove_x] == 0:
+                        minimum_count -= 1
+                add_x = x + radius_x
+                if add_x >= 0 and add_x < width:
+                    total_count += 1
+                    if code_image[yy, add_x] == 0:
+                        minimum_count += 1
+            needs_exact = minimum_count <= total_count // 2
+            if needs_exact and run_start < 0:
+                run_start = x
+            elif not needs_exact and run_start >= 0:
+                _rank_median_fill_small_code_run(
+                    code_image,
+                    output,
+                    row_offsets_y,
+                    row_radii_x,
+                    value_count,
+                    y,
+                    run_start,
+                    x - 1,
+                )
+                run_start = -1
+        if run_start >= 0:
+            _rank_median_fill_small_code_run(
+                code_image,
+                output,
+                row_offsets_y,
+                row_radii_x,
+                value_count,
+                y,
+                run_start,
+                width - 1,
+            )
+    return output
+
+
+def _rank_median_fft_zero_mask_candidate(
+    code_image: np.ndarray,
+    footprint: np.ndarray,
+) -> bool:
+    """Return whether FFT zero-majority counting is likely to beat sliding counts."""
+    return bool(code_image.size >= 262_144 and np.asarray(footprint).sum() >= 4096)
+
+
+def _rank_median_zero_exact_mask_fft(
+    code_image: np.ndarray,
+    footprint: np.ndarray,
+    row_offsets_y: np.ndarray,
+    row_radii_x: np.ndarray,
+) -> np.ndarray:
+    """Return pixels whose local rank median is not provably the minimum code."""
+    from scipy import signal
+
+    zero_image = (np.asarray(code_image) == 0).astype(np.float32, copy=False)
+    footprint_float = np.asarray(footprint, dtype=np.float32)
+    zero_counts = np.rint(
+        signal.fftconvolve(zero_image, footprint_float, mode="same")
+    ).astype(np.int32, copy=False)
+    total_counts = np.rint(
+        signal.fftconvolve(
+            np.ones(code_image.shape, dtype=np.float32),
+            footprint_float,
+            mode="same",
+        )
+    ).astype(np.int32, copy=False)
+    exact_mask = zero_counts <= (total_counts // 2)
+    uncertain_mask = np.abs(zero_counts - (total_counts // 2)) <= 2
+    if np.any(uncertain_mask):
+        _rank_median_correct_zero_exact_mask_numba(
+            np.ascontiguousarray(code_image),
+            exact_mask,
+            np.ascontiguousarray(uncertain_mask),
+            row_offsets_y,
+            row_radii_x,
+        )
+    return np.ascontiguousarray(exact_mask)
+
+
+@njit(cache=True)
+def _rank_median_correct_zero_exact_mask_numba(
+    code_image: np.ndarray,
+    exact_mask: np.ndarray,
+    uncertain_mask: np.ndarray,
+    row_offsets_y: np.ndarray,
+    row_radii_x: np.ndarray,
+) -> None:
+    height, width = code_image.shape
+    for y in range(height):
+        for x in range(width):
+            if not uncertain_mask[y, x]:
+                continue
+            total_count = 0
+            minimum_count = 0
+            for row_index in range(row_offsets_y.shape[0]):
+                yy = y + row_offsets_y[row_index]
+                if yy < 0 or yy >= height:
+                    continue
+                radius_x = row_radii_x[row_index]
+                left = x - radius_x
+                if left < 0:
+                    left = 0
+                right = x + radius_x
+                if right >= width:
+                    right = width - 1
+                for xx in range(left, right + 1):
+                    total_count += 1
+                    if code_image[yy, xx] == 0:
+                        minimum_count += 1
+            exact_mask[y, x] = minimum_count <= total_count // 2
+
+
+@njit(cache=True)
+def _rank_median_small_codes_exact_mask_runs_numba(
+    code_image: np.ndarray,
+    exact_mask: np.ndarray,
+    row_offsets_y: np.ndarray,
+    row_radii_x: np.ndarray,
+    value_count: int,
+) -> np.ndarray:
+    height, width = code_image.shape
+    output = np.zeros((height, width), dtype=np.int32)
+    for y in range(height):
+        run_start = -1
+        for x in range(width):
+            needs_exact = exact_mask[y, x]
+            if needs_exact and run_start < 0:
+                run_start = x
+            elif not needs_exact and run_start >= 0:
+                _rank_median_fill_small_code_run(
+                    code_image,
+                    output,
+                    row_offsets_y,
+                    row_radii_x,
+                    value_count,
+                    y,
+                    run_start,
+                    x - 1,
+                )
+                run_start = -1
+        if run_start >= 0:
+            _rank_median_fill_small_code_run(
+                code_image,
+                output,
+                row_offsets_y,
+                row_radii_x,
+                value_count,
+                y,
+                run_start,
+                width - 1,
+            )
+    return output
+
+
+@njit(cache=True)
+def _rank_median_fill_small_code_run(
+    code_image: np.ndarray,
+    output: np.ndarray,
+    row_offsets_y: np.ndarray,
+    row_radii_x: np.ndarray,
+    value_count: int,
+    y: int,
+    start_x: int,
+    end_x: int,
+) -> None:
+    height, width = code_image.shape
+    histogram = np.zeros(value_count, dtype=np.int32)
+    count = 0
+    for row_index in range(row_offsets_y.shape[0]):
+        yy = y + row_offsets_y[row_index]
+        if yy < 0 or yy >= height:
+            continue
+        radius_x = row_radii_x[row_index]
+        left = start_x - radius_x
+        if left < 0:
+            left = 0
+        right = start_x + radius_x
+        if right >= width:
+            right = width - 1
+        for xx in range(left, right + 1):
+            histogram[int(code_image[yy, xx])] += 1
+            count += 1
+    output[y, start_x] = _rank_median_select_small_code(histogram, count)
+    for x in range(start_x + 1, end_x + 1):
+        for row_index in range(row_offsets_y.shape[0]):
+            yy = y + row_offsets_y[row_index]
+            if yy < 0 or yy >= height:
+                continue
+            radius_x = row_radii_x[row_index]
+            remove_x = x - 1 - radius_x
+            if remove_x >= 0 and remove_x < width:
+                histogram[int(code_image[yy, remove_x])] -= 1
+                count -= 1
+            add_x = x + radius_x
+            if add_x >= 0 and add_x < width:
+                histogram[int(code_image[yy, add_x])] += 1
+                count += 1
+        output[y, x] = _rank_median_select_small_code(histogram, count)
 
 
 @njit(cache=True)
@@ -3283,11 +3271,7 @@ def _highest_fenwick_bit(tree: np.ndarray) -> int:
 
 
 @njit(cache=True)
-def _fenwick_select_index(
-    tree: np.ndarray,
-    kth: int,
-    initial_bit: int,
-) -> int:
+def _fenwick_select_index(tree: np.ndarray, kth: int, initial_bit: int) -> int:
     index = 0
     bit = initial_bit
     target = kth + 1
@@ -3313,7 +3297,6 @@ def _rank_median_uint16_2d_sliding_histogram_numba(
     for y in range(height):
         tree = np.zeros(histogram_size + 1, dtype=np.int64)
         count = 0
-
         for row_index in range(row_offsets_y.shape[0]):
             yy = y + row_offsets_y[row_index]
             if yy < 0 or yy >= height:
@@ -3326,35 +3309,26 @@ def _rank_median_uint16_2d_sliding_histogram_numba(
                 value = image[yy, xx] if mask[yy, xx] else np.uint16(0)
                 _fenwick_add_uint16(tree, value, 1)
                 count += 1
-
         if count == 0:
             output[y, 0] = np.uint16(0)
         else:
             output[y, 0] = _fenwick_select_uint16(tree, count // 2)
-
         for x in range(1, width):
             for row_index in range(row_offsets_y.shape[0]):
                 yy = y + row_offsets_y[row_index]
                 if yy < 0 or yy >= height:
                     continue
                 radius_x = row_radii_x[row_index]
-
                 remove_x = x - 1 - radius_x
                 if remove_x >= 0 and remove_x < width:
-                    value = (
-                        image[yy, remove_x]
-                        if mask[yy, remove_x]
-                        else np.uint16(0)
-                    )
+                    value = image[yy, remove_x] if mask[yy, remove_x] else np.uint16(0)
                     _fenwick_add_uint16(tree, value, -1)
                     count -= 1
-
                 add_x = x + radius_x
                 if add_x >= 0 and add_x < width:
                     value = image[yy, add_x] if mask[yy, add_x] else np.uint16(0)
                     _fenwick_add_uint16(tree, value, 1)
                     count += 1
-
             if count == 0:
                 output[y, x] = np.uint16(0)
             else:
@@ -3377,10 +3351,7 @@ def _fenwick_select_uint16(tree: np.ndarray, kth: int) -> np.uint16:
 
 @njit(cache=True)
 def _rank_median_uint16_2d_numba(
-    image: np.ndarray,
-    mask: np.ndarray,
-    offsets_y: np.ndarray,
-    offsets_x: np.ndarray,
+    image: np.ndarray, mask: np.ndarray, offsets_y: np.ndarray, offsets_x: np.ndarray
 ) -> np.ndarray:
     height, width = image.shape
     output = np.empty((height, width), dtype=np.uint16)
@@ -3421,10 +3392,7 @@ def _select_uint16(values: np.ndarray, count: int, kth: int) -> np.uint16:
 
 @njit(cache=True)
 def _partition_uint16(
-    values: np.ndarray,
-    left: int,
-    right: int,
-    pivot_index: int,
+    values: np.ndarray, left: int, right: int, pivot_index: int
 ) -> int:
     pivot_value = values[pivot_index]
     values[pivot_index] = values[right]

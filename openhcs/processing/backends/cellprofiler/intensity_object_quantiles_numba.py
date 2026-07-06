@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import ClassVar, Generic, TypeAlias, TypeVar
 
 import numpy as np
@@ -145,6 +145,21 @@ class ObjectIntensityArrays(ObjectIntensityFeatureValues[np.ndarray]):
             name: align_column(values)
             for name, values in self.feature_items()
         }
+
+    def with_max_intensity_positions(
+        self,
+        *,
+        max_intensity_x: np.ndarray,
+        max_intensity_y: np.ndarray,
+        max_intensity_z: np.ndarray,
+    ) -> "ObjectIntensityArrays":
+        """Return these measurements with CP-native max-location coordinates."""
+        return replace(
+            self,
+            max_intensity_x=max_intensity_x,
+            max_intensity_y=max_intensity_y,
+            max_intensity_z=max_intensity_z,
+        )
 
     @classmethod
     def from_3d_scan_result(
@@ -566,7 +581,6 @@ def _object_intensity_scan_numba(
     object_count = object_labels.size
     counts = np.zeros(object_count, dtype=np.float64)
     sums = np.zeros(object_count, dtype=np.float64)
-    sumsq = np.zeros(object_count, dtype=np.float64)
     min_values = np.full(object_count, np.inf, dtype=np.float64)
     max_values = np.full(object_count, -np.inf, dtype=np.float64)
     sum_x = np.zeros(object_count, dtype=np.float64)
@@ -578,7 +592,6 @@ def _object_intensity_scan_numba(
 
     edge_counts = np.zeros(object_count, dtype=np.float64)
     edge_sums = np.zeros(object_count, dtype=np.float64)
-    edge_sumsq = np.zeros(object_count, dtype=np.float64)
     edge_min_values = np.full(object_count, np.inf, dtype=np.float64)
     edge_max_values = np.full(object_count, -np.inf, dtype=np.float64)
 
@@ -596,7 +609,6 @@ def _object_intensity_scan_numba(
 
             counts[index] += 1.0
             sums[index] += value
-            sumsq[index] += value * value
             sum_x[index] += x
             sum_y[index] += y
             weighted_x[index] += x * value
@@ -611,7 +623,6 @@ def _object_intensity_scan_numba(
             if _is_inner_boundary_pixel(labels, y, x, label):
                 edge_counts[index] += 1.0
                 edge_sums[index] += value
-                edge_sumsq[index] += value * value
                 if value < edge_min_values[index]:
                     edge_min_values[index] = value
                 if value > edge_max_values[index]:
@@ -627,10 +638,6 @@ def _object_intensity_scan_numba(
     for index in range(object_count):
         if counts[index] > 0.0:
             means[index] = sums[index] / counts[index]
-            variance = sumsq[index] / counts[index] - means[index] * means[index]
-            if variance < 0.0 and variance > -1e-15:
-                variance = 0.0
-            stds[index] = np.sqrt(variance)
             center_x = sum_x[index] / counts[index]
             center_y = sum_y[index] / counts[index]
             if sums[index] != 0.0:
@@ -645,16 +652,17 @@ def _object_intensity_scan_numba(
 
         if edge_counts[index] > 0.0:
             edge_means[index] = edge_sums[index] / edge_counts[index]
-            edge_variance = (
-                edge_sumsq[index] / edge_counts[index]
-                - edge_means[index] * edge_means[index]
-            )
-            if edge_variance < 0.0 and edge_variance > -1e-15:
-                edge_variance = 0.0
-            edge_stds[index] = np.sqrt(edge_variance)
         else:
             edge_min_values[index] = 0.0
             edge_max_values[index] = 0.0
+
+    stds, edge_stds = _object_intensity_std_2d_numba(
+        image,
+        labels,
+        label_to_index,
+        means,
+        edge_means,
+    )
 
     return (
         counts,
@@ -693,6 +701,51 @@ def _is_inner_boundary_pixel(
     if x + 1 < width and labels[y, x + 1] != label:
         return True
     return False
+
+
+@njit(cache=True)
+def _object_intensity_std_2d_numba(
+    image: np.ndarray,
+    labels: np.ndarray,
+    label_to_index: np.ndarray,
+    means: np.ndarray,
+    edge_means: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    object_count = means.size
+    variance_sums = np.zeros(object_count, dtype=np.float64)
+    counts = np.zeros(object_count, dtype=np.float64)
+    edge_variance_sums = np.zeros(object_count, dtype=np.float64)
+    edge_counts = np.zeros(object_count, dtype=np.float64)
+    height, width = image.shape
+    for y in range(height):
+        for x in range(width):
+            label = labels[y, x]
+            if label <= 0 or label >= label_to_index.size:
+                continue
+            index = label_to_index[label]
+            if index < 0:
+                continue
+            value = image[y, x]
+            if not np.isfinite(value):
+                continue
+            diff = value - means[index]
+            variance_sums[index] += diff * diff
+            counts[index] += 1.0
+            if _is_inner_boundary_pixel(labels, y, x, label):
+                edge_diff = value - edge_means[index]
+                edge_variance_sums[index] += edge_diff * edge_diff
+                edge_counts[index] += 1.0
+
+    stds = np.zeros(object_count, dtype=np.float64)
+    edge_stds = np.zeros(object_count, dtype=np.float64)
+    for index in range(object_count):
+        if counts[index] > 0.0:
+            stds[index] = np.sqrt(variance_sums[index] / counts[index])
+        if edge_counts[index] > 0.0:
+            edge_stds[index] = np.sqrt(
+                edge_variance_sums[index] / edge_counts[index]
+            )
+    return stds, edge_stds
 
 
 @njit(cache=True)
@@ -861,7 +914,6 @@ def _object_intensity_scan_3d_numba(
     object_count = object_labels.size
     counts = np.zeros(object_count, dtype=np.float64)
     sums = np.zeros(object_count, dtype=np.float64)
-    sumsq = np.zeros(object_count, dtype=np.float64)
     min_values = np.full(object_count, np.inf, dtype=np.float64)
     max_values = np.full(object_count, -np.inf, dtype=np.float64)
     sum_x = np.zeros(object_count, dtype=np.float64)
@@ -876,7 +928,6 @@ def _object_intensity_scan_3d_numba(
 
     edge_counts = np.zeros(object_count, dtype=np.float64)
     edge_sums = np.zeros(object_count, dtype=np.float64)
-    edge_sumsq = np.zeros(object_count, dtype=np.float64)
     edge_min_values = np.full(object_count, np.inf, dtype=np.float64)
     edge_max_values = np.full(object_count, -np.inf, dtype=np.float64)
 
@@ -895,7 +946,6 @@ def _object_intensity_scan_3d_numba(
 
                 counts[index] += 1.0
                 sums[index] += value
-                sumsq[index] += value * value
                 sum_x[index] += x_index
                 sum_y[index] += y_index
                 sum_z[index] += z_index
@@ -913,7 +963,6 @@ def _object_intensity_scan_3d_numba(
                 if _is_inner_boundary_voxel(labels, z_index, y_index, x_index, label):
                     edge_counts[index] += 1.0
                     edge_sums[index] += value
-                    edge_sumsq[index] += value * value
                     if value < edge_min_values[index]:
                         edge_min_values[index] = value
                     if value > edge_max_values[index]:
@@ -930,10 +979,6 @@ def _object_intensity_scan_3d_numba(
     for index in range(object_count):
         if counts[index] > 0.0:
             means[index] = sums[index] / counts[index]
-            variance = sumsq[index] / counts[index] - means[index] * means[index]
-            if variance < 0.0 and variance > -1e-15:
-                variance = 0.0
-            stds[index] = np.sqrt(variance)
             center_x = sum_x[index] / counts[index]
             center_y = sum_y[index] / counts[index]
             center_z = sum_z[index] / counts[index]
@@ -953,16 +998,17 @@ def _object_intensity_scan_3d_numba(
 
         if edge_counts[index] > 0.0:
             edge_means[index] = edge_sums[index] / edge_counts[index]
-            edge_variance = (
-                edge_sumsq[index] / edge_counts[index]
-                - edge_means[index] * edge_means[index]
-            )
-            if edge_variance < 0.0 and edge_variance > -1e-15:
-                edge_variance = 0.0
-            edge_stds[index] = np.sqrt(edge_variance)
         else:
             edge_min_values[index] = 0.0
             edge_max_values[index] = 0.0
+
+    stds, edge_stds = _object_intensity_std_3d_numba(
+        image,
+        labels,
+        label_to_index,
+        means,
+        edge_means,
+    )
 
     return (
         counts,
@@ -997,7 +1043,6 @@ def _object_intensity_scan_3d_batch_numba(
     object_count = object_labels.size
     counts = np.zeros((image_count, object_count), dtype=np.float64)
     sums = np.zeros((image_count, object_count), dtype=np.float64)
-    sumsq = np.zeros((image_count, object_count), dtype=np.float64)
     min_values = np.full((image_count, object_count), np.inf, dtype=np.float64)
     max_values = np.full((image_count, object_count), -np.inf, dtype=np.float64)
     sum_x = np.zeros((image_count, object_count), dtype=np.float64)
@@ -1012,7 +1057,6 @@ def _object_intensity_scan_3d_batch_numba(
 
     edge_counts = np.zeros((image_count, object_count), dtype=np.float64)
     edge_sums = np.zeros((image_count, object_count), dtype=np.float64)
-    edge_sumsq = np.zeros((image_count, object_count), dtype=np.float64)
     edge_min_values = np.full(
         (image_count, object_count),
         np.inf,
@@ -1047,7 +1091,6 @@ def _object_intensity_scan_3d_batch_numba(
 
                     counts[image_index, object_index] += 1.0
                     sums[image_index, object_index] += value
-                    sumsq[image_index, object_index] += value * value
                     sum_x[image_index, object_index] += x_index
                     sum_y[image_index, object_index] += y_index
                     sum_z[image_index, object_index] += z_index
@@ -1065,7 +1108,6 @@ def _object_intensity_scan_3d_batch_numba(
                     if is_edge:
                         edge_counts[image_index, object_index] += 1.0
                         edge_sums[image_index, object_index] += value
-                        edge_sumsq[image_index, object_index] += value * value
                         if value < edge_min_values[image_index, object_index]:
                             edge_min_values[image_index, object_index] = value
                         if value > edge_max_values[image_index, object_index]:
@@ -1086,15 +1128,6 @@ def _object_intensity_scan_3d_batch_numba(
                     sums[image_index, object_index]
                     / counts[image_index, object_index]
                 )
-                variance = (
-                    sumsq[image_index, object_index]
-                    / counts[image_index, object_index]
-                    - means[image_index, object_index]
-                    * means[image_index, object_index]
-                )
-                if variance < 0.0 and variance > -1e-15:
-                    variance = 0.0
-                stds[image_index, object_index] = np.sqrt(variance)
                 center_x = sum_x[image_index, object_index] / counts[
                     image_index,
                     object_index,
@@ -1135,18 +1168,17 @@ def _object_intensity_scan_3d_batch_numba(
                     edge_sums[image_index, object_index]
                     / edge_counts[image_index, object_index]
                 )
-                edge_variance = (
-                    edge_sumsq[image_index, object_index]
-                    / edge_counts[image_index, object_index]
-                    - edge_means[image_index, object_index]
-                    * edge_means[image_index, object_index]
-                )
-                if edge_variance < 0.0 and edge_variance > -1e-15:
-                    edge_variance = 0.0
-                edge_stds[image_index, object_index] = np.sqrt(edge_variance)
             else:
                 edge_min_values[image_index, object_index] = 0.0
                 edge_max_values[image_index, object_index] = 0.0
+
+    stds, edge_stds = _object_intensity_std_3d_batch_numba(
+        images,
+        labels,
+        label_to_index,
+        means,
+        edge_means,
+    )
 
     return (
         counts,
@@ -1195,6 +1227,177 @@ def _is_inner_boundary_voxel(
 
 
 @njit(cache=True)
+def _object_intensity_std_3d_numba(
+    image: np.ndarray,
+    labels: np.ndarray,
+    label_to_index: np.ndarray,
+    means: np.ndarray,
+    edge_means: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    object_count = means.size
+    variance_sums = np.zeros(object_count, dtype=np.float64)
+    counts = np.zeros(object_count, dtype=np.float64)
+    edge_variance_sums = np.zeros(object_count, dtype=np.float64)
+    edge_counts = np.zeros(object_count, dtype=np.float64)
+    z_size, y_size, x_size = image.shape
+    for z_index in range(z_size):
+        for y_index in range(y_size):
+            for x_index in range(x_size):
+                label = labels[z_index, y_index, x_index]
+                if label <= 0 or label >= label_to_index.size:
+                    continue
+                object_index = label_to_index[label]
+                if object_index < 0:
+                    continue
+                value = image[z_index, y_index, x_index]
+                if not np.isfinite(value):
+                    continue
+                diff = value - means[object_index]
+                variance_sums[object_index] += diff * diff
+                counts[object_index] += 1.0
+                if _is_inner_boundary_voxel(
+                    labels,
+                    z_index,
+                    y_index,
+                    x_index,
+                    label,
+                ):
+                    edge_diff = value - edge_means[object_index]
+                    edge_variance_sums[object_index] += edge_diff * edge_diff
+                    edge_counts[object_index] += 1.0
+
+    stds = np.zeros(object_count, dtype=np.float64)
+    edge_stds = np.zeros(object_count, dtype=np.float64)
+    for object_index in range(object_count):
+        if counts[object_index] > 0.0:
+            stds[object_index] = np.sqrt(
+                variance_sums[object_index] / counts[object_index]
+            )
+        if edge_counts[object_index] > 0.0:
+            edge_stds[object_index] = np.sqrt(
+                edge_variance_sums[object_index] / edge_counts[object_index]
+            )
+    return stds, edge_stds
+
+
+@njit(cache=True)
+def _object_intensity_std_3d_batch_numba(
+    images: np.ndarray,
+    labels: np.ndarray,
+    label_to_index: np.ndarray,
+    means: np.ndarray,
+    edge_means: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    image_count, z_size, y_size, x_size = images.shape
+    object_count = means.shape[1]
+    variance_sums = np.zeros((image_count, object_count), dtype=np.float64)
+    counts = np.zeros((image_count, object_count), dtype=np.float64)
+    edge_variance_sums = np.zeros((image_count, object_count), dtype=np.float64)
+    edge_counts = np.zeros((image_count, object_count), dtype=np.float64)
+    for z_index in range(z_size):
+        for y_index in range(y_size):
+            for x_index in range(x_size):
+                label = labels[z_index, y_index, x_index]
+                if label <= 0 or label >= label_to_index.size:
+                    continue
+                object_index = label_to_index[label]
+                if object_index < 0:
+                    continue
+                is_edge = _is_inner_boundary_voxel(
+                    labels,
+                    z_index,
+                    y_index,
+                    x_index,
+                    label,
+                )
+                for image_index in range(image_count):
+                    value = images[image_index, z_index, y_index, x_index]
+                    if not np.isfinite(value):
+                        continue
+                    diff = value - means[image_index, object_index]
+                    variance_sums[image_index, object_index] += diff * diff
+                    counts[image_index, object_index] += 1.0
+                    if is_edge:
+                        edge_diff = value - edge_means[image_index, object_index]
+                        edge_variance_sums[
+                            image_index,
+                            object_index,
+                        ] += edge_diff * edge_diff
+                        edge_counts[image_index, object_index] += 1.0
+
+    stds = np.zeros((image_count, object_count), dtype=np.float64)
+    edge_stds = np.zeros((image_count, object_count), dtype=np.float64)
+    for image_index in range(image_count):
+        for object_index in range(object_count):
+            if counts[image_index, object_index] > 0.0:
+                stds[image_index, object_index] = np.sqrt(
+                    variance_sums[image_index, object_index]
+                    / counts[image_index, object_index]
+                )
+            if edge_counts[image_index, object_index] > 0.0:
+                edge_stds[image_index, object_index] = np.sqrt(
+                    edge_variance_sums[image_index, object_index]
+                    / edge_counts[image_index, object_index]
+                )
+    return stds, edge_stds
+
+
+@njit(cache=True)
+def _object_intensity_std_3d_sparse_batch_numba(
+    images: np.ndarray,
+    z_indices: np.ndarray,
+    y_indices: np.ndarray,
+    x_indices: np.ndarray,
+    object_indexes: np.ndarray,
+    edge_flags: np.ndarray,
+    means: np.ndarray,
+    edge_means: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    image_count = images.shape[0]
+    object_count = means.shape[1]
+    variance_sums = np.zeros((image_count, object_count), dtype=np.float64)
+    counts = np.zeros((image_count, object_count), dtype=np.float64)
+    edge_variance_sums = np.zeros((image_count, object_count), dtype=np.float64)
+    edge_counts = np.zeros((image_count, object_count), dtype=np.float64)
+    for foreground_index in range(object_indexes.size):
+        object_index = int(object_indexes[foreground_index])
+        z_index = int(z_indices[foreground_index])
+        y_index = int(y_indices[foreground_index])
+        x_index = int(x_indices[foreground_index])
+        is_edge = edge_flags[foreground_index]
+        for image_index in range(image_count):
+            value = images[image_index, z_index, y_index, x_index]
+            if not np.isfinite(value):
+                continue
+            diff = value - means[image_index, object_index]
+            variance_sums[image_index, object_index] += diff * diff
+            counts[image_index, object_index] += 1.0
+            if is_edge:
+                edge_diff = value - edge_means[image_index, object_index]
+                edge_variance_sums[
+                    image_index,
+                    object_index,
+                ] += edge_diff * edge_diff
+                edge_counts[image_index, object_index] += 1.0
+
+    stds = np.zeros((image_count, object_count), dtype=np.float64)
+    edge_stds = np.zeros((image_count, object_count), dtype=np.float64)
+    for image_index in range(image_count):
+        for object_index in range(object_count):
+            if counts[image_index, object_index] > 0.0:
+                stds[image_index, object_index] = np.sqrt(
+                    variance_sums[image_index, object_index]
+                    / counts[image_index, object_index]
+                )
+            if edge_counts[image_index, object_index] > 0.0:
+                edge_stds[image_index, object_index] = np.sqrt(
+                    edge_variance_sums[image_index, object_index]
+                    / edge_counts[image_index, object_index]
+                )
+    return stds, edge_stds
+
+
+@njit(cache=True)
 def _object_intensity_foreground_edges_3d_numba(
     labels: np.ndarray,
     z_indices: np.ndarray,
@@ -1230,7 +1433,6 @@ def _object_intensity_scan_3d_sparse_batch_numba(
     image_count = images.shape[0]
     counts = np.zeros((image_count, object_count), dtype=np.float64)
     sums = np.zeros((image_count, object_count), dtype=np.float64)
-    sumsq = np.zeros((image_count, object_count), dtype=np.float64)
     min_values = np.full((image_count, object_count), np.inf, dtype=np.float64)
     max_values = np.full((image_count, object_count), -np.inf, dtype=np.float64)
     sum_x = np.zeros((image_count, object_count), dtype=np.float64)
@@ -1245,7 +1447,6 @@ def _object_intensity_scan_3d_sparse_batch_numba(
 
     edge_counts = np.zeros((image_count, object_count), dtype=np.float64)
     edge_sums = np.zeros((image_count, object_count), dtype=np.float64)
-    edge_sumsq = np.zeros((image_count, object_count), dtype=np.float64)
     edge_min_values = np.full(
         (image_count, object_count),
         np.inf,
@@ -1270,7 +1471,6 @@ def _object_intensity_scan_3d_sparse_batch_numba(
 
             counts[image_index, object_index] += 1.0
             sums[image_index, object_index] += value
-            sumsq[image_index, object_index] += value * value
             sum_x[image_index, object_index] += x_index
             sum_y[image_index, object_index] += y_index
             sum_z[image_index, object_index] += z_index
@@ -1288,7 +1488,6 @@ def _object_intensity_scan_3d_sparse_batch_numba(
             if is_edge:
                 edge_counts[image_index, object_index] += 1.0
                 edge_sums[image_index, object_index] += value
-                edge_sumsq[image_index, object_index] += value * value
                 if value < edge_min_values[image_index, object_index]:
                     edge_min_values[image_index, object_index] = value
                 if value > edge_max_values[image_index, object_index]:
@@ -1309,15 +1508,6 @@ def _object_intensity_scan_3d_sparse_batch_numba(
                     sums[image_index, object_index]
                     / counts[image_index, object_index]
                 )
-                variance = (
-                    sumsq[image_index, object_index]
-                    / counts[image_index, object_index]
-                    - means[image_index, object_index]
-                    * means[image_index, object_index]
-                )
-                if variance < 0.0 and variance > -1e-15:
-                    variance = 0.0
-                stds[image_index, object_index] = np.sqrt(variance)
                 center_x = sum_x[image_index, object_index] / counts[
                     image_index,
                     object_index,
@@ -1358,18 +1548,20 @@ def _object_intensity_scan_3d_sparse_batch_numba(
                     edge_sums[image_index, object_index]
                     / edge_counts[image_index, object_index]
                 )
-                edge_variance = (
-                    edge_sumsq[image_index, object_index]
-                    / edge_counts[image_index, object_index]
-                    - edge_means[image_index, object_index]
-                    * edge_means[image_index, object_index]
-                )
-                if edge_variance < 0.0 and edge_variance > -1e-15:
-                    edge_variance = 0.0
-                edge_stds[image_index, object_index] = np.sqrt(edge_variance)
             else:
                 edge_min_values[image_index, object_index] = 0.0
                 edge_max_values[image_index, object_index] = 0.0
+
+    stds, edge_stds = _object_intensity_std_3d_sparse_batch_numba(
+        images,
+        z_indices,
+        y_indices,
+        x_indices,
+        object_indexes,
+        edge_flags,
+        means,
+        edge_means,
+    )
 
     return (
         counts,

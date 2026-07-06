@@ -7,20 +7,25 @@ behavior when explicitly requested.
 """
 
 from __future__ import annotations
-
 from enum import Enum
-
 import numpy as np
-
-from openhcs.core.aligned_image_payload import AlignedImageStack, ImagePayloadExecutionMode
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.aligned_image_payload import (
+    AlignedImageStack,
+    ImagePayloadExecutionMode,
+)
+from openhcs.core.artifacts import (
+    ArtifactType,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    MeasurementsArtifactType,
+    RelationshipsArtifactType,
+)
 from openhcs.core.runtime_values import (
     DenseObjectLabelSliceStackRequest,
     ObjectLabelRuntimeSliceStackContract,
     SingletonObjectLabelStackCollapseStrategy,
     object_label_dense_array,
 )
-
 from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
@@ -44,6 +49,9 @@ from openhcs.interop.cellprofiler.runtime.object_input_policies import (
     CellProfilerObjectInputPolicyMixin,
     LabelsObjectInputPolicy,
 )
+from openhcs.interop.cellprofiler.runtime.output_contexts import (
+    InputObjectLabelWithoutParentImageOutputSourceContextPolicyMixin,
+)
 from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
     ObjectInputBindingRequest,
 )
@@ -51,19 +59,23 @@ from openhcs.interop.cellprofiler.runtime.payload_types import (
     CellProfilerKwargDict,
     CellProfilerRuntimeValue,
 )
-from openhcs.processing.backends.cellprofiler.module_classes import (
-    ArtifactContractModule,
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
+    ImageArtifactInputCapability,
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
     ModuleSettingsSourceModule,
     MeasurementArtifactOutputModule,
     ObjectArtifactInputModule,
+    ObjectLabelArtifactInputCapability,
+    ObjectLabelArtifactOutputCapability,
     ObjectArtifactOutputModule,
     ObjectLineageTransformContractModule,
     PlaneRuntimeArtifactModule,
+    RelationshipArtifactOutputModule,
     ScopedMeasurementModule,
     StructuringElementSettingBinding,
     StructuringElementSettingsModule,
@@ -74,7 +86,9 @@ from openhcs.interop.cellprofiler.setting_names import (
     setting_values,
     split_symbol_names,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.interop.cellprofiler.cellprofiler_literals import (
+    cellprofiler_enum_from_literal,
+)
 
 
 class CombineObjectsMethod(Enum):
@@ -104,39 +118,22 @@ class MaskObjectsNumberingChoice(Enum):
 
 class ImageStructuringElementModule(
     StructuringElementExecutionModePolicy,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
     StructuringElementSettingsModule,
 ):
     """Shared declaration for image morphology modules with one image output."""
 
     input_image_setting = SettingNameFamily("Select the input image")
     output_image_setting = SettingNameFamily("Name the output image")
-
-    @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-
-        image = builder.require_artifact(
-            ArtifactSpec(
-                required_setting_value(module, cls.input_image_setting),
-                ArtifactKind.IMAGE,
-            ),
-            module,
-        )
-        output = builder.declare_artifact(
-            ArtifactSpec(
-                required_setting_value(module, cls.output_image_setting),
-                ArtifactKind.IMAGE,
-            ),
-            module,
-        )
-        return assembler.assemble_contract(module, builder, inputs=[image], outputs=[output])
+    image_input_settings = (input_image_setting,)
+    image_output_settings = (output_image_setting,)
 
 
 class ClosingModule(ImageStructuringElementModule):
-    module_name = 'Closing'
-    function_name = 'closing'
+    module_name = "Closing"
+    function_name = "closing"
     validated = True
-    contract = 'unknown'
     confidence = 1.0
 
 
@@ -149,12 +146,10 @@ class ObjectTransformContractModule(
     """Shared declaration for object modules that emit measurements plus objects."""
 
     input_objects_setting = SettingNameFamily(
-        "Select the input objects",
-        aliases=("Select objects to be masked",),
+        "Select the input objects", aliases=("Select objects to be masked",)
     )
     output_objects_setting = SettingNameFamily(
-        "Name the output objects",
-        aliases=("Name the masked objects",),
+        "Name the output objects", aliases=("Name the masked objects",)
     )
 
     @classmethod
@@ -166,9 +161,7 @@ class ObjectTransformContractModule(
         return (cls.output_objects_setting,)
 
 
-class ObjectLineageTransformModule(
-    ObjectLineageTransformContractModule,
-):
+class ObjectLineageTransformModule(ObjectLineageTransformContractModule):
     """Shared declaration for object transforms that also emit parent-child lineage."""
 
 
@@ -178,30 +171,23 @@ class CombineObjectsInputPolicy(CellProfilerObjectInputPolicyMixin):
     image_override_kwarg = CellProfilerInvocationOverrideKwarg.image
     execution_mode_override_kwarg = CellProfilerInvocationOverrideKwarg.execution_mode
 
-    def bind(
-        self,
-        request: ObjectInputBindingRequest,
-    ) -> CellProfilerKwargDict:
+    def bind(self, request: ObjectInputBindingRequest) -> CellProfilerKwargDict:
         request.require_exact_object_count(2)
         label_planes = self.label_pair_payload(request)
         shapes = {tuple(labels.shape) for labels in label_planes}
         if len(shapes) != 1:
             raise ValueError(
-                "CombineObjects requires object-label inputs with matching "
-                f"shapes, got {sorted(shapes)!r}."
+                f"CombineObjects requires object-label inputs with matching shapes, got {sorted(shapes)!r}."
             )
         return {
-            CellProfilerInvocationOverrideKwarg.image: (
-                self.aligned_label_pair_payload(label_planes)
+            CellProfilerInvocationOverrideKwarg.image: self.aligned_label_pair_payload(
+                label_planes
             ),
-            CellProfilerInvocationOverrideKwarg.execution_mode: (
-                ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK
-            ),
+            CellProfilerInvocationOverrideKwarg.execution_mode: ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK,
         }
 
     def aligned_label_pair_payload(
-        self,
-        label_planes: tuple[np.ndarray, np.ndarray],
+        self, label_planes: tuple[np.ndarray, np.ndarray]
     ) -> AlignedImageStack:
         """Return pairwise label payloads without exposing the pair axis as slices."""
         slice_count = self.common_runtime_slice_count(label_planes)
@@ -209,83 +195,87 @@ class CombineObjectsInputPolicy(CellProfilerObjectInputPolicyMixin):
             return AlignedImageStack((np.stack(label_planes, axis=0),))
         return AlignedImageStack(
             tuple(
-                np.stack(
-                    tuple(label_stack[slice_index] for label_stack in label_planes),
-                    axis=0,
+                (
+                    np.stack(
+                        tuple(
+                            (label_stack[slice_index] for label_stack in label_planes)
+                        ),
+                        axis=0,
+                    )
+                    for slice_index in range(slice_count)
                 )
-                for slice_index in range(slice_count)
             )
         )
 
     def common_runtime_slice_count(
-        self,
-        label_planes: tuple[np.ndarray, np.ndarray],
+        self, label_planes: tuple[np.ndarray, np.ndarray]
     ) -> int | None:
         """Return shared runtime-slice depth when both pair inputs are stacks."""
-        if any(labels.ndim != 3 for labels in label_planes):
+        if any((labels.ndim != 3 for labels in label_planes)):
             return None
         counts = {int(labels.shape[0]) for labels in label_planes}
         if len(counts) != 1:
             raise ValueError(
-                "CombineObjects requires object-label stack inputs with matching "
-                f"runtime slice counts, got {sorted(counts)!r}."
+                f"CombineObjects requires object-label stack inputs with matching runtime slice counts, got {sorted(counts)!r}."
             )
         return counts.pop()
 
     def label_pair_payload(
-        self,
-        request: ObjectInputBindingRequest,
+        self, request: ObjectInputBindingRequest
     ) -> tuple[np.ndarray, np.ndarray]:
         """Return the two CombineObjects inputs in a shared dense slice domain."""
         label_payloads = tuple(
-            request.label_payload_for(spec)
-            for spec in request.object_inputs
+            (request.label_payload_for(spec) for spec in request.object_inputs)
         )
         slice_counts = tuple(
-            count
-            for payload in label_payloads
-            for count in (self.runtime_slice_count(payload),)
-            if count is not None
+            (
+                count
+                for payload in label_payloads
+                for count in (self.runtime_slice_count(payload),)
+                if count is not None
+            )
         )
         if not slice_counts:
             return tuple(
-                np.asarray(
-                    SingletonObjectLabelStackCollapseStrategy.for_labels(payload).collapse(
-                        payload
-                    ),
-                    dtype=np.int32,
+                (
+                    np.asarray(
+                        SingletonObjectLabelStackCollapseStrategy.for_labels(
+                            payload
+                        ).collapse(payload),
+                        dtype=np.int32,
+                    )
+                    for payload in label_payloads
                 )
-                for payload in label_payloads
             )
         slice_count_set = set(slice_counts)
         if len(slice_count_set) != 1:
             raise ValueError(
-                "CombineObjects requires compatible object-label runtime slice "
-                f"domains, got slice counts {sorted(slice_count_set)!r}."
+                f"CombineObjects requires compatible object-label runtime slice domains, got slice counts {sorted(slice_count_set)!r}."
             )
         slice_count = slice_count_set.pop()
         stacks = tuple(
-            DenseObjectLabelSliceStackRequest(
-                payload,
-                slice_count,
-                np.int32,
-            ).stack()
-            for payload in label_payloads
+            (
+                DenseObjectLabelSliceStackRequest(
+                    payload, slice_count, np.int32
+                ).stack()
+                for payload in label_payloads
+            )
         )
-        if any(stack is None for stack in stacks):
+        if any((stack is None for stack in stacks)):
             shapes = [
                 tuple(object_label_dense_array(payload, dtype=np.int32).shape)
                 for payload in label_payloads
             ]
             raise ValueError(
-                "CombineObjects requires object-label inputs compatible with "
-                f"runtime slice count {slice_count}, got shapes {shapes!r}."
+                f"CombineObjects requires object-label inputs compatible with runtime slice count {slice_count}, got shapes {shapes!r}."
             )
-        return tuple(stack.labels for stack in stacks if stack is not None)
+        return tuple((stack.labels for stack in stacks if stack is not None))
 
     def runtime_slice_count(self, payload: CellProfilerRuntimeValue) -> int | None:
         """Return the declared or dense object-label slice count for CombineObjects."""
-        declared_count = ObjectLabelRuntimeSliceStackContract.runtime_slice_count(payload)
+        declared_count = ObjectLabelRuntimeSliceStackContract.runtime_slice_count(
+            payload
+        )
         if declared_count is not None:
             return declared_count
         label_array = object_label_dense_array(payload, dtype=np.int32)
@@ -297,11 +287,13 @@ class CombineObjectsInputPolicy(CellProfilerObjectInputPolicyMixin):
 class CombineobjectsModule(
     PlaneRuntimeArtifactModule,
     CombineObjectsInputPolicy,
+    ObjectArtifactInputModule,
+    ObjectArtifactOutputModule,
+    MeasurementArtifactOutputModule,
     CellProfilerModule,
-    ArtifactContractModule,
 ):
-    module_name = 'Combineobjects'
-    function_name = 'combineobjects'
+    module_name = "Combineobjects"
+    function_name = "combineobjects"
     validated = True
     confidence = 1.0
     first_objects_setting = SettingNameFamily("Select initial object set")
@@ -316,58 +308,28 @@ class CombineobjectsModule(
     )
 
     @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+    def object_input_setting_names(cls) -> tuple[str | SettingNameFamily, ...]:
+        return (cls.first_objects_setting, cls.second_objects_setting)
 
-        first_objects = builder.require_artifact(
-            ArtifactSpec(
-                required_setting_value(module, cls.first_objects_setting),
-                ArtifactKind.OBJECT_LABELS,
-            ),
-            module,
-        )
-        second_objects = builder.require_artifact(
-            ArtifactSpec(
-                required_setting_value(module, cls.second_objects_setting),
-                ArtifactKind.OBJECT_LABELS,
-            ),
-            module,
-        )
-        outputs = [
-            builder.declare_artifact(
-                ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS),
-                module,
-            ),
-            builder.declare_artifact(
-                ArtifactSpec(
-                    required_setting_value(module, cls.output_objects_setting),
-                    ArtifactKind.OBJECT_LABELS,
-                ),
-                module,
-            ),
-        ]
-        return assembler.assemble_contract(
-            module,
-            builder,
-            inputs=[first_objects, second_objects],
-            outputs=outputs,
-        )
+    @classmethod
+    def object_output_setting_names(cls) -> tuple[str | SettingNameFamily, ...]:
+        return (cls.output_objects_setting,)
 
 
 class DilateImageModule(ImageStructuringElementModule):
-    module_name = 'DilateImage'
-    function_name = 'dilate_image'
+    module_name = "DilateImage"
+    function_name = "dilate_image"
     validated = True
-    aliases = ('Dilation',)
-    contract = 'unknown'
+    aliases = ("Dilation",)
     confidence = 1.0
 
 
-class DilateObjectsModule(ObjectTransformContractModule, StructuringElementSettingsModule):
-    module_name = 'DilateObjects'
-    function_name = 'dilate_objects'
+class DilateObjectsModule(
+    ObjectTransformContractModule, StructuringElementSettingsModule
+):
+    module_name = "DilateObjects"
+    function_name = "dilate_objects"
     validated = True
-    contract = 'unknown'
     confidence = 1.0
     structuring_element_binding = StructuringElementSettingBinding(
         shape_keyword="structuring_element_shape",
@@ -376,11 +338,10 @@ class DilateObjectsModule(ObjectTransformContractModule, StructuringElementSetti
 
 
 class ErodeImageModule(ImageStructuringElementModule):
-    module_name = 'ErodeImage'
-    function_name = 'erode_image'
+    module_name = "ErodeImage"
+    function_name = "erode_image"
     validated = True
-    aliases = ('Erosion',)
-    contract = 'unknown'
+    aliases = ("Erosion",)
     confidence = 1.0
 
 
@@ -391,28 +352,22 @@ class ErodeObjectsModule(
     ObjectLineageTransformModule,
     StructuringElementSettingsModule,
 ):
-    module_name = 'ErodeObjects'
-    function_name = 'erode_objects'
+    module_name = "ErodeObjects"
+    function_name = "erode_objects"
     validated = True
     confidence = 1.0
     input_objects_setting = SettingNameFamily(
-        "Select the input object",
-        aliases=("Select the input objects",),
+        "Select the input object", aliases=("Select the input objects",)
     )
     output_objects_setting = SettingNameFamily(
-        "Name the output object",
-        aliases=("Name the output objects",),
+        "Name the output object", aliases=("Name the output objects",)
     )
     setting_bindings = (
         SettingToKeywordBinding(
-            "Prevent object removal",
-            "preserve_midpoints",
-            parse_cellprofiler_bool,
+            "Prevent object removal", "preserve_midpoints", parse_cellprofiler_bool
         ),
         SettingToKeywordBinding(
-            "Relabel resulting objects",
-            "relabel_objects",
-            parse_cellprofiler_bool,
+            "Relabel resulting objects", "relabel_objects", parse_cellprofiler_bool
         ),
     )
 
@@ -449,8 +404,8 @@ class ExpandOrShrinkObjectsModule(
     ObjectArtifactOutputModule,
     CellProfilerModule,
 ):
-    module_name = 'ExpandOrShrinkObjects'
-    function_name = 'expand_or_shrink_objects'
+    module_name = "ExpandOrShrinkObjects"
+    function_name = "expand_or_shrink_objects"
     validated = True
     confidence = 1.0
     object_input_settings = ("Select the input objects",)
@@ -459,11 +414,9 @@ class ExpandOrShrinkObjectsModule(
         SettingToKeywordBinding(
             "Select the operation",
             "mode",
-            lambda value: (
-                ExpandShrinkOperationStrategy
-                .mode_for_cellprofiler_operation(value)
-                .value
-            ),
+            lambda value: ExpandShrinkOperationStrategy.mode_for_cellprofiler_operation(
+                value
+            ).value,
         ),
         SettingToKeywordBinding(
             "Number of pixels by which to expand or shrink",
@@ -478,20 +431,24 @@ class ExpandOrShrinkObjectsModule(
     )
 
 
-class MaskObjectsModule(ObjectLabelDrivenPrimaryImageInputPolicy, ObjectTransformContractModule):
-    module_name = 'MaskObjects'
-    function_name = 'mask_objects'
+class MaskObjectsModule(
+    ObjectLabelDrivenPrimaryImageInputPolicy,
+    ImageArtifactInputModule,
+    RelationshipArtifactOutputModule,
+    ObjectTransformContractModule,
+):
+    module_name = "MaskObjects"
+    function_name = "mask_objects"
     validated = True
+    contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
     outline_retention_setting = "Retain outlines of the resulting objects?"
     outline_image_setting = "Name the outline image"
     input_objects_setting = SettingNameFamily(
-        "Select the input objects",
-        aliases=("Select objects to be masked",),
+        "Select the input objects", aliases=("Select objects to be masked",)
     )
     output_objects_setting = SettingNameFamily(
-        "Name the output objects",
-        aliases=("Name the masked objects",),
+        "Name the output objects", aliases=("Name the masked objects",)
     )
     masking_image_setting = SettingNameFamily("Select the masking image")
     masking_objects_setting = SettingNameFamily("Select the masking object")
@@ -503,13 +460,13 @@ class MaskObjectsModule(ObjectLabelDrivenPrimaryImageInputPolicy, ObjectTransfor
 
     @classmethod
     def ignored_settings_for(
-        cls,
-        module: "ModuleBlock",
+        cls, module: "ModuleBlock"
     ) -> tuple[str | "SettingNameFamily", ...]:
         ignored = tuple(cls.ignored_settings)
         if cls.setting_value(module, cls.outline_retention_setting) == "No":
             return (*ignored, cls.outline_image_setting)
         return ignored
+
     setting_bindings = (
         SettingToKeywordBinding(
             "Handling of objects that are partially masked",
@@ -527,74 +484,44 @@ class MaskObjectsModule(ObjectLabelDrivenPrimaryImageInputPolicy, ObjectTransfor
             cellprofiler_enum_value_setting_parser(MaskObjectsNumberingChoice),
         ),
         SettingToKeywordBinding(
-            "Invert the mask?",
-            "invert_mask",
-            parse_cellprofiler_bool,
+            "Invert the mask?", "invert_mask", parse_cellprofiler_bool
         ),
     )
 
     @classmethod
     def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-        from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
-
-        input_objects = builder.require_artifact(
-            ArtifactSpec(
-                required_setting_value(module, cls.input_objects_setting),
-                ArtifactKind.OBJECT_LABELS,
-            ),
-            module,
-        )
+        input_objects = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(required_setting_value(module, cls.input_objects_setting)))
         inputs = [input_objects]
         masking_image = optional_setting_value(module, cls.masking_image_setting)
         if masking_image is not None:
             inputs.append(
-                builder.require_artifact(
-                    ArtifactSpec(masking_image, ArtifactKind.IMAGE),
-                    module,
-                )
+                ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(masking_image))
             )
         masking_objects = optional_setting_value(module, cls.masking_objects_setting)
         if masking_objects is not None:
             inputs.append(
-                builder.require_artifact(
-                    ArtifactSpec(masking_objects, ArtifactKind.OBJECT_LABELS),
-                    module,
-                )
+                ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(masking_objects))
             )
-
-        output_objects = builder.declare_artifact(
-            ArtifactSpec(
-                required_setting_value(module, cls.output_objects_setting),
-                ArtifactKind.OBJECT_LABELS,
-            ),
-            module,
-        )
+        output_objects = ObjectLabelArtifactOutputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactOutputCapability.spec(required_setting_value(module, cls.output_objects_setting)))
         outputs = [
-            builder.declare_artifact(
-                ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS),
+            cls.measurement_output_artifact(builder, module),
+            cls.parent_child_relationship_output_artifact(
+                builder,
                 module,
-            ),
-            builder.declare_artifact(
-                ArtifactSpec(
-                    parent_child_relationship_artifact_name(
-                        input_objects.name,
-                        output_objects.name,
-                    ),
-                    ArtifactKind.RELATIONSHIPS,
-                ),
-                module,
+                parent_name=input_objects.name,
+                child_name=output_objects.name,
             ),
             output_objects,
         ]
-        return assembler.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
+        return assembler.assemble_contract(
+            module, builder, inputs=inputs, outputs=outputs
+        )
 
 
 class OpeningModule(ImageStructuringElementModule):
-    module_name = 'Opening'
-    function_name = 'opening'
+    module_name = "Opening"
+    function_name = "opening"
     validated = True
-    contract = 'unknown'
     confidence = 1.0
 
 
@@ -604,43 +531,57 @@ class RemoveHolesModule(
     ImageArtifactOutputModule,
     CellProfilerModule,
 ):
-    module_name = 'RemoveHoles'
-    function_name = 'remove_holes'
+    module_name = "RemoveHoles"
+    function_name = "remove_holes"
     validated = True
-    contract = 'unknown'
+    function_variants = ("remove_holes_3d",)
+    contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
     image_input_settings = ("Select the input image",)
     image_output_settings = ("Name the output image",)
     setting_bindings = (
         SettingToKeywordBinding(
-            "Size of holes to fill",
-            "diameter",
-            parse_cellprofiler_float,
+            "Size of holes to fill", "diameter", parse_cellprofiler_float
         ),
     )
+
+    @classmethod
+    def resolve_semantic_function(
+        cls,
+        module: "ModuleBlock",
+        *,
+        default_function_name: str | None = None,
+        request: "ModuleProcessingComponentRequest",
+    ) -> "ResolvedModuleFunction":
+        del default_function_name
+        function_name = (
+            cls.function_variants[0]
+            if AllComponents.Z_INDEX in request.runtime_lineage.variable_components
+            else str(cls.function_name)
+        )
+        return super().resolve_function(module, default_function_name=function_name)
 
 
 class ResizeObjectsModule(
     ObjectLabelDrivenPrimaryImageInputPolicy,
     LabelsObjectInputPolicy,
+    InputObjectLabelWithoutParentImageOutputSourceContextPolicyMixin,
     ObjectLineageTransformModule,
 ):
-    module_name = 'ResizeObjects'
-    function_name = 'resize_objects'
+    module_name = "ResizeObjects"
+    function_name = "resize_objects"
     validated = True
-    contract = 'flexible'
-    function_variants = ('resize_objects_3d',)
+    contract = ProcessingContract.FLEXIBLE
+    function_variants = ("resize_objects_3d",)
     confidence = 1.0
     input_objects_setting = SettingNameFamily(
-        "Select the input object",
-        aliases=("Select the input objects",),
+        "Select the input object", aliases=("Select the input objects",)
     )
     output_objects_setting = SettingNameFamily(
-        "Name the output object",
-        aliases=("Name the output objects",),
+        "Name the output object", aliases=("Name the output objects",)
     )
     desired_dimensions_image_setting = SettingNameFamily(
-        "Select the image with the desired dimensions",
+        "Select the image with the desired dimensions"
     )
     factor_z_setting = SettingNameFamily("Z Factor")
     planes_setting = SettingNameFamily("Planes (Z)")
@@ -648,41 +589,29 @@ class ResizeObjectsModule(
     ignored_settings = (desired_dimensions_image_setting,)
     setting_bindings = (
         SettingToKeywordBinding(
-            "Method",
-            "method",
-            normalize_cellprofiler_setting_name,
+            "Method", "method", normalize_cellprofiler_setting_name
         ),
         SettingToKeywordBinding("X Factor", "factor_x", parse_cellprofiler_float),
         SettingToKeywordBinding("Y Factor", "factor_y", parse_cellprofiler_float),
-        SettingToKeywordBinding(
-            factor_z_setting,
-            "factor_z",
-            parse_cellprofiler_float,
-        ),
+        SettingToKeywordBinding(factor_z_setting, "factor_z", parse_cellprofiler_float),
         SettingToKeywordBinding("Width (X)", "width", parse_cellprofiler_int),
         SettingToKeywordBinding("Height (Y)", "height", parse_cellprofiler_int),
-        SettingToKeywordBinding(
-            planes_setting,
-            "planes",
-            parse_cellprofiler_int,
-        ),
+        SettingToKeywordBinding(planes_setting, "planes", parse_cellprofiler_int),
     )
 
     @classmethod
     def resolve_function(
-        cls,
-        module: "ModuleBlock",
-        *,
-        default_function_name: str | None = None,
+        cls, module: "ModuleBlock", *, default_function_name: str | None = None
     ) -> "ResolvedModuleFunction":
         del default_function_name
         function_name = (
             cls.function_variants[0]
-            if any(setting_values(module, setting) for setting in cls.volumetric_settings)
+            if any(
+                (setting_values(module, setting) for setting in cls.volumetric_settings)
+            )
             else str(cls.function_name)
         )
         return super().resolve_function(module, default_function_name=function_name)
-
 
 
 from abc import ABC, abstractmethod
@@ -694,12 +623,10 @@ import logging
 import os
 import time
 from typing import Any, ClassVar
-
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
-
-from openhcs.constants.constants import MemoryType
+from openhcs.constants.constants import AllComponents, MemoryType, VariableComponents
 from openhcs.core.memory.decorators import numpy as numpy_decorator
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.public_api import public_names_from_objects
@@ -774,14 +701,8 @@ MORPH_CONVOLUTION_MODE = "constant"
 MORPH_CONVEX_HULL_OPERATION = "convex_hull"
 MORPHOLOGY_STRATEGY_REGISTRY_KEY = "strategy_label"
 SPARSE_CUBIC_BOOLEAN_RESAMPLE_RADIUS = 2.0
-EIGHT_NEIGHBOR_KERNEL = np.array(
-    [[1, 1, 1], [1, 0, 1], [1, 1, 1]],
-    dtype=np.uint8,
-)
-FOUR_CONNECTED_KERNEL = np.array(
-    [[0, 1, 0], [1, 0, 1], [0, 1, 0]],
-    dtype=np.uint8,
-)
+EIGHT_NEIGHBOR_KERNEL = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=np.uint8)
+FOUR_CONNECTED_KERNEL = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], dtype=np.uint8)
 PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
 
@@ -853,16 +774,13 @@ class FillObjectsRequest:
 
 
 class FillObjectsModeStrategy(
-    EnumKeyedStrategyMixin[FillMode],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[FillMode], ABC, metaclass=AutoRegisterMeta
 ):
     """Nominal implementation for one FillObjects mode."""
 
     __registry_key__ = MORPHOLOGY_STRATEGY_REGISTRY_KEY
     __skip_if_no_key__ = True
     __enum_member_attr__ = "mode"
-
     mode: ClassVar[FillMode | None] = None
     strategy_label: ClassVar[str | None] = None
 
@@ -885,16 +803,16 @@ class FillObjectHolesStrategy(FillObjectsModeStrategy):
 
         filled_labels = np.zeros_like(request.label_array)
         max_hole_area = np.pi * (request.diameter / 2.0) ** 2
-        region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
-            request.label_array
+        region_props = (
+            LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+                request.label_array
+            )
         )
         for label_id in region_props.label:
             label_int = int(label_id)
             obj_mask = request.label_array == label_int
             filled_mask = remove_small_holes(
-                obj_mask,
-                area_threshold=int(max_hole_area),
-                connectivity=1,
+                obj_mask, area_threshold=int(max_hole_area), connectivity=1
             )
             filled_labels[filled_mask] = label_int
         return filled_labels
@@ -908,11 +826,12 @@ class FillObjectConvexHullStrategy(FillObjectsModeStrategy):
     def fill(self, request: FillObjectsRequest) -> np.ndarray:
         filled_labels = np.zeros_like(request.label_array)
         morphology = MorphologyBackendStrategy.for_callable(
-            fill_objects,
-            backend_provider=request.morphology_backend_provider,
+            fill_objects, backend_provider=request.morphology_backend_provider
         )
-        region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
-            request.label_array
+        region_props = (
+            LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+                request.label_array
+            )
         )
         for index, label_id in enumerate(region_props.label):
             label_int = int(label_id)
@@ -984,10 +903,7 @@ class ResizeObjectsRequest:
 
     def target_shape(self) -> tuple[int, ...]:
         return resize_objects_target_shape(
-            self.labels.shape,
-            planes=self.planes,
-            height=self.height,
-            width=self.width,
+            self.labels.shape, planes=self.planes, height=self.height, width=self.width
         )
 
     def zoom_factors(self) -> tuple[float, ...]:
@@ -1085,7 +1001,7 @@ class MorphOperationStrategy(RegisteredCallableStrategy, metaclass=AutoRegisterM
         if (
             cls.operation is not None
             and cls.callback is None
-            and cls.apply is MorphOperationStrategy.apply
+            and (cls.apply is MorphOperationStrategy.apply)
         ):
             raise TypeError(
                 f"{cls.__name__} must declare implementation or apply() for Morph"
@@ -1162,14 +1078,10 @@ class IterativeConvolutionMorphOperationStrategy(MorphOperationStrategy):
         transition = type(self).transition
         if kernel is None or transition is None:
             raise TypeError(f"{type(self).__name__} cannot run convolutional Morph")
-
         result = _ensure_binary(request.image).astype(np.float32)
         for _ in range(request.iterations):
             neighbor_count = convolve(
-                result.astype(np.uint8),
-                kernel,
-                mode=MORPH_CONVOLUTION_MODE,
-                cval=0,
+                result.astype(np.uint8), kernel, mode=MORPH_CONVOLUTION_MODE, cval=0
             )
             result = transition(result, neighbor_count)
         return result
@@ -1185,7 +1097,6 @@ def _bridge(image: np.ndarray, iterations: int = 1) -> np.ndarray:
         np.array([[0, 1, 0], [0, 0, 0], [0, 1, 0]]),
         np.array([[0, 0, 0], [1, 0, 1], [0, 0, 0]]),
     ]
-
     for _ in range(iterations):
         for pattern in patterns:
             match = convolve(result, pattern, mode=MORPH_CONVOLUTION_MODE, cval=0)
@@ -1193,7 +1104,9 @@ def _bridge(image: np.ndarray, iterations: int = 1) -> np.ndarray:
     return result
 
 
-def _convex_hull(image: np.ndarray, morphology: "MorphologyBackendStrategy") -> np.ndarray:
+def _convex_hull(
+    image: np.ndarray, morphology: "MorphologyBackendStrategy"
+) -> np.ndarray:
     binary = _ensure_binary(image)
     if not np.any(binary):
         return np.zeros_like(image, dtype=np.float32)
@@ -1243,7 +1156,9 @@ def _majority(image: np.ndarray, iterations: int = 1) -> np.ndarray:
     return result
 
 
-class OpenLineStructuringElement(RegisteredCallableStrategy, metaclass=AutoRegisterMeta):
+class OpenLineStructuringElement(
+    RegisteredCallableStrategy, metaclass=AutoRegisterMeta
+):
     """Registered structuring-element authority for Morph OPENLINES angles."""
 
     __registry_key__ = "angle"
@@ -1252,14 +1167,12 @@ class OpenLineStructuringElement(RegisteredCallableStrategy, metaclass=AutoRegis
 
     @classmethod
     def registered_elements(cls) -> tuple["OpenLineStructuringElement", ...]:
-        return tuple(strategy_type() for strategy_type in cls.__registry__.values())
+        return tuple((strategy_type() for strategy_type in cls.__registry__.values()))
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         if cls.angle is not None and cls.callback is None:
-            raise TypeError(
-                f"{cls.__name__} must declare callback for Morph OPENLINES"
-            )
+            raise TypeError(f"{cls.__name__} must declare callback for Morph OPENLINES")
 
     def structure(self, line_length: int) -> np.ndarray:
         return self.invoke(line_length)
@@ -1290,7 +1203,9 @@ class FallingDiagonalOpenLineStructuringElement(OpenLineStructuringElement):
     """Falling diagonal OPENLINES structuring element."""
 
     angle = 135
-    callback = staticmethod(lambda line_length: np.fliplr(np.eye(line_length, dtype=bool)))
+    callback = staticmethod(
+        lambda line_length: np.fliplr(np.eye(line_length, dtype=bool))
+    )
 
 
 def _openlines(image: np.ndarray, line_length: int = 3) -> np.ndarray:
@@ -1350,8 +1265,7 @@ def _vbreak(image: np.ndarray, iterations: int = 1) -> np.ndarray:
 def convex_hull_morph_operation(request: MorphOperationRequest) -> np.ndarray:
     """Run Morph CONVEX_HULL through the configured morphology backend."""
     morphology = MorphologyBackendStrategy.for_memory_type(
-        request.memory_type,
-        backend_provider=request.backend_provider,
+        request.memory_type, backend_provider=request.backend_provider
     )
     return _convex_hull(request.image, morphology)
 
@@ -1411,12 +1325,16 @@ class HBreakMorphOperationStrategy(MorphOperationStrategy):
 
 class MajorityMorphOperationStrategy(MorphOperationStrategy):
     operation = MorphOperation.MAJORITY
-    callback = staticmethod(lambda request: _majority(request.image, request.iterations))
+    callback = staticmethod(
+        lambda request: _majority(request.image, request.iterations)
+    )
 
 
 class OpenLinesMorphOperationStrategy(MorphOperationStrategy):
     operation = MorphOperation.OPENLINES
-    callback = staticmethod(lambda request: _openlines(request.image, request.line_length))
+    callback = staticmethod(
+        lambda request: _openlines(request.image, request.line_length)
+    )
 
 
 class RemoveMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
@@ -1442,9 +1360,7 @@ class SpurMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
     kernel = EIGHT_NEIGHBOR_KERNEL
     transition = staticmethod(
         lambda result, neighbor_count: np.where(
-            (neighbor_count == 1) & (result > 0),
-            0.0,
-            result,
+            (neighbor_count == 1) & (result > 0), 0.0, result
         )
     )
 
@@ -1517,15 +1433,14 @@ def closing(
     image: np.ndarray,
     structuring_element: StructuringElement = StructuringElement.DISK,
     size: int = 3,
-    morphology_backend_provider: CellProfilerBackendProvider | None = (
-        CellProfilerBackendProvider.OPENCV
-    ),
+    morphology_backend_provider: (
+        CellProfilerBackendProvider | None
+    ) = CellProfilerBackendProvider.OPENCV,
 ) -> np.ndarray:
     """Apply CellProfiler-compatible grayscale closing to an image plane."""
     pixel_data = image_payload_data(image)
     morphology = MorphologyBackendStrategy.for_callable(
-        closing,
-        backend_provider=morphology_backend_provider,
+        closing, backend_provider=morphology_backend_provider
     )
     result = apply_structuring_element(
         pixel_data,
@@ -1544,15 +1459,14 @@ def opening(
     image: np.ndarray,
     structuring_element: StructuringElement = StructuringElement.DISK,
     size: int = 3,
-    morphology_backend_provider: CellProfilerBackendProvider | None = (
-        CellProfilerBackendProvider.OPENCV
-    ),
+    morphology_backend_provider: (
+        CellProfilerBackendProvider | None
+    ) = CellProfilerBackendProvider.OPENCV,
 ) -> np.ndarray:
     """Apply CellProfiler-compatible grayscale opening to an image plane."""
     pixel_data = image_payload_data(image)
     morphology = MorphologyBackendStrategy.for_callable(
-        opening,
-        backend_provider=morphology_backend_provider,
+        opening, backend_provider=morphology_backend_provider
     )
     result = apply_structuring_element(
         pixel_data,
@@ -1601,19 +1515,13 @@ def erode_image(
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
-def remove_holes(
-    image: np.ndarray,
-    diameter: float = 1.0,
-) -> np.ndarray:
+def remove_holes(image: np.ndarray, diameter: float = 1.0) -> np.ndarray:
     """Fill binary holes smaller than the CellProfiler diameter threshold."""
     return HoleRemovalDiameterPolicy(diameter=diameter, volumetric=False).apply(image)
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_3D)
-def remove_holes_3d(
-    image: np.ndarray,
-    diameter: float = 1.0,
-) -> np.ndarray:
+def remove_holes_3d(image: np.ndarray, diameter: float = 1.0) -> np.ndarray:
     """Fill volumetric holes smaller than the CellProfiler diameter threshold."""
     return HoleRemovalDiameterPolicy(diameter=diameter, volumetric=True).apply(image)
 
@@ -1634,11 +1542,8 @@ def morphological_skeleton_3d(image: np.ndarray) -> np.ndarray:
     return skeletonize_3d(image > 0).astype(np.float32)
 
 
-@numpy_decorator
-def morphologicalskeleton(
-    image: np.ndarray,
-    volumetric: bool = False,
-) -> np.ndarray:
+@numpy_decorator(contract=ProcessingContract.PURE_3D)
+def morphologicalskeleton(image: np.ndarray, volumetric: bool = False) -> np.ndarray:
     """Compute CellProfiler MorphologicalSkeleton on a stack or volume."""
     from skimage.morphology import skeletonize
 
@@ -1662,9 +1567,9 @@ class HoleRemovalDiameterPolicy:
     def threshold(self) -> int:
         radius = self.diameter / 2.0
         if self.volumetric:
-            threshold = (4.0 / 3.0) * np.pi * (radius**3)
+            threshold = 4.0 / 3.0 * np.pi * radius**3
         else:
-            threshold = np.pi * (radius**2)
+            threshold = np.pi * radius**2
         return max(1, int(threshold))
 
     def binary_image(self, image: np.ndarray) -> np.ndarray:
@@ -1680,8 +1585,7 @@ class HoleRemovalDiameterPolicy:
         import skimage.morphology
 
         result = skimage.morphology.remove_small_holes(
-            self.binary_image(image),
-            area_threshold=self.threshold,
+            self.binary_image(image), area_threshold=self.threshold
         )
         return result.astype(np.float32)
 
@@ -1753,22 +1657,18 @@ class CellProfilerDeclumpMethod(Enum):
 class FillHolesOption(CellProfilerEnumAttributeMixin, Enum):
     """CellProfiler IdentifyPrimaryObjects hole-fill phase policy."""
 
-    __cellprofiler_attribute_names__ = (
-        "fill_before_declump",
-        "fill_after_declump",
-    )
-
+    __cellprofiler_attribute_names__ = ("fill_before_declump", "fill_after_declump")
     NEVER = ("never", False, False)
     AFTER_BOTH = ("after_both", True, True)
     AFTER_DECLUMP = ("after_declump", False, True)
 
     def before_declump_requested(self, *, use_advanced_settings: bool) -> bool:
         """Return whether CP fills binary foreground holes before declumping."""
-        return (not use_advanced_settings) or self.fill_before_declump
+        return not use_advanced_settings or self.fill_before_declump
 
     def after_declump_requested(self, *, use_advanced_settings: bool) -> bool:
         """Return whether CP fills labeled-object holes after declumping/filtering."""
-        return (not use_advanced_settings) or self.fill_after_declump
+        return not use_advanced_settings or self.fill_after_declump
 
 
 CELLPROFILER_LOW_RES_AUTO_MAXIMA_SUPPRESSION_SIZE = 7.0
@@ -1799,11 +1699,9 @@ class DeclumpingMaximaGeometry:
                 )
             return cls(
                 image_resize_factor,
-                manual_declumping_size(maxima_suppression_size)
-                * image_resize_factor
+                manual_declumping_size(maxima_suppression_size) * image_resize_factor
                 + 0.5,
             )
-
         if automatic_suppression:
             return cls(1.0, float(min_diameter) / 1.5)
         return cls(1.0, manual_declumping_size(maxima_suppression_size))
@@ -1826,27 +1724,23 @@ class SparseBooleanCubicMapCoordinatesThreshold:
         points = np.argwhere(source_array)
         if points.size == 0:
             return np.zeros(self.target_shape, dtype=bool)
-
         radius = SPARSE_CUBIC_BOOLEAN_RESAMPLE_RADIUS
-        window_diameter = int(np.ceil((radius * 2.0) * float(self.divisor))) + 3
+        window_diameter = int(np.ceil(radius * 2.0 * float(self.divisor))) + 3
         dense_area = int(self.target_shape[0]) * int(self.target_shape[1])
         sparse_area = int(points.shape[0]) * window_diameter * window_diameter
         if sparse_area >= dense_area:
-            coordinates = _declumping_resize_coordinates(self.target_shape, self.divisor)
+            coordinates = _declumping_resize_coordinates(
+                self.target_shape, self.divisor
+            )
             return (
                 ndi.map_coordinates(source_array.astype(float), coordinates)
                 > self.threshold
             )
-
         coefficients = ndi.spline_filter(source_array.astype(float), order=3)
         output = np.zeros(self.target_shape, dtype=bool)
         for source_y, source_x in points:
             self._evaluate_source_window(
-                output,
-                coefficients,
-                int(source_y),
-                int(source_x),
-                radius,
+                output, coefficients, int(source_y), int(source_x), radius
             )
         return output
 
@@ -1873,18 +1767,14 @@ class SparseBooleanCubicMapCoordinatesThreshold:
         )
         if y_start >= y_stop or x_start >= x_stop:
             return
-
         coordinates = _declumping_resize_coordinates(
-            (y_stop - y_start, x_stop - x_start),
-            self.divisor,
+            (y_stop - y_start, x_stop - x_start), self.divisor
         )
-        y_coordinates = coordinates[0] + (float(y_start) / self.divisor)
-        x_coordinates = coordinates[1] + (float(x_start) / self.divisor)
+        y_coordinates = coordinates[0] + float(y_start) / self.divisor
+        x_coordinates = coordinates[1] + float(x_start) / self.divisor
         output[y_start:y_stop, x_start:x_stop] |= (
             ndi.map_coordinates(
-                coefficients,
-                (y_coordinates, x_coordinates),
-                prefilter=False,
+                coefficients, (y_coordinates, x_coordinates), prefilter=False
             )
             > self.threshold
         )
@@ -1899,9 +1789,7 @@ def manual_declumping_size(size: float) -> float:
 
 
 class MorphologyBackendStrategy(
-    CellProfilerBackendStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    CellProfilerBackendStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Nominal morphology operations keyed by OpenHCS memory type."""
 
@@ -1922,14 +1810,10 @@ class MorphologyBackendStrategy(
                 CellProfilerBackendProvider.CENTROSOME,
             ):
                 raise ValueError(
-                    "prefer_centrosome=True conflicts with explicit "
-                    f"backend_provider={backend_provider!r}"
+                    f"prefer_centrosome=True conflicts with explicit backend_provider={backend_provider!r}"
                 )
             backend_provider = CellProfilerBackendProvider.CENTROSOME
-        return super().for_memory_type(
-            memory_type,
-            backend_provider=backend_provider,
-        )
+        return super().for_memory_type(memory_type, backend_provider=backend_provider)
 
     @classmethod
     def for_callable(
@@ -1945,21 +1829,14 @@ class MorphologyBackendStrategy(
                 CellProfilerBackendProvider.CENTROSOME,
             ):
                 raise ValueError(
-                    "prefer_centrosome=True conflicts with explicit "
-                    f"backend_provider={backend_provider!r}"
+                    f"prefer_centrosome=True conflicts with explicit backend_provider={backend_provider!r}"
                 )
             backend_provider = CellProfilerBackendProvider.CENTROSOME
-        return super().for_callable(
-            func,
-            backend_provider=backend_provider,
-        )
+        return super().for_callable(func, backend_provider=backend_provider)
 
     @abstractmethod
     def connected_components(
-        self,
-        mask: np.ndarray,
-        *,
-        connectivity: int = 2,
+        self, mask: np.ndarray, *, connectivity: int = 2
     ) -> tuple[np.ndarray, int]:
         """Label foreground components in a binary 2-D mask."""
 
@@ -1978,43 +1855,28 @@ class MorphologyBackendStrategy(
         """Return the local-maxima suppression footprint for declumping."""
 
     @abstractmethod
-    def grayscale_opening(
-        self,
-        image: np.ndarray,
-        footprint: np.ndarray,
-    ) -> np.ndarray:
+    def grayscale_opening(self, image: np.ndarray, footprint: np.ndarray) -> np.ndarray:
         """Return grayscale morphological opening for a 2-D image."""
 
     @abstractmethod
-    def grayscale_closing(
-        self,
-        image: np.ndarray,
-        footprint: np.ndarray,
-    ) -> np.ndarray:
+    def grayscale_closing(self, image: np.ndarray, footprint: np.ndarray) -> np.ndarray:
         """Return grayscale morphological closing for a 2-D image."""
 
     @abstractmethod
     def erode_labeled_objects(
-        self,
-        labels: np.ndarray,
-        footprint: np.ndarray,
+        self, labels: np.ndarray, footprint: np.ndarray
     ) -> np.ndarray:
         """Erode labeled objects while preserving label identities."""
 
     @abstractmethod
     def block_labels(
-        self,
-        image_shape: tuple[int, int],
-        block_size: int,
+        self, image_shape: tuple[int, int], block_size: int
     ) -> tuple[np.ndarray, np.ndarray]:
         """Partition a 2-D plane into square block labels."""
 
     @abstractmethod
     def blockwise_minimum(
-        self,
-        image: np.ndarray,
-        mask: np.ndarray | None,
-        block_size: int,
+        self, image: np.ndarray, mask: np.ndarray | None, block_size: int
     ) -> np.ndarray:
         """Broadcast the masked minimum of each CellProfiler block to its pixels."""
 
@@ -2027,15 +1889,14 @@ class MorphologyBackendStrategy(
         self,
         labels: np.ndarray,
         *,
+        mask: np.ndarray | None = None,
         size_predicate: HolePredicate | None = None,
     ) -> np.ndarray:
         """Fill enclosed background components."""
 
     @abstractmethod
     def fill_labeled_holes_below_size(
-        self,
-        labels: np.ndarray,
-        maximum_hole_size: int,
+        self, labels: np.ndarray, maximum_hole_size: int
     ) -> np.ndarray:
         """Fill enclosed background components smaller than a size limit."""
 
@@ -2050,10 +1911,7 @@ class MorphologyBackendStrategy(
 
     @abstractmethod
     def local_maxima_by_label(
-        self,
-        image: np.ndarray,
-        labels: np.ndarray,
-        footprint: np.ndarray,
+        self, image: np.ndarray, labels: np.ndarray, footprint: np.ndarray
     ) -> np.ndarray:
         """Find local maxima independently within each positive label."""
 
@@ -2090,10 +1948,7 @@ class MorphologyBackendStrategy(
         half_width = max(int(float(filter_size) / 2.0), 1)
         offsets = np.arange(-half_width, half_width + 1, dtype=np.float64)
         kernel = (
-            1.0
-            / np.sqrt(2.0 * np.pi)
-            / sigma
-            * np.exp(-0.5 * offsets**2 / sigma**2)
+            1.0 / np.sqrt(2.0 * np.pi) / sigma * np.exp(-0.5 * offsets**2 / sigma**2)
         )
         return np.ascontiguousarray(kernel, dtype=np.float64)
 
@@ -2128,10 +1983,7 @@ class NumpyMorphologyBackendStrategy(MorphologyBackendStrategy):
     is_default_backend = False
 
     def connected_components(
-        self,
-        mask: np.ndarray,
-        *,
-        connectivity: int = 2,
+        self, mask: np.ndarray, *, connectivity: int = 2
     ) -> tuple[np.ndarray, int]:
         return _scipy_connected_components(mask, connectivity=connectivity)
 
@@ -2146,52 +1998,30 @@ class NumpyMorphologyBackendStrategy(MorphologyBackendStrategy):
         declump_method: CellProfilerDeclumpMethod,
     ) -> np.ndarray:
         radius = _declumping_suppression_radius(
-            suppress_size,
-            min_diameter=min_diameter,
-            declump_method=declump_method,
+            suppress_size, min_diameter=min_diameter, declump_method=declump_method
         )
         return _scipy_disk_footprint(radius)
 
-    def grayscale_closing(
-        self,
-        image: np.ndarray,
-        footprint: np.ndarray,
-    ) -> np.ndarray:
+    def grayscale_closing(self, image: np.ndarray, footprint: np.ndarray) -> np.ndarray:
         return _skimage_grayscale_closing(image, footprint)
 
-    def grayscale_opening(
-        self,
-        image: np.ndarray,
-        footprint: np.ndarray,
-    ) -> np.ndarray:
+    def grayscale_opening(self, image: np.ndarray, footprint: np.ndarray) -> np.ndarray:
         return _skimage_grayscale_opening(image, footprint)
 
     def erode_labeled_objects(
-        self,
-        labels: np.ndarray,
-        footprint: np.ndarray,
+        self, labels: np.ndarray, footprint: np.ndarray
     ) -> np.ndarray:
         return _scipy_erode_labeled_objects(labels, footprint)
 
     def block_labels(
-        self,
-        image_shape: tuple[int, int],
-        block_size: int,
+        self, image_shape: tuple[int, int], block_size: int
     ) -> tuple[np.ndarray, np.ndarray]:
         return _scipy_block_labels(image_shape, block_size)
 
     def blockwise_minimum(
-        self,
-        image: np.ndarray,
-        mask: np.ndarray | None,
-        block_size: int,
+        self, image: np.ndarray, mask: np.ndarray | None, block_size: int
     ) -> np.ndarray:
-        return _scipy_blockwise_minimum(
-            image,
-            mask,
-            block_size,
-            morphology=self,
-        )
+        return _scipy_blockwise_minimum(image, mask, block_size, morphology=self)
 
     def fix_labeled_result(self, values: np.ndarray) -> np.ndarray:
         return _scipy_fix_labeled_result(values)
@@ -2200,24 +2030,27 @@ class NumpyMorphologyBackendStrategy(MorphologyBackendStrategy):
         self,
         labels: np.ndarray,
         *,
+        mask: np.ndarray | None = None,
         size_predicate: HolePredicate | None = None,
-    ) -> np.ndarray:
-        return self._scipy_fill_labeled_holes(labels, size_predicate=size_predicate)
-
-    def fill_labeled_holes_below_size(
-        self,
-        labels: np.ndarray,
-        maximum_hole_size: int,
     ) -> np.ndarray:
         return self._scipy_fill_labeled_holes(
             labels,
-            size_predicate=lambda size, _is_foreground: size < maximum_hole_size,
+            mask=mask,
+            size_predicate=size_predicate,
+        )
+
+    def fill_labeled_holes_below_size(
+        self, labels: np.ndarray, maximum_hole_size: int
+    ) -> np.ndarray:
+        return self._scipy_fill_labeled_holes(
+            labels, size_predicate=lambda size, _is_foreground: size < maximum_hole_size
         )
 
     def _scipy_fill_labeled_holes(
         self,
         labels: np.ndarray,
         *,
+        mask: np.ndarray | None = None,
         size_predicate: HolePredicate | None = None,
     ) -> np.ndarray:
         from scipy import ndimage as ndi
@@ -2225,18 +2058,20 @@ class NumpyMorphologyBackendStrategy(MorphologyBackendStrategy):
         array = np.asarray(labels)
         foreground = array != 0
         background = ~foreground
+        if mask is not None:
+            background &= np.asarray(mask, dtype=bool)
         if not background.any():
             return array.copy()
-
         structure = ndi.generate_binary_structure(array.ndim, 1)
         background_labels, component_count = ndi.label(background, structure=structure)
         if component_count == 0:
             return array.copy()
-
         border_ids = _border_component_ids(background_labels)
         candidate_ids = set(range(1, component_count + 1)) - border_ids
         if size_predicate is not None:
-            sizes = np.bincount(background_labels.ravel(), minlength=component_count + 1)
+            sizes = np.bincount(
+                background_labels.ravel(), minlength=component_count + 1
+            )
             candidate_ids = {
                 component_id
                 for component_id in candidate_ids
@@ -2244,24 +2079,19 @@ class NumpyMorphologyBackendStrategy(MorphologyBackendStrategy):
             }
         if not candidate_ids:
             return array.copy()
-
         fill_mask = np.isin(background_labels, tuple(sorted(candidate_ids)))
         if array.dtype == bool or np.array_equal(
-            np.unique(array),
-            np.array([False, True]),
+            np.unique(array), np.array([False, True])
         ):
             output = foreground.copy()
             output[fill_mask] = True
             return output.astype(array.dtype, copy=False)
-
         _, nearest_indices = ndi.distance_transform_edt(
-            background,
-            return_distances=True,
-            return_indices=True,
+            background, return_distances=True, return_indices=True
         )
         output = array.copy()
         output[fill_mask] = array[
-            tuple(axis_indices[fill_mask] for axis_indices in nearest_indices)
+            tuple((axis_indices[fill_mask] for axis_indices in nearest_indices))
         ]
         return output
 
@@ -2278,10 +2108,7 @@ class NumpyMorphologyBackendStrategy(MorphologyBackendStrategy):
         ).astype(np.asarray(labels_after_size_filter).dtype, copy=False)
 
     def local_maxima_by_label(
-        self,
-        image: np.ndarray,
-        labels: np.ndarray,
-        footprint: np.ndarray,
+        self, image: np.ndarray, labels: np.ndarray, footprint: np.ndarray
     ) -> np.ndarray:
         return _scipy_local_maxima_by_label(image, labels, footprint)
 
@@ -2317,11 +2144,7 @@ class NumpyMorphologyBackendStrategy(MorphologyBackendStrategy):
         image_resize_factor: float,
     ) -> np.ndarray:
         return _scipy_declumping_seed_points(
-            image,
-            labels,
-            footprint,
-            image_resize_factor,
-            morphology=self,
+            image, labels, footprint, image_resize_factor, morphology=self
         )
 
     def shrink_components_to_seed_points(self, mask: np.ndarray) -> np.ndarray:
@@ -2335,8 +2158,7 @@ class CentrosomeNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
     """Optional centrosome provider for NumPy-memory morphology."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.CENTROSOME,
+        MemoryType.NUMPY, CellProfilerBackendProvider.CENTROSOME
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.CENTROSOME
@@ -2348,9 +2170,7 @@ class CentrosomeNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         return strel_disk(radius)
 
     def block_labels(
-        self,
-        image_shape: tuple[int, int],
-        block_size: int,
+        self, image_shape: tuple[int, int], block_size: int
     ) -> tuple[np.ndarray, np.ndarray]:
         from centrosome.cpmorphology import block
 
@@ -2366,29 +2186,24 @@ class CentrosomeNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         self,
         labels: np.ndarray,
         *,
+        mask: np.ndarray | None = None,
         size_predicate: HolePredicate | None = None,
     ) -> np.ndarray:
         from centrosome.cpmorphology import fill_labeled_holes
 
         if size_predicate is None:
-            return fill_labeled_holes(labels)
-        return fill_labeled_holes(labels, size_fn=size_predicate)
+            return fill_labeled_holes(labels, mask=mask)
+        return fill_labeled_holes(labels, mask=mask, size_fn=size_predicate)
 
     def fill_labeled_holes_below_size(
-        self,
-        labels: np.ndarray,
-        maximum_hole_size: int,
+        self, labels: np.ndarray, maximum_hole_size: int
     ) -> np.ndarray:
         return self.fill_labeled_holes(
-            labels,
-            size_predicate=lambda size, _is_foreground: size < maximum_hole_size,
+            labels, size_predicate=lambda size, _is_foreground: size < maximum_hole_size
         )
 
     def local_maxima_by_label(
-        self,
-        image: np.ndarray,
-        labels: np.ndarray,
-        footprint: np.ndarray,
+        self, image: np.ndarray, labels: np.ndarray, footprint: np.ndarray
     ) -> np.ndarray:
         from centrosome.cpmorphology import is_local_maximum
 
@@ -2408,15 +2223,14 @@ class CentrosomeNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         from centrosome.cpmorphology import relabel
 
         relabeled, count = relabel(labels)
-        return relabeled, int(count)
+        return (relabeled, int(count))
 
 
 class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
     """Numba-accelerated NumPy morphology backend."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.NUMBA,
+        MemoryType.NUMPY, CellProfilerBackendProvider.NUMBA
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
@@ -2435,28 +2249,22 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         self.erode_labeled_objects(labels, footprint)
         self.local_maxima_by_label(image, labels, footprint)
         self.smooth_image_for_declumping(image, mask, 1.0)
+        self.smooth_image_for_declumping(image, np.ones(mask.shape, dtype=np.bool_), 1.0)
 
     def connected_components(
-        self,
-        mask: np.ndarray,
-        *,
-        connectivity: int = 2,
+        self, mask: np.ndarray, *, connectivity: int = 2
     ) -> tuple[np.ndarray, int]:
         mask_array = np.asarray(mask, dtype=bool)
         if mask_array.ndim != 2:
             return self._connected_components_planewise(
-                mask_array,
-                connectivity=connectivity,
+                mask_array, connectivity=connectivity
             )
         if connectivity != 2:
             return super().connected_components(mask_array, connectivity=connectivity)
         return _foreground_components_2d_numba(np.ascontiguousarray(mask_array))
 
     def _connected_components_planewise(
-        self,
-        mask: np.ndarray,
-        *,
-        connectivity: int,
+        self, mask: np.ndarray, *, connectivity: int
     ) -> tuple[np.ndarray, int]:
         if mask.ndim < 2:
             raise ValueError("Connected components requires at least two dimensions.")
@@ -2467,17 +2275,14 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         label_offset = 0
         for plane_index in range(plane_count):
             plane_labels, plane_count_labels = self.connected_components(
-                source_planes[plane_index],
-                connectivity=connectivity,
+                source_planes[plane_index], connectivity=connectivity
             )
             if plane_count_labels:
                 target_planes[plane_index] = np.where(
-                    plane_labels > 0,
-                    plane_labels + label_offset,
-                    0,
+                    plane_labels > 0, plane_labels + label_offset, 0
                 )
                 label_offset += plane_count_labels
-        return labels, label_offset
+        return (labels, label_offset)
 
     def convex_hull_image(self, mask: np.ndarray) -> np.ndarray:
         mask_array = np.asarray(mask, dtype=bool)
@@ -2487,11 +2292,7 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
             )
         return _convex_hull_image_numba(np.ascontiguousarray(mask_array))
 
-    def grayscale_closing(
-        self,
-        image: np.ndarray,
-        footprint: np.ndarray,
-    ) -> np.ndarray:
+    def grayscale_closing(self, image: np.ndarray, footprint: np.ndarray) -> np.ndarray:
         image_array = np.asarray(image)
         footprint_array = np.asarray(footprint, dtype=bool)
         if image_array.ndim != 2 or footprint_array.ndim != 2:
@@ -2499,8 +2300,7 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
                 "Numba morphology backend currently supports 2-D grayscale closing."
             )
         footprint_offsets = FootprintOffsetTable.from_footprint(
-            footprint_array,
-            dimension_policy=FOOTPRINT_OFFSET_2D_POLICY,
+            footprint_array, dimension_policy=FOOTPRINT_OFFSET_2D_POLICY
         )
         return _grayscale_morphology_2d_numba(
             np.ascontiguousarray(image_array),
@@ -2509,11 +2309,7 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
             True,
         )
 
-    def grayscale_opening(
-        self,
-        image: np.ndarray,
-        footprint: np.ndarray,
-    ) -> np.ndarray:
+    def grayscale_opening(self, image: np.ndarray, footprint: np.ndarray) -> np.ndarray:
         image_array = np.asarray(image)
         footprint_array = np.asarray(footprint, dtype=bool)
         if image_array.ndim != 2 or footprint_array.ndim != 2:
@@ -2521,8 +2317,7 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
                 "Numba morphology backend currently supports 2-D grayscale opening."
             )
         footprint_offsets = FootprintOffsetTable.from_footprint(
-            footprint_array,
-            dimension_policy=FOOTPRINT_OFFSET_2D_POLICY,
+            footprint_array, dimension_policy=FOOTPRINT_OFFSET_2D_POLICY
         )
         return _grayscale_morphology_2d_numba(
             np.ascontiguousarray(image_array),
@@ -2532,26 +2327,17 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         )
 
     def block_labels(
-        self,
-        image_shape: tuple[int, int],
-        block_size: int,
+        self, image_shape: tuple[int, int], block_size: int
     ) -> tuple[np.ndarray, np.ndarray]:
         if len(image_shape) != 2:
             raise NotImplementedError(
                 "Numba morphology backend currently supports 2-D block labels."
             )
         height, width = image_shape
-        return _block_labels_2d_numba(
-            int(height),
-            int(width),
-            max(1, int(block_size)),
-        )
+        return _block_labels_2d_numba(int(height), int(width), max(1, int(block_size)))
 
     def blockwise_minimum(
-        self,
-        image: np.ndarray,
-        mask: np.ndarray | None,
-        block_size: int,
+        self, image: np.ndarray, mask: np.ndarray | None, block_size: int
     ) -> np.ndarray:
         image_array = np.asarray(image)
         if image_array.ndim not in (2, 3):
@@ -2563,8 +2349,7 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         )
         if mask is not None and mask_array.shape != image_array.shape[:2]:
             raise ValueError(
-                "Blockwise minimum mask must match image spatial shape; got "
-                f"mask {mask_array.shape!r} for image {image_array.shape!r}."
+                f"Blockwise minimum mask must match image spatial shape; got mask {mask_array.shape!r} for image {image_array.shape!r}."
             )
         return _blockwise_minimum_numba(
             np.ascontiguousarray(image_array),
@@ -2574,34 +2359,26 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         )
 
     def erode_labeled_objects(
-        self,
-        labels: np.ndarray,
-        footprint: np.ndarray,
+        self, labels: np.ndarray, footprint: np.ndarray
     ) -> np.ndarray:
         labels_array = np.asarray(labels)
         footprint_array = np.asarray(footprint, dtype=bool)
         if labels_array.ndim not in (2, 3) or footprint_array.ndim != labels_array.ndim:
             return super().erode_labeled_objects(labels_array, footprint_array)
         offsets = FootprintOffsetTable.from_footprint(
-            footprint_array,
-            dimension_policy=FOOTPRINT_OFFSET_2D_OR_3D_POLICY,
+            footprint_array, dimension_policy=FOOTPRINT_OFFSET_2D_OR_3D_POLICY
         ).offsets
         return _erode_labeled_objects_numba(
-            np.ascontiguousarray(labels_array),
-            offsets,
+            np.ascontiguousarray(labels_array), offsets
         ).astype(labels_array.dtype, copy=False)
 
     def local_maxima_by_label(
-        self,
-        image: np.ndarray,
-        labels: np.ndarray,
-        footprint: np.ndarray,
+        self, image: np.ndarray, labels: np.ndarray, footprint: np.ndarray
     ) -> np.ndarray:
         image_array = np.ascontiguousarray(image, dtype=np.float64)
         labels_array = np.ascontiguousarray(labels, dtype=np.int64)
         footprint_offsets = FootprintOffsetTable.from_footprint(
-            footprint,
-            dimension_policy=FOOTPRINT_OFFSET_2D_POLICY,
+            footprint, dimension_policy=FOOTPRINT_OFFSET_2D_POLICY
         )
         return _local_maxima_by_label_numba(
             image_array,
@@ -2633,8 +2410,7 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
             )
         if image_array.shape != mask_array.shape:
             raise ValueError(
-                "Declumping smoothing mask must match the image shape; got "
-                f"mask {mask_array.shape!r} for image {image_array.shape!r}."
+                f"Declumping smoothing mask must match the image shape; got mask {mask_array.shape!r} for image {image_array.shape!r}."
             )
         kernel = self.declumping_smoothing_kernel(
             filter_size,
@@ -2644,10 +2420,12 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         )
         if kernel.size == 0:
             return image_array
+        if bool(np.all(mask_array)):
+            return _smooth_image_for_declumping_full_mask_numba(
+                np.ascontiguousarray(image_array), kernel
+            )
         return _smooth_image_for_declumping_numba(
-            np.ascontiguousarray(image_array),
-            np.ascontiguousarray(mask_array),
-            kernel,
+            np.ascontiguousarray(image_array), np.ascontiguousarray(mask_array), kernel
         )
 
     def _smooth_image_for_declumping_planewise(
@@ -2664,8 +2442,7 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
             raise ValueError("Declumping smoothing requires at least two dimensions.")
         if image.shape != mask.shape:
             raise ValueError(
-                "Declumping smoothing mask must match the image shape; got "
-                f"mask {mask.shape!r} for image {image.shape!r}."
+                f"Declumping smoothing mask must match the image shape; got mask {mask.shape!r} for image {image.shape!r}."
             )
         smoothed = np.empty_like(image)
         plane_count = int(np.prod(image.shape[:-2], dtype=np.int64))
@@ -2687,24 +2464,38 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         self,
         labels: np.ndarray,
         *,
+        mask: np.ndarray | None = None,
         size_predicate: HolePredicate | None = None,
     ) -> np.ndarray:
         labels_array = np.asarray(labels)
-        if labels_array.ndim != 2:
-            return self._fill_labeled_holes_planewise(
+        excluded_background = None
+        if mask is not None:
+            mask_array = np.asarray(mask, dtype=bool)
+            if mask_array.shape != labels_array.shape:
+                raise ValueError(
+                    f"Hole-fill mask shape must match labels shape; got {mask_array.shape!r} for {labels_array.shape!r}."
+                )
+            excluded_background = (labels_array == 0) & ~mask_array
+            labels_array = np.where(
+                excluded_background,
+                1,
                 labels_array,
-                size_predicate=size_predicate,
             )
-        return self._fill_labeled_holes_2d(
-            labels_array,
-            size_predicate=size_predicate,
-        )
+        if labels_array.ndim != 2:
+            filled = self._fill_labeled_holes_planewise(
+                labels_array, size_predicate=size_predicate
+            )
+        else:
+            filled = self._fill_labeled_holes_2d(
+                labels_array, size_predicate=size_predicate
+            )
+        if excluded_background is not None and np.any(excluded_background):
+            filled = filled.copy()
+            filled[excluded_background] = 0
+        return filled
 
     def _fill_labeled_holes_planewise(
-        self,
-        labels: np.ndarray,
-        *,
-        size_predicate: HolePredicate | None = None,
+        self, labels: np.ndarray, *, size_predicate: HolePredicate | None = None
     ) -> np.ndarray:
         if labels.ndim < 2:
             raise ValueError("Hole filling requires at least two dimensions.")
@@ -2714,16 +2505,12 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         target_planes = filled.reshape((plane_count, *labels.shape[-2:]))
         for plane_index in range(plane_count):
             target_planes[plane_index] = self._fill_labeled_holes_2d(
-                source_planes[plane_index],
-                size_predicate=size_predicate,
+                source_planes[plane_index], size_predicate=size_predicate
             )
         return filled
 
     def _fill_labeled_holes_2d(
-        self,
-        labels: np.ndarray,
-        *,
-        size_predicate: HolePredicate | None = None,
+        self, labels: np.ndarray, *, size_predicate: HolePredicate | None = None
     ) -> np.ndarray:
         components, sizes, touches_border, component_count = (
             _background_components_2d_numba(np.ascontiguousarray(labels))
@@ -2733,22 +2520,17 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
             if touches_border[component_id]:
                 continue
             if size_predicate is None or size_predicate(
-                int(sizes[component_id]),
-                False,
+                int(sizes[component_id]), False
             ):
                 fill_flags[component_id] = True
         if not np.any(fill_flags):
             return labels
         if labels.dtype == np.bool_:
             return _fill_binary_holes_from_components_numba(
-                np.ascontiguousarray(labels),
-                components,
-                fill_flags,
+                np.ascontiguousarray(labels), components, fill_flags
             )
         return _fill_labeled_holes_single_label_components_numba(
-            np.ascontiguousarray(labels),
-            components,
-            fill_flags,
+            np.ascontiguousarray(labels), components, fill_flags
         )
 
     def restore_removed_declump_basins(
@@ -2766,8 +2548,7 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
             )
         if pre_declump.shape != before.shape or before.shape != after.shape:
             raise ValueError(
-                "Declump basin restoration inputs must have identical shapes; got "
-                f"{pre_declump.shape!r}, {before.shape!r}, and {after.shape!r}."
+                f"Declump basin restoration inputs must have identical shapes; got {pre_declump.shape!r}, {before.shape!r}, and {after.shape!r}."
             )
         return _restore_removed_declump_basins_numba(
             np.ascontiguousarray(pre_declump, dtype=np.int64),
@@ -2776,25 +2557,17 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         ).astype(after.dtype, copy=False)
 
     def fill_labeled_holes_below_size(
-        self,
-        labels: np.ndarray,
-        maximum_hole_size: int,
+        self, labels: np.ndarray, maximum_hole_size: int
     ) -> np.ndarray:
         labels_array = np.asarray(labels)
         if labels_array.ndim != 2:
             return self._fill_labeled_holes_below_size_planewise(
-                labels_array,
-                maximum_hole_size,
+                labels_array, maximum_hole_size
             )
-        return self._fill_labeled_holes_below_size_2d(
-            labels_array,
-            maximum_hole_size,
-        )
+        return self._fill_labeled_holes_below_size_2d(labels_array, maximum_hole_size)
 
     def _fill_labeled_holes_below_size_planewise(
-        self,
-        labels: np.ndarray,
-        maximum_hole_size: int,
+        self, labels: np.ndarray, maximum_hole_size: int
     ) -> np.ndarray:
         if labels.ndim < 2:
             raise ValueError("Hole filling requires at least two dimensions.")
@@ -2804,35 +2577,25 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         target_planes = filled.reshape((plane_count, *labels.shape[-2:]))
         for plane_index in range(plane_count):
             target_planes[plane_index] = self._fill_labeled_holes_below_size_2d(
-                source_planes[plane_index],
-                maximum_hole_size,
+                source_planes[plane_index], maximum_hole_size
             )
         return filled
 
     def _fill_labeled_holes_below_size_2d(
-        self,
-        labels: np.ndarray,
-        maximum_hole_size: int,
+        self, labels: np.ndarray, maximum_hole_size: int
     ) -> np.ndarray:
         components, sizes, touches_border, component_count = (
             _background_components_2d_numba(np.ascontiguousarray(labels))
         )
         fill_flags = _hole_fill_flags_below_size_numba(
-            sizes,
-            touches_border,
-            component_count,
-            int(maximum_hole_size),
+            sizes, touches_border, component_count, int(maximum_hole_size)
         )
         if labels.dtype == np.bool_:
             return _fill_binary_holes_from_components_numba(
-                np.ascontiguousarray(labels),
-                components,
-                fill_flags,
+                np.ascontiguousarray(labels), components, fill_flags
             )
         return _fill_labeled_holes_single_label_components_numba(
-            np.ascontiguousarray(labels),
-            components,
-            fill_flags,
+            np.ascontiguousarray(labels), components, fill_flags
         )
 
     def shrink_components_to_seed_points(self, mask: np.ndarray) -> np.ndarray:
@@ -2842,8 +2605,7 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
                 "Numba morphology backend currently supports 2-D seed shrinking."
             )
         return _binary_shrink_2d_numba(
-            np.ascontiguousarray(mask_array),
-            _binary_shrink_table_stack(),
+            np.ascontiguousarray(mask_array), _binary_shrink_table_stack()
         )
 
     def declumping_seed_points(
@@ -2857,10 +2619,7 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         labels_array = np.asarray(labels)
         if image_array.ndim != 2 or labels_array.ndim != 2:
             return self._declumping_seed_points_planewise(
-                image_array,
-                labels_array,
-                footprint,
-                image_resize_factor,
+                image_array, labels_array, footprint, image_resize_factor
             )
         if image_array.shape != labels_array.shape:
             raise ValueError(
@@ -2868,17 +2627,9 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
             )
         if float(image_resize_factor) != 1.0:
             return super().declumping_seed_points(
-                image_array,
-                labels_array,
-                footprint,
-                image_resize_factor,
+                image_array, labels_array, footprint, image_resize_factor
             )
-
-        maxima = self.local_maxima_by_label(
-            image_array,
-            labels_array,
-            footprint,
-        )
+        maxima = self.local_maxima_by_label(image_array, labels_array, footprint)
         maxima[np.asarray(image_array) <= 0] = 0
         return self.shrink_components_to_seed_points(maxima)
 
@@ -2890,7 +2641,9 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         image_resize_factor: float,
     ) -> np.ndarray:
         if image.ndim < 2 or labels.ndim < 2:
-            raise ValueError("Declumping seed extraction requires at least two dimensions.")
+            raise ValueError(
+                "Declumping seed extraction requires at least two dimensions."
+            )
         if image.shape != labels.shape:
             raise ValueError(
                 "image and labels must have identical shapes for declumping seed extraction"
@@ -2914,15 +2667,14 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         if labels_array.ndim > 2:
             relabeled_planes, count = _relabel_sequential_3d_numba(
                 np.ascontiguousarray(
-                    labels_array.reshape((-1, *labels_array.shape[-2:])),
-                    dtype=np.int64,
-                ),
+                    labels_array.reshape((-1, *labels_array.shape[-2:])), dtype=np.int64
+                )
             )
-            return relabeled_planes.reshape(labels_array.shape), int(count)
+            return (relabeled_planes.reshape(labels_array.shape), int(count))
         if labels_array.ndim != 2:
             raise ValueError("Relabeling requires at least two dimensions.")
         return _relabel_sequential_numba(
-            np.ascontiguousarray(labels_array, dtype=np.int64),
+            np.ascontiguousarray(labels_array, dtype=np.int64)
         )
 
 
@@ -2930,33 +2682,20 @@ class OpenCVNumpyMorphologyBackendStrategy(NumbaNumpyMorphologyBackendStrategy):
     """OpenCV-accelerated NumPy morphology backend."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.OPENCV,
+        MemoryType.NUMPY, CellProfilerBackendProvider.OPENCV
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.OPENCV
     is_default_backend = False
 
-    def grayscale_closing(
-        self,
-        image: np.ndarray,
-        footprint: np.ndarray,
-    ) -> np.ndarray:
+    def grayscale_closing(self, image: np.ndarray, footprint: np.ndarray) -> np.ndarray:
         return self._opencv_morphology(image, footprint, operation="closing")
 
-    def grayscale_opening(
-        self,
-        image: np.ndarray,
-        footprint: np.ndarray,
-    ) -> np.ndarray:
+    def grayscale_opening(self, image: np.ndarray, footprint: np.ndarray) -> np.ndarray:
         return self._opencv_morphology(image, footprint, operation="opening")
 
     def _opencv_morphology(
-        self,
-        image: np.ndarray,
-        footprint: np.ndarray,
-        *,
-        operation: str,
+        self, image: np.ndarray, footprint: np.ndarray, *, operation: str
     ) -> np.ndarray:
         import cv2
 
@@ -2976,7 +2715,7 @@ def _scipy_disk_footprint(radius: float) -> np.ndarray:
     radius = max(0.0, float(radius))
     extent = int(radius)
     y, x = np.ogrid[-extent : extent + 1, -extent : extent + 1]
-    return (x * x + y * y) <= radius * radius
+    return x * x + y * y <= radius * radius
 
 
 def _declumping_suppression_radius(
@@ -2990,8 +2729,7 @@ def _declumping_suppression_radius(
 
 
 def _scipy_block_labels(
-    image_shape: tuple[int, int],
-    block_size: int,
+    image_shape: tuple[int, int], block_size: int
 ) -> tuple[np.ndarray, np.ndarray]:
     height, width = image_shape
     block_size = max(1, int(block_size))
@@ -3004,13 +2742,11 @@ def _scipy_block_labels(
         y_stop = int(np.ceil(float((row + 1) * height) / float(row_blocks)))
         for column in range(column_blocks):
             x_start = int(np.ceil(float(column * width) / float(column_blocks)))
-            x_stop = int(
-                np.ceil(float((column + 1) * width) / float(column_blocks))
-            )
+            x_stop = int(np.ceil(float((column + 1) * width) / float(column_blocks)))
             label = row * column_blocks + column
             labels[y_start:y_stop, x_start:x_stop] = label
             indexes.append(label)
-    return labels, np.asarray(indexes, dtype=np.int32)
+    return (labels, np.asarray(indexes, dtype=np.int32))
 
 
 def _scipy_blockwise_minimum(
@@ -3029,21 +2765,17 @@ def _scipy_blockwise_minimum(
         mask_array = np.asarray(mask, dtype=bool)
         if mask_array.shape != image_array.shape[:2]:
             raise ValueError(
-                "Blockwise minimum mask must match image spatial shape; got "
-                f"mask {mask_array.shape!r} for image {image_array.shape!r}."
+                f"Blockwise minimum mask must match image spatial shape; got mask {mask_array.shape!r} for image {image_array.shape!r}."
             )
         labels[~mask_array] = -1
-
     valid = labels != -1
     result = np.zeros(image_array.shape, dtype=image_array.dtype)
     if not np.any(valid):
         return result
-
     if image_array.ndim == 2:
         minima = morphology.fix_labeled_result(minimum(image_array, labels, indexes))
         result[valid] = minima[labels[valid]]
         return result
-
     if image_array.ndim != 3:
         raise NotImplementedError(
             "Blockwise minimum currently supports 2-D images or 3-D color images."
@@ -3057,24 +2789,20 @@ def _scipy_blockwise_minimum(
 
 
 def _scipy_erode_labeled_objects(
-    labels: np.ndarray,
-    footprint: np.ndarray,
+    labels: np.ndarray, footprint: np.ndarray
 ) -> np.ndarray:
     import scipy.ndimage
 
     labels_array = np.asarray(labels)
     contours = scipy.ndimage.morphological_gradient(
-        labels_array,
-        footprint=np.asarray(footprint, dtype=bool),
+        labels_array, footprint=np.asarray(footprint, dtype=bool)
     )
     return labels_array * (contours == 0)
 
 
 @njit(cache=True)
 def _block_labels_2d_numba(
-    height: int,
-    width: int,
-    block_size: int,
+    height: int, width: int, block_size: int
 ) -> tuple[np.ndarray, np.ndarray]:
     row_blocks = max(1, int(np.floor(float(height) / float(block_size))))
     column_blocks = max(1, int(np.floor(float(width) / float(block_size))))
@@ -3085,23 +2813,18 @@ def _block_labels_2d_numba(
         y_stop = int(np.ceil(float((row + 1) * height) / float(row_blocks)))
         for column in range(column_blocks):
             x_start = int(np.ceil(float(column * width) / float(column_blocks)))
-            x_stop = int(
-                np.ceil(float((column + 1) * width) / float(column_blocks))
-            )
+            x_stop = int(np.ceil(float((column + 1) * width) / float(column_blocks)))
             label = row * column_blocks + column
             indexes[label] = label
             for y in range(y_start, y_stop):
                 for x in range(x_start, x_stop):
                     labels[y, x] = label
-    return labels, indexes
+    return (labels, indexes)
 
 
 @njit(cache=True)
 def _blockwise_minimum_numba(
-    image: np.ndarray,
-    mask: np.ndarray,
-    has_mask: bool,
-    block_size: int,
+    image: np.ndarray, mask: np.ndarray, has_mask: bool, block_size: int
 ) -> np.ndarray:
     height = image.shape[0]
     width = image.shape[1]
@@ -3109,7 +2832,6 @@ def _blockwise_minimum_numba(
     column_blocks = max(1, int(np.floor(float(width) / float(block_size))))
     label_count = row_blocks * column_blocks
     output = np.zeros(image.shape, dtype=image.dtype)
-
     if image.ndim == 2:
         minima = np.empty(label_count, dtype=image.dtype)
         has_value = np.zeros(label_count, dtype=np.bool_)
@@ -3124,7 +2846,7 @@ def _blockwise_minimum_numba(
                 label = row * column_blocks + column
                 for y in range(y_start, y_stop):
                     for x in range(x_start, x_stop):
-                        if has_mask and not mask[y, x]:
+                        if has_mask and (not mask[y, x]):
                             continue
                         value = image[y, x]
                         if not has_value[label] or value < minima[label]:
@@ -3137,7 +2859,6 @@ def _blockwise_minimum_numba(
                             if not has_mask or mask[y, x]:
                                 output[y, x] = value
         return output
-
     channel_count = image.shape[2]
     minima = np.empty((label_count, channel_count), dtype=image.dtype)
     has_value = np.zeros(label_count, dtype=np.bool_)
@@ -3150,7 +2871,7 @@ def _blockwise_minimum_numba(
             label = row * column_blocks + column
             for y in range(y_start, y_stop):
                 for x in range(x_start, x_stop):
-                    if has_mask and not mask[y, x]:
+                    if has_mask and (not mask[y, x]):
                         continue
                     if not has_value[label]:
                         for channel in range(channel_count):
@@ -3171,10 +2892,7 @@ def _blockwise_minimum_numba(
 
 
 @njit(cache=True)
-def _erode_labeled_objects_numba(
-    labels: np.ndarray,
-    offsets: np.ndarray,
-) -> np.ndarray:
+def _erode_labeled_objects_numba(labels: np.ndarray, offsets: np.ndarray) -> np.ndarray:
     output = np.zeros(labels.shape, dtype=labels.dtype)
     if labels.ndim == 2:
         height, width = labels.shape
@@ -3187,7 +2905,7 @@ def _erode_labeled_objects_numba(
                 for offset_index in range(offsets.shape[0]):
                     yy = y + offsets[offset_index, 0]
                     xx = x + offsets[offset_index, 1]
-                    if yy < 0 or xx < 0 or yy >= height or xx >= width:
+                    if yy < 0 or xx < 0 or yy >= height or (xx >= width):
                         continue
                     if labels[yy, xx] != label:
                         keep = False
@@ -3195,7 +2913,6 @@ def _erode_labeled_objects_numba(
                 if keep:
                     output[y, x] = label
         return output
-
     z_size, y_size, x_size = labels.shape
     for z in range(z_size):
         for y in range(y_size):
@@ -3212,9 +2929,9 @@ def _erode_labeled_objects_numba(
                         zz < 0
                         or yy < 0
                         or xx < 0
-                        or zz >= z_size
-                        or yy >= y_size
-                        or xx >= x_size
+                        or (zz >= z_size)
+                        or (yy >= y_size)
+                        or (xx >= x_size)
                     ):
                         continue
                     if labels[zz, yy, xx] != label:
@@ -3226,18 +2943,16 @@ def _erode_labeled_objects_numba(
 
 
 def _scipy_connected_components(
-    mask: np.ndarray,
-    *,
-    connectivity: int = 2,
+    mask: np.ndarray, *, connectivity: int = 2
 ) -> tuple[np.ndarray, int]:
     from scipy import ndimage as ndi
 
     mask_array = np.asarray(mask, dtype=bool)
-    structure = ConnectedComponentConnectivity.for_connectivity(
-        connectivity
-    ).structure(mask_array.ndim)
+    structure = ConnectedComponentConnectivity.for_connectivity(connectivity).structure(
+        mask_array.ndim
+    )
     labels, count = ndi.label(mask_array, structure=structure)
-    return labels.astype(np.int32, copy=False), int(count)
+    return (labels.astype(np.int32, copy=False), int(count))
 
 
 def _scipy_fix_labeled_result(values: np.ndarray) -> np.ndarray:
@@ -3248,9 +2963,7 @@ def _scipy_fix_labeled_result(values: np.ndarray) -> np.ndarray:
 
 
 def _scipy_local_maxima_by_label(
-    image: np.ndarray,
-    labels: np.ndarray,
-    footprint: np.ndarray,
+    image: np.ndarray, labels: np.ndarray, footprint: np.ndarray
 ) -> np.ndarray:
     from scipy import ndimage as ndi
 
@@ -3261,7 +2974,6 @@ def _scipy_local_maxima_by_label(
         raise ValueError(
             "image and labels must have identical shapes for labeled local maxima"
         )
-
     for label_id, bounds in _positive_label_bounding_boxes(labels_array):
         label_crop = labels_array[bounds] == label_id
         image_crop = image_array[bounds]
@@ -3277,9 +2989,7 @@ def _scipy_local_maxima_by_label(
 
 
 def _scipy_smooth_image_for_declumping(
-    image: np.ndarray,
-    mask: np.ndarray,
-    kernel: np.ndarray,
+    image: np.ndarray, mask: np.ndarray, kernel: np.ndarray
 ) -> np.ndarray:
     import scipy.ndimage
 
@@ -3288,16 +2998,10 @@ def _scipy_smooth_image_for_declumping(
 
     def convolve(array: np.ndarray) -> np.ndarray:
         output = scipy.ndimage.convolve1d(
-            array,
-            kernel,
-            axis=0,
-            mode=SCIPY_CONSTANT_BOUNDARY_MODE,
+            array, kernel, axis=0, mode=SCIPY_CONSTANT_BOUNDARY_MODE
         )
         return scipy.ndimage.convolve1d(
-            output,
-            kernel,
-            axis=1,
-            mode=SCIPY_CONSTANT_BOUNDARY_MODE,
+            output, kernel, axis=1, mode=SCIPY_CONSTANT_BOUNDARY_MODE
         )
 
     mask_array = np.asarray(mask, dtype=bool)
@@ -3325,10 +3029,7 @@ def _skimage_convex_hull_image(mask: np.ndarray) -> np.ndarray:
     return np.asarray(convex_hull_image(np.asarray(mask, dtype=bool)), dtype=bool)
 
 
-def _skimage_grayscale_closing(
-    image: np.ndarray,
-    footprint: np.ndarray,
-) -> np.ndarray:
+def _skimage_grayscale_closing(image: np.ndarray, footprint: np.ndarray) -> np.ndarray:
     from skimage.morphology import closing as skimage_closing
 
     image_array = np.asarray(image)
@@ -3338,10 +3039,7 @@ def _skimage_grayscale_closing(
     )
 
 
-def _skimage_grayscale_opening(
-    image: np.ndarray,
-    footprint: np.ndarray,
-) -> np.ndarray:
+def _skimage_grayscale_opening(image: np.ndarray, footprint: np.ndarray) -> np.ndarray:
     from skimage.morphology import opening as skimage_opening
 
     image_array = np.asarray(image)
@@ -3367,33 +3065,22 @@ def _scipy_declumping_seed_points(
         raise ValueError(
             "image and labels must have identical shapes for declumping seed extraction"
         )
-
     if image_resize_factor < 1.0:
         shape = np.maximum(
-            1,
-            np.ceil(np.asarray(image_array.shape) * float(image_resize_factor)),
+            1, np.ceil(np.asarray(image_array.shape) * float(image_resize_factor))
         ).astype(int)
         coordinates = _declumping_resize_coordinates(
-            (int(shape[0]), int(shape[1])),
-            float(image_resize_factor),
+            (int(shape[0]), int(shape[1])), float(image_resize_factor)
         )
         resized_image = ndi.map_coordinates(image_array, coordinates)
-        resized_labels = ndi.map_coordinates(
-            labels_array,
-            coordinates,
-            order=0,
-        ).astype(labels_array.dtype, copy=False)
+        resized_labels = ndi.map_coordinates(labels_array, coordinates, order=0).astype(
+            labels_array.dtype, copy=False
+        )
     else:
         resized_image = image_array
         resized_labels = labels_array
-
-    maxima = morphology.local_maxima_by_label(
-        resized_image,
-        resized_labels,
-        footprint,
-    )
+    maxima = morphology.local_maxima_by_label(resized_image, resized_labels, footprint)
     maxima[resized_image <= 0] = 0
-
     if image_resize_factor < 1.0:
         inverse_resize_factor = float(image_array.shape[0]) / float(maxima.shape[0])
         coordinates = _declumping_resize_coordinates(
@@ -3405,14 +3092,12 @@ def _scipy_declumping_seed_points(
             (int(image_array.shape[0]), int(image_array.shape[1])),
             inverse_resize_factor,
         ).execute()
-
     return morphology.shrink_components_to_seed_points(maxima)
 
 
 @lru_cache(maxsize=128)
 def _declumping_resize_coordinates(
-    target_shape: tuple[int, int],
-    divisor: float,
+    target_shape: tuple[int, int], divisor: float
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return cached CellProfiler-style coordinate grids for declumping resize."""
     return tuple(
@@ -3421,27 +3106,27 @@ def _declumping_resize_coordinates(
     )
 
 
-
-def _positive_label_bounding_boxes(
-    labels: np.ndarray,
-) -> LabelBoundingBoxes:
+def _positive_label_bounding_boxes(labels: np.ndarray) -> LabelBoundingBoxes:
     positive_coords = np.nonzero(labels > 0)
     if not positive_coords[0].size:
         return []
-
     label_values = labels[positive_coords]
     order = np.argsort(label_values, kind="stable")
     sorted_labels = label_values[order]
-    sorted_coords = tuple(axis_coords[order] for axis_coords in positive_coords)
+    sorted_coords = tuple((axis_coords[order] for axis_coords in positive_coords))
     change_offsets = np.flatnonzero(sorted_labels[1:] != sorted_labels[:-1]) + 1
     group_starts = np.concatenate(([0], change_offsets))
     group_ends = np.concatenate((change_offsets, [sorted_labels.size]))
-
     boxes: LabelBoundingBoxes = []
     for start, end in zip(group_starts, group_ends):
         bounds = tuple(
-            slice(int(axis_coords[start:end].min()), int(axis_coords[start:end].max()) + 1)
-            for axis_coords in sorted_coords
+            (
+                slice(
+                    int(axis_coords[start:end].min()),
+                    int(axis_coords[start:end].max()) + 1,
+                )
+                for axis_coords in sorted_coords
+            )
         )
         boxes.append((int(sorted_labels[start]), bounds))
     return boxes
@@ -3452,13 +3137,11 @@ def _scipy_shrink_components_to_seed_points(mask: np.ndarray) -> np.ndarray:
 
     mask_array = np.asarray(mask, dtype=bool)
     components, component_count = ndi.label(
-        mask_array,
-        structure=np.ones((3,) * mask_array.ndim, dtype=bool),
+        mask_array, structure=np.ones((3,) * mask_array.ndim, dtype=bool)
     )
     seeds = np.zeros(mask_array.shape, dtype=bool)
     for component_id, component_slice in enumerate(
-        ndi.find_objects(components, max_label=component_count),
-        start=1,
+        ndi.find_objects(components, max_label=component_count), start=1
     ):
         if component_slice is None:
             continue
@@ -3469,8 +3152,12 @@ def _scipy_shrink_components_to_seed_points(mask: np.ndarray) -> np.ndarray:
         centroid = coords.mean(axis=0)
         nearest = int(np.argmin(np.sum((coords - centroid) ** 2, axis=1)))
         seed_coord = tuple(
-            int(axis_slice.start or 0) + int(coord)
-            for axis_slice, coord in zip(component_slice, coords[nearest], strict=True)
+            (
+                int(axis_slice.start or 0) + int(coord)
+                for axis_slice, coord in zip(
+                    component_slice, coords[nearest], strict=True
+                )
+            )
         )
         seeds[seed_coord] = True
     return seeds
@@ -3488,59 +3175,50 @@ def _binary_shrink_table_stack() -> np.ndarray:
         dtype=np.bool_,
     )
     erode_table[binary_shrink.index_of(np.ones((3, 3), dtype=bool))] = True
-
     tables = (
         erode_table
-        | (
-            binary_shrink.make_table(
-                False,
-                np.array([[0, 0, 0], [1, 1, 0], [0, 0, 0]], dtype=bool),
-                np.array([[0, 0, 0], [1, 1, 1], [0, 0, 0]], dtype=bool),
-            )
-            & binary_shrink.make_table(
-                False,
-                np.array([[1, 0, 0], [0, 1, 0], [0, 0, 0]], dtype=bool),
-                np.array([[1, 0, 0], [0, 1, 1], [0, 1, 1]], dtype=bool),
-            )
+        | binary_shrink.make_table(
+            False,
+            np.array([[0, 0, 0], [1, 1, 0], [0, 0, 0]], dtype=bool),
+            np.array([[0, 0, 0], [1, 1, 1], [0, 0, 0]], dtype=bool),
+        )
+        & binary_shrink.make_table(
+            False,
+            np.array([[1, 0, 0], [0, 1, 0], [0, 0, 0]], dtype=bool),
+            np.array([[1, 0, 0], [0, 1, 1], [0, 1, 1]], dtype=bool),
         ),
         erode_table
-        | (
-            binary_shrink.make_table(
-                False,
-                np.array([[0, 1, 0], [0, 1, 0], [0, 0, 0]], dtype=bool),
-                np.array([[0, 1, 0], [0, 1, 0], [0, 1, 0]], dtype=bool),
-            )
-            & binary_shrink.make_table(
-                False,
-                np.array([[0, 0, 1], [0, 1, 0], [0, 0, 0]], dtype=bool),
-                np.array([[0, 0, 1], [1, 1, 0], [1, 1, 0]], dtype=bool),
-            )
+        | binary_shrink.make_table(
+            False,
+            np.array([[0, 1, 0], [0, 1, 0], [0, 0, 0]], dtype=bool),
+            np.array([[0, 1, 0], [0, 1, 0], [0, 1, 0]], dtype=bool),
+        )
+        & binary_shrink.make_table(
+            False,
+            np.array([[0, 0, 1], [0, 1, 0], [0, 0, 0]], dtype=bool),
+            np.array([[0, 0, 1], [1, 1, 0], [1, 1, 0]], dtype=bool),
         ),
         erode_table
-        | (
-            binary_shrink.make_table(
-                False,
-                np.array([[0, 0, 0], [0, 1, 1], [0, 0, 0]], dtype=bool),
-                np.array([[0, 0, 0], [1, 1, 1], [0, 0, 0]], dtype=bool),
-            )
-            & binary_shrink.make_table(
-                False,
-                np.array([[0, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=bool),
-                np.array([[1, 1, 0], [1, 1, 0], [0, 0, 1]], dtype=bool),
-            )
+        | binary_shrink.make_table(
+            False,
+            np.array([[0, 0, 0], [0, 1, 1], [0, 0, 0]], dtype=bool),
+            np.array([[0, 0, 0], [1, 1, 1], [0, 0, 0]], dtype=bool),
+        )
+        & binary_shrink.make_table(
+            False,
+            np.array([[0, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=bool),
+            np.array([[1, 1, 0], [1, 1, 0], [0, 0, 1]], dtype=bool),
         ),
         erode_table
-        | (
-            binary_shrink.make_table(
-                False,
-                np.array([[0, 0, 0], [0, 1, 0], [0, 1, 0]], dtype=bool),
-                np.array([[0, 1, 0], [0, 1, 0], [0, 1, 0]], dtype=bool),
-            )
-            & binary_shrink.make_table(
-                False,
-                np.array([[0, 0, 0], [0, 1, 0], [1, 0, 0]], dtype=bool),
-                np.array([[0, 1, 1], [0, 1, 1], [1, 0, 0]], dtype=bool),
-            )
+        | binary_shrink.make_table(
+            False,
+            np.array([[0, 0, 0], [0, 1, 0], [0, 1, 0]], dtype=bool),
+            np.array([[0, 1, 0], [0, 1, 0], [0, 1, 0]], dtype=bool),
+        )
+        & binary_shrink.make_table(
+            False,
+            np.array([[0, 0, 0], [0, 1, 0], [1, 0, 0]], dtype=bool),
+            np.array([[0, 1, 1], [0, 1, 1], [1, 0, 0]], dtype=bool),
         ),
     )
     return np.ascontiguousarray(np.stack(tables), dtype=np.bool_)
@@ -3567,21 +3245,16 @@ class BinaryShrinkPatternAlgebra:
                 visited[row, col] = True
                 while stack:
                     current_row, current_col = stack.pop()
-                    for delta_row, delta_col in (
-                        (-1, 0),
-                        (1, 0),
-                        (0, -1),
-                        (0, 1),
-                    ):
+                    for delta_row, delta_col in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                         next_row = current_row + delta_row
                         next_col = current_col + delta_col
                         if (
                             next_row < 0
                             or next_row >= 3
                             or next_col < 0
-                            or next_col >= 3
+                            or (next_col >= 3)
                             or visited[next_row, next_col]
-                            or not pattern[next_row, next_col]
+                            or (not pattern[next_row, next_col])
                         ):
                             continue
                         visited[next_row, next_col] = True
@@ -3610,11 +3283,7 @@ class BinaryShrinkPatternAlgebra:
         return index
 
     @staticmethod
-    def make_table(
-        value: bool,
-        pattern: np.ndarray,
-        care: np.ndarray,
-    ) -> np.ndarray:
+    def make_table(value: bool, pattern: np.ndarray, care: np.ndarray) -> np.ndarray:
         table = np.empty(512, dtype=np.bool_)
         for index in range(512):
             matches = True
@@ -3637,7 +3306,7 @@ def _scipy_relabel_sequential(labels: np.ndarray) -> tuple[np.ndarray, int]:
     output = np.zeros(labels_array.shape, dtype=np.int32)
     for new_label, old_label in enumerate(positive, start=1):
         output[labels_array == old_label] = new_label
-    return output, int(positive.size)
+    return (output, int(positive.size))
 
 
 @dataclass(frozen=True, slots=True)
@@ -3670,10 +3339,7 @@ class FootprintOffsetTable:
 
     @classmethod
     def from_footprint(
-        cls,
-        footprint: np.ndarray,
-        *,
-        dimension_policy: FootprintOffsetDimensionPolicy,
+        cls, footprint: np.ndarray, *, dimension_policy: FootprintOffsetDimensionPolicy
     ) -> "FootprintOffsetTable":
         footprint_array = np.asarray(footprint, dtype=bool)
         dimension_policy.validate(footprint_array)
@@ -3724,12 +3390,13 @@ def _grayscale_morphology_2d_numba(
                     _reflect_index_1d(row + int(offset_rows[offset_index]), height),
                     _reflect_index_1d(col + int(offset_cols[offset_index]), width),
                 ]
-                if (first_pass_is_dilation and value > best) or (
-                    not first_pass_is_dilation and value < best
+                if (
+                    first_pass_is_dilation
+                    and value > best
+                    or (not first_pass_is_dilation and value < best)
                 ):
                     best = value
             intermediate[row, col] = best
-
     for row in range(height):
         for col in range(width):
             best = intermediate[
@@ -3741,8 +3408,10 @@ def _grayscale_morphology_2d_numba(
                     _reflect_index_1d(row + int(offset_rows[offset_index]), height),
                     _reflect_index_1d(col + int(offset_cols[offset_index]), width),
                 ]
-                if (first_pass_is_dilation and value < best) or (
-                    not first_pass_is_dilation and value > best
+                if (
+                    first_pass_is_dilation
+                    and value < best
+                    or (not first_pass_is_dilation and value > best)
                 ):
                     best = value
             output[row, col] = best
@@ -3771,10 +3440,8 @@ def _convex_hull_image_numba(mask: np.ndarray) -> np.ndarray:
         for x in range(width):
             if mask[y, x]:
                 point_count += 1
-
     if point_count == 0:
         return output
-
     row_count2 = height * 2 + 1
     min_col_by_row = np.empty(row_count2, dtype=np.int64)
     max_col_by_row = np.empty(row_count2, dtype=np.int64)
@@ -3783,23 +3450,13 @@ def _convex_hull_image_numba(mask: np.ndarray) -> np.ndarray:
     point_x = np.empty(point_capacity, dtype=np.int64)
     hull_y = np.empty(point_capacity * 2, dtype=np.int64)
     hull_x = np.empty(point_capacity * 2, dtype=np.int64)
-
     point_count = _collect_convex_hull_diamond_extreme_points_numba(
-        mask,
-        min_col_by_row,
-        max_col_by_row,
-        point_y,
-        point_x,
+        mask, min_col_by_row, max_col_by_row, point_y, point_x
     )
     if point_count == 0:
         return output
-
     hull_count = _monotone_chain_hull_numba(
-        point_y,
-        point_x,
-        point_count,
-        hull_y,
-        hull_x,
+        point_y, point_x, point_count, hull_y, hull_x
     )
     _paint_convex_hull_mask_numba(output, hull_y, hull_x, hull_count)
     return output
@@ -3818,35 +3475,21 @@ def _collect_convex_hull_diamond_extreme_points_numba(
     for row_index in range(row_count2):
         min_col_by_row[row_index] = 9223372036854775807
         max_col_by_row[row_index] = -9223372036854775807
-
     for y in range(height):
         for x in range(width):
             if mask[y, x]:
                 _add_convex_hull_diamond_vertex_numba(
-                    min_col_by_row,
-                    max_col_by_row,
-                    2 * y - 1,
-                    2 * x,
+                    min_col_by_row, max_col_by_row, 2 * y - 1, 2 * x
                 )
                 _add_convex_hull_diamond_vertex_numba(
-                    min_col_by_row,
-                    max_col_by_row,
-                    2 * y + 1,
-                    2 * x,
+                    min_col_by_row, max_col_by_row, 2 * y + 1, 2 * x
                 )
                 _add_convex_hull_diamond_vertex_numba(
-                    min_col_by_row,
-                    max_col_by_row,
-                    2 * y,
-                    2 * x - 1,
+                    min_col_by_row, max_col_by_row, 2 * y, 2 * x - 1
                 )
                 _add_convex_hull_diamond_vertex_numba(
-                    min_col_by_row,
-                    max_col_by_row,
-                    2 * y,
-                    2 * x + 1,
+                    min_col_by_row, max_col_by_row, 2 * y, 2 * x + 1
                 )
-
     point_count = 0
     for row_index in range(row_count2):
         max_col = max_col_by_row[row_index]
@@ -3866,10 +3509,7 @@ def _collect_convex_hull_diamond_extreme_points_numba(
 
 @njit(cache=True)
 def _add_convex_hull_diamond_vertex_numba(
-    min_col_by_row: np.ndarray,
-    max_col_by_row: np.ndarray,
-    row2: int,
-    col2: int,
+    min_col_by_row: np.ndarray, max_col_by_row: np.ndarray, row2: int, col2: int
 ) -> None:
     row_index = row2 + 1
     if col2 < min_col_by_row[row_index]:
@@ -3880,12 +3520,7 @@ def _add_convex_hull_diamond_vertex_numba(
 
 @njit(cache=True)
 def _cross_convex_hull_points_numba(
-    ay: int,
-    ax: int,
-    by: int,
-    bx: int,
-    cy: int,
-    cx: int,
+    ay: int, ax: int, by: int, bx: int, cy: int, cx: int
 ) -> int:
     return (by - ay) * (cx - ax) - (bx - ax) * (cy - ay)
 
@@ -3903,41 +3538,46 @@ def _monotone_chain_hull_numba(
             hull_y[0] = point_y[0]
             hull_x[0] = point_x[0]
         return point_count
-
     hull_count = 0
     for index in range(point_count):
         py = point_y[index]
         px = point_x[index]
-        while hull_count >= 2 and _cross_convex_hull_points_numba(
-            hull_y[hull_count - 2],
-            hull_x[hull_count - 2],
-            hull_y[hull_count - 1],
-            hull_x[hull_count - 1],
-            py,
-            px,
-        ) <= 0:
+        while (
+            hull_count >= 2
+            and _cross_convex_hull_points_numba(
+                hull_y[hull_count - 2],
+                hull_x[hull_count - 2],
+                hull_y[hull_count - 1],
+                hull_x[hull_count - 1],
+                py,
+                px,
+            )
+            <= 0
+        ):
             hull_count -= 1
         hull_y[hull_count] = py
         hull_x[hull_count] = px
         hull_count += 1
-
     lower_count = hull_count
     for index in range(point_count - 2, -1, -1):
         py = point_y[index]
         px = point_x[index]
-        while hull_count > lower_count and _cross_convex_hull_points_numba(
-            hull_y[hull_count - 2],
-            hull_x[hull_count - 2],
-            hull_y[hull_count - 1],
-            hull_x[hull_count - 1],
-            py,
-            px,
-        ) <= 0:
+        while (
+            hull_count > lower_count
+            and _cross_convex_hull_points_numba(
+                hull_y[hull_count - 2],
+                hull_x[hull_count - 2],
+                hull_y[hull_count - 1],
+                hull_x[hull_count - 1],
+                py,
+                px,
+            )
+            <= 0
+        ):
             hull_count -= 1
         hull_y[hull_count] = py
         hull_x[hull_count] = px
         hull_count += 1
-
     if hull_count > 1:
         hull_count -= 1
     return hull_count
@@ -3945,10 +3585,7 @@ def _monotone_chain_hull_numba(
 
 @njit(cache=True)
 def _paint_convex_hull_mask_numba(
-    output: np.ndarray,
-    hull_y: np.ndarray,
-    hull_x: np.ndarray,
-    hull_count: int,
+    output: np.ndarray, hull_y: np.ndarray, hull_x: np.ndarray, hull_count: int
 ) -> None:
     if hull_count <= 0:
         return
@@ -3957,10 +3594,9 @@ def _paint_convex_hull_mask_numba(
             return
         y = hull_y[0] // 2
         x = hull_x[0] // 2
-        if y >= 0 and y < output.shape[0] and x >= 0 and x < output.shape[1]:
+        if y >= 0 and y < output.shape[0] and (x >= 0) and (x < output.shape[1]):
             output[y, x] = True
         return
-
     min_row2 = hull_y[0]
     max_row2 = hull_y[0]
     min_col2 = hull_x[0]
@@ -3976,7 +3612,6 @@ def _paint_convex_hull_mask_numba(
             min_col2 = col2
         if col2 > max_col2:
             max_col2 = col2
-
     if hull_count == 2:
         _paint_convex_hull_line_mask_numba(
             output,
@@ -3990,20 +3625,17 @@ def _paint_convex_hull_mask_numba(
             max_col2,
         )
         return
-
     area2 = 0
     for index in range(hull_count):
         next_index = 0 if index == hull_count - 1 else index + 1
         area2 += hull_y[index] * hull_x[next_index]
         area2 -= hull_y[next_index] * hull_x[index]
     positive_orientation = area2 >= 0
-
     image_height, image_width = output.shape
     min_y = max(0, _ceil_div2_numba(min_row2))
     max_y = min(image_height - 1, _floor_div2_numba(max_row2))
     min_x = max(0, _ceil_div2_numba(min_col2))
     max_x = min(image_width - 1, _floor_div2_numba(max_col2))
-
     for y in range(min_y, max_y + 1):
         query_row2 = y * 2
         for x in range(min_x, max_x + 1):
@@ -4063,10 +3695,9 @@ def _paint_convex_hull_line_mask_numba(
         if y0 % 2 == 0 and x0 % 2 == 0:
             y = y0 // 2
             x = x0 // 2
-            if y >= 0 and y < output.shape[0] and x >= 0 and x < output.shape[1]:
+            if y >= 0 and y < output.shape[0] and (x >= 0) and (x < output.shape[1]):
                 output[y, x] = True
         return
-
     image_height, image_width = output.shape
     min_y = max(0, _ceil_div2_numba(min_row2))
     max_y = min(image_height - 1, _floor_div2_numba(max_row2))
@@ -4086,10 +3717,7 @@ def _paint_convex_hull_line_mask_numba(
 
 @njit(cache=True)
 def _local_maxima_by_label_numba(
-    image: np.ndarray,
-    labels: np.ndarray,
-    offset_y: np.ndarray,
-    offset_x: np.ndarray,
+    image: np.ndarray, labels: np.ndarray, offset_y: np.ndarray, offset_x: np.ndarray
 ) -> np.ndarray:
     height, width = image.shape
     maxima = np.zeros((height, width), dtype=np.bool_)
@@ -4107,7 +3735,7 @@ def _local_maxima_by_label_numba(
                     neighbor_y < 0
                     or neighbor_y >= height
                     or neighbor_x < 0
-                    or neighbor_x >= width
+                    or (neighbor_x >= width)
                 ):
                     continue
                 if labels[neighbor_y, neighbor_x] != label:
@@ -4121,9 +3749,7 @@ def _local_maxima_by_label_numba(
 
 @njit(cache=True)
 def _smooth_image_for_declumping_numba(
-    image: np.ndarray,
-    mask: np.ndarray,
-    kernel: np.ndarray,
+    image: np.ndarray, mask: np.ndarray, kernel: np.ndarray
 ) -> np.ndarray:
     height, width = image.shape
     radius = kernel.size // 2
@@ -4131,7 +3757,6 @@ def _smooth_image_for_declumping_numba(
     image_vertical = np.empty((height, width), dtype=np.float64)
     edge_array = np.empty((height, width), dtype=np.float64)
     smoothed_image = np.empty((height, width), dtype=np.float64)
-
     for y in range(height):
         for x in range(width):
             edge_sum = 0.0
@@ -4146,7 +3771,6 @@ def _smooth_image_for_declumping_numba(
                     image_sum += float(image[iy, x]) * kernel_value
             edge_vertical[y, x] = edge_sum
             image_vertical[y, x] = image_sum
-
     for y in range(height):
         for x in range(width):
             edge_sum = 0.0
@@ -4160,7 +3784,6 @@ def _smooth_image_for_declumping_numba(
                 image_sum += image_vertical[y, ix] * kernel_value
             edge_array[y, x] = edge_sum
             smoothed_image[y, x] = image_sum
-
     output = np.empty_like(image)
     for y in range(height):
         for x in range(width):
@@ -4175,17 +3798,99 @@ def _smooth_image_for_declumping_numba(
     return output
 
 
+@njit(cache=True, fastmath=True)
+def _smooth_image_for_declumping_full_mask_numba(
+    image: np.ndarray, kernel: np.ndarray
+) -> np.ndarray:
+    height, width = image.shape
+    radius = kernel.size // 2
+    kernel_size = kernel.size
+    edge_y = np.empty(height, dtype=np.float64)
+    edge_x = np.empty(width, dtype=np.float64)
+    image_vertical = np.empty((height, width), dtype=np.float64)
+    for y in range(height):
+        edge_sum = 0.0
+        for kernel_index in range(kernel.size):
+            iy = y + kernel_index - radius
+            if iy >= 0 and iy < height:
+                edge_sum += kernel[kernel_index]
+        edge_y[y] = edge_sum
+    for x in range(width):
+        edge_sum = 0.0
+        for kernel_index in range(kernel.size):
+            ix = x + kernel_index - radius
+            if ix >= 0 and ix < width:
+                edge_sum += kernel[kernel_index]
+        edge_x[x] = edge_sum
+    full_y_start = radius
+    full_y_stop = height - radius
+    full_x_start = radius
+    full_x_stop = width - radius
+    for y in range(height):
+        if y >= full_y_start and y < full_y_stop:
+            y0 = y - radius
+            for x in range(width):
+                image_sum = 0.0
+                for kernel_index in range(kernel_size):
+                    image_sum += float(image[y0 + kernel_index, x]) * kernel[kernel_index]
+                image_vertical[y, x] = image_sum
+        else:
+            for x in range(width):
+                image_sum = 0.0
+                for kernel_index in range(kernel_size):
+                    iy = y + kernel_index - radius
+                    if iy < 0 or iy >= height:
+                        continue
+                    image_sum += float(image[iy, x]) * kernel[kernel_index]
+                image_vertical[y, x] = image_sum
+    output = np.empty_like(image)
+    for y in range(height):
+        edge_y_value = edge_y[y]
+        for x in range(full_x_start):
+            image_sum = 0.0
+            for kernel_index in range(kernel_size):
+                ix = x + kernel_index - radius
+                if ix < 0 or ix >= width:
+                    continue
+                image_sum += image_vertical[y, ix] * kernel[kernel_index]
+            edge_value = edge_y_value * edge_x[x]
+            if edge_value != 0.0:
+                output[y, x] = image_sum / edge_value
+            else:
+                output[y, x] = image[y, x]
+        for x in range(full_x_start, full_x_stop):
+            x0 = x - radius
+            image_sum = 0.0
+            for kernel_index in range(kernel_size):
+                image_sum += image_vertical[y, x0 + kernel_index] * kernel[kernel_index]
+            edge_value = edge_y_value * edge_x[x]
+            if edge_value != 0.0:
+                output[y, x] = image_sum / edge_value
+            else:
+                output[y, x] = image[y, x]
+        for x in range(full_x_stop, width):
+            image_sum = 0.0
+            for kernel_index in range(kernel_size):
+                ix = x + kernel_index - radius
+                if ix < 0 or ix >= width:
+                    continue
+                image_sum += image_vertical[y, ix] * kernel[kernel_index]
+            edge_value = edge_y_value * edge_x[x]
+            if edge_value != 0.0:
+                output[y, x] = image_sum / edge_value
+            else:
+                output[y, x] = image[y, x]
+    return output
+
+
 @njit(cache=True)
-def _foreground_components_2d_numba(
-    mask: np.ndarray,
-) -> tuple[np.ndarray, int]:
+def _foreground_components_2d_numba(mask: np.ndarray) -> tuple[np.ndarray, int]:
     height, width = mask.shape
     capacity = height * width
     labels = np.zeros((height, width), dtype=np.int32)
     queue_y = np.empty(capacity, dtype=np.int64)
     queue_x = np.empty(capacity, dtype=np.int64)
     component_count = 0
-
     for start_y in range(height):
         for start_x in range(width):
             if not mask[start_y, start_x] or labels[start_y, start_x] != 0:
@@ -4196,7 +3901,6 @@ def _foreground_components_2d_numba(
             queue_y[0] = start_y
             queue_x[0] = start_x
             labels[start_y, start_x] = component_count
-
             while head < tail:
                 y = queue_y[head]
                 x = queue_x[head]
@@ -4217,7 +3921,7 @@ def _foreground_components_2d_numba(
                         queue_y[tail] = ny
                         queue_x[tail] = nx
                         tail += 1
-    return labels, component_count
+    return (labels, component_count)
 
 
 @njit(cache=True)
@@ -4232,7 +3936,6 @@ def _background_components_2d_numba(
     queue_y = np.empty(capacity, dtype=np.int64)
     queue_x = np.empty(capacity, dtype=np.int64)
     component_count = 0
-
     for start_y in range(height):
         for start_x in range(width):
             if labels[start_y, start_x] != 0 or components[start_y, start_x] != 0:
@@ -4243,16 +3946,14 @@ def _background_components_2d_numba(
             queue_y[0] = start_y
             queue_x[0] = start_x
             components[start_y, start_x] = component_count
-
             while head < tail:
                 y = queue_y[head]
                 x = queue_x[head]
                 head += 1
                 sizes[component_count] += 1
-                if y == 0 or y == height - 1 or x == 0 or x == width - 1:
+                if y == 0 or y == height - 1 or x == 0 or (x == width - 1):
                     touches_border[component_count] = True
-
-                if y > 0 and labels[y - 1, x] == 0 and components[y - 1, x] == 0:
+                if y > 0 and labels[y - 1, x] == 0 and (components[y - 1, x] == 0):
                     components[y - 1, x] = component_count
                     queue_y[tail] = y - 1
                     queue_x[tail] = x
@@ -4260,13 +3961,13 @@ def _background_components_2d_numba(
                 if (
                     y + 1 < height
                     and labels[y + 1, x] == 0
-                    and components[y + 1, x] == 0
+                    and (components[y + 1, x] == 0)
                 ):
                     components[y + 1, x] = component_count
                     queue_y[tail] = y + 1
                     queue_x[tail] = x
                     tail += 1
-                if x > 0 and labels[y, x - 1] == 0 and components[y, x - 1] == 0:
+                if x > 0 and labels[y, x - 1] == 0 and (components[y, x - 1] == 0):
                     components[y, x - 1] = component_count
                     queue_y[tail] = y
                     queue_x[tail] = x - 1
@@ -4274,14 +3975,13 @@ def _background_components_2d_numba(
                 if (
                     x + 1 < width
                     and labels[y, x + 1] == 0
-                    and components[y, x + 1] == 0
+                    and (components[y, x + 1] == 0)
                 ):
                     components[y, x + 1] = component_count
                     queue_y[tail] = y
                     queue_x[tail] = x + 1
                     tail += 1
-
-    return components, sizes, touches_border, component_count
+    return (components, sizes, touches_border, component_count)
 
 
 @njit(cache=True)
@@ -4294,17 +3994,14 @@ def _hole_fill_flags_below_size_numba(
     fill_flags = np.zeros(component_count + 1, dtype=np.bool_)
     for component_id in range(1, component_count + 1):
         fill_flags[component_id] = (
-            not touches_border[component_id]
-            and sizes[component_id] < maximum_hole_size
+            not touches_border[component_id] and sizes[component_id] < maximum_hole_size
         )
     return fill_flags
 
 
 @njit(cache=True)
 def _fill_binary_holes_from_components_numba(
-    labels: np.ndarray,
-    components: np.ndarray,
-    fill_flags: np.ndarray,
+    labels: np.ndarray, components: np.ndarray, fill_flags: np.ndarray
 ) -> np.ndarray:
     height, width = labels.shape
     has_fillable_component = False
@@ -4314,7 +4011,6 @@ def _fill_binary_holes_from_components_numba(
             break
     if not has_fillable_component:
         return labels
-
     output = labels.copy()
     for y in range(height):
         for x in range(width):
@@ -4326,13 +4022,10 @@ def _fill_binary_holes_from_components_numba(
 
 @njit(cache=True)
 def _fill_labeled_holes_single_label_components_numba(
-    labels: np.ndarray,
-    components: np.ndarray,
-    fill_flags: np.ndarray,
+    labels: np.ndarray, components: np.ndarray, fill_flags: np.ndarray
 ) -> np.ndarray:
     height, width = labels.shape
     component_labels = np.zeros(fill_flags.size, dtype=np.int64)
-
     for y in range(height):
         for x in range(width):
             component = components[y, x]
@@ -4340,29 +4033,20 @@ def _fill_labeled_holes_single_label_components_numba(
                 continue
             if y > 0:
                 _record_component_boundary_label_numba(
-                    component_labels,
-                    component,
-                    int(labels[y - 1, x]),
+                    component_labels, component, int(labels[y - 1, x])
                 )
             if y + 1 < height:
                 _record_component_boundary_label_numba(
-                    component_labels,
-                    component,
-                    int(labels[y + 1, x]),
+                    component_labels, component, int(labels[y + 1, x])
                 )
             if x > 0:
                 _record_component_boundary_label_numba(
-                    component_labels,
-                    component,
-                    int(labels[y, x - 1]),
+                    component_labels, component, int(labels[y, x - 1])
                 )
             if x + 1 < width:
                 _record_component_boundary_label_numba(
-                    component_labels,
-                    component,
-                    int(labels[y, x + 1]),
+                    component_labels, component, int(labels[y, x + 1])
                 )
-
     has_fillable_component = False
     for component in range(component_labels.size):
         if component_labels[component] > 0:
@@ -4370,7 +4054,6 @@ def _fill_labeled_holes_single_label_components_numba(
             break
     if not has_fillable_component:
         return labels
-
     output = labels.copy()
     for y in range(height):
         for x in range(width):
@@ -4403,7 +4086,6 @@ def _restore_removed_declump_basins_numba(
     height, width = labels_before_size_filter.shape
     output = labels_after_size_filter.copy()
     max_pre_declump_label = _max_label_2d_numba(pre_declump_labels)
-
     component_surviving_label = np.zeros(max_pre_declump_label + 1, dtype=np.int64)
     for y in range(height):
         for x in range(width):
@@ -4416,13 +4098,11 @@ def _restore_removed_declump_basins_numba(
                 component_surviving_label[pre_label] = after_label
             elif current_label != after_label:
                 component_surviving_label[pre_label] = -1
-
     visited = np.zeros((height, width), dtype=np.bool_)
     stack_y = np.empty(height * width, dtype=np.int64)
     stack_x = np.empty(height * width, dtype=np.int64)
     component_y = np.empty(height * width, dtype=np.int64)
     component_x = np.empty(height * width, dtype=np.int64)
-
     for start_y in range(height):
         for start_x in range(width):
             if visited[start_y, start_x]:
@@ -4433,7 +4113,6 @@ def _restore_removed_declump_basins_numba(
             ):
                 visited[start_y, start_x] = True
                 continue
-
             stack_size = 1
             stack_y[0] = start_y
             stack_x[0] = start_x
@@ -4443,7 +4122,6 @@ def _restore_removed_declump_basins_numba(
             has_multiple_boundary_labels = False
             pre_declump_label = 0
             has_multiple_pre_declump_labels = False
-
             while stack_size:
                 stack_size -= 1
                 y = stack_y[stack_size]
@@ -4458,7 +4136,6 @@ def _restore_removed_declump_basins_numba(
                     pre_declump_label = current_pre_declump_label
                 elif pre_declump_label != current_pre_declump_label:
                     has_multiple_pre_declump_labels = True
-
                 for dy in range(-1, 2):
                     yy = y + dy
                     if yy < 0 or yy >= height:
@@ -4469,7 +4146,6 @@ def _restore_removed_declump_basins_numba(
                         xx = x + dx
                         if xx < 0 or xx >= width:
                             continue
-
                         neighbor_after = labels_after_size_filter[yy, xx]
                         if neighbor_after > 0:
                             if boundary_label == 0:
@@ -4477,7 +4153,6 @@ def _restore_removed_declump_basins_numba(
                             elif boundary_label != neighbor_after:
                                 has_multiple_boundary_labels = True
                             continue
-
                         if visited[yy, xx]:
                             continue
                         if (
@@ -4488,7 +4163,6 @@ def _restore_removed_declump_basins_numba(
                             stack_y[stack_size] = yy
                             stack_x[stack_size] = xx
                             stack_size += 1
-
             if (
                 boundary_label <= 0
                 or has_multiple_boundary_labels
@@ -4506,9 +4180,7 @@ def _restore_removed_declump_basins_numba(
 
 @njit(cache=True)
 def _record_component_boundary_label_numba(
-    component_labels: np.ndarray,
-    component: int,
-    label: int,
+    component_labels: np.ndarray, component: int, label: int
 ) -> None:
     if label <= 0:
         return
@@ -4521,9 +4193,7 @@ def _record_component_boundary_label_numba(
 
 @njit(cache=True)
 def _fill_labeled_holes_from_components_numba(
-    labels: np.ndarray,
-    components: np.ndarray,
-    fill_flags: np.ndarray,
+    labels: np.ndarray, components: np.ndarray, fill_flags: np.ndarray
 ) -> np.ndarray:
     height, width = labels.shape
     capacity = height * width
@@ -4532,7 +4202,6 @@ def _fill_labeled_holes_from_components_numba(
     queue_x = np.empty(capacity, dtype=np.int64)
     head = 0
     tail = 0
-
     for y in range(height):
         for x in range(width):
             component = components[y, x]
@@ -4545,19 +4214,17 @@ def _fill_labeled_holes_from_components_numba(
             queue_y[tail] = y
             queue_x[tail] = x
             tail += 1
-
     while head < tail:
         y = queue_y[head]
         x = queue_x[head]
         head += 1
         component = components[y, x]
         label = output[y, x]
-
         if (
             y > 0
             and components[y - 1, x] == component
             and fill_flags[component]
-            and output[y - 1, x] == 0
+            and (output[y - 1, x] == 0)
         ):
             output[y - 1, x] = label
             queue_y[tail] = y - 1
@@ -4567,7 +4234,7 @@ def _fill_labeled_holes_from_components_numba(
             y + 1 < height
             and components[y + 1, x] == component
             and fill_flags[component]
-            and output[y + 1, x] == 0
+            and (output[y + 1, x] == 0)
         ):
             output[y + 1, x] = label
             queue_y[tail] = y + 1
@@ -4577,7 +4244,7 @@ def _fill_labeled_holes_from_components_numba(
             x > 0
             and components[y, x - 1] == component
             and fill_flags[component]
-            and output[y, x - 1] == 0
+            and (output[y, x - 1] == 0)
         ):
             output[y, x - 1] = label
             queue_y[tail] = y
@@ -4587,22 +4254,17 @@ def _fill_labeled_holes_from_components_numba(
             x + 1 < width
             and components[y, x + 1] == component
             and fill_flags[component]
-            and output[y, x + 1] == 0
+            and (output[y, x + 1] == 0)
         ):
             output[y, x + 1] = label
             queue_y[tail] = y
             queue_x[tail] = x + 1
             tail += 1
-
     return output
 
 
 @njit(cache=True)
-def _first_adjacent_foreground_label_numba(
-    labels: np.ndarray,
-    y: int,
-    x: int,
-):
+def _first_adjacent_foreground_label_numba(labels: np.ndarray, y: int, x: int):
     height, width = labels.shape
     for dy in range(-1, 2):
         neighbor_y = y + dy
@@ -4640,7 +4302,6 @@ def _binary_shrink_2d_numba(mask: np.ndarray, tables: np.ndarray) -> np.ndarray:
             coords_y[count] = padded_y
             coords_x[count] = padded_x
             count += 1
-
     iterations = count
     for _iteration in range(iterations):
         pixel_count = count
@@ -4653,7 +4314,6 @@ def _binary_shrink_2d_numba(mask: np.ndarray, tables: np.ndarray) -> np.ndarray:
                 x = coords_x[coord_index]
                 if not current[y, x]:
                     continue
-
                 pattern_index = 0
                 bit = 1
                 for dy in range(-1, 2):
@@ -4661,7 +4321,6 @@ def _binary_shrink_2d_numba(mask: np.ndarray, tables: np.ndarray) -> np.ndarray:
                         if current[y + dy, x + dx]:
                             pattern_index += bit
                         bit <<= 1
-
                 if table[pattern_index]:
                     coords_y[new_count] = y
                     coords_x[new_count] = x
@@ -4673,10 +4332,8 @@ def _binary_shrink_2d_numba(mask: np.ndarray, tables: np.ndarray) -> np.ndarray:
             for removed_index in range(removed_count):
                 current[removed_y[removed_index], removed_x[removed_index]] = False
             count = new_count
-
         if count == pixel_count:
             break
-
     output = np.zeros((height, width), dtype=np.bool_)
     for coord_index in range(count):
         output[coords_y[coord_index] - 1, coords_x[coord_index] - 1] = True
@@ -4685,8 +4342,7 @@ def _binary_shrink_2d_numba(mask: np.ndarray, tables: np.ndarray) -> np.ndarray:
 
 @njit(cache=True)
 def _seed_points_from_components_numba(
-    components: np.ndarray,
-    component_count: int,
+    components: np.ndarray, component_count: int
 ) -> np.ndarray:
     height, width = components.shape
     counts = np.zeros(component_count + 1, dtype=np.int64)
@@ -4700,13 +4356,11 @@ def _seed_points_from_components_numba(
             counts[component] += 1
             sum_y[component] += y
             sum_x[component] += x
-
     best_distance = np.empty(component_count + 1, dtype=np.float64)
     best_y = np.full(component_count + 1, -1, dtype=np.int64)
     best_x = np.full(component_count + 1, -1, dtype=np.int64)
     for component in range(component_count + 1):
         best_distance[component] = np.inf
-
     for y in range(height):
         for x in range(width):
             component = components[y, x]
@@ -4721,7 +4375,6 @@ def _seed_points_from_components_numba(
                 best_distance[component] = distance
                 best_y[component] = y
                 best_x[component] = x
-
     seeds = np.zeros((height, width), dtype=np.bool_)
     for component in range(1, component_count + 1):
         y = best_y[component]
@@ -4738,36 +4391,32 @@ def _relabel_sequential_flat_numba(labels: np.ndarray) -> tuple[np.ndarray, int]
         label = labels[index]
         if label > max_label:
             max_label = label
-
     if max_label <= 0:
-        return np.zeros(labels.shape, dtype=np.int32), 0
-
+        return (np.zeros(labels.shape, dtype=np.int32), 0)
     present = np.zeros(max_label + 1, dtype=np.bool_)
     for index in range(labels.size):
         label = labels[index]
         if label > 0:
             present[label] = True
-
     mapping = np.zeros(max_label + 1, dtype=np.int32)
     count = 0
     for label in range(1, max_label + 1):
         if present[label]:
             count += 1
             mapping[label] = count
-
     output = np.zeros(labels.shape, dtype=np.int32)
     for index in range(labels.size):
         label = labels[index]
         if label > 0:
             output[index] = mapping[label]
-    return output, count
+    return (output, count)
 
 
 @njit(cache=True)
 def _relabel_sequential_numba(labels: np.ndarray) -> tuple[np.ndarray, int]:
     height, width = labels.shape
     flat_output, count = _relabel_sequential_flat_numba(labels.reshape(height * width))
-    return flat_output.reshape((height, width)), count
+    return (flat_output.reshape((height, width)), count)
 
 
 @njit(cache=True)
@@ -4776,13 +4425,11 @@ def _relabel_sequential_3d_numba(labels: np.ndarray) -> tuple[np.ndarray, int]:
     flat_output, count = _relabel_sequential_flat_numba(
         labels.reshape(plane_count * height * width)
     )
-    return flat_output.reshape((plane_count, height, width)), count
+    return (flat_output.reshape((plane_count, height, width)), count)
 
 
 class ExpandShrinkOperationStrategy(
-    EnumKeyedStrategyMixin[ExpandShrinkMode],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[ExpandShrinkMode], ABC, metaclass=AutoRegisterMeta
 ):
     """Nominal CellProfiler ExpandOrShrinkObjects operation strategy."""
 
@@ -4791,61 +4438,54 @@ class ExpandShrinkOperationStrategy(
     __enum_member_attr__ = "mode"
     mode: ClassVar[ExpandShrinkMode | None] = None
     strategy_label: ClassVar[str | None] = None
-    cellprofiler_operations: ClassVar[tuple[CellProfilerExpandShrinkOperation, ...]] = ()
+    cellprofiler_operations: ClassVar[
+        tuple[CellProfilerExpandShrinkOperation, ...]
+    ] = ()
 
     @classmethod
-    def for_mode(
-        cls,
-        mode: ExpandShrinkMode | str,
-    ) -> "ExpandShrinkOperationStrategy":
+    def for_mode(cls, mode: ExpandShrinkMode | str) -> "ExpandShrinkOperationStrategy":
         resolved = coerce_cellprofiler_enum(ExpandShrinkMode, mode)
         return cls.for_enum_member(resolved)
 
     @classmethod
     def mode_for_cellprofiler_operation(
-        cls,
-        operation: CellProfilerExpandShrinkOperation | str,
+        cls, operation: CellProfilerExpandShrinkOperation | str
     ) -> ExpandShrinkMode:
         """Return the runtime mode declared for one CellProfiler operation."""
         resolved = coerce_cellprofiler_enum(
-            CellProfilerExpandShrinkOperation,
-            operation,
+            CellProfilerExpandShrinkOperation, operation
         )
         matches = tuple(
-            strategy_type.mode
-            for strategy_type in cls.registered_strategy_types()
-            if resolved in strategy_type.cellprofiler_operations
+            (
+                strategy_type.mode
+                for strategy_type in cls.registered_strategy_types()
+                if resolved in strategy_type.cellprofiler_operations
+            )
         )
         if len(matches) != 1 or not isinstance(matches[0], ExpandShrinkMode):
             raise ValueError(
-                "Expected exactly one ExpandOrShrinkObjects mode for operation "
-                f"{resolved.value!r}; found {len(matches)}."
+                f"Expected exactly one ExpandOrShrinkObjects mode for operation {resolved.value!r}; found {len(matches)}."
             )
         return matches[0]
 
     @abstractmethod
     def apply(
-        self,
-        labels: np.ndarray,
-        *,
-        iterations: int,
-        fill_holes: bool,
+        self, labels: np.ndarray, *, iterations: int, fill_holes: bool
     ) -> np.ndarray:
         """Return transformed labels for this operation mode."""
 
     def output_domain(self, labels: np.ndarray) -> ObjectLabelDomain:
         """Return CP's semantic object domain for transformed labels."""
         return ObjectLabelDomain(
-            declared_object_count=(
-                ObjectLabelIdDomainStrategy.for_value(labels).max_present_id(labels)
-            ),
+            declared_object_count=ObjectLabelIdDomainStrategy.for_value(
+                labels
+            ).max_present_id(labels),
             scope=ObjectLabelDomainScope.PLANE,
         )
 
     @staticmethod
     def apply_label_planes(
-        labels: np.ndarray,
-        operation: Callable[[np.ndarray], np.ndarray],
+        labels: np.ndarray, operation: Callable[[np.ndarray], np.ndarray]
     ) -> np.ndarray:
         output = np.empty_like(labels, dtype=np.int32)
         label_planes = labels.reshape((-1, *labels.shape[-2:]))
@@ -4865,19 +4505,11 @@ class ExpandDefinedPixelsStrategy(ExpandShrinkOperationStrategy):
     )
 
     def apply(
-        self,
-        labels: np.ndarray,
-        *,
-        iterations: int,
-        fill_holes: bool,
+        self, labels: np.ndarray, *, iterations: int, fill_holes: bool
     ) -> np.ndarray:
         return self.expand_defined_pixels(labels, iterations)
 
-    def expand_defined_pixels(
-        self,
-        labels: np.ndarray,
-        iterations: int,
-    ) -> np.ndarray:
+    def expand_defined_pixels(self, labels: np.ndarray, iterations: int) -> np.ndarray:
         """Expand labeled objects by a defined number of pixels."""
         from scipy.ndimage import distance_transform_edt
 
@@ -4886,20 +4518,19 @@ class ExpandDefinedPixelsStrategy(ExpandShrinkOperationStrategy):
         labels_int = labels.astype(np.int32, copy=False)
         if labels_int.ndim > 2:
             return self.apply_label_planes(
-                labels_int,
-                lambda plane: self.expand_defined_pixels(plane, iterations),
+                labels_int, lambda plane: self.expand_defined_pixels(plane, iterations)
             )
         if _labels_are_points_numba(np.ascontiguousarray(labels_int)):
             return _expand_point_labels_defined_pixels_numba(
-                np.ascontiguousarray(labels_int),
-                int(iterations),
+                np.ascontiguousarray(labels_int), int(iterations)
             )
-
         result = labels_int.copy()
         background = labels_int == 0
         distances, indices = distance_transform_edt(background, return_indices=True)
         expand_mask = background & (distances <= iterations)
-        result[expand_mask] = labels_int[indices[0][expand_mask], indices[1][expand_mask]]
+        result[expand_mask] = labels_int[
+            indices[0][expand_mask], indices[1][expand_mask]
+        ]
         return result
 
 
@@ -4907,16 +4538,10 @@ class ExpandInfiniteStrategy(ExpandShrinkOperationStrategy):
     """Expand labeled objects until all background is assigned."""
 
     mode = ExpandShrinkMode.EXPAND_INFINITE
-    cellprofiler_operations = (
-        CellProfilerExpandShrinkOperation.EXPAND_UNTIL_TOUCHING,
-    )
+    cellprofiler_operations = (CellProfilerExpandShrinkOperation.EXPAND_UNTIL_TOUCHING,)
 
     def apply(
-        self,
-        labels: np.ndarray,
-        *,
-        iterations: int,
-        fill_holes: bool,
+        self, labels: np.ndarray, *, iterations: int, fill_holes: bool
     ) -> np.ndarray:
         return _expand_until_touching(labels)
 
@@ -4931,11 +4556,7 @@ class ShrinkDefinedPixelsStrategy(ExpandShrinkOperationStrategy):
     )
 
     def apply(
-        self,
-        labels: np.ndarray,
-        *,
-        iterations: int,
-        fill_holes: bool,
+        self, labels: np.ndarray, *, iterations: int, fill_holes: bool
     ) -> np.ndarray:
         return _shrink_defined_pixels(labels, iterations, fill_holes)
 
@@ -4944,30 +4565,19 @@ class ShrinkToPointStrategy(ExpandShrinkOperationStrategy):
     """Shrink each object to its center point."""
 
     mode = ExpandShrinkMode.SHRINK_TO_POINT
-    cellprofiler_operations = (
-        CellProfilerExpandShrinkOperation.SHRINK_TO_POINT,
-    )
+    cellprofiler_operations = (CellProfilerExpandShrinkOperation.SHRINK_TO_POINT,)
 
     def apply(
-        self,
-        labels: np.ndarray,
-        *,
-        iterations: int,
-        fill_holes: bool,
+        self, labels: np.ndarray, *, iterations: int, fill_holes: bool
     ) -> np.ndarray:
         return self.shrink_to_point(labels, fill_holes)
 
-    def shrink_to_point(
-        self,
-        labels: np.ndarray,
-        fill: bool,
-    ) -> np.ndarray:
+    def shrink_to_point(self, labels: np.ndarray, fill: bool) -> np.ndarray:
         """Shrink each labeled object to a single point at its centroid."""
         labels_int = labels.astype(np.int32, copy=False)
         if labels_int.ndim > 2:
             return self.apply_label_planes(
-                labels_int,
-                lambda plane: self.shrink_to_point(plane, fill),
+                labels_int, lambda plane: self.shrink_to_point(plane, fill)
             )
         if labels_int.size == 0 or int(labels_int.max()) <= 0:
             return np.zeros_like(labels_int)
@@ -4978,16 +4588,10 @@ class AddDividingLinesStrategy(ExpandShrinkOperationStrategy):
     """Remove touching object boundary pixels."""
 
     mode = ExpandShrinkMode.ADD_DIVIDING_LINES
-    cellprofiler_operations = (
-        CellProfilerExpandShrinkOperation.ADD_DIVIDING_LINES,
-    )
+    cellprofiler_operations = (CellProfilerExpandShrinkOperation.ADD_DIVIDING_LINES,)
 
     def apply(
-        self,
-        labels: np.ndarray,
-        *,
-        iterations: int,
-        fill_holes: bool,
+        self, labels: np.ndarray, *, iterations: int, fill_holes: bool
     ) -> np.ndarray:
         return _add_dividing_lines(labels)
 
@@ -4999,11 +4603,7 @@ class DespurStrategy(ExpandShrinkOperationStrategy):
     cellprofiler_operations = (CellProfilerExpandShrinkOperation.DESPUR,)
 
     def apply(
-        self,
-        labels: np.ndarray,
-        *,
-        iterations: int,
-        fill_holes: bool,
+        self, labels: np.ndarray, *, iterations: int, fill_holes: bool
     ) -> np.ndarray:
         return _despur(labels, iterations)
 
@@ -5015,11 +4615,7 @@ class SkeletonizeStrategy(ExpandShrinkOperationStrategy):
     cellprofiler_operations = (CellProfilerExpandShrinkOperation.SKELETONIZE,)
 
     def apply(
-        self,
-        labels: np.ndarray,
-        *,
-        iterations: int,
-        fill_holes: bool,
+        self, labels: np.ndarray, *, iterations: int, fill_holes: bool
     ) -> np.ndarray:
         return _skeletonize_labels(labels)
 
@@ -5030,7 +4626,6 @@ def _labels_are_points_numba(labels: np.ndarray) -> bool:
     max_label = _max_label_2d_numba(labels)
     if max_label <= 0:
         return True
-
     counts = np.zeros(max_label + 1, dtype=np.int64)
     for y in range(height):
         for x in range(width):
@@ -5045,8 +4640,7 @@ def _labels_are_points_numba(labels: np.ndarray) -> bool:
 
 @njit(cache=True)
 def _expand_point_labels_defined_pixels_numba(
-    labels: np.ndarray,
-    radius: int,
+    labels: np.ndarray, radius: int
 ) -> np.ndarray:
     height, width = labels.shape
     output = labels.copy()
@@ -5055,7 +4649,6 @@ def _expand_point_labels_defined_pixels_numba(
     best_distance = np.full(labels.shape, initial_distance, dtype=np.int32)
     best_y = np.full(labels.shape, 2147483647, dtype=np.int32)
     best_x = np.full(labels.shape, 2147483647, dtype=np.int32)
-
     for y in range(height):
         for x in range(width):
             label = int(labels[y, x])
@@ -5072,14 +4665,11 @@ def _expand_point_labels_defined_pixels_numba(
                     distance = dy * dy + dx * dx
                     if distance > radius_squared:
                         continue
-                    if (
-                        distance < best_distance[yy, xx]
-                        or (
-                            distance == best_distance[yy, xx]
-                            and (
-                                x < best_x[yy, xx]
-                                or (x == best_x[yy, xx] and y < best_y[yy, xx])
-                            )
+                    if distance < best_distance[yy, xx] or (
+                        distance == best_distance[yy, xx]
+                        and (
+                            x < best_x[yy, xx]
+                            or (x == best_x[yy, xx] and y < best_y[yy, xx])
                         )
                     ):
                         best_distance[yy, xx] = distance
@@ -5095,8 +4685,7 @@ def _expand_until_touching(labels: np.ndarray) -> np.ndarray:
 
     if labels.ndim > 2:
         return ExpandShrinkOperationStrategy.apply_label_planes(
-            labels,
-            _expand_until_touching,
+            labels, _expand_until_touching
         )
     if labels.max() == 0:
         return labels.copy()
@@ -5105,16 +4694,16 @@ def _expand_until_touching(labels: np.ndarray) -> np.ndarray:
     return labels[indices[0], indices[1]]
 
 
-def _shrink_defined_pixels(labels: np.ndarray, iterations: int, fill: bool) -> np.ndarray:
+def _shrink_defined_pixels(
+    labels: np.ndarray, iterations: int, fill: bool
+) -> np.ndarray:
     """Shrink labeled objects by a defined number of pixels."""
     if iterations <= 0:
         return labels.copy()
-
     original = labels.astype(np.int32, copy=False)
     if original.ndim > 2:
         return ExpandShrinkOperationStrategy.apply_label_planes(
-            original,
-            lambda plane: _shrink_defined_pixels(plane, iterations, fill),
+            original, lambda plane: _shrink_defined_pixels(plane, iterations, fill)
         )
     result = original.copy()
     for _ in range(iterations):
@@ -5128,16 +4717,13 @@ def _shrink_defined_pixels(labels: np.ndarray, iterations: int, fill: bool) -> n
             & (center == result[1:-1, 2:])
         )
         result = np.where(same_neighbors, result, 0).astype(np.int32, copy=False)
-
     if fill:
         _restore_eroded_objects_to_centroids(original, result)
-
     return result
 
 
 def _restore_eroded_objects_to_centroids(
-    original: np.ndarray,
-    eroded: np.ndarray,
+    original: np.ndarray, eroded: np.ndarray
 ) -> None:
     """Preserve one centroid pixel for labels fully removed by shrinking."""
     region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
@@ -5145,7 +4731,9 @@ def _restore_eroded_objects_to_centroids(
     )
     if region_props.label.size == 0:
         return
-    remaining_ids = set(int(label_id) for label_id in np.unique(eroded) if label_id > 0)
+    remaining_ids = set(
+        (int(label_id) for label_id in np.unique(eroded) if label_id > 0)
+    )
     for index, label_id in enumerate(region_props.label):
         label_int = int(label_id)
         if label_int in remaining_ids:
@@ -5159,7 +4747,6 @@ def _restore_eroded_objects_to_centroids(
 def _shrink_to_point_numba(labels: np.ndarray) -> np.ndarray:
     height, width = labels.shape
     max_label = _max_label_2d_numba(labels)
-
     y_sums = np.zeros(max_label + 1, dtype=np.float64)
     x_sums = np.zeros(max_label + 1, dtype=np.float64)
     counts = np.zeros(max_label + 1, dtype=np.int64)
@@ -5171,7 +4758,6 @@ def _shrink_to_point_numba(labels: np.ndarray) -> np.ndarray:
             y_sums[label] += float(y)
             x_sums[label] += float(x)
             counts[label] += 1
-
     result = np.zeros(labels.shape, dtype=np.int32)
     for label in range(1, max_label + 1):
         count = counts[label]
@@ -5197,8 +4783,7 @@ def _add_dividing_lines(labels: np.ndarray) -> np.ndarray:
 
     if labels.ndim > 2:
         return ExpandShrinkOperationStrategy.apply_label_planes(
-            labels,
-            _add_dividing_lines,
+            labels, _add_dividing_lines
         )
     if labels.max() == 0:
         return labels.copy()
@@ -5218,8 +4803,7 @@ def _despur(labels: np.ndarray, iterations: int) -> np.ndarray:
         return labels.copy()
     if labels.ndim > 2:
         return ExpandShrinkOperationStrategy.apply_label_planes(
-            labels,
-            lambda plane: _despur(plane, iterations),
+            labels, lambda plane: _despur(plane, iterations)
         )
     result = np.zeros_like(labels)
     struct = generate_binary_structure(2, 1)
@@ -5237,8 +4821,7 @@ def _skeletonize_labels(labels: np.ndarray) -> np.ndarray:
 
     if labels.ndim > 2:
         return ExpandShrinkOperationStrategy.apply_label_planes(
-            labels,
-            _skeletonize_labels,
+            labels, _skeletonize_labels
         )
     result = np.zeros_like(labels)
     for label_id in range(1, labels.max() + 1):
@@ -5271,15 +4854,16 @@ def expand_or_shrink_objects(
     labels_int = object_label_dense_array(labels, dtype=np.int32)
     operation = ExpandShrinkOperationStrategy.for_mode(mode)
     result_labels = operation.apply(
-        labels_int,
-        iterations=iterations,
-        fill_holes=fill_holes,
+        labels_int, iterations=iterations, fill_holes=fill_holes
     )
-    return image, object_label_value_with_dense_labels(
-        labels,
-        result_labels.astype(np.int32, copy=False),
-        domain_declaration=ExplicitObjectLabelDomainDeclaration(
-            operation.output_domain(result_labels)
+    return (
+        image,
+        object_label_value_with_dense_labels(
+            labels,
+            result_labels.astype(np.int32, copy=False),
+            domain_declaration=ExplicitObjectLabelDomainDeclaration(
+                operation.output_domain(result_labels)
+            ),
         ),
     )
 
@@ -5305,9 +4889,7 @@ class MaskObjectsPlaneResult:
 
 
 class MaskObjectsOverlapHandlingStrategy(
-    EnumKeyedStrategyMixin[MaskObjectsOverlapHandling],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[MaskObjectsOverlapHandling], ABC, metaclass=AutoRegisterMeta
 ):
     """Apply one MaskObjects overlap-handling policy to a label plane."""
 
@@ -5315,14 +4897,12 @@ class MaskObjectsOverlapHandlingStrategy(
     __skip_if_no_key__ = True
     __enum_member_attr__ = "overlap_handling"
     __enum_label_attr__ = MORPHOLOGY_STRATEGY_REGISTRY_KEY
-
     overlap_handling: ClassVar[MaskObjectsOverlapHandling | None] = None
     strategy_label: ClassVar[str | None] = None
 
     @classmethod
     def for_choice(
-        cls,
-        overlap_handling: MaskObjectsOverlapHandling,
+        cls, overlap_handling: MaskObjectsOverlapHandling
     ) -> "MaskObjectsOverlapHandlingStrategy":
         return cls.for_enum_member(overlap_handling)
 
@@ -5438,11 +5018,7 @@ class MaskObjectsRemovePercentageOverlapStrategy(MaskObjectsOverlapHandlingStrat
             )
         )
         with np.errstate(divide="ignore", invalid="ignore"):
-            fractions = np.where(
-                total_pixels > 0,
-                pixel_counts / total_pixels,
-                0,
-            )
+            fractions = np.where(total_pixels > 0, pixel_counts / total_pixels, 0)
         keep = fractions >= overlap_fraction
         keep_lookup = np.concatenate([[False], keep])
         masked_labels[~keep_lookup[label_image]] = 0
@@ -5450,9 +5026,7 @@ class MaskObjectsRemovePercentageOverlapStrategy(MaskObjectsOverlapHandlingStrat
 
 
 class MaskObjectsNumberingStrategy(
-    EnumKeyedStrategyMixin[MaskObjectsNumberingChoice],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[MaskObjectsNumberingChoice], ABC, metaclass=AutoRegisterMeta
 ):
     """Apply one MaskObjects label-numbering policy."""
 
@@ -5460,23 +5034,18 @@ class MaskObjectsNumberingStrategy(
     __skip_if_no_key__ = True
     __enum_member_attr__ = "numbering"
     __enum_label_attr__ = MORPHOLOGY_STRATEGY_REGISTRY_KEY
-
     numbering: ClassVar[MaskObjectsNumberingChoice | None] = None
     strategy_label: ClassVar[str | None] = None
 
     @classmethod
     def for_choice(
-        cls,
-        numbering: MaskObjectsNumberingChoice,
+        cls, numbering: MaskObjectsNumberingChoice
     ) -> "MaskObjectsNumberingStrategy":
         return cls.for_enum_member(numbering)
 
     @abstractmethod
     def apply(
-        self,
-        masked_labels: np.ndarray,
-        *,
-        nobjects: int,
+        self, masked_labels: np.ndarray, *, nobjects: int
     ) -> tuple[np.ndarray, int]:
         """Return labels and remaining object count after numbering."""
 
@@ -5485,34 +5054,24 @@ class MaskObjectsRenumberStrategy(MaskObjectsNumberingStrategy):
     numbering = MaskObjectsNumberingChoice.RENUMBER
 
     def apply(
-        self,
-        masked_labels: np.ndarray,
-        *,
-        nobjects: int,
+        self, masked_labels: np.ndarray, *, nobjects: int
     ) -> tuple[np.ndarray, int]:
         unique_labels = np.unique(masked_labels[masked_labels != 0])
         if len(unique_labels) == 0:
-            return masked_labels, 0
+            return (masked_labels, 0)
         indexer = np.zeros(nobjects + 1, dtype=np.int32)
-        indexer[unique_labels] = np.arange(
-            1,
-            len(unique_labels) + 1,
-            dtype=np.int32,
-        )
-        return indexer[masked_labels], len(unique_labels)
+        indexer[unique_labels] = np.arange(1, len(unique_labels) + 1, dtype=np.int32)
+        return (indexer[masked_labels], len(unique_labels))
 
 
 class MaskObjectsRetainNumberingStrategy(MaskObjectsNumberingStrategy):
     numbering = MaskObjectsNumberingChoice.RETAIN
 
     def apply(
-        self,
-        masked_labels: np.ndarray,
-        *,
-        nobjects: int,
+        self, masked_labels: np.ndarray, *, nobjects: int
     ) -> tuple[np.ndarray, int]:
         del nobjects
-        return masked_labels, len(np.unique(masked_labels[masked_labels != 0]))
+        return (masked_labels, len(np.unique(masked_labels[masked_labels != 0])))
 
 
 @dataclass(frozen=True, slots=True)
@@ -5526,20 +5085,14 @@ class MaskObjectsPlaneOperation:
     relationship_backend: ObjectRelationshipBackendStrategy
 
     def apply(
-        self,
-        label_image: np.ndarray,
-        mask: np.ndarray,
-        *,
-        slice_index: int = 0,
+        self, label_image: np.ndarray, mask: np.ndarray, *, slice_index: int = 0
     ) -> MaskObjectsPlaneResult:
         label_image = np.asarray(label_image, dtype=np.int32)
         _aligned_labels, mask = DenseObjectLabelMaskAligner(label_image, mask).aligned()
         label_image = _aligned_labels.astype(np.int32, copy=False)
-
         binary_mask = mask > 0 if mask.max() > 1 else mask.astype(bool)
         if self.invert_mask:
             binary_mask = ~binary_mask
-
         masked_labels = label_image.copy()
         nobjects = int(np.max(label_image))
         if nobjects == 0:
@@ -5552,11 +5105,9 @@ class MaskObjectsPlaneOperation:
                     objects_removed=0,
                 ),
                 relationships=ParentChildRelationshipPayload(
-                    parent_ids=(),
-                    child_ids=(),
+                    parent_ids=(), child_ids=()
                 ),
             )
-
         binary_mask = _size_binary_mask_like_labels(label_image, binary_mask)
         masked_labels = MaskObjectsOverlapHandlingStrategy.for_choice(
             self.overlap_handling
@@ -5570,7 +5121,6 @@ class MaskObjectsPlaneOperation:
         masked_labels, remaining_count = MaskObjectsNumberingStrategy.for_choice(
             self.numbering
         ).apply(masked_labels, nobjects=nobjects)
-
         return MaskObjectsPlaneResult(
             labels=masked_labels,
             stats=MaskObjectsStats(
@@ -5580,8 +5130,7 @@ class MaskObjectsPlaneOperation:
                 objects_removed=nobjects - remaining_count,
             ),
             relationships=self.relationship_backend.parent_child_payload_from_labels(
-                label_image,
-                masked_labels,
+                label_image, masked_labels
             ),
         )
 
@@ -5597,8 +5146,7 @@ class MaskObjectsOutputLabels:
         if not isinstance(self.source, (ObjectLabelPayload, ObjectLabelSet)):
             return self.labels
         plane_domains = dense_object_label_plane_id_domains(
-            self.labels,
-            domain_scope=ObjectLabelDomainScope.PLANE,
+            self.labels, domain_scope=ObjectLabelDomainScope.PLANE
         )
         return object_label_value_with_dense_labels(
             self.source,
@@ -5612,7 +5160,7 @@ class MaskObjectsOutputLabels:
         )
 
 
-@numpy_decorator
+@numpy_decorator(contract=ProcessingContract.FLEXIBLE)
 @special_inputs("labels", "mask")
 @special_outputs(
     (
@@ -5646,15 +5194,13 @@ def mask_objects(
     object,
 ]:
     """Mask object labels while preserving OpenHCS object-label domain semantics."""
-
     overlap_handling = coerce_cellprofiler_enum(
-        MaskObjectsOverlapHandling,
-        overlap_handling,
+        MaskObjectsOverlapHandling, overlap_handling
     )
     numbering = coerce_cellprofiler_enum(MaskObjectsNumberingChoice, numbering)
     label_array = object_label_dense_array(labels, dtype=np.int32)
     relationship_backend = ObjectRelationshipBackendStrategy.for_memory_type(
-        backend_provider=relationship_backend_provider,
+        backend_provider=relationship_backend_provider
     )
     operation = MaskObjectsPlaneOperation(
         overlap_handling=overlap_handling,
@@ -5663,30 +5209,29 @@ def mask_objects(
         invert_mask=invert_mask,
         relationship_backend=relationship_backend,
     )
-
     stack_slice_count = ObjectLabelRuntimeSliceStackContract.runtime_slice_count(labels)
     if stack_slice_count is None and label_array.ndim == 3:
         stack_slice_count = int(label_array.shape[0])
     if stack_slice_count is not None and stack_slice_count > 1:
         stack_alignment = DenseObjectLabelMaskAligner(
-            label_array,
-            mask,
+            label_array, mask
         ).aligned_stack_context(stack_slice_count)
         if stack_alignment is not None:
             plane_results = tuple(
-                operation.apply(
-                    stack_alignment.label_stack[slice_index],
-                    stack_alignment.mask_stack[slice_index],
-                    slice_index=slice_index,
+                (
+                    operation.apply(
+                        stack_alignment.label_stack[slice_index],
+                        stack_alignment.mask_stack[slice_index],
+                        slice_index=slice_index,
+                    )
+                    for slice_index in range(stack_slice_count)
                 )
-                for slice_index in range(stack_slice_count)
             )
             masked_stack = stack_alignment.restore_label_stack(
                 np.stack([result.labels for result in plane_results], axis=0)
             )
             plane_domains = dense_object_label_plane_id_domains(
-                masked_stack,
-                domain_scope=ObjectLabelDomainScope.PLANE,
+                masked_stack, domain_scope=ObjectLabelDomainScope.PLANE
             )
             masked_payload = object_label_value_with_dense_labels(
                 labels,
@@ -5700,19 +5245,25 @@ def mask_objects(
             )
             relationships = ParentChildRelationshipPayload(
                 parent_ids=tuple(
-                    parent_id
-                    for result in plane_results
-                    for parent_id in result.relationships.parent_ids
+                    (
+                        parent_id
+                        for result in plane_results
+                        for parent_id in result.relationships.parent_ids
+                    )
                 ),
                 child_ids=tuple(
-                    child_id
-                    for result in plane_results
-                    for child_id in result.relationships.child_ids
+                    (
+                        child_id
+                        for result in plane_results
+                        for child_id in result.relationships.child_ids
+                    )
                 ),
                 slice_indices=tuple(
-                    slice_index
-                    for slice_index, result in enumerate(plane_results)
-                    for _child_id in result.relationships.child_ids
+                    (
+                        slice_index
+                        for slice_index, result in enumerate(plane_results)
+                        for _child_id in result.relationships.child_ids
+                    )
                 ),
                 slice_count=stack_slice_count,
             )
@@ -5722,36 +5273,35 @@ def mask_objects(
                 relationships,
                 masked_payload,
             )
-
     try:
-        label_image = DenseObjectLabelStack.from_labels(
-            label_array
-        ).project_xy_plane_without_relabeling().astype(
-            np.int32,
-            copy=False,
+        label_image = (
+            DenseObjectLabelStack.from_labels(label_array)
+            .project_xy_plane_without_relabeling()
+            .astype(np.int32, copy=False)
         )
     except ValueError as exc:
         raise ValueError(
-            "MaskObjects could not project object labels; "
-            f"labels shape={label_array.shape!r}, "
-            f"mask shape={mask.shape!r}."
+            f"MaskObjects could not project object labels; labels shape={label_array.shape!r}, mask shape={mask.shape!r}."
         ) from exc
     result = operation.apply(label_image, mask)
     masked_labels = MaskObjectsOutputLabels(labels, result.labels).value()
-    return image, result.stats, result.relationships, masked_labels
+    return (image, result.stats, result.relationships, masked_labels)
 
 
 def _size_binary_mask_like_labels(
-    labels: np.ndarray,
-    binary_mask: np.ndarray,
+    labels: np.ndarray, binary_mask: np.ndarray
 ) -> np.ndarray:
     """Return a binary mask sized like CP size_similarly(labels, mask)."""
     if binary_mask.shape == labels.shape:
         return binary_mask
     result = np.zeros(labels.shape, dtype=bool)
     common_slices = tuple(
-        slice(0, min(label_extent, mask_extent))
-        for label_extent, mask_extent in zip(labels.shape, binary_mask.shape, strict=False)
+        (
+            slice(0, min(label_extent, mask_extent))
+            for label_extent, mask_extent in zip(
+                labels.shape, binary_mask.shape, strict=False
+            )
+        )
     )
     if not common_slices:
         return result
@@ -5771,9 +5321,7 @@ class CombineObjectsStats:
 
 
 class CombineObjectsStrategy(
-    EnumKeyedStrategyMixin[CombineObjectsMethod],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[CombineObjectsMethod], ABC, metaclass=AutoRegisterMeta
 ):
     """Nominal object-label combination strategy."""
 
@@ -5784,10 +5332,7 @@ class CombineObjectsStrategy(
     method: ClassVar[CombineObjectsMethod | None] = None
 
     @classmethod
-    def for_method(
-        cls,
-        method: CombineObjectsMethod | str,
-    ) -> "CombineObjectsStrategy":
+    def for_method(cls, method: CombineObjectsMethod | str) -> "CombineObjectsStrategy":
         return cls.for_enum_member(
             coerce_cellprofiler_enum(CombineObjectsMethod, method)
         )
@@ -5797,9 +5342,7 @@ class CombineObjectsStrategy(
         """Return combined labels for this policy."""
 
     def result(
-        self,
-        labels_x: np.ndarray,
-        labels_y: np.ndarray,
+        self, labels_x: np.ndarray, labels_y: np.ndarray
     ) -> tuple[CombineObjectsStats, np.ndarray]:
         combined_labels = self.combine(labels_x, labels_y)
         method = type(self).method
@@ -5887,7 +5430,7 @@ class SegmentCombineObjectsStrategy(CombineObjectsStrategy):
         return watershed(-distance, markers, mask=binary_x).astype(np.int32)
 
 
-@numpy_decorator
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
 @special_outputs(
     (
         "combine_stats",
@@ -5905,17 +5448,15 @@ class SegmentCombineObjectsStrategy(CombineObjectsStrategy):
     ("labels", segmentation_mask_rois()),
 )
 def combineobjects(
-    image: np.ndarray,
-    method: CombineObjectsMethod | str = CombineObjectsMethod.MERGE,
+    image: np.ndarray, method: CombineObjectsMethod | str = CombineObjectsMethod.MERGE
 ) -> tuple[np.ndarray, CombineObjectsStats, np.ndarray]:
     """Combine objects from two label images using CellProfiler policies."""
     labels_x = object_label_dense_array(image[0], dtype=np.int32)
     labels_y = object_label_dense_array(image[1], dtype=np.int32)
     stats, combined_labels = CombineObjectsStrategy.for_method(method).result(
-        labels_x,
-        labels_y,
+        labels_x, labels_y
     )
-    return labels_x.astype(np.float32), stats, combined_labels
+    return (labels_x.astype(np.float32), stats, combined_labels)
 
 
 class SplitOrMergeOperation(Enum):
@@ -5975,23 +5516,19 @@ class SplitOrMergeRequest:
 
 
 class SplitOrMergeOperationStrategy(
-    EnumKeyedStrategyMixin[SplitOrMergeOperation],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[SplitOrMergeOperation], ABC, metaclass=AutoRegisterMeta
 ):
     """Nominal implementation for one SplitOrMergeObjects operation."""
 
     __registry_key__ = MORPHOLOGY_STRATEGY_REGISTRY_KEY
     __skip_if_no_key__ = True
     __enum_member_attr__ = "operation"
-
     operation: ClassVar[SplitOrMergeOperation]
     strategy_label: ClassVar[str | None] = None
 
     @classmethod
     def for_operation(
-        cls,
-        operation: SplitOrMergeOperation | str,
+        cls, operation: SplitOrMergeOperation | str
     ) -> "SplitOrMergeOperationStrategy":
         return cls.for_enum_member(
             coerce_cellprofiler_enum(SplitOrMergeOperation, operation)
@@ -6009,8 +5546,7 @@ class SplitObjectsStrategy(SplitOrMergeOperationStrategy):
         from scipy.ndimage import label as scipy_label
 
         output_labels, _ = scipy_label(
-            request.labels > 0,
-            structure=np.ones((3, 3), bool),
+            request.labels > 0, structure=np.ones((3, 3), bool)
         )
         return output_labels
 
@@ -6023,29 +5559,25 @@ class MergeObjectsStrategy(SplitOrMergeOperationStrategy):
             raise ValueError(
                 f"MergeObjectsStrategy cannot execute {request.operation!r}."
             )
-        return SplitOrMergeMergeMethodStrategy.for_method(
-            request.merge_method,
-        ).merge(request)
+        return SplitOrMergeMergeMethodStrategy.for_method(request.merge_method).merge(
+            request
+        )
 
 
 class SplitOrMergeMergeMethodStrategy(
-    EnumKeyedStrategyMixin[SplitOrMergeMergeMethod],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[SplitOrMergeMergeMethod], ABC, metaclass=AutoRegisterMeta
 ):
     """Nominal implementation for one SplitOrMergeObjects merge method."""
 
     __registry_key__ = MORPHOLOGY_STRATEGY_REGISTRY_KEY
     __skip_if_no_key__ = True
     __enum_member_attr__ = "method"
-
     method: ClassVar[SplitOrMergeMergeMethod]
     strategy_label: ClassVar[str | None] = None
 
     @classmethod
     def for_method(
-        cls,
-        method: SplitOrMergeMergeMethod | str,
+        cls, method: SplitOrMergeMergeMethod | str
     ) -> "SplitOrMergeMergeMethodStrategy":
         return cls.for_enum_member(
             coerce_cellprofiler_enum(SplitOrMergeMergeMethod, method)
@@ -6065,11 +5597,9 @@ class DistanceSplitOrMergeMergeMethodStrategy(SplitOrMergeMergeMethodStrategy):
         mask = request.labels > 0
         if request.distance_threshold > 0:
             distance = distance_transform_edt(~mask)
-            mask = distance < (request.distance_threshold / 2.0 + 1)
-
+            mask = distance < request.distance_threshold / 2.0 + 1
         output_labels, _ = scipy_label(mask, structure=np.ones((3, 3), bool))
         output_labels[request.labels == 0] = 0
-
         if request.use_guide_image:
             output_labels = SplitOrMergeGuideImageFilter().filter(
                 request.labels,
@@ -6078,7 +5608,6 @@ class DistanceSplitOrMergeMergeMethodStrategy(SplitOrMergeMergeMethodStrategy):
                 request.minimum_intensity_fraction,
                 request.intensity_method,
             )
-
         return DenseObjectLabelConsecutiveRelabelingStrategy.for_labels(
             output_labels
         ).relabel(output_labels)
@@ -6089,8 +5618,9 @@ class ParentSplitOrMergeMergeMethodStrategy(SplitOrMergeMergeMethodStrategy):
 
     def merge(self, request: SplitOrMergeRequest) -> np.ndarray:
         if request.parent_labels is None:
-            raise ValueError("parent_labels are required when merge_method is PER_PARENT")
-
+            raise ValueError(
+                "parent_labels are required when merge_method is PER_PARENT"
+            )
         from skimage.measure import regionprops
 
         output_labels = np.zeros_like(request.labels)
@@ -6102,7 +5632,6 @@ class ParentSplitOrMergeMergeMethodStrategy(SplitOrMergeMergeMethodStrategy):
                 output_labels[child_mask] = np.bincount(parent_values).argmax()
             else:
                 output_labels[child_mask] = prop.label
-
         if request.output_object_type == SplitOrMergeOutputObjectType.CONVEX_HULL:
             output_labels = SplitOrMergeConvexHull().labels(
                 output_labels,
@@ -6111,7 +5640,6 @@ class ParentSplitOrMergeMergeMethodStrategy(SplitOrMergeMergeMethodStrategy):
                     backend_provider=request.morphology_backend_provider,
                 ),
             )
-
         return DenseObjectLabelConsecutiveRelabelingStrategy.for_labels(
             output_labels
         ).relabel(output_labels)
@@ -6130,19 +5658,14 @@ class SplitOrMergeGuideImageFilter:
     ) -> np.ndarray:
         if intensity_method is not SplitOrMergeIntensityMethod.CLOSEST_POINT:
             return merged_labels.copy()
-
         from scipy.ndimage import distance_transform_edt, label as scipy_label
 
-        _, indices = distance_transform_edt(
-            original_labels == 0,
-            return_indices=True,
-        )
+        _, indices = distance_transform_edt(original_labels == 0, return_indices=True)
         closest_i, closest_j = indices
         object_intensity = image[closest_i, closest_j] * minimum_intensity_fraction
         valid_mask = (original_labels > 0) | (image >= object_intensity)
         output_labels, _ = scipy_label(
-            valid_mask & (merged_labels > 0),
-            structure=np.ones((3, 3), bool),
+            valid_mask & (merged_labels > 0), structure=np.ones((3, 3), bool)
         )
         output_labels[original_labels == 0] = 0
         return output_labels
@@ -6152,28 +5675,23 @@ class SplitOrMergeConvexHull:
     """Convex-hull fill policy for per-parent merged labels."""
 
     def labels(
-        self,
-        labels: np.ndarray,
-        morphology: MorphologyBackendStrategy,
+        self, labels: np.ndarray, morphology: MorphologyBackendStrategy
     ) -> np.ndarray:
         output = np.zeros_like(labels)
         unique_labels = np.unique(labels)
         unique_labels = unique_labels[unique_labels > 0]
-
         for label_id in unique_labels:
             mask = labels == label_id
             coords = np.argwhere(mask)
             if len(coords) < 3:
                 output[mask] = label_id
                 continue
-
             min_row = int(coords[:, 0].min())
             max_row = int(coords[:, 0].max()) + 1
             min_col = int(coords[:, 1].min())
             max_col = int(coords[:, 1].max()) + 1
             hull = morphology.convex_hull_image(mask[min_row:max_row, min_col:max_col])
             output[min_row:max_row, min_col:max_col][hull] = label_id
-
         return output
 
 
@@ -6199,9 +5717,7 @@ def split_or_merge_objects(
     labels: np.ndarray,
     operation: SplitOrMergeOperation = SplitOrMergeOperation.MERGE,
     merge_method: SplitOrMergeMergeMethod = SplitOrMergeMergeMethod.DISTANCE,
-    output_object_type: SplitOrMergeOutputObjectType = (
-        SplitOrMergeOutputObjectType.DISCONNECTED
-    ),
+    output_object_type: SplitOrMergeOutputObjectType = SplitOrMergeOutputObjectType.DISCONNECTED,
     distance_threshold: int = 0,
     use_guide_image: bool = False,
     minimum_intensity_fraction: float = 0.9,
@@ -6222,21 +5738,19 @@ def split_or_merge_objects(
         operation=coerce_cellprofiler_enum(SplitOrMergeOperation, operation),
         merge_method=coerce_cellprofiler_enum(SplitOrMergeMergeMethod, merge_method),
         output_object_type=coerce_cellprofiler_enum(
-            SplitOrMergeOutputObjectType,
-            output_object_type,
+            SplitOrMergeOutputObjectType, output_object_type
         ),
         distance_threshold=distance_threshold,
         use_guide_image=use_guide_image,
         minimum_intensity_fraction=minimum_intensity_fraction,
         intensity_method=coerce_cellprofiler_enum(
-            SplitOrMergeIntensityMethod,
-            intensity_method,
+            SplitOrMergeIntensityMethod, intensity_method
         ),
         parent_labels=parent_array,
         morphology_backend_provider=morphology_backend_provider,
     )
     output_labels = SplitOrMergeOperationStrategy.for_operation(
-        request.operation,
+        request.operation
     ).execute(request)
     stats = SplitOrMergeStats(
         slice_index=0,
@@ -6244,7 +5758,7 @@ def split_or_merge_objects(
         output_object_count=int(positive_dense_label_count(output_labels)),
         operation=request.operation.value,
     )
-    return image, stats, output_labels.astype(np.int32)
+    return (image, stats, output_labels.astype(np.int32))
 
 
 def positive_dense_label_count(labels: np.ndarray) -> int:
@@ -6257,7 +5771,7 @@ def dense_label_area_statistics(labels: np.ndarray) -> tuple[float, float, float
     areas = np.bincount(np.asarray(labels).ravel())[1:]
     positive_areas = areas[areas > 0]
     if positive_areas.size == 0:
-        return 0.0, 0.0, 0.0
+        return (0.0, 0.0, 0.0)
     return (
         float(np.mean(positive_areas)),
         float(np.median(positive_areas)),
@@ -6266,84 +5780,54 @@ def dense_label_area_statistics(labels: np.ndarray) -> tuple[float, float, float
 
 
 def filter_labels_below_minimum_diameter(
-    labels: np.ndarray,
-    min_diameter: float,
+    labels: np.ndarray, min_diameter: float
 ) -> np.ndarray:
-    min_area = np.pi * (float(min_diameter) ** 2) / 4.0
+    min_area = np.pi * float(min_diameter) ** 2 / 4.0
     labels_array = np.ascontiguousarray(labels)
     areas = np.bincount(np.asarray(labels_array).ravel())
     return filter_labels_by_area_numba(
-        labels_array,
-        np.ascontiguousarray(areas),
-        float(min_area),
-        np.inf,
+        labels_array, np.ascontiguousarray(areas), float(min_area), np.inf
     )
 
 
 def filter_labels_above_maximum_diameter(
-    labels: np.ndarray,
-    max_diameter: float,
+    labels: np.ndarray, max_diameter: float
 ) -> np.ndarray:
-    max_area = np.pi * (float(max_diameter) ** 2) / 4.0
+    max_area = np.pi * float(max_diameter) ** 2 / 4.0
     labels_array = np.ascontiguousarray(labels)
     areas = np.bincount(np.asarray(labels_array).ravel())
     return filter_labels_by_area_numba(
-        labels_array,
-        np.ascontiguousarray(areas),
-        0.0,
-        float(max_area),
+        labels_array, np.ascontiguousarray(areas), 0.0, float(max_area)
     )
 
 
 def filter_labels_by_diameter_range(
-    labels: np.ndarray,
-    min_diameter: float,
-    max_diameter: float,
+    labels: np.ndarray, min_diameter: float, max_diameter: float
 ) -> tuple[np.ndarray, np.ndarray]:
-    min_area = np.pi * (float(min_diameter) ** 2) / 4.0
-    max_area = np.pi * (float(max_diameter) ** 2) / 4.0
+    min_area = np.pi * float(min_diameter) ** 2 / 4.0
+    max_area = np.pi * float(max_diameter) ** 2 / 4.0
     labels_array = np.ascontiguousarray(labels)
     areas = np.ascontiguousarray(np.bincount(np.asarray(labels_array).ravel()))
     return filter_labels_by_diameter_range_numba(
-        labels_array,
-        areas,
-        float(min_area),
-        float(max_area),
+        labels_array, areas, float(min_area), float(max_area)
     )
 
 
 def filter_labels_by_area_numba(
-    labels: np.ndarray,
-    areas: np.ndarray,
-    min_area: float,
-    max_area: float,
+    labels: np.ndarray, areas: np.ndarray, min_area: float, max_area: float
 ) -> np.ndarray:
     if labels.ndim == 2:
-        return _filter_labels_by_area_2d_numba(
-            labels,
-            areas,
-            min_area,
-            max_area,
-        )
+        return _filter_labels_by_area_2d_numba(labels, areas, min_area, max_area)
     if labels.ndim == 3:
-        return _filter_labels_by_area_3d_numba(
-            labels,
-            areas,
-            min_area,
-            max_area,
-        )
+        return _filter_labels_by_area_3d_numba(labels, areas, min_area, max_area)
     raise ValueError(
-        "IdentifyPrimaryObjects area filtering expects 2-D planes or stacked "
-        f"planes, got shape {labels.shape!r}."
+        f"IdentifyPrimaryObjects area filtering expects 2-D planes or stacked planes, got shape {labels.shape!r}."
     )
 
 
 @njit(cache=True)
 def _filter_labels_by_area_2d_numba(
-    labels: np.ndarray,
-    areas: np.ndarray,
-    min_area: float,
-    max_area: float,
+    labels: np.ndarray, areas: np.ndarray, min_area: float, max_area: float
 ) -> np.ndarray:
     output = labels.copy()
     height, width = labels.shape
@@ -6360,10 +5844,7 @@ def _filter_labels_by_area_2d_numba(
 
 @njit(cache=True)
 def _filter_labels_by_area_3d_numba(
-    labels: np.ndarray,
-    areas: np.ndarray,
-    min_area: float,
-    max_area: float,
+    labels: np.ndarray, areas: np.ndarray, min_area: float, max_area: float
 ) -> np.ndarray:
     output = labels.copy()
     plane_count, height, width = labels.shape
@@ -6380,37 +5861,24 @@ def _filter_labels_by_area_3d_numba(
 
 
 def filter_labels_by_diameter_range_numba(
-    labels: np.ndarray,
-    areas: np.ndarray,
-    min_area: float,
-    max_area: float,
+    labels: np.ndarray, areas: np.ndarray, min_area: float, max_area: float
 ) -> tuple[np.ndarray, np.ndarray]:
     if labels.ndim == 2:
         return _filter_labels_by_diameter_range_2d_numba(
-            labels,
-            areas,
-            min_area,
-            max_area,
+            labels, areas, min_area, max_area
         )
     if labels.ndim == 3:
         return _filter_labels_by_diameter_range_3d_numba(
-            labels,
-            areas,
-            min_area,
-            max_area,
+            labels, areas, min_area, max_area
         )
     raise ValueError(
-        "IdentifyPrimaryObjects size filtering expects 2-D planes or stacked "
-        f"planes, got shape {labels.shape!r}."
+        f"IdentifyPrimaryObjects size filtering expects 2-D planes or stacked planes, got shape {labels.shape!r}."
     )
 
 
 @njit(cache=True)
 def _filter_labels_by_diameter_range_2d_numba(
-    labels: np.ndarray,
-    areas: np.ndarray,
-    min_area: float,
-    max_area: float,
+    labels: np.ndarray, areas: np.ndarray, min_area: float, max_area: float
 ) -> tuple[np.ndarray, np.ndarray]:
     small_removed = labels.copy()
     final = labels.copy()
@@ -6426,15 +5894,12 @@ def _filter_labels_by_diameter_range_2d_numba(
                 final[row, col] = 0
             elif area > max_area:
                 final[row, col] = 0
-    return small_removed, final
+    return (small_removed, final)
 
 
 @njit(cache=True)
 def _filter_labels_by_diameter_range_3d_numba(
-    labels: np.ndarray,
-    areas: np.ndarray,
-    min_area: float,
-    max_area: float,
+    labels: np.ndarray, areas: np.ndarray, min_area: float, max_area: float
 ) -> tuple[np.ndarray, np.ndarray]:
     small_removed = labels.copy()
     final = labels.copy()
@@ -6451,7 +5916,7 @@ def _filter_labels_by_diameter_range_3d_numba(
                     final[plane_index, row, col] = 0
                 elif area > max_area:
                     final[plane_index, row, col] = 0
-    return small_removed, final
+    return (small_removed, final)
 
 
 def filter_border_objects(
@@ -6464,11 +5929,8 @@ def filter_border_objects(
     labeled_array = np.asarray(labeled_image)
     if labeled_array.ndim > 2:
         return filter_border_objects_planewise(
-            labeled_array,
-            image_mask=image_mask,
-            image_metadata=image_metadata,
+            labeled_array, image_mask=image_mask, image_metadata=image_metadata
         )
-
     height, width = labeled_array.shape[:2]
     physical_edges = image_metadata.physical_border_edges_for_shape((height, width))
     output, removed_physical = filter_physical_border_objects_numba(
@@ -6480,10 +5942,8 @@ def filter_border_objects(
     )
     if removed_physical:
         return output
-
     if image_mask is None or image_metadata.mask_defines_border is False:
         return output
-
     from scipy import ndimage as ndi
 
     max_label = int(output.max())
@@ -6492,10 +5952,7 @@ def filter_border_objects(
     mask = np.asarray(image_mask, dtype=bool)
     mask_border = np.logical_not(ndi.binary_erosion(mask, border_value=1)) & mask
     masked_border_labels = output[mask_border].astype(np.int64, copy=False)
-    masked_border_histogram = np.bincount(
-        masked_border_labels,
-        minlength=max_label + 1,
-    )
+    masked_border_histogram = np.bincount(masked_border_labels, minlength=max_label + 1)
     labels_to_remove = np.flatnonzero(masked_border_histogram[1:] > 0) + 1
     if labels_to_remove.size:
         output[np.isin(output, labels_to_remove)] = 0
@@ -6522,8 +5979,7 @@ def filter_border_objects_planewise(
 
 
 def mask_planes_for_labels(
-    image_mask: np.ndarray | None,
-    plane_count: int,
+    image_mask: np.ndarray | None, plane_count: int
 ) -> np.ndarray | None:
     if image_mask is None:
         return None
@@ -6536,24 +5992,18 @@ def mask_planes_for_labels(
     if mask_planes.shape[0] == 1:
         return np.broadcast_to(mask_planes[0], (plane_count, *mask_planes.shape[-2:]))
     raise ValueError(
-        "IdentifyPrimaryObjects mask stack must align with label stack; got "
-        f"{mask.shape!r} for {plane_count} label planes."
+        f"IdentifyPrimaryObjects mask stack must align with label stack; got {mask.shape!r} for {plane_count} label planes."
     )
 
 
 @njit(cache=True)
 def filter_physical_border_objects_numba(
-    labels: np.ndarray,
-    top: bool,
-    bottom: bool,
-    left: bool,
-    right: bool,
+    labels: np.ndarray, top: bool, bottom: bool, left: bool, right: bool
 ) -> tuple[np.ndarray, bool]:
     height, width = labels.shape
     max_label = _max_label_2d_numba(labels)
     if max_label <= 0:
-        return labels, False
-
+        return (labels, False)
     remove = np.zeros(max_label + 1, dtype=np.bool_)
     if top and height > 0:
         for x in range(width):
@@ -6575,22 +6025,20 @@ def filter_physical_border_objects_numba(
             label = int(labels[y, width - 1])
             if label > 0:
                 remove[label] = True
-
     any_removed = False
     for label in range(1, max_label + 1):
         if remove[label]:
             any_removed = True
             break
     if not any_removed:
-        return labels, False
-
+        return (labels, False)
     output = labels.copy()
     for y in range(height):
         for x in range(width):
             label = int(labels[y, x])
             if label > 0 and remove[label]:
                 output[y, x] = 0
-    return output, True
+    return (output, True)
 
 
 def profile_function_runtime_enabled() -> bool:
@@ -6600,7 +6048,7 @@ def profile_function_runtime_enabled() -> bool:
 def log_function_runtime_profile(label: str, seconds: float, **fields: object) -> None:
     if not profile_function_runtime_enabled():
         return
-    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    field_text = " ".join((f"{key}={value}" for key, value in fields.items()))
     logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
@@ -6639,90 +6087,68 @@ def erode_objects(
     total_started_at = time.perf_counter()
     labels = object_label_dense_array(labels, dtype=np.int32)
     footprint = adapt_structuring_element_rank(
-        build_structuring_element(structuring_element, size),
-        labels.ndim,
+        build_structuring_element(structuring_element, size), labels.ndim
     )
-
     phase_started_at = time.perf_counter()
     input_labels = np.unique(labels)
     input_labels = input_labels[input_labels != 0]
     input_count = len(input_labels)
     log_function_runtime_profile(
-        "erode_objects_input_labels",
-        time.perf_counter() - phase_started_at,
+        "erode_objects_input_labels", time.perf_counter() - phase_started_at
     )
-
     phase_started_at = time.perf_counter()
     eroded = MorphologyBackendStrategy.for_memory_type().erode_labeled_objects(
-        labels,
-        footprint,
+        labels, footprint
     )
     log_function_runtime_profile(
-        "erode_objects_backend",
-        time.perf_counter() - phase_started_at,
+        "erode_objects_backend", time.perf_counter() - phase_started_at
     )
-
     if preserve_midpoints:
         phase_started_at = time.perf_counter()
         missing_labels = np.setxor1d(labels, eroded)
         preservation = MidpointPreservationPolicy.for_footprint(footprint)
-        eroded = preservation.preserve_missing_labels(
-            labels,
-            eroded,
-            missing_labels,
-        )
+        eroded = preservation.preserve_missing_labels(labels, eroded, missing_labels)
         log_function_runtime_profile(
             "erode_objects_preserve_midpoints",
             time.perf_counter() - phase_started_at,
             missing=len(missing_labels),
             policy=type(preservation).__name__,
         )
-
     if relabel_objects:
         phase_started_at = time.perf_counter()
         eroded = relabel(eroded > 0).astype(labels.dtype)
         log_function_runtime_profile(
-            "erode_objects_relabel",
-            time.perf_counter() - phase_started_at,
+            "erode_objects_relabel", time.perf_counter() - phase_started_at
         )
-
     phase_started_at = time.perf_counter()
     output_labels = np.unique(eroded)
     output_labels = output_labels[output_labels != 0]
     output_count = len(output_labels)
     log_function_runtime_profile(
-        "erode_objects_output_labels",
-        time.perf_counter() - phase_started_at,
+        "erode_objects_output_labels", time.perf_counter() - phase_started_at
     )
-
     stats = ErosionStats(
         slice_index=0,
         input_object_count=input_count,
         output_object_count=output_count,
         objects_removed=input_count - output_count,
     )
-
     phase_started_at = time.perf_counter()
     relationship = object_label_lineage_payload(labels, eroded)
     log_function_runtime_profile(
-        "erode_objects_lineage",
-        time.perf_counter() - phase_started_at,
+        "erode_objects_lineage", time.perf_counter() - phase_started_at
     )
     log_function_runtime_profile(
-        "erode_objects_total",
-        time.perf_counter() - total_started_at,
+        "erode_objects_total", time.perf_counter() - total_started_at
     )
-    return image, stats, relationship, eroded
+    return (image, stats, relationship, eroded)
 
 
 class MidpointPreservationPolicy:
     """CellProfiler midpoint preservation for labels lost during erosion."""
 
     def preserve_missing_labels(
-        self,
-        labels: np.ndarray,
-        eroded: np.ndarray,
-        missing_labels: np.ndarray,
+        self, labels: np.ndarray, eroded: np.ndarray, missing_labels: np.ndarray
     ) -> np.ndarray:
         for label_id in missing_labels:
             label_positions = np.argwhere(labels == label_id)
@@ -6733,21 +6159,24 @@ class MidpointPreservationPolicy:
             expanded_lower = np.maximum(lower - 1, 0)
             expanded_upper = np.minimum(upper + 1, labels.shape)
             expanded_slices = tuple(
-                slice(int(start), int(stop))
-                for start, stop in zip(expanded_lower, expanded_upper, strict=True)
+                (
+                    slice(int(start), int(stop))
+                    for start, stop in zip(expanded_lower, expanded_upper, strict=True)
+                )
             )
             inner_slices = tuple(
-                slice(int(start - expanded_start), int(stop - expanded_start))
-                for start, stop, expanded_start in zip(
-                    lower,
-                    upper,
-                    expanded_lower,
-                    strict=True,
+                (
+                    slice(int(start - expanded_start), int(stop - expanded_start))
+                    for start, stop, expanded_start in zip(
+                        lower, upper, expanded_lower, strict=True
+                    )
                 )
             )
             output_slices = tuple(
-                slice(int(start), int(stop))
-                for start, stop in zip(lower, upper, strict=True)
+                (
+                    slice(int(start), int(stop))
+                    for start, stop in zip(lower, upper, strict=True)
+                )
             )
             binary = labels[expanded_slices] == label_id
             midpoint = self.midpoint_distance(binary)[inner_slices]
@@ -6781,10 +6210,7 @@ class SimpleDiskMidpointPreservationPolicy(MidpointPreservationPolicy):
         )
 
     def preserve_missing_labels(
-        self,
-        labels: np.ndarray,
-        eroded: np.ndarray,
-        missing_labels: np.ndarray,
+        self, labels: np.ndarray, eroded: np.ndarray, missing_labels: np.ndarray
     ) -> np.ndarray:
         return eroded + labels * np.isin(labels, missing_labels)
 
@@ -6823,8 +6249,7 @@ def dilate_objects(
         float(np.mean(props_before.area)) if props_before.label.size else 0.0
     )
     footprint = build_structuring_element(
-        structuring_element_shape,
-        structuring_element_size,
+        structuring_element_shape, structuring_element_size
     )
     footprint = adapt_structuring_element_rank(footprint, label_array.ndim)
     dilated_labels = grey_dilation(label_array, footprint=footprint)
@@ -6840,7 +6265,7 @@ def dilate_objects(
         mean_area_before=mean_area_before,
         mean_area_after=mean_area_after,
     )
-    return image, stats, dilated_labels.astype(np.float32)
+    return (image, stats, dilated_labels.astype(np.float32))
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_3D)
@@ -6870,8 +6295,7 @@ def dilate_objects_3d(
     volumes_before = [prop.area for prop in props_before]
     mean_volume_before = float(np.mean(volumes_before)) if volumes_before else 0.0
     footprint = build_structuring_element(
-        structuring_element_shape,
-        structuring_element_size,
+        structuring_element_shape, structuring_element_size
     )
     dilated_labels = grey_dilation(label_array, footprint=footprint)
     props_after = regionprops(dilated_labels)
@@ -6882,7 +6306,7 @@ def dilate_objects_3d(
         mean_volume_before=mean_volume_before,
         mean_volume_after=mean_volume_after,
     )
-    return image, stats, dilated_labels.astype(np.float32)
+    return (image, stats, dilated_labels.astype(np.float32))
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
@@ -6898,8 +6322,7 @@ def fill_objects(
     """Fill object holes or replace objects with convex hull labels."""
     label_array = object_label_dense_array(labels, dtype=np.int32)
     if label_array.max() == 0:
-        return image, label_array.copy()
-
+        return (image, label_array.copy())
     filled_labels = FillObjectsModeStrategy.for_mode(mode).fill(
         FillObjectsRequest(
             image=image,
@@ -6908,7 +6331,7 @@ def fill_objects(
             morphology_backend_provider=morphology_backend_provider,
         )
     )
-    return image, filled_labels.astype(label_array.dtype)
+    return (image, filled_labels.astype(label_array.dtype))
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
@@ -6917,15 +6340,13 @@ def fill_objects(
     (
         "centroid_stats",
         csv_materializer(
-            fields=["slice_index", "object_count"],
-            analysis_type="centroid",
+            fields=["slice_index", "object_count"], analysis_type="centroid"
         ),
     ),
     ("centroid_labels", segmentation_mask_rois()),
 )
 def shrink_to_object_centers(
-    image: np.ndarray,
-    labels: np.ndarray,
+    image: np.ndarray, labels: np.ndarray
 ) -> tuple[np.ndarray, CentroidStats, np.ndarray]:
     """Transform labeled objects into single-pixel centroid labels."""
     label_array = object_label_dense_array(labels, dtype=np.int32)
@@ -6933,18 +6354,18 @@ def shrink_to_object_centers(
         label_array
     )
     output_labels = np.zeros_like(label_array, dtype=np.int32)
-
     for index, label_id in enumerate(region_props.label):
         centroid_int = (
             int(round(float(region_props.centroid_y[index]))),
             int(round(float(region_props.centroid_x[index]))),
         )
         if all(
-            0 <= centroid_int[axis] < label_array.shape[axis]
-            for axis in range(len(centroid_int))
+            (
+                0 <= centroid_int[axis] < label_array.shape[axis]
+                for axis in range(len(centroid_int))
+            )
         ):
             output_labels[centroid_int] = int(label_id)
-
     return (
         image,
         CentroidStats(slice_index=0, object_count=int(region_props.label.size)),
@@ -6958,15 +6379,13 @@ def shrink_to_object_centers(
     (
         "centroid_stats",
         csv_materializer(
-            fields=["slice_index", "object_count"],
-            analysis_type="centroid",
+            fields=["slice_index", "object_count"], analysis_type="centroid"
         ),
     ),
     ("centroid_labels", segmentation_mask_rois()),
 )
 def shrink_to_object_centers_3d(
-    image: np.ndarray,
-    labels: np.ndarray,
+    image: np.ndarray, labels: np.ndarray
 ) -> tuple[np.ndarray, CentroidStats, np.ndarray]:
     """Transform 3D labeled objects into single-voxel centroid labels."""
     from skimage.measure import regionprops
@@ -6974,20 +6393,16 @@ def shrink_to_object_centers_3d(
     label_array = object_label_dense_array(labels, dtype=np.int32)
     props = regionprops(label_array)
     output_labels = np.zeros_like(label_array, dtype=np.int32)
-
     for region in props:
-        centroid_int = tuple(int(round(coordinate)) for coordinate in region.centroid)
+        centroid_int = tuple((int(round(coordinate)) for coordinate in region.centroid))
         if all(
-            0 <= centroid_int[axis] < label_array.shape[axis]
-            for axis in range(len(centroid_int))
+            (
+                0 <= centroid_int[axis] < label_array.shape[axis]
+                for axis in range(len(centroid_int))
+            )
         ):
             output_labels[centroid_int] = region.label
-
-    return (
-        image,
-        CentroidStats(slice_index=0, object_count=len(props)),
-        output_labels,
-    )
+    return (image, CentroidStats(slice_index=0, object_count=len(props)), output_labels)
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
@@ -7022,8 +6437,6 @@ def resize_objects(
     planes: int = 10,
 ) -> tuple[np.ndarray, ResizeObjectsStats, ParentChildRelationshipPayload, np.ndarray]:
     """Resize object labels by CellProfiler nearest-neighbor label semantics."""
-    from scipy.ndimage import zoom
-
     labels = object_label_dense_array(labels, dtype=np.int32)
     original_shape = labels.shape
     request = ResizeObjectsRequest(
@@ -7036,12 +6449,9 @@ def resize_objects(
         height=height,
         planes=planes,
     )
-    resized_labels = zoom(labels, request.zoom_factors(), order=0, mode="nearest").astype(
-        np.int32
-    )
+    resized_labels = resize_object_labels_nearest(labels, request.zoom_factors())
     unique_labels = np.unique(resized_labels)
     object_count = len(unique_labels[unique_labels > 0])
-
     stats = ResizeObjectsStats(
         slice_index=0,
         original_height=original_shape[-2],
@@ -7051,33 +6461,57 @@ def resize_objects(
         object_count=object_count,
     )
     relationship = object_label_lineage_payload(labels, resized_labels)
-    return image, stats, relationship, resized_labels
+    return (image, stats, relationship, resized_labels)
 
 
 def resize_objects_target_shape(
-    shape: tuple[int, ...],
-    *,
-    planes: int,
-    height: int,
-    width: int,
+    shape: tuple[int, ...], *, planes: int, height: int, width: int
 ) -> tuple[int, ...]:
     spatial_shape = (planes, height, width) if len(shape) >= 3 else (height, width)
     return trailing_spatial_target_shape(shape, spatial_shape)
 
 
 def resize_objects_zoom_factors(
-    ndim: int,
-    *,
-    factor_z: float,
-    factor_y: float,
-    factor_x: float,
+    ndim: int, *, factor_z: float, factor_y: float, factor_x: float
 ) -> tuple[float, ...]:
     spatial_factors = (
-        (factor_z, factor_y, factor_x)
-        if ndim >= 3
-        else (factor_y, factor_x)
+        (factor_z, factor_y, factor_x) if ndim >= 3 else (factor_y, factor_x)
     )
     return trailing_spatial_factors(ndim, spatial_factors)
+
+
+def resize_object_labels_nearest(
+    labels: np.ndarray, zoom_factors: tuple[float, ...]
+) -> np.ndarray:
+    """Resize dense object labels with SciPy order-0 nearest-neighbor geometry."""
+    label_array = np.asarray(labels)
+    target_shape = tuple(
+        int(round(axis_size * zoom_factor))
+        for axis_size, zoom_factor in zip(label_array.shape, zoom_factors, strict=True)
+    )
+    if any(axis_size <= 0 for axis_size in target_shape):
+        from scipy.ndimage import zoom
+
+        return zoom(label_array, zoom_factors, order=0, mode="nearest").astype(
+            np.int32
+        )
+    resized = label_array
+    for axis, target_size in enumerate(target_shape):
+        source_size = resized.shape[axis]
+        if source_size == target_size:
+            continue
+        if source_size == 1:
+            source_indices = np.zeros(target_size, dtype=np.intp)
+        elif target_size == 1:
+            source_indices = np.zeros(1, dtype=np.intp)
+        else:
+            source_indices = np.rint(
+                np.arange(target_size, dtype=np.float64)
+                * float(source_size - 1)
+                / float(target_size - 1)
+            ).astype(np.intp)
+        resized = np.take(resized, source_indices, axis=axis)
+    return resized.astype(np.int32, copy=False)
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_3D)
@@ -7113,8 +6547,6 @@ def resize_objects_3d(
     planes: int = 10,
 ) -> tuple[np.ndarray, dict, ParentChildRelationshipPayload, np.ndarray]:
     """Resize 3D object labels by CellProfiler nearest-neighbor semantics."""
-    from scipy.ndimage import zoom
-
     labels = object_label_dense_array(labels, dtype=np.int32)
     original_shape = labels.shape
     request = ResizeObjectsRequest(
@@ -7127,12 +6559,9 @@ def resize_objects_3d(
         height=height,
         planes=planes,
     )
-    resized_labels = zoom(labels, request.zoom_factors(), order=0, mode="nearest").astype(
-        np.int32
-    )
+    resized_labels = resize_object_labels_nearest(labels, request.zoom_factors())
     unique_labels = np.unique(resized_labels)
     object_count = len(unique_labels[unique_labels > 0])
-
     stats = {
         "original_depth": original_shape[0],
         "original_height": original_shape[1],
@@ -7143,41 +6572,45 @@ def resize_objects_3d(
         "object_count": object_count,
     }
     relationship = object_label_lineage_payload(labels, resized_labels)
-    return image, stats, relationship, resized_labels
+    return (image, stats, relationship, resized_labels)
 
 
 class FillObjectsModule(CellProfilerModule):
-    module_name = 'FillObjects'
-    function_name = 'fill_objects'
+    module_name = "FillObjects"
+    function_name = "fill_objects"
     validated = True
-    contract = 'unknown'
     confidence = 1.0
+
 
 class MorphModule(CellProfilerModule):
-    module_name = 'Morph'
-    function_name = 'morph'
+    module_name = "Morph"
+    function_name = "morph"
     validated = True
     confidence = 1.0
+
 
 class MorphologicalskeletonModule(CellProfilerModule):
-    module_name = 'Morphologicalskeleton'
-    function_name = 'morphologicalskeleton'
+    module_name = "Morphologicalskeleton"
+    function_name = "morphologicalskeleton"
     validated = True
-    contract = 'pure_3d'
-    category = 'z_projection'
+    contract = ProcessingContract.PURE_3D
+    default_variable_components = (VariableComponents.Z_INDEX,)
     confidence = 0.95
 
+
 class ShrinkToObjectCentersModule(CellProfilerModule):
-    module_name = 'ShrinkToObjectCenters'
-    function_name = 'shrink_to_object_centers'
+    module_name = "ShrinkToObjectCenters"
+    function_name = "shrink_to_object_centers"
     validated = True
     confidence = 1.0
 
+
 class SplitOrMergeObjectsModule(CellProfilerModule):
-    module_name = 'SplitOrMergeObjects'
-    function_name = 'split_or_merge_objects'
+    module_name = "SplitOrMergeObjects"
+    function_name = "split_or_merge_objects"
     validated = True
     confidence = 1.0
+
 
 __all__ = public_names_from_objects(
     CentrosomeNumpyMorphologyBackendStrategy,

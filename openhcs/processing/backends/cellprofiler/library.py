@@ -1,7 +1,6 @@
 """Product-owned registry for absorbed CellProfiler functions."""
 
 from __future__ import annotations
-
 import ast
 import inspect
 import importlib
@@ -11,14 +10,11 @@ from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
-
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 if TYPE_CHECKING:
-    from openhcs.processing.backends.cellprofiler.module_classes import CellProfilerModule
-
-
+    from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 _LIBRARY_ROOT = Path(__file__).parent
 _FUNCTIONS_PACKAGE = "benchmark.cellprofiler_library.functions"
 _BACKEND_FUNCTIONS_PACKAGE = "openhcs.processing.backends.cellprofiler"
@@ -37,8 +33,7 @@ def _functions_root() -> Path:
     spec = importlib.util.find_spec(_FUNCTIONS_PACKAGE)
     if spec is None or not spec.submodule_search_locations:
         raise ImportError(
-            f"Absorbed CellProfiler functions package {_FUNCTIONS_PACKAGE!r} "
-            "is not importable."
+            f"Absorbed CellProfiler functions package {_FUNCTIONS_PACKAGE!r} is not importable."
         )
     return Path(next(iter(spec.submodule_search_locations)))
 
@@ -54,16 +49,12 @@ class AbsorbedFunctionMetadata:
     aliases: tuple[str, ...]
     function_name: str
     function_variants: tuple[str, ...]
-    contract: str
-    category: str
     confidence: float
     validated: bool
 
     @classmethod
     def from_json(
-        cls,
-        module_name: str,
-        payload: Mapping[str, Any],
+        cls, module_name: str, payload: Mapping[str, Any]
     ) -> "AbsorbedFunctionMetadata":
         function_name = _required_string(payload, "function_name", module_name)
         return cls(
@@ -71,22 +62,15 @@ class AbsorbedFunctionMetadata:
             aliases=_string_tuple(payload, "aliases", module_name),
             function_name=function_name,
             function_variants=_function_variant_tuple(
-                payload,
-                module_name=module_name,
-                primary_function_name=function_name,
+                payload, module_name=module_name, primary_function_name=function_name
             ),
-            contract=str(
-                payload.get("contract", ProcessingContract.PURE_2D.declared_name)
-            ),
-            category=str(payload.get("category", "image_operation")),
-            confidence=float(payload.get("confidence", 0.5)),
-            validated=bool(payload.get("validated", False)),
+            confidence=_required_float(payload, "confidence", module_name),
+            validated=_required_bool(payload, "validated", module_name),
         )
 
     @classmethod
     def from_module_class(
-        cls,
-        module_type: type[CellProfilerModule],
+        cls, module_type: type[CellProfilerModule]
     ) -> "AbsorbedFunctionMetadata":
         """Project compatibility metadata from one registered module class."""
         return cls(
@@ -94,8 +78,6 @@ class AbsorbedFunctionMetadata:
             aliases=tuple(module_type.aliases),
             function_name=str(module_type.function_name),
             function_variants=tuple(module_type.function_variants),
-            contract=str(module_type.contract),
-            category=str(module_type.category),
             confidence=float(module_type.confidence),
             validated=bool(module_type.validated),
         )
@@ -104,8 +86,6 @@ class AbsorbedFunctionMetadata:
         """Return the historical metadata shape consumed by converter code."""
         payload: dict[str, Any] = {
             "function_name": self.function_name,
-            "contract": self.contract,
-            "category": self.category,
             "confidence": self.confidence,
             "validated": self.validated,
         }
@@ -160,14 +140,12 @@ class AbsorbedFunctionModuleExports:
     def public_function_names(self) -> tuple[str, ...]:
         exports: list[str] = []
         for node in self.parsed_module.body:
-            if isinstance(node, ast.FunctionDef) and not node.name.startswith("_"):
+            if isinstance(node, ast.FunctionDef) and (not node.name.startswith("_")):
                 exports.append(node.name)
             elif isinstance(node, ast.ImportFrom):
                 exports.extend(self.imported_declared_function_names(node))
         if self.declared_only:
-            exports = [
-                name for name in exports if name in self.declared_function_names
-            ]
+            exports = [name for name in exports if name in self.declared_function_names]
         return tuple(dict.fromkeys(exports))
 
     def imported_declared_function_names(self, node: ast.ImportFrom) -> tuple[str, ...]:
@@ -187,7 +165,7 @@ _function_cache: dict[tuple[str, str], Callable[..., Any]] = {}
 
 def _cellprofiler_module_root() -> type["CellProfilerModule"]:
     """Return the module declaration root without import-time registry cycles."""
-    from openhcs.processing.backends.cellprofiler.module_classes import CellProfilerModule
+    from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
     return CellProfilerModule
 
@@ -198,57 +176,46 @@ def canonical_module_name(module_name: str) -> str:
 
 
 def get_function(
-    module_name: str,
-    *,
-    function_name: str | None = None,
+    module_name: str, *, function_name: str | None = None
 ) -> Callable[..., Any] | None:
     """Return the absorbed function for a CellProfiler module, if registered."""
     canonical_name = canonical_module_name(module_name)
     metadata = _absorbed_contracts().get(canonical_name)
     if metadata is None:
         return None
-
     resolved_function_name = function_name or metadata.function_name
     cache_key = (canonical_name, resolved_function_name)
     cached = _function_cache.get(cache_key)
     if cached is not None:
         return cached
-
     location = _absorbed_function_locations().get(resolved_function_name)
     if location is None:
         return None
-
     module = importlib.import_module(location.module_name)
     function = module.__dict__.get(resolved_function_name)
     if not callable(function):
         return None
     coerce_absorbed_processing_contract(
-        canonical_name,
-        resolved_function_name,
-        function,
+        canonical_name, resolved_function_name, function
     )
     _function_cache[cache_key] = function
     return function
 
 
 def require_function(
-    module_name: str,
-    *,
-    function_name: str | None = None,
+    module_name: str, *, function_name: str | None = None
 ) -> Callable[..., Any]:
     """Return one absorbed function or raise a precise registry error."""
     function = get_function(module_name, function_name=function_name)
     if function is not None:
         return function
-
     canonical_name = canonical_module_name(module_name)
     metadata = _absorbed_contracts().get(canonical_name)
     if metadata is None:
         raise KeyError(f"No absorbed CellProfiler module registered: {module_name!r}")
     resolved_function_name = function_name or metadata.function_name
     raise KeyError(
-        f"Absorbed CellProfiler module {module_name!r} declares missing "
-        f"function {resolved_function_name!r}."
+        f"Absorbed CellProfiler module {module_name!r} declares missing function {resolved_function_name!r}."
     )
 
 
@@ -288,9 +255,7 @@ def function_source_path(function_name: str) -> Path | None:
 
 
 def coerce_absorbed_processing_contract(
-    module_name: str,
-    function_name: str,
-    function: Callable[..., Any],
+    module_name: str, function_name: str, function: Callable[..., Any]
 ) -> ProcessingContract | None:
     """Return or install nominal processing metadata for an executable function.
 
@@ -307,11 +272,8 @@ def coerce_absorbed_processing_contract(
         return raw_contract
     if raw_contract is not None:
         raise TypeError(
-            f"Absorbed CellProfiler function {function_name!r} declares "
-            f"{processing_contract_key} as {type(raw_contract).__name__}; "
-            "expected ProcessingContract."
+            f"Absorbed CellProfiler function {function_name!r} declares {processing_contract_key} as {type(raw_contract).__name__}; expected ProcessingContract."
         )
-
     declared_contract = _absorbed_default_function_contracts().get(function_name)
     if declared_contract is None:
         return None
@@ -319,42 +281,53 @@ def coerce_absorbed_processing_contract(
     metadata = _absorbed_contracts().get(canonical_name)
     if metadata is None or function_name not in metadata.declared_function_names:
         return None
-
     vars(function)[processing_contract_key] = declared_contract
     return declared_contract
 
 
 def coerce_registered_absorbed_processing_contract(
-    function_name: str,
-    function: Callable[..., Any],
+    function_name: str, function: Callable[..., Any]
 ) -> ProcessingContract | None:
     """Install nominal processing metadata for a registered absorbed function."""
     for metadata in _absorbed_contracts().values():
         if metadata.function_name != function_name:
             continue
         return coerce_absorbed_processing_contract(
-            metadata.module_name,
-            function_name,
-            function,
+            metadata.module_name, function_name, function
         )
     return None
 
 
-@lru_cache(maxsize=1)
 def _absorbed_contracts() -> Mapping[str, AbsorbedFunctionMetadata]:
     """Return the declaration-derived absorbed module catalog."""
     return _load_contracts()
 
 
-@lru_cache(maxsize=1)
 def _absorbed_default_function_contracts() -> Mapping[str, ProcessingContract]:
     """Return function processing contracts derived from module declarations."""
+    return _absorbed_default_function_contracts_for(_absorbed_contract_signature())
+
+
+def _absorbed_function_locations() -> Mapping[str, AbsorbedFunctionLocation]:
+    """Return function locations filtered by declared module function names."""
+    return _absorbed_function_locations_for(_absorbed_contract_signature())
+
+
+@lru_cache(maxsize=16)
+def _absorbed_default_function_contracts_for(
+    contract_signature: tuple[tuple[str, str, tuple[str, ...], str | None], ...],
+) -> Mapping[str, ProcessingContract]:
+    """Return cached function contracts for one registry contract signature."""
+    del contract_signature
     return _load_default_function_contracts(_absorbed_contracts())
 
 
-@lru_cache(maxsize=1)
-def _absorbed_function_locations() -> Mapping[str, AbsorbedFunctionLocation]:
-    """Return function locations filtered by declared module function names."""
+@lru_cache(maxsize=16)
+def _absorbed_function_locations_for(
+    contract_signature: tuple[tuple[str, str, tuple[str, ...], str | None], ...],
+) -> Mapping[str, AbsorbedFunctionLocation]:
+    """Return cached function locations for one registry contract signature."""
+    del contract_signature
     return _discover_function_locations(_absorbed_contracts())
 
 
@@ -366,21 +339,41 @@ def _load_contracts() -> Mapping[str, AbsorbedFunctionMetadata]:
     return MappingProxyType(contracts)
 
 
+def _absorbed_contract_signature() -> (
+    tuple[tuple[str, str, tuple[str, ...], str | None], ...]
+):
+    """Return a stable cache key for the currently discovered module contracts."""
+    return tuple(
+        sorted(
+            (
+                str(module_type.module_name),
+                str(module_type.function_name),
+                tuple(module_type.function_variants),
+                (
+                    None
+                    if module_type.contract is None
+                    else module_type.contract.declared_name
+                ),
+            )
+            for module_type in _cellprofiler_module_root().__registry__.values()
+        )
+    )
+
+
 def _load_default_function_contracts(
     contracts: Mapping[str, AbsorbedFunctionMetadata],
 ) -> Mapping[str, ProcessingContract]:
+    del contracts
     declared_contracts: dict[str, ProcessingContract] = {}
-    for module_name, metadata in contracts.items():
-        contract = ProcessingContract.from_declared_name(metadata.contract)
+    for module_type in _cellprofiler_module_root().__registry__.values():
+        contract = module_type.contract
         if contract is None:
             continue
-        for function_name in metadata.declared_function_names:
+        for function_name in module_type.declared_function_names():
             existing = declared_contracts.get(function_name)
             if existing is not None and existing is not contract:
                 raise ValueError(
-                    f"Absorbed CellProfiler function {function_name!r} "
-                    f"has conflicting declared contracts {existing.name!r} and "
-                    f"{contract.name!r}."
+                    f"Absorbed CellProfiler function {function_name!r} has conflicting declared contracts {existing.name!r} and {contract.name!r}."
                 )
             declared_contracts[function_name] = contract
     return MappingProxyType(declared_contracts)
@@ -438,8 +431,7 @@ def _register_function_locations(
             continue
         module_stem = file_path.stem
         parsed_module = ast.parse(
-            file_path.read_text(encoding="utf-8"),
-            filename=str(file_path),
+            file_path.read_text(encoding="utf-8"), filename=str(file_path)
         )
         module_exports = AbsorbedFunctionModuleExports(
             declared_function_names=declared_function_names,
@@ -447,13 +439,12 @@ def _register_function_locations(
             parsed_module=parsed_module,
         )
         for function_name in module_exports.public_function_names():
-            if function_name in locations and not replace_existing:
+            if function_name in locations and (not replace_existing):
                 existing = locations[function_name]
                 if existing.package != package:
                     continue
                 raise ValueError(
-                    f"CellProfiler function {function_name!r} is declared in both "
-                    f"{existing.module_name!r} and {package}.{module_stem!r}."
+                    f"CellProfiler function {function_name!r} is declared in both {existing.module_name!r} and {package}.{module_stem!r}."
                 )
             locations[function_name] = AbsorbedFunctionLocation(
                 package=package,
@@ -462,11 +453,8 @@ def _register_function_locations(
                 function_name=function_name,
             )
 
-def _required_string(
-    payload: Mapping[str, Any],
-    key: str,
-    module_name: str,
-) -> str:
+
+def _required_string(payload: Mapping[str, Any], key: str, module_name: str) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value:
         raise ValueError(
@@ -475,10 +463,26 @@ def _required_string(
     return value
 
 
+def _required_float(payload: Mapping[str, Any], key: str, module_name: str) -> float:
+    value = payload.get(key)
+    if not isinstance(value, (int, float)):
+        raise ValueError(
+            f"Absorbed CellProfiler module {module_name!r} must define numeric {key}."
+        )
+    return float(value)
+
+
+def _required_bool(payload: Mapping[str, Any], key: str, module_name: str) -> bool:
+    value = payload.get(key)
+    if not isinstance(value, bool):
+        raise ValueError(
+            f"Absorbed CellProfiler module {module_name!r} must define boolean {key}."
+        )
+    return value
+
+
 def _string_tuple(
-    payload: Mapping[str, Any],
-    key: str,
-    module_name: str,
+    payload: Mapping[str, Any], key: str, module_name: str
 ) -> tuple[str, ...]:
     if key not in payload:
         return ()
@@ -487,11 +491,10 @@ def _string_tuple(
         return ()
     if not isinstance(raw_values, list):
         raise TypeError(
-            f"Absorbed CellProfiler module {module_name!r} must declare {key} "
-            "as a list of strings."
+            f"Absorbed CellProfiler module {module_name!r} must declare {key} as a list of strings."
         )
-    values = tuple(str(value).strip() for value in raw_values)
-    if any(not value for value in values):
+    values = tuple((str(value).strip() for value in raw_values))
+    if any((not value for value in values)):
         raise ValueError(
             f"Absorbed CellProfiler module {module_name!r} declares an empty {key}."
         )
@@ -499,21 +502,16 @@ def _string_tuple(
 
 
 def _function_variant_tuple(
-    payload: Mapping[str, Any],
-    *,
-    module_name: str,
-    primary_function_name: str,
+    payload: Mapping[str, Any], *, module_name: str, primary_function_name: str
 ) -> tuple[str, ...]:
     variants = _string_tuple(payload, "function_variants", module_name)
     if primary_function_name in variants:
         raise ValueError(
-            f"Absorbed CellProfiler module {module_name!r} declares primary "
-            f"function {primary_function_name!r} as a variant."
+            f"Absorbed CellProfiler module {module_name!r} declares primary function {primary_function_name!r} as a variant."
         )
     if len(set(variants)) != len(variants):
         raise ValueError(
-            f"Absorbed CellProfiler module {module_name!r} declares duplicate "
-            "function variants."
+            f"Absorbed CellProfiler module {module_name!r} declares duplicate function variants."
         )
     return variants
 
@@ -522,12 +520,10 @@ def _is_public_api_export(name: str, value: object) -> bool:
     return (
         not name.startswith("_")
         and (inspect.isclass(value) or inspect.isfunction(value))
-        and value.__module__ == __name__
+        and (value.__module__ == __name__)
     )
 
 
 __all__ = tuple(
-    name
-    for name, value in globals().items()
-    if _is_public_api_export(name, value)
+    (name for name, value in globals().items() if _is_public_api_export(name, value))
 )

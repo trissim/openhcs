@@ -1,24 +1,24 @@
 """CellProfiler database export module declaration."""
 
 from __future__ import annotations
-
 from typing import Any
-
 from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
     optional_setting_value,
     required_setting_value,
     split_symbol_names,
 )
-from openhcs.processing.backends.cellprofiler.module_classes import (
+from openhcs.interop.cellprofiler.module_declarations import (
+    CellProfilerModule,
     InfrastructureCellProfilerModule,
 )
 
+
 class ExportToDatabaseModule(InfrastructureCellProfilerModule):
-    module_name = 'ExportToDatabase'
-    function_name = 'export_to_database'
+    module_name = "ExportToDatabase"
+    function_name = "export_to_database"
     validated = True
-    contract = 'unknown'
+    contract = None
     confidence = 1.0
     database_type_setting = SettingNameFamily("Database type")
     sqlite_file_setting = SettingNameFamily("Name the SQLite database file")
@@ -39,8 +39,7 @@ class ExportToDatabaseModule(InfrastructureCellProfilerModule):
 
     @classmethod
     def database_export_settings(
-        cls,
-        module: "ModuleBlock",
+        cls, module: "ModuleBlock"
     ) -> "CellProfilerDatabaseExportSettings":
         from openhcs.interop.cellprofiler.analyst_export import (
             CellProfilerDatabaseExportSettings,
@@ -49,22 +48,17 @@ class ExportToDatabaseModule(InfrastructureCellProfilerModule):
 
         if CellProfilerModule.canonical_module_name(module.name) != cls.module_name:
             raise ValueError(
-                "database_export_settings requires an ExportToDatabase module, "
-                f"got {module.name!r}."
+                f"database_export_settings requires an ExportToDatabase module, got {module.name!r}."
             )
         database_type = required_setting_value(module, cls.database_type_setting)
         if database_type.strip().lower() != "sqlite":
             raise ValueError(
-                "OpenHCS CPA export dry run only supports SQLite ExportToDatabase; "
-                f"got {database_type!r}."
+                f"OpenHCS CPA export dry run only supports SQLite ExportToDatabase; got {database_type!r}."
             )
         return CellProfilerDatabaseExportSettings(
             database_type="sqlite",
             sqlite_file=required_setting_value(module, cls.sqlite_file_setting),
-            experiment_name=required_setting_value(
-                module,
-                cls.experiment_name_setting,
-            ),
+            experiment_name=required_setting_value(module, cls.experiment_name_setting),
             table_prefix=cls._table_prefix(module),
             object_table_mode=cls._object_table_mode(
                 required_setting_value(module, cls.object_table_mode_setting),
@@ -72,20 +66,16 @@ class ExportToDatabaseModule(InfrastructureCellProfilerModule):
             ),
             selected_objects=cls._selected_objects(module),
             wants_properties_file=cls._required_bool(
-                module,
-                cls.save_cpa_properties_setting,
+                module, cls.save_cpa_properties_setting
             ),
             wants_relationship_tables=cls._required_bool(
-                module,
-                cls.relationship_table_setting,
+                module, cls.relationship_table_setting
             ),
         )
 
     @classmethod
     def _required_bool(
-        cls,
-        module: "ModuleBlock",
-        setting_name: SettingNameFamily,
+        cls, module: "ModuleBlock", setting_name: SettingNameFamily
     ) -> bool:
         raw_value = required_setting_value(module, setting_name)
         normalized = raw_value.strip().lower()
@@ -94,8 +84,7 @@ class ExportToDatabaseModule(InfrastructureCellProfilerModule):
         if normalized in {"no", "false", "0"}:
             return False
         raise ValueError(
-            f"ExportToDatabase setting {setting_name.canonical!r} requires "
-            f"a boolean value, got {raw_value!r}."
+            f"ExportToDatabase setting {setting_name.canonical!r} requires a boolean value, got {raw_value!r}."
         )
 
     @classmethod
@@ -105,10 +94,7 @@ class ExportToDatabaseModule(InfrastructureCellProfilerModule):
         return required_setting_value(module, cls.table_prefix_setting)
 
     @staticmethod
-    def _object_table_mode(
-        value: str,
-        object_table_mode_type: type[Any],
-    ) -> Any:
+    def _object_table_mode(value: str, object_table_mode_type: type[Any]) -> Any:
         normalized = value.strip().lower()
         modes = {
             "one table per object type": object_table_mode_type.PER_OBJECT,
@@ -134,10 +120,7 @@ class ExportToDatabaseModule(InfrastructureCellProfilerModule):
             value = optional_setting_value(module, cls.objects_list_setting)
             if value is None:
                 raise ValueError(
-                    "ExportToDatabase selected object export requires selected "
-                    "object names."
+                    "ExportToDatabase selected object export requires selected object names."
                 )
             return split_symbol_names(value)
-        raise ValueError(
-            f"Unsupported ExportToDatabase object choice {raw_choice!r}."
-        )
+        raise ValueError(f"Unsupported ExportToDatabase object choice {raw_choice!r}.")

@@ -1,4 +1,4 @@
-"""Numba propagation and EDT kernels for CellProfiler secondary objects."""
+"""Numba EDT and propagation kernels for CellProfiler-compatible backends."""
 
 from __future__ import annotations
 

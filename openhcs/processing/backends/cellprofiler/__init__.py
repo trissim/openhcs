@@ -6,25 +6,20 @@ not import or execute the local CellProfiler source tree.
 """
 
 from __future__ import annotations
-
 import inspect
 import importlib
 import sys
-from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache, wraps
-from types import ModuleType
-from typing import Any, ClassVar
+from types import FunctionType, ModuleType
+from typing import Any
 
-from metaclass_registry import AutoRegisterMeta
 from python_introspect import parameter_exclusions, set_parameter_exclusions
-
 from openhcs.processing.backends.cellprofiler.library import (
     coerce_absorbed_processing_contract,
     function_inventory,
     get_contract,
-    list_modules,
 )
 from openhcs.processing.backends.cellprofiler.function_documentation import (
     enrich_cellprofiler_function_documentation,
@@ -34,24 +29,65 @@ from openhcs.core.callable_contract import (
     attach_callable_contract_metadata,
 )
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
+from openhcs.core.function_reference import (
+    FunctionReference,
+    FunctionReferenceTransportAuthority,
+    FunctionReferenceTransportStrategy,
+)
+from openhcs.processing.backends.lib_registry.openhcs_registry import (
+    OpenHCSFunctionCatalogModule,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
-
 CELLPROFILER_MODULE_ATTR = "__openhcs_cellprofiler_module__"
-CELLPROFILER_FUNCTION_NAMES = frozenset(function_inventory())
-_STABLE_CELLPROFILER_FUNCTIONS: dict[str, Callable[..., Any]] = {}
+CELLPROFILER_BACKEND_MODULE = "openhcs.processing.backends.cellprofiler"
+CELLPROFILER_PUBLIC_API_NAMES = (
+    "CellProfilerFunctionCatalog",
+    "CellProfilerFunctionRuntimeMetadata",
+)
+_CELLPROFILER_FUNCTION_RESOLUTION_STACK: set[str] = set()
 
 
-class CellProfilerBackendModule(ModuleType):
+class CellProfilerBackendModule(OpenHCSFunctionCatalogModule):
     """Package attribute authority for CellProfiler backend function exports."""
 
-    def __getattribute__(self, name: str) -> Any:
-        module_dict = ModuleType.__getattribute__(self, "__dict__")
-        function_names = module_dict.get("CELLPROFILER_FUNCTION_NAMES", frozenset())
-        if name in function_names:
-            catalog = module_dict["CellProfilerFunctionCatalog"]
-            return catalog.get_function(name)
-        return ModuleType.__getattribute__(self, name)
+    @property
+    def __all__(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                (
+                    *CELLPROFILER_PUBLIC_API_NAMES,
+                    *CellProfilerFunctionCatalog.list_functions(),
+                )
+            )
+        )
+
+    def openhcs_registry_functions(self) -> tuple[Callable[..., Any], ...]:
+        return tuple(
+            CellProfilerFunctionCatalog.get_function(function_name)
+            for function_name in CellProfilerFunctionCatalog.list_functions()
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        if CellProfilerFunctionCatalog.has_function(name):
+            return CellProfilerFunctionCatalog.get_function(name)
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if isinstance(value, ModuleType) and CellProfilerFunctionCatalog.has_function(
+            name
+        ):
+            existing = self.__dict__.get(name)
+            if callable(existing):
+                return
+            if name not in _CELLPROFILER_FUNCTION_RESOLUTION_STACK:
+                ModuleType.__setattr__(
+                    self,
+                    name,
+                    CellProfilerFunctionCatalog.get_function(name),
+                )
+                return
+        ModuleType.__setattr__(self, name, value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,14 +101,12 @@ class CellProfilerFunctionRuntimeMetadata:
 
     @classmethod
     def from_callable(
-        cls,
-        func: Callable[..., Any],
+        cls, func: Callable[..., Any]
     ) -> "CellProfilerFunctionRuntimeMetadata | None":
         """Project OpenHCS-owned CellProfiler runtime metadata from a callable."""
         if not callable(func):
             raise TypeError(
-                "cellprofiler_function_runtime_metadata requires a callable, "
-                f"got {type(func).__name__}."
+                f"CellProfilerFunctionCatalog.runtime_metadata requires a callable, got {type(func).__name__}."
             )
         try:
             metadata = func.__dict__
@@ -86,15 +120,14 @@ class CellProfilerFunctionRuntimeMetadata:
         )
         if not isinstance(processing_contract, ProcessingContract):
             raise TypeError(
-                f"CellProfiler function {func.__name__!r} has no declared "
-                "ProcessingContract metadata."
+                f"CellProfiler function {func.__name__!r} has no declared ProcessingContract metadata."
             )
         return cls(
             module_name=str(module_name),
             function_name=func.__name__,
             processing_contract=processing_contract,
             declared_processing_contract=metadata.get(
-                FunctionContractAttribute.declared_processing_contract,
+                FunctionContractAttribute.declared_processing_contract
             ),
         )
 
@@ -104,140 +137,131 @@ class CellProfilerFunctionCatalog:
 
     @classmethod
     def runtime_metadata(
-        cls,
-        func: Callable[..., Any],
+        cls, func: Callable[..., Any]
     ) -> CellProfilerFunctionRuntimeMetadata | None:
         return CellProfilerFunctionRuntimeMetadata.from_callable(func)
 
     @classmethod
     def list_functions(cls) -> tuple[str, ...]:
         """Return exported CellProfiler-compatible function names."""
-        return tuple(CELLPROFILER_FUNCTIONS)
+        return tuple(function_inventory())
+
+    @classmethod
+    def has_function(cls, name: str) -> bool:
+        """Return whether a function is declared by a CellProfiler module."""
+        return name in function_inventory()
 
     @classmethod
     def get_function(cls, name: str) -> Callable[..., Any]:
         """Return one exported CellProfiler-compatible processing function."""
-        return _cellprofiler_function(name)
+        return _declared_cellprofiler_function(name)
 
     @classmethod
     def require_function(
-        cls,
-        module_name: str,
-        *,
-        function_name: str | None = None,
+        cls, module_name: str, *, function_name: str | None = None
     ) -> Callable[..., Any]:
         """Return one OpenHCS-owned CellProfiler-compatible function."""
         contract_payload = get_contract(module_name)
         if contract_payload is None:
             raise KeyError(
-                "No CellProfiler-compatible processing module registered: "
-                f"{module_name!r}"
+                f"No CellProfiler-compatible processing module registered: {module_name!r}"
             )
         resolved_function_name = function_name or str(contract_payload["function_name"])
         try:
             return cls.get_function(resolved_function_name)
         except KeyError as exc:
             raise KeyError(
-                f"CellProfiler-compatible processing module {module_name!r} "
-                f"declares missing function {resolved_function_name!r}."
+                f"CellProfiler-compatible processing module {module_name!r} declares missing function {resolved_function_name!r}."
             ) from exc
 
     @classmethod
     def unavailable_functions(cls) -> Mapping[str, str]:
         """Return absorbed modules that were skipped during backend loading."""
-        return UNAVAILABLE_CELLPROFILER_FUNCTIONS
+        return {}
 
 
-class CellProfilerCatalogCompatibilityExport(ABC, metaclass=AutoRegisterMeta):
-    """Registered compatibility export for legacy module-level catalog helpers."""
+class CellProfilerFunctionReferenceTransportStrategy(FunctionReferenceTransportStrategy):
+    """Transport strategy for CellProfiler package-catalog callables."""
 
-    __registry_key__ = "export_name"
-    __skip_if_no_key__ = True
-    export_name: ClassVar[str | None] = None
+    strategy_key = "cellprofiler"
 
-    @classmethod
-    @abstractmethod
-    def value(cls) -> Callable[..., Any]:
-        """Return the callable exposed for this compatibility name."""
+    def reference_for_callable(self, func: Callable) -> FunctionReference | None:
+        function_name = self.function_name_for_callable(func)
+        if function_name is None:
+            return None
+        try:
+            CellProfilerFunctionCatalog.get_function(function_name)
+        except KeyError:
+            return None
+        contract = CallableContract.from_callable(func)
+        memory_type = (
+            "python"
+            if contract.input_memory_type is None
+            else contract.input_memory_type
+        )
+        return FunctionReference(
+            function_name=function_name,
+            registry_name="cellprofiler",
+            memory_type=memory_type,
+            composite_key=f"cellprofiler:{function_name}",
+            original_module=CELLPROFILER_BACKEND_MODULE,
+            metadata=FunctionReferenceTransportAuthority.callable_metadata(func),
+        )
 
+    def normalized_callable(self, func: Callable) -> Callable | None:
+        function_name = self.function_name_for_callable(func)
+        if function_name is None:
+            return None
+        try:
+            return CellProfilerFunctionCatalog.get_function(function_name)
+        except KeyError:
+            return None
 
-class RuntimeMetadataCatalogCompatibilityExport(
-    CellProfilerCatalogCompatibilityExport,
-):
-    export_name = "cellprofiler_function_runtime_metadata"
+    def normalized_module(self, module: ModuleType) -> Callable | None:
+        function_name = self.function_name_for_module(module)
+        if function_name is None:
+            return None
+        try:
+            return CellProfilerFunctionCatalog.get_function(function_name)
+        except KeyError:
+            return None
 
-    @classmethod
-    def value(cls) -> Callable[..., Any]:
-        return CellProfilerFunctionCatalog.runtime_metadata
+    @staticmethod
+    def function_name_for_callable(func: Callable) -> str | None:
+        """Return the CellProfiler catalog name for a backend callable."""
+        if not isinstance(func, FunctionType):
+            raw_processing_function = CallableContract.from_callable(
+                func
+            ).raw_processing_function
+            if (
+                callable(raw_processing_function)
+                and raw_processing_function is not func
+            ):
+                return CellProfilerFunctionReferenceTransportStrategy.function_name_for_callable(
+                    raw_processing_function
+                )
+            return None
+        module_name = func.__module__
+        if module_name != CELLPROFILER_BACKEND_MODULE and not module_name.startswith(
+            f"{CELLPROFILER_BACKEND_MODULE}."
+        ):
+            return None
+        return func.__name__
 
-
-class GetFunctionCatalogCompatibilityExport(CellProfilerCatalogCompatibilityExport):
-    export_name = "get_cellprofiler_function"
-
-    @classmethod
-    def value(cls) -> Callable[..., Any]:
-        return CellProfilerFunctionCatalog.get_function
-
-
-class ListFunctionsCatalogCompatibilityExport(CellProfilerCatalogCompatibilityExport):
-    export_name = "list_cellprofiler_functions"
-
-    @classmethod
-    def value(cls) -> Callable[..., Any]:
-        return CellProfilerFunctionCatalog.list_functions
-
-
-class RequireFunctionCatalogCompatibilityExport(
-    CellProfilerCatalogCompatibilityExport,
-):
-    export_name = "require_cellprofiler_function"
-
-    @classmethod
-    def value(cls) -> Callable[..., Any]:
-        return CellProfilerFunctionCatalog.require_function
-
-
-class UnavailableFunctionsCatalogCompatibilityExport(
-    CellProfilerCatalogCompatibilityExport,
-):
-    export_name = "unavailable_cellprofiler_functions"
-
-    @classmethod
-    def value(cls) -> Callable[..., Any]:
-        return CellProfilerFunctionCatalog.unavailable_functions
-
-
-class _LazyCellProfilerFunctionMapping(Mapping[str, Any]):
-    """Mapping facade that loads absorbed functions only on first access."""
-
-    def __init__(self, index: int) -> None:
-        self._index = index
-
-    @property
-    def _mapping(self) -> Mapping[str, Any]:
-        return _cellprofiler_function_maps()[self._index]
-
-    def __getitem__(self, key: str) -> Any:
-        if self._index == 0:
-            return _cellprofiler_function(key)
-        return self._mapping[key]
-
-    def __iter__(self):
-        return iter(self._mapping)
-
-    def __len__(self) -> int:
-        return len(self._mapping)
+    @staticmethod
+    def function_name_for_module(module: ModuleType) -> str | None:
+        """Return the CellProfiler catalog name represented by a submodule."""
+        module_prefix = f"{CELLPROFILER_BACKEND_MODULE}."
+        if not module.__name__.startswith(module_prefix):
+            return None
+        return module.__name__.removeprefix(module_prefix)
 
 
 def _declared_processing_contract(
-    module_name: str,
-    function_name: str,
-    absorbed_function: Callable[..., Any],
+    module_name: str, function_name: str, absorbed_function: Callable[..., Any]
 ) -> ProcessingContract | None:
     contract = coerce_absorbed_processing_contract(
-        module_name,
-        function_name,
-        absorbed_function,
+        module_name, function_name, absorbed_function
     )
     if isinstance(contract, ProcessingContract):
         return contract
@@ -245,10 +269,7 @@ def _declared_processing_contract(
 
 
 def _make_processing_wrapper(
-    *,
-    module_name: str,
-    func: Callable[..., Any],
-    contract: ProcessingContract,
+    *, module_name: str, func: Callable[..., Any], contract: ProcessingContract
 ) -> Callable[..., Any]:
     """Build an OpenHCS-owned wrapper around one absorbed implementation."""
 
@@ -262,23 +283,18 @@ def _make_processing_wrapper(
     wrapper.__signature__ = inspect.signature(func)
     wrapper.__annotations__ = inspect.get_annotations(func, eval_str=False).copy()
     callable_contract = CallableContract.from_callable(func)
-    from openhcs.processing.backends.cellprofiler.module_classes import (
-        CellProfilerModule,
-    )
+    from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
     module_type = CellProfilerModule.for_module(module_name)
     if module_type is None:
         raise KeyError(
-            "CellProfiler-compatible processing function requires a "
-            f"CellProfilerModule declaration for {module_name!r}."
+            f"CellProfiler-compatible processing function requires a CellProfilerModule declaration for {module_name!r}."
         )
     wrapper.input_memory_type = callable_contract.input_memory_type
     wrapper.output_memory_type = callable_contract.output_memory_type
     setattr(wrapper, FunctionContractAttribute.processing_contract, contract)
     setattr(
-        wrapper,
-        FunctionContractAttribute.declared_processing_contract,
-        contract.name,
+        wrapper, FunctionContractAttribute.declared_processing_contract, contract.name
     )
     setattr(wrapper, CELLPROFILER_MODULE_ATTR, module_name)
     setattr(
@@ -292,9 +308,7 @@ def _make_processing_wrapper(
         runtime_image_execution_mode=callable_contract.runtime_image_execution_mode,
     )
     enrich_cellprofiler_function_documentation(
-        wrapper,
-        module_name=module_name,
-        source_function=func,
+        wrapper, module_name=module_name, source_function=func
     )
     hidden_parameters = parameter_exclusions(func)
     if hidden_parameters:
@@ -305,119 +319,75 @@ def _make_processing_wrapper(
 @lru_cache(maxsize=1)
 def _default_module_names_by_function_name() -> dict[str, str]:
     """Map each declared function to the CellProfiler module that owns it."""
+    from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
+
     default_modules: dict[str, str] = {}
-    for module_name in list_modules():
-        contract_payload = get_contract(module_name)
-        if contract_payload is None:
-            continue
+    for module_type in CellProfilerModule.__registry__.values():
+        module_name = str(module_type.module_name)
         function_names = (
-            str(contract_payload["function_name"]),
-            *(str(name) for name in contract_payload.get("function_variants", ())),
+            str(module_type.function_name),
+            *(str(name) for name in module_type.function_variants),
         )
         for function_name in function_names:
             default_modules.setdefault(function_name, module_name)
     return default_modules
 
 
-@lru_cache(maxsize=None)
-def _cellprofiler_function(function_name: str) -> Callable[..., Any]:
+def _declared_cellprofiler_function(function_name: str) -> Callable[..., Any]:
     """Return one absorbed function wrapper without loading the full catalog."""
-    if function_name not in function_inventory():
+    installed = globals().get(function_name)
+    if callable(installed):
+        metadata = CellProfilerFunctionRuntimeMetadata.from_callable(installed)
+        if metadata is not None and metadata.function_name == function_name:
+            return installed
+
+    inventory = function_inventory()
+    if function_name not in inventory:
         raise KeyError(function_name)
-    location = function_inventory()[function_name]
-    module_name = _default_module_names_by_function_name().get(
-        function_name,
-        location.module_stem,
-    )
     absorbed_function = _function_from_inventory(function_name)
+    _default_module_names_by_function_name.cache_clear()
+    module_name = _module_name_for_declared_function(function_name)
     contract = _declared_processing_contract(
-        module_name,
-        function_name,
-        absorbed_function,
+        module_name, function_name, absorbed_function
     )
     if contract is None:
         raise KeyError(function_name)
-    return _STABLE_CELLPROFILER_FUNCTIONS.setdefault(
-        function_name,
-        _make_processing_wrapper(
-            module_name=module_name,
-            func=absorbed_function,
-            contract=contract,
-        ),
+    wrapper = _make_processing_wrapper(
+        module_name=module_name, func=absorbed_function, contract=contract
     )
+    globals()[function_name] = wrapper
+    return wrapper
+
+
+def _module_name_for_declared_function(function_name: str) -> str:
+    """Return the CellProfiler module declaration that owns one function."""
+
+    module_names = _default_module_names_by_function_name()
+    if function_name not in module_names:
+        raise KeyError(
+            f"CellProfiler-compatible processing function {function_name!r} "
+            "has no CellProfilerModule declaration."
+        )
+    return module_names[function_name]
 
 
 def _function_from_inventory(function_name: str) -> Callable[..., Any]:
     location = function_inventory()[function_name]
-    module = importlib.import_module(location.module_name)
+    _CELLPROFILER_FUNCTION_RESOLUTION_STACK.add(function_name)
+    try:
+        module = importlib.import_module(location.module_name)
+    finally:
+        _CELLPROFILER_FUNCTION_RESOLUTION_STACK.discard(function_name)
     function = vars(module).get(function_name)
     if not callable(function):
         raise KeyError(
-            f"Absorbed CellProfiler function {function_name!r} is missing from "
-            f"{location.module_name!r}."
+            f"Absorbed CellProfiler function {function_name!r} is missing from {location.module_name!r}."
         )
     return function
 
 
-def _load_cellprofiler_functions() -> tuple[dict[str, Callable[..., Any]], dict[str, str]]:
-    functions: dict[str, Callable[..., Any]] = {}
-    for function_name in function_inventory():
-        try:
-            function = _cellprofiler_function(function_name)
-        except KeyError:
-            continue
-        functions[function.__name__] = function
-    return functions, {}
-
-
-@lru_cache(maxsize=1)
-def _cellprofiler_function_maps() -> tuple[
-    Mapping[str, Callable[..., Any]],
-    Mapping[str, str],
-]:
-    functions, unavailable = _load_cellprofiler_functions()
-    return functions, unavailable
-
-
-CELLPROFILER_FUNCTIONS: Mapping[str, Callable[..., Any]] = (
-    _LazyCellProfilerFunctionMapping(0)
-)
-UNAVAILABLE_CELLPROFILER_FUNCTIONS: Mapping[str, str] = (
-    _LazyCellProfilerFunctionMapping(1)
-)
-
-def __getattr__(name: str) -> Any:
-    catalog_export = CellProfilerCatalogCompatibilityExport.__registry__.get(name)
-    if catalog_export is not None:
-        return catalog_export.value()
-    if name in CELLPROFILER_FUNCTIONS:
-        return CELLPROFILER_FUNCTIONS[name]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 def __dir__() -> list[str]:
-    return sorted(
-        {
-            *globals(),
-            *CELLPROFILER_FUNCTION_NAMES,
-        }
-    )
-
-__all__ = tuple(
-    sorted(
-        (
-            "CELLPROFILER_FUNCTIONS",
-            "CellProfilerFunctionCatalog",
-            "CellProfilerFunctionRuntimeMetadata",
-            "UNAVAILABLE_CELLPROFILER_FUNCTIONS",
-            "get_cellprofiler_function",
-            "list_cellprofiler_functions",
-            "require_cellprofiler_function",
-            "unavailable_cellprofiler_functions",
-            *CELLPROFILER_FUNCTION_NAMES,
-        )
-    )
-)
+    return sorted((*globals(), *sys.modules[__name__].__all__))
 
 
 sys.modules[__name__].__class__ = CellProfilerBackendModule

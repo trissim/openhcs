@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from enum import Enum
 from abc import ABC, abstractmethod
 from typing import ClassVar
-
 import numpy as np
 import scipy.ndimage
 import skimage.exposure
@@ -13,18 +12,18 @@ import skimage.morphology
 import skimage.transform
 from numba import njit
 from metaclass_registry import AutoRegisterMeta
-
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     coerce_cellprofiler_enum,
 )
-from openhcs.processing.backends.cellprofiler.module_classes import (
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
     BoundModuleSettings,
     CellProfilerModule,
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
-    )
+)
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import (
@@ -33,10 +32,9 @@ from openhcs.core.runtime_values import (
     image_payload_mask,
     image_payload_metadata,
 )
-from openhcs.core.measurement_image_alignment import ReplicatedChannelMonochromeProjection
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-
-
+from openhcs.core.measurement_image_alignment import (
+    ReplicatedChannelMonochromeProjection,
+)
 class OperationMethod(Enum):
     ENHANCE = "Enhance"
     SUPPRESS = "Suppress"
@@ -85,16 +83,13 @@ def enhance_or_suppress_features(
     speckle_accuracy = coerce_cellprofiler_enum(SpeckleAccuracy, speckle_accuracy)
     neurite_method = coerce_cellprofiler_enum(NeuriteMethod, neurite_method)
     image_data = ReplicatedChannelMonochromeProjection().plane(
-        image_payload_data(image),
-        name="enhancement image",
+        image_payload_data(image), name="enhancement image"
     )
     if image_data.dtype != np.float32 and image_data.dtype != np.float64:
         image_data = image_data.astype(np.float32)
     mask_context = FeatureEnhancementMaskContext(
-        original=image_data,
-        mask=_enhancement_mask(image, image_data),
+        original=image_data, mask=_enhancement_mask(image, image_data)
     )
-
     result = FeatureOperationStrategy.for_method(method).apply(
         FeatureEnhancementRequest(
             mask_context=mask_context,
@@ -110,7 +105,6 @@ def enhance_or_suppress_features(
             dic_decay=dic_decay,
         )
     )
-
     return RuntimeImagePayloadContext(
         np.asarray(result, dtype=np.float32),
         mask=image_payload_mask(image),
@@ -119,9 +113,7 @@ def enhance_or_suppress_features(
 
 
 class EnhanceOrSuppressFeaturesModule(
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
-    CellProfilerModule,
+    ImageArtifactInputModule, ImageArtifactOutputModule, CellProfilerModule
 ):
     module_name = "EnhanceOrSuppressFeatures"
     function_name = "enhance_or_suppress_features"
@@ -148,21 +140,16 @@ class EnhanceOrSuppressFeaturesModule(
 
     @classmethod
     def postprocess_bound_settings(
-        cls,
-        module: "ModuleBlock",
-        bound: BoundModuleSettings,
+        cls, module: "ModuleBlock", bound: BoundModuleSettings
     ) -> BoundModuleSettings:
         kwargs = dict(bound.kwargs)
         hole_sizes = kwargs.pop("dark_hole_radius_range", None)
         if hole_sizes is not None:
             if not isinstance(hole_sizes, tuple) or len(hole_sizes) != 2:
                 raise ValueError(
-                    f"{module.name} hole size range must contain two values, "
-                    f"got {hole_sizes!r}."
+                    f"{module.name} hole size range must contain two values, got {hole_sizes!r}."
                 )
-            kwargs["dark_hole_radius_min"], kwargs["dark_hole_radius_max"] = (
-                hole_sizes
-            )
+            kwargs["dark_hole_radius_min"], kwargs["dark_hole_radius_max"] = hole_sizes
         feature_size = kwargs.pop("feature_size", None)
         if feature_size is not None:
             kwargs["radius"] = feature_size / 2
@@ -174,11 +161,9 @@ class EnhanceOrSuppressFeaturesModule(
         )
 
 
-@numpy
+@numpy(contract=ProcessingContract.PURE_3D)
 def match_template(
-    image: np.ndarray,
-    template: np.ndarray | None = None,
-    pad_input: bool = True,
+    image: np.ndarray, template: np.ndarray | None = None, pad_input: bool = True
 ) -> np.ndarray:
     """Match an image template using normalized cross-correlation."""
     from skimage.feature import match_template as skimage_match_template
@@ -186,23 +171,17 @@ def match_template(
     if template is None:
         if image.shape[0] < 2:
             raise ValueError(
-                "When template is not provided, image must have at least 2 slices "
-                "in dimension 0: [input_image, template]."
+                "When template is not provided, image must have at least 2 slices in dimension 0: [input_image, template]."
             )
         output = skimage_match_template(
-            image=image[0],
-            template=image[1],
-            pad_input=pad_input,
+            image=image[0], template=image[1], pad_input=pad_input
         )
         return output[np.newaxis, ...].astype(np.float32)
-
     template_2d = template[0] if template.ndim == 3 else template
     return np.stack(
         [
             skimage_match_template(
-                image=input_slice,
-                template=template_2d,
-                pad_input=pad_input,
+                image=input_slice, template=template_2d, pad_input=pad_input
             )
             for input_slice in image
         ],
@@ -245,9 +224,7 @@ class FeatureEnhancementRequest:
 
 
 class FeatureOperationStrategy(
-    EnumKeyedStrategyMixin[OperationMethod],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[OperationMethod], ABC, metaclass=AutoRegisterMeta
 ):
     """Top-level CP enhance/suppress operation semantics."""
 
@@ -271,9 +248,9 @@ class EnhanceFeatureOperationStrategy(FeatureOperationStrategy):
     method = OperationMethod.ENHANCE
 
     def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
-        return FeatureEnhanceMethodStrategy.for_method(
-            request.enhance_method
-        ).apply(request)
+        return FeatureEnhanceMethodStrategy.for_method(request.enhance_method).apply(
+            request
+        )
 
 
 class SuppressFeatureOperationStrategy(FeatureOperationStrategy):
@@ -282,16 +259,13 @@ class SuppressFeatureOperationStrategy(FeatureOperationStrategy):
     def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
         footprint = _structuring_element(request.radius)
         opened = skimage.morphology.opening(
-            request.mask_context.masked_original,
-            footprint=footprint,
+            request.mask_context.masked_original, footprint=footprint
         )
         return request.mask_context.restore_background(opened)
 
 
 class FeatureEnhanceMethodStrategy(
-    EnumKeyedStrategyMixin[EnhanceMethod],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[EnhanceMethod], ABC, metaclass=AutoRegisterMeta
 ):
     """CP feature enhancement method semantics."""
 
@@ -328,10 +302,7 @@ class SpecklesFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
     def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
         footprint = _structuring_element(request.radius)
         masked = request.mask_context.masked_original
-        if (
-            request.speckle_accuracy is SpeckleAccuracy.FAST
-            and request.radius > 3
-        ):
+        if request.speckle_accuracy is SpeckleAccuracy.FAST and request.radius > 3:
             opened = scipy.ndimage.maximum_filter(
                 scipy.ndimage.minimum_filter(masked, footprint=footprint),
                 footprint=footprint,
@@ -367,7 +338,9 @@ class NeuritesFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
 
 
 @njit(cache=True)
-def _tubeness_response_2d_numba(image: np.ndarray, smoothing_value: float) -> np.ndarray:
+def _tubeness_response_2d_numba(
+    image: np.ndarray, smoothing_value: float
+) -> np.ndarray:
     height, width = image.shape
     result = np.zeros((height, width), dtype=np.float64)
     scale = smoothing_value * smoothing_value
@@ -377,9 +350,9 @@ def _tubeness_response_2d_numba(image: np.ndarray, smoothing_value: float) -> np
             b = 0.0
             c = 0.0
             if 0 < y < height - 1:
-                a = image[y - 1, x] - (2.0 * image[y, x]) + image[y + 1, x]
+                a = image[y - 1, x] - 2.0 * image[y, x] + image[y + 1, x]
             if 0 < x < width - 1:
-                c = image[y, x - 1] - (2.0 * image[y, x]) + image[y, x + 1]
+                c = image[y, x - 1] - 2.0 * image[y, x] + image[y, x + 1]
             if 0 < y < height - 1 and 0 < x < width - 1:
                 b = (
                     image[y + 1, x + 1]
@@ -387,7 +360,6 @@ def _tubeness_response_2d_numba(image: np.ndarray, smoothing_value: float) -> np
                     - image[y + 1, x - 1]
                     - image[y - 1, x + 1]
                 ) / 4.0
-
             linear = -(a + c)
             constant = a * c - b * b
             discriminant = linear * linear - 4.0 * constant
@@ -415,8 +387,7 @@ class DarkHolesFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
         )
         responses = [
             skimage.morphology.black_tophat(
-                masked,
-                footprint=_structuring_element(radius),
+                masked, footprint=_structuring_element(radius)
             )
             for radius in radii
         ]
@@ -441,8 +412,7 @@ class TextureFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
         masked = request.mask_context.masked_original.astype(float)
         mean = scipy.ndimage.gaussian_filter(masked, request.smoothing_value)
         mean_squared = scipy.ndimage.gaussian_filter(
-            masked * masked,
-            request.smoothing_value,
+            masked * masked, request.smoothing_value
         )
         result = np.maximum(mean_squared - mean * mean, 0)
         return request.mask_context.restore_background(result)
@@ -453,26 +423,16 @@ class DicFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
 
     def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
         smoothed = scipy.ndimage.gaussian_filter(
-            request.mask_context.masked_original,
-            request.smoothing_value,
+            request.mask_context.masked_original, request.smoothing_value
         )
         radians = np.deg2rad(request.dic_angle)
-        shift = np.array((np.sin(radians), np.cos(radians))) * max(
-            request.dic_decay,
-            0,
-        )
+        shift = np.array((np.sin(radians), np.cos(radians))) * max(request.dic_decay, 0)
         coords = np.indices(smoothed.shape, dtype=float)
         forward = scipy.ndimage.map_coordinates(
-            smoothed,
-            coords + shift.reshape(2, 1, 1),
-            order=1,
-            mode="nearest",
+            smoothed, coords + shift.reshape(2, 1, 1), order=1, mode="nearest"
         )
         backward = scipy.ndimage.map_coordinates(
-            smoothed,
-            coords - shift.reshape(2, 1, 1),
-            order=1,
-            mode="nearest",
+            smoothed, coords - shift.reshape(2, 1, 1), order=1, mode="nearest"
         )
         result = np.maximum(forward - backward, 0)
         return request.mask_context.restore_background(result)
@@ -492,8 +452,8 @@ def _prepare_enhance_or_suppress_features() -> None:
 
 
 class MatchTemplateModule(CellProfilerModule):
-    module_name = 'MatchTemplate'
-    function_name = 'match_template'
+    module_name = "MatchTemplate"
+    function_name = "match_template"
     validated = True
-    contract = 'flexible'
+    contract = ProcessingContract.PURE_3D
     confidence = 1.0

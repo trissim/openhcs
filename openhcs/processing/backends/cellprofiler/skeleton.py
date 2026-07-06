@@ -1,34 +1,22 @@
 """CellProfiler-compatible skeleton measurement backends."""
 
 from __future__ import annotations
-from openhcs.processing.backends.cellprofiler.module_classes import CellProfilerModule
-
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
+    CellProfilerModule,
+)
 from dataclasses import dataclass
-
 import numpy as np
 import scipy.ndimage
 from skimage.morphology import remove_small_holes, skeletonize
-
 from openhcs.core.memory.decorators import numpy as numpy_backend
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_values import object_label_dense_array
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.materialization import csv_materializer
-
-SKELETON_MEASUREMENT_FIELDS = ["slice_index", "branches", "endpoints"]
-OBJECT_SKELETON_MEASUREMENT_FIELDS = [
-    "slice_index",
-    "object_label",
-    "number_trunks",
-    "number_non_trunk_branches",
-    "number_branch_ends",
-    "total_skeleton_length",
-]
-EIGHT_NEIGHBOR_KERNEL = np.array(
-    [[1, 1, 1], [1, 0, 1], [1, 1, 1]],
-    dtype=np.uint8,
+from openhcs.processing.materialization import (
+    csv_dataclass_materializer,
 )
+EIGHT_NEIGHBOR_KERNEL = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=np.uint8)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,11 +54,12 @@ class SkeletonNeighborhood:
         binary = self.binary
         padding = np.pad(binary, 1, mode="constant", constant_values=0)
         mask = padding > 0
-        response = (3**binary.ndim) * scipy.ndimage.uniform_filter(
-            padding.astype(np.float64),
-            size=3,
-        ) - 1
-        interior = tuple(slice(1, -1) for _ in range(binary.ndim))
+        response = (
+            3**binary.ndim
+            * scipy.ndimage.uniform_filter(padding.astype(np.float64), size=3)
+            - 1
+        )
+        interior = tuple((slice(1, -1) for _ in range(binary.ndim)))
         return (response * mask)[interior].astype(np.uint16)
 
     def measurement(self, *, slice_index: int = 0) -> SkeletonMeasurement:
@@ -108,7 +97,7 @@ class SkeletonLabelPropagation:
         for _ in range(max_distance):
             dilated = scipy.ndimage.grey_dilation(propagated, size=3)
             propagated = np.where((propagated == 0) & self.mask, dilated, propagated)
-        return propagated, distance
+        return (propagated, distance)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,7 +115,6 @@ class ObjectSkeletonSliceMeasurement:
         label_count = int(np.max(labels))
         if label_count == 0:
             return []
-
         label_range = np.arange(1, label_count + 1, dtype=np.int32)
         disk = DiskStructuringElement(1.5).footprint()
         dilated_labels = scipy.ndimage.grey_dilation(labels, footprint=disk)
@@ -136,37 +124,39 @@ class ObjectSkeletonSliceMeasurement:
         combined_skeleton = combined_skeleton & ~(closed_labels > 0)
         if self.fill_small_holes:
             combined_skeleton = remove_small_holes(
-                combined_skeleton,
-                area_threshold=self.maximum_hole_size,
+                combined_skeleton, area_threshold=self.maximum_hole_size
             )
         combined_skeleton = skeletonize(combined_skeleton)
         outside_skeleton = combined_skeleton & (dilated_labels == 0)
-
         propagated_labels, distance_map = SkeletonLabelPropagation(
-            labels=dilated_labels,
-            mask=combined_skeleton,
+            labels=dilated_labels, mask=combined_skeleton
         ).propagate()
         combined_skeleton = combined_skeleton & (propagated_labels > 0)
         branch_points = SkeletonConvolutionFeatures(combined_skeleton).branchpoints()
         end_points = SkeletonConvolutionFeatures(combined_skeleton).endpoints()
-        branching_counts = SkeletonConvolutionFeatures(combined_skeleton).branching_counts()
+        branching_counts = SkeletonConvolutionFeatures(
+            combined_skeleton
+        ).branching_counts()
         dilated_skeleton = scipy.ndimage.binary_dilation(
-            outside_skeleton,
-            structure=np.ones((3, 3)),
+            outside_skeleton, structure=np.ones((3, 3))
         )
         branching_counts[~dilated_skeleton] = 0
-
         nearby_labels = propagated_labels.copy()
         nearby_labels[distance_map > 1.5] = 0
         outside_labels = propagated_labels.copy()
         outside_labels[nearby_labels > 0] = 0
-
         trunk_counts = np.array(
-            [int(np.sum(branching_counts[nearby_labels == label])) for label in label_range],
+            [
+                int(np.sum(branching_counts[nearby_labels == label]))
+                for label in label_range
+            ],
             dtype=np.int32,
         )
         branch_counts = np.array(
-            [int(np.sum(branch_points[outside_labels == label])) for label in label_range],
+            [
+                int(np.sum(branch_points[outside_labels == label]))
+                for label in label_range
+            ],
             dtype=np.int32,
         )
         end_counts = np.array(
@@ -177,7 +167,6 @@ class ObjectSkeletonSliceMeasurement:
             labels=propagated_labels * outside_skeleton.astype(np.int32),
             label_range=label_range,
         ).lengths()
-
         return [
             ObjectSkeletonMeasurement(
                 slice_index=self.slice_index,
@@ -186,9 +175,7 @@ class ObjectSkeletonSliceMeasurement:
                 number_non_trunk_branches=int(branch_counts[index]),
                 number_branch_ends=int(end_counts[index]),
                 total_skeleton_length=(
-                    float(total_distance[index])
-                    if index < len(total_distance)
-                    else 0.0
+                    float(total_distance[index]) if index < len(total_distance) else 0.0
                 ),
             )
             for index, label in enumerate(label_range)
@@ -231,11 +218,7 @@ class SkeletonLengthByLabel:
     def lengths(self) -> np.ndarray:
         if len(self.label_range) == 0:
             return np.zeros(0)
-        lengths = scipy.ndimage.sum(
-            self.labels > 0,
-            self.labels,
-            self.label_range,
-        )
+        lengths = scipy.ndimage.sum(self.labels > 0, self.labels, self.label_range)
         return np.atleast_1d(lengths).astype(float)
 
 
@@ -243,30 +226,32 @@ class SkeletonLengthByLabel:
 @special_outputs(
     (
         "skeleton_measurements",
-        csv_materializer(
-            fields=SKELETON_MEASUREMENT_FIELDS,
+        csv_dataclass_materializer(
+            SkeletonMeasurement,
             analysis_type="skeleton_measurement",
         ),
     )
 )
 def measure_image_skeleton(image: np.ndarray) -> tuple[np.ndarray, SkeletonMeasurement]:
     """Measure branches and endpoints in a 2-D skeletonized image."""
-    return image, SkeletonNeighborhood(image).measurement()
+    return (image, SkeletonNeighborhood(image).measurement())
 
 
 @numpy_backend(contract=ProcessingContract.PURE_3D)
 @special_outputs(
     (
         "skeleton_measurements_3d",
-        csv_materializer(
-            fields=SKELETON_MEASUREMENT_FIELDS,
+        csv_dataclass_materializer(
+            SkeletonMeasurement,
             analysis_type="skeleton_measurement_3d",
         ),
     )
 )
-def measure_image_skeleton_3d(image: np.ndarray) -> tuple[np.ndarray, SkeletonMeasurement]:
+def measure_image_skeleton_3d(
+    image: np.ndarray,
+) -> tuple[np.ndarray, SkeletonMeasurement]:
     """Measure branches and endpoints in a 3-D skeletonized image."""
-    return image, SkeletonNeighborhood(image).measurement()
+    return (image, SkeletonNeighborhood(image).measurement())
 
 
 @numpy_backend
@@ -274,8 +259,8 @@ def measure_image_skeleton_3d(image: np.ndarray) -> tuple[np.ndarray, SkeletonMe
 @special_outputs(
     (
         "skeleton_measurements",
-        csv_materializer(
-            fields=OBJECT_SKELETON_MEASUREMENT_FIELDS,
+        csv_dataclass_materializer(
+            ObjectSkeletonMeasurement,
             analysis_type="object_skeleton",
         ),
     )
@@ -291,7 +276,6 @@ def measure_object_skeleton(
     label_stack = object_label_dense_array(seed_labels, dtype=np.int32)
     if label_stack.ndim == 2:
         label_stack = label_stack[np.newaxis, :, :]
-
     measurements: list[ObjectSkeletonMeasurement] = []
     for slice_index in range(image_stack.shape[0]):
         labels_slice = (
@@ -308,29 +292,28 @@ def measure_object_skeleton(
                 maximum_hole_size=maximum_hole_size,
             ).measurements()
         )
-    return image, measurements
+    return (image, measurements)
 
 
 class MeasureImageSkeletonModule(CellProfilerModule):
-    module_name = 'MeasureImageSkeleton'
-    function_name = 'measure_image_skeleton'
+    module_name = "MeasureImageSkeleton"
+    function_name = "measure_image_skeleton"
     validated = True
-    contract = 'unknown'
     confidence = 1.0
 
+
 class MeasureObjectSkeletonModule(CellProfilerModule):
-    module_name = 'MeasureObjectSkeleton'
-    function_name = 'measure_object_skeleton'
+    module_name = "MeasureObjectSkeleton"
+    function_name = "measure_object_skeleton"
     validated = True
     confidence = 1.0
+
 
 __all__ = public_names_from_objects(
     DiskStructuringElement,
     "EIGHT_NEIGHBOR_KERNEL",
-    "OBJECT_SKELETON_MEASUREMENT_FIELDS",
     ObjectSkeletonMeasurement,
     ObjectSkeletonSliceMeasurement,
-    "SKELETON_MEASUREMENT_FIELDS",
     SkeletonConvolutionFeatures,
     SkeletonLabelPropagation,
     SkeletonLengthByLabel,

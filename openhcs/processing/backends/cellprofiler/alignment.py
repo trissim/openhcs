@@ -1,21 +1,20 @@
 """Alignment backends for CellProfiler-compatible processing."""
 
 from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, ClassVar
-
+from typing import Annotated, Any, ClassVar
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from scipy.fftpack import fft2, ifft2
-
 from openhcs.constants.constants import MemoryType
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.artifacts import ArtifactSpec, ArtifactSpecCollection, ImageArtifactType
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.runtime_semantics import MeasurementRowAxisField
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     MaskedImagePayload,
@@ -24,19 +23,37 @@ from openhcs.core.runtime_values import (
     image_payload_mask,
     image_payload_metadata,
 )
-from openhcs.processing.backends.cellprofiler.module_classes import ModuleSettingsSourceModule, ArtifactContractModule
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
+    ArtifactContractModule,
+    ImageArtifactInputCapability,
+    ImageArtifactOutputCapability,
+    MeasurementArtifactOutputCapability,
+    ModuleSettingsSourceModule,
+)
 from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
     required_setting_value,
     setting_values,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.interop.cellprofiler.cellprofiler_literals import (
+    cellprofiler_enum_from_literal,
+)
 from openhcs.interop.cellprofiler.runtime.measurement_recording import (
-    AlignOutputMeasurementRecordRowsMixin,
+    DeclaredImageOutputPayloadMeasurementRecordMixin,
+    FieldDerivedMeasurementFeatureModule,
+    MeasurementFeatureRecord,
     NoFieldsMeasurementRecordMixin,
     NoObjectNameMeasurementRecordMixin,
-    NoSourceMeasurementRecordMixin,
 )
+from openhcs.interop.cellprofiler.runtime.measurement_rows import (
+    CellProfilerMeasurementStatField,
+    ModuleOwnedResultMeasurementRows,
+)
+from openhcs.interop.cellprofiler.runtime.main_flow import (
+    CellProfilerMainFlowReplacementPolicyMixin,
+)
+from openhcs.interop.cellprofiler.runtime.payload_types import CellProfilerKwargDict
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -50,18 +67,100 @@ from openhcs.processing.backends.cellprofiler.alignment_mutual_information_offse
 )
 
 
+class AlignOutputMeasurementRecordRowsMixin(FieldDerivedMeasurementFeatureModule):
+    """Declares Align measurement rows on the module MRO."""
+
+    measurement_feature_family = "Align"
+    measurement_feature_token_aliases = (("shift", "shift"),)
+
+    class MeasurementStatField(CellProfilerMeasurementStatField):
+        """Absorbed Align result fields."""
+
+        OUTPUT_INDEX = "output_index"
+        SLICE_INDEX = MeasurementRowAxisField.SLICE_INDEX.value
+        X_SHIFT = "x_shift"
+        Y_SHIFT = "y_shift"
+
+    @dataclass(frozen=True, slots=True)
+    class MeasurementRecord(MeasurementFeatureRecord):
+        """Raw Align measurements before CP row projection."""
+
+        slice_index: Annotated[int, MeasurementRowAxisField.SLICE_INDEX]
+        source_image_name: Annotated[str, MeasurementRowAxisField.SOURCE_IMAGE_NAME]
+        x_shift: float
+        y_shift: float
+
+    @dataclass(frozen=True, slots=True)
+    class MeasurementRows(ModuleOwnedResultMeasurementRows):
+        """Project absorbed Align results into CP image measurement rows."""
+
+        registry_key = "align"
+        image_output_names: tuple[str, ...]
+
+        @classmethod
+        def for_request(cls, module_type, request):
+            image_output_names = tuple(
+                spec.name
+                for spec in ArtifactSpecCollection(
+                    request.declared_outputs
+                ).of_artifact_type(ImageArtifactType)
+            )
+            return cls(
+                request.output_value,
+                module_type=module_type,
+                image_output_names=image_output_names,
+            )
+
+        def rows(self) -> list[CellProfilerKwargDict]:
+            records: list[AlignOutputMeasurementRecordRowsMixin.MeasurementRecord] = []
+            stat_field = self.stat_field_type
+            record_type = self.module_type.MeasurementRecord
+            for result in self.source_rows():
+                output_index = int(
+                    self.row_value(result, stat_field.OUTPUT_INDEX, 0)
+                )
+                if output_index < 0 or output_index >= len(self.image_output_names):
+                    raise ValueError(
+                        f"Align measurement output_index {output_index} does not match "
+                        f"declared image outputs {self.image_output_names!r}."
+                    )
+                slice_index = int(
+                    self.row_value(result, stat_field.SLICE_INDEX, 0)
+                )
+                records.append(
+                    record_type(
+                        slice_index=slice_index,
+                        source_image_name=self.image_output_names[output_index],
+                        x_shift=float(self.row_value(result, stat_field.X_SHIFT, 0.0)),
+                        y_shift=float(self.row_value(result, stat_field.Y_SHIFT, 0.0)),
+                    )
+                )
+            return self.module_type.measurement_feature_rows_from_records(tuple(records))
+
+
+class AlignMainFlowReplacementMixin(CellProfilerMainFlowReplacementPolicyMixin):
+    """Align publishes its declared aligned image outputs to downstream flow."""
+
+    def replaces_main_flow(self, image_outputs: tuple[ArtifactSpec, ...]) -> bool:
+        return bool(image_outputs)
+
+
 class AlignModule(
+    AlignMainFlowReplacementMixin,
     AlignOutputMeasurementRecordRowsMixin,
     NoObjectNameMeasurementRecordMixin,
-    NoSourceMeasurementRecordMixin,
+    DeclaredImageOutputPayloadMeasurementRecordMixin,
     NoFieldsMeasurementRecordMixin,
     ModuleSettingsSourceModule,
+    ArtifactContractModule,
+    ImageArtifactInputCapability,
+    ImageArtifactOutputCapability,
+    MeasurementArtifactOutputCapability,
 ):
-    module_name = 'Align'
-    function_name = 'align'
+    module_name = "Align"
+    function_name = "align"
     validated = True
-    contract = 'flexible'
-    category = 'channel_operation'
+    contract = ProcessingContract.PURE_3D
     confidence = 1.0
     method_setting = "Select the alignment method"
     v2_crop_setting = "Crop output images to retain just the aligned regions?"
@@ -79,8 +178,7 @@ class AlignModule(
 
         @classmethod
         def from_literal(
-            cls,
-            value: "AlignModule.AdditionalMode | str",
+            cls, value: "AlignModule.AdditionalMode | str"
         ) -> "AlignModule.AdditionalMode":
             return cellprofiler_enum_from_literal(cls, value)
 
@@ -91,8 +189,7 @@ class AlignModule(
 
         @classmethod
         def from_literal(
-            cls,
-            value: "AlignModule.CropMode | str",
+            cls, value: "AlignModule.CropMode | str"
         ) -> "AlignModule.CropMode":
             return cellprofiler_enum_from_literal(
                 cls,
@@ -115,12 +212,12 @@ class AlignModule(
         additional_modes = cls.additional_alignment_modes(module)
         if additional_modes:
             kwargs["additional_alignment_modes"] = tuple(
-                mode.value for mode in additional_modes
+                (mode.value for mode in additional_modes)
             )
         return kwargs
 
     @classmethod
-    def input_names(cls, module: "ModuleBlock") -> tuple[str, ...]:
+    def image_input_names(cls, module: "ModuleBlock") -> tuple[str, ...]:
         return (
             required_setting_value(module, cls.first_input_setting),
             required_setting_value(module, cls.second_input_setting),
@@ -128,13 +225,12 @@ class AlignModule(
         )
 
     @classmethod
-    def output_names(cls, module: "ModuleBlock") -> tuple[str, ...]:
+    def image_output_names(cls, module: "ModuleBlock") -> tuple[str, ...]:
         return (
             required_setting_value(module, cls.first_output_setting),
             required_setting_value(module, cls.second_output_setting),
             *setting_values(module, cls.additional_output_setting),
         )
-
 
     @classmethod
     def crop_mode(cls, module: "ModuleBlock") -> "AlignModule.CropMode":
@@ -146,46 +242,40 @@ class AlignModule(
 
     @classmethod
     def additional_alignment_modes(
-        cls,
-        module: "ModuleBlock",
+        cls, module: "ModuleBlock"
     ) -> tuple["AlignModule.AdditionalMode", ...]:
         additional_inputs = setting_values(module, cls.additional_input_setting)
         additional_outputs = setting_values(module, cls.additional_output_setting)
         if len(additional_inputs) != len(additional_outputs):
             raise ValueError(
-                f"Module Align({module.module_num}) has {len(additional_inputs)} "
-                f"additional inputs but {len(additional_outputs)} additional outputs."
+                f"Module Align({module.module_num}) has {len(additional_inputs)} additional inputs but {len(additional_outputs)} additional outputs."
             )
         raw_modes = setting_values(module, cls.additional_mode_setting)
         if not raw_modes:
             return (cls.AdditionalMode.SIMILARLY,) * len(additional_inputs)
-        modes = tuple(cls.AdditionalMode.from_literal(value) for value in raw_modes)
+        modes = tuple((cls.AdditionalMode.from_literal(value) for value in raw_modes))
         if len(modes) != len(additional_inputs):
             raise ValueError(
-                f"Module Align({module.module_num}) has {len(modes)} additional "
-                f"alignment modes for {len(additional_inputs)} additional images."
+                f"Module Align({module.module_num}) has {len(modes)} additional alignment modes for {len(additional_inputs)} additional images."
             )
         return modes
 
     @classmethod
     def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-
         inputs = [
-            builder.require_artifact(ArtifactSpec(name, ArtifactKind.IMAGE), module)
-            for name in cls.input_names(module)
+            ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(name))
+            for name in cls.image_input_names(module)
         ]
         outputs = [
-            builder.declare_artifact(ArtifactSpec(name, ArtifactKind.IMAGE), module)
-            for name in cls.output_names(module)
+            ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(name))
+            for name in cls.image_output_names(module)
         ]
         outputs.append(
-            builder.declare_artifact(
-                ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS),
-                module,
-            )
+            MeasurementArtifactOutputCapability.bind_artifact(cls, builder, module, MeasurementArtifactOutputCapability.spec(cls.measurement_artifact_name(module)))
         )
-        return assembler.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
+        return assembler.assemble_contract(
+            module, builder, inputs=inputs, outputs=outputs
+        )
 
 
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -193,9 +283,7 @@ from openhcs.processing.materialization import csv_materializer
 
 
 class AlignmentBackendStrategy(
-    CellProfilerBackendStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    CellProfilerBackendStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Alignment operations keyed by OpenHCS memory type/provider."""
 
@@ -217,8 +305,7 @@ class NumbaNumpyAlignmentBackendStrategy(AlignmentBackendStrategy):
     """Numba-accelerated NumPy alignment primitives."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.NUMBA,
+        MemoryType.NUMPY, CellProfilerBackendProvider.NUMBA
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
@@ -241,13 +328,11 @@ class NumbaNumpyAlignmentBackendStrategy(AlignmentBackendStrategy):
         reshaped_moving_pixels = _reshape_image(moving_pixels, max_shape)
         reshaped_reference_mask = _reshape_image(reference_mask, max_shape)
         reshaped_moving_mask = _reshape_image(moving_mask, max_shape)
-
         if bool(np.all(reshaped_reference_mask)) and bool(np.all(reshaped_moving_mask)):
             return mutual_information_offset_unmasked_numba(
                 np.asarray(reshaped_reference_pixels, dtype=np.float64),
                 np.asarray(reshaped_moving_pixels, dtype=np.float64),
             )
-
         return mutual_information_offset_numba(
             np.asarray(reshaped_reference_pixels, dtype=np.float64),
             np.asarray(reshaped_moving_pixels, dtype=np.float64),
@@ -296,12 +381,11 @@ class TranslationOffsetRequest:
         moving_pixels = alignment_pixels(self.moving_image)
         if self.method.strip().lower() == "normalized cross correlation":
             column_offset, row_offset = cross_correlation_offset(
-                reference_pixels,
-                moving_pixels,
+                reference_pixels, moving_pixels
             )
         else:
             selected_backend = AlignmentBackendStrategy.for_memory_type(
-                backend_provider=self.alignment_backend_provider,
+                backend_provider=self.alignment_backend_provider
             )
             column_offset, row_offset = selected_backend.mutual_information_offset(
                 reference_pixels,
@@ -309,7 +393,7 @@ class TranslationOffsetRequest:
                 alignment_mask(self.first_mask, reference_pixels.shape),
                 alignment_mask(self.second_mask, moving_pixels.shape),
             )
-        return int(row_offset), int(column_offset)
+        return (int(row_offset), int(column_offset))
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,12 +410,9 @@ class AlignOutputRequest:
         output_shape = tuple(self.shape) + tuple(np.asarray(self.image).shape[2:])
         output = np.zeros(output_shape, dtype=np.asarray(self.image).dtype)
         source_view, output_view = offset_slice(
-            np.asarray(self.image),
-            output,
-            *self.offset,
+            np.asarray(self.image), output, *self.offset
         )
         output_view[...] = source_view
-
         source_mask = (
             np.ones(np.asarray(self.image).shape[:2], dtype=bool)
             if self.mask is None
@@ -339,9 +420,7 @@ class AlignOutputRequest:
         )
         output_mask = np.zeros(tuple(self.shape), dtype=bool)
         source_mask_view, output_mask_view = offset_slice(
-            source_mask,
-            output_mask,
-            *self.offset,
+            source_mask, output_mask, *self.offset
         )
         output_mask_view[...] = source_mask_view
         return RuntimeImagePayloadContext(
@@ -360,8 +439,8 @@ class AlignGeometryProjection:
 
     def as_pair(self) -> AlignGeometryPair:
         return (
-            tuple(tuple(int(value) for value in row) for row in self.offsets),
-            tuple(tuple(int(value) for value in row) for row in self.shapes),
+            tuple((tuple((int(value) for value in row)) for row in self.offsets)),
+            tuple((tuple((int(value) for value in row)) for row in self.shapes)),
         )
 
 
@@ -376,7 +455,7 @@ class AlignInputPayloads:
         data = np.asarray(image_payload_data(self.payload))
         if not hasattr(data, "ndim") or data.ndim not in (3, 4) or data.shape[0] < 2:
             raise ValueError("Align requires at least two stacked image inputs.")
-        return tuple(data[index] for index in range(data.shape[0]))
+        return tuple((data[index] for index in range(data.shape[0])))
 
     def masks(self, images: tuple[np.ndarray, ...]) -> tuple[np.ndarray | None, ...]:
         mask = image_payload_mask(self.payload)
@@ -386,13 +465,12 @@ class AlignInputPayloads:
         if mask_array.ndim == 2:
             return (mask_array,) * len(images)
         if mask_array.ndim == 3 and mask_array.shape[0] == len(images):
-            return tuple(mask_array[index] for index in range(len(images)))
+            return tuple((mask_array[index] for index in range(len(images))))
         spatial_shapes = {
             tuple(np.asarray(input_image).shape[:2]) for input_image in images
         }
-        if (
-            len(spatial_shapes) == 1
-            and mask_array.shape[:2] == next(iter(spatial_shapes))
+        if len(spatial_shapes) == 1 and mask_array.shape[:2] == next(
+            iter(spatial_shapes)
         ):
             return (mask_array,) * len(images)
         raise ValueError(
@@ -401,7 +479,7 @@ class AlignInputPayloads:
 
     def metadata(self, count: int) -> tuple[ImagePayloadMetadata, ...]:
         metadata = image_payload_metadata(self.payload)
-        return tuple(metadata.for_source_plane(index) for index in range(count))
+        return tuple((metadata.for_source_plane(index) for index in range(count)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,13 +500,11 @@ class AlignAdditionalModePlan:
         if not self.modes:
             return (AlignModule.AdditionalMode.SIMILARLY,) * self.additional_count
         normalized = tuple(
-            AlignModule.AdditionalMode.from_literal(mode) for mode in self.modes
+            (AlignModule.AdditionalMode.from_literal(mode) for mode in self.modes)
         )
         if len(normalized) != self.additional_count:
             raise ValueError(
-                "Align additional alignment mode count must match additional image "
-                f"count; got {len(normalized)} modes for {self.additional_count} "
-                "images."
+                f"Align additional alignment mode count must match additional image count; got {len(normalized)} modes for {self.additional_count} images."
             )
         return normalized
 
@@ -446,21 +522,21 @@ class SimilarlyAlignedOutputGeometry:
     @property
     def geometry(self) -> tuple[tuple[int, int], tuple[int, int]]:
         if self.crop_mode is AlignModule.CropMode.KEEP_SIZE:
-            return self.second_offset, tuple(np.asarray(self.additional_image).shape[:2])
+            return (
+                self.second_offset,
+                tuple(np.asarray(self.additional_image).shape[:2]),
+            )
         if tuple(np.asarray(self.additional_image).shape[:2]) != tuple(
             np.asarray(self.second_image).shape[:2]
         ):
             raise ValueError(
-                "Align additional images with non-keep-size crop modes must share "
-                "the second input image spatial shape."
+                "Align additional images with non-keep-size crop modes must share the second input image spatial shape."
             )
-        return self.second_offset, self.second_shape
+        return (self.second_offset, self.second_shape)
 
 
 class AlignCropModeStrategy(
-    EnumKeyedStrategyMixin[AlignModule.CropMode],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[AlignModule.CropMode], ABC, metaclass=AutoRegisterMeta
 ):
     """Nominal strategy family for legacy Align crop modes."""
 
@@ -468,7 +544,6 @@ class AlignCropModeStrategy(
     __skip_if_no_key__ = True
     __enum_member_attr__ = "crop_mode"
     __enum_label_attr__ = "crop_mode_label"
-
     crop_mode: ClassVar[AlignModule.CropMode | None] = None
     crop_mode_label: ClassVar[str | None] = None
 
@@ -487,7 +562,7 @@ class KeepSizeAlignCropModeStrategy(AlignCropModeStrategy):
     crop_mode = AlignModule.CropMode.KEEP_SIZE
 
     def apply(self, request: AlignCropRequest) -> AlignGeometryPair:
-        return request.offsets, request.shapes
+        return (request.offsets, request.shapes)
 
 
 class PadImagesAlignCropModeStrategy(AlignCropModeStrategy):
@@ -526,8 +601,7 @@ class AlignExecution:
         masks = payloads.masks(images)
         metadata = payloads.metadata(len(images))
         additional_modes = AlignAdditionalModePlan(
-            self.additional_alignment_modes,
-            len(images) - 2,
+            self.additional_alignment_modes, len(images) - 2
         ).normalized_modes
         row_offset, column_offset = TranslationOffsetRequest(
             reference_image=first_image,
@@ -617,16 +691,12 @@ def align_offsets(
     crop_mode: AlignModule.CropMode,
 ) -> AlignGeometryPair:
     return AlignCropModeStrategy.for_crop_mode(crop_mode).apply(
-        AlignCropRequest(
-            offsets=offsets,
-            shapes=shapes,
-        )
+        AlignCropRequest(offsets=offsets, shapes=shapes)
     )
 
 
 def align_offsets_for_cropping(
-    offsets: AlignImageGeometry,
-    shapes: AlignImageGeometry,
+    offsets: AlignImageGeometry, shapes: AlignImageGeometry
 ) -> AlignGeometryPair:
     offsets_array = np.asarray(offsets, dtype=int)
     shapes_array = np.asarray(shapes, dtype=int)
@@ -634,14 +704,12 @@ def align_offsets_for_cropping(
     shapes_array = shapes_array + offsets_array
     output_shape = np.min(shapes_array, axis=0)
     return AlignGeometryProjection(
-        offsets=offsets_array,
-        shapes=np.tile(output_shape, (len(shapes), 1)),
+        offsets=offsets_array, shapes=np.tile(output_shape, (len(shapes), 1))
     ).as_pair()
 
 
 def align_offsets_for_padding(
-    offsets: AlignImageGeometry,
-    shapes: AlignImageGeometry,
+    offsets: AlignImageGeometry, shapes: AlignImageGeometry
 ) -> AlignGeometryPair:
     offsets_array = np.asarray(offsets, dtype=int)
     shapes_array = np.asarray(shapes, dtype=int)
@@ -649,8 +717,7 @@ def align_offsets_for_padding(
     shapes_array = shapes_array + offsets_array
     output_shape = np.max(shapes_array, axis=0)
     return AlignGeometryProjection(
-        offsets=offsets_array,
-        shapes=np.tile(output_shape, (len(shapes), 1)),
+        offsets=offsets_array, shapes=np.tile(output_shape, (len(shapes), 1))
     ).as_pair()
 
 
@@ -697,21 +764,18 @@ def alignment_mask(mask: np.ndarray | None, shape: tuple[int, int]) -> np.ndarra
 
 
 def cross_correlation_offset(
-    reference_pixels: np.ndarray,
-    moving_pixels: np.ndarray,
+    reference_pixels: np.ndarray, moving_pixels: np.ndarray
 ) -> tuple[int, int]:
     shape = np.maximum(reference_pixels.shape, moving_pixels.shape)
     fft_shape = shape * 2
     row_grid, column_grid = np.mgrid[-shape[0] : shape[0], -shape[1] : shape[1]]
     overlap_count = np.abs(row_grid * column_grid).astype(float)
     overlap_count[overlap_count < 1] = 1
-
     reference_pixels = reference_pixels - np.mean(reference_pixels)
     moving_pixels = moving_pixels - np.mean(moving_pixels)
     reference_fft = fft2(reference_pixels, fft_shape.tolist())
     moving_fft = fft2(moving_pixels, fft_shape.tolist())
     correlation = ifft2(reference_fft * moving_fft.conj()).real
-
     ref_rows, ref_columns = reference_pixels.shape
     ref_sum = np.zeros(fft_shape)
     ref_sum[:ref_rows, :ref_columns] = cumsum_quadrant(
@@ -727,7 +791,6 @@ def cross_correlation_offset(
         reference_pixels, row_forwards=True, column_forwards=True
     )
     ref_mean = ref_sum / overlap_count
-
     moving_rows, moving_columns = moving_pixels.shape
     moving_sum = np.zeros(fft_shape)
     moving_sum[:moving_rows, :moving_columns] = cumsum_quadrant(
@@ -743,26 +806,23 @@ def cross_correlation_offset(
         moving_pixels, row_forwards=True, column_forwards=True
     )
     moving_mean = np.fliplr(np.flipud(moving_sum)) / overlap_count
-
     ref_sd = np.sum(reference_pixels**2) - ref_mean**2 * np.prod(shape)
     moving_sd = np.sum(moving_pixels**2) - moving_mean**2 * np.prod(shape)
     sd = np.sqrt(np.maximum(ref_sd * moving_sd, 0))
-    normalized = np.divide(correlation, sd, out=np.zeros_like(correlation), where=sd != 0)
+    normalized = np.divide(
+        correlation, sd, out=np.zeros_like(correlation), where=sd != 0
+    )
     normalized[(overlap_count < np.prod(shape) / 2) & (sd < np.mean(sd) / 100)] = 0
-
     row_offset, column_offset = np.unravel_index(np.argmax(normalized), fft_shape)
     if row_offset > reference_pixels.shape[0]:
         row_offset -= int(fft_shape[0])
     if column_offset > reference_pixels.shape[1]:
         column_offset -= int(fft_shape[1])
-    return int(column_offset), int(row_offset)
+    return (int(column_offset), int(row_offset))
 
 
 def cumsum_quadrant(
-    values: np.ndarray,
-    *,
-    row_forwards: bool,
-    column_forwards: bool,
+    values: np.ndarray, *, row_forwards: bool, column_forwards: bool
 ) -> np.ndarray:
     if row_forwards:
         values = values.cumsum(0)
@@ -774,10 +834,7 @@ def cumsum_quadrant(
 
 
 def offset_slice(
-    source: np.ndarray,
-    target: np.ndarray,
-    row_offset: int,
-    column_offset: int,
+    source: np.ndarray, target: np.ndarray, row_offset: int, column_offset: int
 ) -> tuple[np.ndarray, np.ndarray]:
     if row_offset < 0:
         height = min(source.shape[0] + row_offset, target.shape[0])
@@ -795,11 +852,9 @@ def offset_slice(
         width = min(source.shape[1], target.shape[1] - column_offset)
         source_column_start = 0
         target_column_start = column_offset
-
     if height <= 0 or width <= 0:
         empty = (slice(0, 0), slice(0, 0))
-        return source[empty], target[empty]
-
+        return (source[empty], target[empty])
     source_slices = (
         slice(source_row_start, source_row_start + height),
         slice(source_column_start, source_column_start + width),
@@ -810,7 +865,7 @@ def offset_slice(
         slice(target_column_start, target_column_start + width),
         *(slice(None),) * max(0, target.ndim - 2),
     )
-    return source[source_slices], target[target_slices]
+    return (source[source_slices], target[target_slices])
 
 
 def prepare_align() -> None:
@@ -829,7 +884,7 @@ def prepare_align() -> None:
     ).offset()
 
 
-@numpy(contract=ProcessingContract.FLEXIBLE)
+@numpy(contract=ProcessingContract.PURE_3D)
 @special_outputs(
     (
         "align_measurements",

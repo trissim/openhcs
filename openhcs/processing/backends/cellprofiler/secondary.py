@@ -1,21 +1,17 @@
 """Secondary-object backend strategies for CellProfiler-compatible processing."""
 
 from __future__ import annotations
-
 from openhcs.interop.cellprofiler.settings_binder import parse_cellprofiler_bool
-
 import logging
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, ClassVar, Tuple, TypeAlias
-
+from typing import Annotated, Callable, ClassVar, Tuple, TypeAlias
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
-
 from openhcs.constants.constants import MemoryType
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory import numpy
@@ -23,11 +19,18 @@ from openhcs.core.pipeline.function_contracts import (
     RuntimePure2DSliceBatchRequest,
     pure_2d_batch_executor,
 )
+from openhcs.core.artifacts import (
+    ArtifactSpecRef,
+    GroupLineageSourceRelation,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+)
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import RegisteredLeafClassSpec
 from openhcs.core.runtime_semantics import (
     DenseObjectLabelPairAligner,
     ExplicitObjectLabelDomainDeclaration,
+    MeasurementRowAxisField,
     ObjectLabelDomain,
     ObjectLabelDomainScope,
     ObjectLabelRepresentation,
@@ -54,12 +57,20 @@ from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     coerce_cellprofiler_enum,
 )
-from openhcs.processing.backends.cellprofiler.module_classes import (
-    ArtifactContractModule,
+from openhcs.interop.cellprofiler.module_declarations import (
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
+    ImageArtifactInputCapability,
+    ImageArtifactInputModule,
+    MeasurementArtifactOutputModule,
     ModuleSettingsSourceModule,
+    ObjectArtifactInputModule,
+    ObjectArtifactOutputModule,
+    ObjectLabelArtifactInputCapability,
+    ObjectLabelArtifactOutputCapability,
+    ProcessingContract,
+    RelationshipArtifactOutputModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
 )
@@ -69,13 +80,15 @@ from openhcs.interop.cellprofiler.setting_names import (
     setting_values,
     split_symbol_names,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.interop.cellprofiler.cellprofiler_literals import (
+    cellprofiler_enum_from_literal,
+)
 from openhcs.interop.cellprofiler.runtime.measurement_recording import (
     ColumnarFieldsMeasurementRecordMixin,
+    MeasurementFeatureRecord,
     NoFieldsMeasurementRecordMixin,
     NoObjectNameMeasurementRecordMixin,
     NoSourceMeasurementRecordMixin,
-    OutputObjectThresholdMeasurementRecordRowsMixin,
     RelationshipMeasurementRecordRowsMixin,
 )
 from openhcs.interop.cellprofiler.runtime.object_input_policies import (
@@ -83,17 +96,23 @@ from openhcs.interop.cellprofiler.runtime.object_input_policies import (
     PrimaryObjectLabelInputPolicy,
 )
 
+
 class IdentifyTertiaryObjectsModule(
     PairedPrimarySecondaryObjectInputPolicy,
     RelationshipMeasurementRecordRowsMixin,
     NoObjectNameMeasurementRecordMixin,
     NoSourceMeasurementRecordMixin,
     ColumnarFieldsMeasurementRecordMixin,
+    ObjectArtifactInputModule,
+    ObjectArtifactOutputModule,
+    RelationshipArtifactOutputModule,
+    MeasurementArtifactOutputModule,
     CellProfilerModule,
 ):
-    module_name = 'IdentifyTertiaryObjects'
-    function_name = 'identify_tertiary_objects'
+    module_name = "IdentifyTertiaryObjects"
+    function_name = "identify_tertiary_objects"
     validated = True
+    contract = ProcessingContract.PURE_2D
     confidence = 1.0
     setting_bindings = (
         SettingToKeywordBinding(
@@ -104,37 +123,68 @@ class IdentifyTertiaryObjectsModule(
     )
 
     @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-        from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
+    def measurement_output_relations(cls, builder, module):
+        del builder
+        larger_name = required_setting_value(
+            module, "Select the larger identified objects"
+        )
+        return (
+            GroupLineageSourceRelation(
+                source=ArtifactSpecRef.input(
+                    larger_name,
+                    ObjectLabelsArtifactType,
+                )
+            ),
+        )
 
-        larger = builder.require_artifact(
-            ArtifactSpec(required_setting_value(module, "Select the larger identified objects"), ArtifactKind.OBJECT_LABELS),
-            module,
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        larger = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(required_setting_value(module, "Select the larger identified objects")))
+        smaller = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(required_setting_value(module, "Select the smaller identified objects")))
+        output_name = required_setting_value(
+            module, "Name the tertiary objects to be identified"
         )
-        smaller = builder.require_artifact(
-            ArtifactSpec(required_setting_value(module, "Select the smaller identified objects"), ArtifactKind.OBJECT_LABELS),
+        output = ObjectLabelArtifactOutputCapability.bind_artifact(
+            cls,
+            builder,
             module,
-        )
-        output = builder.declare_artifact(
-            ArtifactSpec(required_setting_value(module, "Name the tertiary objects to be identified"), ArtifactKind.OBJECT_LABELS),
-            module,
+            ObjectLabelArtifactOutputCapability.spec(
+                output_name,
+                relations=(
+                    GroupLineageSourceRelation(
+                        source=ArtifactSpecRef.input(
+                            larger.name,
+                            ObjectLabelsArtifactType,
+                        )
+                    ),
+                ),
+            ),
         )
         outputs = [
-            builder.declare_artifact(ArtifactSpec(parent_child_relationship_artifact_name(larger.name, output.name), ArtifactKind.RELATIONSHIPS), module),
-            builder.declare_artifact(ArtifactSpec(parent_child_relationship_artifact_name(smaller.name, output.name), ArtifactKind.RELATIONSHIPS), module),
-            builder.declare_artifact(ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS), module),
+            cls.parent_child_relationship_output_artifact(
+                builder, module, parent_name=larger.name, child_name=output.name
+            ),
+            cls.parent_child_relationship_output_artifact(
+                builder, module, parent_name=smaller.name, child_name=output.name
+            ),
+            cls.measurement_output_artifact(builder, module),
             output,
         ]
-        return assembler.assemble_contract(module, builder, inputs=[larger, smaller], outputs=outputs)
+        return assembler.assemble_contract(
+            module, builder, inputs=[larger, smaller], outputs=outputs
+        )
 
 
 from openhcs.processing.backends.cellprofiler.image_geometry import (
     CellProfilerPlaneGeometry,
     collapse_singleton_plane_stack,
 )
-from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
-from openhcs.processing.backends.cellprofiler.outlines import ObjectOutlineBackendStrategy
+from openhcs.processing.backends.cellprofiler.morphology import (
+    MorphologyBackendStrategy,
+)
+from openhcs.processing.backends.cellprofiler.outlines import (
+    ObjectOutlineBackendStrategy,
+)
 from openhcs.processing.backends.cellprofiler.thresholding import (
     CellProfilerAveragingMethod,
     CellProfilerOtsuMethod,
@@ -145,11 +195,14 @@ from openhcs.processing.backends.cellprofiler.thresholding import (
     CellProfilerThresholdScope,
     CellProfilerThresholdSettings,
     CellProfilerVarianceMethod,
+    ObjectThresholdResult,
+    OutputObjectThresholdMeasurementRecordRowsMixin,
+    ThresholdMeasurementFeatureRecord,
     ThresholdPrimitiveBackendStrategy,
     ThresholdSettingsModule,
     normalize_cellprofiler_image,
     threshold_primitives,
-    unit_interval_scale_for_threshold_diagnostics,
+    unit_interval_scale_for_threshold_selection,
 )
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
@@ -164,7 +217,7 @@ from openhcs.processing.backends.cellprofiler.granularity import (
 from openhcs.processing.backends.cellprofiler.enum_attributes import (
     CellProfilerEnumAttributeMixin,
 )
-from openhcs.processing.backends.cellprofiler.secondary_numba_propagation_labels import (
+from openhcs.processing.backends.cellprofiler.distance_propagation_numba import (
     _distance_to_positive_labels_numba,
     _nearest_label_expansion_numba,
     _propagate_labels_and_distances_zero_image_numba,
@@ -176,7 +229,6 @@ from openhcs.processing.backends.cellprofiler.watershed import (
 
 logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
-
 METHOD_LABEL_REGISTRY_KEY = "method_label"
 ClassNamespaceValue: TypeAlias = (
     str
@@ -196,7 +248,6 @@ class SecondaryMethod(CellProfilerEnumAttributeMixin, Enum):
     """CellProfiler IdentifySecondaryObjects segmentation method."""
 
     __cellprofiler_attribute_names__ = ("requires_threshold",)
-
     PROPAGATION = ("propagation", True)
     WATERSHED_GRADIENT = ("watershed_gradient", True)
     WATERSHED_IMAGE = ("watershed_image", True)
@@ -235,24 +286,19 @@ class SecondaryInputNormalization:
                 image=image,
                 labels=final_labels,
                 unedited_labels=_secondary_seed_labels(
-                    final_labels,
-                    collapse_singleton_plane_stack(unedited_labels),
+                    final_labels, collapse_singleton_plane_stack(unedited_labels)
                 ),
             )
         if image.ndim == 3 and image.shape[0] == 2:
             labels = image[1].astype(np.int32)
             return SourceImageObjectLabelBuildRequest(
-                image=image[0],
-                labels=labels,
-                unedited_labels=labels,
+                image=image[0], labels=labels, unedited_labels=labels
             )
         labels = collapse_singleton_plane_stack(
             np.asarray(self.primary_labels, dtype=np.int32)
         )
         return SourceImageObjectLabelBuildRequest(
-            image=image,
-            labels=labels,
-            unedited_labels=labels,
+            image=image, labels=labels, unedited_labels=labels
         )
 
 
@@ -265,8 +311,12 @@ class SecondarySegmentationRequest:
     distance_to_dilate: int
     regularization_factor: float
     watershed_backend_provider: CellProfilerBackendProvider | None
-    distance_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
-    propagation_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
+    distance_backend_provider: BackendProviderInput = (
+        DEFAULT_CELLPROFILER_BACKEND_SELECTION
+    )
+    propagation_backend_provider: BackendProviderInput = (
+        DEFAULT_CELLPROFILER_BACKEND_SELECTION
+    )
 
     @property
     def has_primary_objects(self) -> bool:
@@ -320,12 +370,14 @@ class MethodLabelRegistryRoot(ABC):
 
 
 class SecondarySegmentationStrategy(
-    MethodLabelRegistryRoot,
-    metaclass=MethodLabelAutoRegisterMeta,
+    MethodLabelRegistryRoot, metaclass=MethodLabelAutoRegisterMeta
 ):
     """Segmentation strategy for one closed secondary-object method."""
 
     method: ClassVar[SecondaryMethod | None] = None
+    default_propagation_backend_provider: ClassVar[BackendProviderInput] = (
+        DEFAULT_CELLPROFILER_BACKEND_SELECTION
+    )
 
     def segment(self, request: SecondarySegmentationRequest) -> np.ndarray:
         if not request.has_primary_objects:
@@ -344,19 +396,25 @@ class SecondarySegmentationStrategy(
         labels = geometry.label_plane(request.seed_labels)
         mask = geometry.binary_mask(request.thresholded)
         return SecondaryPropagationBackendStrategy.for_memory_type(
-            backend_provider=request.propagation_backend_provider,
+            backend_provider=self.propagation_backend_provider(request)
         ).propagate(
-            request.image_plane,
-            labels,
-            mask,
-            regularization,
-            max_distance=max_distance,
+            request.image_plane, labels, mask, regularization, max_distance=max_distance
         )
 
+    def propagation_backend_provider(
+        self, request: SecondarySegmentationRequest
+    ) -> BackendProviderInput:
+        """Return this method's backend provider when the caller requests default."""
+        if (
+            request.propagation_backend_provider is None
+            or request.propagation_backend_provider
+            is DEFAULT_CELLPROFILER_BACKEND_SELECTION
+        ):
+            return self.default_propagation_backend_provider
+        return request.propagation_backend_provider
+
     def watershed_secondary_labels(
-        self,
-        request: SecondarySegmentationRequest,
-        watershed_image: np.ndarray,
+        self, request: SecondarySegmentationRequest, watershed_image: np.ndarray
     ) -> np.ndarray:
         """Build secondary labels from watershed markers and object mask."""
         return cellprofiler_legacy_watershed(
@@ -368,10 +426,7 @@ class SecondarySegmentationStrategy(
         )
 
     @abstractmethod
-    def _segment_non_empty(
-        self,
-        request: SecondarySegmentationRequest,
-    ) -> np.ndarray:
+    def _segment_non_empty(self, request: SecondarySegmentationRequest) -> np.ndarray:
         """Segment secondary objects when primary labels are present."""
 
 
@@ -379,30 +434,22 @@ class DistanceOnlySegmentationStrategy(SecondarySegmentationStrategy):
     method = SecondaryMethod.DISTANCE_N
     method_label = method.value
 
-    def _segment_non_empty(
-        self,
-        request: SecondarySegmentationRequest,
-    ) -> np.ndarray:
+    def _segment_non_empty(self, request: SecondarySegmentationRequest) -> np.ndarray:
         return SecondaryDistanceTransformBackendStrategy.for_memory_type(
-            backend_provider=request.distance_backend_provider,
+            backend_provider=request.distance_backend_provider
         ).nearest_label_expansion(
-            request.seed_labels,
-            float(request.distance_to_dilate),
+            request.seed_labels, float(request.distance_to_dilate)
         )
 
 
 class DistanceMaskedSegmentationStrategy(SecondarySegmentationStrategy):
     method = SecondaryMethod.DISTANCE_B
     method_label = method.value
+    default_propagation_backend_provider = CellProfilerBackendProvider.NUMBA
 
-    def _segment_non_empty(
-        self,
-        request: SecondarySegmentationRequest,
-    ) -> np.ndarray:
+    def _segment_non_empty(self, request: SecondarySegmentationRequest) -> np.ndarray:
         labels_out = self.propagate_labels(
-            request,
-            regularization=1.0,
-            max_distance=float(request.distance_to_dilate),
+            request, regularization=1.0, max_distance=float(request.distance_to_dilate)
         )
         labels = request.label_plane
         labels_out[labels > 0] = labels[labels > 0]
@@ -415,14 +462,11 @@ class DistanceMaskedSegmentationStrategy(SecondarySegmentationStrategy):
 class PropagationSegmentationStrategy(SecondarySegmentationStrategy):
     method = SecondaryMethod.PROPAGATION
     method_label = method.value
+    default_propagation_backend_provider = CellProfilerBackendProvider.NUMBA
 
-    def _segment_non_empty(
-        self,
-        request: SecondarySegmentationRequest,
-    ) -> np.ndarray:
+    def _segment_non_empty(self, request: SecondarySegmentationRequest) -> np.ndarray:
         return self.propagate_labels(
-            request,
-            regularization=request.regularization_factor,
+            request, regularization=request.regularization_factor
         )
 
 
@@ -430,10 +474,7 @@ class GradientWatershedSegmentationStrategy(SecondarySegmentationStrategy):
     method = SecondaryMethod.WATERSHED_GRADIENT
     method_label = method.value
 
-    def _segment_non_empty(
-        self,
-        request: SecondarySegmentationRequest,
-    ) -> np.ndarray:
+    def _segment_non_empty(self, request: SecondarySegmentationRequest) -> np.ndarray:
         from scipy.ndimage import sobel
 
         sobel_image = np.abs(sobel(request.image_plane, axis=0)) + np.abs(
@@ -446,17 +487,12 @@ class ImageWatershedSegmentationStrategy(SecondarySegmentationStrategy):
     method = SecondaryMethod.WATERSHED_IMAGE
     method_label = method.value
 
-    def _segment_non_empty(
-        self,
-        request: SecondarySegmentationRequest,
-    ) -> np.ndarray:
+    def _segment_non_empty(self, request: SecondarySegmentationRequest) -> np.ndarray:
         return self.watershed_secondary_labels(request, 1.0 - request.image_plane)
 
 
 class SecondaryDistanceTransformBackendStrategy(
-    CellProfilerBackendStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    CellProfilerBackendStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Distance transform operations used by secondary segmentation."""
 
@@ -469,15 +505,13 @@ class SecondaryDistanceTransformBackendStrategy(
 
     @abstractmethod
     def nearest_label_expansion(
-        self,
-        labels: np.ndarray,
-        max_distance: float,
+        self, labels: np.ndarray, max_distance: float
     ) -> np.ndarray:
         """Expand labels to pixels within ``max_distance`` of a seed."""
 
 
 class NumpySecondaryDistanceTransformBackendStrategy(
-    SecondaryDistanceTransformBackendStrategy,
+    SecondaryDistanceTransformBackendStrategy
 ):
     """Reference NumPy/SciPy secondary distance-transform backend."""
 
@@ -491,16 +525,13 @@ class NumpySecondaryDistanceTransformBackendStrategy(
         return distance_transform_edt(np.asarray(labels) == 0)
 
     def nearest_label_expansion(
-        self,
-        labels: np.ndarray,
-        max_distance: float,
+        self, labels: np.ndarray, max_distance: float
     ) -> np.ndarray:
         from scipy.ndimage import distance_transform_edt
 
         label_array = np.asarray(labels, dtype=np.int32)
         distances, indices = distance_transform_edt(
-            label_array == 0,
-            return_indices=True,
+            label_array == 0, return_indices=True
         )
         output = np.zeros_like(label_array)
         mask = distances <= float(max_distance)
@@ -509,13 +540,12 @@ class NumpySecondaryDistanceTransformBackendStrategy(
 
 
 class NumbaSecondaryDistanceTransformBackendStrategy(
-    SecondaryDistanceTransformBackendStrategy,
+    SecondaryDistanceTransformBackendStrategy
 ):
     """Numba-accelerated exact 2-D Euclidean distance-transform backend."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.NUMBA,
+        MemoryType.NUMPY, CellProfilerBackendProvider.NUMBA
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
@@ -535,9 +565,7 @@ class NumbaSecondaryDistanceTransformBackendStrategy(
         return _distance_to_positive_labels_numba(np.ascontiguousarray(label_array))
 
     def nearest_label_expansion(
-        self,
-        labels: np.ndarray,
-        max_distance: float,
+        self, labels: np.ndarray, max_distance: float
     ) -> np.ndarray:
         label_array = np.asarray(labels, dtype=np.int32)
         if label_array.ndim != 2:
@@ -545,15 +573,12 @@ class NumbaSecondaryDistanceTransformBackendStrategy(
                 "Numba secondary distance backend currently supports 2-D labels."
             )
         return _nearest_label_expansion_numba(
-            np.ascontiguousarray(label_array),
-            float(max_distance),
+            np.ascontiguousarray(label_array), float(max_distance)
         )
 
 
 class SecondaryPropagationBackendStrategy(
-    CellProfilerBackendStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    CellProfilerBackendStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Regularized label propagation backend for secondary segmentation."""
 
@@ -583,18 +608,16 @@ class SecondaryPropagationBackendStrategy(
     ) -> np.ndarray:
         """Propagate seed labels through a mask."""
         result = self.propagate_result(
-            image,
-            labels,
-            mask,
-            regularization,
-            max_distance=max_distance,
+            image, labels, mask, regularization, max_distance=max_distance
         )
         propagated = np.asarray(result.labels, dtype=np.int32)
         if max_distance is None:
             return propagated
         filtered = propagated.copy()
         source_labels = np.asarray(labels, dtype=np.int32)
-        filtered[np.asarray(result.distances, dtype=np.float64) > float(max_distance)] = 0
+        filtered[
+            np.asarray(result.distances, dtype=np.float64) > float(max_distance)
+        ] = 0
         filtered[source_labels > 0] = source_labels[source_labels > 0]
         return filtered
 
@@ -617,18 +640,15 @@ class SecondaryPropagationBackendStrategy(
         )
 
 
-class NumbaSecondaryPropagationBackendStrategy(
-    SecondaryPropagationBackendStrategy,
-):
+class NumbaSecondaryPropagationBackendStrategy(SecondaryPropagationBackendStrategy):
     """Numba implementation of regularized secondary-label propagation."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.NUMBA,
+        MemoryType.NUMPY, CellProfilerBackendProvider.NUMBA
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
-    is_default_backend = True
+    is_default_backend = False
 
     def prepare_backend(self) -> None:
         image = np.arange(9, dtype=np.float64).reshape((3, 3))
@@ -654,7 +674,10 @@ class NumbaSecondaryPropagationBackendStrategy(
             raise NotImplementedError(
                 "Numba secondary propagation backend currently supports 2-D arrays."
             )
-        if image_array.shape != label_array.shape or image_array.shape != mask_array.shape:
+        if (
+            image_array.shape != label_array.shape
+            or image_array.shape != mask_array.shape
+        ):
             raise ValueError("image, labels, and mask must have the same shape.")
         if np.max(label_array) == 0:
             return LabelPropagationResult(
@@ -700,14 +723,50 @@ class NumbaSecondaryPropagationBackendStrategy(
         return LabelPropagationResult(labels=propagated, distances=distances)
 
 
+class NativeSecondaryPropagationBackendStrategy(SecondaryPropagationBackendStrategy):
+    """CellProfiler-native label propagation via centrosome."""
+
+    backend_key = CellProfilerBackendAuthority.backend_key(
+        MemoryType.NUMPY, CellProfilerBackendProvider.NATIVE
+    )
+    memory_type = MemoryType.NUMPY
+    backend_provider = CellProfilerBackendProvider.NATIVE
+    is_default_backend = True
+
+    def propagate_result(
+        self,
+        image: np.ndarray,
+        labels: np.ndarray,
+        mask: np.ndarray,
+        regularization: float,
+        *,
+        max_distance: float | None = None,
+    ) -> LabelPropagationResult:
+        import centrosome.propagate
+
+        propagated, distances = centrosome.propagate.propagate(
+            np.asarray(image, dtype=np.float64),
+            np.asarray(labels, dtype=np.int32),
+            np.asarray(mask, dtype=np.bool_),
+            float(regularization),
+        )
+        if max_distance is not None:
+            propagated = np.asarray(propagated, dtype=np.int32).copy()
+            source_labels = np.asarray(labels, dtype=np.int32)
+            propagated[np.asarray(distances, dtype=np.float64) > float(max_distance)] = 0
+            propagated[source_labels > 0] = source_labels[source_labels > 0]
+        return LabelPropagationResult(
+            labels=np.asarray(propagated, dtype=np.int32),
+            distances=np.asarray(distances, dtype=np.float64),
+        )
+
+
 def secondary_propagation_backend(
-    *,
-    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    *, backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
 ) -> SecondaryPropagationBackendStrategy:
     """Return the selected secondary propagation backend."""
     return SecondaryPropagationBackendStrategy.for_memory_type(
-        MemoryType.NUMPY,
-        backend_provider=backend_provider,
+        MemoryType.NUMPY, backend_provider=backend_provider
     )
 
 
@@ -719,17 +778,26 @@ class ThresholdMethod(Enum):
 
 
 @dataclass
-class SecondaryObjectStats:
-    slice_index: int
+class SecondaryObjectStats(ThresholdMeasurementFeatureRecord):
+    slice_index: Annotated[int, MeasurementRowAxisField.SLICE_INDEX]
     object_count: int
     mean_area: float
     median_area: float
     total_area: int
     area_coverage_percent: float
-    threshold_value: float
+    final_threshold: float
     original_threshold: float = 0.0
     weighted_variance: float = 0.0
     sum_of_entropies: float = 0.0
+
+    def threshold_measurement_record(self) -> MeasurementFeatureRecord:
+        return ObjectThresholdResult(
+            slice_index=self.slice_index,
+            final_threshold=self.final_threshold,
+            original_threshold=self.original_threshold,
+            weighted_variance=self.weighted_variance,
+            sum_of_entropies=self.sum_of_entropies,
+        )
 
     @classmethod
     def from_labels(
@@ -763,7 +831,7 @@ class SecondaryObjectStats:
             median_area=median_area,
             total_area=total_area,
             area_coverage_percent=area_coverage,
-            threshold_value=float(threshold.final_threshold),
+            final_threshold=float(threshold.final_threshold),
             original_threshold=float(threshold.original_threshold),
             weighted_variance=float(threshold.weighted_variance),
             sum_of_entropies=float(threshold.sum_of_entropies),
@@ -790,7 +858,10 @@ class SecondaryObjectLabels:
     ) -> "SecondaryObjectLabels":
         small_removed = labels
         if fill_holes and small_removed.max() > 0:
-            small_removed = morphology.fill_labeled_holes(small_removed)
+            small_removed = morphology.fill_labeled_holes(
+                small_removed,
+                mask=small_removed == 0,
+            )
         segmented = _filter_labels(small_removed, primary_labels)
         if discard_edge_objects and segmented.max() > 0:
             segmented = _discard_edge_objects(segmented, morphology)
@@ -810,8 +881,7 @@ class SecondaryObjectLabels:
 
 
 class ThresholdCalculator(
-    MethodLabelRegistryRoot,
-    metaclass=MethodLabelAutoRegisterMeta,
+    MethodLabelRegistryRoot, metaclass=MethodLabelAutoRegisterMeta
 ):
     """Threshold strategy for one closed CellProfiler threshold method."""
 
@@ -835,15 +905,14 @@ class ThresholdCalculatorDeclaration(RegisteredLeafClassSpec):
 
     @property
     def class_name(self) -> str:
-        method_name = "".join(part.title() for part in self.method.name.split("_"))
+        method_name = "".join((part.title() for part in self.method.name.split("_")))
         return f"{method_name}ThresholdCalculator"
 
     def class_attributes(self) -> Mapping[str, ClassNamespaceValue]:
         primitive = self.primitive
 
         def concrete_primitive(
-            backend: ThresholdPrimitiveBackendStrategy,
-            image: np.ndarray,
+            backend: ThresholdPrimitiveBackendStrategy, image: np.ndarray
         ) -> float:
             return primitive(backend, image)
 
@@ -856,42 +925,35 @@ class ThresholdCalculatorDeclaration(RegisteredLeafClassSpec):
 
 THRESHOLD_CALCULATOR_DECLARATIONS = (
     ThresholdCalculatorDeclaration(
-        ThresholdMethod.OTSU,
-        ThresholdPrimitiveBackendStrategy.otsu_threshold,
+        ThresholdMethod.OTSU, ThresholdPrimitiveBackendStrategy.otsu_threshold
     ),
     ThresholdCalculatorDeclaration(
-        ThresholdMethod.LI,
-        ThresholdPrimitiveBackendStrategy.li_threshold,
+        ThresholdMethod.LI, ThresholdPrimitiveBackendStrategy.li_threshold
     ),
     ThresholdCalculatorDeclaration(
-        ThresholdMethod.MINIMUM,
-        ThresholdPrimitiveBackendStrategy.minimum_threshold,
+        ThresholdMethod.MINIMUM, ThresholdPrimitiveBackendStrategy.minimum_threshold
     ),
     ThresholdCalculatorDeclaration(
-        ThresholdMethod.TRIANGLE,
-        ThresholdPrimitiveBackendStrategy.triangle_threshold,
+        ThresholdMethod.TRIANGLE, ThresholdPrimitiveBackendStrategy.triangle_threshold
     ),
 )
-
 for threshold_calculator_declaration in THRESHOLD_CALCULATOR_DECLARATIONS:
     threshold_calculator_declaration.declare_in(globals())
 
 
 def _secondary_seed_labels(
-    final_labels: np.ndarray,
-    unedited_labels: np.ndarray,
+    final_labels: np.ndarray, unedited_labels: np.ndarray
 ) -> np.ndarray:
     """Match CellProfiler's secondary-object seed contract.
 
     CellProfiler seeds secondary segmentation from unedited primary labels, but
-    removes non-edge labels that were rejected from the final primary objects.
-    Edge-touching rejected labels remain so they can constrain propagated
-    secondary boundaries without becoming accepted parent objects.
+    removes rejected non-edge labels. Edge-touching rejected labels remain so
+    they can constrain propagated secondary boundaries without becoming accepted
+    parent objects.
     """
     labels_in = np.asarray(unedited_labels, dtype=np.int32).copy()
     if labels_in.size == 0 or labels_in.max() <= 0:
         return labels_in
-
     final = np.asarray(final_labels, dtype=np.int32)
     if final.shape != labels_in.shape:
         aligned_final = np.zeros(labels_in.shape, dtype=final.dtype)
@@ -899,20 +961,14 @@ def _secondary_seed_labels(
         j_max = min(labels_in.shape[1], final.shape[1])
         aligned_final[:i_max, :j_max] = final[:i_max, :j_max]
         final = aligned_final
-
     edge_labels = np.unique(
         np.concatenate(
-            (
-                labels_in[0, :],
-                labels_in[-1, :],
-                labels_in[:, 0],
-                labels_in[:, -1],
-            )
+            (labels_in[0, :], labels_in[-1, :], labels_in[:, 0], labels_in[:, -1])
         )
     )
     is_touching_lookup = np.zeros(int(labels_in.max()) + 1, dtype=bool)
     is_touching_lookup[edge_labels.astype(int)] = True
-    return _secondary_seed_label_remap_numba(
+    return _secondary_seed_label_filter_numba(
         np.ascontiguousarray(labels_in, dtype=np.int32),
         np.ascontiguousarray(final, dtype=np.int32),
         is_touching_lookup,
@@ -920,41 +976,21 @@ def _secondary_seed_labels(
 
 
 @njit(cache=True)
-def _secondary_seed_label_remap_numba(
-    unedited_labels: np.ndarray,
-    final_labels: np.ndarray,
-    is_touching_edge: np.ndarray,
+def _secondary_seed_label_filter_numba(
+    unedited_labels: np.ndarray, final_labels: np.ndarray, is_touching_edge: np.ndarray
 ) -> np.ndarray:
-    max_unedited = int(unedited_labels.max())
-    max_final = int(final_labels.max())
-    accepted_mapping = np.zeros(max_unedited + 1, dtype=np.int32)
-
+    output = unedited_labels.copy()
     flat_unedited = unedited_labels.ravel()
     flat_final = final_labels.ravel()
-    for index in range(flat_unedited.size):
-        unedited_label = int(flat_unedited[index])
-        final_label = int(flat_final[index])
-        if unedited_label > 0 and final_label > accepted_mapping[unedited_label]:
-            accepted_mapping[unedited_label] = final_label
-
-    edge_mapping = np.zeros(max_unedited + 1, dtype=np.int32)
-    next_edge_label = max_final + 1
-    for label in range(1, max_unedited + 1):
-        if accepted_mapping[label] == 0 and is_touching_edge[label]:
-            edge_mapping[label] = next_edge_label
-            next_edge_label += 1
-
-    output = np.zeros(unedited_labels.shape, dtype=np.int32)
     output_flat = output.ravel()
     for index in range(flat_unedited.size):
         unedited_label = int(flat_unedited[index])
-        if unedited_label == 0:
-            continue
-        accepted_label = accepted_mapping[unedited_label]
-        if accepted_label > 0:
-            output_flat[index] = accepted_label
-        else:
-            output_flat[index] = edge_mapping[unedited_label]
+        if (
+            unedited_label > 0
+            and not is_touching_edge[unedited_label]
+            and int(flat_final[index]) == 0
+        ):
+            output_flat[index] = 0
     return output
 
 
@@ -994,9 +1030,7 @@ def _filter_labels(labels_out: np.ndarray, primary_labels: np.ndarray) -> np.nda
 
 @njit(cache=True)
 def _filter_labels_numba(
-    labels_out: np.ndarray,
-    aligned_primary: np.ndarray,
-    max_out: int,
+    labels_out: np.ndarray, aligned_primary: np.ndarray, max_out: int
 ) -> np.ndarray:
     lookup = np.zeros(max_out + 1, dtype=np.int32)
     labels_flat = labels_out.ravel()
@@ -1009,7 +1043,6 @@ def _filter_labels_numba(
         if primary_label > lookup[label]:
             lookup[label] = primary_label
     lookup[0] = 0
-
     filtered = np.empty(labels_out.shape, dtype=np.int32)
     filtered_flat = filtered.ravel()
     for index in range(labels_flat.size):
@@ -1018,27 +1051,22 @@ def _filter_labels_numba(
 
 
 def _discard_edge_objects(
-    labels: np.ndarray,
-    morphology: MorphologyBackendStrategy,
+    labels: np.ndarray, morphology: MorphologyBackendStrategy
 ) -> np.ndarray:
-    edge_labels = np.unique(np.concatenate([
-        labels[0, :],
-        labels[-1, :],
-        labels[:, 0],
-        labels[:, -1],
-    ]))
+    edge_labels = np.unique(
+        np.concatenate([labels[0, :], labels[-1, :], labels[:, 0], labels[:, -1]])
+    )
     labels_out = labels.copy()
     for edge_label in edge_labels:
         if edge_label > 0:
             labels_out[labels_out == edge_label] = 0
-
     if labels_out.max() == 0:
         return labels_out
     relabeled, _count = morphology.connected_components(labels_out > 0, connectivity=2)
     return relabeled.astype(np.int32, copy=False)
 
 
-@numpy
+@numpy(contract=ProcessingContract.PURE_2D)
 def identify_secondary_objects(
     image: np.ndarray,
     primary_labels: ObjectLabelValue,
@@ -1051,17 +1079,13 @@ def identify_secondary_objects(
     threshold_max: float = 1.0,
     manual_threshold: float = 0.0,
     otsu_class_count: CellProfilerOtsuMethod = CellProfilerOtsuMethod.TWO_CLASS,
-    assign_middle_to_foreground: CellProfilerThresholdAssignment = (
-        CellProfilerThresholdAssignment.FOREGROUND
-    ),
+    assign_middle_to_foreground: CellProfilerThresholdAssignment = CellProfilerThresholdAssignment.FOREGROUND,
     log_transform: bool = False,
     adaptive_window_size: int = 10,
     lower_outlier_fraction: float = 0.05,
     upper_outlier_fraction: float = 0.05,
     averaging_method: CellProfilerAveragingMethod = CellProfilerAveragingMethod.MEAN,
-    variance_method: CellProfilerVarianceMethod = (
-        CellProfilerVarianceMethod.STANDARD_DEVIATION
-    ),
+    variance_method: CellProfilerVarianceMethod = CellProfilerVarianceMethod.STANDARD_DEVIATION,
     number_of_deviations: float = 2.0,
     distance_to_dilate: int = 10,
     regularization_factor: float = 0.05,
@@ -1072,10 +1096,7 @@ def identify_secondary_objects(
     distance_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     propagation_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[
-    np.ndarray,
-    SecondaryObjectStats,
-    ParentChildRelationshipPayload,
-    np.ndarray,
+    np.ndarray, SecondaryObjectStats, ParentChildRelationshipPayload, np.ndarray
 ]:
     """
     Identify secondary objects using primary objects as seeds.
@@ -1101,20 +1122,17 @@ def identify_secondary_objects(
     phase_started_at = time.perf_counter()
     method = coerce_cellprofiler_enum(SecondaryMethod, method)
     morphology = MorphologyBackendStrategy.for_callable(
-        identify_secondary_objects,
-        backend_provider=morphology_backend_provider,
+        identify_secondary_objects, backend_provider=morphology_backend_provider
     )
     input_mask = image_payload_mask(image)
     if input_mask is not None:
         input_mask = collapse_singleton_plane_stack(np.asarray(input_mask, dtype=bool))
     raw_image_data = image_payload_data(image)
-    proven_unit_interval_scale = unit_interval_scale_for_threshold_diagnostics(
-        np.asarray(raw_image_data),
-        image_payload_metadata(image),
+    proven_unit_interval_scale = unit_interval_scale_for_threshold_selection(
+        np.asarray(raw_image_data), image_payload_metadata(image)
     )
     inputs = SecondaryInputNormalization(
-        raw_image_data,
-        primary_labels,
+        raw_image_data, primary_labels
     ).object_label_request()
     img = normalize_cellprofiler_image(np.asarray(inputs.image))
     runtime_profiler.log(
@@ -1159,9 +1177,7 @@ def identify_secondary_objects(
     raw_labels = SecondarySegmentationStrategy.for_method(method).segment(
         SecondarySegmentationRequest(
             inputs=SourceImageObjectLabelBuildRequest(
-                image=img,
-                labels=inputs.labels,
-                unedited_labels=inputs.unedited_labels,
+                image=img, labels=inputs.labels, unedited_labels=inputs.unedited_labels
             ),
             thresholded=threshold.mask,
             distance_to_dilate=distance_to_dilate,
@@ -1193,9 +1209,7 @@ def identify_secondary_objects(
     )
     phase_started_at = time.perf_counter()
     stats = SecondaryObjectStats.from_labels(
-        object_labels.segmented,
-        image_shape=img.shape,
-        threshold=threshold,
+        object_labels.segmented, image_shape=img.shape, threshold=threshold
     )
     runtime_profiler.log(
         "iso_stats",
@@ -1205,7 +1219,11 @@ def identify_secondary_objects(
     )
     phase_started_at = time.perf_counter()
     relationships = object_label_parent_child_payload(
-        primary_labels if isinstance(primary_labels, ObjectLabelPayload) else inputs.labels,
+        (
+            primary_labels
+            if isinstance(primary_labels, ObjectLabelPayload)
+            else inputs.labels
+        ),
         object_labels.segmented,
     )
     runtime_profiler.log(
@@ -1220,7 +1238,6 @@ def identify_secondary_objects(
         function="identify_secondary_objects",
         method=method.value,
     )
-
     return (
         img.astype(np.float32),
         stats,
@@ -1242,11 +1259,17 @@ class IdentifySecondaryObjectsModule(
     NoObjectNameMeasurementRecordMixin,
     NoSourceMeasurementRecordMixin,
     NoFieldsMeasurementRecordMixin,
+    ObjectArtifactInputModule,
+    ImageArtifactInputModule,
+    ObjectArtifactOutputModule,
+    RelationshipArtifactOutputModule,
+    MeasurementArtifactOutputModule,
     ThresholdSettingsModule,
 ):
-    module_name = 'IdentifySecondaryObjects'
-    function_name = 'identify_secondary_objects'
+    module_name = "IdentifySecondaryObjects"
+    function_name = "identify_secondary_objects"
     validated = True
+    contract = ProcessingContract.PURE_2D
     confidence = 1.0
     ignored_settings = (
         "Select the input objects",
@@ -1255,11 +1278,9 @@ class IdentifySecondaryObjectsModule(
         "Discard the associated primary objects?",
         "Name the new primary objects",
     )
-
     setting_bindings = (
         SettingToKeywordBinding(
-            "Select the method to identify the secondary objects",
-            "method",
+            "Select the method to identify the secondary objects", "method"
         ),
         SettingToKeywordBinding(
             "Number of pixels by which to expand the primary objects",
@@ -1274,30 +1295,48 @@ class IdentifySecondaryObjectsModule(
     )
 
     @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-        from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
+    def measurement_output_relations(cls, builder, module):
+        del builder
+        image_name = required_setting_value(module, "Select the input image")
+        return (
+            GroupLineageSourceRelation(
+                source=ArtifactSpecRef.input(image_name, ImageArtifactType)
+            ),
+        )
 
-        input_objects = builder.require_artifact(
-            ArtifactSpec(required_setting_value(module, "Select the input objects"), ArtifactKind.OBJECT_LABELS),
-            module,
+    @classmethod
+    def artifact_contract(cls, assembler, builder, module):
+        input_objects = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(required_setting_value(module, "Select the input objects")))
+        image = ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(required_setting_value(module, "Select the input image")))
+        output_name = required_setting_value(
+            module, "Name the objects to be identified"
         )
-        image = builder.require_artifact(
-            ArtifactSpec(required_setting_value(module, "Select the input image"), ArtifactKind.IMAGE),
+        output_objects = ObjectLabelArtifactOutputCapability.bind_artifact(
+            cls,
+            builder,
             module,
+            ObjectLabelArtifactOutputCapability.spec(
+                output_name,
+                relations=(
+                    GroupLineageSourceRelation(
+                        source=ArtifactSpecRef.input(image.name, ImageArtifactType)
+                    ),
+                ),
+            ),
         )
-        output_name = required_setting_value(module, "Name the objects to be identified")
-        output_objects = builder.declare_artifact(ArtifactSpec(output_name, ArtifactKind.OBJECT_LABELS), module)
         outputs = [
-            builder.declare_artifact(ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS), module),
-            builder.declare_artifact(
-                ArtifactSpec(parent_child_relationship_artifact_name(input_objects.name, output_objects.name), ArtifactKind.RELATIONSHIPS),
+            cls.measurement_output_artifact(builder, module),
+            cls.parent_child_relationship_output_artifact(
+                builder,
                 module,
+                parent_name=input_objects.name,
+                child_name=output_objects.name,
             ),
             output_objects,
         ]
-        return assembler.assemble_contract(module, builder, inputs=[input_objects, image], outputs=outputs)
-
+        return assembler.assemble_contract(
+            module, builder, inputs=[input_objects, image], outputs=outputs
+        )
 
 
 @processing_prepare(identify_secondary_objects)
@@ -1305,8 +1344,8 @@ def _prepare_identify_secondary_objects() -> None:
     """Compile secondary-object threshold, distance, and propagation kernels."""
     image = np.zeros((64, 64), dtype=np.float32)
     yy, xx = np.ogrid[:64, :64]
-    image[((yy - 24) ** 2 + (xx - 24) ** 2) <= 18 * 18] = 0.7
-    image[((yy - 40) ** 2 + (xx - 40) ** 2) <= 14 * 14] = 0.5
+    image[(yy - 24) ** 2 + (xx - 24) ** 2 <= 18 * 18] = 0.7
+    image[(yy - 40) ** 2 + (xx - 40) ** 2 <= 14 * 14] = 0.5
     labels = np.zeros((64, 64), dtype=np.int32)
     labels[20:28, 20:28] = 1
     labels[36:44, 36:44] = 2
@@ -1367,8 +1406,7 @@ class TertiaryObjectLabelOutput:
             domain_declaration=ExplicitObjectLabelDomainDeclaration(
                 ObjectLabelDomain(
                     declared_object_id_domains=dense_object_label_plane_id_domains(
-                        self.labels,
-                        domain_scope=ObjectLabelDomainScope.PLANE,
+                        self.labels, domain_scope=ObjectLabelDomainScope.PLANE
                     ),
                     scope=ObjectLabelDomainScope.PLANE,
                 )
@@ -1402,8 +1440,7 @@ class TertiaryObjectLabelOutput:
     def projected_declared_ids(self) -> tuple[int, ...]:
         """Return the material object-ID domain for this derived label plane."""
         domains = dense_object_label_plane_id_domains(
-            self.labels,
-            domain_scope=ObjectLabelDomainScope.PAYLOAD,
+            self.labels, domain_scope=ObjectLabelDomainScope.PAYLOAD
         )
         if not domains:
             return ()
@@ -1433,8 +1470,8 @@ class TertiaryObjectMeasurement:
         areas = np.bincount(np.asarray(self.labels).ravel())[1:]
         positive_areas = areas[areas > 0]
         if positive_areas.size == 0:
-            return 0, 0.0
-        return int(positive_areas.size), float(np.mean(positive_areas))
+            return (0, 0.0)
+        return (int(positive_areas.size), float(np.mean(positive_areas)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1444,15 +1481,12 @@ class TertiaryPrimaryMaskPlane:
     plane: np.ndarray
 
     def retained_secondary_mask(
-        self,
-        *,
-        shrink_primary: bool,
-        outline_backend_provider: BackendProviderInput,
+        self, *, shrink_primary: bool, outline_backend_provider: BackendProviderInput
     ) -> np.ndarray:
         if not shrink_primary:
             return self.plane == 0
         primary_outline = ObjectOutlineBackendStrategy.for_memory_type(
-            backend_provider=outline_backend_provider,
+            backend_provider=outline_backend_provider
         ).outline(self.plane)
         return np.logical_or(self.plane == 0, primary_outline > 0)
 
@@ -1487,15 +1521,12 @@ class TertiaryObjectInputs:
 
     @classmethod
     def from_labels(
-        cls,
-        primary_labels: ObjectLabelValue,
-        secondary_labels: ObjectLabelValue,
+        cls, primary_labels: ObjectLabelValue, secondary_labels: ObjectLabelValue
     ) -> "TertiaryObjectInputs":
         alignment = DenseObjectLabelPairAligner(
-            primary_labels,
-            secondary_labels,
+            primary_labels, secondary_labels
         ).alignment()
-        primary_label_plane, secondary_label_plane = alignment.first, alignment.second
+        primary_label_plane, secondary_label_plane = (alignment.first, alignment.second)
         primary_label_plane = np.asarray(primary_label_plane, dtype=np.int32)
         secondary_label_plane = np.asarray(secondary_label_plane, dtype=np.int32)
         if primary_label_plane.ndim == 3:
@@ -1504,8 +1535,7 @@ class TertiaryObjectInputs:
             secondary_label_plane = secondary_label_plane[0]
         if primary_label_plane.shape != secondary_label_plane.shape:
             raise ValueError(
-                f"Primary and secondary label shapes must match. "
-                f"Got {primary_label_plane.shape} vs {secondary_label_plane.shape}"
+                f"Primary and secondary label shapes must match. Got {primary_label_plane.shape} vs {secondary_label_plane.shape}"
             )
         return cls(
             primary_source=primary_labels,
@@ -1548,7 +1578,7 @@ class TertiaryObjectSegmentation:
         slice_index: int = 0,
     ) -> TertiaryObjectStats:
         object_count, mean_area = TertiaryObjectMeasurement(
-            tertiary_labels,
+            tertiary_labels
         ).positive_label_mean_area
         return TertiaryObjectStats(
             slice_index=slice_index,
@@ -1565,12 +1595,10 @@ def _identify_tertiary_objects_batch(
     kwargs = request.kwargs
     slice_count = request.slice_count
     alignment = DenseObjectLabelPairAligner(
-        kwargs["primary_labels"],
-        kwargs["secondary_labels"],
+        kwargs["primary_labels"], kwargs["secondary_labels"]
     ).aligned_stack_context(slice_count)
     if alignment is None:
         return [request.execute_one(slice_index) for slice_index in range(slice_count)]
-
     primary_stack = alignment.first_stack
     secondary_stack = alignment.second_stack
     if "shrink_primary" in kwargs:
@@ -1578,20 +1606,14 @@ def _identify_tertiary_objects_batch(
     else:
         shrink_primary = True
     tertiary_stack, object_counts, mean_areas, primary_counts, secondary_counts = (
-        _tertiary_stack_numba(
-            primary_stack,
-            secondary_stack,
-            shrink_primary,
-        )
+        _tertiary_stack_numba(primary_stack, secondary_stack, shrink_primary)
     )
     output_tertiary_stack = alignment.restore_second_stack(tertiary_stack)
-
     return [
         (
             request.slices_2d[slice_index],
             object_label_parent_child_payload(
-                secondary_stack[slice_index],
-                tertiary_stack[slice_index],
+                secondary_stack[slice_index], tertiary_stack[slice_index]
             ),
             object_label_parent_child_payload(
                 primary_stack[slice_index],
@@ -1617,9 +1639,7 @@ def _identify_tertiary_objects_batch(
 
 @njit(cache=True)
 def _tertiary_stack_numba(
-    primary_stack: np.ndarray,
-    secondary_stack: np.ndarray,
-    shrink_primary: bool,
+    primary_stack: np.ndarray, secondary_stack: np.ndarray, shrink_primary: bool
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     slice_count, height, width = secondary_stack.shape
     max_primary = 0
@@ -1633,7 +1653,6 @@ def _tertiary_stack_numba(
                     max_primary = primary_label
                 if secondary_label > max_secondary:
                     max_secondary = secondary_label
-
     tertiary_stack = np.zeros_like(secondary_stack)
     primary_present = np.zeros((slice_count, max_primary + 1), dtype=np.uint8)
     secondary_present = np.zeros((slice_count, max_secondary + 1), dtype=np.uint8)
@@ -1648,23 +1667,20 @@ def _tertiary_stack_numba(
                     primary_present[z, primary_label] = 1
                 if secondary_label > 0:
                     secondary_present[z, secondary_label] = 1
-
                 keep_pixel = primary_label <= 0
                 if shrink_primary and primary_label > 0:
                     for dy in range(-1, 2):
                         ny = y + dy
                         for dx in range(-1, 2):
                             nx = x + dx
-                            if ny < 0 or ny >= height or nx < 0 or nx >= width:
+                            if ny < 0 or ny >= height or nx < 0 or (nx >= width):
                                 keep_pixel = True
                             elif primary_stack[z, ny, nx] != primary_label:
                                 keep_pixel = True
-
                 if keep_pixel and secondary_label > 0:
                     tertiary_stack[z, y, x] = secondary_label
                     tertiary_present[z, secondary_label] = 1
                     tertiary_areas[z, secondary_label] += 1
-
     object_counts = np.zeros(slice_count, dtype=np.int64)
     mean_areas = np.zeros(slice_count, dtype=np.float64)
     primary_counts = np.zeros(slice_count, dtype=np.int64)
@@ -1682,10 +1698,10 @@ def _tertiary_stack_numba(
                 total_area += tertiary_areas[z, label]
         if object_counts[z] > 0:
             mean_areas[z] = total_area / object_counts[z]
-    return tertiary_stack, object_counts, mean_areas, primary_counts, secondary_counts
+    return (tertiary_stack, object_counts, mean_areas, primary_counts, secondary_counts)
 
 
-@numpy
+@numpy(contract=ProcessingContract.PURE_2D)
 def identify_tertiary_objects(
     image: np.ndarray,
     primary_labels: ObjectLabelValue,
@@ -1707,12 +1723,10 @@ def identify_tertiary_objects(
         shrink_primary=shrink_primary,
         outline_backend_provider=outline_backend_provider,
     )
-
     output_labels = inputs.restore_secondary_labels(tertiary_labels)
     tertiary_labels_out = (
         np.expand_dims(output_labels, axis=0) if image.ndim == 3 else output_labels
     )
-
     return (
         image,
         object_label_parent_child_payload(inputs.secondary_source, tertiary_labels),
@@ -1722,10 +1736,7 @@ def identify_tertiary_objects(
             child_region_labels=inputs.region_labels.plane,
         ),
         segmentation.stats(inputs, tertiary_labels),
-        TertiaryObjectLabelOutput(
-            inputs.secondary_source,
-            tertiary_labels_out,
-        ).value(),
+        TertiaryObjectLabelOutput(inputs.secondary_source, tertiary_labels_out).value(),
     )
 
 
@@ -1738,21 +1749,14 @@ def _prepare_identify_tertiary_objects() -> None:
     primary[10:20, 10:20] = 1
     secondary[6:24, 6:24] = 1
     identify_tertiary_objects.__wrapped__(
-        image,
-        primary,
-        secondary,
-        shrink_primary=True,
+        image, primary, secondary, shrink_primary=True
     )
     _tertiary_stack_numba(
-        np.expand_dims(primary, axis=0),
-        np.expand_dims(secondary, axis=0),
-        True,
+        np.expand_dims(primary, axis=0), np.expand_dims(secondary, axis=0), True
     )
 
 
 pure_2d_batch_executor(_identify_tertiary_objects_batch)(identify_tertiary_objects)
-
-
 __all__ = public_names_from_objects(
     DistanceMaskedSegmentationStrategy,
     DistanceOnlySegmentationStrategy,

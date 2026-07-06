@@ -1,12 +1,12 @@
 """Classification backends for CellProfiler-compatible object measurements."""
 
 from __future__ import annotations
-
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import ClassVar
-
+from openhcs.core.runtime_semantics import MeasurementRowAxisField
 from openhcs.interop.cellprofiler.runtime.artifact_binding import (
-    RuntimeArtifactKindStrategy,
+    RuntimeArtifactTypeStrategy,
 )
 from openhcs.interop.cellprofiler.runtime.binding_authorities import (
     CellProfilerStringKwargAuthority,
@@ -30,40 +30,48 @@ from openhcs.interop.cellprofiler.runtime.special_input_policies import (
     SpecialInputBindingRequest,
 )
 from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
-
-from openhcs.processing.backends.cellprofiler.module_classes import (
-    ArtifactContractModule,
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
+    ImageArtifactOutputCapability,
+    ImageArtifactOutputModule,
+    MeasurementArtifactOutputModule,
     ModuleSettingsSourceModule,
+    ObjectArtifactInputModule,
+    PriorMeasurementArtifactInputModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
 )
 from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
-    required_setting_value,
     setting_values,
     split_symbol_names,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.interop.cellprofiler.cellprofiler_literals import (
+    cellprofiler_enum_from_literal,
+)
 from openhcs.interop.cellprofiler.runtime.measurement_recording import (
-    ClassifyObjectsMeasurementRecordRowsMixin,
     ColumnarFieldsMeasurementRecordMixin,
     NoObjectNameMeasurementRecordMixin,
     NoSourceMeasurementRecordMixin,
 )
+from openhcs.interop.cellprofiler.runtime.measurement_rows import (
+    CellProfilerMeasurementStatField,
+    FormattingMeasurementFeatureTemplate,
+    ModuleOwnedResultMeasurementRows,
+    _measurement_object_name,
+)
+from openhcs.interop.cellprofiler.runtime.mapping_lookup import MappingValueLookup
 
-class ClassifyObjectsMeasurementInputPolicy(
-    NoSpecialImageInputsMixin,
-):
+
+class ClassifyObjectsMeasurementInputPolicy(NoSpecialImageInputsMixin):
     """Resolve ClassifyObjects label and measurement-vector inputs."""
 
     measurement_value_parameters: ClassVar[RuntimeBoundParameterNames] = (
         RuntimeBoundParameterNames(
-            "measurement_values",
-            "measurement1_values",
-            "measurement2_values",
+            "measurement_values", "measurement1_values", "measurement2_values"
         )
     )
     measurement_feature_kwargs: ClassVar[tuple[str, ...]] = (
@@ -74,127 +82,110 @@ class ClassifyObjectsMeasurementInputPolicy(
     measurement_kwarg_by_parameter: ClassVar[Mapping[str, str]] = dict(
         zip(measurement_value_parameters, measurement_feature_kwargs, strict=True)
     )
-    labels_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName("labels")
+    labels_kwarg: ClassVar[RuntimeBoundParameterName] = RuntimeBoundParameterName(
+        "labels"
     )
     measurement_values_by_rule_kwarg: ClassVar[RuntimeBoundParameterName] = (
         RuntimeBoundParameterName("measurement_values_by_rule")
     )
 
     def extra_bound_parameter_names(
-        self,
-        plan: CellProfilerModuleRuntimePlan,
+        self, plan: CellProfilerModuleRuntimePlan
     ) -> tuple[str, ...]:
         """Return runtime-derived classification measurement vectors."""
         del plan
         declared_names = declared_runtime_bound_parameter_names(type(self))
-        return tuple(
-            name
-            for name in declared_names
-            if name != self.labels_kwarg
-        )
+        return tuple((name for name in declared_names if name != self.labels_kwarg))
 
-    def bind(
-        self,
-        request: SpecialInputBindingRequest,
-    ) -> CellProfilerKwargDict:
+    def bind(self, request: SpecialInputBindingRequest) -> CellProfilerKwargDict:
         object_inputs = request.object_inputs
         CellProfilerObjectInputCountAuthority.require_exact(
-            request.module_name,
-            object_inputs,
-            1,
+            request.module_name, object_inputs, 1
         )
         object_spec = object_inputs[0]
         labels = request.labels_for(object_spec)
         measurement_labels = request.label_payload_for(object_spec)
-        image_number = RuntimeArtifactKindStrategy.for_kind(
-            object_spec.kind
+        image_number = RuntimeArtifactTypeStrategy.for_artifact_type(
+            object_spec.artifact_type
         ).cellprofiler_image_number(request.artifact_input_request(object_spec))
         if "classification_rules" in request.kwargs:
             rules = request.kwargs["classification_rules"]
             if not isinstance(rules, (tuple, list)):
                 raise ValueError(
-                    f"{request.module_name} classification_rules must be an "
-                    "ordered tuple or list."
+                    f"{request.module_name} classification_rules must be an ordered tuple or list."
                 )
             return {
                 self.labels_kwarg: labels,
                 self.measurement_values_by_rule_kwarg: tuple(
-                    CellProfilerObjectMeasurementVectorBinding.for_object(
-                        request,
-                        object_ref=object_spec,
-                        feature_name=_classification_rule_measurement_feature(
-                            rule,
-                            request.module_name,
-                        ),
-                        labels=measurement_labels,
-                        image_number=image_number,
+                    (
+                        CellProfilerObjectMeasurementVectorBinding.for_object(
+                            request,
+                            object_ref=object_spec,
+                            feature_name=_classification_rule_measurement_feature(
+                                rule, request.module_name
+                            ),
+                            labels=measurement_labels,
+                            image_number=image_number,
+                        )
+                        .vector()
+                        .slice_aligned_value
+                        for rule in rules
                     )
-                    .vector()
-                    .slice_aligned_value
-                    for rule in rules
                 ),
             }
         bound_values = {
-            parameter_name: (
-                CellProfilerObjectMeasurementVectorBinding.for_object(
-                    request,
-                    object_ref=object_spec,
-                    feature_name=CellProfilerStringKwargAuthority.required(
-                        request.kwargs,
-                        kwarg_name,
-                        request.module_name,
-                    ),
-                    labels=measurement_labels,
-                    image_number=image_number,
-                    source=(
-                        CellProfilerObjectMeasurementVectorSource
-                        .CURRENT_OBJECT_SHAPE_FEATURE
-                    ),
-                )
-                .vector()
-                .slice_aligned_value
+            parameter_name: CellProfilerObjectMeasurementVectorBinding.for_object(
+                request,
+                object_ref=object_spec,
+                feature_name=CellProfilerStringKwargAuthority.required(
+                    request.kwargs, kwarg_name, request.module_name
+                ),
+                labels=measurement_labels,
+                image_number=image_number,
+                source=CellProfilerObjectMeasurementVectorSource.CURRENT_OBJECT_SHAPE_FEATURE,
             )
-            for parameter_name, kwarg_name in (
-                type(self).measurement_kwarg_by_parameter.items()
-            )
+            .vector()
+            .slice_aligned_value
+            for parameter_name, kwarg_name in type(
+                self
+            ).measurement_kwarg_by_parameter.items()
             if kwarg_name in request.kwargs
         }
-        return {
-            self.labels_kwarg: labels,
-            **bound_values,
-        }
+        return {self.labels_kwarg: labels, **bound_values}
 
 
 def _classification_rule_measurement_feature(
-    rule: CellProfilerRuntimeValue,
-    module_name: str,
+    rule: CellProfilerRuntimeValue, module_name: str
 ) -> str:
     if not isinstance(rule, Mapping):
         raise ValueError(f"{module_name} classification rule must be a mapping.")
     value = rule.get("measurement_feature")
     if not isinstance(value, str) or not value.strip():
         raise ValueError(
-            f"{module_name} classification rule requires non-empty "
-            "'measurement_feature'."
+            f"{module_name} classification rule requires non-empty 'measurement_feature'."
         )
     return value
 
 
 class ClassifyObjectsSingleMeasurementModule(
-    ClassifyObjectsMeasurementRecordRowsMixin,
     NoObjectNameMeasurementRecordMixin,
     NoSourceMeasurementRecordMixin,
     ColumnarFieldsMeasurementRecordMixin,
     ClassifyObjectsMeasurementInputPolicy,
+    ObjectArtifactInputModule,
+    ImageArtifactOutputModule,
+    PriorMeasurementArtifactInputModule,
+    MeasurementArtifactOutputModule,
     BinderSettingsSourceModule,
 ):
-    module_name = 'ClassifyObjectsSingleMeasurement'
-    function_name = 'classify_objects_single_measurement'
-    function_variants = ('classify_objects_two_measurements',)
+    module_name = "ClassifyObjectsSingleMeasurement"
+    function_name = "classify_objects_single_measurement"
+    function_variants = ("classify_objects_two_measurements",)
+    contract = ProcessingContract.FLEXIBLE
     validated = True
-    aliases = ('ClassifyObjects', 'ClassifyObjectsTwoMeasurements')
+    aliases = ("ClassifyObjects", "ClassifyObjectsTwoMeasurements")
     confidence = 0.0
+    measurement_category_prefixes = (("classify",),)
     classification_decision_count_setting = SettingNameFamily(
         "Make each classification decision on how many measurements?"
     )
@@ -232,7 +223,6 @@ class ClassifyObjectsSingleMeasurementModule(
         "Retain an image of the classified objects?"
     )
     output_image_setting = SettingNameFamily("Name the output image")
-
     classification_decision_default = "Single measurement"
     measurement_feature_default = ""
     bin_spacing_default = "Evenly spaced bins"
@@ -250,11 +240,128 @@ class ClassifyObjectsSingleMeasurementModule(
     high_low_bin_name_default = "high_low"
     high_high_bin_name_default = "high_high"
 
+    class MeasurementStatField(CellProfilerMeasurementStatField):
+        """Absorbed ClassifyObjects result fields."""
+
+        BIN_COUNTS = "bin_counts"
+        BIN_PERCENTAGES = "bin_percentages"
+        OBJECT_CLASSES = "object_classes"
+        TOTAL_OBJECTS = "total_objects"
+        SLICE_INDEX = MeasurementRowAxisField.SLICE_INDEX.value
+
+    class MeasurementFeatureTemplate(FormattingMeasurementFeatureTemplate):
+        """Templated CellProfiler ClassifyObjects measurement features."""
+
+        OBJECTS_PER_BIN = "Classify_{bin_name}_NumObjectsPerBin"
+        PERCENT_PER_BIN = "Classify_{bin_name}_PctObjectsPerBin"
+        OBJECT_CLASS = "Classify_{bin_name}"
+
+    @dataclass(frozen=True, slots=True)
+    class MeasurementRows(ModuleOwnedResultMeasurementRows):
+        """Project absorbed ClassifyObjects results into CP measurement rows."""
+
+        registry_key = "classify_objects"
+        object_name: str | None
+
+        @classmethod
+        def for_request(cls, module_type, request):
+            return cls(
+                request.output_value,
+                module_type=module_type,
+                object_name=_measurement_object_name(request.declared_input_specs),
+            )
+
+        def rows(self) -> list[CellProfilerKwargDict]:
+            rows: list[CellProfilerKwargDict] = []
+            stat_field = self.stat_field_type
+            feature_template = self.feature_template_type
+            for result in self.source_rows():
+                bin_counts = self.json_object_mapping(
+                    self.row_value(result, stat_field.BIN_COUNTS, {})
+                )
+                bin_percentages = self.json_object_mapping(
+                    self.row_value(result, stat_field.BIN_PERCENTAGES, {})
+                )
+                object_classes = self.json_object_mapping(
+                    self.row_value(result, stat_field.OBJECT_CLASSES, {})
+                )
+                slice_index = int(self.row_value(result, stat_field.SLICE_INDEX, 0))
+                bin_names = tuple(str(name) for name in bin_counts)
+                for bin_name, count in bin_counts.items():
+                    rows.append(
+                        self.measurement_row(
+                            axis_values={
+                                MeasurementRowAxisField.SLICE_INDEX.value: slice_index
+                            },
+                            feature_name=feature_template.OBJECTS_PER_BIN.feature_name(
+                                bin_name=str(bin_name)
+                            ),
+                            value=count,
+                        )
+                    )
+                    rows.append(
+                        self.measurement_row(
+                            axis_values={
+                                MeasurementRowAxisField.SLICE_INDEX.value: slice_index
+                            },
+                            feature_name=feature_template.PERCENT_PER_BIN.feature_name(
+                                bin_name=str(bin_name)
+                            ),
+                            value=MappingValueLookup(
+                                bin_percentages,
+                                bin_name,
+                            ).value_or(0.0),
+                        )
+                    )
+                rows.extend(
+                    self.object_class_rows(
+                        object_classes=object_classes,
+                        bin_names=bin_names,
+                        result=result,
+                        slice_index=slice_index,
+                    )
+                )
+            return rows
+
+        def object_class_rows(
+            self,
+            *,
+            object_classes: CellProfilerKwargs,
+            bin_names: tuple[str, ...],
+            result: CellProfilerRuntimeValue,
+            slice_index: int,
+        ) -> list[CellProfilerKwargDict]:
+            if self.object_name is None:
+                return []
+            stat_field = self.stat_field_type
+            feature_template = self.feature_template_type
+            total_objects = int(
+                self.row_value(result, stat_field.TOTAL_OBJECTS, 0)
+            )
+            class_labels = tuple(sorted(int(label) for label in object_classes))
+            dense_labels = tuple(range(1, total_objects + 1))
+            object_labels = tuple(dict.fromkeys((*dense_labels, *class_labels)))
+            return [
+                self.object_measurement_row(
+                    object_name=self.object_name,
+                    object_label=object_label,
+                    axis_values={
+                        MeasurementRowAxisField.SLICE_INDEX.value: slice_index
+                    },
+                    feature_name=feature_template.OBJECT_CLASS.feature_name(
+                        bin_name=bin_name
+                    ),
+                    value=int(
+                        object_classes.get(str(object_label)) == bin_name
+                    ),
+                )
+                for object_label in object_labels
+                for bin_name in bin_names
+            ]
+
     @classmethod
     def settings_source(
-        cls,
-        module: "ModuleBlock",
-        binder: "SettingsBinder",
+        cls, module: "ModuleBlock", binder: "SettingsBinder"
     ) -> "CellProfilerKwargs":
         if cls.uses_two_measurements(module):
             return cls._two_measurement_kwargs(module, binder)
@@ -299,17 +406,12 @@ class ClassifyObjectsSingleMeasurementModule(
 
     @classmethod
     def resolve_function(
-        cls,
-        module: "ModuleBlock",
-        *,
-        default_function_name: str | None = None,
+        cls, module: "ModuleBlock", *, default_function_name: str | None = None
     ) -> "ResolvedModuleFunction":
         del default_function_name
         return super().resolve_function(
-            module,
-            default_function_name=cls.function_name_for_module(module),
+            module, default_function_name=cls.function_name_for_module(module)
         )
-
 
     @staticmethod
     def _canonical_setting_name(setting_name: str | SettingNameFamily) -> str:
@@ -330,10 +432,7 @@ class ClassifyObjectsSingleMeasurementModule(
         return binder.parse_value(
             cls._canonical_setting_name(setting_name),
             cls.indexed_setting_value(
-                module,
-                setting_name,
-                default=default,
-                value_index=value_index,
+                module, setting_name, default=default, value_index=value_index
             ),
         )
 
@@ -347,10 +446,7 @@ class ClassifyObjectsSingleMeasurementModule(
         value_index: int = 0,
     ) -> str:
         value = cls.indexed_setting_value(
-            module,
-            setting_name,
-            default=default,
-            value_index=value_index,
+            module, setting_name, default=default, value_index=value_index
         ).strip()
         if not value:
             raise ValueError(f"ClassifyObjects requires setting {setting_name!r}.")
@@ -378,29 +474,25 @@ class ClassifyObjectsSingleMeasurementModule(
 
     @classmethod
     def _single_measurement_kwargs(
-        cls,
-        module: "ModuleBlock",
-        binder: "SettingsBinder",
+        cls, module: "ModuleBlock", binder: "SettingsBinder"
     ) -> "CellProfilerKwargs":
         measurement_features = setting_values(
-            module,
-            cls.single_measurement_feature_setting,
+            module, cls.single_measurement_feature_setting
         )
         if len(measurement_features) > 1:
             return {
                 "classification_rules": tuple(
-                    cls._single_measurement_rule_kwargs(module, binder, index)
-                    for index in range(len(measurement_features))
-                ),
+                    (
+                        cls._single_measurement_rule_kwargs(module, binder, index)
+                        for index in range(len(measurement_features))
+                    )
+                )
             }
         return cls._single_measurement_rule_kwargs(module, binder, 0)
 
     @classmethod
     def _single_measurement_rule_kwargs(
-        cls,
-        module: "ModuleBlock",
-        binder: "SettingsBinder",
-        value_index: int,
+        cls, module: "ModuleBlock", binder: "SettingsBinder", value_index: int
     ) -> "CellProfilerKwargs":
         bin_names = cls.indexed_setting_value(
             module,
@@ -469,9 +561,7 @@ class ClassifyObjectsSingleMeasurementModule(
 
     @classmethod
     def _two_measurement_kwargs(
-        cls,
-        module: "ModuleBlock",
-        binder: "SettingsBinder",
+        cls, module: "ModuleBlock", binder: "SettingsBinder"
     ) -> "CellProfilerKwargs":
         return {
             "measurement1_feature": cls._required_indexed_setting_value(
@@ -535,24 +625,24 @@ class ClassifyObjectsSingleMeasurementModule(
         }
 
     @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+    def object_input_setting_names(cls):
+        return (cls.input_objects_setting,)
 
-        inputs = [
-            builder.require_artifact(ArtifactSpec(name, ArtifactKind.OBJECT_LABELS), module)
-            for value in setting_values(module, cls.input_objects_setting)
-            for name in split_symbol_names(value)
-        ]
+    @classmethod
+    def artifact_contract_outputs(cls, builder, module):
         outputs = []
-        if optional_setting_value(module, cls.retain_image_setting) in {"Yes", "yes", "True", "true"}:
+        if optional_setting_value(module, cls.retain_image_setting) in {
+            "Yes",
+            "yes",
+            "True",
+            "true",
+        }:
             output_name = optional_setting_value(module, cls.output_image_setting)
             if output_name is not None:
-                outputs.append(builder.declare_artifact(ArtifactSpec(output_name, ArtifactKind.IMAGE), module))
-        outputs.append(
-            builder.declare_artifact(ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS), module)
-        )
-        return assembler.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
-
+                outputs.append(
+                    ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(output_name))
+                )
+        return (*outputs, *super().artifact_contract_outputs(builder, module))
 
 
 from abc import ABC, abstractmethod
@@ -560,11 +650,9 @@ from dataclasses import dataclass, replace
 from enum import Enum
 import json
 from typing import ClassVar
-
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
-
 from openhcs.constants.constants import MemoryType
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
@@ -579,20 +667,12 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendAuthority,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.materialization import csv_materializer
+from openhcs.processing.materialization import (
+    csv_dataclass_materializer,
+)
 from openhcs.processing.backends.cellprofiler.thresholding import (
     ThresholdSettingsModule,
 )
-
-CLASSIFICATION_RESULT_FIELDS = [
-    "slice_index",
-    "total_objects",
-    "bin_counts",
-    "bin_percentages",
-    "object_classes",
-]
-
 
 class ClassificationMethod(Enum):
     """CellProfiler ClassifyObjects measurement-count mode."""
@@ -625,8 +705,7 @@ class ClassificationThresholdStrategy(ABC, metaclass=AutoRegisterMeta):
 
     @classmethod
     def for_method(
-        cls,
-        method: ClassificationThresholdMethod,
+        cls, method: ClassificationThresholdMethod
     ) -> "ClassificationThresholdStrategy":
         return cls.__registry__[method]()
 
@@ -699,10 +778,7 @@ class ClassificationMeasurementVector:
     values: np.ndarray
 
     @classmethod
-    def from_value(
-        cls,
-        values: np.ndarray,
-    ) -> "ClassificationMeasurementVector":
+    def from_value(cls, values: np.ndarray) -> "ClassificationMeasurementVector":
         return cls(np.asarray(values, dtype=np.float64).reshape(-1))
 
     def aligned_to_labels(self, label_ids: np.ndarray) -> np.ndarray:
@@ -711,14 +787,11 @@ class ClassificationMeasurementVector:
             return np.zeros(0, dtype=np.float64)
         if self.values.size == label_ids.size:
             return self.values.copy()
-
         max_label = int(label_ids[-1])
         if self.values.size >= max_label and max_label > label_ids.size:
             return ObjectLabelMeasurementValues.from_label_indexed_values(
-                tuple(int(label_id) for label_id in label_ids),
-                self.values,
+                tuple((int(label_id) for label_id in label_ids)), self.values
             ).values
-
         aligned = np.full(label_ids.size, np.nan, dtype=np.float64)
         copied = min(self.values.size, aligned.size)
         if copied:
@@ -750,26 +823,23 @@ class SingleMeasurementClassificationRequest:
         unique_labels = backend.positive_label_ids(labels)
         num_objects = len(unique_labels)
         if num_objects == 0:
-            return labels, ClassificationResult.empty()
-
+            return (labels, ClassificationResult.empty())
         if self.measurement_values is None:
             values = backend.mean_intensity_values(labels, image, unique_labels)
         else:
             values = ClassificationMeasurementVector.from_value(
                 self.measurement_values
             ).aligned_to_labels(unique_labels)
-
         if bin_choice == ClassificationBinChoice.EVEN:
             low_threshold = self.low_threshold
             high_threshold = self.high_threshold
             if low_threshold >= high_threshold:
-                low_threshold, high_threshold = high_threshold, low_threshold
+                low_threshold, high_threshold = (high_threshold, low_threshold)
             thresholds = np.linspace(low_threshold, high_threshold, self.bin_count + 1)
         else:
             thresholds = np.array(
                 [float(x.strip()) for x in self.custom_thresholds.split(",")]
             )
-
         threshold_list = []
         if self.wants_low_bin:
             threshold_list.append(-np.inf)
@@ -777,16 +847,13 @@ class SingleMeasurementClassificationRequest:
         if self.wants_high_bin:
             threshold_list.append(np.inf)
         thresholds = np.array(threshold_list)
-
         num_bins = len(thresholds) - 1
         if self.bin_names is not None:
             names = [name.strip() for name in self.bin_names.split(",")]
         else:
             names = [f"Bin_{index + 1}" for index in range(num_bins)]
-
         while len(names) < num_bins:
             names.append(f"Bin_{len(names) + 1}")
-
         object_bins = np.zeros(num_objects, dtype=np.int32)
         for index, value in enumerate(values):
             if np.isnan(value):
@@ -796,11 +863,9 @@ class SingleMeasurementClassificationRequest:
                     if thresholds[bin_index] < value <= thresholds[bin_index + 1]:
                         object_bins[index] = bin_index + 1
                         break
-
-        return labels, classification_result_from_bins(
-            unique_labels,
-            object_bins,
-            names,
+        return (
+            labels,
+            classification_result_from_bins(unique_labels, object_bins, names),
         )
 
 
@@ -830,63 +895,50 @@ class TwoMeasurementClassificationRequest:
         backend: ObjectClassificationBackendStrategy,
     ) -> tuple[np.ndarray, ClassificationResult]:
         threshold1_method = coerce_cellprofiler_enum(
-            ClassificationThresholdMethod,
-            self.threshold1_method,
+            ClassificationThresholdMethod, self.threshold1_method
         )
         threshold2_method = coerce_cellprofiler_enum(
-            ClassificationThresholdMethod,
-            self.threshold2_method,
+            ClassificationThresholdMethod, self.threshold2_method
         )
         unique_labels = backend.positive_label_ids(labels)
         num_objects = len(unique_labels)
         if num_objects == 0:
-            return labels, ClassificationResult.empty()
-
+            return (labels, ClassificationResult.empty())
         if self.measurement1_values is None:
             values1 = backend.mean_intensity_values(labels, image, unique_labels)
         else:
             values1 = ClassificationMeasurementVector.from_value(
                 self.measurement1_values
             ).aligned_to_labels(unique_labels)
-
         if self.measurement2_values is None:
             values2 = np.bincount(
                 labels.astype(np.intp, copy=False).ravel(),
-                minlength=(int(unique_labels[-1]) + 1 if num_objects else 1),
+                minlength=int(unique_labels[-1]) + 1 if num_objects else 1,
             )[unique_labels].astype(float)
         else:
             values2 = ClassificationMeasurementVector.from_value(
                 self.measurement2_values
             ).aligned_to_labels(unique_labels)
-
-        t1 = classification_threshold(
-            values1,
-            threshold1_method,
-            self.threshold1_value,
-        )
-        t2 = classification_threshold(
-            values2,
-            threshold2_method,
-            self.threshold2_value,
-        )
-
+        t1 = classification_threshold(values1, threshold1_method, self.threshold1_value)
+        t2 = classification_threshold(values2, threshold2_method, self.threshold2_value)
         high1 = values1 >= t1
         high2 = values2 >= t2
         has_nan = np.isnan(values1) | np.isnan(values2)
-
         object_class = np.zeros(num_objects, dtype=np.int32)
-        object_class[(~high1) & (~high2) & (~has_nan)] = 1
-        object_class[(high1) & (~high2) & (~has_nan)] = 2
-        object_class[(~high1) & (high2) & (~has_nan)] = 3
-        object_class[(high1) & (high2) & (~has_nan)] = 4
-
+        object_class[~high1 & ~high2 & ~has_nan] = 1
+        object_class[high1 & ~high2 & ~has_nan] = 2
+        object_class[~high1 & high2 & ~has_nan] = 3
+        object_class[high1 & high2 & ~has_nan] = 4
         names = [
             self.low_low_name,
             self.high_low_name,
             self.low_high_name,
             self.high_high_name,
         ]
-        return labels, classification_result_from_bins(unique_labels, object_class, names)
+        return (
+            labels,
+            classification_result_from_bins(unique_labels, object_class, names),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -905,24 +957,19 @@ class IntensityBinsClassificationRequest:
         unique_labels = backend.positive_label_ids(labels)
         num_objects = len(unique_labels)
         if num_objects == 0:
-            return labels, ClassificationResult.empty()
-
+            return (labels, ClassificationResult.empty())
         values = backend.mean_intensity_values(labels, image, unique_labels)
         valid_mask = ~np.isnan(values)
         valid_values = values[valid_mask]
         if len(valid_values) == 0:
-            return labels, ClassificationResult.empty(total_objects=num_objects)
-
+            return (labels, ClassificationResult.empty(total_objects=num_objects))
         if self.use_percentiles:
             percentiles = np.linspace(0, 100, self.num_bins + 1)
             thresholds = np.percentile(valid_values, percentiles)
         else:
             thresholds = np.linspace(
-                np.min(valid_values),
-                np.max(valid_values),
-                self.num_bins + 1,
+                np.min(valid_values), np.max(valid_values), self.num_bins + 1
             )
-
         object_bins = np.zeros(num_objects, dtype=np.int32)
         for index, value in enumerate(values):
             if np.isnan(value):
@@ -931,53 +978,43 @@ class IntensityBinsClassificationRequest:
                 if bin_index == self.num_bins - 1:
                     if thresholds[bin_index] <= value <= thresholds[bin_index + 1]:
                         object_bins[index] = bin_index + 1
-                else:
-                    if thresholds[bin_index] <= value < thresholds[bin_index + 1]:
-                        object_bins[index] = bin_index + 1
-                        break
-
+                elif thresholds[bin_index] <= value < thresholds[bin_index + 1]:
+                    object_bins[index] = bin_index + 1
+                    break
         bin_names = [f"Intensity_Bin_{index + 1}" for index in range(self.num_bins)]
-        return labels, classification_result_from_bins(
-            unique_labels,
-            object_bins,
-            bin_names,
+        return (
+            labels,
+            classification_result_from_bins(unique_labels, object_bins, bin_names),
         )
 
 
 def classification_threshold(
-    values: np.ndarray,
-    method: ClassificationThresholdMethod,
-    custom_value: float,
+    values: np.ndarray, method: ClassificationThresholdMethod, custom_value: float
 ) -> float:
     """Return the threshold for one ClassifyObjects measurement vector."""
     method = coerce_cellprofiler_enum(ClassificationThresholdMethod, method)
     return ClassificationThresholdStrategy.for_method(method).threshold(
-        values,
-        custom_value,
+        values, custom_value
     )
 
 
 def classification_result_from_bins(
-    unique_labels: np.ndarray,
-    object_bins: np.ndarray,
-    names: list[str],
+    unique_labels: np.ndarray, object_bins: np.ndarray, names: list[str]
 ) -> ClassificationResult:
     """Return serialized ClassifyObjects measurement rows from bin ids."""
     num_objects = len(unique_labels)
     bin_counts: dict[str, int] = {}
     bin_percentages: dict[str, float] = {}
     for bin_index, name in enumerate(names):
-        count = np.sum(object_bins == (bin_index + 1))
+        count = np.sum(object_bins == bin_index + 1)
         bin_counts[name] = int(count)
         bin_percentages[name] = (
             float(count / num_objects * 100) if num_objects > 0 else 0.0
         )
-
     object_classes: dict[int, str] = {}
     for index, label_value in enumerate(unique_labels):
         if object_bins[index] > 0:
             object_classes[int(label_value)] = names[object_bins[index] - 1]
-
     return ClassificationResult(
         slice_index=0,
         total_objects=num_objects,
@@ -988,9 +1025,7 @@ def classification_result_from_bins(
 
 
 class ObjectClassificationBackendStrategy(
-    CellProfilerBackendStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    CellProfilerBackendStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Object classification primitives keyed by memory type/provider."""
 
@@ -1003,19 +1038,13 @@ class ObjectClassificationBackendStrategy(
 
     @abstractmethod
     def mean_intensity_values(
-        self,
-        labels: np.ndarray,
-        image: np.ndarray,
-        label_ids: np.ndarray,
+        self, labels: np.ndarray, image: np.ndarray, label_ids: np.ndarray
     ) -> np.ndarray:
         """Return mean intensity for ``label_ids``."""
 
     @abstractmethod
     def apply_object_bins(
-        self,
-        labels: np.ndarray,
-        label_ids: np.ndarray,
-        object_bins: np.ndarray,
+        self, labels: np.ndarray, label_ids: np.ndarray, object_bins: np.ndarray
     ) -> np.ndarray:
         """Map source labels to classification bin ids in one image pass."""
 
@@ -1026,8 +1055,7 @@ class NumbaNumpyObjectClassificationBackendStrategy(
     """Numba-backed NumPy object classification primitives."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.NUMBA,
+        MemoryType.NUMPY, CellProfilerBackendProvider.NUMBA
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
@@ -1052,10 +1080,7 @@ class NumbaNumpyObjectClassificationBackendStrategy(
         return np.flatnonzero(present[1:]).astype(np.int32) + 1
 
     def mean_intensity_values(
-        self,
-        labels: np.ndarray,
-        image: np.ndarray,
-        label_ids: np.ndarray,
+        self, labels: np.ndarray, image: np.ndarray, label_ids: np.ndarray
     ) -> np.ndarray:
         return _mean_intensity_values_numba(
             np.asarray(labels, dtype=np.int32),
@@ -1064,10 +1089,7 @@ class NumbaNumpyObjectClassificationBackendStrategy(
         )
 
     def apply_object_bins(
-        self,
-        labels: np.ndarray,
-        label_ids: np.ndarray,
-        object_bins: np.ndarray,
+        self, labels: np.ndarray, label_ids: np.ndarray, object_bins: np.ndarray
     ) -> np.ndarray:
         return _apply_object_bins_numba(
             np.asarray(labels, dtype=np.int32),
@@ -1077,13 +1099,11 @@ class NumbaNumpyObjectClassificationBackendStrategy(
 
 
 def object_classification_backend(
-    *,
-    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    *, backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
 ) -> ObjectClassificationBackendStrategy:
     """Return the selected object-classification backend."""
     return ObjectClassificationBackendStrategy.for_memory_type(
-        MemoryType.NUMPY,
-        backend_provider=backend_provider,
+        MemoryType.NUMPY, backend_provider=backend_provider
     )
 
 
@@ -1092,8 +1112,8 @@ def object_classification_backend(
 @special_outputs(
     (
         "classification_results",
-        csv_materializer(
-            fields=CLASSIFICATION_RESULT_FIELDS,
+        csv_dataclass_materializer(
+            ClassificationResult,
             analysis_type="classification",
         ),
     )
@@ -1120,8 +1140,8 @@ def classify_objects_single_measurement(
     if (
         slice_index is None
         and np.asarray(image).ndim == 2
-        and label_array.ndim == 3
-        and label_array.shape[-2:] == np.asarray(image).shape
+        and (label_array.ndim == 3)
+        and (label_array.shape[-2:] == np.asarray(image).shape)
     ):
         results: list[ClassificationResult] = []
         value_offset = 0
@@ -1157,18 +1177,13 @@ def classify_objects_single_measurement(
             )
             if isinstance(result, tuple):
                 results.extend(
-                    replace(item, slice_index=plane_index) for item in result
+                    (replace(item, slice_index=plane_index) for item in result)
                 )
             else:
                 results.append(replace(result, slice_index=plane_index))
-        return image, tuple(results)
-
+        return (image, tuple(results))
     slice_index = 0 if slice_index is None else int(slice_index)
-    labels = _labels_for_image_slice(
-        label_array,
-        image,
-        slice_index,
-    )
+    labels = _labels_for_image_slice(label_array, image, slice_index)
     backend = object_classification_backend(
         backend_provider=classification_backend_provider
     )
@@ -1190,11 +1205,10 @@ def classify_objects_single_measurement(
                 wants_low_bin=bool(rule.get("wants_low_bin", False)),
                 wants_high_bin=bool(rule.get("wants_high_bin", False)),
                 custom_thresholds=str(rule.get("custom_thresholds", "0,1")),
-                bin_names=rule.get("bin_names"),  # type: ignore[arg-type]
+                bin_names=rule.get("bin_names"),
             ).classify(image, labels, backend)
             results.append(result)
-        return classified_labels, tuple(results)
-
+        return (classified_labels, tuple(results))
     return SingleMeasurementClassificationRequest(
         measurement_values=measurement_values,
         bin_choice=bin_choice,
@@ -1209,15 +1223,13 @@ def classify_objects_single_measurement(
 
 
 def _labels_for_image_slice(
-    labels: np.ndarray,
-    image: np.ndarray,
-    slice_index: int,
+    labels: np.ndarray, image: np.ndarray, slice_index: int
 ) -> np.ndarray:
     image_array = np.asarray(image)
     if (
         image_array.ndim == 2
         and labels.ndim > 2
-        and labels.shape[-2:] == image_array.shape
+        and (labels.shape[-2:] == image_array.shape)
     ):
         if 0 <= slice_index < labels.shape[0]:
             labels = labels[slice_index]
@@ -1231,8 +1243,8 @@ def _labels_for_image_slice(
 @special_outputs(
     (
         "classification_results",
-        csv_materializer(
-            fields=CLASSIFICATION_RESULT_FIELDS,
+        csv_dataclass_materializer(
+            ClassificationResult,
             analysis_type="classification",
         ),
     )
@@ -1277,8 +1289,8 @@ def classify_objects_two_measurements(
 @special_outputs(
     (
         "classification_results",
-        csv_materializer(
-            fields=CLASSIFICATION_RESULT_FIELDS,
+        csv_dataclass_materializer(
+            ClassificationResult,
             analysis_type="classification",
         ),
     )
@@ -1293,8 +1305,7 @@ def classify_objects_by_intensity_bins(
     """Classify objects by mean intensity into evenly distributed bins."""
     labels = object_label_dense_array(labels, dtype=np.int32)
     return IntensityBinsClassificationRequest(
-        num_bins=num_bins,
-        use_percentiles=use_percentiles,
+        num_bins=num_bins, use_percentiles=use_percentiles
     ).classify(
         image,
         labels,
@@ -1304,9 +1315,7 @@ def classify_objects_by_intensity_bins(
 
 @njit(cache=True)
 def _mean_intensity_values_numba(
-    labels: np.ndarray,
-    image: np.ndarray,
-    label_ids: np.ndarray,
+    labels: np.ndarray, image: np.ndarray, label_ids: np.ndarray
 ) -> np.ndarray:
     max_label = 0
     for i in range(label_ids.size):
@@ -1334,9 +1343,7 @@ def _mean_intensity_values_numba(
 
 @njit(cache=True)
 def _apply_object_bins_numba(
-    labels: np.ndarray,
-    label_ids: np.ndarray,
-    object_bins: np.ndarray,
+    labels: np.ndarray, label_ids: np.ndarray, object_bins: np.ndarray
 ) -> np.ndarray:
     max_label = 0
     for i in range(label_ids.size):
@@ -1351,7 +1358,6 @@ def _apply_object_bins_numba(
         label = int(label_ids[i])
         if label > 0 and label <= max_label:
             bin_by_label[label] = int(object_bins[i])
-
     output = np.zeros(labels.shape, dtype=np.int32)
     rows, cols = labels.shape
     for row in range(rows):
@@ -1367,7 +1373,6 @@ __all__ = public_names_from_objects(
     ClassificationMethod,
     ClassificationResult,
     ClassificationThresholdMethod,
-    "CLASSIFICATION_RESULT_FIELDS",
     IntensityBinsClassificationRequest,
     NumbaNumpyObjectClassificationBackendStrategy,
     ObjectClassificationBackendStrategy,

@@ -1,24 +1,20 @@
 """CellProfiler image-save infrastructure module declarations."""
 
 from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from typing import ClassVar
-
 from metaclass_registry import AutoRegisterMeta
-
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ImageArtifactType
 from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
     optional_setting_value,
     setting_values,
     split_symbol_names,
 )
-from openhcs.processing.backends.cellprofiler.module_classes import (
+from openhcs.interop.cellprofiler.module_declarations import (
     InfrastructureCellProfilerModule,
 )
-
 from openhcs.core.runtime_exports import RuntimeImageExportBitDepth
 
 
@@ -71,20 +67,23 @@ class SaveImagesNativeBitDepth(SaveImagesBitDepthLiteral):
     def bit_depth(self) -> RuntimeImageExportBitDepth:
         return RuntimeImageExportBitDepth.NATIVE
 
+
 class SaveCroppedObjectsModule(InfrastructureCellProfilerModule):
-    module_name = 'SaveCroppedObjects'
-    function_name = 'save_cropped_objects'
+    module_name = "SaveCroppedObjects"
+    function_name = "save_cropped_objects"
     validated = True
-    contract = 'unknown'
+    contract = None
     confidence = 1.0
 
 
 class SaveImagesModule(InfrastructureCellProfilerModule):
-    module_name = 'SaveImages'
-    function_name = 'save_images'
+    module_name = "SaveImages"
+    function_name = "save_images"
     validated = True
     confidence = 1.0
-    infrastructure_import_note = "SaveImages -> handled by runtime image materialization"
+    infrastructure_import_note = (
+        "SaveImages -> handled by runtime image materialization"
+    )
     infrastructure_exports_images = True
     source_image_setting = SettingNameFamily("Select the image to save")
     bit_depth_setting = SettingNameFamily("Image bit depth")
@@ -101,15 +100,16 @@ class SaveImagesModule(InfrastructureCellProfilerModule):
         from openhcs.interop.cellprofiler.module_roles import ArtifactSpecKey
 
         return frozenset(
-            ArtifactSpecKey(ArtifactKind.IMAGE, image_name)
-            for value in setting_values(module, cls.source_image_setting)
-            for image_name in split_symbol_names(value)
+            (
+                ArtifactSpecKey(ImageArtifactType, image_name)
+                for value in setting_values(module, cls.source_image_setting)
+                for image_name in split_symbol_names(value)
+            )
         )
 
     @classmethod
     def image_export_specs(
-        cls,
-        module: "ModuleBlock",
+        cls, module: "ModuleBlock"
     ) -> tuple["RuntimeImageExportSpec", ...]:
         """Return runtime image-export expectations declared by SaveImages."""
         from openhcs.core.runtime_exports import RuntimeImageExportSpec
@@ -123,11 +123,13 @@ class SaveImagesModule(InfrastructureCellProfilerModule):
                 f"Unsupported SaveImages bit depth in module {module.module_num}."
             ) from exc
         return tuple(
-            RuntimeImageExportSpec(
-                artifact_name=image_name,
-                bit_depth=bit_depth,
-                file_format=optional_setting_value(module, cls.file_format_setting),
+            (
+                RuntimeImageExportSpec(
+                    artifact_name=image_name,
+                    bit_depth=bit_depth,
+                    file_format=optional_setting_value(module, cls.file_format_setting),
+                )
+                for value in setting_values(module, cls.source_image_setting)
+                for image_name in split_symbol_names(value)
             )
-            for value in setting_values(module, cls.source_image_setting)
-            for image_name in split_symbol_names(value)
         )

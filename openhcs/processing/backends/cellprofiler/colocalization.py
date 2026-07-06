@@ -1,30 +1,25 @@
 """Colocalization backends for CellProfiler-compatible measurements."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass
 from enum import Enum
+from types import MappingProxyType
 from typing import ClassVar
-
 from python_introspect import set_parameter_exclusions
-
-from openhcs.core.measurement_row_materialization import (
-    MEASUREMENT_OBJECT_LABEL_FIELD,
-    MEASUREMENT_OBJECT_NAME_FIELD,
-    MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
-)
+from scipy.linalg import lstsq
+from openhcs.constants.constants import VariableComponents
 from openhcs.core.runtime_semantics import (
     MeasurementRowAxisField,
     measurement_row_mapping,
+    RuntimeMeasurementFeature,
 )
 from openhcs.core.runtime_values import ColumnarRows
-from openhcs.interop.cellprofiler.setting_names import (
-    SettingNameFamily,
-    setting_names,
+from openhcs.interop.cellprofiler.setting_names import SettingNameFamily, setting_names
+from openhcs.interop.cellprofiler.settings_binder import (
+    normalize_cellprofiler_setting_name,
 )
-from openhcs.interop.cellprofiler.settings_binder import normalize_cellprofiler_setting_name
-
-from openhcs.processing.backends.cellprofiler.module_classes import (
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
     ArtifactContractModule,
     BinderSettingsSourceModule,
     BoundModuleSettings,
@@ -62,18 +57,21 @@ from openhcs.interop.cellprofiler.setting_names import (
     setting_values,
     split_symbol_names,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.interop.cellprofiler.cellprofiler_literals import (
+    cellprofiler_enum_from_literal,
+)
 from openhcs.processing.backends.cellprofiler.thresholding import (
     ThresholdSettingsModule,
 )
+
 
 class CellProfilerMeasurementRowIdentityField(str, Enum):
     """CellProfiler row fields that carry ownership/axis identity, not values."""
 
     SLICE_INDEX = MeasurementRowAxisField.SLICE_INDEX.value
-    OBJECT_LABEL = MEASUREMENT_OBJECT_LABEL_FIELD
-    OBJECT_NAME = MEASUREMENT_OBJECT_NAME_FIELD
-    SOURCE_IMAGE_NAME = MEASUREMENT_SOURCE_IMAGE_NAME_FIELD
+    OBJECT_LABEL = MeasurementRowAxisField.OBJECT_LABEL.value
+    OBJECT_NAME = MeasurementRowAxisField.OBJECT_NAME.value
+    SOURCE_IMAGE_NAME = MeasurementRowAxisField.SOURCE_IMAGE_NAME.value
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,20 +82,19 @@ class SourceImagePairCollection:
 
     def single_source_image_name(self) -> str | None:
         match self.source_pairs:
-            case (source_pair,):
+            case [source_pair]:
                 return source_pair.source_image_name
             case _:
                 return None
 
 
 class MeasureColocalizationObjectMeasurementRowPolicy(
-    DenseColumnarObjectMeasurementRowsMixin,
-    CellProfilerObjectMeasurementRowPolicy
+    DenseColumnarObjectMeasurementRowsMixin, CellProfilerObjectMeasurementRowPolicy
 ):
     """Expand composed source stacks into source-pair object measurements."""
 
     identity_fields: ClassVar[frozenset[str]] = frozenset(
-        field.value for field in CellProfilerMeasurementRowIdentityField
+        (field.value for field in CellProfilerMeasurementRowIdentityField)
     )
 
     def invocations(
@@ -109,23 +106,23 @@ class MeasureColocalizationObjectMeasurementRowPolicy(
         if not source_pairs:
             return super().invocations(measurement_image, kwargs)
         return tuple(
-            SourcePairObjectMeasurementInvocation(
-                kwargs={
-                    **kwargs,
-                    **source_pair.invocation_kwargs(
-                        first_channel_kwarg="channel_1",
-                        second_channel_kwarg="channel_2",
-                    ),
-                },
-                source_pair=source_pair,
+            (
+                SourcePairObjectMeasurementInvocation(
+                    kwargs={
+                        **kwargs,
+                        **source_pair.invocation_kwargs(
+                            first_channel_kwarg="channel_1",
+                            second_channel_kwarg="channel_2",
+                        ),
+                    },
+                    source_pair=source_pair,
+                )
+                for source_pair in source_pairs
             )
-            for source_pair in source_pairs
         )
 
     def project_rows(
-        self,
-        rows: "MeasurementRowsInput",
-        invocation: ObjectMeasurementInvocation,
+        self, rows: "MeasurementRowsInput", invocation: ObjectMeasurementInvocation
     ) -> "MeasurementRowsInput":
         if invocation.source_pair is None:
             return rows if isinstance(rows, ColumnarRows) else list(rows)
@@ -138,17 +135,13 @@ class MeasureColocalizationObjectMeasurementRowPolicy(
         return [self.project_row(row, invocation.source_pair) for row in rows]
 
     def project_row(
-        self,
-        row: "CellProfilerRuntimeValue",
-        source_pair: CellProfilerSourceImagePair,
+        self, row: "CellProfilerRuntimeValue", source_pair: CellProfilerSourceImagePair
     ) -> "CellProfilerKwargDict":
         """Return one row with CellProfiler source-pair feature names."""
         row_mapping = measurement_row_mapping(row)
         identity_fields = type(self).identity_fields
         return CellProfilerSourcePairFeature.project_row_for_pair(
-            row_mapping,
-            source_pair,
-            retain_field=identity_fields.__contains__,
+            row_mapping, source_pair, retain_field=identity_fields.__contains__
         )
 
     def table_source_image_name(
@@ -158,9 +151,11 @@ class MeasureColocalizationObjectMeasurementRowPolicy(
     ) -> str | None:
         del source_image_name
         source_pairs = tuple(
-            source_pair
-            for measurement_image in measurement_images
-            for source_pair in measurement_image.source_image_pairs()
+            (
+                source_pair
+                for measurement_image in measurement_images
+                for source_pair in measurement_image.source_image_pairs()
+            )
         )
         return SourceImagePairCollection(source_pairs).single_source_image_name()
 
@@ -176,24 +171,88 @@ class MeasureColocalizationModule(
     DeclaredDualScopeMeasurementPolicy,
     ScopedMeasurementModule,
 ):
-    module_name = 'MeasureColocalization'
-    function_name = 'measure_colocalization'
+    module_name = "MeasureColocalization"
+    function_name = "measure_colocalization"
     validated = True
-    aliases = ('MeasureCorrelation',)
-    function_variants = ('measure_colocalization_objects',)
-    image_function_name = 'measure_colocalization'
-    category = 'channel_operation'
+    aliases = ("MeasureCorrelation",)
+    function_variants = ("measure_colocalization_objects",)
+    contract = ProcessingContract.FLEXIBLE
+    image_function_name = "measure_colocalization"
+    default_variable_components = (VariableComponents.CHANNEL,)
     confidence = 1.0
+    measurement_category_prefixes = (
+        ("correlation",),
+        ("colocalization",),
+    )
     measurement_scope_setting = SettingNameFamily("Select where to measure correlation")
     object_measurement_setting = SettingNameFamily(
-        "Select objects to measure",
-        aliases=("Select an object to measure",),
+        "Select objects to measure", aliases=("Select an object to measure",)
     )
     object_gate_setting = SettingNameFamily("Select an object to measure")
-    ignored_settings = (
-        "Select objects to measure",
-        "Hidden",
+    ignored_settings = ("Select objects to measure", "Hidden")
+
+    class MeasurementFeature(RuntimeMeasurementFeature):
+        """Feature families emitted by MeasureColocalization."""
+
+        CORRELATION = "correlation"
+        REGRESSION_SLOPE = "slope"
+        OVERLAP = "overlap"
+        COSTES_MANDERS = "costes"
+        MANDERS = "manders"
+        RANK_WEIGHTED_COLOCALIZATION = "rwc"
+        OVERLAP_K = "k"
+
+    directional_pair_feature_aliases = MappingProxyType(
+        {
+            "costes_m_1": (MeasurementFeature.COSTES_MANDERS.value, 1),
+            "costes_m_2": (MeasurementFeature.COSTES_MANDERS.value, 2),
+            "k_1": (MeasurementFeature.OVERLAP_K.value, 1),
+            "k_2": (MeasurementFeature.OVERLAP_K.value, 2),
+            "manders_m_1": (MeasurementFeature.MANDERS.value, 1),
+            "manders_m_2": (MeasurementFeature.MANDERS.value, 2),
+            "rwc_1": (MeasurementFeature.RANK_WEIGHTED_COLOCALIZATION.value, 1),
+            "rwc_2": (MeasurementFeature.RANK_WEIGHTED_COLOCALIZATION.value, 2),
+        }
     )
+    scale_qualified_measurement_feature_prefixes = (
+        (MeasurementFeature.CORRELATION.value,),
+    )
+    pair_correlation_feature_name = MeasurementFeature.CORRELATION.value
+    pair_regression_slope_feature_name = MeasurementFeature.REGRESSION_SLOPE.value
+    undirected_pair_feature_names = frozenset(
+        {
+            MeasurementFeature.CORRELATION.value,
+            MeasurementFeature.OVERLAP.value,
+        }
+    )
+    threshold_sensitive_pair_feature_names = frozenset(
+        {
+            MeasurementFeature.COSTES_MANDERS.value,
+            MeasurementFeature.MANDERS.value,
+            MeasurementFeature.RANK_WEIGHTED_COLOCALIZATION.value,
+            MeasurementFeature.OVERLAP_K.value,
+        }
+    )
+    measurement_value_fields = (
+        "correlation",
+        "slope",
+        "overlap",
+        "k1",
+        "k2",
+        "manders_m1",
+        "manders_m2",
+        "rwc1",
+        "rwc2",
+        "costes_m1",
+        "costes_m2",
+        "costes_threshold_1",
+        "costes_threshold_2",
+    )
+
+    @classmethod
+    def materialized_measurement_fields(cls, *, object_scope: bool = False) -> tuple[str, ...]:
+        axis_fields = ("slice_index", "object_label") if object_scope else ("slice_index",)
+        return (*axis_fields, *cls.measurement_value_fields)
 
     class MeasurementScope(str, Enum):
         image = "Across entire image"
@@ -202,8 +261,7 @@ class MeasureColocalizationModule(
 
         @classmethod
         def from_literal(
-            cls,
-            value: "MeasureColocalizationModule.MeasurementScope | str",
+            cls, value: "MeasureColocalizationModule.MeasurementScope | str"
         ) -> "MeasureColocalizationModule.MeasurementScope":
             return cellprofiler_enum_from_literal(
                 cls,
@@ -221,8 +279,7 @@ class MeasureColocalizationModule(
 
     @classmethod
     def ignored_settings_for(
-        cls,
-        module: "ModuleBlock",
+        cls, module: "ModuleBlock"
     ) -> tuple[str | "SettingNameFamily", ...]:
         from openhcs.interop.cellprofiler.setting_names import is_blank_symbol_name
 
@@ -234,34 +291,28 @@ class MeasureColocalizationModule(
 
     @classmethod
     def resolve_function(
-        cls,
-        module: "ModuleBlock",
-        *,
-        default_function_name: str | None = None,
+        cls, module: "ModuleBlock", *, default_function_name: str | None = None
     ) -> "ResolvedModuleFunction":
         scope = cls.MeasurementScope.from_literal(
             cls.setting_value(module, cls.measurement_scope_setting)
             or cls.measurement_scope_default.value
         )
         object_values = setting_values(module, cls.object_measurement_setting)
-        has_objects = any(split_symbol_names(value) for value in object_values)
+        has_objects = any((split_symbol_names(value) for value in object_values))
         if (
             scope in (cls.MeasurementScope.objects, cls.MeasurementScope.both)
             and has_objects
         ):
             return super().resolve_function(
-                module,
-                default_function_name=cls.function_variants[0],
+                module, default_function_name=cls.function_variants[0]
             )
         return super().resolve_function(
-            module,
-            default_function_name=default_function_name,
+            module, default_function_name=default_function_name
         )
 
     @classmethod
     def measurement_target_scope(
-        cls,
-        module: "ModuleBlock",
+        cls, module: "ModuleBlock"
     ) -> "MeasureColocalizationModule.MeasurementScope":
         return cls.MeasurementScope.from_literal(
             cls.setting_value(module, cls.measurement_scope_setting)
@@ -269,9 +320,7 @@ class MeasureColocalizationModule(
         )
 
     metric_settings: ClassVar[Mapping[str | SettingNameFamily, str]] = {
-        "Set threshold as percentage of maximum intensity for the images": (
-            "threshold_percent"
-        ),
+        "Set threshold as percentage of maximum intensity for the images": "threshold_percent",
         "Calculate correlation and slope metrics?": "do_correlation",
         "Calculate the Manders coefficients?": "do_manders",
         SettingNameFamily(
@@ -279,9 +328,7 @@ class MeasureColocalizationModule(
             aliases=("Calculate the Rank Weighted Coloalization coefficients?",),
         ): "do_rwc",
         "Calculate the Overlap coefficients?": "do_overlap",
-        "Calculate the Manders coefficients using Costes auto threshold?": (
-            "do_costes"
-        ),
+        "Calculate the Manders coefficients using Costes auto threshold?": "do_costes",
     }
     metric_flags: ClassVar[tuple[str, ...]] = (
         "do_correlation",
@@ -300,8 +347,7 @@ class MeasureColocalizationModule(
 
         @classmethod
         def from_literal(
-            cls,
-            value: "MeasureColocalizationModule.CostesMethod | str",
+            cls, value: "MeasureColocalizationModule.CostesMethod | str"
         ) -> "MeasureColocalizationModule.CostesMethod":
             return cellprofiler_enum_from_literal(cls, value)
 
@@ -315,48 +361,38 @@ class MeasureColocalizationModule(
         ignored_unmapped_settings: frozenset[str] = frozenset(),
     ) -> "BoundModuleSettings":
         bound = cls._bind_generic_settings(
-            module,
-            binder=binder,
-            param_mapping=param_mapping,
+            module, binder=binder, param_mapping=param_mapping
         )
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
         for setting_name in setting_names(cls.measurement_scope_setting):
             unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
-
         for setting_name, parameter_name in cls.metric_settings.items():
             value = optional_setting_value(module, setting_name)
             if value is not None:
                 kwargs[parameter_name] = binder.parse_value(setting_name, value)
             for concrete_name in setting_names(setting_name):
                 unmapped_kwargs.pop(
-                    normalize_cellprofiler_setting_name(concrete_name),
-                    None,
+                    normalize_cellprofiler_setting_name(concrete_name), None
                 )
-
         run_all_value = optional_setting_value(module, cls.run_all_metrics_setting)
         if run_all_value is not None:
             if cls.run_all_metrics_enabled(run_all_value, binder):
                 kwargs.update({flag: True for flag in cls.metric_flags})
             unmapped_kwargs.pop(
-                normalize_cellprofiler_setting_name(cls.run_all_metrics_setting),
-                None,
+                normalize_cellprofiler_setting_name(cls.run_all_metrics_setting), None
             )
-
         costes_method = optional_setting_value(module, cls.costes_method_setting)
         if costes_method is not None:
             kwargs["costes_method"] = cls.CostesMethod.from_literal(costes_method).value
             unmapped_kwargs.pop(
-                normalize_cellprofiler_setting_name(cls.costes_method_setting),
-                None,
+                normalize_cellprofiler_setting_name(cls.costes_method_setting), None
             )
-
         return cls._finalize_bound_settings(
             module,
             binder=binder,
             bound=cls.postprocess_bound_settings(
-                module,
-                BoundModuleSettings(kwargs, unmapped_kwargs),
+                module, BoundModuleSettings(kwargs, unmapped_kwargs)
             ),
             ignored_unmapped_settings=ignored_unmapped_settings,
         )
@@ -373,11 +409,8 @@ class MeasureColocalizationModule(
     @classmethod
     def artifact_contract(cls, assembler, builder, module):
         return cls.measurement_artifact_contract_from_declared_settings(
-            assembler,
-            builder,
-            module,
+            assembler, builder, module
         )
-
 
 
 import logging
@@ -388,11 +421,9 @@ from dataclasses import asdict, dataclass, field, fields, make_dataclass, replac
 from enum import Enum
 from types import MappingProxyType
 from typing import ClassVar, Tuple
-
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
-
 from openhcs.constants.constants import MemoryType
 from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
@@ -408,7 +439,11 @@ from openhcs.core.pipeline.function_contracts import (
 )
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
-from openhcs.core.runtime_semantics import DenseObjectLabelStack, RuntimePlaneAxis
+from openhcs.core.runtime_semantics import (
+    DenseObjectLabelStack,
+    RuntimePlaneAxis,
+    RuntimeMeasurementFeature,
+)
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 from openhcs.core.runtime_values import (
     ColumnarRows,
@@ -446,6 +481,7 @@ from openhcs.processing.backends.cellprofiler.colocalization_costes import (
     _thresholded_colocalization_metrics_with_ranks_numba,
     costes_above_threshold_mask,
     object_colocalization_base_reductions,
+    object_colocalization_correlation_reductions,
     object_colocalization_rwc_reductions,
     object_colocalization_threshold_reductions,
     quantized_unit_interval_event_summaries,
@@ -465,7 +501,6 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 )
 from openhcs.processing.materialization import csv_materializer
 
-
 logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
 _COLOCALIZATION_MEASUREMENT_FUNCTION = "_colocalization_measurement"
@@ -473,9 +508,7 @@ ColocalizationDenseLabelProjectionIdentity = tuple[tuple[str, Hashable], ...]
 
 
 def _log_colocalization_measurement_phase(
-    phase_name: str,
-    started_at: float,
-    **fields: object,
+    phase_name: str, started_at: float, **fields: object
 ) -> None:
     runtime_profiler.log(
         phase_name,
@@ -486,9 +519,7 @@ def _log_colocalization_measurement_phase(
 
 
 class ColocalizationCostesBackendStrategy(
-    CellProfilerBackendStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    CellProfilerBackendStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Costes thresholding primitives keyed by OpenHCS memory/provider."""
 
@@ -507,18 +538,13 @@ class ColocalizationCostesBackendStrategy(
 
     @abstractmethod
     def scaled_second_channel_costes(
-        self,
-        first_pixels: np.ndarray,
-        second_pixels: np.ndarray,
-        scale_max: int,
+        self, first_pixels: np.ndarray, second_pixels: np.ndarray, scale_max: int
     ) -> tuple[float, float]:
         """Return CellProfiler scaled-bin second-channel Costes thresholds."""
 
     @abstractmethod
     def correlation_slopes(
-        self,
-        first_pixels: np.ndarray,
-        second_pixels: np.ndarray,
+        self, first_pixels: np.ndarray, second_pixels: np.ndarray
     ) -> tuple[float, float, float]:
         """Return Pearson correlation plus forward/reverse regression slopes."""
 
@@ -529,8 +555,7 @@ class NumbaNumpyColocalizationCostesBackendStrategy(
     """Numba implementation of Costes threshold searches."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.NUMBA,
+        MemoryType.NUMPY, CellProfilerBackendProvider.NUMBA
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
@@ -547,7 +572,7 @@ class NumbaNumpyColocalizationCostesBackendStrategy(
         second = np.ascontiguousarray(second_pixels, dtype=np.float64)
         valid, slope, intercept = _regression_line_numba(first, second)
         if not valid:
-            return 0.0, 0.0
+            return (0.0, 0.0)
         if slope > 0.0:
             event_threshold = np.minimum(first, (second - intercept) / slope)
             order = np.argsort(event_threshold)
@@ -567,34 +592,22 @@ class NumbaNumpyColocalizationCostesBackendStrategy(
                 ),
                 bool(fast_mode),
             )
-        return _linear_costes_numba(
-            first,
-            second,
-            int(scale_max),
-            bool(fast_mode),
-        )
+        return _linear_costes_numba(first, second, int(scale_max), bool(fast_mode))
 
     def scaled_second_channel_costes(
-        self,
-        first_pixels: np.ndarray,
-        second_pixels: np.ndarray,
-        scale_max: int,
+        self, first_pixels: np.ndarray, second_pixels: np.ndarray, scale_max: int
     ) -> tuple[float, float]:
         first = np.ascontiguousarray(first_pixels, dtype=np.float64)
         second = np.ascontiguousarray(second_pixels, dtype=np.float64)
         valid, slope, intercept = _regression_line_numba(first, second)
         if not valid:
-            return 0.0, 0.0
+            return (0.0, 0.0)
         if slope > 0.0:
             event_summaries = quantized_unit_interval_event_summaries(
-                first,
-                second,
-                slope,
-                intercept,
-                int(scale_max),
+                first, second, slope, intercept, int(scale_max)
             )
             if event_summaries is None:
-                event_threshold = np.minimum(second, (slope * first) + intercept)
+                event_threshold = np.minimum(second, slope * first + intercept)
                 unique_events, inverse = np.unique(event_threshold, return_inverse=True)
                 counts = np.bincount(inverse)
                 first_sum = np.bincount(inverse, weights=first)
@@ -618,7 +631,9 @@ class NumbaNumpyColocalizationCostesBackendStrategy(
                     np.ascontiguousarray(np.cumsum(first_sum), dtype=np.float64),
                     np.ascontiguousarray(np.cumsum(second_sum), dtype=np.float64),
                     np.ascontiguousarray(np.cumsum(first_square_sum), dtype=np.float64),
-                    np.ascontiguousarray(np.cumsum(second_square_sum), dtype=np.float64),
+                    np.ascontiguousarray(
+                        np.cumsum(second_square_sum), dtype=np.float64
+                    ),
                     np.ascontiguousarray(np.cumsum(product_sum), dtype=np.float64),
                     int(scale_max),
                     slope,
@@ -626,20 +641,20 @@ class NumbaNumpyColocalizationCostesBackendStrategy(
                 ),
                 np.ascontiguousarray(np.cumsum(counts), dtype=np.int64),
             )
-        return _scaled_second_channel_costes_numba(
-            first,
-            second,
-            int(scale_max),
-        )
+        return _scaled_second_channel_costes_numba(first, second, int(scale_max))
+
     def correlation_slopes(
-        self,
-        first_pixels: np.ndarray,
-        second_pixels: np.ndarray,
+        self, first_pixels: np.ndarray, second_pixels: np.ndarray
     ) -> tuple[float, float, float]:
-        return _correlation_slopes_numba(
+        correlation, _, reverse_slope = _correlation_slopes_numba(
             np.ascontiguousarray(first_pixels, dtype=np.float64),
             np.ascontiguousarray(second_pixels, dtype=np.float64),
         )
+        slope = lstsq(
+            np.array((first_pixels, np.ones_like(first_pixels))).transpose(),
+            second_pixels,
+        )[0][0]
+        return float(correlation), float(slope), float(reverse_slope)
 
     def prepare_backend(self) -> None:
         """Compile numba Costes kernels outside measured execution."""
@@ -648,19 +663,17 @@ class NumbaNumpyColocalizationCostesBackendStrategy(
         self.correlation_slopes(first, second)
         thresholded_colocalization_metrics(first, second, 15.0, True, True, True)
         self.linear_costes(first, second, 255, False)
-        quantized_codes = (np.arange(64 * 64, dtype=np.uint16) % 512) + 1024
+        quantized_codes = np.arange(64 * 64, dtype=np.uint16) % 512 + 1024
         quantized = quantized_codes.astype(np.float32) / np.float32(65535)
         self.scaled_second_channel_costes(quantized, quantized.copy(), 255)
 
 
 def costes_backend(
-    *,
-    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    *, backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
 ) -> ColocalizationCostesBackendStrategy:
     """Resolve the explicit/default Costes backend for NumPy data."""
     return ColocalizationCostesBackendStrategy.for_memory_type(
-        MemoryType.NUMPY,
-        backend_provider=backend_provider,
+        MemoryType.NUMPY, backend_provider=backend_provider
     )
 
 
@@ -673,10 +686,10 @@ class CostesMethod(Enum):
 @dataclass(slots=True)
 class ColocalizationMeasurements:
     """Colocalization measurements between two channels."""
+
     slice_index: int
     correlation: float
     slope: float
-    slope_reverse: float
     overlap: float
     k1: float
     k2: float
@@ -697,17 +710,13 @@ class ColocalizationMeasurementSchema:
 
     @classmethod
     def object_measurement_type(
-        cls,
-        measurement_type: type[ColocalizationMeasurements],
+        cls, measurement_type: type[ColocalizationMeasurements]
     ) -> type:
         measurement_fields = tuple(fields(measurement_type))
         row_fields = (
             (measurement_fields[0].name, measurement_fields[0].type),
             cls.object_label_field,
-            *(
-                (field.name, field.type)
-                for field in measurement_fields[1:]
-            ),
+            *((field.name, field.type) for field in measurement_fields[1:]),
         )
         return make_dataclass(
             "ObjectColocalizationMeasurements",
@@ -727,16 +736,10 @@ class ColocalizationMeasurementSchema:
 
     @staticmethod
     def from_measurement(
-        row_type: type,
-        *,
-        object_label: int,
-        measurement: ColocalizationMeasurements,
+        row_type: type, *, object_label: int, measurement: ColocalizationMeasurements
     ) -> object:
         measurement_values = asdict(measurement)
-        return row_type(
-            object_label=object_label,
-            **measurement_values,
-        )
+        return row_type(object_label=object_label, **measurement_values)
 
     @classmethod
     def from_values(
@@ -747,7 +750,6 @@ class ColocalizationMeasurementSchema:
         slice_index: int = 0,
         correlation: float = 0.0,
         slope: float = 0.0,
-        slope_reverse: float = 0.0,
         overlap: float = 0.0,
         k1: float = 0.0,
         k2: float = 0.0,
@@ -766,7 +768,6 @@ class ColocalizationMeasurementSchema:
             object_label=object_label,
             correlation=cls.finite_or_zero(correlation),
             slope=cls.finite_or_zero(slope),
-            slope_reverse=cls.finite_or_zero(slope_reverse),
             overlap=cls.finite_or_zero(overlap),
             k1=cls.finite_or_zero(k1),
             k2=cls.finite_or_zero(k2),
@@ -799,7 +800,9 @@ class ColocalizationMeasurementOptions:
     costes_method: CostesMethod
     scale_max: int
     unit_interval_intensity_scale: int | None = None
-    costes_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
+    costes_backend_provider: BackendProviderInput = (
+        DEFAULT_CELLPROFILER_BACKEND_SELECTION
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "costes_method", CostesMethod(self.costes_method))
@@ -816,11 +819,7 @@ class ColocalizationCostesThresholds:
 
     @classmethod
     def from_thresholds(
-        cls,
-        first: float,
-        second: float,
-        *,
-        scale_max: int,
+        cls, first: float, second: float, *, scale_max: int
     ) -> "ColocalizationCostesThresholds":
         first_denominator = float(first)
         second_denominator = float(second)
@@ -836,7 +835,7 @@ class ColocalizationCostesThresholds:
             nearest_first_bin / scale_max
             if scale_max > 0
             and np.isfinite(first)
-            and np.isclose(scaled_first, nearest_first_bin, rtol=0.0, atol=1e-3)
+            and np.isclose(scaled_first, nearest_first_bin, rtol=0.0, atol=0.001)
             else first_denominator
         )
         return cls(
@@ -924,12 +923,11 @@ class ColocalizationMaskStrategy(ABC, metaclass=AutoRegisterMeta):
 
     __registry_key__ = "registry_key"
     __skip_if_no_key__ = True
-
     registry_key: ClassVar[str | None] = None
 
     @classmethod
     def strategies(cls) -> tuple["ColocalizationMaskStrategy", ...]:
-        return tuple(strategy_type() for strategy_type in cls.__registry__.values())
+        return tuple((strategy_type() for strategy_type in cls.__registry__.values()))
 
     @abstractmethod
     def matches(self, request: ColocalizationMaskRequest) -> bool:
@@ -977,7 +975,7 @@ class ChannelLeadingColocalizationMaskStrategy(ColocalizationMaskStrategy):
         return (
             request.mask_array.ndim >= 3
             and request.mask_array.shape[0] == request.image_data.shape[0]
-            and request.mask_array.shape[1:] == request.valid.shape
+            and (request.mask_array.shape[1:] == request.valid.shape)
         )
 
     def apply(self, request: ColocalizationMaskRequest) -> np.ndarray:
@@ -1002,10 +1000,7 @@ class ColocalizationImagePairContext:
 
     @staticmethod
     def valid_mask(
-        image: object,
-        image_data: np.ndarray,
-        channel_1: int,
-        channel_2: int,
+        image: object, image_data: np.ndarray, channel_1: int, channel_2: int
     ) -> np.ndarray | None:
         """Return CellProfiler-style valid pixels for a two-image measurement."""
         first_pixels = image_data[channel_1]
@@ -1017,7 +1012,6 @@ class ColocalizationImagePairContext:
             ):
                 return None
             return np.isfinite(first_pixels) & np.isfinite(second_pixels)
-
         valid = np.isfinite(first_pixels) & np.isfinite(second_pixels)
         mask_array = np.asarray(mask, dtype=bool)
         request = ColocalizationMaskRequest(
@@ -1034,29 +1028,18 @@ class ColocalizationImagePairContext:
                     return None
                 return resolved_valid
         raise ValueError(
-            "MeasureColocalization image mask must match the shared spatial "
-            f"domain or channel stack; got mask {mask_array.shape!r} for image "
-            f"{image_data.shape!r}."
+            f"MeasureColocalization image mask must match the shared spatial domain or channel stack; got mask {mask_array.shape!r} for image {image_data.shape!r}."
         )
 
     @classmethod
     def from_request(
-        cls,
-        image: object,
-        *,
-        channel_1: int,
-        channel_2: int,
+        cls, image: object, *, channel_1: int, channel_2: int
     ) -> "ColocalizationImagePairContext":
         image_data = cls.measurement_pixels(image)
         image_float = np.asarray(image_data, dtype=np.float32)
         first_image = image_float[channel_1]
         second_image = image_float[channel_2]
-        pair_valid_mask = cls.valid_mask(
-            image,
-            image_float,
-            channel_1,
-            channel_2,
-        )
+        pair_valid_mask = cls.valid_mask(image, image_float, channel_1, channel_2)
         if pair_valid_mask is None:
             full_first_pixels = first_image.ravel()
             full_second_pixels = second_image.ravel()
@@ -1085,8 +1068,10 @@ class ColocalizationImagePairContext:
         if isinstance(image_data, AlignedImageStack):
             return np.stack(
                 tuple(
-                    np.asarray(image_payload_data(slice_payload))
-                    for slice_payload in image_data.slices
+                    (
+                        np.asarray(image_payload_data(slice_payload))
+                        for slice_payload in image_data.slices
+                    )
                 ),
                 axis=0,
             )
@@ -1137,9 +1122,7 @@ class ColocalizationObjectLabelContext:
     ) -> "ColocalizationObjectLabelContext":
         """Build reductions from an already-resolved dense label array."""
         label_array = cls._labels_aligned_to_mask(
-            label_array,
-            pair_valid_mask,
-            measurement_shape=measurement_shape,
+            label_array, pair_valid_mask, measurement_shape=measurement_shape
         )
         max_label = int(np.max(label_array)) if label_array.size else 0
         label_range = np.arange(1, max_label + 1, dtype=np.int32)
@@ -1148,8 +1131,7 @@ class ColocalizationObjectLabelContext:
             object_mask = object_mask & pair_valid_mask
         object_labels = label_array[object_mask].astype(np.int32, copy=False)
         aggregation = DenseObjectLabelAggregation(
-            labels=object_labels,
-            object_count=max_label,
+            labels=object_labels, object_count=max_label
         )
         return cls(
             labels=label_array,
@@ -1172,11 +1154,11 @@ class ColocalizationObjectLabelContext:
         if (
             measurement_shape is not None
             and label_array.ndim == len(measurement_shape) + 1
-            and tuple(label_array.shape[1:]) == tuple(measurement_shape)
+            and (tuple(label_array.shape[1:]) == tuple(measurement_shape))
         ):
             try:
                 return DenseObjectLabelStack.from_labels(
-                    label_array,
+                    label_array
                 ).project_xy_plane_without_relabeling()
             except ValueError:
                 return np.max(label_array, axis=0).astype(np.int32, copy=False)
@@ -1184,10 +1166,9 @@ class ColocalizationObjectLabelContext:
             return label_array
         if tuple(label_array.shape) == tuple(pair_valid_mask.shape):
             return label_array
-        if (
-            pair_valid_mask.ndim == label_array.ndim + 1
-            and tuple(pair_valid_mask.shape[1:]) == tuple(label_array.shape)
-        ):
+        if pair_valid_mask.ndim == label_array.ndim + 1 and tuple(
+            pair_valid_mask.shape[1:]
+        ) == tuple(label_array.shape):
             return np.broadcast_to(label_array, pair_valid_mask.shape)
         return label_array
 
@@ -1233,26 +1214,15 @@ class ObjectColocalizationBaseStage:
 
     @classmethod
     def from_context(
-        cls,
-        context: ObjectColocalizationRequestContext,
+        cls, context: ObjectColocalizationRequestContext
     ) -> "ObjectColocalizationBaseStage":
         labels = context.labels
         first_pixels = context.image_pair.first_image[labels.object_mask]
         second_pixels = context.image_pair.second_image[labels.object_mask]
-        (
-            object_counts,
-            sum1,
-            sum2,
-            sum1_sq,
-            sum2_sq,
-            product_sum,
-            max1,
-            max2,
-        ) = object_colocalization_base_reductions(
-            first_pixels,
-            second_pixels,
-            labels.object_labels,
-            labels.max_label,
+        object_counts, sum1, sum2, sum1_sq, sum2_sq, product_sum, max1, max2 = (
+            object_colocalization_base_reductions(
+                first_pixels, second_pixels, labels.object_labels, labels.max_label
+            )
         )
         return cls(
             first_pixels=first_pixels,
@@ -1341,9 +1311,7 @@ class CachedObjectColocalizationRankProvider(ObjectColocalizationRankProvider):
             ranks = UnitIntervalDenseRankSemantics.ranks(
                 pixels,
                 preferred_scale=context.options.scale_max,
-                proven_unit_interval_scale=(
-                    context.options.unit_interval_intensity_scale
-                ),
+                proven_unit_interval_scale=context.options.unit_interval_intensity_scale,
             )
             self.ranks_by_key[key] = ranks
         return ranks
@@ -1355,7 +1323,6 @@ class ObjectColocalizationMetricArrays:
 
     corr: np.ndarray
     slope: np.ndarray
-    slope_reverse: np.ndarray
     overlap: np.ndarray
     k1: np.ndarray
     k2: np.ndarray
@@ -1370,13 +1337,13 @@ class ObjectColocalizationMetricArrays:
 
     @classmethod
     def empty(cls, max_label: int) -> "ObjectColocalizationMetricArrays":
+
         def values() -> np.ndarray:
             return np.zeros(max_label, dtype=float)
 
         return cls(
             corr=values(),
             slope=values(),
-            slope_reverse=values(),
             overlap=values(),
             k1=values(),
             k2=values(),
@@ -1391,10 +1358,7 @@ class ObjectColocalizationMetricArrays:
         )
 
     def rows_for(
-        self,
-        label_range: np.ndarray,
-        *,
-        slice_index: int = 0,
+        self, label_range: np.ndarray, *, slice_index: int = 0
     ) -> "ObjectColocalizationColumnarMeasurements":
         return ObjectColocalizationColumnarMeasurements(
             object_labels=np.asarray(label_range, dtype=np.int32),
@@ -1408,22 +1372,16 @@ class ObjectColocalizationMetricArrays:
         return np.where(np.isfinite(array), array, 0.0)
 
     def columns_for(
-        self,
-        object_labels: np.ndarray,
-        *,
-        slice_index: int = 0,
+        self, object_labels: np.ndarray, *, slice_index: int = 0
     ) -> Mapping[str, np.ndarray]:
         return MappingProxyType(
             {
                 "slice_index": np.full(
-                    len(object_labels),
-                    int(slice_index),
-                    dtype=np.int32,
+                    len(object_labels), int(slice_index), dtype=np.int32
                 ),
                 "object_label": object_labels,
                 "correlation": self.finite_or_zero_column(self.corr),
                 "slope": self.finite_or_zero_column(self.slope),
-                "slope_reverse": self.finite_or_zero_column(self.slope_reverse),
                 "overlap": self.finite_or_zero_column(self.overlap),
                 "k1": self.finite_or_zero_column(self.k1),
                 "k2": self.finite_or_zero_column(self.k2),
@@ -1456,10 +1414,7 @@ class ObjectColocalizationColumnarMeasurements(ColumnarRows):
         object.__setattr__(
             self,
             "_columns",
-            self.metrics.columns_for(
-                self.object_labels,
-                slice_index=self.slice_index,
-            ),
+            self.metrics.columns_for(self.object_labels, slice_index=self.slice_index),
         )
 
     @property
@@ -1476,7 +1431,6 @@ class ObjectColocalizationColumnarMeasurements(ColumnarRows):
                 slice_index=self.slice_index,
                 correlation=self.metrics.corr[index],
                 slope=self.metrics.slope[index],
-                slope_reverse=self.metrics.slope_reverse[index],
                 overlap=self.metrics.overlap[index],
                 k1=self.metrics.k1[index],
                 k2=self.metrics.k2[index],
@@ -1529,12 +1483,25 @@ class ObjectColocalizationThresholdStage:
             (options.do_manders, options.do_rwc, options.do_overlap)
         )
         if threshold_metrics_requested:
-            threshold_1 = options.threshold_percent / 100 * base.max1
-            threshold_2 = options.threshold_percent / 100 * base.max2
+            first_threshold_scale = np.asarray(
+                options.threshold_percent / 100,
+                dtype=base.first_pixels.dtype,
+            )
+            second_threshold_scale = np.asarray(
+                options.threshold_percent / 100,
+                dtype=base.second_pixels.dtype,
+            )
+            threshold_1 = first_threshold_scale * np.asarray(
+                base.max1,
+                dtype=base.first_pixels.dtype,
+            )
+            threshold_2 = second_threshold_scale * np.asarray(
+                base.max2,
+                dtype=base.second_pixels.dtype,
+            )
         else:
             threshold_1 = np.zeros(max_label, dtype=float)
             threshold_2 = np.zeros(max_label, dtype=float)
-
         threshold_reductions_requested = threshold_metrics_requested or (
             options.do_costes and base.full_first_pixels.size
         )
@@ -1586,7 +1553,6 @@ class ObjectColocalizationThresholdStage:
             total_second_costes = empty.copy()
             costes_sum1 = empty.copy()
             costes_sum2 = empty.copy()
-
         return cls(
             threshold_1=threshold_1,
             threshold_2=threshold_2,
@@ -1626,9 +1592,7 @@ def _prepare_object_colocalization_context(
 ) -> ObjectColocalizationRequestContext:
     if image_pair_context is None:
         image_pair_context = ColocalizationImagePairContext.from_request(
-            image,
-            channel_1=channel_1,
-            channel_2=channel_2,
+            image, channel_1=channel_1, channel_2=channel_2
         )
     image_data = image_pair_context.image_data
     if object_label_context is None:
@@ -1646,11 +1610,7 @@ def _prepare_object_colocalization_context(
         do_costes=do_costes,
         costes_method=costes_method,
         scale_max=ColocalizationCostesThresholdRequest.scale_max_for_image_pair(
-            image,
-            image_data,
-            channel_1,
-            channel_2,
-            scale_max,
+            image, image_data, channel_1, channel_2, scale_max
         ),
         costes_backend_provider=costes_backend_provider,
     )
@@ -1666,13 +1626,10 @@ def _prepare_object_colocalization_context(
 
 
 def _empty_object_colocalization_rows(
-    label_range: np.ndarray,
-    *,
-    slice_index: int = 0,
+    label_range: np.ndarray, *, slice_index: int = 0
 ) -> ObjectColocalizationColumnarMeasurements:
     return ObjectColocalizationMetricArrays.empty(len(label_range)).rows_for(
-        label_range,
-        slice_index=slice_index,
+        label_range, slice_index=slice_index
     )
 
 
@@ -1689,20 +1646,16 @@ def _resolve_object_costes_thresholds(
         resolved = provided
     elif options.costes_method == CostesMethod.FASTER:
         threshold_c1, threshold_c2 = costes_backend(
-            backend_provider=options.costes_backend_provider,
+            backend_provider=options.costes_backend_provider
         ).scaled_second_channel_costes(
-            base.full_first_pixels,
-            base.full_second_pixels,
-            options.scale_max,
+            base.full_first_pixels, base.full_second_pixels, options.scale_max
         )
         resolved = ColocalizationCostesThresholds.from_thresholds(
-            threshold_c1,
-            threshold_c2,
-            scale_max=options.scale_max,
+            threshold_c1, threshold_c2, scale_max=options.scale_max
         )
     else:
         threshold_c1, threshold_c2 = costes_backend(
-            backend_provider=options.costes_backend_provider,
+            backend_provider=options.costes_backend_provider
         ).linear_costes(
             base.full_first_pixels,
             base.full_second_pixels,
@@ -1710,11 +1663,8 @@ def _resolve_object_costes_thresholds(
             options.costes_method == CostesMethod.FAST,
         )
         resolved = ColocalizationCostesThresholds.from_thresholds(
-            threshold_c1,
-            threshold_c2,
-            scale_max=options.scale_max,
+            threshold_c1, threshold_c2, scale_max=options.scale_max
         )
-
     metrics.costes_threshold_1.fill(resolved.first)
     metrics.costes_threshold_2.fill(resolved.second)
     return resolved
@@ -1727,11 +1677,15 @@ def _populate_object_correlation_metrics(
 ) -> None:
     if not options.do_correlation:
         return
-    with np.errstate(divide="ignore", invalid="ignore"):
-        centered_product = base.product_sum - ((base.sum1 * base.sum2) / base.object_counts)
-        centered_first = base.sum1_sq - ((base.sum1 * base.sum1) / base.object_counts)
-        centered_second = base.sum2_sq - ((base.sum2 * base.sum2) / base.object_counts)
-        metrics.corr = centered_product / np.sqrt(centered_first * centered_second)
+    metrics.corr = object_colocalization_correlation_reductions(
+        base.first_pixels,
+        base.second_pixels,
+        base.object_labels,
+        base.object_counts,
+        base.sum1,
+        base.sum2,
+        len(base.object_counts),
+    )
     metrics.corr[~np.isfinite(metrics.corr)] = np.nan
 
 
@@ -1745,24 +1699,17 @@ def _populate_object_threshold_metrics(
     options = context.options
     if options.do_manders and threshold.combined_threshold_has_values:
         metrics.manders_m1 = _divide_measurements(
-            threshold.threshold_sum1,
-            threshold.total_first_threshold,
+            threshold.threshold_sum1, threshold.total_first_threshold
         )
         metrics.manders_m2 = _divide_measurements(
-            threshold.threshold_sum2,
-            threshold.total_second_threshold,
+            threshold.threshold_sum2, threshold.total_second_threshold
         )
-
     if options.do_rwc:
         rank_image_1 = rank_provider.ranks(
-            context,
-            base.first_pixels,
-            channel_index=context.channel_1,
+            context, base.first_pixels, channel_index=context.channel_1
         )
         rank_image_2 = rank_provider.ranks(
-            context,
-            base.second_pixels,
-            channel_index=context.channel_2,
+            context, base.second_pixels, channel_index=context.channel_2
         )
         max_rank = max(rank_image_1.max(), rank_image_2.max()) + 1
         if threshold.combined_threshold_has_values:
@@ -1778,26 +1725,21 @@ def _populate_object_threshold_metrics(
                 len(threshold.threshold_1),
             )
             metrics.rwc1 = _divide_measurements(
-                weighted_first,
-                threshold.total_first_threshold,
+                weighted_first, threshold.total_first_threshold
             )
             metrics.rwc2 = _divide_measurements(
-                weighted_second,
-                threshold.total_second_threshold,
+                weighted_second, threshold.total_second_threshold
             )
-
     if options.do_overlap and threshold.combined_threshold_has_values:
         metrics.overlap = _divide_measurements(
             threshold.threshold_product_sum,
             np.sqrt(threshold.threshold_sum1_sq * threshold.threshold_sum2_sq),
         )
         metrics.k1 = _divide_measurements(
-            threshold.threshold_product_sum,
-            threshold.threshold_sum1_sq,
+            threshold.threshold_product_sum, threshold.threshold_sum1_sq
         )
         metrics.k2 = _divide_measurements(
-            threshold.threshold_product_sum,
-            threshold.threshold_sum2_sq,
+            threshold.threshold_product_sum, threshold.threshold_sum2_sq
         )
 
 
@@ -1810,12 +1752,10 @@ def _populate_object_costes_metrics(
     if not (options.do_costes and base.full_first_pixels.size):
         return
     metrics.costes_m1 = _divide_costes_measurements(
-        threshold.costes_sum1,
-        threshold.total_first_costes,
+        threshold.costes_sum1, threshold.total_first_costes
     )
     metrics.costes_m2 = _divide_costes_measurements(
-        threshold.costes_sum2,
-        threshold.total_second_costes,
+        threshold.costes_sum2, threshold.total_second_costes
     )
 
 
@@ -1830,7 +1770,6 @@ def _colocalization_measurement(
     phase_started_at = time.perf_counter()
     corr = np.nan
     slope = np.nan
-    slope_reverse = np.nan
     overlap = np.nan
     k1 = np.nan
     k2 = np.nan
@@ -1842,7 +1781,6 @@ def _colocalization_measurement(
     c2 = np.nan
     thr_fi_c = np.nan
     thr_si_c = np.nan
-
     if valid_mask is None:
         first_array = np.asarray(first_pixels)
         second_array = np.asarray(second_pixels)
@@ -1865,36 +1803,21 @@ def _colocalization_measurement(
         else:
             fi = np.empty(0, dtype=np.asarray(first_pixels).dtype)
             si = np.empty(0, dtype=np.asarray(second_pixels).dtype)
-
     _log_colocalization_measurement_phase(
-        "coloc_prepare_pixels",
-        phase_started_at,
-        pixels=fi.size,
+        "coloc_prepare_pixels", phase_started_at, pixels=fi.size
     )
     if fi.size:
         if options.do_correlation:
             phase_started_at = time.perf_counter()
-            corr, slope, slope_reverse = (
+            corr, slope, _ = (
                 ColocalizationCostesBackendStrategy.for_memory_type(
-                    backend_provider=options.costes_backend_provider,
+                    backend_provider=options.costes_backend_provider
                 ).correlation_slopes(fi, si)
             )
-            _log_colocalization_measurement_phase(
-                "coloc_correlation",
-                phase_started_at,
-            )
-
+            _log_colocalization_measurement_phase("coloc_correlation", phase_started_at)
         if any((options.do_manders, options.do_rwc, options.do_overlap)):
             phase_started_at = time.perf_counter()
-            (
-                m1,
-                m2,
-                rwc1,
-                rwc2,
-                overlap,
-                k1,
-                k2,
-            ) = thresholded_colocalization_metrics(
+            m1, m2, rwc1, rwc2, overlap, k1, k2 = thresholded_colocalization_metrics(
                 np.ascontiguousarray(fi),
                 np.ascontiguousarray(si),
                 float(options.threshold_percent),
@@ -1905,36 +1828,24 @@ def _colocalization_measurement(
                 options.unit_interval_intensity_scale,
             )
             _log_colocalization_measurement_phase(
-                "coloc_thresholded_metrics",
-                phase_started_at,
+                "coloc_thresholded_metrics", phase_started_at
             )
-
         if options.do_costes:
             phase_started_at = time.perf_counter()
             if options.costes_method == CostesMethod.FASTER:
                 thr_fi_c, thr_si_c = costes_backend(
-                    backend_provider=options.costes_backend_provider,
-                ).scaled_second_channel_costes(
-                    fi,
-                    si,
-                    options.scale_max,
-                )
+                    backend_provider=options.costes_backend_provider
+                ).scaled_second_channel_costes(fi, si, options.scale_max)
             else:
                 fast_mode = options.costes_method == CostesMethod.FAST
                 thr_fi_c, thr_si_c = costes_backend(
-                    backend_provider=options.costes_backend_provider,
-                ).linear_costes(
-                    fi,
-                    si,
-                    options.scale_max,
-                    fast_mode,
-                )
+                    backend_provider=options.costes_backend_provider
+                ).linear_costes(fi, si, options.scale_max, fast_mode)
             _log_colocalization_measurement_phase(
                 "coloc_costes_thresholds",
                 phase_started_at,
                 method=options.costes_method.value,
             )
-
             phase_started_at = time.perf_counter()
             c1, c2 = _costes_manders_numba(
                 np.ascontiguousarray(fi),
@@ -1943,15 +1854,12 @@ def _colocalization_measurement(
                 _pixel_dtype_threshold(si, thr_si_c),
             )
             _log_colocalization_measurement_phase(
-                "coloc_costes_manders",
-                phase_started_at,
+                "coloc_costes_manders", phase_started_at
             )
-
     result = ColocalizationMeasurements(
         slice_index=0,
         correlation=float(corr) if not np.isnan(corr) else 0.0,
         slope=float(slope) if not np.isnan(slope) else 0.0,
-        slope_reverse=float(slope_reverse) if not np.isnan(slope_reverse) else 0.0,
         overlap=float(overlap) if not np.isnan(overlap) else 0.0,
         k1=float(k1) if not np.isnan(k1) else 0.0,
         k2=float(k2) if not np.isnan(k2) else 0.0,
@@ -1964,10 +1872,7 @@ def _colocalization_measurement(
         costes_threshold_1=float(thr_fi_c) if not np.isnan(thr_fi_c) else 0.0,
         costes_threshold_2=float(thr_si_c) if not np.isnan(thr_si_c) else 0.0,
     )
-    _log_colocalization_measurement_phase(
-        "coloc_total",
-        total_started_at,
-    )
+    _log_colocalization_measurement_phase("coloc_total", total_started_at)
     return result
 
 
@@ -1982,9 +1887,7 @@ def _cellprofiler_float_pixels(image: np.ndarray) -> np.ndarray:
 
 
 def _colocalization_unit_interval_scale(
-    image: object,
-    channel_1: int,
-    channel_2: int,
+    image: object, channel_1: int, channel_2: int
 ) -> int | None:
     """Return a shared proof scale when both channels are exact unit interval."""
     metadata = image_payload_metadata(image)
@@ -1998,13 +1901,16 @@ def _colocalization_unit_interval_scale(
 
 
 @composed_image_payload
-@numpy
-@special_outputs(("colocalization_measurements", csv_materializer(
-    fields=["slice_index", "correlation", "slope", "slope_reverse", "overlap", "k1", "k2",
-            "manders_m1", "manders_m2", "rwc1", "rwc2",
-            "costes_m1", "costes_m2", "costes_threshold_1", "costes_threshold_2"],
-    analysis_type="colocalization"
-)))
+@numpy(contract=ProcessingContract.FLEXIBLE)
+@special_outputs(
+    (
+        "colocalization_measurements",
+        csv_materializer(
+            fields=MeasureColocalizationModule.materialized_measurement_fields(),
+            analysis_type="colocalization",
+        ),
+    )
+)
 def measure_colocalization(
     image: np.ndarray,
     channel_1: int = 0,
@@ -2054,16 +1960,16 @@ def measure_colocalization(
     """
     total_started_at = time.perf_counter()
     phase_started_at = time.perf_counter()
-    # Select the two channels to compare
     image_data = image_payload_data(image)
     if channel_1 >= image_data.shape[0] or channel_2 >= image_data.shape[0]:
-        raise ValueError(f"Channel indices ({channel_1}, {channel_2}) out of range for image with {image_data.shape[0]} channels")
+        raise ValueError(
+            f"Channel indices ({channel_1}, {channel_2}) out of range for image with {image_data.shape[0]} channels"
+        )
     runtime_profiler.log(
         "measure_coloc_input",
         time.perf_counter() - phase_started_at,
         function="measure_colocalization",
     )
-
     phase_started_at = time.perf_counter()
     options = ColocalizationMeasurementOptions(
         threshold_percent=threshold_percent,
@@ -2074,16 +1980,10 @@ def measure_colocalization(
         do_costes=do_costes,
         costes_method=costes_method,
         scale_max=ColocalizationCostesThresholdRequest.scale_max_for_image_pair(
-            image,
-            image_data,
-            channel_1,
-            channel_2,
-            scale_max,
+            image, image_data, channel_1, channel_2, scale_max
         ),
         unit_interval_intensity_scale=_colocalization_unit_interval_scale(
-            image,
-            channel_1,
-            channel_2,
+            image, channel_1, channel_2
         ),
         costes_backend_provider=costes_backend_provider,
     )
@@ -2095,10 +1995,7 @@ def measure_colocalization(
     phase_started_at = time.perf_counter()
     image_float = _cellprofiler_float_pixels(image_data)
     valid_mask = ColocalizationImagePairContext.valid_mask(
-        image,
-        image_float,
-        channel_1,
-        channel_2,
+        image, image_float, channel_1, channel_2
     )
     runtime_profiler.log(
         "measure_coloc_prepare_arrays",
@@ -2118,13 +2015,9 @@ def measure_colocalization(
         time.perf_counter() - phase_started_at,
         function="measure_colocalization",
     )
-
-    # Return first selected channel as the output image
     phase_started_at = time.perf_counter()
     output = ImagePayloadChannelProjection.from_channel(
-        image,
-        image_data,
-        channel_1,
+        image, image_data, channel_1
     ).payload()
     runtime_profiler.log(
         "measure_coloc_output_payload",
@@ -2136,7 +2029,7 @@ def measure_colocalization(
         time.perf_counter() - total_started_at,
         function="measure_colocalization",
     )
-    return output, measurements
+    return (output, measurements)
 
 
 def _measure_colocalization_objects_core(
@@ -2156,9 +2049,7 @@ def _measure_colocalization_objects_core(
     costes_thresholds: ColocalizationCostesThresholds | None = None,
     image_pair_context: ColocalizationImagePairContext | None = None,
     object_label_context: ColocalizationObjectLabelContext | None = None,
-    rank_provider: ObjectColocalizationRankProvider = (
-        DirectObjectColocalizationRankProvider()
-    ),
+    rank_provider: ObjectColocalizationRankProvider = DirectObjectColocalizationRankProvider(),
 ) -> Tuple[np.ndarray, ObjectColocalizationColumnarMeasurements]:
     """Measure colocalization between two channels within labeled objects."""
     total_started_at = time.perf_counter()
@@ -2192,25 +2083,19 @@ def _measure_colocalization_objects_core(
     if not context.has_labels:
         return (
             ImagePayloadChannelProjection.from_channel(
-                context.image,
-                context.image_data,
-                context.channel_1,
+                context.image, context.image_data, context.channel_1
             ).payload(),
             [],
         )
     if not context.has_object_pixels:
         return (
             ImagePayloadChannelProjection.from_channel(
-                context.image,
-                context.image_data,
-                context.channel_1,
+                context.image, context.image_data, context.channel_1
             ).payload(),
             _empty_object_colocalization_rows(
-                context.labels.label_range,
-                slice_index=context.labels.slice_index,
+                context.labels.label_range, slice_index=context.labels.slice_index
             ),
         )
-
     phase_started_at = time.perf_counter()
     base = ObjectColocalizationBaseStage.from_context(context)
     runtime_profiler.log(
@@ -2233,10 +2118,7 @@ def _measure_colocalization_objects_core(
     )
     phase_started_at = time.perf_counter()
     resolved_costes_thresholds = _resolve_object_costes_thresholds(
-        context,
-        base,
-        costes_thresholds,
-        metrics,
+        context, base, costes_thresholds, metrics
     )
     runtime_profiler.log(
         "coloc_object_costes_thresholds",
@@ -2248,9 +2130,7 @@ def _measure_colocalization_objects_core(
     )
     phase_started_at = time.perf_counter()
     threshold = ObjectColocalizationThresholdStage.from_base(
-        context,
-        base,
-        resolved_costes_thresholds,
+        context, base, resolved_costes_thresholds
     )
     runtime_profiler.log(
         "coloc_object_threshold_stage",
@@ -2261,13 +2141,7 @@ def _measure_colocalization_objects_core(
         thresholds=threshold.combined_threshold_has_values,
     )
     phase_started_at = time.perf_counter()
-    _populate_object_threshold_metrics(
-        context,
-        base,
-        threshold,
-        metrics,
-        rank_provider,
-    )
+    _populate_object_threshold_metrics(context, base, threshold, metrics, rank_provider)
     runtime_profiler.log(
         "coloc_object_threshold_metrics",
         time.perf_counter() - phase_started_at,
@@ -2286,8 +2160,7 @@ def _measure_colocalization_objects_core(
     )
     phase_started_at = time.perf_counter()
     rows = metrics.rows_for(
-        context.labels.label_range,
-        slice_index=context.labels.slice_index,
+        context.labels.label_range, slice_index=context.labels.slice_index
     )
     runtime_profiler.log(
         "coloc_object_rows",
@@ -2306,37 +2179,25 @@ def _measure_colocalization_objects_core(
     )
     return (
         ImagePayloadChannelProjection.from_channel(
-            context.image,
-            context.image_data,
-            context.channel_1,
+            context.image, context.image_data, context.channel_1
         ).payload(),
         rows,
     )
 
 
-@numpy
+@numpy(contract=ProcessingContract.FLEXIBLE)
 @special_inputs("labels")
-@special_outputs(("object_colocalization_measurements", csv_materializer(
-    fields=[
-        "slice_index",
-        "object_label",
-        "correlation",
-        "slope",
-        "slope_reverse",
-        "overlap",
-        "k1",
-        "k2",
-        "manders_m1",
-        "manders_m2",
-        "rwc1",
-        "rwc2",
-        "costes_m1",
-        "costes_m2",
-        "costes_threshold_1",
-        "costes_threshold_2",
-    ],
-    analysis_type="object_colocalization",
-)))
+@special_outputs(
+    (
+        "object_colocalization_measurements",
+        csv_materializer(
+            fields=MeasureColocalizationModule.materialized_measurement_fields(
+                object_scope=True
+            ),
+            analysis_type="object_colocalization",
+        ),
+    )
+)
 def measure_colocalization_objects(
     image: np.ndarray,
     labels: np.ndarray,
@@ -2354,9 +2215,7 @@ def measure_colocalization_objects(
     costes_thresholds: ColocalizationCostesThresholds | None = None,
     image_pair_context: ColocalizationImagePairContext | None = None,
     object_label_context: ColocalizationObjectLabelContext | None = None,
-    rank_provider: ObjectColocalizationRankProvider = (
-        DirectObjectColocalizationRankProvider()
-    ),
+    rank_provider: ObjectColocalizationRankProvider = DirectObjectColocalizationRankProvider(),
 ) -> Tuple[np.ndarray, ObjectColocalizationColumnarMeasurements]:
     """Measure colocalization between two channels within labeled objects."""
     return _measure_colocalization_objects_core(
@@ -2420,19 +2279,19 @@ class ColocalizationCostesThresholdRequest:
         """Resolve Costes scale from image metadata, with dtype fallback."""
         if explicit_scale_max is not None:
             return int(explicit_scale_max)
-
         metadata = image_payload_metadata(image)
         metadata_scales = tuple(
-            scale
-            for scale in (
-                metadata.intensity_scale_for_source_plane(channel_1),
-                metadata.intensity_scale_for_source_plane(channel_2),
+            (
+                scale
+                for scale in (
+                    metadata.intensity_scale_for_source_plane(channel_1),
+                    metadata.intensity_scale_for_source_plane(channel_2),
+                )
+                if scale is not None and scale > 0
             )
-            if scale is not None and scale > 0
         )
         if metadata_scales:
             return int(round(max(metadata_scales)))
-
         dtype_scale = image_intensity_scale_for_dtype(np.asarray(image_data).dtype)
         if dtype_scale is not None and dtype_scale > 0:
             return int(round(dtype_scale))
@@ -2462,11 +2321,7 @@ class ColocalizationCostesThresholdRequest:
             channel_2=channel_2,
             method=CostesMethod(kwargs.get("costes_method", CostesMethod.FASTER)),
             scale_max=cls.scale_max_for_image_pair(
-                request.image,
-                image_data,
-                channel_1,
-                channel_2,
-                kwargs.get("scale_max"),
+                request.image, image_data, channel_1, channel_2, kwargs.get("scale_max")
             ),
             backend_provider=kwargs.get("costes_backend_provider"),
             image_pair_context=image_pair_context,
@@ -2476,9 +2331,7 @@ class ColocalizationCostesThresholdRequest:
         """Compute Costes thresholds for this resolved image source pair."""
         if self.image_pair_context is None:
             image_pair_context = ColocalizationImagePairContext.from_request(
-                self.image,
-                channel_1=self.channel_1,
-                channel_2=self.channel_2,
+                self.image, channel_1=self.channel_1, channel_2=self.channel_2
             )
         else:
             image_pair_context = self.image_pair_context
@@ -2486,21 +2339,15 @@ class ColocalizationCostesThresholdRequest:
         second_pixels = image_pair_context.full_second_pixels
         if not first_pixels.size:
             return ColocalizationCostesThresholds.from_thresholds(
-                0.0,
-                0.0,
-                scale_max=self.scale_max,
+                0.0, 0.0, scale_max=self.scale_max
             )
         if self.method is CostesMethod.FASTER:
             first, second = costes_backend(
-                backend_provider=self.backend_provider,
-            ).scaled_second_channel_costes(
-                first_pixels,
-                second_pixels,
-                self.scale_max,
-            )
+                backend_provider=self.backend_provider
+            ).scaled_second_channel_costes(first_pixels, second_pixels, self.scale_max)
         else:
             first, second = costes_backend(
-                backend_provider=self.backend_provider,
+                backend_provider=self.backend_provider
             ).linear_costes(
                 first_pixels,
                 second_pixels,
@@ -2508,9 +2355,7 @@ class ColocalizationCostesThresholdRequest:
                 self.method is CostesMethod.FAST,
             )
         return ColocalizationCostesThresholds.from_thresholds(
-            first,
-            second,
-            scale_max=self.scale_max,
+            first, second, scale_max=self.scale_max
         )
 
 
@@ -2519,21 +2364,17 @@ class ColocalizationCostesThresholdBatch:
 
     def __init__(self) -> None:
         self._thresholds: dict[
-            ColocalizationCostesThresholdCacheKey,
-            ColocalizationCostesThresholds,
+            ColocalizationCostesThresholdCacheKey, ColocalizationCostesThresholds
         ] = {}
         self._image_pairs: dict[
-            ColocalizationImagePairCacheKey,
-            ColocalizationImagePairContext,
+            ColocalizationImagePairCacheKey, ColocalizationImagePairContext
         ] = {}
         self._label_contexts: dict[
-            ColocalizationObjectLabelCacheKey,
-            ColocalizationObjectLabelContext,
+            ColocalizationObjectLabelCacheKey, ColocalizationObjectLabelContext
         ] = {}
 
     def image_pair_context(
-        self,
-        request: RuntimeBatchInvocationRequest,
+        self, request: RuntimeBatchInvocationRequest
     ) -> ColocalizationImagePairContext:
         """Return the batch-local resolved image-pair context."""
         kwargs = request.kwargs
@@ -2541,17 +2382,12 @@ class ColocalizationCostesThresholdBatch:
         channel_1 = int(kwargs.get("channel_1", 0))
         channel_2 = int(kwargs.get("channel_2", 1))
         key = ColocalizationImagePairCacheKey(
-            id(request.image),
-            id(image_data),
-            channel_1,
-            channel_2,
+            id(request.image), id(image_data), channel_1, channel_2
         )
         context = self._image_pairs.get(key)
         if context is None:
             context = ColocalizationImagePairContext.from_request(
-                request.image,
-                channel_1=channel_1,
-                channel_2=channel_2,
+                request.image, channel_1=channel_1, channel_2=channel_2
             )
             self._image_pairs[key] = context
         return context
@@ -2565,8 +2401,8 @@ class ColocalizationCostesThresholdBatch:
     ) -> ColocalizationObjectLabelContext:
         """Return the batch-local resolved object-label context."""
         label_payload = request.kwargs["labels"]
-        dense_label_data = (
-            ObjectLabelDenseDataStrategy.for_payload(label_payload).data(label_payload)
+        dense_label_data = ObjectLabelDenseDataStrategy.for_payload(label_payload).data(
+            label_payload
         )
         dense_label_array = np.asarray(dense_label_data)
         label_identity_payload = (
@@ -2595,8 +2431,7 @@ class ColocalizationCostesThresholdBatch:
         return context
 
     def request_kwargs(
-        self,
-        request: RuntimeBatchInvocationRequest,
+        self, request: RuntimeBatchInvocationRequest
     ) -> dict[str, object]:
         """Return request kwargs with source-pair thresholds materialized once."""
         if ColocalizationImagePairContext.requires_slice_local_context(request.image):
@@ -2604,8 +2439,7 @@ class ColocalizationCostesThresholdBatch:
         image_pair_context = self.image_pair_context(request)
         object_label_context = self.object_label_context(request, image_pair_context)
         threshold_request = ColocalizationCostesThresholdRequest.from_batch_request(
-            request,
-            image_pair_context,
+            request, image_pair_context
         )
         thresholds = None
         if threshold_request is not None:
@@ -2624,14 +2458,12 @@ class ColocalizationCostesThresholdBatch:
         return kwargs
 
     def slice_aligned_request_kwargs(
-        self,
-        request: RuntimeBatchInvocationRequest,
+        self, request: RuntimeBatchInvocationRequest
     ) -> dict[str, object]:
         """Return kwargs carrying one cached context per aligned image slice."""
         image_data = image_payload_data(request.image)
         if not isinstance(image_data, AlignedImageStack):
             return dict(request.kwargs)
-
         image_pair_contexts: list[ColocalizationImagePairContext] = []
         object_label_contexts: list[ColocalizationObjectLabelContext] = []
         costes_thresholds: list[ColocalizationCostesThresholds | None] = []
@@ -2649,13 +2481,10 @@ class ColocalizationCostesThresholdBatch:
             slice_request = replace(request, image=slice_payload, kwargs=slice_kwargs)
             image_pair_context = self.image_pair_context(slice_request)
             object_label_context = self.object_label_context(
-                slice_request,
-                image_pair_context,
-                slice_index=slice_index,
+                slice_request, image_pair_context, slice_index=slice_index
             )
             threshold_request = ColocalizationCostesThresholdRequest.from_batch_request(
-                slice_request,
-                image_pair_context,
+                slice_request, image_pair_context
             )
             thresholds = None
             if threshold_request is not None:
@@ -2668,11 +2497,12 @@ class ColocalizationCostesThresholdBatch:
             image_pair_contexts.append(image_pair_context)
             object_label_contexts.append(object_label_context)
             costes_thresholds.append(thresholds)
-
         kwargs: dict[str, object] = {
             **request.kwargs,
             "image_pair_context": RuntimeSliceAlignedValues(tuple(image_pair_contexts)),
-            "object_label_context": RuntimeSliceAlignedValues(tuple(object_label_contexts)),
+            "object_label_context": RuntimeSliceAlignedValues(
+                tuple(object_label_contexts)
+            ),
         }
         if has_thresholds:
             kwargs["costes_thresholds"] = RuntimeSliceAlignedValues(
@@ -2685,8 +2515,7 @@ def measure_colocalization_objects_batch(
     func: Callable[..., object],
     requests: tuple[RuntimeBatchInvocationRequest, ...],
     execute_request: Callable[
-        [Callable[..., object], RuntimeBatchInvocationRequest],
-        object,
+        [Callable[..., object], RuntimeBatchInvocationRequest], object
     ],
 ) -> list[object]:
     """Batch object colocalization over shared image-pair thresholds and ranks."""
@@ -2709,9 +2538,7 @@ def measure_colocalization_objects_batch(
             )
         phase_started_at = time.perf_counter() if profile_enabled else 0.0
         direct_output = _direct_colocalization_batch_request(
-            request,
-            prepared_kwargs,
-            rank_provider,
+            request, prepared_kwargs, rank_provider
         )
         if profile_enabled:
             runtime_profiler.log(
@@ -2729,15 +2556,7 @@ def measure_colocalization_objects_batch(
                 )
             continue
         phase_started_at = time.perf_counter() if profile_enabled else 0.0
-        outputs.append(
-            execute_request(
-                func,
-                replace(
-                    request,
-                    kwargs=prepared_kwargs,
-                ),
-            )
-        )
+        outputs.append(execute_request(func, replace(request, kwargs=prepared_kwargs)))
         if profile_enabled:
             runtime_profiler.log(
                 "coloc_object_batch_fallback",
@@ -2760,28 +2579,23 @@ def _direct_colocalization_batch_request(
     """Return direct backend output for batch modes owned by colocalization."""
     image_data = image_payload_data(request.image)
     if (
-        request.execution_mode is not ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK
+        request.execution_mode
+        is not ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK
         or not isinstance(image_data, AlignedImageStack)
     ):
         return None
-
     slice_results: list[object] = []
     slice_count = len(image_data.slices)
     profile_enabled = runtime_profiler.enabled()
     for slice_index, slice_payload in enumerate(image_data.slices):
         slice_started_at = time.perf_counter() if profile_enabled else 0.0
         slice_kwargs = aligned_image_stack_kwargs(
-            prepared_kwargs,
-            slice_index,
-            slice_count,
-            reference_payload=slice_payload,
+            prepared_kwargs, slice_index, slice_count, reference_payload=slice_payload
         )
         slice_results.append(
             SINGLETON_STACK_OUTPUT_COLLAPSE.collapse(
                 _measure_colocalization_objects_from_runtime_kwargs(
-                    slice_payload,
-                    slice_kwargs,
-                    rank_provider,
+                    slice_payload, slice_kwargs, rank_provider
                 )
             )
         )
@@ -2824,11 +2638,7 @@ def _measure_colocalization_objects_from_runtime_kwargs(
         do_overlap=bool(kwargs["do_overlap"]),
         do_costes=bool(kwargs["do_costes"]),
         costes_method=CostesMethod(kwargs["costes_method"]),
-        scale_max=(
-            None
-            if scale_max is None
-            else int(scale_max)
-        ),
+        scale_max=None if scale_max is None else int(scale_max),
         costes_backend_provider=kwargs["costes_backend_provider"],
         costes_thresholds=costes_thresholds,
         image_pair_context=kwargs["image_pair_context"],
@@ -2854,9 +2664,7 @@ def _aggregate_direct_colocalization_slice_results(
         stacked_main_output,
         *(
             CellProfilerPure2DOutputAggregator.aggregate(
-                auxiliary_group,
-                memory_type,
-                plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+                auxiliary_group, memory_type, plane_axis=RuntimePlaneAxis.RUNTIME_SLICE
             )
             for auxiliary_group in result_batch.auxiliary_groups
         ),
@@ -2876,10 +2684,7 @@ def _prepare_measure_colocalization_objects() -> None:
     object_labels = np.repeat(np.arange(1, 5, dtype=np.int32), 4)
     object_count = 4
     reductions = object_colocalization_base_reductions(
-        first_pixels,
-        second_pixels,
-        object_labels,
-        object_count,
+        first_pixels, second_pixels, object_labels, object_count
     )
     threshold_1 = 0.15 * reductions[6]
     threshold_2 = 0.15 * reductions[7]

@@ -3,7 +3,7 @@
 import logging
 import numpy as np
 import time
-from typing import Tuple
+from typing import Annotated, Tuple
 from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory import numpy
@@ -15,7 +15,7 @@ from openhcs.core.runtime_values import (
     image_payload_mask,
     image_payload_metadata,
 )
-
+from openhcs.core.runtime_semantics import MeasurementRowAxisField
 from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
     required_setting_value,
@@ -28,15 +28,18 @@ from openhcs.interop.cellprofiler.settings_binder import (
     parse_cellprofiler_float,
     parse_cellprofiler_int,
 )
-from openhcs.processing.backends.cellprofiler.module_classes import (
-    ArtifactContractModule,
+from openhcs.interop.cellprofiler.module_declarations import (
     BoundModuleSettings,
-    )
+    ImageArtifactInputModule,
+    MeasurementArtifactOutputModule,
+    ObjectArtifactOutputModule,
+    ProcessingContract,
+)
 from openhcs.interop.cellprofiler.runtime.measurement_recording import (
     CurrentPayloadMeasurementRecordMixin,
+    MeasurementFeatureRecord,
     NoFieldsMeasurementRecordMixin,
     NoObjectNameMeasurementRecordMixin,
-    OutputObjectThresholdMeasurementRecordRowsMixin,
 )
 from openhcs.processing.backends.cellprofiler.thresholding import (
     CellProfilerAveragingMethod,
@@ -47,11 +50,14 @@ from openhcs.processing.backends.cellprofiler.thresholding import (
     CellProfilerThresholdScope,
     CellProfilerThresholdSettings,
     CellProfilerVarianceMethod,
+    OutputObjectThresholdMeasurementRecordRowsMixin,
+    ObjectThresholdResult,
+    ThresholdMeasurementFeatureRecord,
     ThresholdSettingsModule,
     cellprofiler_threshold_diagnostics,
     normalize_cellprofiler_image,
     threshold_profile_sink,
-    unit_interval_scale_for_threshold_diagnostics,
+    unit_interval_scale_for_threshold_selection,
 )
 from openhcs.processing.backends.cellprofiler.perf_fixtures import capture_array_fixture
 from openhcs.processing.backends.cellprofiler.watershed import (
@@ -101,25 +107,33 @@ class WatershedMethod(Enum):
 
 class ExcessObjectHandling(CellProfilerEnumAttributeMixin, Enum):
     __cellprofiler_attribute_names__ = ("erase_excess",)
-
     CONTINUE = ("Continue", False)
     ERASE = ("Erase", True)
 
 
 @dataclass
-class PrimaryObjectStats:
-    slice_index: int
+class PrimaryObjectStats(ThresholdMeasurementFeatureRecord):
+    slice_index: Annotated[int, MeasurementRowAxisField.SLICE_INDEX]
     object_count: int
     mean_area: float
     median_area: float
     total_area: float
-    threshold_used: float
+    final_threshold: float
     original_threshold: float = 0.0
     weighted_variance: float = 0.0
     sum_of_entropies: float = 0.0
 
+    def threshold_measurement_record(self) -> MeasurementFeatureRecord:
+        return ObjectThresholdResult(
+            slice_index=self.slice_index,
+            final_threshold=self.final_threshold,
+            original_threshold=self.original_threshold,
+            weighted_variance=self.weighted_variance,
+            sum_of_entropies=self.sum_of_entropies,
+        )
 
-@numpy
+
+@numpy(contract=ProcessingContract.PURE_2D)
 def identify_primary_objects(
     image: np.ndarray,
     min_diameter: int = 10,
@@ -193,7 +207,7 @@ def identify_primary_objects(
         'Manual threshold' -> manual_threshold
 
     Identify primary objects in a grayscale image.
-    
+
     Args:
         image: Input grayscale image (H, W)
         min_diameter: Minimum object diameter in pixels
@@ -216,7 +230,7 @@ def identify_primary_objects(
         respect_source_border_metadata: Treat only source-image edges as
             physical borders. The CellProfiler-compatible default filters the
             current image plane border.
-    
+
     Returns:
         Tuple of (original image, object statistics, labeled image)
     """
@@ -227,16 +241,14 @@ def identify_primary_objects(
     profile_total_started_at = time.perf_counter()
     phase_started_at = time.perf_counter()
     morphology = MorphologyBackendStrategy.for_callable(
-        identify_primary_objects,
-        backend_provider=morphology_backend_provider,
+        identify_primary_objects, backend_provider=morphology_backend_provider
     )
     unclump_method = coerce_cellprofiler_enum(UnclumpMethod, unclump_method)
     watershed_method = coerce_cellprofiler_enum(WatershedMethod, watershed_method)
     fill_holes = coerce_cellprofiler_enum(FillHolesOption, fill_holes)
     limit_erase = coerce_cellprofiler_enum(ExcessObjectHandling, limit_erase)
     threshold_method = coerce_cellprofiler_enum(
-        CellProfilerThresholdMethod,
-        threshold_method,
+        CellProfilerThresholdMethod, threshold_method
     )
     runtime_profiler.log(
         "ipo_prepare_inputs",
@@ -256,9 +268,8 @@ def identify_primary_objects(
         else ImagePayloadMetadata()
     )
     raw_image_data = np.asarray(image_payload_data(image))
-    proven_unit_interval_scale = unit_interval_scale_for_threshold_diagnostics(
-        raw_image_data,
-        image_payload_metadata(image),
+    proven_unit_interval_scale = unit_interval_scale_for_threshold_selection(
+        raw_image_data, image_payload_metadata(image)
     )
     img = normalize_cellprofiler_image(image)
     effective_threshold_smoothing = threshold_smoothing_scale
@@ -267,7 +278,6 @@ def identify_primary_objects(
         time.perf_counter() - phase_started_at,
         function="identify_primary_objects",
     )
-    
     phase_started_at = time.perf_counter()
     threshold = CellProfilerThresholdRequest(
         image=img,
@@ -296,6 +306,15 @@ def identify_primary_objects(
         log_profile_function=threshold_profile_sink(),
     ).calculate()
     binary = threshold.mask
+    capture_array_fixture(
+        "ipo_threshold",
+        image=img,
+        mask=(
+            np.ones(img.shape, dtype=bool)
+            if input_mask is None
+            else np.asarray(input_mask, dtype=bool)
+        ),
+    )
     runtime_profiler.log(
         "ipo_threshold",
         time.perf_counter() - phase_started_at,
@@ -311,25 +330,18 @@ def identify_primary_objects(
         image_source_path=image_payload_metadata(image).source_path,
         image_source_components=image_payload_metadata(image).source_component_metadata,
     )
-    # Fill holes if requested (before declumping)
     if fill_holes.before_declump_requested(use_advanced_settings=use_advanced_settings):
         phase_started_at = time.perf_counter()
         max_hole_size = max_diameter * max_diameter
-        binary = morphology.fill_labeled_holes_below_size(
-            binary,
-            max_hole_size,
-        )
+        binary = morphology.fill_labeled_holes_below_size(binary, max_hole_size)
         runtime_profiler.log(
             "ipo_fill_before_declump",
             time.perf_counter() - phase_started_at,
             function="identify_primary_objects",
         )
-    
-    # Initial labeling
     phase_started_at = time.perf_counter()
     labeled_image, object_count = morphology.connected_components(
-        binary,
-        connectivity=2,
+        binary, connectivity=2
     )
     declump_backend_method = CellProfilerDeclumpMethod.SHAPE
     runtime_profiler.log(
@@ -338,15 +350,16 @@ def identify_primary_objects(
         function="identify_primary_objects",
         object_count=object_count,
     )
-    
-    # Declumping and watershed
-    if unclump_method != UnclumpMethod.NONE and watershed_method != WatershedMethod.NONE and object_count > 0:
+    if (
+        unclump_method != UnclumpMethod.NONE
+        and watershed_method != WatershedMethod.NONE
+        and (object_count > 0)
+    ):
         declump_started_at = time.perf_counter()
         if automatic_smoothing:
             smooth_size = 2.35 * min_diameter / 3.5
         else:
             smooth_size = manual_declumping_size(smoothing_filter_size)
-
         declump_backend_method = (
             CellProfilerDeclumpMethod.INTENSITY
             if unclump_method is UnclumpMethod.INTENSITY
@@ -360,7 +373,6 @@ def identify_primary_objects(
         )
         image_resize_factor = maxima_geometry.image_resize_factor
         suppress_size = maxima_geometry.suppress_size
-
         maxima_mask = np.asarray(
             morphology.declumping_suppression_footprint(
                 suppress_size,
@@ -377,6 +389,14 @@ def identify_primary_objects(
         distance = None
         if unclump_method == UnclumpMethod.INTENSITY:
             phase_started_at = time.perf_counter()
+            capture_array_fixture(
+                "ipo_declump_smooth",
+                image=img,
+                mask=image_mask,
+                smooth_size=np.asarray(smooth_size, dtype=np.float64),
+                suppress_size=np.asarray(suppress_size, dtype=np.float64),
+                min_diameter=np.asarray(min_diameter, dtype=np.int64),
+            )
             smoothed = morphology.smooth_image_for_declumping(
                 img,
                 image_mask,
@@ -397,9 +417,7 @@ def identify_primary_objects(
                 np.asarray(labeled_image, dtype=np.int32)
             )
             distance = distance + np.random.RandomState(0).uniform(
-                0,
-                0.001,
-                distance.shape,
+                0, 0.001, distance.shape
             )
             maxima_image = distance
             runtime_profiler.log(
@@ -407,13 +425,16 @@ def identify_primary_objects(
                 time.perf_counter() - phase_started_at,
                 function="identify_primary_objects",
             )
-
         phase_started_at = time.perf_counter()
+        capture_array_fixture(
+            "ipo_declump_seed_points",
+            maxima_image=maxima_image,
+            labeled_image=labeled_image,
+            maxima_mask=maxima_mask,
+            image_resize_factor=np.asarray(image_resize_factor, dtype=np.float64),
+        )
         maxima = morphology.declumping_seed_points(
-            maxima_image,
-            labeled_image,
-            maxima_mask,
-            image_resize_factor,
+            maxima_image, labeled_image, maxima_mask, image_resize_factor
         )
         runtime_profiler.log(
             "ipo_declump_seed_points",
@@ -421,10 +442,7 @@ def identify_primary_objects(
             function="identify_primary_objects",
         )
         phase_started_at = time.perf_counter()
-        markers, object_count = morphology.connected_components(
-            maxima,
-            connectivity=2,
-        )
+        markers, object_count = morphology.connected_components(maxima, connectivity=2)
         runtime_profiler.log(
             "ipo_declump_marker_label",
             time.perf_counter() - phase_started_at,
@@ -450,6 +468,12 @@ def identify_primary_objects(
                 function="identify_primary_objects",
             )
             phase_started_at = time.perf_counter()
+            capture_array_fixture(
+                "ipo_watershed_execute",
+                watershed_image=watershed_image,
+                watershed_markers=watershed_markers,
+                mask=labeled_image != 0,
+            )
             labeled_image = -cellprofiler_legacy_watershed(
                 watershed_image,
                 markers=watershed_markers,
@@ -469,7 +493,6 @@ def identify_primary_objects(
             time.perf_counter() - declump_started_at,
             function="identify_primary_objects",
         )
-    
     phase_started_at = time.perf_counter()
     unedited_labels = labeled_image.copy()
     small_removed_labels = labeled_image.copy()
@@ -478,40 +501,26 @@ def identify_primary_objects(
         time.perf_counter() - phase_started_at,
         function="identify_primary_objects",
     )
-
-    # Filter objects touching the image border, or the mask border when the
-    # image has a crop/mask domain. This mirrors CellProfiler's legacy rule:
-    # mask-border filtering is applied only when no labels touch the physical
-    # image border.
     if exclude_border_objects and object_count > 0:
         phase_started_at = time.perf_counter()
         labeled_image = filter_border_objects(
-            labeled_image,
-            image_mask=input_mask,
-            image_metadata=input_metadata,
+            labeled_image, image_mask=input_mask, image_metadata=input_metadata
         )
         runtime_profiler.log(
             "ipo_filter_border",
             time.perf_counter() - phase_started_at,
             function="identify_primary_objects",
         )
-    
-    # Filter objects by size. Keep CellProfiler's small-removed variant: small
-    # objects are removed, large objects are still present.
     if exclude_size and object_count > 0:
         phase_started_at = time.perf_counter()
         small_removed_labels, labeled_image = filter_labels_by_diameter_range(
-            labeled_image,
-            min_diameter,
-            max_diameter,
+            labeled_image, min_diameter, max_diameter
         )
         runtime_profiler.log(
             "ipo_filter_size",
             time.perf_counter() - phase_started_at,
             function="identify_primary_objects",
         )
-
-    # CellProfiler fills segmented-object holes after border and size filtering.
     if fill_holes.after_declump_requested(use_advanced_settings=use_advanced_settings):
         phase_started_at = time.perf_counter()
         capture_array_fixture("ipo_fill_after", labels=labeled_image)
@@ -521,23 +530,30 @@ def identify_primary_objects(
             time.perf_counter() - phase_started_at,
             function="identify_primary_objects",
         )
-    
-    # Relabel while preserving watershed boundaries between touching objects.
     phase_started_at = time.perf_counter()
+    accepted_labels_before_relabel = labeled_image.copy()
     labeled_image, object_count = morphology.relabel_sequential(labeled_image)
+    unedited_labels = _remap_object_label_variant_after_final_relabel(
+        unedited_labels,
+        accepted_labels_before_relabel,
+        labeled_image,
+        object_count,
+    )
+    small_removed_labels = _remap_object_label_variant_after_final_relabel(
+        small_removed_labels,
+        accepted_labels_before_relabel,
+        labeled_image,
+        object_count,
+    )
     runtime_profiler.log(
         "ipo_relabel",
         time.perf_counter() - phase_started_at,
         function="identify_primary_objects",
         object_count=object_count,
     )
-    
-    # Check object count limit
     if limit_erase.erase_excess and object_count > maximum_object_count:
         labeled_image = np.zeros_like(labeled_image)
         object_count = 0
-    
-    # Calculate statistics
     phase_started_at = time.perf_counter()
     mean_area, median_area, total_area = dense_label_area_statistics(labeled_image)
     runtime_profiler.log(
@@ -545,14 +561,13 @@ def identify_primary_objects(
         time.perf_counter() - phase_started_at,
         function="identify_primary_objects",
     )
-    
     stats = PrimaryObjectStats(
         slice_index=0,
         object_count=object_count,
         mean_area=mean_area,
         median_area=median_area,
         total_area=total_area,
-        threshold_used=float(threshold.final_threshold),
+        final_threshold=float(threshold.final_threshold),
         original_threshold=threshold.original_threshold,
         weighted_variance=threshold.weighted_variance,
         sum_of_entropies=threshold.sum_of_entropies,
@@ -575,12 +590,43 @@ def identify_primary_objects(
         time.perf_counter() - profile_total_started_at,
         function="identify_primary_objects",
     )
+    return (image, stats, label_payload)
 
-    return (
-        image,
-        stats,
-        label_payload,
-    )
+
+def _remap_object_label_variant_after_final_relabel(
+    variant_labels: np.ndarray,
+    accepted_labels_before_relabel: np.ndarray,
+    final_labels: np.ndarray,
+    object_count: int,
+) -> np.ndarray:
+    """Align a CP object-label variant to final object identities.
+
+    Accepted objects are rewritten to the final post-filter relabel IDs. Rejected
+    variant-only labels are retained above the declared object-count domain so
+    downstream modules can still use them as boundary blockers without treating
+    them as accepted objects.
+    """
+    variant = np.asarray(variant_labels, dtype=np.int32)
+    accepted_before = np.asarray(accepted_labels_before_relabel, dtype=np.int32)
+    final = np.asarray(final_labels, dtype=np.int32)
+    max_variant = int(np.max(variant)) if variant.size else 0
+    max_accepted = int(np.max(accepted_before)) if accepted_before.size else 0
+    max_label = max(max_variant, max_accepted)
+    if max_label <= 0:
+        return variant.copy()
+
+    lookup = np.zeros(max_label + 1, dtype=np.int32)
+    accepted_mask = (accepted_before > 0) & (final > 0)
+    if np.any(accepted_mask):
+        lookup[accepted_before[accepted_mask]] = final[accepted_mask]
+
+    next_rejected_label = int(object_count) + 1
+    for old_label in np.unique(variant[variant > 0]):
+        old_label = int(old_label)
+        if lookup[old_label] == 0:
+            lookup[old_label] = next_rejected_label
+            next_rejected_label += 1
+    return lookup[variant]
 
 
 class IdentifyPrimaryObjectsModule(
@@ -588,8 +634,11 @@ class IdentifyPrimaryObjectsModule(
     NoObjectNameMeasurementRecordMixin,
     CurrentPayloadMeasurementRecordMixin,
     NoFieldsMeasurementRecordMixin,
+    ImageArtifactInputModule,
+    ObjectArtifactOutputModule,
+    MeasurementArtifactOutputModule,
     ThresholdSettingsModule,
-    ):
+):
     module_name = "IdentifyPrimaryObjects"
     function_name = "identify_primary_objects"
     validated = True
@@ -597,27 +646,22 @@ class IdentifyPrimaryObjectsModule(
     include_threshold_advanced_setting = True
     input_image_setting = SettingNameFamily(
         "Select the input image",
-        aliases=(
-            "Select an input image",
-            "Select the input binary image",
-            "Input",
-        ),
+        aliases=("Select an input image", "Select the input binary image", "Input"),
     )
     output_objects_setting = SettingNameFamily(
-        "Name the primary objects to be identified",
-        aliases=("Object",),
+        "Name the primary objects to be identified", aliases=("Object",)
     )
+    image_input_settings = (input_image_setting,)
+    object_output_settings = (output_objects_setting,)
     ignored_settings = (
         input_image_setting,
         output_objects_setting,
         "Display accepted local maxima?",
         "Select maxima color",
     )
-
     setting_bindings = (
         SettingToKeywordBinding(
-            "Typical diameter of objects, in pixel units (Min,Max)",
-            "diameter_range",
+            "Typical diameter of objects, in pixel units (Min,Max)", "diameter_range"
         ),
         SettingToKeywordBinding(
             "Discard objects outside the diameter range?",
@@ -640,9 +684,7 @@ class IdentifyPrimaryObjectsModule(
             cellprofiler_enum_value_setting_parser(WatershedMethod),
         ),
         SettingToKeywordBinding(
-            "Size of smoothing filter",
-            "smoothing_filter_size",
-            parse_cellprofiler_int,
+            "Size of smoothing filter", "smoothing_filter_size", parse_cellprofiler_int
         ),
         SettingToKeywordBinding(
             "Suppress local maxima that are closer than this minimum allowed distance",
@@ -675,25 +717,20 @@ class IdentifyPrimaryObjectsModule(
             cellprofiler_enum_value_setting_parser(ExcessObjectHandling),
         ),
         SettingToKeywordBinding(
-            "Maximum number of objects",
-            "maximum_object_count",
-            parse_cellprofiler_int,
+            "Maximum number of objects", "maximum_object_count", parse_cellprofiler_int
         ),
     )
 
     @classmethod
     def postprocess_bound_settings(
-        cls,
-        module: "ModuleBlock",
-        bound: BoundModuleSettings,
+        cls, module: "ModuleBlock", bound: BoundModuleSettings
     ) -> BoundModuleSettings:
         kwargs = dict(bound.kwargs)
         diameter_range = kwargs.pop("diameter_range", None)
         if diameter_range is not None:
             if not isinstance(diameter_range, tuple) or len(diameter_range) != 2:
                 raise ValueError(
-                    f"{module.name} diameter range must contain two values, "
-                    f"got {diameter_range!r}."
+                    f"{module.name} diameter range must contain two values, got {diameter_range!r}."
                 )
             kwargs["min_diameter"], kwargs["max_diameter"] = diameter_range
         return BoundModuleSettings(
@@ -703,37 +740,15 @@ class IdentifyPrimaryObjectsModule(
             bound.setting_coverage,
         )
 
-    @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-
-        inputs = [
-            builder.require_artifact(ArtifactSpec(required_setting_value(module, cls.input_image_setting), ArtifactKind.IMAGE), module)
-        ]
-        outputs = [
-            builder.declare_artifact(ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS), module),
-            builder.declare_artifact(ArtifactSpec(required_setting_value(module, cls.output_objects_setting), ArtifactKind.OBJECT_LABELS), module),
-        ]
-        return assembler.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
-
 
 def _prepare_identify_primary_objects() -> None:
     """Compile Numba/backend kernels used by IdentifyPrimaryObjects."""
     labels = np.array(
-        [
-            [0, 1, 1, 0],
-            [0, 1, 1, 2],
-            [3, 3, 2, 2],
-            [0, 0, 2, 2],
-        ],
-        dtype=np.int32,
+        [[0, 1, 1, 0], [0, 1, 1, 2], [3, 3, 2, 2], [0, 0, 2, 2]], dtype=np.int32
     )
     areas = np.bincount(labels.ravel())
     filter_labels_by_area_numba(
-        np.ascontiguousarray(labels),
-        np.ascontiguousarray(areas),
-        2.0,
-        4.0,
+        np.ascontiguousarray(labels), np.ascontiguousarray(areas), 2.0, 4.0
     )
     filter_labels_by_diameter_range(labels, 2.0, 4.0)
     filter_physical_border_objects_numba(labels, True, True, True, True)
@@ -748,22 +763,20 @@ def _prepare_identify_primary_objects() -> None:
     filter_labels_by_diameter_range(stacked_labels, 2.0, 4.0)
     image = np.zeros((96, 96), dtype=np.float32)
     yy, xx = np.ogrid[:96, :96]
-    image[((yy - 32) ** 2 + (xx - 32) ** 2) <= 12 * 12] = 0.8
-    image[((yy - 56) ** 2 + (xx - 56) ** 2) <= 12 * 12] = 0.75
+    image[(yy - 32) ** 2 + (xx - 32) ** 2 <= 12 * 12] = 0.8
+    image[(yy - 56) ** 2 + (xx - 56) ** 2 <= 12 * 12] = 0.75
     binary = image > np.float32(0.5)
     cellprofiler_threshold_diagnostics(
         image,
         binary,
         final_threshold=0.5,
         original_threshold=0.5,
-        proven_unit_interval_scale=65535,
     )
     cellprofiler_threshold_diagnostics(
         image,
         binary,
         final_threshold=0.5,
         original_threshold=0.5,
-        proven_unit_interval_scale=None,
     )
     rectangular_mask = np.zeros_like(binary, dtype=bool)
     rectangular_mask[16:80, 16:80] = True
@@ -773,7 +786,6 @@ def _prepare_identify_primary_objects() -> None:
         final_threshold=0.5,
         original_threshold=0.5,
         mask=rectangular_mask,
-        proven_unit_interval_scale=65535,
     )
     cellprofiler_threshold_diagnostics(
         image,
@@ -781,7 +793,6 @@ def _prepare_identify_primary_objects() -> None:
         final_threshold=0.5,
         original_threshold=0.5,
         mask=rectangular_mask,
-        proven_unit_interval_scale=None,
     )
     identify_primary_objects.__wrapped__(
         image,
@@ -822,8 +833,6 @@ def _prepare_identify_primary_objects() -> None:
 
 
 identify_primary_objects.__openhcs_prepare__ = _prepare_identify_primary_objects
-
-
 __all__ = public_names_from_objects(
     ExcessObjectHandling,
     FillHolesOption,

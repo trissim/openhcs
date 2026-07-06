@@ -4,13 +4,16 @@ Measures the total area in an image that is occupied by objects or foreground.
 """
 
 from openhcs.interop.cellprofiler.setting_names import split_symbol_names
-
 import numpy as np
-from typing import Optional, Sequence, Tuple
+from typing import Annotated, Optional, Sequence, Tuple
 from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_semantics import (
+    MeasurementRowAxisField,
+    RuntimeMeasurementFeature,
+)
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.analysis.region_properties import (
     binary_area_and_perimeter_2d,
@@ -23,9 +26,17 @@ from openhcs.core.pipeline.function_contracts import (
     special_outputs,
 )
 from openhcs.processing.materialization import csv_materializer
-from openhcs.processing.backends.cellprofiler.module_classes import (
-    ArtifactContractModule,
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
+    ImageArtifactInputCapability,
+    ImageArtifactInputModule,
+    ImageArtifactOutputCapability,
+    ImageArtifactOutputModule,
+    MeasurementArtifactOutputModule,
     ModuleSettingsSourceModule,
+    ObjectArtifactInputModule,
+    ObjectLabelArtifactInputCapability,
+    SourceQualifiedMeasurementFeatureModule,
 )
 from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
@@ -38,35 +49,86 @@ from openhcs.interop.cellprofiler.setting_names import normalized_symbol_name
 from openhcs.interop.cellprofiler.runtime.object_input_policies import (
     ObjectRowsInputPolicy,
 )
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    FieldDerivedMeasurementFeatureModule,
+    MeasurementFeatureRecord,
+    NoFieldsMeasurementRecordMixin,
+    NoObjectNameMeasurementRecordMixin,
+    SourceQualifiedInputPayloadMeasurementRecordMixin,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_rows import (
+    ModuleOwnedResultMeasurementRows,
+)
+from openhcs.interop.cellprofiler.runtime.payload_types import CellProfilerKwargs
 
 
 class MeasureImageAreaOccupiedBinaryModule(
     ObjectRowsInputPolicy,
+    NoObjectNameMeasurementRecordMixin,
+    SourceQualifiedInputPayloadMeasurementRecordMixin,
+    SourceQualifiedMeasurementFeatureModule,
+    FieldDerivedMeasurementFeatureModule,
+    NoFieldsMeasurementRecordMixin,
+    ImageArtifactInputModule,
+    ObjectArtifactInputModule,
+    ImageArtifactOutputModule,
+    MeasurementArtifactOutputModule,
     ModuleSettingsSourceModule,
 ):
-    module_name = 'MeasureImageAreaOccupiedBinary'
-    function_name = 'measure_image_area_occupied'
+    module_name = "MeasureImageAreaOccupiedBinary"
+    function_name = "measure_image_area_occupied"
     validated = True
-    aliases = ('MeasureImageAreaOccupied',)
+    aliases = ("MeasureImageAreaOccupied",)
     function_variants = (
-        'measure_image_area_occupied_binary',
-        'measure_image_area_occupied_objects',
-        'measure_image_volume_occupied_binary',
-        'measure_image_volume_occupied_objects',
+        "measure_image_area_occupied_binary",
+        "measure_image_area_occupied_objects",
+        "measure_image_volume_occupied_binary",
+        "measure_image_volume_occupied_objects",
     )
-    contract = 'flexible'
+    contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
+    measurement_category_prefixes = (("area", "occupied"),)
+    measurement_feature_family = "AreaOccupied"
+
+    class MeasurementFeature(RuntimeMeasurementFeature):
+        """Feature families emitted by MeasureImageAreaOccupied."""
+
+        AREA_OCCUPIED = "AreaOccupied"
+        PERIMETER = "Perimeter"
+        TOTAL_AREA = "TotalArea"
+
+    @dataclass(frozen=True, slots=True)
+    class MeasurementRows(ModuleOwnedResultMeasurementRows):
+        """Project AreaOccupied result records into source-qualified CP features."""
+
+        registry_key = "area_occupied"
+
+        @classmethod
+        def for_request(cls, module_type, request):
+            return cls(request.output_value, module_type=module_type)
+
+        def rows(self) -> list[CellProfilerKwargs]:
+            records: list[AreaOccupiedMeasurement] = []
+            for source_record in self.source_rows():
+                if not isinstance(source_record, AreaOccupiedMeasurement):
+                    raise TypeError(
+                        "MeasureImageAreaOccupied measurement rows must be emitted "
+                        "as AreaOccupiedMeasurement dataclasses."
+                    )
+                records.append(source_record)
+            return self.module_type.source_qualified_measurement_feature_rows_from_records(
+                tuple(records)
+            )
+
     mode_setting = SettingNameFamily(
         "Measure the area occupied in a binary image, or in objects?",
         aliases=("Measure the area occupied by",),
     )
     binary_image_setting = SettingNameFamily(
-        "Select a binary image to measure",
-        aliases=("Select binary images to measure",),
+        "Select a binary image to measure", aliases=("Select binary images to measure",)
     )
     objects_setting = SettingNameFamily(
-        "Select objects to measure",
-        aliases=("Select object sets to measure",),
+        "Select objects to measure", aliases=("Select object sets to measure",)
     )
     retain_image_setting = "Retain a binary image of the object regions?"
     output_image_setting = "Name the output binary image"
@@ -87,35 +149,35 @@ class MeasureImageAreaOccupiedBinaryModule(
     def settings_source(cls, module: "ModuleBlock") -> "CellProfilerKwargs":
         rows = cls.measurement_rows(module)
         return {
-            "operand_choices": tuple(row.operand.value for row in rows),
-            "input_names": tuple(row.input_name for row in rows),
-            "retained_image_names": tuple(row.retained_image_name for row in rows),
+            "operand_choices": tuple((row.operand.value for row in rows)),
+            "input_names": tuple((row.input_name for row in rows)),
+            "retained_image_names": tuple((row.retained_image_name for row in rows)),
         }
 
     @classmethod
     def measurement_rows(
-        cls,
-        module: "ModuleBlock",
+        cls, module: "ModuleBlock"
     ) -> tuple["MeasureImageAreaOccupiedBinaryModule.MeasurementRow", ...]:
         rows: list[MeasureImageAreaOccupiedBinaryModule.MeasurementRow] = []
         for block in repeating_setting_blocks(
-            module.iter_settings(),
-            start_name=cls.mode_setting,
+            module.iter_settings(), start_name=cls.mode_setting
         ):
             rows.extend(cls._expanded_rows_from_block(module, block))
         return tuple(rows)
 
     @classmethod
     def _expanded_rows_from_block(
-        cls,
-        module: "ModuleBlock",
-        block: Sequence["ModuleSetting"],
+        cls, module: "ModuleBlock", block: Sequence["ModuleSetting"]
     ) -> tuple["MeasureImageAreaOccupiedBinaryModule.MeasurementRow", ...]:
-        operand = cls._operand_from_literal(block_setting_value(block, cls.mode_setting))
+        operand = cls._operand_from_literal(
+            block_setting_value(block, cls.mode_setting)
+        )
         binary_image_name = normalized_symbol_name(
             block_setting_value(block, cls.binary_image_setting)
         )
-        objects_name = normalized_symbol_name(block_setting_value(block, cls.objects_setting))
+        objects_name = normalized_symbol_name(
+            block_setting_value(block, cls.objects_setting)
+        )
         input_name = cls._input_name_for_operand(
             module,
             operand,
@@ -124,26 +186,31 @@ class MeasureImageAreaOccupiedBinaryModule(
         )
         retained_image_name = cls._retained_image_name(block)
         expanded_input_names = cls._expanded_input_names(
-            module,
-            operand,
-            input_name=input_name,
-            block=block,
+            module, operand, input_name=input_name, block=block
         )
         return tuple(
-            cls.MeasurementRow(
-                operand=operand,
-                input_name=expanded_input_name,
-                binary_image_name=(
-                    expanded_input_name if operand is cls.Operand.BINARY_IMAGE else None
-                ),
-                objects_name=expanded_input_name if operand is cls.Operand.OBJECTS else None,
-                retained_image_name=retained_image_name,
+            (
+                cls.MeasurementRow(
+                    operand=operand,
+                    input_name=expanded_input_name,
+                    binary_image_name=(
+                        expanded_input_name
+                        if operand is cls.Operand.BINARY_IMAGE
+                        else None
+                    ),
+                    objects_name=(
+                        expanded_input_name if operand is cls.Operand.OBJECTS else None
+                    ),
+                    retained_image_name=retained_image_name,
+                )
+                for expanded_input_name in expanded_input_names
             )
-            for expanded_input_name in expanded_input_names
         )
 
     @classmethod
-    def _operand_from_literal(cls, value: str) -> "MeasureImageAreaOccupiedBinaryModule.Operand":
+    def _operand_from_literal(
+        cls, value: str
+    ) -> "MeasureImageAreaOccupiedBinaryModule.Operand":
         normalized = value.strip().lower()
         if "binary" in normalized:
             return cls.Operand.BINARY_IMAGE
@@ -168,8 +235,7 @@ class MeasureImageAreaOccupiedBinaryModule(
             role = "object"
         if input_name is None:
             raise ValueError(
-                f"Module {module.name}({module.module_num}) has an area-occupied "
-                f"row with no {role} input."
+                f"Module {module.name}({module.module_num}) has an area-occupied row with no {role} input."
             )
         return input_name
 
@@ -183,45 +249,51 @@ class MeasureImageAreaOccupiedBinaryModule(
         block: Sequence["ModuleSetting"],
     ) -> tuple[str, ...]:
         if operand is cls.Operand.BINARY_IMAGE:
-            return (
-                split_symbol_names(block_setting_value(block, cls.binary_image_setting))
-                or (input_name,)
-            )
+            return split_symbol_names(
+                block_setting_value(block, cls.binary_image_setting)
+            ) or (input_name,)
         return split_symbol_names(block_setting_value(block, cls.objects_setting)) or (
             input_name,
         )
 
     @classmethod
-    def _retained_image_name(
-        cls,
-        block: Sequence["ModuleSetting"],
-    ) -> str | None:
+    def _retained_image_name(cls, block: Sequence["ModuleSetting"]) -> str | None:
         retain_literal = block_setting_value(block, cls.retain_image_setting)
         if retain_literal.strip().lower() != "yes":
             return None
-        return normalized_symbol_name(block_setting_value(block, cls.output_image_setting))
+        return normalized_symbol_name(
+            block_setting_value(block, cls.output_image_setting)
+        )
 
     @classmethod
     def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-
         rows = cls.measurement_rows(module)
         if not rows:
-            raise ValueError(f"Module {module.name}({module.module_num}) declares no MeasureImageAreaOccupied measurement rows.")
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) declares no MeasureImageAreaOccupied measurement rows."
+            )
         inputs = []
         retained_images = []
         for row in rows:
-            if row.operand is cls.Operand.BINARY_IMAGE and row.binary_image_name is not None:
-                inputs.append(builder.require_artifact(ArtifactSpec(row.binary_image_name, ArtifactKind.IMAGE), module))
+            if (
+                row.operand is cls.Operand.BINARY_IMAGE
+                and row.binary_image_name is not None
+            ):
+                inputs.append(
+                    ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(row.binary_image_name))
+                )
             if row.operand is cls.Operand.OBJECTS and row.objects_name is not None:
-                inputs.append(builder.require_artifact(ArtifactSpec(row.objects_name, ArtifactKind.OBJECT_LABELS), module))
+                inputs.append(
+                    ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(row.objects_name))
+                )
             if row.retained_image_name is not None:
-                retained_images.append(builder.declare_artifact(ArtifactSpec(row.retained_image_name, ArtifactKind.IMAGE), module))
-        measurements = builder.declare_artifact(
-            ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS),
-            module,
+                retained_images.append(
+                    ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(row.retained_image_name))
+                )
+        measurements = cls.measurement_output_artifact(builder, module)
+        return assembler.assemble_contract(
+            module, builder, inputs=inputs, outputs=[*retained_images, measurements]
         )
-        return assembler.assemble_contract(module, builder, inputs=inputs, outputs=[*retained_images, measurements])
 
 
 class OperandChoice(Enum):
@@ -267,13 +339,17 @@ class AreaOccupiedRuntimeRow:
 
 
 @dataclass
-class AreaOccupiedMeasurement:
+class AreaOccupiedMeasurement(MeasurementFeatureRecord):
     """Measurements for area occupied analysis."""
-    slice_index: int
+
+    slice_index: Annotated[int, MeasurementRowAxisField.SLICE_INDEX]
     area_occupied: float
     perimeter: float
     total_area: float
-    source_image_name: str | None = None
+    source_image_name: Annotated[
+        str | None,
+        MeasurementRowAxisField.SOURCE_IMAGE_NAME,
+    ] = None
 
     @classmethod
     def from_area(
@@ -312,7 +388,7 @@ class BinaryAreaOccupiedRequest:
             slice_index=self.slice_index,
             source_image_name=self.source_image_name,
         )
-        return self.image, measurement
+        return (self.image, measurement)
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,15 +411,20 @@ class ObjectLabelsAreaOccupiedRequest:
             source_image_name=self.source_image_name,
         )
         object_region_mask = (label_array > 0).astype(np.asarray(self.image).dtype)
-        return object_region_mask, measurement
+        return (object_region_mask, measurement)
 
 
 @composed_image_payload
 @numpy(contract=ProcessingContract.FLEXIBLE)
-@special_outputs(("area_measurements", csv_materializer(
-    fields=["slice_index", "area_occupied", "perimeter", "total_area"],
-    analysis_type="area_occupied"
-)))
+@special_outputs(
+    (
+        "area_measurements",
+        csv_materializer(
+            fields=["slice_index", "area_occupied", "perimeter", "total_area"],
+            analysis_type="area_occupied",
+        ),
+    )
+)
 def measure_image_area_occupied(
     image: np.ndarray,
     *,
@@ -355,19 +436,17 @@ def measure_image_area_occupied(
 ) -> tuple:
     """Measure area occupied for ordered binary-image and object rows."""
     rows = _area_occupied_runtime_rows(
-        operand_choices,
-        input_names,
-        retained_image_names,
+        operand_choices, input_names, retained_image_names
     )
     binary_images = _binary_images_from_payload(
-        image,
-        sum(row.operand is OperandChoice.BINARY_IMAGE for row in rows),
+        image, sum((row.operand is OperandChoice.BINARY_IMAGE for row in rows))
     )
-    if len(object_labels) != sum(row.operand is OperandChoice.OBJECTS for row in rows):
+    if len(object_labels) != sum(
+        (row.operand is OperandChoice.OBJECTS for row in rows)
+    ):
         raise ValueError(
             "MeasureImageAreaOccupied object_labels count must match object rows."
         )
-
     retained_outputs = []
     measurements = []
     binary_index = 0
@@ -392,61 +471,64 @@ def measure_image_area_occupied(
         measurements.append(measurement)
         if row.retained_image_name is not None:
             retained_outputs.append(output_image)
-
     if retained_outputs:
         return (*retained_outputs, measurements)
-    return image, measurements
+    return (image, measurements)
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
-@special_outputs(("area_measurements", csv_materializer(
-    fields=["slice_index", "area_occupied", "perimeter", "total_area"],
-    analysis_type="area_occupied"
-)))
+@special_outputs(
+    (
+        "area_measurements",
+        csv_materializer(
+            fields=["slice_index", "area_occupied", "perimeter", "total_area"],
+            analysis_type="area_occupied",
+        ),
+    )
+)
 def measure_image_area_occupied_binary(
-    image: np.ndarray,
-    source_image_name: str | None = None,
+    image: np.ndarray, source_image_name: str | None = None
 ) -> Tuple[np.ndarray, AreaOccupiedMeasurement]:
     """
     Measure area occupied by foreground in a binary image.
-    
+
     Args:
         image: Binary image (H, W) where foreground > 0
-        
+
     Returns:
         Tuple of (original image, AreaOccupiedMeasurement)
     """
     return BinaryAreaOccupiedRequest(
-        image=image,
-        source_image_name=source_image_name,
+        image=image, source_image_name=source_image_name
     ).measure()
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
-@special_outputs(("area_measurements", csv_materializer(
-    fields=["slice_index", "area_occupied", "perimeter", "total_area"],
-    analysis_type="area_occupied"
-)))
+@special_outputs(
+    (
+        "area_measurements",
+        csv_materializer(
+            fields=["slice_index", "area_occupied", "perimeter", "total_area"],
+            analysis_type="area_occupied",
+        ),
+    )
+)
 def measure_image_area_occupied_objects(
-    image: np.ndarray,
-    labels: np.ndarray,
-    source_image_name: str | None = None,
+    image: np.ndarray, labels: np.ndarray, source_image_name: str | None = None
 ) -> Tuple[np.ndarray, AreaOccupiedMeasurement]:
     """
     Measure area occupied by labeled objects.
-    
+
     Args:
         image: Intensity image (H, W)
         labels: Label image from segmentation (H, W)
-        
+
     Returns:
         Tuple of (original image, AreaOccupiedMeasurement)
     """
     return ObjectLabelsAreaOccupiedRequest(
-        image=image,
-        labels=labels,
-        source_image_name=source_image_name,
+        image=image, labels=labels, source_image_name=source_image_name
     ).measure()
 
 
@@ -462,41 +544,37 @@ def _area_occupied_runtime_rows(
             "MeasureImageAreaOccupied row kwargs must have matching lengths."
         )
     return tuple(
-        AreaOccupiedRuntimeRow.from_literals(
-            operand=operand,
-            input_name=input_name,
-            retained_image_name=retained_image_name,
-        )
-        for operand, input_name, retained_image_name in zip(
-            operand_choices,
-            input_names,
-            retained_image_names,
-            strict=True,
+        (
+            AreaOccupiedRuntimeRow.from_literals(
+                operand=operand,
+                input_name=input_name,
+                retained_image_name=retained_image_name,
+            )
+            for operand, input_name, retained_image_name in zip(
+                operand_choices, input_names, retained_image_names, strict=True
+            )
         )
     )
 
 
 def _binary_images_from_payload(
-    image: np.ndarray,
-    binary_image_count: int,
+    image: np.ndarray, binary_image_count: int
 ) -> tuple[np.ndarray, ...]:
     if binary_image_count == 0:
         return ()
     if binary_image_count == 1:
-        if isinstance(image, np.ndarray) and image.ndim == 3 and image.shape[0] == 1:
+        if isinstance(image, np.ndarray) and image.ndim == 3 and (image.shape[0] == 1):
             return (image[0],)
         return (image,)
     if not isinstance(image, np.ndarray) or image.ndim != 3:
         raise ValueError(
-            "MeasureImageAreaOccupied requires a stacked image payload for "
-            "multiple binary-image rows."
+            "MeasureImageAreaOccupied requires a stacked image payload for multiple binary-image rows."
         )
     if image.shape[0] != binary_image_count:
         raise ValueError(
-            "MeasureImageAreaOccupied binary image stack length must match "
-            "binary-image row count."
+            "MeasureImageAreaOccupied binary image stack length must match binary-image row count."
         )
-    return tuple(image[index] for index in range(binary_image_count))
+    return tuple((image[index] for index in range(binary_image_count)))
 
 
 def label_area_and_perimeter(labels: np.ndarray) -> tuple[float, float]:
@@ -504,12 +582,14 @@ def label_area_and_perimeter(labels: np.ndarray) -> tuple[float, float]:
     if label_array.ndim <= 2:
         return _label_plane_area_and_perimeter(label_array)
     plane_measurements = tuple(
-        _label_plane_area_and_perimeter(label_array[index])
-        for index in range(label_array.shape[0])
+        (
+            _label_plane_area_and_perimeter(label_array[index])
+            for index in range(label_array.shape[0])
+        )
     )
     return (
-        float(sum(area for area, _perimeter in plane_measurements)),
-        float(sum(perimeter for _area, perimeter in plane_measurements)),
+        float(sum((area for area, _perimeter in plane_measurements))),
+        float(sum((perimeter for _area, perimeter in plane_measurements))),
     )
 
 
@@ -530,17 +610,14 @@ def _reference_image_for_labels(image: np.ndarray, labels: np.ndarray) -> np.nda
 @dataclass
 class VolumeOccupiedMeasurement:
     """Measurements for volume occupied analysis (3D)."""
+
     volume_occupied: float
     surface_area: float
     total_volume: float
 
     @classmethod
     def from_volume(
-        cls,
-        *,
-        volume_occupied: float,
-        surface_area: float,
-        total_volume: float,
+        cls, *, volume_occupied: float, surface_area: float, total_volume: float
     ) -> "VolumeOccupiedMeasurement":
         return cls(
             volume_occupied=volume_occupied,
@@ -563,21 +640,16 @@ class SurfaceAreaRequest:
         label_image = np.asarray(self.label_image)
         if spacing is None:
             spacing = (1.0,) * label_image.ndim
-
         unique_labels = np.unique(label_image)
         unique_labels = unique_labels[unique_labels != 0]
         if len(unique_labels) == 0:
             return 0.0
-
         total_surface = 0.0
         for label in unique_labels:
             binary_mask = (label_image == label).astype(np.float32)
             try:
                 verts, faces, _, _ = marching_cubes(
-                    binary_mask,
-                    spacing=spacing,
-                    level=0.5,
-                    method="lorensen",
+                    binary_mask, spacing=spacing, level=0.5, method="lorensen"
                 )
                 total_surface += mesh_surface_area(verts, faces)
             except (ValueError, RuntimeError):
@@ -602,55 +674,56 @@ class VolumeOccupiedRequest:
 
 
 @numpy(contract=ProcessingContract.PURE_3D)
-@special_outputs(("volume_measurements", csv_materializer(
-    fields=["volume_occupied", "surface_area", "total_volume"],
-    analysis_type="volume_occupied"
-)))
+@special_outputs(
+    (
+        "volume_measurements",
+        csv_materializer(
+            fields=["volume_occupied", "surface_area", "total_volume"],
+            analysis_type="volume_occupied",
+        ),
+    )
+)
 def measure_image_volume_occupied_binary(
-    image: np.ndarray,
-    spacing: Optional[Tuple[float, float, float]] = None,
+    image: np.ndarray, spacing: Optional[Tuple[float, float, float]] = None
 ) -> Tuple[np.ndarray, VolumeOccupiedMeasurement]:
     """
     Measure volume occupied by foreground in a 3D binary image.
-    
+
     Args:
         image: 3D binary image (D, H, W) where foreground > 0
         spacing: Voxel spacing (z, y, x) for surface area calculation
-        
+
     Returns:
         Tuple of (original image, VolumeOccupiedMeasurement)
     """
-    # Calculate volume occupied (number of foreground voxels)
     binary_mask = image > 0
     volume_occupied = float(np.sum(binary_mask))
-    
-    # Calculate surface area
     if volume_occupied > 0:
         surface_area_value = SurfaceAreaRequest(
-            binary_mask.astype(np.int32),
-            spacing=spacing,
+            binary_mask.astype(np.int32), spacing=spacing
         ).surface_area()
     else:
         surface_area_value = 0.0
-    
-    # Total volume is the total number of voxels
     total_volume = float(np.prod(image.shape))
-    
     measurement = VolumeOccupiedRequest(
         volume_occupied=volume_occupied,
         surface_area=surface_area_value,
         total_volume=total_volume,
     ).measurement()
-    
-    return image, measurement
+    return (image, measurement)
 
 
 @numpy(contract=ProcessingContract.PURE_3D)
 @special_inputs("labels")
-@special_outputs(("volume_measurements", csv_materializer(
-    fields=["volume_occupied", "surface_area", "total_volume"],
-    analysis_type="volume_occupied"
-)))
+@special_outputs(
+    (
+        "volume_measurements",
+        csv_materializer(
+            fields=["volume_occupied", "surface_area", "total_volume"],
+            analysis_type="volume_occupied",
+        ),
+    )
+)
 def measure_image_volume_occupied_objects(
     image: np.ndarray,
     labels: np.ndarray,
@@ -658,37 +731,30 @@ def measure_image_volume_occupied_objects(
 ) -> Tuple[np.ndarray, VolumeOccupiedMeasurement]:
     """
     Measure volume occupied by labeled objects in 3D.
-    
+
     Args:
         image: 3D intensity image (D, H, W)
         labels: 3D label image from segmentation (D, H, W)
         spacing: Voxel spacing (z, y, x) for surface area calculation
-        
+
     Returns:
         Tuple of (original image, VolumeOccupiedMeasurement)
     """
     labels_array = object_label_dense_array(labels, dtype=np.int32)
     volume_occupied = float(np.count_nonzero(labels_array))
-    
-    # Calculate surface area
     if volume_occupied > 0:
         surface_area_value = SurfaceAreaRequest(
-            labels_array,
-            spacing=spacing,
+            labels_array, spacing=spacing
         ).surface_area()
     else:
         surface_area_value = 0.0
-    
-    # Total volume is the total number of voxels
     total_volume = float(np.prod(labels_array.shape))
-    
     measurement = VolumeOccupiedRequest(
         volume_occupied=volume_occupied,
         surface_area=surface_area_value,
         total_volume=total_volume,
     ).measurement()
-    
-    return image, measurement
+    return (image, measurement)
 
 
 @processing_prepare(measure_image_area_occupied)

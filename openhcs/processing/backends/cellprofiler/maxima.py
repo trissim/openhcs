@@ -1,32 +1,26 @@
 """CellProfiler-compatible local maxima detection backend."""
 
 from __future__ import annotations
-from openhcs.processing.backends.cellprofiler.module_classes import CellProfilerModule
-
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
+    CellProfilerModule,
+)
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar
-
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
 import scipy.ndimage
 from skimage.feature import peak_local_max
-
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.memory.decorators import numpy
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.core.public_api import public_names_from_objects
-from openhcs.processing.materialization import csv_materializer
-
-MAXIMA_RESULT_FIELDS = [
-    "slice_index",
-    "maxima_count",
-    "min_distance_used",
-    "threshold_used",
-]
+from openhcs.processing.materialization import (
+    csv_dataclass_materializer,
+)
 
 
 class ExcludeMode(Enum):
@@ -58,27 +52,28 @@ class MaximaRequest:
 
     def detect(self) -> tuple[np.ndarray, MaximaResult]:
         maxima_coords = peak_local_max(
-            self.image,
-            min_distance=self.min_distance,
-            threshold_abs=self.threshold_abs,
+            self.image, min_distance=self.min_distance, threshold_abs=self.threshold_abs
         )
         output = np.zeros(self.image.shape, dtype=np.float32)
         if len(maxima_coords) > 0:
             output[tuple(maxima_coords.T)] = 1.0
         if self.label_maxima:
             output = scipy.ndimage.label(output > 0)[0].astype(np.float32)
-        return output, MaximaResult(
-            slice_index=0,
-            maxima_count=len(maxima_coords),
-            min_distance_used=self.min_distance,
-            threshold_used=self.threshold_abs if self.threshold_abs is not None else 0.0,
+        return (
+            output,
+            MaximaResult(
+                slice_index=0,
+                maxima_count=len(maxima_coords),
+                min_distance_used=self.min_distance,
+                threshold_used=(
+                    self.threshold_abs if self.threshold_abs is not None else 0.0
+                ),
+            ),
         )
 
 
 class MaximaInputStrategy(
-    EnumKeyedStrategyMixin[ExcludeMode],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[ExcludeMode], ABC, metaclass=AutoRegisterMeta
 ):
     """Build the effective maxima source image for one CP exclusion mode."""
 
@@ -122,8 +117,8 @@ class ObjectMaximaInputStrategy(MaskMaximaInputStrategy):
 @special_outputs(
     (
         "maxima_results",
-        csv_materializer(
-            fields=MAXIMA_RESULT_FIELDS,
+        csv_dataclass_materializer(
+            MaximaResult,
             analysis_type="maxima_detection",
         ),
     )
@@ -145,12 +140,12 @@ def find_maxima(
     ).detect()
 
 
-@numpy
+@numpy(contract=ProcessingContract.PURE_3D)
 @special_outputs(
     (
         "maxima_results",
-        csv_materializer(
-            fields=MAXIMA_RESULT_FIELDS,
+        csv_dataclass_materializer(
+            MaximaResult,
             analysis_type="maxima_detection",
         ),
     )
@@ -168,15 +163,15 @@ def find_maxima_with_mask(
         min_intensity=min_intensity,
         label_maxima=label_maxima,
     ).detect()
-    return maxima[np.newaxis, ...], result
+    return (maxima[np.newaxis, ...], result)
 
 
 class FindMaximaModule(CellProfilerModule):
-    module_name = 'FindMaxima'
-    function_name = 'find_maxima'
+    module_name = "FindMaxima"
+    function_name = "find_maxima"
     validated = True
-    contract = 'unknown'
     confidence = 1.0
+
 
 __all__ = public_names_from_objects(
     ExcludeMode,
@@ -188,5 +183,4 @@ __all__ = public_names_from_objects(
     ThresholdMaximaInputStrategy,
     find_maxima,
     find_maxima_with_mask,
-    extra_names=("MAXIMA_RESULT_FIELDS",),
 )

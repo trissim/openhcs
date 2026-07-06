@@ -1,10 +1,9 @@
 """CellProfiler-compatible edge enhancement backend semantics."""
 
 from __future__ import annotations
-
 from openhcs.interop.cellprofiler.settings_binder import SettingToKeywordBinding
-
-from openhcs.processing.backends.cellprofiler.module_classes import (
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
@@ -20,34 +19,32 @@ from openhcs.interop.cellprofiler.setting_names import (
     setting_values,
     split_symbol_names,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.interop.cellprofiler.cellprofiler_literals import (
+    cellprofiler_enum_from_literal,
+)
+
 
 class EnhanceEdgesModule(
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
-    CellProfilerModule,
+    ImageArtifactInputModule, ImageArtifactOutputModule, CellProfilerModule
 ):
-    module_name = 'EnhanceEdges'
-    function_name = 'enhance_edges'
+    module_name = "EnhanceEdges"
+    function_name = "enhance_edges"
     validated = True
     confidence = 1.0
     image_input_settings = ("Select the input image",)
     image_output_settings = ("Name the output image",)
     setting_bindings = (
         SettingToKeywordBinding(
-            "Automatically calculate the threshold?",
-            "automatic_threshold",
+            "Automatically calculate the threshold?", "automatic_threshold"
         ),
         SettingToKeywordBinding("Absolute threshold", "manual_threshold"),
         SettingToKeywordBinding(
-            "Threshold adjustment factor",
-            "threshold_adjustment_factor",
+            "Threshold adjustment factor", "threshold_adjustment_factor"
         ),
         SettingToKeywordBinding("Select an edge-finding method", "method"),
         SettingToKeywordBinding("Select edge direction to enhance", "direction"),
         SettingToKeywordBinding(
-            "Calculate Gaussian's sigma automatically?",
-            "automatic_gaussian",
+            "Calculate Gaussian's sigma automatically?", "automatic_gaussian"
         ),
         SettingToKeywordBinding("Gaussian's sigma value", "sigma"),
         SettingToKeywordBinding(
@@ -58,17 +55,14 @@ class EnhanceEdgesModule(
     )
 
 
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar
 import warnings
-
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
-
 from openhcs.core.memory.decorators import numpy as numpy_decorator
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_values import (
@@ -141,9 +135,7 @@ class EdgeEnhancementStrategyKey:
     @property
     def label(self) -> str:
         return (
-            f"{self.backend_provider.value}:"
-            f"{self.method.value}:"
-            f"{self.direction.value}"
+            f"{self.backend_provider.value}:{self.method.value}:{self.direction.value}"
         )
 
 
@@ -197,17 +189,13 @@ class EdgeEnhancementRequest:
     @property
     def strategy_key(self) -> EdgeEnhancementStrategyKey:
         return EdgeEnhancementStrategyKey(
-            self.backend_provider,
-            self.method,
-            self.direction,
+            self.backend_provider, self.method, self.direction
         )
 
     @property
     def fallback_strategy_key(self) -> EdgeEnhancementStrategyKey:
         return EdgeEnhancementStrategyKey(
-            self.backend_provider,
-            self.method,
-            EdgeDirection.ALL,
+            self.backend_provider, self.method, EdgeDirection.ALL
         )
 
 
@@ -226,9 +214,7 @@ class EdgeEnhancementStrategy(ABC, metaclass=AutoRegisterMeta):
             strategy_type = cls.__registry__.get(request.fallback_strategy_key.label)
         if strategy_type is None:
             raise NotImplementedError(
-                "No CellProfiler edge enhancement backend is registered for "
-                f"provider {request.backend_provider.value!r}, method "
-                f"{request.method.value!r}, direction {request.direction.value!r}."
+                f"No CellProfiler edge enhancement backend is registered for provider {request.backend_provider.value!r}, method {request.method.value!r}, direction {request.direction.value!r}."
             )
         return strategy_type()
 
@@ -249,9 +235,7 @@ class EdgeEnhancementStrategyLeaf(EdgeEnhancementStrategy):
         if cls.backend_provider is None or cls.method is None or cls.direction is None:
             return
         cls.strategy_key = EdgeEnhancementStrategyKey(
-            cls.backend_provider,
-            cls.method,
-            cls.direction,
+            cls.backend_provider, cls.method, cls.direction
         )
         cls.strategy_label = cls.strategy_key.label
 
@@ -359,10 +343,7 @@ class NumpyLaplacianOfGaussianStrategy(EdgeEnhancementStrategyLeaf):
 
         size = int(request.sigma * 4) + 1
         return centrosome.filter.laplacian_of_gaussian(
-            request.image,
-            request.mask,
-            size,
-            request.sigma,
+            request.image, request.mask, size, request.sigma
         )
 
 
@@ -384,13 +365,8 @@ class NumpyCannyStrategy(EdgeEnhancementStrategyLeaf):
                 high_threshold = high * request.threshold_adjustment_factor
             if request.automatic_low_threshold:
                 low_threshold = low * request.threshold_adjustment_factor
-
         return centrosome.filter.canny(
-            request.image,
-            request.mask,
-            request.sigma,
-            low_threshold,
-            high_threshold,
+            request.image, request.mask, request.sigma, low_threshold, high_threshold
         )
 
 
@@ -438,14 +414,13 @@ def enhance_edges(
             f"low_threshold value of {low_threshold} is outside of the [0-1] range.",
             stacklevel=2,
         )
-
     pixel_data = np.asarray(image_payload_data(image), dtype=np.float32)
     payload_mask = image_payload_mask(image)
     operation_mask = (
         np.ones(pixel_data.shape[:2], dtype=bool)
         if payload_mask is None
         else CellProfilerPlaneGeometry.from_image_plane(pixel_data).binary_mask(
-            np.asarray(payload_mask),
+            np.asarray(payload_mask)
         )
     )
     request = EdgeEnhancementRequest.build(
@@ -461,8 +436,8 @@ def enhance_edges(
         manual_threshold=manual_threshold,
         threshold_adjustment_factor=threshold_adjustment_factor,
     )
-    output = EdgeEnhancementStrategy.for_request(request).enhance(request).astype(
-        np.float32
+    output = (
+        EdgeEnhancementStrategy.for_request(request).enhance(request).astype(np.float32)
     )
     return with_image_payload_data(
         image,
@@ -483,12 +458,10 @@ def _sobel_numba_kernel(
     output = np.zeros((height, width), dtype=np.float32)
     if height < 3 or width < 3:
         return output
-
     for row in range(1, height - 1):
         for col in range(1, width - 1):
             if not _full_sobel_neighborhood_is_valid(mask, row, col):
                 continue
-
             horizontal = abs(
                 (
                     image[row - 1, col - 1]
@@ -511,9 +484,10 @@ def _sobel_numba_kernel(
                 )
                 * 0.25
             )
-
             if include_horizontal and include_vertical:
-                output[row, col] = np.sqrt(horizontal * horizontal + vertical * vertical)
+                output[row, col] = np.sqrt(
+                    horizontal * horizontal + vertical * vertical
+                )
             elif include_horizontal:
                 output[row, col] = horizontal
             elif include_vertical:
@@ -522,11 +496,7 @@ def _sobel_numba_kernel(
 
 
 @njit(cache=True)
-def _full_sobel_neighborhood_is_valid(
-    mask: np.ndarray,
-    row: int,
-    col: int,
-) -> bool:
+def _full_sobel_neighborhood_is_valid(mask: np.ndarray, row: int, col: int) -> bool:
     for mask_row in range(row - 1, row + 2):
         for mask_col in range(col - 1, col + 2):
             if not mask[mask_row, mask_col]:

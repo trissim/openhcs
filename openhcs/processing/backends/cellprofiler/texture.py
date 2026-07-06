@@ -1,30 +1,27 @@
 """Texture-measurement backends for CellProfiler-compatible processing."""
 
 from __future__ import annotations
-
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from inspect import unwrap
 from typing import ClassVar
-
-from openhcs.interop.cellprofiler.setting_names import (
-    SettingNameFamily,
-    setting_names,
-)
+from openhcs.core.runtime_identifier import normalize_runtime_identifier
+from openhcs.interop.cellprofiler.setting_names import SettingNameFamily, setting_names
 from openhcs.interop.cellprofiler.settings_binder import (
     normalize_cellprofiler_setting_name,
     parse_cellprofiler_int,
 )
-
-from openhcs.processing.backends.cellprofiler.module_classes import (
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
     ArtifactContractModule,
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
     ModuleSettingsSourceModule,
     ScopedMeasurementModule,
+    SourceQualifiedMeasurementFeatureModule,
     StructuringElementSettingsModule,
     ObjectMeasurementRowsModule,
     PerObjectMeasurementExecutionModule,
@@ -44,19 +41,16 @@ from openhcs.interop.cellprofiler.setting_names import (
     setting_values,
     split_symbol_names,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
-
-
+from openhcs.interop.cellprofiler.cellprofiler_literals import (
+    cellprofiler_enum_from_literal,
+)
 from openhcs.core.measurement_row_materialization import (
-    MEASUREMENT_OBJECT_ID_FIELDS,
-    MEASUREMENT_OBJECT_NAME_FIELD,
-    MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD,
-    MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
     measurement_object_label,
 )
 from openhcs.core.runtime_semantics import (
     MeasurementObjectRowIdentity,
     MeasurementRowAxisField,
+    RuntimeMeasurementFeature,
     MeasurementScalarLiteral,
     ObjectLabelDomainScope,
     RuntimePlaneAxis,
@@ -91,6 +85,7 @@ from openhcs.interop.cellprofiler.runtime.runtime_profile import (
     CellProfilerRuntimeProfileLogger,
 )
 
+
 class MeasureTextureObjectMeasurementRowPolicy(
     DeclaredDomainCompactMeasuredObjectMeasurementRowPolicy
 ):
@@ -117,14 +112,15 @@ class MeasureTextureObjectMeasurementRowPolicy(
         ).is_multi_source_plane_domain():
             return tuple(axis_fields)
         return tuple(
-            field_name
-            for field_name in axis_fields
-            if field_name in type(self).row_sequence_axis_fields
+            (
+                field_name
+                for field_name in axis_fields
+                if field_name in type(self).row_sequence_axis_fields
+            )
         )
 
     def object_identity_for_label_payload(
-        self,
-        label_payload: CellProfilerRuntimeValue,
+        self, label_payload: CellProfilerRuntimeValue
     ) -> MeasurementObjectRowIdentity:
         """Use row-sequence identity only for multi-source plane-domain texture rows."""
         if MeasureTextureMissingValueDomain.from_payload(
@@ -142,7 +138,9 @@ class MeasureTextureObjectMeasurementRowPolicy(
         positive_label_extent: int | None = None,
     ) -> float:
         missing_domain = MeasureTextureMissingValueDomain.from_payload(label_payload)
-        value_policy = missing_domain.missing_value_policy(type(self).missing_value_policy)
+        value_policy = missing_domain.missing_value_policy(
+            type(self).missing_value_policy
+        )
         if positive_label_extent is None:
             positive_label_extent = missing_domain.compact_row_ordinal_positive_extent()
         strategy = MissingObjectMeasurementValueStrategy.for_enum_member(value_policy)
@@ -186,7 +184,7 @@ class MeasureTextureObjectMeasurementRowPolicy(
         if (
             rows
             and unwrap(func) is unwrap(measure_texture_objects)
-            and not missing_domain.is_multi_source_plane_domain()
+            and (not missing_domain.is_multi_source_plane_domain())
         ):
             return list(rows)
         if not schema.axis_fields and rows:
@@ -196,9 +194,11 @@ class MeasureTextureObjectMeasurementRowPolicy(
                 axis_key=(),
             )
             emitted_object_ids = tuple(
-                int(measurement_row_mapping(row)[schema.object_id_field])
-                for row in rows
-                if self.row_is_object_scoped(row)
+                (
+                    int(measurement_row_mapping(row)[schema.object_id_field])
+                    for row in rows
+                    if self.row_is_object_scoped(row)
+                )
             )
             if emitted_object_ids == required_object_ids:
                 return missing_domain.normalize_existing_rows(
@@ -209,10 +209,7 @@ class MeasureTextureObjectMeasurementRowPolicy(
                 )
         if schema.axis_fields and rows:
             complete_axis_rows = TextureAxisMeasurementRows.from_rows(
-                rows,
-                schema=schema,
-                label_payload=label_payload,
-                row_policy=self,
+                rows, schema=schema, label_payload=label_payload, row_policy=self
             )
             if complete_axis_rows.already_complete:
                 return missing_domain.normalize_existing_rows(
@@ -222,9 +219,7 @@ class MeasureTextureObjectMeasurementRowPolicy(
                     axis_fields=schema.axis_fields,
                 )
         completed_rows = super().complete_rows(
-            rows,
-            label_payload=label_payload,
-            func=func,
+            rows, label_payload=label_payload, func=func
         )
         if isinstance(completed_rows, ColumnarRows):
             return completed_rows
@@ -262,8 +257,7 @@ class TextureAxisMeasurementRows:
         for row in rows:
             row_mapping = measurement_row_mapping(row)
             object_id = measurement_object_label(
-                row_mapping,
-                object_id_field=schema.object_id_field,
+                row_mapping, object_id_field=schema.object_id_field
             )
             if object_id is None:
                 continue
@@ -278,16 +272,20 @@ class TextureAxisMeasurementRows:
                 rows=tuple(rows),
                 row_keys=ObjectMeasurementProjectedRowKeys(
                     tuple(
-                        (object_id, axis_key)
-                        for axis_key, object_ids in emitted_ids.items()
-                        for object_id in object_ids
+                        (
+                            (object_id, axis_key)
+                            for axis_key, object_ids in emitted_ids.items()
+                            for object_id in object_ids
+                        )
                     )
                 ),
                 measured_row_keys=ObjectMeasurementProjectedRowKeys(
                     tuple(
-                        (object_id, axis_key)
-                        for axis_key, object_ids in emitted_ids.items()
-                        for object_id in object_ids
+                        (
+                            (object_id, axis_key)
+                            for axis_key, object_ids in emitted_ids.items()
+                            for object_id in object_ids
+                        )
                     )
                 ),
                 axis_keys=axis_keys,
@@ -309,7 +307,10 @@ class TextureAxisMeasurementRows:
     def already_complete(self) -> bool:
         if not self.emitted_object_ids_by_axis:
             return False
-        if self.emitted_object_ids_by_axis.keys() != self.required_object_ids_by_axis.keys():
+        if (
+            self.emitted_object_ids_by_axis.keys()
+            != self.required_object_ids_by_axis.keys()
+        ):
             return False
         for axis_key, object_ids in self.emitted_object_ids_by_axis.items():
             required_object_ids = self.required_object_ids_by_axis[axis_key]
@@ -328,8 +329,7 @@ class MeasureTextureMissingValueDomain:
 
     @classmethod
     def from_payload(
-        cls,
-        label_payload: CellProfilerRuntimeValue | None,
+        cls, label_payload: CellProfilerRuntimeValue | None
     ) -> "MeasureTextureMissingValueDomain":
         """Return texture domain semantics only for object-label payloads."""
         if isinstance(label_payload, ObjectLabelValue):
@@ -337,8 +337,7 @@ class MeasureTextureMissingValueDomain:
         return cls(None)
 
     def missing_value_policy(
-        self,
-        default_policy: MissingObjectMeasurementValuePolicy,
+        self, default_policy: MissingObjectMeasurementValuePolicy
     ) -> MissingObjectMeasurementValuePolicy:
         if self.is_multi_source_plane_domain():
             return MissingObjectMeasurementValuePolicy.ZERO_WITHIN_POSITIVE_EXTENT
@@ -373,13 +372,14 @@ class MeasureTextureMissingValueDomain:
         extent = max(extent, self.compact_row_ordinal_extent_from_rows(rows))
         identity_fields = {
             object_id_field,
-            *MEASUREMENT_OBJECT_ID_FIELDS,
             *axis_fields,
-            MEASUREMENT_OBJECT_NAME_FIELD,
-            MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
         }
         measurement_fields = tuple(
-            field_name for field_name in field_names if field_name not in identity_fields
+            (
+                field_name
+                for field_name in field_names
+                if field_name not in identity_fields
+            )
         )
         return MeasureTextureExistingRowsNormalizer(
             rows=rows,
@@ -397,25 +397,32 @@ class MeasureTextureMissingValueDomain:
             return None
         if not isinstance(self.label_payload, ObjectLabelValue):
             raise TypeError(
-                "MeasureTexture row-ordinal extent requires ObjectLabelValue, got "
-                f"{type(self.label_payload).__name__}."
+                f"MeasureTexture row-ordinal extent requires ObjectLabelValue, got {type(self.label_payload).__name__}."
             )
         domain = self.label_payload.object_label_domain()
         if domain.declared_object_id_domains:
-            return max(len(object_ids) for object_ids in domain.declared_object_id_domains)
+            return max(
+                (len(object_ids) for object_ids in domain.declared_object_id_domains)
+            )
         explicit_domain = domain.explicit_id_domain()
         if explicit_domain is not None:
             return len(explicit_domain)
         return None
 
     @staticmethod
-    def compact_row_ordinal_extent_from_rows(rows: CellProfilerRuntimeValueSequence) -> int:
+    def compact_row_ordinal_extent_from_rows(
+        rows: CellProfilerRuntimeValueSequence,
+    ) -> int:
         """Return the largest compact row ordinal already emitted by texture rows."""
         object_ids = tuple(
-            object_id
-            for row in rows
-            for object_id in (measurement_object_label(measurement_row_mapping(row)),)
-            if object_id is not None
+            (
+                object_id
+                for row in rows
+                for object_id in (
+                    measurement_object_label(measurement_row_mapping(row)),
+                )
+                if object_id is not None
+            )
         )
         if not object_ids:
             return 0
@@ -430,7 +437,7 @@ class FirstMeasurementField:
 
     def value_or_none(self) -> str | None:
         match self.measurement_fields:
-            case (field_name, *_):
+            case [field_name, *_]:
                 return field_name
             case _:
                 return None
@@ -462,7 +469,7 @@ class MeasureTextureExistingRowsNormalizer:
         if object_id is None or object_id > self.extent:
             return row
         normalized_row = dict(row_mapping)
-        normalized_row[MEASUREMENT_OBJECT_ROW_IDENTITY_FIELD] = (
+        normalized_row[MeasurementRowAxisField.OBJECT_ROW_IDENTITY.value] = (
             MeasurementObjectRowIdentity.ROW_SEQUENCE.value
         )
         self.record_first_field_sample(row_mapping)
@@ -480,9 +487,7 @@ class MeasureTextureExistingRowsNormalizer:
             self.first_field_sample_values.append(repr(first_value))
 
     def replace_existing_measurements(
-        self,
-        row_mapping: MeasurementRowMapping,
-        normalized_row: CellProfilerKwargDict,
+        self, row_mapping: MeasurementRowMapping, normalized_row: CellProfilerKwargDict
     ) -> None:
         for field_name, value in row_mapping.items():
             if field_name in self.identity_fields:
@@ -525,6 +530,7 @@ class MeasureTextureExistingRowsNormalizer:
             absent_replacements=self.absent_replacements,
         )
 
+
 class MeasureTextureModule(
     LabelsObjectInputPolicy,
     PerObjectMeasurementExecutionModule,
@@ -532,20 +538,21 @@ class MeasureTextureModule(
     MeasureTextureObjectMeasurementRowPolicy,
     DeclaredDualScopeMeasurementPolicy,
     ScopedMeasurementModule,
+    SourceQualifiedMeasurementFeatureModule,
 ):
-    module_name = 'MeasureTexture'
-    function_name = 'measure_texture'
+    module_name = "MeasureTexture"
+    function_name = "measure_texture"
     validated = True
-    function_variants = ('measure_texture_objects',)
-    image_function_name = 'measure_texture'
+    function_variants = ("measure_texture_objects",)
+    contract = ProcessingContract.FLEXIBLE
+    image_function_name = "measure_texture"
     confidence = 1.0
+    measurement_category_prefixes = (("texture",),)
     measurement_scope_setting = SettingNameFamily(
-        "Measure images or objects?",
-        aliases=("Measure whole images or objects?",),
+        "Measure images or objects?", aliases=("Measure whole images or objects?",)
     )
     object_measurement_setting = SettingNameFamily(
-        "Select objects to measure",
-        aliases=("Select an object to measure",),
+        "Select objects to measure", aliases=("Select an object to measure",)
     )
     ignored_settings = (
         "Hidden",
@@ -561,43 +568,53 @@ class MeasureTextureModule(
 
         @classmethod
         def from_literal(
-            cls,
-            value: "MeasureTextureModule.MeasurementScope | str",
+            cls, value: "MeasureTextureModule.MeasurementScope | str"
         ) -> "MeasureTextureModule.MeasurementScope":
             return cellprofiler_enum_from_literal(cls, value)
 
     measurement_scope_default = MeasurementScope.image
 
+    class MeasurementFeature(RuntimeMeasurementFeature):
+        """Haralick feature families emitted by MeasureTexture."""
+
+        ANGULAR_SECOND_MOMENT = "AngularSecondMoment"
+        CONTRAST = "Contrast"
+        CORRELATION = "Correlation"
+        VARIANCE = "Variance"
+        INVERSE_DIFFERENCE_MOMENT = "InverseDifferenceMoment"
+        SUM_AVERAGE = "SumAverage"
+        SUM_VARIANCE = "SumVariance"
+        SUM_ENTROPY = "SumEntropy"
+        ENTROPY = "Entropy"
+        DIFFERENCE_VARIANCE = "DifferenceVariance"
+        DIFFERENCE_ENTROPY = "DifferenceEntropy"
+        INFO_MEAS1 = "InfoMeas1"
+        INFO_MEAS2 = "InfoMeas2"
+
     @classmethod
     def resolve_function(
-        cls,
-        module: "ModuleBlock",
-        *,
-        default_function_name: str | None = None,
+        cls, module: "ModuleBlock", *, default_function_name: str | None = None
     ) -> "ResolvedModuleFunction":
         scope = cls.MeasurementScope.from_literal(
             cls.setting_value(module, cls.measurement_scope_setting)
             or cls.measurement_scope_default.value
         )
         object_values = setting_values(module, cls.object_measurement_setting)
-        has_objects = any(split_symbol_names(value) for value in object_values)
+        has_objects = any((split_symbol_names(value) for value in object_values))
         if (
             scope in (cls.MeasurementScope.objects, cls.MeasurementScope.both)
             and has_objects
         ):
             return super().resolve_function(
-                module,
-                default_function_name=cls.function_variants[0],
+                module, default_function_name=cls.function_variants[0]
             )
         return super().resolve_function(
-            module,
-            default_function_name=default_function_name,
+            module, default_function_name=default_function_name
         )
 
     @classmethod
     def measurement_target_scope(
-        cls,
-        module: "ModuleBlock",
+        cls, module: "ModuleBlock"
     ) -> "MeasureTextureModule.MeasurementScope":
         return cls.MeasurementScope.from_literal(
             cls.setting_value(module, cls.measurement_scope_setting)
@@ -606,6 +623,14 @@ class MeasureTextureModule(
 
     texture_scale_setting = "Texture scale to measure"
     gray_levels_setting = "Enter how many gray levels to measure the texture at"
+
+    @classmethod
+    def haralick_feature_prefixes(cls) -> tuple[str, ...]:
+        del cls
+        return tuple(
+            f"{normalize_runtime_identifier(feature_name)}_"
+            for feature_name in F_HARALICK
+        )
 
     @classmethod
     def bind_settings(
@@ -617,40 +642,34 @@ class MeasureTextureModule(
         ignored_unmapped_settings: frozenset[str] = frozenset(),
     ) -> "BoundModuleSettings":
         bound = cls._bind_generic_settings(
-            module,
-            binder=binder,
-            param_mapping=param_mapping,
+            module, binder=binder, param_mapping=param_mapping
         )
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
         for setting_name in setting_names(cls.measurement_scope_setting):
             unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
-
         texture_scales = setting_values(module, cls.texture_scale_setting)
         if texture_scales:
-            parsed_scales = tuple(parse_cellprofiler_int(value) for value in texture_scales)
+            parsed_scales = tuple(
+                (parse_cellprofiler_int(value) for value in texture_scales)
+            )
             kwargs["scale"] = (
                 parsed_scales[0] if len(parsed_scales) == 1 else parsed_scales
             )
             unmapped_kwargs.pop(
-                normalize_cellprofiler_setting_name(cls.texture_scale_setting),
-                None,
+                normalize_cellprofiler_setting_name(cls.texture_scale_setting), None
             )
-
         gray_levels = optional_setting_value(module, cls.gray_levels_setting)
         if gray_levels is not None:
             kwargs["gray_levels"] = parse_cellprofiler_int(gray_levels)
             unmapped_kwargs.pop(
-                normalize_cellprofiler_setting_name(cls.gray_levels_setting),
-                None,
+                normalize_cellprofiler_setting_name(cls.gray_levels_setting), None
             )
-
         return cls._finalize_bound_settings(
             module,
             binder=binder,
             bound=cls.postprocess_bound_settings(
-                module,
-                BoundModuleSettings(kwargs, unmapped_kwargs),
+                module, BoundModuleSettings(kwargs, unmapped_kwargs)
             ),
             ignored_unmapped_settings=ignored_unmapped_settings,
         )
@@ -658,21 +677,16 @@ class MeasureTextureModule(
     @classmethod
     def artifact_contract(cls, assembler, builder, module):
         return cls.measurement_artifact_contract_from_declared_settings(
-            assembler,
-            builder,
-            module,
+            assembler, builder, module
         )
-
 
 
 from abc import ABC, abstractmethod
 from typing import TypeAlias
-
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.alias_property import AliasProperty
 from numba import njit
-
 from openhcs.constants.constants import MemoryType
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.memory.decorators import numpy
@@ -703,7 +717,6 @@ from openhcs.processing.backends.cellprofiler.thresholding import (
     ThresholdSettingsModule,
 )
 
-
 F_HARALICK = [
     "AngularSecondMoment",
     "Contrast",
@@ -719,7 +732,6 @@ F_HARALICK = [
     "InfoMeas1",
     "InfoMeas2",
 ]
-
 N_DIRECTIONS_2D = 4
 ObjectIntensityCrops = tuple[np.ndarray, tuple[np.ndarray, ...]]
 TextureLabelSource: TypeAlias = ObjectLabelValue | np.ndarray | None
@@ -759,8 +771,8 @@ class HaralickFeatureColumns:
     contrast: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(1)
     correlation: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(2)
     variance: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(3)
-    inverse_difference_moment: ClassVar[HaralickFeatureColumn] = (
-        HaralickFeatureColumn(4)
+    inverse_difference_moment: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(
+        4
     )
     sum_average: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(5)
     sum_variance: ClassVar[HaralickFeatureColumn] = HaralickFeatureColumn(6)
@@ -792,9 +804,7 @@ class ObjectTextureMeasurement(TextureAxisColumns, HaralickFeatureColumns):
 
 
 class ObjectTextureCropBackendStrategy(
-    CellProfilerBackendStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    CellProfilerBackendStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Extract masked object intensity crops for texture measurement."""
 
@@ -803,17 +813,13 @@ class ObjectTextureCropBackendStrategy(
 
     @abstractmethod
     def object_intensity_crops(
-        self,
-        image: np.ndarray,
-        labels: np.ndarray,
+        self, image: np.ndarray, labels: np.ndarray
     ) -> ObjectIntensityCrops:
         """Return positive object labels and CP-style masked intensity crops."""
 
 
 class HaralickTextureBackendStrategy(
-    CellProfilerBackendStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
+    CellProfilerBackendStrategyMixin, ABC, metaclass=AutoRegisterMeta
 ):
     """Compute CP-compatible 2-D Haralick feature matrices."""
 
@@ -822,11 +828,7 @@ class HaralickTextureBackendStrategy(
 
     @abstractmethod
     def haralick_features(
-        self,
-        pixel_data: np.ndarray,
-        *,
-        scale: int,
-        ignore_zeros: bool,
+        self, pixel_data: np.ndarray, *, scale: int, ignore_zeros: bool
     ) -> np.ndarray:
         """Return one Haralick feature row per 2-D direction."""
 
@@ -835,8 +837,7 @@ class NumbaNumpyObjectTextureCropBackendStrategy(ObjectTextureCropBackendStrateg
     """Numba-accelerated NumPy backend for object texture crop extraction."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.NUMBA,
+        MemoryType.NUMPY, CellProfilerBackendProvider.NUMBA
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
@@ -848,9 +849,7 @@ class NumbaNumpyObjectTextureCropBackendStrategy(ObjectTextureCropBackendStrateg
         self.object_intensity_crops(image, labels)
 
     def object_intensity_crops(
-        self,
-        image: np.ndarray,
-        labels: np.ndarray,
+        self, image: np.ndarray, labels: np.ndarray
     ) -> ObjectIntensityCrops:
         image_array = np.asarray(image)
         labels_array = np.asarray(labels)
@@ -860,8 +859,7 @@ class NumbaNumpyObjectTextureCropBackendStrategy(ObjectTextureCropBackendStrateg
             )
         if image_array.shape != labels_array.shape:
             raise ValueError(
-                "Texture image and labels must have identical shapes; got "
-                f"{image_array.shape!r} and {labels_array.shape!r}."
+                f"Texture image and labels must have identical shapes; got {image_array.shape!r} and {labels_array.shape!r}."
             )
         object_labels, boxes = _object_bounding_boxes_numba(
             np.ascontiguousarray(labels_array, dtype=np.int64)
@@ -873,15 +871,14 @@ class NumbaNumpyObjectTextureCropBackendStrategy(ObjectTextureCropBackendStrateg
             intensity_crop = np.asarray(image_array[y0:y1, x0:x1]).copy()
             intensity_crop[label_crop != object_label] = 0
             crops.append(intensity_crop)
-        return object_labels.astype(np.int64, copy=False), tuple(crops)
+        return (object_labels.astype(np.int64, copy=False), tuple(crops))
 
 
 class NumbaNumpyHaralickTextureBackendStrategy(HaralickTextureBackendStrategy):
     """Numba implementation of mahotas' default 2-D Haralick semantics."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.NUMBA,
+        MemoryType.NUMPY, CellProfilerBackendProvider.NUMBA
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
@@ -892,11 +889,7 @@ class NumbaNumpyHaralickTextureBackendStrategy(HaralickTextureBackendStrategy):
         self.haralick_features(image, scale=1, ignore_zeros=False)
 
     def haralick_features(
-        self,
-        pixel_data: np.ndarray,
-        *,
-        scale: int,
-        ignore_zeros: bool,
+        self, pixel_data: np.ndarray, *, scale: int, ignore_zeros: bool
     ) -> np.ndarray:
         pixel_array = np.ascontiguousarray(pixel_data)
         if pixel_array.ndim != 2:
@@ -906,9 +899,7 @@ class NumbaNumpyHaralickTextureBackendStrategy(HaralickTextureBackendStrategy):
         if pixel_array.shape[0] <= scale or pixel_array.shape[1] <= scale:
             return np.zeros((4, 13), dtype=np.float64)
         return _haralick_2d_features_numba(
-            pixel_array.astype(np.int64, copy=False),
-            int(scale),
-            bool(ignore_zeros),
+            pixel_array.astype(np.int64, copy=False), int(scale), bool(ignore_zeros)
         )
 
 
@@ -916,26 +907,19 @@ class NativeNumpyHaralickTextureBackendStrategy(HaralickTextureBackendStrategy):
     """Explicit mahotas backend used as the native reference implementation."""
 
     backend_key = CellProfilerBackendAuthority.backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.NATIVE,
+        MemoryType.NUMPY, CellProfilerBackendProvider.NATIVE
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NATIVE
 
     def haralick_features(
-        self,
-        pixel_data: np.ndarray,
-        *,
-        scale: int,
-        ignore_zeros: bool,
+        self, pixel_data: np.ndarray, *, scale: int, ignore_zeros: bool
     ) -> np.ndarray:
         import mahotas.features as mahotas_features
 
         return np.asarray(
             mahotas_features.haralick(
-                np.asarray(pixel_data),
-                distance=scale,
-                ignore_zeros=ignore_zeros,
+                np.asarray(pixel_data), distance=scale, ignore_zeros=ignore_zeros
             ),
             dtype=np.float64,
         )
@@ -947,7 +931,7 @@ def _normalize_gray_levels(gray_levels: int) -> int:
 
 def _texture_scales(scale: int | tuple[int, ...] | list[int]) -> tuple[int, ...]:
     if isinstance(scale, (tuple, list)):
-        return tuple(int(value) for value in scale)
+        return tuple((int(value) for value in scale))
     return (int(scale),)
 
 
@@ -969,9 +953,7 @@ class CellProfilerTexturePixelDataRequest:
         )
         if self.gray_levels != 256:
             pixel_data = rescale_intensity(
-                pixel_data,
-                in_range=(0, 255),
-                out_range=(0, self.gray_levels - 1),
+                pixel_data, in_range=(0, 255), out_range=(0, self.gray_levels - 1)
             ).astype(np.uint8)
         return pixel_data
 
@@ -998,35 +980,26 @@ class HaralickFeatureMatrixRequest:
     def feature_matrix(self) -> np.ndarray:
         pixel_data = np.asarray(self.pixel_data)
         if not _haralick_has_valid_domain(
-            pixel_data,
-            scale=self.scale,
-            ignore_zeros=self.ignore_zeros,
+            pixel_data, scale=self.scale, ignore_zeros=self.ignore_zeros
         ):
             return _zero_feature_matrix()
-
         backend = HaralickTextureBackendStrategy.for_memory_type(
-            backend_provider=self.backend_provider,
+            backend_provider=self.backend_provider
         )
         return np.asarray(
             backend.haralick_features(
-                pixel_data,
-                scale=self.scale,
-                ignore_zeros=self.ignore_zeros,
+                pixel_data, scale=self.scale, ignore_zeros=self.ignore_zeros
             ),
             dtype=float,
         )
 
 
 def _haralick_has_valid_domain(
-    pixel_data: np.ndarray,
-    *,
-    scale: int,
-    ignore_zeros: bool,
+    pixel_data: np.ndarray, *, scale: int, ignore_zeros: bool
 ) -> bool:
     if pixel_data.ndim != 2:
         raise ValueError(
-            "MeasureTexture expects a 2D image plane. Stack dispatch must be "
-            "handled by the OpenHCS processing contract."
+            "MeasureTexture expects a 2D image plane. Stack dispatch must be handled by the OpenHCS processing contract."
         )
     if scale < 1:
         raise ValueError(f"MeasureTexture scale must be positive, got {scale}.")
@@ -1074,9 +1047,7 @@ class HaralickFeatureVector:
 
     @classmethod
     def from_matrix(
-        cls,
-        feature_matrix: np.ndarray,
-        direction: int,
+        cls, feature_matrix: np.ndarray, direction: int
     ) -> "HaralickFeatureVector":
         if direction >= feature_matrix.shape[0]:
             return cls.zeros()
@@ -1087,21 +1058,13 @@ class HaralickFeatureVector:
         return cls(np.zeros((len(F_HARALICK),), dtype=float))
 
     def image_measurement(self, axis: TextureMeasurementAxis) -> TextureMeasurement:
-        return TextureMeasurement(
-            axis=axis,
-            features=self,
-        )
+        return TextureMeasurement(axis=axis, features=self)
 
     def object_measurement(
-        self,
-        axis: TextureMeasurementAxis,
-        *,
-        object_label: int,
+        self, axis: TextureMeasurementAxis, *, object_label: int
     ) -> ObjectTextureMeasurement:
         return ObjectTextureMeasurement(
-            object_label=object_label,
-            axis=axis,
-            features=self,
+            object_label=object_label, axis=axis, features=self
         )
 
 
@@ -1143,10 +1106,8 @@ def measure_texture(
     """Measure Haralick texture features on a grayscale image."""
     gray_levels = _normalize_gray_levels(gray_levels)
     pixel_data = CellProfilerTexturePixelDataRequest(
-        image=image,
-        gray_levels=gray_levels,
+        image=image, gray_levels=gray_levels
     ).pixel_data()
-
     measurements = []
     for texture_scale in _texture_scales(scale):
         feature_matrix = HaralickFeatureMatrixRequest(
@@ -1155,7 +1116,6 @@ def measure_texture(
             ignore_zeros=False,
             backend_provider=haralick_backend_provider,
         ).feature_matrix()
-
         for direction in range(N_DIRECTIONS_2D):
             axis = TextureMeasurementAxis(
                 slice_index=0,
@@ -1165,14 +1125,10 @@ def measure_texture(
             )
             measurements.append(
                 HaralickFeatureVector.from_matrix(
-                    feature_matrix,
-                    direction,
-                ).image_measurement(
-                    axis,
-                )
+                    feature_matrix, direction
+                ).image_measurement(axis)
             )
-
-    return image, measurements
+    return (image, measurements)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1188,7 +1144,6 @@ class ObjectTextureMeasurementCompletionRequest:
         object_domain = dense_object_label_id_domain(self.labels)
         if not object_domain:
             return list(self.measurements)
-
         by_key = {
             measurement.axis.object_key(measurement.object_label): measurement
             for measurement in self.measurements
@@ -1203,32 +1158,28 @@ class ObjectTextureMeasurementCompletionRequest:
                     complete.append(by_key[key])
                     continue
                 complete.append(
-                    zero_features.object_measurement(
-                        axis,
-                        object_label=object_label,
-                    )
+                    zero_features.object_measurement(axis, object_label=object_label)
                 )
         return complete
 
     @property
     def axes(self) -> tuple[TextureMeasurementAxis, ...]:
         axes = tuple(
-            dict.fromkeys(
-                measurement.axis
-                for measurement in self.measurements
-            )
+            dict.fromkeys((measurement.axis for measurement in self.measurements))
         )
         if axes:
             return axes
         return tuple(
-            TextureMeasurementAxis(
-                slice_index=0,
-                scale=texture_scale,
-                direction=direction,
-                gray_levels=self.gray_levels,
+            (
+                TextureMeasurementAxis(
+                    slice_index=0,
+                    scale=texture_scale,
+                    direction=direction,
+                    gray_levels=self.gray_levels,
+                )
+                for texture_scale in _texture_scales(self.scale)
+                for direction in range(N_DIRECTIONS_2D)
             )
-            for texture_scale in _texture_scales(self.scale)
-            for direction in range(N_DIRECTIONS_2D)
         )
 
 
@@ -1277,8 +1228,7 @@ def measure_texture_objects(
     original_labels = labels
     if image_array.ndim == 2 and slice_index == 0:
         plane_domain_stack = DenseObjectLabelPlaneDomainStackRequest(
-            labels,
-            dtype=np.int32,
+            labels, dtype=np.int32
         ).stack()
         if plane_domain_stack is not None:
             measurements: list[ObjectTextureMeasurement] = []
@@ -1293,39 +1243,34 @@ def measure_texture_objects(
                     slice_index=plane_index,
                 )
                 measurements.extend(plane_measurements)
-            return image, measurements
-
+            return (image, measurements)
     gray_levels = _normalize_gray_levels(gray_levels)
     pixel_data = CellProfilerTexturePixelDataRequest(
-        image=image,
-        gray_levels=gray_levels,
+        image=image, gray_levels=gray_levels
     ).pixel_data()
     crop_backend = ObjectTextureCropBackendStrategy.for_callable(
-        measure_texture_objects,
-        backend_provider=texture_crop_backend_provider,
+        measure_texture_objects, backend_provider=texture_crop_backend_provider
     )
-
     measurements = []
     label_projection = TextureLabelSliceProjection.from_source(
-        labels,
-        np.asarray(image),
-        slice_index,
+        labels, np.asarray(image), slice_index
     )
     labels_2d = label_projection.labels_2d()
     if labels_2d is not None:
         labels = labels_2d
     object_labels, intensity_crops = crop_backend.object_intensity_crops(
-        pixel_data,
-        labels,
+        pixel_data, labels
     )
     if object_labels.size == 0:
-        return image, ObjectTextureMeasurementCompletionRequest(
-            measurements=tuple(measurements),
-            labels=original_labels,
-            scale=scale,
-            gray_levels=gray_levels,
-        ).complete()
-
+        return (
+            image,
+            ObjectTextureMeasurementCompletionRequest(
+                measurements=tuple(measurements),
+                labels=original_labels,
+                scale=scale,
+                gray_levels=gray_levels,
+            ).complete(),
+        )
     for object_label, label_data in zip(object_labels, intensity_crops, strict=True):
         for texture_scale in _texture_scales(scale):
             feature_matrix = HaralickFeatureMatrixRequest(
@@ -1334,7 +1279,6 @@ def measure_texture_objects(
                 ignore_zeros=True,
                 backend_provider=haralick_backend_provider,
             ).feature_matrix()
-
             for direction in range(N_DIRECTIONS_2D):
                 axis = TextureMeasurementAxis(
                     slice_index=slice_index,
@@ -1344,20 +1288,18 @@ def measure_texture_objects(
                 )
                 measurements.append(
                     HaralickFeatureVector.from_matrix(
-                        feature_matrix,
-                        direction,
-                    ).object_measurement(
-                        axis,
-                        object_label=int(object_label),
-                    )
+                        feature_matrix, direction
+                    ).object_measurement(axis, object_label=int(object_label))
                 )
-
-    return image, ObjectTextureMeasurementCompletionRequest(
-        measurements=tuple(measurements),
-        labels=original_labels,
-        scale=scale,
-        gray_levels=gray_levels,
-    ).complete()
+    return (
+        image,
+        ObjectTextureMeasurementCompletionRequest(
+            measurements=tuple(measurements),
+            labels=original_labels,
+            scale=scale,
+            gray_levels=gray_levels,
+        ).complete(),
+    )
 
 
 def measure_texture_objects_batch(
@@ -1410,10 +1352,7 @@ class TextureLabelSliceProjection:
 
     @classmethod
     def from_source(
-        cls,
-        source: TextureLabelSource,
-        slice_array: np.ndarray,
-        slice_index: int,
+        cls, source: TextureLabelSource, slice_array: np.ndarray, slice_index: int
     ) -> "TextureLabelSliceProjection":
         return cls(
             source=source,
@@ -1429,7 +1368,7 @@ class TextureLabelSliceProjection:
         while (
             selected.ndim > 2
             and selected.shape[-2:] == self.slice_array.shape
-            and selected.shape[0] > 0
+            and (selected.shape[0] > 0)
         ):
             selected = selected[min(self.slice_index, selected.shape[0] - 1)]
         if selected.ndim == 2 and selected.shape == self.slice_array.shape:
@@ -1477,12 +1416,9 @@ def _max_value_2d_numba(values: np.ndarray) -> int:
 
 
 @njit(cache=True)
-def _object_bounding_boxes_numba(
-    labels: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
+def _object_bounding_boxes_numba(labels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     height, width = labels.shape
     max_label = _max_value_2d_numba(labels)
-
     min_y = np.full(max_label + 1, height, dtype=np.int64)
     min_x = np.full(max_label + 1, width, dtype=np.int64)
     max_y = np.full(max_label + 1, -1, dtype=np.int64)
@@ -1500,12 +1436,10 @@ def _object_bounding_boxes_numba(
                 max_y[label] = y
             if x > max_x[label]:
                 max_x[label] = x
-
     object_count = 0
     for label in range(1, max_label + 1):
         if max_y[label] >= 0:
             object_count += 1
-
     object_labels = np.empty(object_count, dtype=np.int64)
     boxes = np.empty((object_count, 4), dtype=np.int64)
     index = 0
@@ -1518,23 +1452,19 @@ def _object_bounding_boxes_numba(
         boxes[index, 2] = min_x[label]
         boxes[index, 3] = max_x[label] + 1
         index += 1
-    return object_labels, boxes
+    return (object_labels, boxes)
 
 
 @njit(cache=True)
 def _haralick_2d_features_numba(
-    image: np.ndarray,
-    distance: int,
-    ignore_zeros: bool,
+    image: np.ndarray, distance: int, ignore_zeros: bool
 ) -> np.ndarray:
     height, width = image.shape
     max_value = _max_value_2d_numba(image)
-
     gray_count = max_value + 1
     features = np.zeros((4, 13), dtype=np.float64)
     deltas_y = np.array((0, 1, 1, 1), dtype=np.int64)
     deltas_x = np.array((1, 1, 0, -1), dtype=np.int64)
-
     for direction in range(4):
         cmat = np.zeros((gray_count, gray_count), dtype=np.float64)
         dy = deltas_y[direction] * distance
@@ -1553,7 +1483,6 @@ def _haralick_2d_features_numba(
                     continue
                 cmat[a, b] += 1.0
                 cmat[b, a] += 1.0
-
         total = cmat.sum()
         if total == 0.0:
             continue
@@ -1562,17 +1491,13 @@ def _haralick_2d_features_numba(
 
 
 @njit(cache=True)
-def _haralick_features_from_cmat_numba(
-    cmat: np.ndarray,
-    total: float,
-) -> np.ndarray:
+def _haralick_features_from_cmat_numba(cmat: np.ndarray, total: float) -> np.ndarray:
     gray_count = cmat.shape[0]
     feats = np.zeros(13, dtype=np.float64)
     px = np.zeros(gray_count, dtype=np.float64)
     py = np.zeros(gray_count, dtype=np.float64)
     px_plus_y = np.zeros(gray_count * 2, dtype=np.float64)
     px_minus_y = np.zeros(gray_count, dtype=np.float64)
-
     for i in range(gray_count):
         for j in range(gray_count):
             p = cmat[i, j] / total
@@ -1586,13 +1511,11 @@ def _haralick_features_from_cmat_numba(
             feats[0] += p * p
             feats[1] += diff * diff * p
             feats[4] += p / (1.0 + diff * diff)
-
     ux = 0.0
     uy = 0.0
     for k in range(gray_count):
         ux += px[k] * k
         uy += py[k] * k
-
     vx = 0.0
     vy = 0.0
     for k in range(gray_count):
@@ -1600,7 +1523,6 @@ def _haralick_features_from_cmat_numba(
         vy += py[k] * k * k
     vx -= ux * ux
     vy -= uy * uy
-
     sx = np.sqrt(vx)
     sy = np.sqrt(vy)
     if sx == 0.0 or sy == 0.0:
@@ -1611,7 +1533,6 @@ def _haralick_features_from_cmat_numba(
             for j in range(gray_count):
                 ijp += i * j * (cmat[i, j] / total)
         feats[2] = (ijp - ux * uy) / (sx * sy)
-
     feats[3] = vx
     sum_average = 0.0
     sum_second = 0.0
@@ -1622,7 +1543,6 @@ def _haralick_features_from_cmat_numba(
     feats[7] = _entropy_numba(px_plus_y)
     feats[6] = sum_second - sum_average * sum_average
     feats[8] = _entropy_matrix_numba(cmat, total)
-
     mean_minus = 0.0
     for k in range(gray_count):
         mean_minus += px_minus_y[k]
@@ -1633,7 +1553,6 @@ def _haralick_features_from_cmat_numba(
         variance_minus += delta * delta
     feats[9] = variance_minus / gray_count
     feats[10] = _entropy_numba(px_minus_y)
-
     hx = _entropy_numba(px)
     hy = _entropy_numba(py)
     hxy1 = 0.0
@@ -1646,7 +1565,6 @@ def _haralick_features_from_cmat_numba(
                 hxy1 -= p * np.log2(cross)
             if cross > 0.0:
                 hxy2 -= cross * np.log2(cross)
-
     if hx >= hy:
         max_h = hx
     else:
@@ -1695,9 +1613,5 @@ __all__ = public_names_from_objects(
     TextureMeasurement,
     measure_texture,
     measure_texture_objects,
-    extra_names=(
-        "F_HARALICK",
-        "N_DIRECTIONS_2D",
-        "ObjectIntensityCrops",
-    ),
+    extra_names=("F_HARALICK", "N_DIRECTIONS_2D", "ObjectIntensityCrops"),
 )

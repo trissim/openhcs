@@ -116,6 +116,51 @@ def object_colocalization_base_reductions(
 
 
 @njit(cache=True)
+def object_colocalization_correlation_reductions(
+    first_pixels: np.ndarray,
+    second_pixels: np.ndarray,
+    object_labels: np.ndarray,
+    object_counts: np.ndarray,
+    sum1: np.ndarray,
+    sum2: np.ndarray,
+    object_count: int,
+) -> np.ndarray:
+    mean1 = np.empty(object_count, dtype=np.float64)
+    mean2 = np.empty(object_count, dtype=np.float64)
+    centered_sum1_sq = np.zeros(object_count, dtype=np.float64)
+    centered_sum2_sq = np.zeros(object_count, dtype=np.float64)
+    corr = np.zeros(object_count, dtype=np.float64)
+    for label_index in range(object_count):
+        if object_counts[label_index] > 0.0:
+            mean1[label_index] = sum1[label_index] / object_counts[label_index]
+            mean2[label_index] = sum2[label_index] / object_counts[label_index]
+        else:
+            mean1[label_index] = np.nan
+            mean2[label_index] = np.nan
+    for index in range(object_labels.size):
+        label_index = int(object_labels[index]) - 1
+        first_delta = float(first_pixels[index]) - mean1[label_index]
+        second_delta = float(second_pixels[index]) - mean2[label_index]
+        centered_sum1_sq[label_index] += first_delta * first_delta
+        centered_sum2_sq[label_index] += second_delta * second_delta
+    std1 = np.sqrt(centered_sum1_sq)
+    std2 = np.sqrt(centered_sum2_sq)
+    for index in range(object_labels.size):
+        label_index = int(object_labels[index]) - 1
+        denominator = std1[label_index] * std2[label_index]
+        if denominator == 0.0:
+            corr[label_index] = np.nan
+            continue
+        first_delta = float(first_pixels[index]) - mean1[label_index]
+        second_delta = float(second_pixels[index]) - mean2[label_index]
+        corr[label_index] += first_delta * second_delta / denominator
+    for label_index in range(object_count):
+        if object_counts[label_index] == 0.0:
+            corr[label_index] = np.nan
+    return corr
+
+
+@njit(cache=True)
 def object_colocalization_threshold_reductions(
     first_pixels: np.ndarray,
     second_pixels: np.ndarray,

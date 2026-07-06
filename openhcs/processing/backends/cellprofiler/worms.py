@@ -13,18 +13,15 @@ from openhcs.interop.cellprofiler.setting_names import (
     repeating_setting_blocks,
 )
 from openhcs.interop.cellprofiler.settings_binder import parse_cellprofiler_bool
-
 import numpy as np
 import re
 import scipy.ndimage
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from heapq import heappop, heappush
 from pathlib import Path
 from typing import Any, ClassVar
 from xml.dom.minidom import parse
-
 from metaclass_registry import AutoRegisterMeta
 from scipy.ndimage import (
     binary_dilation,
@@ -33,10 +30,17 @@ from scipy.ndimage import (
     find_objects,
     label,
 )
-
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpecCollection
-from openhcs.interop.cellprofiler.runtime.bound_parameters import RuntimeBoundParameterName
+from openhcs.core.artifacts import (
+    ArtifactSpecCollection,
+    ArtifactType,
+    ImageArtifactType,
+    MeasurementsArtifactType,
+    ObjectLabelsArtifactType,
+)
+from openhcs.interop.cellprofiler.runtime.bound_parameters import (
+    RuntimeBoundParameterName,
+)
 from openhcs.interop.cellprofiler.runtime.mapping_lookup import MappingValueLookup
 from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
     CellProfilerObjectInputCountAuthority,
@@ -61,15 +65,23 @@ from openhcs.core.runtime_values import (
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
-
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
-from openhcs.processing.backends.cellprofiler.module_classes import (
-    ArtifactContractModule,
+from openhcs.interop.cellprofiler.module_declarations import (
+    ProcessingContract,
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
+    ImageArtifactInputCapability,
+    ImageArtifactInputModule,
+    ImageArtifactOutputCapability,
+    ImageArtifactOutputModule,
+    MeasurementArtifactOutputModule,
     ModuleSettingsSourceModule,
+    ObjectArtifactInputModule,
+    ObjectArtifactOutputModule,
+    ObjectLabelArtifactInputCapability,
+    ObjectLabelArtifactOutputCapability,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
 )
@@ -79,22 +91,45 @@ from openhcs.interop.cellprofiler.setting_names import (
     setting_values,
     split_symbol_names,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import cellprofiler_enum_from_literal
+from openhcs.interop.cellprofiler.cellprofiler_literals import (
+    cellprofiler_enum_from_literal,
+)
 from openhcs.processing.backends.cellprofiler.thresholding import (
     ThresholdSettingsModule,
 )
+from openhcs.processing.backends.cellprofiler.distance_propagation_numba import (
+    _propagate_labels_and_distances_zero_image_numba,
+)
 
-class UntangleWormsModule(ModuleSettingsSourceModule):
-    module_name = 'UntangleWorms'
-    function_name = 'untangle_worms'
+MAX_CLUSTER_PATHS = 400
+MAX_CLUSTER_PATH_SETS_CONSIDERED = 50_000
+
+
+class UntangleWormsModule(
+    ImageArtifactInputModule,
+    ObjectArtifactOutputModule,
+    MeasurementArtifactOutputModule,
+    ModuleSettingsSourceModule,
+):
+    module_name = "UntangleWorms"
+    function_name = "untangle_worms"
     validated = True
     confidence = 1.0
+    calculated_measurement_feature_prefixes = (
+        ("worm",),
+        ("fat", "regions"),
+        ("mean", "fat", "regions"),
+    )
     input_image_setting = SettingNameFamily(
-        "Select the input binary image",
-        aliases=("Select the input image",),
+        "Select the input binary image", aliases=("Select the input image",)
     )
     overlapping_objects_setting = "Name the output overlapping worm objects"
     nonoverlapping_objects_setting = "Name the output non-overlapping worm objects"
+    image_input_settings = (input_image_setting,)
+    object_output_settings = (
+        overlapping_objects_setting,
+        nonoverlapping_objects_setting,
+    )
     training_file_name_setting = "Training set file name"
     training_parameter_tags: ClassVar[tuple[tuple[str, str, type], ...]] = (
         ("min-area", "min_worm_area", float),
@@ -126,32 +161,29 @@ class UntangleWormsModule(ModuleSettingsSourceModule):
     def settings_source(cls, module: "ModuleBlock") -> "CellProfilerKwargs":
         """Bind UntangleWorms settings that affect runtime output semantics."""
         overlap_style = coerce_cellprofiler_enum(
-            cls.OverlapStyle,
-            module.get_setting("Overlap style", "Without overlap"),
+            cls.OverlapStyle, module.get_setting("Overlap style", "Without overlap")
         )
         kwargs: dict[str, str | int | float | tuple[Any, ...]] = {
             "overlap_style": overlap_style.value,
             "overlapping_object_name": required_setting_value(
-                module,
-                cls.overlapping_objects_setting,
+                module, cls.overlapping_objects_setting
             ),
             "nonoverlapping_object_name": required_setting_value(
-                module,
-                cls.nonoverlapping_objects_setting,
+                module, cls.nonoverlapping_objects_setting
             ),
         }
-        if (num_control_points := optional_setting_value(
-            module,
-            "Number of control points",
-        )) is not None:
+        if (
+            num_control_points := optional_setting_value(
+                module, "Number of control points"
+            )
+        ) is not None:
             kwargs["num_control_points"] = int(float(num_control_points))
         kwargs.update(cls.training_parameter_kwargs(module))
         return kwargs
 
     @classmethod
     def training_parameter_kwargs(
-        cls,
-        module: "ModuleBlock",
+        cls, module: "ModuleBlock"
     ) -> dict[str, float | int | tuple[Any, ...]]:
         training_path = cls.training_file_path(module)
         if training_path is None:
@@ -163,9 +195,11 @@ class UntangleWormsModule(ModuleSettingsSourceModule):
             if len(elements) != 1:
                 continue
             text = "".join(
-                node.data
-                for node in elements[0].childNodes
-                if node.nodeType == doc.TEXT_NODE
+                (
+                    node.data
+                    for node in elements[0].childNodes
+                    if node.nodeType == doc.TEXT_NODE
+                )
             ).strip()
             if text:
                 kwargs[parameter_name] = (
@@ -187,33 +221,37 @@ class UntangleWormsModule(ModuleSettingsSourceModule):
         if len(elements) != 1:
             return ()
         return tuple(
-            cls.xml_float(value_element, doc)
-            for value_element in elements[0].getElementsByTagName("value")
+            (
+                cls.xml_float(value_element, doc)
+                for value_element in elements[0].getElementsByTagName("value")
+            )
         )
 
     @classmethod
     def xml_matrix_values(
-        cls,
-        doc: Any,
-        tag_name: str,
+        cls, doc: Any, tag_name: str
     ) -> tuple[tuple[float, ...], ...]:
         elements = doc.documentElement.getElementsByTagName(tag_name)
         if len(elements) != 1:
             return ()
         return tuple(
-            tuple(
-                cls.xml_float(value_element, doc)
-                for value_element in values_element.getElementsByTagName("value")
+            (
+                tuple(
+                    (
+                        cls.xml_float(value_element, doc)
+                        for value_element in values_element.getElementsByTagName(
+                            "value"
+                        )
+                    )
+                )
+                for values_element in elements[0].getElementsByTagName("values")
             )
-            for values_element in elements[0].getElementsByTagName("values")
         )
 
     @staticmethod
     def xml_float(element: Any, doc: Any) -> float:
         text = "".join(
-            node.data
-            for node in element.childNodes
-            if node.nodeType == doc.TEXT_NODE
+            (node.data for node in element.childNodes if node.nodeType == doc.TEXT_NODE)
         ).strip()
         return float(text)
 
@@ -229,21 +267,6 @@ class UntangleWormsModule(ModuleSettingsSourceModule):
             if candidate.is_file():
                 return candidate
         return None
-
-    @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-
-        image = builder.require_artifact(
-            ArtifactSpec(required_setting_value(module, cls.input_image_setting), ArtifactKind.IMAGE),
-            module,
-        )
-        outputs = [
-            builder.declare_artifact(ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS), module),
-            builder.declare_artifact(ArtifactSpec(required_setting_value(module, cls.overlapping_objects_setting), ArtifactKind.OBJECT_LABELS), module),
-            builder.declare_artifact(ArtifactSpec(required_setting_value(module, cls.nonoverlapping_objects_setting), ArtifactKind.OBJECT_LABELS), module),
-        ]
-        return assembler.assemble_contract(module, builder, inputs=[image], outputs=outputs)
 
 
 from openhcs.processing.backends.cellprofiler.worm_geometry import (
@@ -262,49 +285,44 @@ from openhcs.processing.backends.cellprofiler.worm_geometry import (
 class StraightenWormsSpecialInputPolicy(CellProfilerSpecialInputPolicyMixin):
     """Resolve worm labels plus producer-derived control points."""
 
-    worm_labels_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName("worm_labels")
+    worm_labels_kwarg: ClassVar[RuntimeBoundParameterName] = RuntimeBoundParameterName(
+        "worm_labels"
     )
     control_points_kwarg: ClassVar[RuntimeBoundParameterName] = (
         RuntimeBoundParameterName("control_points")
     )
 
     def extra_bound_parameter_names(
-        self,
-        plan: "CellProfilerModuleRuntimePlan",
+        self, plan: "CellProfilerModuleRuntimePlan"
     ) -> tuple[str, ...]:
-        if ArtifactSpecCollection(plan.runtime_inputs).of_kind(ArtifactKind.MEASUREMENTS):
+        if ArtifactSpecCollection(plan.runtime_inputs).of_artifact_type(
+            MeasurementsArtifactType
+        ):
             return super().extra_bound_parameter_names(plan)
         return ()
 
-    def bind(
-        self,
-        request: SpecialInputBindingRequest,
-    ) -> CellProfilerKwargDict:
+    def bind(self, request: SpecialInputBindingRequest) -> CellProfilerKwargDict:
         object_inputs = request.object_inputs
         CellProfilerObjectInputCountAuthority.require_exact(
-            request.module_name,
-            object_inputs,
-            1,
+            request.module_name, object_inputs, 1
         )
-        measurement_inputs = ArtifactSpecCollection(request.runtime_inputs).of_kind(
-            ArtifactKind.MEASUREMENTS
-        )
+        measurement_inputs = ArtifactSpecCollection(
+            request.runtime_inputs
+        ).of_artifact_type(MeasurementsArtifactType)
         bound: CellProfilerKwargDict = {
-            self.worm_labels_kwarg: request.labels_for(object_inputs[0]),
+            self.worm_labels_kwarg: request.labels_for(object_inputs[0])
         }
         if not measurement_inputs:
             return bound
         if len(measurement_inputs) > 1:
             raise NotImplementedError(
-                f"{request.module_name} supports one producer measurement "
-                f"input; got {[spec.name for spec in measurement_inputs]}."
+                f"{request.module_name} supports one producer measurement input; got {[spec.name for spec in measurement_inputs]}."
             )
         num_control_points = int(
             MappingValueLookup(request.kwargs, "num_control_points").value_or(21)
         )
         control_points = WormControlPointMeasurementSchema(
-            num_control_points=num_control_points,
+            num_control_points=num_control_points
         ).control_points_from_rows(
             request.runtime_value(measurement_inputs[0]),
             object_name=object_inputs[0].name,
@@ -316,12 +334,17 @@ class StraightenWormsSpecialInputPolicy(CellProfilerSpecialInputPolicyMixin):
 
 class StraightenWormsModule(
     StraightenWormsSpecialInputPolicy,
+    ObjectArtifactInputModule,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    ObjectArtifactOutputModule,
+    MeasurementArtifactOutputModule,
     ModuleSettingsSourceModule,
 ):
-    module_name = 'StraightenWorms'
-    function_name = 'straighten_worms'
+    module_name = "StraightenWorms"
+    function_name = "straighten_worms"
     validated = True
-    contract = 'flexible'
+    contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
     input_objects_setting = "Select the input untangled worm objects"
     output_objects_setting = "Name the output straightened worm objects"
@@ -349,28 +372,18 @@ class StraightenWormsModule(
         kwargs: dict[str, Any] = {}
         cls._bind_optional_int(module, cls.worm_width_setting, "worm_width", kwargs)
         cls._bind_optional_bool(
-            module,
-            cls.measure_intensity_setting,
-            "measure_intensity",
-            kwargs,
+            module, cls.measure_intensity_setting, "measure_intensity", kwargs
         )
         cls._bind_optional_int(
-            module,
-            cls.transverse_segments_setting,
-            "number_of_segments",
-            kwargs,
+            module, cls.transverse_segments_setting, "number_of_segments", kwargs
         )
         cls._bind_optional_int(
-            module,
-            cls.longitudinal_stripes_setting,
-            "number_of_stripes",
-            kwargs,
+            module, cls.longitudinal_stripes_setting, "number_of_stripes", kwargs
         )
         alignment = optional_setting_value(module, cls.alignment_setting)
         if alignment is not None:
             kwargs["flip_mode"] = coerce_cellprofiler_enum(
-                cls.FlipMode,
-                alignment,
+                cls.FlipMode, alignment
             ).value
         return kwargs
 
@@ -384,26 +397,24 @@ class StraightenWormsModule(
 
     @classmethod
     def image_bindings(
-        cls,
-        module: "ModuleBlock",
+        cls, module: "ModuleBlock"
     ) -> tuple["StraightenWormsModule.ImageBinding", ...]:
         return tuple(
-            cls.ImageBinding(
-                input_image_name=block_setting_value(
-                    block,
-                    cls.input_image_setting,
-                ),
-                output_image_name=block_setting_value(
-                    block,
-                    cls.output_image_setting,
-                ),
+            (
+                cls.ImageBinding(
+                    input_image_name=block_setting_value(
+                        block, cls.input_image_setting
+                    ),
+                    output_image_name=block_setting_value(
+                        block, cls.output_image_setting
+                    ),
+                )
+                for block in repeating_setting_blocks(
+                    module.iter_settings(), start_name=cls.input_image_setting
+                )
+                if block_setting_value(block, cls.input_image_setting)
+                and block_setting_value(block, cls.output_image_setting)
             )
-            for block in repeating_setting_blocks(
-                module.iter_settings(),
-                start_name=cls.input_image_setting,
-            )
-            if block_setting_value(block, cls.input_image_setting)
-            and block_setting_value(block, cls.output_image_setting)
         )
 
     @classmethod
@@ -432,30 +443,21 @@ class StraightenWormsModule(
 
     @classmethod
     def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
-
-        input_objects = builder.require_artifact(
-            ArtifactSpec(cls.input_objects_name(module), ArtifactKind.OBJECT_LABELS),
-            module,
-        )
+        input_objects = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(cls.input_objects_name(module)))
         image_bindings = cls.image_bindings(module)
         image_inputs = [
-            builder.require_artifact(ArtifactSpec(binding.input_image_name, ArtifactKind.IMAGE), module)
+            ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(binding.input_image_name))
             for binding in image_bindings
         ]
         image_outputs = [
-            builder.declare_artifact(ArtifactSpec(binding.output_image_name, ArtifactKind.IMAGE), module)
+            ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(binding.output_image_name))
             for binding in image_bindings
         ]
-        output_objects = builder.declare_artifact(
-            ArtifactSpec(cls.output_objects_name(module), ArtifactKind.OBJECT_LABELS),
-            module,
+        output_objects = ObjectLabelArtifactOutputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactOutputCapability.spec(cls.output_objects_name(module)))
+        producer_measurements = builder.measurement_output_for_module_num(
+            input_objects.producer_module_num
         )
-        producer_measurements = builder.measurement_output_for_module_num(input_objects.producer_module_num)
-        measurements = builder.declare_artifact(
-            ArtifactSpec(cls.measurement_artifact_name(module), ArtifactKind.MEASUREMENTS),
-            module,
-        )
+        measurements = cls.measurement_output_artifact(builder, module)
         side_inputs = [input_objects]
         if producer_measurements is not None:
             side_inputs.append(producer_measurements)
@@ -465,8 +467,6 @@ class StraightenWormsModule(
             inputs=[*side_inputs, *image_inputs],
             outputs=[*image_outputs, output_objects, measurements],
         )
-
-
 
 
 class OverlapStyle(str, Enum):
@@ -533,8 +533,7 @@ class StraightenWormControlPoints:
         points = np.asarray(self.points, dtype=float)
         if points.ndim != 3:
             raise ValueError(
-                "StraightenWorms control_points must have shape "
-                "(objects, 2, control_points) or (2, control_points, objects)."
+                "StraightenWorms control_points must have shape (objects, 2, control_points) or (2, control_points, objects)."
             )
         if points.shape[1] == 2:
             normalized = points
@@ -542,13 +541,11 @@ class StraightenWormControlPoints:
             normalized = points.transpose(2, 0, 1)
         else:
             raise ValueError(
-                "StraightenWorms control_points must include one coordinate axis "
-                "of length 2."
+                "StraightenWorms control_points must include one coordinate axis of length 2."
             )
         if normalized.shape[2] != self.num_control_points:
             raise ValueError(
-                f"StraightenWorms expected {self.num_control_points} control points; "
-                f"got {normalized.shape[2]}."
+                f"StraightenWorms expected {self.num_control_points} control points; got {normalized.shape[2]}."
             )
         return normalized
 
@@ -585,14 +582,23 @@ class StraightenWormsSliceRequest:
         unique_labels = self.positive_labels
         if len(unique_labels) == 0:
             shape = (self.output_width, self.output_width)
-            return np.zeros(shape, dtype=image.dtype), np.zeros(shape, dtype=np.int32), []
-
+            return (
+                np.zeros(shape, dtype=image.dtype),
+                np.zeros(shape, dtype=np.int32),
+                [],
+            )
         lengths = self.worm_lengths(len(unique_labels))
         if not lengths:
             shape = (self.output_width, self.output_width)
-            return np.zeros(shape, dtype=image.dtype), np.zeros(shape, dtype=np.int32), []
-
-        shape = (max(lengths) + self.output_width, len(unique_labels) * self.output_width)
+            return (
+                np.zeros(shape, dtype=image.dtype),
+                np.zeros(shape, dtype=np.int32),
+                [],
+            )
+        shape = (
+            max(lengths) + self.output_width,
+            len(unique_labels) * self.output_width,
+        )
         straightened_image = np.zeros(shape, dtype=image.dtype)
         straightened_labels = np.zeros(shape, dtype=np.int32)
         placements = self.placements(unique_labels, lengths)
@@ -607,13 +613,13 @@ class StraightenWormsSliceRequest:
         lengths: list[int] = []
         for index in range(min(worm_count, self.control_points.shape[0])):
             control_point = self.control_points[index]
-            lengths.append(int(np.ceil(calculate_cumulative_lengths(control_point.T)[-1])))
+            lengths.append(
+                int(np.ceil(calculate_cumulative_lengths(control_point.T)[-1]))
+            )
         return lengths
 
     def placements(
-        self,
-        unique_labels: np.ndarray,
-        lengths: list[int],
+        self, unique_labels: np.ndarray, lengths: list[int]
     ) -> list[StraightenedWormPlacement]:
         placements: list[StraightenedWormPlacement] = []
         for index, object_number in enumerate(unique_labels):
@@ -631,11 +637,7 @@ class StraightenWormsSliceRequest:
         return placements
 
     def placement_for_object(
-        self,
-        *,
-        object_number: int,
-        object_index: int,
-        length: int,
+        self, *, object_number: int, object_index: int, length: int
     ) -> StraightenedWormPlacement:
         control_point = self.control_points[object_index]
         ii = control_point[0]
@@ -644,7 +646,6 @@ class StraightenWormsSliceRequest:
         t_new = np.arange(0, length + 1)
         ci = np.interp(t_new, t_orig, ii)
         cj = np.interp(t_new, t_orig, jj)
-
         di = np.diff(ci, prepend=ci[0])
         dj = np.diff(cj, prepend=cj[0])
         di[0] = di[1] if len(di) > 1 else 0
@@ -653,7 +654,6 @@ class StraightenWormsSliceRequest:
         norm[norm == 0] = 1
         ni = -dj / norm
         nj = di / norm
-
         half_width = self.half_width
         ci_ext = np.concatenate(
             [
@@ -664,14 +664,14 @@ class StraightenWormsSliceRequest:
         )
         cj_ext = np.concatenate(
             [
-                np.arange(-half_width, 0) * (-ni[0]) + cj[0],
+                np.arange(-half_width, 0) * -ni[0] + cj[0],
                 cj,
-                np.arange(1, half_width + 1) * (-ni[-1]) + cj[-1],
+                np.arange(1, half_width + 1) * -ni[-1] + cj[-1],
             ]
         )
         ni_ext = np.concatenate([[ni[0]] * half_width, ni, [ni[-1]] * half_width])
         nj_ext = np.concatenate([[nj[0]] * half_width, nj, [nj[-1]] * half_width])
-        iii, jjj = np.mgrid[0 : len(ci_ext), -half_width : (half_width + 1)]
+        iii, jjj = np.mgrid[0 : len(ci_ext), -half_width : half_width + 1]
         source_y = ci_ext[iii] + ni_ext[iii] * jjj
         source_x = cj_ext[iii] + nj_ext[iii] * jjj
         if self.should_flip(object_number, ci_ext, cj_ext, ni_ext, nj_ext, iii, jjj):
@@ -683,8 +683,7 @@ class StraightenWormsSliceRequest:
             object_number=object_number,
             output_y=slice(0, len(ci_ext)),
             output_x=slice(
-                self.output_width * object_index,
-                self.output_width * (object_index + 1),
+                self.output_width * object_index, self.output_width * (object_index + 1)
             ),
             source_y=np.ascontiguousarray(source_y, dtype=float),
             source_x=np.ascontiguousarray(source_x, dtype=float),
@@ -705,10 +704,7 @@ class StraightenWormsSliceRequest:
         source_y = ci_ext[iii] + ni_ext[iii] * jjj
         source_x = cj_ext[iii] + nj_ext[iii] * jjj
         sampled_image = scipy.ndimage.map_coordinates(
-            self.image,
-            [source_y, source_x],
-            order=1,
-            mode="constant",
+            self.image, [source_y, source_x], order=1, mode="constant"
         )
         sampled_mask = scipy.ndimage.map_coordinates(
             (self.labels == object_number).astype(np.float32),
@@ -726,9 +722,7 @@ class StraightenWormsSliceRequest:
         return (
             self.flip_mode is FlipMode.TOP
             and top_intensity < bottom_intensity
-        ) or (
-            self.flip_mode is FlipMode.BOTTOM
-            and bottom_intensity < top_intensity
+            or (self.flip_mode is FlipMode.BOTTOM and bottom_intensity < top_intensity)
         )
 
     def apply_placements(
@@ -739,13 +733,14 @@ class StraightenWormsSliceRequest:
     ) -> None:
         if not placements:
             return
-        flat_source_y = np.concatenate([placement.source_y.ravel() for placement in placements])
-        flat_source_x = np.concatenate([placement.source_x.ravel() for placement in placements])
+        flat_source_y = np.concatenate(
+            [placement.source_y.ravel() for placement in placements]
+        )
+        flat_source_x = np.concatenate(
+            [placement.source_x.ravel() for placement in placements]
+        )
         flat_image = scipy.ndimage.map_coordinates(
-            self.image,
-            [flat_source_y, flat_source_x],
-            order=1,
-            mode="constant",
+            self.image, [flat_source_y, flat_source_x], order=1, mode="constant"
         )
         flat_labels = scipy.ndimage.map_coordinates(
             self.labels,
@@ -762,8 +757,12 @@ class StraightenWormsSliceRequest:
             image_block = flat_image[offset:next_offset].reshape(block_shape)
             label_block = flat_labels[offset:next_offset].reshape(block_shape)
             straightened_image[placement.output_y, placement.output_x] = image_block
-            output_label_block = straightened_labels[placement.output_y, placement.output_x]
-            output_label_block[label_block == placement.object_number] = placement.object_number
+            output_label_block = straightened_labels[
+                placement.output_y, placement.output_x
+            ]
+            output_label_block[label_block == placement.object_number] = (
+                placement.object_number
+            )
             offset = next_offset
 
     def measurements(
@@ -833,10 +832,7 @@ class DeadWormDiamondTemplate:
         pts_y1 = np.array([y1, y2, y3, y0]) + ymax
         pts_x1 = np.array([x1, x2, x3, x0]) + xmax
         i_pts, j_pts = LineSegments.from_endpoints(
-            pts_y0,
-            pts_x0,
-            pts_y1,
-            pts_x1,
+            pts_y0, pts_x0, pts_y1, pts_x1
         ).points()
         valid = (
             (i_pts >= 0)
@@ -859,11 +855,7 @@ class LineSegments:
 
     @classmethod
     def from_endpoints(
-        cls,
-        y0: np.ndarray,
-        x0: np.ndarray,
-        y1: np.ndarray,
-        x1: np.ndarray,
+        cls, y0: np.ndarray, x0: np.ndarray, y1: np.ndarray, x1: np.ndarray
     ) -> "LineSegments":
         return cls(y0=y0, x0=x0, y1=y1, x1=x1)
 
@@ -890,7 +882,7 @@ class LineSegments:
                 if e2 < dx:
                     err += dx
                     cy += sy
-        return np.array(all_i), np.array(all_j)
+        return (np.array(all_i), np.array(all_j))
 
 
 @dataclass(frozen=True, slots=True)
@@ -943,7 +935,7 @@ class DeadWormAdjacencyPolicy:
 
     def edges(self) -> tuple[np.ndarray, np.ndarray]:
         if len(self.i) < 2:
-            return np.zeros(0, dtype=int), np.zeros(0, dtype=int)
+            return (np.zeros(0, dtype=int), np.zeros(0, dtype=int))
         order = np.lexsort((self.angle, self.j, self.i))
         i_sorted = self.i[order]
         j_sorted = self.j[order]
@@ -952,17 +944,19 @@ class DeadWormAdjacencyPolicy:
         second: list[int] = []
         for idx1 in range(len(self.i)):
             for idx2 in range(idx1 + 1, len(self.i)):
-                spatial_dist_sq = (
-                    (i_sorted[idx1] - i_sorted[idx2]) ** 2
-                    + (j_sorted[idx1] - j_sorted[idx2]) ** 2
-                )
+                spatial_dist_sq = (i_sorted[idx1] - i_sorted[idx2]) ** 2 + (
+                    j_sorted[idx1] - j_sorted[idx2]
+                ) ** 2
                 if spatial_dist_sq > self.space_dist**2:
                     continue
                 angle_diff = abs(angle_sorted[idx1] - angle_sorted[idx2])
-                if angle_diff <= self.angle_dist or (np.pi - angle_diff) <= self.angle_dist:
+                if (
+                    angle_diff <= self.angle_dist
+                    or np.pi - angle_diff <= self.angle_dist
+                ):
                     first.append(order[idx1])
                     second.append(order[idx2])
-        return np.array(first, dtype=int), np.array(second, dtype=int)
+        return (np.array(first, dtype=int), np.array(second, dtype=int))
 
 
 @dataclass(frozen=True, slots=True)
@@ -973,9 +967,7 @@ class WormLabelOutputRequest:
 
 
 class WormLabelOutputStrategy(
-    EnumKeyedStrategyMixin[OverlapStyle],
-    ABC,
-    metaclass=AutoRegisterMeta,
+    EnumKeyedStrategyMixin[OverlapStyle], ABC, metaclass=AutoRegisterMeta
 ):
     """Select UntangleWorms label outputs for one CellProfiler overlap style."""
 
@@ -987,22 +979,20 @@ class WormLabelOutputStrategy(
     overlap_style: ClassVar[OverlapStyle | None] = None
 
     @classmethod
-    def for_overlap_style(cls, overlap_style: OverlapStyle) -> "WormLabelOutputStrategy":
+    def for_overlap_style(
+        cls, overlap_style: OverlapStyle
+    ) -> "WormLabelOutputStrategy":
         return cls.for_enum_member(overlap_style)
 
     @abstractmethod
     def outputs(
-        self,
-        request: WormLabelOutputRequest,
+        self, request: WormLabelOutputRequest
     ) -> tuple[ObjectLabelValue, ObjectLabelPayload]:
         """Return the public overlapping and nonoverlapping label payloads."""
 
     @abstractmethod
     def measurement_object_names(
-        self,
-        *,
-        overlapping_object_name: str,
-        nonoverlapping_object_name: str,
+        self, *, overlapping_object_name: str, nonoverlapping_object_name: str
     ) -> tuple[str, ...]:
         """Return object names that should receive UntangleWorms measurements."""
 
@@ -1011,16 +1001,12 @@ class WithOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
     overlap_style = OverlapStyle.WITH_OVERLAP
 
     def outputs(
-        self,
-        request: WormLabelOutputRequest,
+        self, request: WormLabelOutputRequest
     ) -> tuple[ObjectLabelValue, ObjectLabelPayload]:
-        return request.sparse_overlapping, request.overlapping
+        return (request.sparse_overlapping, request.overlapping)
 
     def measurement_object_names(
-        self,
-        *,
-        overlapping_object_name: str,
-        nonoverlapping_object_name: str,
+        self, *, overlapping_object_name: str, nonoverlapping_object_name: str
     ) -> tuple[str, ...]:
         return (overlapping_object_name,)
 
@@ -1029,16 +1015,12 @@ class WithoutOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
     overlap_style = OverlapStyle.WITHOUT_OVERLAP
 
     def outputs(
-        self,
-        request: WormLabelOutputRequest,
+        self, request: WormLabelOutputRequest
     ) -> tuple[ObjectLabelValue, ObjectLabelPayload]:
-        return request.nonoverlapping, request.nonoverlapping
+        return (request.nonoverlapping, request.nonoverlapping)
 
     def measurement_object_names(
-        self,
-        *,
-        overlapping_object_name: str,
-        nonoverlapping_object_name: str,
+        self, *, overlapping_object_name: str, nonoverlapping_object_name: str
     ) -> tuple[str, ...]:
         return (nonoverlapping_object_name,)
 
@@ -1047,16 +1029,12 @@ class BothOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
     overlap_style = OverlapStyle.BOTH
 
     def outputs(
-        self,
-        request: WormLabelOutputRequest,
+        self, request: WormLabelOutputRequest
     ) -> tuple[ObjectLabelValue, ObjectLabelPayload]:
-        return request.sparse_overlapping, request.nonoverlapping
+        return (request.sparse_overlapping, request.nonoverlapping)
 
     def measurement_object_names(
-        self,
-        *,
-        overlapping_object_name: str,
-        nonoverlapping_object_name: str,
+        self, *, overlapping_object_name: str, nonoverlapping_object_name: str
     ) -> tuple[str, ...]:
         return (overlapping_object_name, nonoverlapping_object_name)
 
@@ -1065,18 +1043,13 @@ def coerce_overlap_style(value: str | OverlapStyle) -> OverlapStyle:
     """Normalize CellProfiler overlap-style literals into the typed enum."""
     if isinstance(value, OverlapStyle):
         return value
-    normalized = re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
+    normalized = re.sub("[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
     for style in OverlapStyle:
-        literals = (
-            style.name.lower(),
-            style.value,
-            style.value.replace("_", ""),
-        )
+        literals = (style.name.lower(), style.value, style.value.replace("_", ""))
         if normalized in literals:
             return style
     raise ValueError(
-        "overlap_style must be one of "
-        f"{', '.join(style.value for style in OverlapStyle)}; got {value!r}."
+        f"overlap_style must be one of {', '.join((style.value for style in OverlapStyle))}; got {value!r}."
     )
 
 
@@ -1091,7 +1064,6 @@ class WormControlPointGeometry:
         """Extract angles at each interior control point."""
         if len(self.control_coords) < 3:
             return np.array([])
-
         segments_delta = self.control_coords[1:] - self.control_coords[:-1]
         segment_bearings = np.arctan2(segments_delta[:, 0], segments_delta[:, 1])
         angles = segment_bearings[1:] - segment_bearings[:-1]
@@ -1126,18 +1098,15 @@ def untangle_worms(
     overlapping_object_name: str = "OverlappingWorms",
     nonoverlapping_object_name: str = "NonOverlappingWorms",
 ) -> tuple[
-    np.ndarray,
-    list[dict[str, float | int | str]],
-    ObjectLabelValue,
-    ObjectLabelPayload,
+    np.ndarray, list[dict[str, float | int | str]], ObjectLabelValue, ObjectLabelPayload
 ]:
     """
     Untangle overlapping worms in a binary image.
-    
+
     This function takes a binary image where foreground indicates worm shapes
     and attempts to identify and separate individual worms, even when they
     overlap or cross each other.
-    
+
     Args:
         image: Binary input image (H, W) where foreground indicates worms
         overlap_style: How to handle overlapping regions:
@@ -1152,24 +1121,18 @@ def untangle_worms(
         max_path_length: Maximum skeleton path length for a worm
         overlap_weight: Penalty weight for overlapping worm regions
         leftover_weight: Penalty weight for uncovered foreground
-    
+
     Returns:
         Tuple of (original_image, measurements, overlapping_labels, nonoverlapping_labels)
     """
     overlap_style = coerce_overlap_style(overlap_style)
     mean_angles_array = _coerce_mean_angles(mean_angles, num_control_points)
     inv_angles_covariance_array = _coerce_inverse_covariance(
-        inv_angles_covariance_matrix,
-        num_control_points,
+        inv_angles_covariance_matrix, num_control_points
     )
     radii_array = _coerce_worm_radii(radii_from_training, num_control_points)
-
-    # Ensure binary
     binary = image > 0
-    
-    # Label connected components
     labels, count = label(binary, structure=eight_connectivity())
-    
     if count == 0:
         empty_labels, empty_nonoverlapping_labels = _worm_label_outputs(
             [],
@@ -1179,46 +1142,31 @@ def untangle_worms(
             overlap_style=overlap_style,
             overlapping_object_name=overlapping_object_name,
         )
-        return image, [], empty_labels, empty_nonoverlapping_labels
-    
-    # Skeletonize
+        return (image, [], empty_labels, empty_nonoverlapping_labels)
     skeleton = skeletonize_worm_mask(binary)
-    
-    # Remove skeleton points at image edges
     eroded = binary_erosion(binary, structure=eight_connectivity())
     skeleton = skeletonize_worm_mask(skeleton & eroded)
-    
     areas = np.bincount(labels.ravel())
     component_slices = find_objects(labels)
     all_path_coords: list[np.ndarray] = []
-    
     for i, object_slice in enumerate(component_slices, start=1):
         if object_slice is None:
             continue
         component_area = areas[i]
-        
-        # Skip if too small
         if component_area < min_worm_area:
             continue
-        
         row_slice, column_slice = object_slice
         local_labels = labels[object_slice]
         mask = local_labels == i
         component_skeleton = skeleton[object_slice] & mask
-        
         if not np.any(component_skeleton):
             continue
-        
         if component_area <= max_worm_area:
             path_coords = _longest_worm_graph_path_coords(
-                mask,
-                component_skeleton,
-                max_length=max_path_length,
+                mask, component_skeleton, max_length=max_path_length
             )
-            
             if len(path_coords) < 2:
                 continue
-            
             cumul_lengths = calculate_cumulative_lengths(path_coords)
             total_length = cumul_lengths[-1]
             if not WormShapeCostRequest(
@@ -1229,7 +1177,6 @@ def untangle_worms(
                 inv_angles_covariance_matrix=inv_angles_covariance_array,
             ).passes(cost_threshold):
                 continue
-            
             all_path_coords.append(
                 _offset_path_coords(
                     path_coords,
@@ -1245,29 +1192,29 @@ def untangle_worms(
                 max_skel_length=max_skel_length,
             ).build()
             paths = graph.paths_between_lengths(
-                min_length=min_path_length,
-                max_length=max_path_length,
+                min_length=min_path_length, max_length=max_path_length
             )
             all_path_coords.extend(
-                _offset_path_coords(
-                    path_coords,
-                    row_offset=row_slice.start,
-                    column_offset=column_slice.start,
+                (
+                    _offset_path_coords(
+                        path_coords,
+                        row_offset=row_slice.start,
+                        column_offset=column_slice.start,
+                    )
+                    for path_coords in WormClusterPathSelectionPolicy(
+                        median_worm_area=median_worm_area,
+                        component_area=int(component_area),
+                        num_control_points=num_control_points,
+                        mean_angles=mean_angles_array,
+                        inv_angles_covariance_matrix=inv_angles_covariance_array,
+                        cost_threshold=cost_threshold,
+                        overlap_weight=overlap_weight,
+                        leftover_weight=leftover_weight,
+                        min_path_length=min_path_length,
+                        max_path_length=max_path_length,
+                    ).select(graph, paths)
                 )
-                for path_coords in WormClusterPathSelectionPolicy(
-                    median_worm_area=median_worm_area,
-                    component_area=int(component_area),
-                    num_control_points=num_control_points,
-                    mean_angles=mean_angles_array,
-                    inv_angles_covariance_matrix=inv_angles_covariance_array,
-                    cost_threshold=cost_threshold,
-                    overlap_weight=overlap_weight,
-                    leftover_weight=leftover_weight,
-                    min_path_length=min_path_length,
-                    max_path_length=max_path_length,
-                ).select(graph, paths)
             )
-    
     overlapping_labels, nonoverlapping_labels = _worm_label_outputs(
         all_path_coords,
         source_image=image,
@@ -1276,7 +1223,6 @@ def untangle_worms(
         overlap_style=overlap_style,
         overlapping_object_name=overlapping_object_name,
     )
-    
     measurements = _worm_descriptor_rows(
         all_path_coords,
         num_control_points=num_control_points,
@@ -1284,11 +1230,10 @@ def untangle_worms(
         nonoverlapping_object_name=nonoverlapping_object_name,
         overlap_style=overlap_style,
     )
-    
-    return image, measurements, overlapping_labels, nonoverlapping_labels
+    return (image, measurements, overlapping_labels, nonoverlapping_labels)
 
 
-@numpy
+@numpy(contract=ProcessingContract.FLEXIBLE)
 @special_inputs("worm_labels")
 @special_outputs(
     ("straightened_labels", None),
@@ -1323,12 +1268,10 @@ def straighten_worms(
     flip_mode = coerce_cellprofiler_enum(FlipMode, flip_mode)
     if flip_mode is FlipMode.MANUAL:
         raise NotImplementedError("StraightenWorms manual flipping is interactive.")
-
     image_stack = image[np.newaxis, :, :] if image.ndim == 2 else image
     labels_stack = object_label_dense_array(worm_labels, dtype=np.int32)
     if labels_stack.ndim == 2:
         labels_stack = labels_stack[np.newaxis, :, :]
-
     straightened_images: list[np.ndarray] = []
     straightened_label_planes: list[np.ndarray] = []
     all_measurements: list[WormMeasurement] = []
@@ -1355,13 +1298,14 @@ def straighten_worms(
         straightened_images.append(slice_image)
         straightened_label_planes.append(slice_labels)
         all_measurements.extend(measurements)
-
     straightened_image_stack = np.stack(straightened_images, axis=0)
     straightened_label_stack = np.stack(straightened_label_planes, axis=0)
     return (
         *tuple(
-            straightened_image_stack[index]
-            for index in range(straightened_image_stack.shape[0])
+            (
+                straightened_image_stack[index]
+                for index in range(straightened_image_stack.shape[0])
+            )
         ),
         straightened_label_stack,
         all_measurements,
@@ -1405,9 +1349,7 @@ def identify_dead_worms(
     for angle_index in range(angle_count):
         angle = float(angle_index) * np.pi / float(angle_count)
         footprint = DeadWormDiamondTemplate(
-            worm_width=worm_width,
-            worm_length=worm_length,
-            angle=angle,
+            worm_width=worm_width, worm_length=worm_length, angle=angle
         ).footprint()
         erosion = binary_erosion(mask, footprint)
         point_count = np.sum(erosion)
@@ -1416,11 +1358,9 @@ def identify_dead_worms(
         i_coords.append(ig[erosion])
         j_coords.append(jg[erosion])
         a_coords.append(np.ones(point_count) * angle)
-
     if not i_coords:
         labels = np.zeros(mask.shape, dtype=np.int32)
-        return image, DeadWormStats(0, 0, 0.0, 0.0, 0.0), labels
-
+        return (image, DeadWormStats(0, 0, 0.0, 0.0, 0.0), labels)
     i = np.concatenate(i_coords)
     j = np.concatenate(j_coords)
     a = np.concatenate(a_coords)
@@ -1430,13 +1370,8 @@ def identify_dead_worms(
     else:
         space_dist = space_distance
         angle_dist = angular_distance * np.pi / 180.0
-
     first, second = DeadWormAdjacencyPolicy(
-        i=i,
-        j=j,
-        angle=a,
-        space_dist=space_dist,
-        angle_dist=angle_dist,
+        i=i, j=j, angle=a, space_dist=space_dist, angle_dist=angle_dist
     ).edges()
     if len(first) > 0:
         ij_labels = ConnectedComponentEdges(first, second).labels() + 1
@@ -1459,7 +1394,6 @@ def identify_dead_worms(
             center_x = np.array([])
             center_y = np.array([])
             angles = np.array([])
-
     stats = DeadWormStats(
         slice_index=0,
         object_count=int(label_count),
@@ -1467,7 +1401,7 @@ def identify_dead_worms(
         mean_center_y=float(np.mean(center_y)) if len(center_y) > 0 else 0.0,
         mean_angle=float(np.mean(angles) * 180 / np.pi) if len(angles) > 0 else 0.0,
     )
-    return image, stats, labels
+    return (image, stats, labels)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1483,9 +1417,7 @@ class WormGraphPath:
         direction = graph.incidence_directions[self.branch_areas[0], self.segments[0]]
         result = [graph.segments[self.segments[0]][int(direction)]]
         for branch_area, segment in zip(
-            self.branch_areas,
-            self.segments[1:],
-            strict=True,
+            self.branch_areas, self.segments[1:], strict=True
         ):
             direction = not graph.incidence_directions[branch_area, segment]
             result.append(graph.segments[segment][int(direction)])
@@ -1504,18 +1436,17 @@ class WormGraph:
     incident_segments: tuple[np.ndarray, ...]
 
     def paths_between_lengths(
-        self,
-        *,
-        min_length: float,
-        max_length: float,
+        self, *, min_length: float, max_length: float
     ) -> list[WormGraphPath]:
         paths: list[WormGraphPath] = []
         for segment_index, current_length in enumerate(self.segment_lengths):
             if current_length >= min_length:
                 paths.append(WormGraphPath((segment_index,), ()))
             unfinished_branches = tuple(
-                (int(branch_index),)
-                for branch_index in self.incident_branch_areas[segment_index]
+                (
+                    (int(branch_index),)
+                    for branch_index in self.incident_branch_areas[segment_index]
+                )
             )
             paths.extend(
                 self._paths_from(
@@ -1553,9 +1484,7 @@ class WormGraph:
                 first_coord = self.segments[segment_index][int(direction)][0]
                 gap_length = float(np.sqrt(np.sum((last_coord - first_coord) ** 2)))
                 next_length = (
-                    current_length
-                    + gap_length
-                    + self.segment_lengths[segment_index]
+                    current_length + gap_length + self.segment_lengths[segment_index]
                 )
                 if next_length > max_length:
                     continue
@@ -1563,10 +1492,12 @@ class WormGraph:
                 if segment_index > unfinished_segments[0] and next_length >= min_length:
                     paths.append(WormGraphPath(next_segments, unfinished_branch))
                 next_branches = tuple(
-                    (*unfinished_branch, int(branch_index))
-                    for branch_index in self.incident_branch_areas[segment_index]
-                    if int(branch_index) != end_branch
-                    and int(branch_index) not in unfinished_branch
+                    (
+                        (*unfinished_branch, int(branch_index))
+                        for branch_index in self.incident_branch_areas[segment_index]
+                        if int(branch_index) != end_branch
+                        and int(branch_index) not in unfinished_branch
+                    )
                 )
                 paths.extend(
                     self._paths_from(
@@ -1591,17 +1522,15 @@ class WormGraphFromBinaryRequest:
 
     def build(self) -> WormGraph:
         branch_areas = branchpoints(self.skeleton)
-        if self.max_radius is not None and self.max_radius > 0:
+        if self.max_radius is not None:
             far = binary_erosion(
-                self.binary_image,
-                structure=_cellprofiler_strel_disk(self.max_radius),
+                self.binary_image, structure=_cellprofiler_strel_disk(self.max_radius)
             )
             far = binary_opening(far, structure=eight_connectivity())
-            far_labels, _count = label(far, structure=eight_connectivity())
+            far_labels, _count = label(far)
             if far_labels.size:
                 far_counts = np.bincount(
-                    far_labels.ravel(),
-                    weights=branch_areas.ravel().astype(float),
+                    far_labels.ravel(), weights=branch_areas.ravel().astype(float)
                 )
                 far[far_counts[far_labels] < 2] = False
                 branch_areas |= far
@@ -1629,78 +1558,85 @@ class WormSegmentTrace:
 
     @classmethod
     def from_segments(cls, segments: np.ndarray) -> "WormSegmentTrace":
-        foreground = np.argwhere(segments)
-        if len(foreground) == 0:
-            empty_i = np.zeros(0, dtype=int)
-            empty_distance = np.zeros(0, dtype=float)
-            return cls(empty_i, empty_i, empty_i, empty_i, empty_distance, 0)
-
-        row_min, column_min = foreground.min(axis=0)
-        row_max, column_max = foreground.max(axis=0) + 1
-        local_segments = segments[row_min:row_max, column_min:column_max]
-        segment_labels, segment_count = label(
-            local_segments,
-            structure=eight_connectivity(),
-        )
+        segment_labels, segment_count = label(segments, structure=eight_connectivity())
         if segment_count == 0:
             empty_i = np.zeros(0, dtype=int)
             empty_distance = np.zeros(0, dtype=float)
             return cls(empty_i, empty_i, empty_i, empty_i, empty_distance, 0)
-        endpoint_mask = endpoints(local_segments)
-        traced: list[tuple[int, int, int, float]] = []
-        object_slices = find_objects(segment_labels)
-        for label_id, object_slice in enumerate(object_slices, start=1):
-            if object_slice is None:
-                continue
-            row_slice, column_slice = object_slice
-            local_labels = segment_labels[object_slice]
-            segment_mask = local_labels == label_id
-            endpoint_coords = np.argwhere(endpoint_mask[object_slice] & segment_mask)
-            if len(endpoint_coords):
-                start = endpoint_coords[
-                    np.lexsort((endpoint_coords[:, 1], endpoint_coords[:, 0]))
-                ][0]
-            else:
-                coords = np.argwhere(segment_mask)
-                start = coords[np.lexsort((coords[:, 1], coords[:, 0]))][0]
-            distances = _segment_geodesic_distances(segment_mask, tuple(start))
-            coords = np.argwhere(segment_mask)
-            for row, column in coords:
-                traced.append(
-                    (
-                        int(row + row_slice.start + row_min),
-                        int(column + column_slice.start + column_min),
-                        label_id,
-                        float(distances[row, column]),
-                    )
-                )
-        traced_array = np.array(traced, dtype=float)
-        sort_order = np.lexsort((traced_array[:, 3], traced_array[:, 2]))
-        traced_array = traced_array[sort_order]
-        labels = traced_array[:, 2].astype(int)
-        segment_order = np.arange(len(labels), dtype=int)
+
+        endpoint_mask = endpoints(segments)
+        order_image = np.arange(np.prod(segments.shape))
+        order_image.shape = segments.shape
+        order_image[~endpoint_mask] += np.prod(segments.shape)
+        label_range = np.arange(segment_count + 1).astype(int)
+        endpoint_loc = np.array(
+            scipy.ndimage.minimum_position(order_image, segment_labels, label_range),
+            dtype=int,
+        )
+        endpoint_labels = np.zeros(segment_labels.shape, dtype=np.int16)
+        endpoint_labels[endpoint_loc[:, 0], endpoint_loc[:, 1]] = segment_labels[
+            endpoint_loc[:, 0], endpoint_loc[:, 1]
+        ]
+
+        loops = ~endpoint_mask[endpoint_loc[1:, 0], endpoint_loc[1:, 1]]
+        if np.any(loops):
+            dilated_endpoint_labels = scipy.ndimage.grey_dilation(
+                endpoint_labels,
+                footprint=np.ones((3, 3), bool),
+            )
+            dilated_endpoint_labels[dilated_endpoint_labels != segment_labels] = 0
+            loop_endpoints = np.array(
+                scipy.ndimage.maximum_position(
+                    order_image,
+                    dilated_endpoint_labels.astype(int),
+                    label_range[1:][loops],
+                ),
+                dtype=int,
+            )
+            traced_segments = segments.copy()
+            traced_segments[loop_endpoints[:, 0], loop_endpoints[:, 1]] = False
+        else:
+            traced_segments = segments
+
+        _propagated, distances = _propagate_labels_and_distances_zero_image_numba(
+            np.ascontiguousarray(endpoint_labels, dtype=np.int32),
+            np.ascontiguousarray(traced_segments, dtype=np.bool_),
+            1.0,
+            -1.0,
+        )
+        if np.any(loops):
+            distances[loop_endpoints[:, 0], loop_endpoints[:, 1]] = np.inf
+
+        rows, columns = np.mgrid[0 : segments.shape[0], 0 : segments.shape[1]]
+        rows = rows[segments]
+        columns = columns[segments]
+        labels = segment_labels[segments]
+        distance_values = distances[segments]
+        sort_order = np.lexsort((distance_values, labels))
+        rows = rows[sort_order]
+        columns = columns[sort_order]
+        labels = labels[sort_order]
+        distance_values = distance_values[sort_order]
+        segment_order = np.arange(len(rows), dtype=int)
         areas = np.bincount(labels)
         indexes = np.cumsum(areas) - areas
         segment_order -= indexes[labels]
         return cls(
-            traced_array[:, 0].astype(int),
-            traced_array[:, 1].astype(int),
-            labels,
+            rows.astype(int),
+            columns.astype(int),
+            labels.astype(int),
             segment_order,
-            traced_array[:, 3],
+            distance_values,
             segment_count,
         )
 
 
 def _insert_long_segment_breakpoints(
-    segments: np.ndarray,
-    branch_areas: np.ndarray,
-    *,
-    max_skel_length: int,
+    segments: np.ndarray, branch_areas: np.ndarray, *, max_skel_length: int
 ) -> tuple[np.ndarray, np.ndarray]:
     trace = WormSegmentTrace.from_segments(segments)
     if trace.segment_count == 0:
-        return segments, branch_areas
+        return (segments, branch_areas)
     max_order = np.zeros(trace.segment_count + 1, dtype=int)
     for label_id in range(1, trace.segment_count + 1):
         label_orders = trace.order[trace.labels == label_id]
@@ -1708,29 +1644,26 @@ def _insert_long_segment_breakpoints(
             max_order[label_id] = int(np.max(label_orders))
     big_segment = max_order >= max_skel_length
     segment_count_per_label = np.maximum(
-        ((max_order + max_skel_length - 1) / max_skel_length).astype(int),
-        1,
+        ((max_order + max_skel_length - 1) / max_skel_length).astype(int), 1
     )
-    segment_length = np.maximum(((max_order + 1) / segment_count_per_label).astype(int), 1)
+    segment_length = np.maximum(
+        ((max_order + 1) / segment_count_per_label).astype(int), 1
+    )
     new_breakpoints = (
         (trace.order % segment_length[trace.labels] == segment_length[trace.labels] - 1)
         & (trace.order != max_order[trace.labels])
         & big_segment[trace.labels]
     )
     if not np.any(new_breakpoints):
-        return segments, branch_areas
+        return (segments, branch_areas)
     new_branch_areas = np.zeros(segments.shape, dtype=bool)
     new_branch_areas[trace.rows[new_breakpoints], trace.columns[new_breakpoints]] = True
-    new_branch_areas = binary_dilation(
-        new_branch_areas,
-        structure=eight_connectivity(),
-    )
-    return segments & ~new_branch_areas, branch_areas | new_branch_areas
+    new_branch_areas = binary_dilation(new_branch_areas, structure=eight_connectivity())
+    return (segments & ~new_branch_areas, branch_areas | new_branch_areas)
 
 
 def _worm_graph_from_branching_areas(
-    branch_areas: np.ndarray,
-    segments: np.ndarray,
+    branch_areas: np.ndarray, segments: np.ndarray
 ) -> WormGraph:
     branch_labels, branch_count = label(branch_areas, structure=eight_connectivity())
     trace = WormSegmentTrace.from_segments(segments)
@@ -1742,9 +1675,10 @@ def _worm_graph_from_branching_areas(
             incidence_matrix=empty_incidence,
             incidence_directions=empty_incidence.copy(),
             incident_branch_areas=(),
-            incident_segments=tuple(np.zeros(0, dtype=int) for _ in range(branch_count)),
+            incident_segments=tuple(
+                (np.zeros(0, dtype=int) for _ in range(branch_count))
+            ),
         )
-
     sort_order = np.lexsort((trace.order, trace.labels))
     i = trace.rows[sort_order]
     j = trace.columns[sort_order]
@@ -1756,10 +1690,12 @@ def _worm_graph_from_branching_areas(
     coords = np.column_stack((i, j))
     graph_segments = tuple(
         (
-            coords[indexes[index] : indexes[index] + counts[index]],
-            coords[indexes[index] : indexes[index] + counts[index]][::-1],
+            (
+                coords[indexes[index] : indexes[index] + counts[index]],
+                coords[indexes[index] : indexes[index] + counts[index]][::-1],
+            )
+            for index in range(len(counts))
         )
-        for index in range(len(counts))
     )
     start_labels = np.zeros(segments.shape, dtype=int)
     starts = order == 0
@@ -1768,16 +1704,10 @@ def _worm_graph_from_branching_areas(
     end_labels = np.zeros(segments.shape, dtype=int)
     end_labels[i[ends], j[ends]] = labels[ends]
     incidence_directions = _incidence_matrix(
-        branch_labels,
-        branch_count,
-        start_labels,
-        segment_count,
+        branch_labels, branch_count, start_labels, segment_count
     )
     incidence_matrix = _incidence_matrix(
-        branch_labels,
-        branch_count,
-        end_labels,
-        segment_count,
+        branch_labels, branch_count, end_labels, segment_count
     )
     incidence_matrix |= incidence_directions
     segment_lengths = np.array(
@@ -1785,12 +1715,16 @@ def _worm_graph_from_branching_areas(
         dtype=float,
     )
     incident_segments = tuple(
-        np.flatnonzero(incidence_matrix[branch_index, :])
-        for branch_index in range(branch_count)
+        (
+            np.flatnonzero(incidence_matrix[branch_index, :])
+            for branch_index in range(branch_count)
+        )
     )
     incident_branch_areas = tuple(
-        np.flatnonzero(incidence_matrix[:, segment_index])
-        for segment_index in range(segment_count)
+        (
+            np.flatnonzero(incidence_matrix[:, segment_index])
+            for segment_index in range(segment_count)
+        )
     )
     return WormGraph(
         segments=graph_segments,
@@ -1806,17 +1740,13 @@ def _cellprofiler_strel_disk(radius: float) -> np.ndarray:
     """Return CellProfiler/centrosome's disk footprint semantics."""
     integer_radius = int(radius)
     rows, columns = np.mgrid[
-        -integer_radius : integer_radius + 1,
-        -integer_radius : integer_radius + 1,
+        -integer_radius : integer_radius + 1, -integer_radius : integer_radius + 1
     ]
-    return (rows * rows + columns * columns) <= radius * radius
+    return rows * rows + columns * columns <= radius * radius
 
 
 def _offset_path_coords(
-    coords: np.ndarray,
-    *,
-    row_offset: int,
-    column_offset: int,
+    coords: np.ndarray, *, row_offset: int, column_offset: int
 ) -> np.ndarray:
     if len(coords) == 0:
         return coords
@@ -1825,10 +1755,7 @@ def _offset_path_coords(
 
 
 def _longest_worm_graph_path_coords(
-    binary_image: np.ndarray,
-    skeleton: np.ndarray,
-    *,
-    max_length: float,
+    binary_image: np.ndarray, skeleton: np.ndarray, *, max_length: float
 ) -> np.ndarray:
     graph = WormGraphFromBinaryRequest(
         binary_image=binary_image,
@@ -1845,39 +1772,6 @@ def _longest_worm_graph_path_coords(
             longest_coords = coords
             longest_length = path_length
     return longest_coords
-
-
-def _segment_geodesic_distances(
-    segment_mask: np.ndarray,
-    start: tuple[int, int],
-) -> np.ndarray:
-    distances = np.full(segment_mask.shape, np.inf, dtype=float)
-    distances[start] = 0.0
-    queue: list[tuple[float, int, int]] = [(0.0, int(start[0]), int(start[1]))]
-    while queue:
-        distance, row, column = heappop(queue)
-        if distance != distances[row, column]:
-            continue
-        for row_delta in (-1, 0, 1):
-            for column_delta in (-1, 0, 1):
-                if row_delta == 0 and column_delta == 0:
-                    continue
-                next_row = row + row_delta
-                next_column = column + column_delta
-                if (
-                    next_row < 0
-                    or next_column < 0
-                    or next_row >= segment_mask.shape[0]
-                    or next_column >= segment_mask.shape[1]
-                    or not segment_mask[next_row, next_column]
-                ):
-                    continue
-                step = float(np.hypot(row_delta, column_delta))
-                next_distance = distance + step
-                if next_distance < distances[next_row, next_column]:
-                    distances[next_row, next_column] = next_distance
-                    heappush(queue, (next_distance, next_row, next_column))
-    return distances
 
 
 def _incidence_matrix(
@@ -1927,7 +1821,10 @@ class WormClusterPathSelectionPolicy:
         for path in paths:
             coords = path.to_pixel_coords(graph)
             total_length = float(calculate_cumulative_lengths(coords)[-1])
-            if total_length > self.max_path_length or total_length < self.min_path_length:
+            if (
+                total_length > self.max_path_length
+                or total_length < self.min_path_length
+            ):
                 continue
             cost = WormShapeCostRequest(
                 path_coords=coords,
@@ -1940,11 +1837,10 @@ class WormClusterPathSelectionPolicy:
                 paths_and_costs.append((path, cost))
         if not paths_and_costs:
             return []
-
         costs = np.asarray([cost for _path, cost in paths_and_costs], dtype=float)
         order = np.lexsort([costs])
-        if len(order) > 500:
-            order = order[:500]
+        if len(order) > MAX_CLUSTER_PATHS:
+            order = order[:MAX_CLUSTER_PATHS]
         costs = costs[order]
         path_segment_matrix = np.zeros((len(graph.segments), len(order)), dtype=bool)
         for column, ordered_index in enumerate(order):
@@ -1957,8 +1853,7 @@ class WormClusterPathSelectionPolicy:
             overlap_weight=self.overlap_weight,
             leftover_weight=self.leftover_weight,
             max_worms=_cluster_max_worms(
-                self.component_area,
-                median_worm_area=self.median_worm_area,
+                self.component_area, median_worm_area=self.median_worm_area
             ),
         ).select()
         selected_paths = [
@@ -1968,11 +1863,7 @@ class WormClusterPathSelectionPolicy:
         return [path.to_pixel_coords(graph) for path in selected_paths]
 
 
-def _cluster_max_worms(
-    component_area: int,
-    *,
-    median_worm_area: float | None,
-) -> int:
+def _cluster_max_worms(component_area: int, *, median_worm_area: float | None) -> int:
     if median_worm_area is None or median_worm_area <= 0:
         return 1
     return max(1, int(np.ceil(component_area / median_worm_area)))
@@ -2012,7 +1903,9 @@ class WormPathSubsetSelectionContext:
                 break
         return state.best_subset
 
-    def _select_one_level(self, state: WormPathSelectionState) -> WormPathSelectionState:
+    def _select_one_level(
+        self, state: WormPathSelectionState
+    ) -> WormPathSelectionState:
         partial_costs = (
             np.sum(self.costs[:, np.newaxis] * state.path_choices, axis=0)
             + np.sum(
@@ -2040,8 +1933,8 @@ class WormPathSubsetSelectionContext:
         if not np.any(mask):
             return self._empty_state(best_subset, best_cost)
         order = order[mask[order]]
-        if len(order) * len(self.costs) > 5000:
-            order = order[: (1 + 5000 // len(self.costs))]
+        if len(order) * len(self.costs) > MAX_CLUSTER_PATH_SETS_CONSIDERED:
+            order = order[: 1 + MAX_CLUSTER_PATH_SETS_CONSIDERED // len(self.costs)]
         path_segment_matrix = state.path_segment_matrix[:, order]
         path_choices = state.path_choices[:, order]
         i, j = np.mgrid[0 : len(self.costs), 0 : len(self.costs)]
@@ -2053,16 +1946,13 @@ class WormPathSubsetSelectionContext:
         return WormPathSelectionState(
             best_subset=best_subset,
             best_cost=best_cost,
-            path_segment_matrix=(
-                self.path_segment_matrix[:, i] + path_segment_matrix[:, j]
-            ),
+            path_segment_matrix=self.path_segment_matrix[:, i]
+            + path_segment_matrix[:, j],
             path_choices=np.eye(len(self.costs), dtype=bool)[:, i] | path_choices[:, j],
         )
 
     def _empty_state(
-        self,
-        best_subset: list[int],
-        best_cost: float,
+        self, best_subset: list[int], best_cost: float
     ) -> WormPathSelectionState:
         return WormPathSelectionState(
             best_subset=best_subset,
@@ -2111,8 +2001,7 @@ def _worm_label_outputs(
         else np.zeros((0, 3), dtype=np.int32)
     )
     sparse_overlapping = SourceImageObjectLabelBuildRequest(
-        image=source_image,
-        labels=SparseIJVLabelRows(ijv),
+        image=source_image, labels=SparseIJVLabelRows(ijv)
     ).label_set(
         name=overlapping_object_name,
         representation=ObjectLabelRepresentation.SPARSE_IJV,
@@ -2120,12 +2009,10 @@ def _worm_label_outputs(
     overlapping_payload = SourceImageObjectLabelBuildRequest(
         image=source_image,
         labels=overlapping,
-        declared_object_count=len(all_path_coords),
     ).payload()
     nonoverlapping_payload = SourceImageObjectLabelBuildRequest(
         image=source_image,
         labels=nonoverlapping,
-        declared_object_count=len(all_path_coords),
     ).payload()
     return WormLabelOutputStrategy.for_overlap_style(overlap_style).outputs(
         WormLabelOutputRequest(
@@ -2143,22 +2030,17 @@ def _reconstructed_worm_pixels(
     radii_from_training: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     if len(path_coords) < 2:
-        return np.zeros(0, dtype=int), np.zeros(0, dtype=int)
+        return (np.zeros(0, dtype=int), np.zeros(0, dtype=int))
     control_coords = sample_control_points(
-        path_coords,
-        calculate_cumulative_lengths(path_coords),
-        len(radii_from_training),
+        path_coords, calculate_cumulative_lengths(path_coords), len(radii_from_training)
     )
     return rebuild_worm_from_control_points_approx(
-        control_coords,
-        radii_from_training,
-        image_shape,
+        control_coords, radii_from_training, image_shape
     )
 
 
 def _coerce_mean_angles(
-    mean_angles: tuple[float, ...] | None,
-    num_control_points: int,
+    mean_angles: tuple[float, ...] | None, num_control_points: int
 ) -> np.ndarray:
     if mean_angles is None:
         return np.zeros(max(num_control_points - 1, 0), dtype=float)
@@ -2175,8 +2057,7 @@ def _coerce_inverse_covariance(
 
 
 def _coerce_worm_radii(
-    radii_from_training: tuple[float, ...] | None,
-    num_control_points: int,
+    radii_from_training: tuple[float, ...] | None, num_control_points: int
 ) -> np.ndarray:
     if radii_from_training is None:
         return np.ones(num_control_points, dtype=float)
@@ -2215,9 +2096,7 @@ class WormShapeCostRequest:
         angles = WormControlPointGeometry(control_coords).angles
         feature_vector = np.hstack((angles, [self.total_length])) - self.mean_angles
         return float(
-            feature_vector
-            @ self.inv_angles_covariance_matrix
-            @ feature_vector
+            feature_vector @ self.inv_angles_covariance_matrix @ feature_vector
         )
 
     def passes(self, cost_threshold: float) -> bool:
@@ -2252,10 +2131,7 @@ def _worm_descriptor_rows(
 
 
 def _worm_descriptor_row(
-    path_coords: np.ndarray,
-    *,
-    object_number: int,
-    num_control_points: int,
+    path_coords: np.ndarray, *, object_number: int, num_control_points: int
 ) -> dict[str, float | int]:
     cumul_lengths = calculate_cumulative_lengths(path_coords)
     if len(path_coords) < 2:
@@ -2264,13 +2140,10 @@ def _worm_descriptor_row(
         length = 0.0
     else:
         control_coords = sample_control_points(
-            path_coords,
-            cumul_lengths,
-            num_control_points,
+            path_coords, cumul_lengths, num_control_points
         )
         angles = WormControlPointGeometry(control_coords).angles
         length = float(cumul_lengths[-1])
-
     row: dict[str, float | int] = {
         "object_number": object_number,
         "worm_length": length,
@@ -2279,14 +2152,14 @@ def _worm_descriptor_row(
         row[f"worm_angle_{index}"] = float(angle)
     row.update(
         WormControlPointMeasurementSchema(
-            num_control_points=num_control_points,
+            num_control_points=num_control_points
         ).row_fields(control_coords)
     )
     return row
 
 
 class IdentifyDeadWormsModule(CellProfilerModule):
-    module_name = 'IdentifyDeadWorms'
-    function_name = 'identify_dead_worms'
+    module_name = "IdentifyDeadWorms"
+    function_name = "identify_dead_worms"
     validated = True
     confidence = 1.0
