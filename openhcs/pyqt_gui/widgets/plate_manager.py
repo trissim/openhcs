@@ -33,6 +33,7 @@ from openhcs.core.orchestrator.orchestrator import (
     PipelineOrchestrator,
     OrchestratorState,
 )
+from openhcs.core.pipeline import Pipeline
 from openhcs.core.path_cache import PathCacheKey
 from openhcs.core.selection import (
     SelectedAllSelectionMode as PlateManagerCodeSelectionMode,
@@ -2095,7 +2096,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     ) -> PlateManagerCodeDocumentContext:
         """Render orchestrator code for an explicit plate row collection."""
         plate_paths: list[str] = []
-        pipeline_data: dict[str, list] = {}
+        pipeline_data: dict[str, Pipeline] = {}
         per_plate_configs: dict[str, PipelineConfig] = {}
         global_config = self._current_global_config_for_code_document()
 
@@ -2105,8 +2106,11 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
 
             definition_pipeline = self._get_current_pipeline_definition(plate_path)
             if not definition_pipeline:
-                logger.warning("No pipeline defined for %s, using empty pipeline", row.name)
-                definition_pipeline = []
+                logger.warning(
+                    "No pipeline defined for %s, using empty pipeline",
+                    row.name,
+                )
+                definition_pipeline = Pipeline()
 
             pipeline_data[plate_path] = definition_pipeline
 
@@ -2464,7 +2468,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
 
     # ========== Helper Methods ==========
 
-    def _get_current_pipeline_definition(self, plate_path: str) -> List:
+    def _get_current_pipeline_definition(self, plate_path: str) -> Pipeline:
         """
         Get the current pipeline definition for a plate.
 
@@ -2472,15 +2476,15 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             plate_path: Path to the plate
 
         Returns:
-            List of pipeline steps or empty list if no pipeline
+            Pipeline declaration for the plate, including metadata.
         """
-        pipeline_steps = PipelineObjectStateBinding.steps_for_plate(plate_path)
+        pipeline = PipelineObjectStateBinding.pipeline_for_plate(plate_path)
         logger.debug(
             "Loaded pipeline for plate %s from ObjectState with %d steps",
             plate_path,
-            len(pipeline_steps),
+            len(pipeline.steps),
         )
-        return pipeline_steps
+        return pipeline
 
     def notify_pipeline_definition_changed(self, plate_path: str) -> None:
         """Invalidate compiled/run state after the Pipeline ObjectState changes."""
@@ -2552,7 +2556,22 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             )
         if import_result is not None:
             self._cellprofiler_import_results_by_plate[plate_path] = import_result
-        PipelineObjectStateBinding.update_plate_steps(plate_path, pipeline_steps)
+        runtime_bound_steps = PlateManagerCodeWorkflow(
+            self
+        ).runtime_bound_pipeline_for_plate(
+            plate_path,
+            pipeline_steps,
+        )
+        PipelineObjectStateBinding.update_plate_pipeline(
+            plate_path,
+            Pipeline(
+                steps=runtime_bound_steps,
+                name=prepared_pipeline.pipeline.name,
+                metadata=dict(prepared_pipeline.pipeline.metadata),
+                description=prepared_pipeline.pipeline.description,
+                step_scope_ids=prepared_pipeline.pipeline.step_scope_ids,
+            ),
+        )
         self.cellprofiler_pipeline_imported.emit(plate_path)
         self.status_message.emit(
             f"Imported {len(pipeline_steps)} CellProfiler step(s) for {Path(plate_path).name}"

@@ -25,10 +25,12 @@ from openhcs.core.runtime_values import (
 )
 from openhcs.interop.cellprofiler.module_declarations import (
     ProcessingContract,
-    ArtifactContractModule,
     ImageArtifactInputCapability,
+    ImageArtifactInputModule,
     ImageArtifactOutputCapability,
+    ImageArtifactOutputModule,
     MeasurementArtifactOutputCapability,
+    MeasurementArtifactOutputModule,
     ModuleSettingsSourceModule,
 )
 from openhcs.interop.cellprofiler.setting_names import (
@@ -152,10 +154,9 @@ class AlignModule(
     DeclaredImageOutputPayloadMeasurementRecordMixin,
     NoFieldsMeasurementRecordMixin,
     ModuleSettingsSourceModule,
-    ArtifactContractModule,
-    ImageArtifactInputCapability,
-    ImageArtifactOutputCapability,
-    MeasurementArtifactOutputCapability,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    MeasurementArtifactOutputModule,
 ):
     module_name = "Align"
     function_name = "align"
@@ -172,6 +173,16 @@ class AlignModule(
     additional_input_setting = "Select the additional image"
     additional_output_setting = "Name the output image"
     additional_mode_setting = "Select how the alignment is to be applied"
+    image_input_settings = (
+        first_input_setting,
+        second_input_setting,
+        additional_input_setting,
+    )
+    image_output_settings = (
+        first_output_setting,
+        second_output_setting,
+        additional_output_setting,
+    )
 
     class AdditionalMode(str, Enum):
         SIMILARLY = "Similarly"

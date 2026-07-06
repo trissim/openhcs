@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Self
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
+from openhcs.core.pipeline import Pipeline
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
 from openhcs.pyqt_gui.services.plate_manager_root_state import (
@@ -98,21 +99,25 @@ class PlateManagerCodeNamespace(dict):
             raise TypeError("plate_paths must be a list of strings.")
         return tuple(value)
 
-    def pipeline_data(self) -> dict[str, list[FunctionStep]]:
+    def pipeline_data(self) -> dict[str, Pipeline]:
         field_name = PlateManagerCodeNamespaceField.PIPELINE_DATA.value
         value = self[field_name]
         if not isinstance(value, dict):
-            raise TypeError("pipeline_data must be a dict of plate paths to steps.")
+            raise TypeError(
+                "pipeline_data must be a dict of plate paths to Pipeline instances."
+            )
 
-        pipeline_data: dict[str, list[FunctionStep]] = {}
-        for plate_path, pipeline_steps in value.items():
+        pipeline_data: dict[str, Pipeline] = {}
+        for plate_path, pipeline in value.items():
             if not isinstance(plate_path, str):
                 raise TypeError("pipeline_data keys must be plate path strings.")
-            if not isinstance(pipeline_steps, list):
-                raise TypeError("pipeline_data values must be FunctionStep lists.")
-            if not all(isinstance(step, FunctionStep) for step in pipeline_steps):
-                raise TypeError("pipeline_data values must be FunctionStep lists.")
-            pipeline_data[plate_path] = list(pipeline_steps)
+            if not isinstance(pipeline, Pipeline):
+                raise TypeError("pipeline_data values must be Pipeline instances.")
+            if not all(isinstance(step, FunctionStep) for step in pipeline.steps):
+                raise TypeError(
+                    "pipeline_data Pipeline values must contain FunctionStep instances."
+                )
+            pipeline_data[plate_path] = pipeline
         return pipeline_data
 
     def global_config(self) -> GlobalPipelineConfig | None:
@@ -168,7 +173,7 @@ class PlateManagerOrchestratorCodePayload:
     """Authoritative payload for plate-manager orchestrator code documents."""
 
     plate_paths: tuple[str, ...]
-    pipeline_data: dict[str, list[FunctionStep]]
+    pipeline_data: dict[str, Pipeline]
     global_pipeline_config: GlobalPipelineConfig | None = None
     per_plate_configs: dict[str, PipelineConfig] | None = None
 
@@ -397,15 +402,21 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
             pipeline_config
         )
 
-    def apply_pipeline_data(self, pipeline_data: dict[str, list[FunctionStep]]) -> None:
-        for plate_path, pipeline_steps in pipeline_data.items():
+    def apply_pipeline_data(self, pipeline_data: dict[str, Pipeline]) -> None:
+        for plate_path, pipeline in pipeline_data.items():
             pipeline_steps = self.runtime_bound_pipeline_for_plate(
                 plate_path,
-                pipeline_steps,
+                pipeline.steps,
             )
-            PipelineObjectStateBinding.update_plate_steps(
+            PipelineObjectStateBinding.update_plate_pipeline(
                 plate_path,
-                pipeline_steps,
+                Pipeline(
+                    steps=pipeline_steps,
+                    name=pipeline.name,
+                    metadata=dict(pipeline.metadata),
+                    description=pipeline.description,
+                    step_scope_ids=pipeline.step_scope_ids,
+                ),
             )
             logger.debug(
                 "Updated pipeline for %s with %d steps",

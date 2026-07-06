@@ -211,6 +211,9 @@ class RelateObjectsModule(
     save_children_setting = SettingNameFamily(
         "Do you want to save the children with parents as a new object set?"
     )
+    output_object_setting = SettingNameFamily("Name the output object")
+    object_input_settings = (parent_objects_setting, child_objects_setting)
+    object_output_settings = (output_object_setting,)
 
     @classmethod
     def relationship_measurement_rows(cls, request):
@@ -225,7 +228,7 @@ class RelateObjectsModule(
         "Calculate distances to other parents?",
         "Parent name",
         save_children_setting,
-        "Name the output object",
+        output_object_setting,
     )
     setting_bindings = (
         SettingToKeywordBinding(
@@ -255,7 +258,7 @@ class RelateObjectsModule(
         ]
         save_children = optional_setting_value(module, cls.save_children_setting)
         if save_children is not None and save_children.strip().lower() == "yes":
-            output_objects = ObjectLabelArtifactOutputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactOutputCapability.spec(required_setting_value(module, "Name the output object")))
+            output_objects = ObjectLabelArtifactOutputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactOutputCapability.spec(required_setting_value(module, cls.output_object_setting)))
             outputs.insert(0, output_objects)
             outputs.insert(
                 2,
@@ -268,6 +271,13 @@ class RelateObjectsModule(
             )
         return assembler.assemble_contract(
             module, builder, inputs=[parent, child], outputs=outputs
+        )
+
+    @classmethod
+    def compile_time_public_setting_names(cls):
+        return (
+            *super().compile_time_public_setting_names(),
+            cls.save_children_setting,
         )
 
 

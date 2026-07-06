@@ -44,10 +44,6 @@ from openhcs.core.pipeline_image_schema import (
     PipelineImageSchema,
     PipelineImageSchemaSourceBindingsRepresentability,
 )
-from openhcs.core.function_patterns import (
-    COMPILE_TIME_FUNCTION_KWARGS_KEY,
-    CompileTimeFunctionKwargs,
-)
 from openhcs.core.python_source_literal import PythonSourceLiteral
 from openhcs.core.vfs_protocol import FileManagerLike
 from openhcs.interop.cellprofiler.module_roles import (
@@ -55,13 +51,7 @@ from openhcs.interop.cellprofiler.module_roles import (
     cellprofiler_infrastructure_import_note,
     cellprofiler_infrastructure_retained_artifacts,
 )
-from openhcs.interop.cellprofiler.parser import ModuleBlock
-from openhcs.interop.cellprofiler.measurement_scope import (
-    CellProfilerMeasurementTargetScope,
-)
-from openhcs.processing.backends.cellprofiler._backend import (
-    CellProfilerBackendProvider,
-)
+from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.artifact_semantics import artifact_setting_symbols
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingsBinder,
@@ -73,10 +63,6 @@ from openhcs.interop.cellprofiler.module_declarations import (
     BoundModuleSettings,
     CellProfilerModule,
     ModuleSettingCoverageRecord,
-)
-from openhcs.interop.cellprofiler.module_settings_payload import (
-    CellProfilerModuleSettingsKwarg,
-    CellProfilerModuleSettingsPayload,
 )
 from openhcs.processing.materialization import MaterializedFilenameIdentity, tiff_stack
 from openhcs.interop.cellprofiler.symbol_table import (
@@ -723,6 +709,86 @@ class StepInputSourceLiteral:
         lines.append(f"            input_source={self.value},")
 
 
+@dataclass(frozen=True, slots=True)
+class CellProfilerCompileTimeSettingProjection:
+    """Public kwargs used only to reconstruct CellProfiler module contracts."""
+
+    kwargs: dict[str, object]
+
+    @classmethod
+    def from_module(
+        cls,
+        *,
+        module: ModuleBlock,
+        existing_kwargs: Mapping[str, object],
+        source_schema: PipelineImageSchema | None = None,
+    ) -> "CellProfilerCompileTimeSettingProjection":
+        module_type = CellProfilerModule.for_module(module.name)
+        existing = set(existing_kwargs)
+        kwargs: dict[str, object] = {}
+        public_records = cls._public_records(module)
+        if module_type is not None:
+            public_records = (
+                *module_type.compile_time_public_setting_records(
+                    module, source_schema
+                ),
+                *public_records,
+            )
+        binder = SettingsBinder()
+        for setting in cls._dedupe_records(public_records):
+            setting_name = setting.name
+            value = binder.parse_value(setting_name, setting.value)
+            key = normalize_cellprofiler_setting_name(setting_name)
+            if key in existing:
+                continue
+            cls._append_setting_value(kwargs, key, value)
+        return cls(kwargs)
+
+    @classmethod
+    def _public_records(
+        cls,
+        module: ModuleBlock,
+    ) -> tuple[ModuleSetting, ...]:
+        records: list[ModuleSetting] = []
+        seen: set[tuple[str, str]] = set()
+
+        for symbol in artifact_setting_symbols(module):
+            key = (symbol.setting_name, symbol.name)
+            if key in seen:
+                continue
+            records.append(ModuleSetting(symbol.setting_name, symbol.name))
+            seen.add(key)
+
+        return tuple(records)
+
+    @staticmethod
+    def _dedupe_records(records: tuple[ModuleSetting, ...]) -> tuple[ModuleSetting, ...]:
+        deduped: list[ModuleSetting] = []
+        seen: set[tuple[str, str]] = set()
+        for record in records:
+            key = (record.name, record.value)
+            if key in seen:
+                continue
+            deduped.append(record)
+            seen.add(key)
+        return tuple(deduped)
+
+    @staticmethod
+    def _append_setting_value(
+        kwargs: dict[str, object],
+        key: str,
+        value: object,
+    ) -> None:
+        existing = kwargs.get(key)
+        if existing is None:
+            kwargs[key] = value
+            return
+        if isinstance(existing, tuple):
+            kwargs[key] = (*existing, value)
+            return
+        kwargs[key] = (existing, value)
+
+
 @dataclass(frozen=True)
 class PipelineGeneratorCodeEmitter:
     """Generated-code emission for imports, FunctionStep declarations, and comments."""
@@ -773,17 +839,16 @@ class PipelineGeneratorCodeEmitter:
                 param_mapping=param_mapping,
                 artifact_contract=artifact_contract,
             )
-            module_settings_payload = CellProfilerModuleSettingsPayload.from_module(
-                module
-            )
-            compile_time_kwargs = CompileTimeFunctionKwargs.of(
-                CellProfilerModuleSettingsKwarg,
-                module_settings_payload,
+            compile_time_projection = (
+                CellProfilerCompileTimeSettingProjection.from_module(
+                    module=module,
+                    existing_kwargs=dict(translated_kwargs.items()),
+                    source_schema=source_schema,
+                )
             )
             translated_kwargs = translated_kwargs.with_defaults(
-                {COMPILE_TIME_FUNCTION_KWARGS_KEY: compile_time_kwargs}
+                compile_time_projection.kwargs
             )
-            literal_imports.update(compile_time_kwargs.source_literal_imports())
             invocation_options_literal = (
                 module_type.generated_invocation_options_literal(
                     bound_settings.invocation_options, import_collector=literal_imports
@@ -819,7 +884,9 @@ class PipelineGeneratorCodeEmitter:
                 kwargs_lines = ["{"]
                 for k, v in translated_kwargs.items():
                     kwargs_lines.append(
-                        f"            {self.kwarg_key_literal(k)}: {python_literal(v)},"
+                        "            "
+                        f"{self.kwarg_key_literal(k)}: "
+                        f"{python_literal(v, import_collector=literal_imports)},"
                     )
                 kwargs_lines.append("        }")
                 kwargs_str = "\n".join(kwargs_lines)
@@ -909,7 +976,8 @@ class PipelineGeneratorBuildStage:
         missing_modules = []
         for module in modules:
             if self.generator.registry.has_module(module.name):
-                registry_modules.append(module)
+                module_type = self.generator.registry.required_module_class(module.name)
+                registry_modules.extend(module_type.generated_module_blocks(module))
             else:
                 missing_modules.append(module)
                 logger.warning(f"Module {module.name} not in absorbed library")
@@ -1153,34 +1221,58 @@ class PipelineGenerator:
         )
 
 
-def python_literal(value: GeneratedLiteralValue) -> str:
+def python_literal(
+    value: GeneratedLiteralValue,
+    *,
+    import_collector: GeneratedImportCollector | None = None,
+) -> str:
     """Render a deterministic generated-code literal for bound setting values."""
     if isinstance(value, PythonSourceLiteral):
+        if import_collector is not None:
+            import_collector.update(value.source_literal_imports())
         return value.source_literal()
-    if isinstance(value, CellProfilerMeasurementTargetScope):
-        return f"CellProfilerMeasurementTargetScope.{value.name}"
-    if isinstance(value, CellProfilerBackendProvider):
-        return f"CellProfilerBackendProvider.{value.name}"
     if isinstance(value, Enum):
-        return repr(value.value)
+        enum_type = type(value)
+        if "<locals>" in enum_type.__qualname__:
+            return repr(value)
+        root_name, _, nested_path = enum_type.__qualname__.partition(".")
+        if import_collector is not None:
+            import_collector.add((enum_type.__module__, root_name))
+        enum_reference = f"{root_name}.{nested_path}" if nested_path else root_name
+        return f"{enum_reference}.{value.name}"
     if isinstance(value, tuple):
         trailing_comma = ""
         if len(value) == 1:
             trailing_comma = ","
         return (
             "("
-            + ", ".join((python_literal(item) for item in value))
+            + ", ".join(
+                (
+                    python_literal(item, import_collector=import_collector)
+                    for item in value
+                )
+            )
             + trailing_comma
             + ")"
         )
     if isinstance(value, list):
-        return "[" + ", ".join((python_literal(item) for item in value)) + "]"
+        return (
+            "["
+            + ", ".join(
+                (
+                    python_literal(item, import_collector=import_collector)
+                    for item in value
+                )
+            )
+            + "]"
+        )
     if isinstance(value, dict):
         return (
             "{"
             + ", ".join(
                 (
-                    f"{python_literal(key)}: {python_literal(item)}"
+                    f"{python_literal(key, import_collector=import_collector)}: "
+                    f"{python_literal(item, import_collector=import_collector)}"
                     for key, item in value.items()
                 )
             )

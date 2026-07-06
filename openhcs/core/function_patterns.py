@@ -8,13 +8,11 @@ gives that unit a named identity for compile-time planning and runtime lookup.
 
 from __future__ import annotations
 
-from abc import ABC
 from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import ClassVar, Generic, TypeAlias, TypeVar, cast
+from typing import TypeAlias
 
-from metaclass_registry import AutoRegisterMeta
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.invocation_artifacts import (
@@ -25,7 +23,6 @@ from openhcs.core.invocation_artifacts import (
     public_callable_invocation_contract,
 )
 from openhcs.core.function_reference import FunctionReference
-from openhcs.core.python_source_literal import PythonSourceLiteral
 from openhcs.core.runtime_invocation import (
     RuntimeInvocationOptions,
     RuntimeParameterBinding,
@@ -43,184 +40,6 @@ GroupedPatternMap: TypeAlias = dict[FunctionGroupKey, Sequence]
 JsonScalar: TypeAlias = str | int | float | bool | None
 RuntimeComponentValue: TypeAlias = JsonScalar
 DEFAULT_GROUP_KEY = "default"
-CompileTimeKwargPayload = TypeVar("CompileTimeKwargPayload")
-COMPILE_TIME_FUNCTION_KWARGS_KEY = "__openhcs_compile_time_kwargs__"
-
-
-class CompileTimeFunctionKwarg(
-    ABC,
-    Generic[CompileTimeKwargPayload],
-    metaclass=AutoRegisterMeta,
-):
-    """Nominal owner for kwargs consumed by compilation, not runtime callables."""
-
-    __registry_key__ = "__name__"
-    payload_type: ClassVar[type[object] | None] = None
-
-    @classmethod
-    def registered_keys(cls) -> frozenset[type["CompileTimeFunctionKwarg"]]:
-        return frozenset(
-            kwarg_type
-            for kwarg_type in cls.__registry__.values()
-            if isinstance(kwarg_type.payload_type, type)
-        )
-
-    @classmethod
-    def source_literal(cls) -> str:
-        """Return the imported class reference used as a compile-only kwarg key."""
-        return cls.__name__
-
-    @classmethod
-    def source_literal_imports(cls) -> frozenset[tuple[str, str]]:
-        """Return imports required to reference this compile-only kwarg key."""
-        return frozenset({(cls.__module__, cls.__name__)})
-
-    @classmethod
-    def required_payload_type(cls) -> type[CompileTimeKwargPayload]:
-        """Return the payload type accepted by this compile-only kwarg."""
-        if not isinstance(cls.payload_type, type):
-            raise TypeError(f"{cls.__name__} must declare payload_type.")
-        return cast(type[CompileTimeKwargPayload], cls.payload_type)
-
-    @classmethod
-    def payload_from_kwargs(
-        cls,
-        kwargs: Mapping[object, object],
-    ) -> CompileTimeKwargPayload | None:
-        """Extract and type-check this declaration's payload from kwargs."""
-        carrier = kwargs.get(COMPILE_TIME_FUNCTION_KWARGS_KEY)
-        if carrier is None:
-            return None
-        if not isinstance(carrier, CompileTimeFunctionKwargs):
-            raise TypeError(
-                f"{COMPILE_TIME_FUNCTION_KWARGS_KEY} must be "
-                f"CompileTimeFunctionKwargs, got {type(carrier).__name__}."
-            )
-        value = carrier.payload_for(cls)
-        if value is None:
-            return None
-        payload_type = cls.required_payload_type()
-        if not isinstance(value, payload_type):
-            raise TypeError(
-                f"{cls.__name__} payload must be {payload_type.__name__}, "
-                f"got {type(value).__name__}."
-            )
-        return value
-
-    @classmethod
-    def invocation_contract_provider_for_session(
-        cls,
-        session: object,
-    ) -> InvocationContractProviderLike | None:
-        """Return a compile-time contract provider owned by this kwarg type."""
-        del session
-        return None
-
-    @classmethod
-    def strip_from_items(cls, kwargs: RuntimeKwargItems) -> RuntimeKwargItems:
-        return tuple(
-            (key, value)
-            for key, value in kwargs
-            if key != COMPILE_TIME_FUNCTION_KWARGS_KEY
-        )
-
-    @classmethod
-    def strip_from_mapping(cls, kwargs: Mapping[object, object]) -> dict:
-        """Return kwargs without compile-time-only metadata."""
-        return {
-            key: value
-            for key, value in kwargs.items()
-            if key != COMPILE_TIME_FUNCTION_KWARGS_KEY
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class CompileTimeFunctionKwargBinding(PythonSourceLiteral):
-    """Typed compile-time payload entry carried inside a string-safe kwarg."""
-
-    kwarg_type: type[CompileTimeFunctionKwarg]
-    payload: object
-
-    def __post_init__(self) -> None:
-        if not issubclass(self.kwarg_type, CompileTimeFunctionKwarg):
-            raise TypeError(
-                "kwarg_type must inherit CompileTimeFunctionKwarg, "
-                f"got {self.kwarg_type!r}."
-            )
-        payload_type = self.kwarg_type.required_payload_type()
-        if not isinstance(self.payload, payload_type):
-            raise TypeError(
-                f"{self.kwarg_type.__name__} payload must be "
-                f"{payload_type.__name__}, got {type(self.payload).__name__}."
-            )
-
-    def source_literal(self) -> str:
-        """Return importable Python source for this typed binding."""
-        if not isinstance(self.payload, PythonSourceLiteral):
-            raise TypeError(
-                f"{type(self.payload).__name__} must implement PythonSourceLiteral."
-            )
-        return (
-            f"{type(self).__name__}("
-            f"{self.kwarg_type.source_literal()}, "
-            f"{self.payload.source_literal()}"
-            ")"
-        )
-
-    def source_literal_imports(self) -> frozenset[tuple[str, str]]:
-        """Return imports needed by generated source."""
-        payload_imports: frozenset[tuple[str, str]] = frozenset()
-        if isinstance(self.payload, PythonSourceLiteral):
-            payload_imports = self.payload.source_literal_imports()
-        return frozenset(
-            {
-                (type(self).__module__, type(self).__name__),
-                *self.kwarg_type.source_literal_imports(),
-                *payload_imports,
-            }
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class CompileTimeFunctionKwargs(PythonSourceLiteral):
-    """String-key-safe container for typed compile-time function metadata."""
-
-    bindings: tuple[CompileTimeFunctionKwargBinding, ...]
-
-    @classmethod
-    def of(
-        cls,
-        kwarg_type: type[CompileTimeFunctionKwarg],
-        payload: object,
-    ) -> "CompileTimeFunctionKwargs":
-        """Build a carrier with one typed compile-time payload."""
-        return cls((CompileTimeFunctionKwargBinding(kwarg_type, payload),))
-
-    def payload_for(
-        self,
-        kwarg_type: type[CompileTimeFunctionKwarg[CompileTimeKwargPayload]],
-    ) -> CompileTimeKwargPayload | None:
-        """Return the payload registered for ``kwarg_type``."""
-        for binding in self.bindings:
-            if binding.kwarg_type is kwarg_type:
-                return cast(CompileTimeKwargPayload, binding.payload)
-        return None
-
-    def source_literal(self) -> str:
-        """Return importable Python source for this carrier."""
-        bindings_literal = ", ".join(
-            binding.source_literal() for binding in self.bindings
-        )
-        if len(self.bindings) == 1:
-            bindings_literal = f"{bindings_literal},"
-        return f"{type(self).__name__}(({bindings_literal}))"
-
-    def source_literal_imports(self) -> frozenset[tuple[str, str]]:
-        """Return imports needed by generated source."""
-        imports = {(type(self).__module__, type(self).__name__)}
-        for binding in self.bindings:
-            imports.update(binding.source_literal_imports())
-        return frozenset(imports)
 
 
 @dataclass(frozen=True, slots=True)
@@ -914,7 +733,6 @@ def _compile_invocation(
         runtime_parameter_bindings,
         item.contract.runtime_bound_parameter_types,
     )
-    user_kwargs = CompileTimeFunctionKwarg.strip_from_items(user_kwargs)
     return CompiledFunctionInvocation(
         key=item.key,
         contract=item.contract,

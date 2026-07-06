@@ -19,6 +19,7 @@ from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_invocation import SliceIndexRuntimeParameter
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.interop.cellprofiler.setting_names import (
+    SettingNameFamily,
     optional_setting_value,
     required_setting_value,
     setting_values,
@@ -1339,12 +1340,25 @@ class MeasureObjectNeighborsModule(
     validated = True
     confidence = 1.0
     measurement_category_prefixes = (("neighbors",),)
+    measured_objects_setting = SettingNameFamily("Select objects to measure")
+    neighbor_objects_setting = SettingNameFamily(
+        "Select neighboring objects to measure"
+    )
+    retain_count_image_setting = (
+        "Retain the image of objects colored by numbers of neighbors?"
+    )
+    retain_percent_image_setting = (
+        "Retain the image of objects colored by percent of touching pixels?"
+    )
+    output_image_setting = SettingNameFamily("Name the output image")
+    object_input_settings = (measured_objects_setting, neighbor_objects_setting)
+    image_output_settings = (output_image_setting,)
     ignored_settings = (
-        "Select objects to measure",
-        "Select neighboring objects to measure",
-        "Retain the image of objects colored by numbers of neighbors?",
-        "Retain the image of objects colored by percent of touching pixels?",
-        "Name the output image",
+        measured_objects_setting,
+        neighbor_objects_setting,
+        retain_count_image_setting,
+        retain_percent_image_setting,
+        output_image_setting,
         "Select colormap",
     )
     setting_bindings = (
@@ -1393,18 +1407,18 @@ class MeasureObjectNeighborsModule(
 
     @classmethod
     def artifact_contract(cls, assembler, builder, module):
-        measured = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(required_setting_value(module, "Select objects to measure")))
-        neighbors = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(required_setting_value(module, "Select neighboring objects to measure")))
-        output_names = setting_values(module, "Name the output image")
+        measured = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(required_setting_value(module, cls.measured_objects_setting)))
+        neighbors = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(required_setting_value(module, cls.neighbor_objects_setting)))
+        output_names = setting_values(module, cls.output_image_setting)
         outputs = []
         if optional_setting_value(
-            module, "Retain the image of objects colored by numbers of neighbors?"
+            module, cls.retain_count_image_setting
         ) in {"Yes", "yes", "True", "true"}:
             outputs.append(
                 ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(output_names[0]))
             )
         if optional_setting_value(
-            module, "Retain the image of objects colored by percent of touching pixels?"
+            module, cls.retain_percent_image_setting
         ) in {"Yes", "yes", "True", "true"}:
             outputs.append(
                 ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(output_names[1]))
@@ -1412,6 +1426,14 @@ class MeasureObjectNeighborsModule(
         outputs.append(cls.measurement_output_artifact(builder, module))
         return assembler.assemble_contract(
             module, builder, inputs=[measured, neighbors], outputs=outputs
+        )
+
+    @classmethod
+    def compile_time_public_setting_names(cls):
+        return (
+            *super().compile_time_public_setting_names(),
+            cls.retain_count_image_setting,
+            cls.retain_percent_image_setting,
         )
 
 

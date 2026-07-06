@@ -51,7 +51,8 @@ def coerce_cellprofiler_enum(
     """Coerce a CellProfiler literal into a nominal enum member."""
     if isinstance(value, enum_type):
         return value
-    normalized_value = _normalized_enum_literal(str(value))
+    enum_value = value.value if isinstance(value, Enum) else value
+    normalized_value = _normalized_enum_literal(str(enum_value))
     for member in enum_type:
         if normalized_value in _member_literals(enum_type, member):
             return member

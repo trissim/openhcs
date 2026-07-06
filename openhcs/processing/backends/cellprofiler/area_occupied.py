@@ -44,7 +44,9 @@ from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
     repeating_setting_blocks,
     required_setting_value,
+    setting_names,
 )
+from openhcs.interop.cellprofiler.parser import ModuleSetting
 from openhcs.interop.cellprofiler.setting_names import normalized_symbol_name
 from openhcs.interop.cellprofiler.runtime.object_input_policies import (
     ObjectRowsInputPolicy,
@@ -155,6 +157,46 @@ class MeasureImageAreaOccupiedBinaryModule(
         }
 
     @classmethod
+    def compile_time_setting_records_from_kwargs(cls, kwargs):
+        if not {
+            "operand_choices",
+            "input_names",
+            "retained_image_names",
+        }.issubset(kwargs):
+            return ()
+        operand_choices = tuple(kwargs["operand_choices"])
+        input_names = tuple(kwargs["input_names"])
+        retained_image_names = tuple(kwargs["retained_image_names"])
+        if (
+            len(operand_choices) != len(input_names)
+            or len(input_names) != len(retained_image_names)
+        ):
+            raise ValueError(
+                "MeasureImageAreaOccupied compile-time kwargs must align by row."
+            )
+
+        records: list[ModuleSetting] = []
+        for operand_literal, input_name, retained_image_name in zip(
+            operand_choices,
+            input_names,
+            retained_image_names,
+            strict=True,
+        ):
+            operand = cls._operand_from_kwarg(operand_literal)
+            records.extend(
+                cls._compile_time_setting_records_for_row(
+                    operand,
+                    input_name=str(input_name),
+                    retained_image_name=(
+                        None
+                        if retained_image_name is None
+                        else str(retained_image_name)
+                    ),
+                )
+            )
+        return tuple(records)
+
+    @classmethod
     def measurement_rows(
         cls, module: "ModuleBlock"
     ) -> tuple["MeasureImageAreaOccupiedBinaryModule.MeasurementRow", ...]:
@@ -217,6 +259,40 @@ class MeasureImageAreaOccupiedBinaryModule(
         if "object" in normalized:
             return cls.Operand.OBJECTS
         raise ValueError(f"Unsupported MeasureImageAreaOccupied mode {value!r}.")
+
+    @classmethod
+    def _operand_from_kwarg(
+        cls, value: object
+    ) -> "MeasureImageAreaOccupiedBinaryModule.Operand":
+        if isinstance(value, cls.Operand):
+            return value
+        return cls.Operand(str(value))
+
+    @classmethod
+    def _compile_time_setting_records_for_row(
+        cls,
+        operand: "MeasureImageAreaOccupiedBinaryModule.Operand",
+        *,
+        input_name: str,
+        retained_image_name: str | None,
+    ) -> tuple[ModuleSetting, ...]:
+        binary_image_name = input_name if operand is cls.Operand.BINARY_IMAGE else "None"
+        objects_name = input_name if operand is cls.Operand.OBJECTS else "None"
+        records = [
+            ModuleSetting(
+                setting_names(cls.mode_setting)[0],
+                "Binary image" if operand is cls.Operand.BINARY_IMAGE else "Objects",
+            ),
+            ModuleSetting(setting_names(cls.binary_image_setting)[0], binary_image_name),
+            ModuleSetting(setting_names(cls.objects_setting)[0], objects_name),
+            ModuleSetting(
+                cls.retain_image_setting,
+                "Yes" if retained_image_name is not None else "No",
+            ),
+        ]
+        if retained_image_name is not None:
+            records.append(ModuleSetting(cls.output_image_setting, retained_image_name))
+        return tuple(records)
 
     @classmethod
     def _input_name_for_operand(
@@ -441,11 +517,16 @@ def measure_image_area_occupied(
     binary_images = _binary_images_from_payload(
         image, sum((row.operand is OperandChoice.BINARY_IMAGE for row in rows))
     )
-    if len(object_labels) != sum(
-        (row.operand is OperandChoice.OBJECTS for row in rows)
-    ):
+    expected_object_rows = sum((row.operand is OperandChoice.OBJECTS for row in rows))
+    if len(object_labels) != expected_object_rows:
         raise ValueError(
-            "MeasureImageAreaOccupied object_labels count must match object rows."
+            "MeasureImageAreaOccupied object_labels count must match object rows: "
+            f"got {len(object_labels)} object label input(s) for "
+            f"{expected_object_rows} object row(s) from "
+            f"operand_choices={tuple(row.operand.value for row in rows)!r}, "
+            f"input_names={tuple(row.input_name for row in rows)!r}; "
+            f"object_labels_type={type(object_labels).__name__}, "
+            f"object_label_items={_object_label_items_diagnostic(object_labels)}."
         )
     retained_outputs = []
     measurements = []
@@ -555,6 +636,17 @@ def _area_occupied_runtime_rows(
             )
         )
     )
+
+
+def _object_label_items_diagnostic(object_labels: Sequence[np.ndarray]) -> tuple[str, ...]:
+    diagnostics: list[str] = []
+    for label in object_labels:
+        shape = getattr(label, "shape", None)
+        if shape is None:
+            data = getattr(label, "data", None)
+            shape = getattr(data, "shape", None)
+        diagnostics.append(f"{type(label).__name__}(shape={shape!r})")
+    return tuple(diagnostics)
 
 
 def _binary_images_from_payload(

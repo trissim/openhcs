@@ -3,6 +3,7 @@
 from __future__ import annotations
 import inspect
 import importlib
+import pkgutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
@@ -291,11 +292,24 @@ def _declared_function_name_candidates_for(
 
 
 def _load_contracts() -> Mapping[str, AbsorbedFunctionMetadata]:
+    _ensure_module_declarations_loaded()
     contracts = {}
     for module_type in _cellprofiler_module_root().__registry__.values():
         metadata = AbsorbedFunctionMetadata.from_module_class(module_type)
         contracts[metadata.module_name] = metadata
     return MappingProxyType(contracts)
+
+
+def _ensure_module_declarations_loaded() -> None:
+    """Import CellProfiler backend modules before snapshotting declarations."""
+    package = importlib.import_module("openhcs.processing.backends.cellprofiler")
+    for _importer, module_name, is_package in pkgutil.iter_modules(
+        package.__path__,
+        f"{package.__name__}.",
+    ):
+        if is_package or module_name.endswith(".library"):
+            continue
+        importlib.import_module(module_name)
 
 
 def _absorbed_contract_signature() -> (

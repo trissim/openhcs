@@ -337,6 +337,15 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         repr=False,
         compare=False,
     )
+    _current_object_cache: dict[
+        tuple[int, str | None, str, int],
+        ObjectLabelSet,
+    ] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
     _measurement_cache: dict[Hashable, CellProfilerMeasurementCacheValue] = field(
         default_factory=dict,
         init=False,
@@ -1255,6 +1264,16 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
             cached = self._object_cache.get(cache_key)
             if cached is not None:
                 return cached
+        else:
+            current_cache_key = (
+                self.runtime_value_store.revision,
+                resolved_group_key,
+                name,
+                id(current_image),
+            )
+            cached = self._current_object_cache.get(current_cache_key)
+            if cached is not None:
+                return cached
         records = RuntimeArtifactRecordResolver(
             adapter=self,
             name=name,
@@ -1274,6 +1293,8 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
             ).project(objects)
         if current_image is None:
             self._object_cache[cache_key] = objects
+        else:
+            self._current_object_cache[current_cache_key] = objects
         return objects
 
     def get_objects_across_groups(self, name: str) -> ObjectLabelSet:
@@ -2017,6 +2038,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         self._image_cache.clear()
         self._current_image_cache.clear()
         self._object_cache.clear()
+        self._current_object_cache.clear()
         self._measurement_cache.clear()
         object_label_measurement_values_cache(self.runtime_value_store).clear()
         object_measurement_table_cache(self.runtime_value_store).clear()

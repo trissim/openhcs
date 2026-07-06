@@ -452,6 +452,7 @@ class MaskObjectsModule(
     )
     masking_image_setting = SettingNameFamily("Select the masking image")
     masking_objects_setting = SettingNameFamily("Select the masking object")
+    image_input_settings = (masking_image_setting,)
     ignored_settings = (
         "Mask using a region defined by other objects or by binary image",
         "Select the masking image",
@@ -487,6 +488,13 @@ class MaskObjectsModule(
             "Invert the mask?", "invert_mask", parse_cellprofiler_bool
         ),
     )
+
+    @classmethod
+    def compile_time_public_setting_names(cls):
+        return (
+            *super().compile_time_public_setting_names(),
+            cls.masking_objects_setting,
+        )
 
     @classmethod
     def artifact_contract(cls, assembler, builder, module):

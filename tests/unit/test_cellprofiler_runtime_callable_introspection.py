@@ -1,6 +1,9 @@
 """CellProfiler runtime callable introspection behavior."""
 
 import copy
+from inspect import signature
+import subprocess
+import sys
 from types import ModuleType
 from typing import get_args
 
@@ -16,6 +19,7 @@ from openhcs.core.artifacts import (
     ObjectLabelsArtifactType,
 )
 from openhcs.core.function_patterns import compile_function_pattern
+from openhcs.core.function_reference import FunctionReferenceTransportAuthority
 from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
 from openhcs.core.module_artifact_contract import (
     DeclaredArtifactOutputPartition,
@@ -32,9 +36,13 @@ from openhcs.core.source_bindings import (
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.config_framework.object_state import ObjectState
 from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
+    CellProfilerGeneratedInvocationContractProvider,
     CellProfilerGeneratedRuntimeBindingState,
     CellProfilerGeneratedPipelineInvocationContracts,
     bind_generated_pipeline_runtime,
+)
+from openhcs.interop.cellprofiler.compile_time_contracts import (
+    cellprofiler_module_settings_invocation_contract_provider_for_session,
 )
 from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerProcessingContractAuthority,
@@ -43,10 +51,17 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
 )
 from openhcs.processing.backends.cellprofiler import (
     CellProfilerFunctionCatalog,
+    correct_illumination_calculate,
     crop,
     identify_tertiary_objects,
 )
 from openhcs.processing.backends.cellprofiler.crop import CropModule
+from openhcs.processing.backends.cellprofiler.illumination import (
+    FilterSizeMethod,
+    IntensityChoice,
+    RescaleOption,
+    SmoothingMethod,
+)
 from openhcs.processing.backends.cellprofiler.neighbors import measure_object_neighbors
 from pyqt_reactive.services.function_pattern_code_document import (
     FunctionPatternCodeDocumentService,
@@ -87,6 +102,22 @@ def declared_runtime_callable(func, contract):
         contract,
         processing_contract=processing_contract,
         declared_processing_contract=declared_processing_contract,
+    )
+
+
+def test_public_cellprofiler_backend_import_registers_compile_time_contract_provider():
+    """Plain public CP callables must be enough for compiler-time contract derivation."""
+    script = """
+from openhcs.core.invocation_artifacts import InvocationContractProviderFactory
+import openhcs.processing.backends.cellprofiler
+names = sorted(cls.__name__ for cls in InvocationContractProviderFactory.__registry__.values())
+assert "CellProfilerInvocationContractProviderFactory" in names, names
+"""
+    subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        text=True,
+        capture_output=True,
     )
 
 
@@ -210,6 +241,21 @@ def test_cellprofiler_runtime_callable_analyzes_raw_backend_signature():
     assert "crop_shape" in params
     assert CropModule.Shape in get_args(params["crop_shape"].param_type)
     assert runtime_callable.__doc__ == crop.__doc__
+
+
+def test_cellprofiler_runtime_callable_publishes_resolved_enum_annotations():
+    """UI-facing runtime callables must not expose stringified enum annotations."""
+    runtime_callable = declared_runtime_callable(
+        correct_illumination_calculate,
+        ModuleArtifactContract(module_name="CorrectIlluminationCalculate"),
+    )
+
+    parameters = signature(runtime_callable).parameters
+
+    assert IntensityChoice in get_args(parameters["intensity_choice"].annotation)
+    assert RescaleOption in get_args(parameters["rescale_option"].annotation)
+    assert SmoothingMethod in get_args(parameters["smoothing_method"].annotation)
+    assert FilterSizeMethod in get_args(parameters["filter_size_method"].annotation)
 
 
 def test_cellprofiler_runtime_callable_rebuilds_with_nominal_equality():
@@ -378,6 +424,87 @@ def test_generated_contract_provider_binds_cellprofiler_runtime_at_compile_time(
     assert invocation.contract.module_artifact_contract == contract
     assert isinstance(invocation.contract.func, CellProfilerRuntimeCallable)
     assert runtime_adapter_spec_from_callable(invocation.contract.func) is not None
+
+
+def test_generated_contract_provider_uses_generated_step_order_for_repeated_modules():
+    """Repeated generated modules can share source bindings without contract ambiguity."""
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigBlue",
+                artifact_kind=ImageArtifactType,
+            ),
+        ),
+    )
+    first_contract = crop_contract(
+        inputs=(ArtifactSpec.input("OrigBlue", ImageArtifactType),),
+        outputs=(ArtifactSpec.output("FirstCrop", ImageArtifactType),),
+    )
+    second_contract = crop_contract(
+        inputs=(ArtifactSpec.input("OrigBlue", ImageArtifactType),),
+        outputs=(ArtifactSpec.output("SecondCrop", ImageArtifactType),),
+    )
+    steps = [
+        FunctionStep(func=crop, name="Crop", source_bindings=source_bindings),
+        FunctionStep(func=crop, name="Crop", source_bindings=source_bindings),
+    ]
+    FunctionReferenceTransportAuthority.reference_pipeline_in_place(steps)
+    provider = CellProfilerGeneratedInvocationContractProvider.for_steps(
+        {1: first_contract, 2: second_contract},
+        steps,
+    )
+
+    compiled = compile_function_pattern(
+        crop,
+        {},
+        {},
+        invocation_contract_provider=provider,
+        step_context=ArtifactDeclarationStepContext(
+            step_index=1,
+            source_bindings=source_bindings,
+        ),
+    )
+    invocation = next(compiled.iter_invocations())
+
+    assert invocation.contract.module_artifact_contract == second_contract
+
+
+def test_cellprofiler_compile_time_contract_provider_derives_single_source_input():
+    """Source bindings can provide an unambiguous missing CP input-image setting."""
+    source_bindings = StepSourceBindingsConfig(
+        enabled=True,
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigStain1",
+                artifact_kind=ImageArtifactType,
+            ),
+        ),
+    )
+    step = FunctionStep(
+        func=(
+            correct_illumination_calculate,
+            {"name_the_output_image": "IllumStain1"},
+        ),
+        name="CorrectIlluminationCalculate",
+        source_bindings=source_bindings,
+    )
+    session = type(
+        "Session",
+        (),
+        {
+            "steps": [step],
+            "pipeline_metadata": {},
+        },
+    )()
+
+    provider = cellprofiler_module_settings_invocation_contract_provider_for_session(
+        session
+    )
+
+    assert provider is not None
+    contract = provider.contracts_by_module_num[1]
+    assert [spec.name for spec in contract.inputs] == ["OrigStain1"]
+    assert [spec.name for spec in contract.outputs] == ["IllumStain1"]
 
 
 def test_generated_runtime_binding_state_accepts_nested_function_patterns():

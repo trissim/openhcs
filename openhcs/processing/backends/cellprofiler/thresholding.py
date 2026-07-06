@@ -94,7 +94,7 @@ from openhcs.processing.backends.cellprofiler.thresholding_threshold_numba_diagn
     QuantizedThresholdDiagnosticContext,
     _threshold_diagnostics_rectangular_mask_quantized_numba,
     _threshold_diagnostics_unmasked_finite_quantized_numba,
-    quantized_threshold_codes,
+    exact_quantized_threshold_codes,
 )
 from openhcs.processing.backends.cellprofiler.thresholding_threshold_numba_otsu import (
     CELLPROFILER_LI_TOLERANCE,
@@ -1196,11 +1196,18 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                 mask_domain = rectangular_mask_domain(mask_array)
                 if mask_domain is not None:
                     cropped_image = image_array[mask_domain.slices]
-                    if bool(np.all(np.isfinite(cropped_image))):
+                    codes = exact_quantized_threshold_codes(
+                        image_array,
+                        int(proven_unit_interval_scale),
+                    )
+                    if (
+                        codes is not None
+                        and bool(np.all(np.isfinite(cropped_image)))
+                    ):
                         scale = int(proven_unit_interval_scale)
                         log_tables = _quantized_log_tables(scale)
                         context = QuantizedThresholdDiagnosticContext(
-                            codes=quantized_threshold_codes(image_array, scale),
+                            codes=codes,
                             binary_image=np.ascontiguousarray(binary_array),
                             noise=_deterministic_normal_noise(image_array.shape),
                             values=log_tables.values,
@@ -1263,6 +1270,28 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
 
         full_mask = flat_mask is None or bool(np.all(flat_mask))
         if full_mask and bool(np.all(np.isfinite(flat_image))):
+            if request.proven_unit_interval_scale is not None:
+                scale = int(request.proven_unit_interval_scale)
+                codes = exact_quantized_threshold_codes(image_array, scale)
+                if codes is not None:
+                    log_tables = _quantized_log_tables(scale)
+                    context = QuantizedThresholdDiagnosticContext(
+                        codes=np.ascontiguousarray(codes.reshape(-1, 1)),
+                        binary_image=flat_binary,
+                        noise=noise,
+                        values=log_tables.values,
+                        weighted_log_values=log_tables.weighted_log_values,
+                        entropy_log_values=log_tables.entropy_log_values,
+                        entropy_log_delta_values=(
+                            log_tables.entropy_log_delta_values
+                        ),
+                    )
+                    weighted_variance, sum_of_entropies = (
+                        _threshold_diagnostics_unmasked_finite_quantized_numba(
+                            context
+                        )
+                    )
+                    return (float(weighted_variance), float(sum_of_entropies))
             weighted_variance, sum_of_entropies = (
                 _threshold_diagnostics_unmasked_finite_numba(
                     flat_image,

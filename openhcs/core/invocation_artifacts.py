@@ -7,6 +7,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from metaclass_registry import AutoRegisterMeta
+
 from openhcs.core.artifact_key_selection import ArtifactPlanKeySelector
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
@@ -192,6 +194,20 @@ InvocationContractProviderLike = Callable[
 ]
 
 
+class InvocationContractProviderFactory(ABC, metaclass=AutoRegisterMeta):
+    """Registered owner for compile-time invocation contract providers."""
+
+    __registry_key__ = "__name__"
+
+    @classmethod
+    @abstractmethod
+    def provider_for_session(
+        cls,
+        session: Any,
+    ) -> InvocationContractProviderLike | None:
+        """Return an invocation-contract provider for one compilation session."""
+
+
 @dataclass(frozen=True, slots=True)
 class CompositeInvocationContractProvider:
     """Try compile-time invocation-contract providers in declaration order."""
@@ -219,10 +235,9 @@ class PipelineInvocationContractProviderAuthority:
         session: Any,
     ) -> InvocationContractProviderLike:
         providers: list[InvocationContractProviderLike] = []
-        from openhcs.core.function_patterns import CompileTimeFunctionKwarg
 
-        for kwarg_type in CompileTimeFunctionKwarg.registered_keys():
-            provider = kwarg_type.invocation_contract_provider_for_session(session)
+        for provider_factory in InvocationContractProviderFactory.__registry__.values():
+            provider = provider_factory.provider_for_session(session)
             if provider is not None:
                 providers.append(provider)
         if not providers:

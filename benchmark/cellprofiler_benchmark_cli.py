@@ -163,6 +163,14 @@ class RunBenchmarkCommand(BenchmarkCliCommand):
             load_comparison_cases(args.manifest),
             tuple(args.case_names or ()),
         )
+        source_schema_image_set_selection = None
+        if args.source_schema_wells is not None or (
+            args.source_schema_max_image_set_count is not None
+        ):
+            source_schema_image_set_selection = SourceSchemaImageSetSelection(
+                well_filter=tuple(args.source_schema_wells or ()),
+                max_image_set_count=args.source_schema_max_image_set_count,
+            )
         observations = run_comparison_suite(
             cases,
             output_root=args.output_dir,
@@ -174,10 +182,7 @@ class RunBenchmarkCommand(BenchmarkCliCommand):
             require_native_reference=args.require_native_reference,
             discard_openhcs_outputs=args.discard_openhcs_outputs,
             continue_on_error=args.continue_on_error,
-            source_schema_image_set_selection=SourceSchemaImageSetSelection(
-                well_filter=tuple(args.source_schema_wells or ()),
-                max_image_set_count=args.source_schema_max_image_set_count,
-            ),
+            source_schema_image_set_selection=source_schema_image_set_selection,
             metric_policy=ComparisonMetricPolicy(
                 collect_memory=not args.no_memory_metric,
             ),

@@ -44,7 +44,11 @@ from openhcs.interop.cellprofiler.setting_names import (
     required_setting_value,
     setting_values,
 )
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    cellprofiler_enum_value_setting_parser,
+    coerce_cellprofiler_enum,
+)
 
 
 class ColorToGrayModule(
@@ -93,6 +97,19 @@ class ColorToGrayModule(
         HSV = "hsv"
         CHANNELS = "channels"
 
+    setting_bindings = (
+        SettingToKeywordBinding(
+            conversion_method_setting,
+            "mode",
+            cellprofiler_enum_value_setting_parser(ConversionMethod),
+        ),
+        SettingToKeywordBinding(
+            image_type_setting,
+            "image_type",
+            cellprofiler_enum_value_setting_parser(ImageType),
+        ),
+    )
+
     @dataclass(frozen=True, slots=True)
     class Plan:
         input_image_name: str
@@ -116,6 +133,37 @@ class ColorToGrayModule(
         cls, module: "ModuleBlock", binder: "SettingsBinder"
     ) -> "CellProfilerKwargs":
         return cls.plan(module, binder).kwargs
+
+    @classmethod
+    def compile_time_public_setting_records(cls, module, source_schema=None):
+        del source_schema
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+        from openhcs.interop.cellprofiler.setting_names import setting_name_matches
+
+        preserved_settings = (
+            cls.output_image_setting,
+            cls.channel_output_image_setting,
+            *cls.rgb_output_flags,
+            *cls.hsv_output_flags,
+        )
+        return tuple(
+            ModuleSetting(setting.name, setting.value)
+            for setting in module.iter_settings()
+            if any(
+                setting_name_matches(setting.name, preserved)
+                for preserved in preserved_settings
+            )
+        )
+
+    @classmethod
+    def compile_time_public_setting_names(cls):
+        return (
+            *super().compile_time_public_setting_names(),
+            cls.output_image_setting,
+            cls.channel_output_image_setting,
+            *cls.rgb_output_flags,
+            *cls.hsv_output_flags,
+        )
 
     @classmethod
     def plan(

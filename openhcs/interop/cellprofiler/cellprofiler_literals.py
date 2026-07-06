@@ -54,3 +54,19 @@ def cellprofiler_enum_from_literal(
     raise ValueError(
         f"Unsupported {enum_type.__name__} CellProfiler literal {value!r}."
     )
+
+
+def cellprofiler_setting_literal(value: object) -> str:
+    """Return a CellProfiler setting-row literal for a Python value."""
+    if value is None:
+        return "None"
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        return ", ".join(cellprofiler_setting_literal(item) for item in value)
+    enum_value = getattr(value, "value", None)
+    if isinstance(enum_value, str):
+        return enum_value
+    return str(value)

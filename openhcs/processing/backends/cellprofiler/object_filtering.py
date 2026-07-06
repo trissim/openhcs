@@ -411,6 +411,15 @@ class FilterObjectsModule(
     additional_outline_setting = "Save outlines of relabeled objects?"
     enclosing_object_setting = "Select the objects that contain the filtered objects"
     per_object_assignment_setting = "Assign overlapping child to"
+    object_input_settings = (
+        input_setting,
+        additional_input_setting,
+        enclosing_object_setting,
+    )
+    object_output_settings = (
+        output_setting,
+        additional_output_setting,
+    )
 
     @dataclass(frozen=True, slots=True)
     class SymbolRequirement:

@@ -542,7 +542,7 @@ class CellProfilerRuntimeCallable:
         self.__module__ = raw_func.__module__
         self.__doc__ = raw_func.__doc__
         self.__signature__ = _cellprofiler_runtime_callable_signature(raw_func)
-        self.__annotations__ = get_annotations(raw_func, eval_str=False)
+        self.__annotations__ = _cellprofiler_runtime_callable_annotations(raw_func)
         if raw_contract.input_memory_type is not None:
             self.input_memory_type = raw_contract.input_memory_type
         if raw_contract.output_memory_type is not None:
@@ -634,6 +634,44 @@ class CellProfilerRuntimeCallable:
         self.executor.prepare(self.raw_func)
 
 
+def _cellprofiler_callable_annotations(raw_func: CellProfilerFunction) -> dict[str, object]:
+    """Return evaluated callable annotations with a raw fallback for broken imports."""
+    try:
+        return dict(_callable_type_hints(raw_func))
+    except Exception:
+        return dict(get_annotations(raw_func, eval_str=False))
+
+
+def _cellprofiler_runtime_callable_annotations(
+    raw_func: CellProfilerFunction,
+) -> dict[str, object]:
+    """Return the runtime callable's public annotation map."""
+    return {
+        **_cellprofiler_callable_annotations(raw_func),
+        CellProfilerRuntimeAdapter.require_parameter_name(): CellProfilerRuntimeAdapter,
+        RuntimeInvocationOptions.require_parameter_name(): CellProfilerRuntimeValue | None,
+        "enabled": bool,
+    }
+
+
+def _signature_with_resolved_annotations(
+    raw_func: CellProfilerFunction,
+):
+    """Return raw callable signature with evaluated parameter annotations."""
+    raw_signature = signature(raw_func)
+    annotations = _cellprofiler_callable_annotations(raw_func)
+    parameters = [
+        parameter.replace(annotation=annotations[name])
+        if name in annotations
+        else parameter
+        for name, parameter in raw_signature.parameters.items()
+    ]
+    return raw_signature.replace(
+        parameters=parameters,
+        return_annotation=annotations.get("return", raw_signature.return_annotation),
+    )
+
+
 def _cellprofiler_runtime_callable_signature(raw_func: CellProfilerFunction):
     """Return raw callable signature plus OpenHCS runtime injection parameters."""
     runtime_parameters = (
@@ -648,9 +686,9 @@ def _cellprofiler_runtime_callable_signature(raw_func: CellProfilerFunction):
             annotation=CellProfilerRuntimeValue | None,
             default=None,
         ),
-        Enableable.parameter(),
+        Enableable.parameter().replace(annotation=bool),
     )
-    raw_signature = signature(raw_func)
+    raw_signature = _signature_with_resolved_annotations(raw_func)
     existing_names = frozenset(raw_signature.parameters)
     injected = [
         parameter

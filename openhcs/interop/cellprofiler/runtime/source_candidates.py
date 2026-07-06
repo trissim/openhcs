@@ -112,10 +112,22 @@ def source_candidate_process_cache_key(
     )
     return (
         file_paths,
-        context.process_semantic_identity,
+        source_candidate_context_identity(context),
         projects_virtual_paths,
         plan.metadata_rules,
         parser.semantic_identity(),
+    )
+
+
+def source_candidate_context_identity(
+    context: SourceBindingRuntimeContext,
+) -> tuple[Hashable, ...]:
+    """Return source semantics that affect parsing one explicit file universe."""
+    return (
+        context.step_input_dir,
+        context.source_metadata_identity,
+        tuple(sorted(context.step_input_source_paths.items())),
+        tuple(sorted(context.virtual_source_paths_by_identity.items())),
     )
 
 
@@ -1369,8 +1381,7 @@ def _source_path_candidate_cache_key(
     context = adapter.source_binding_context
     return (
         str(file_path),
-        context.source_order_identity,
-        context.source_metadata_identity,
+        source_candidate_context_identity(context),
         universe.projects_virtual_paths,
         adapter.source_binding_plan.metadata_rules,
         parser.semantic_identity(),

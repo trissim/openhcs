@@ -98,6 +98,36 @@ class MeasureImageQualityModule(
     )
 
     @classmethod
+    def compile_time_public_setting_records(cls, module, source_schema=None):
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        selection = optional_setting_value(module, cls.image_selection_setting)
+        if selection is None:
+            return ()
+        if selection == cls.all_loaded_images_selection and source_schema is not None:
+            loaded_image_aliases = source_schema.loaded_image_aliases
+            if loaded_image_aliases:
+                return (
+                    ModuleSetting(
+                        cls.image_selection_setting,
+                        cls.selected_images_selection,
+                    ),
+                    *(
+                        ModuleSetting(cls.selected_images_setting, alias)
+                        for alias in loaded_image_aliases
+                    ),
+                )
+        return (ModuleSetting(cls.image_selection_setting, selection),)
+
+    @classmethod
+    def compile_time_public_setting_names(cls):
+        return (
+            *super().compile_time_public_setting_names(),
+            cls.image_selection_setting,
+            cls.selected_images_setting,
+        )
+
+    @classmethod
     def ignored_settings_for(
         cls, module: "ModuleBlock"
     ) -> tuple[str | "SettingNameFamily", ...]:

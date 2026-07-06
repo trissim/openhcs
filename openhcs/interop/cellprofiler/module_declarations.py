@@ -10,7 +10,17 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
+from types import UnionType
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    TypeVar,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict, RegistryConfig
 from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.core.artifacts import (
@@ -166,6 +176,39 @@ class BoundModuleSettings:
             self.invocation_options,
             self.setting_coverage,
         )
+
+    def with_replaced_kwargs(self, kwargs: Mapping[str, Any]) -> "BoundModuleSettings":
+        """Return this binding with the function kwargs replaced."""
+        return BoundModuleSettings(
+            kwargs,
+            self.unmapped_kwargs,
+            self.invocation_options,
+            self.setting_coverage,
+        )
+
+
+def _enum_type_from_annotation(annotation: Any) -> type[Enum] | None:
+    """Return the callable-owned Enum type declared by an annotation."""
+    if isinstance(annotation, type) and issubclass(annotation, Enum):
+        return annotation
+    origin = get_origin(annotation)
+    if origin in (Union, UnionType, tuple):
+        for arg in get_args(annotation):
+            enum_type = _enum_type_from_annotation(arg)
+            if enum_type is not None:
+                return enum_type
+    return None
+
+
+def _coerce_callable_enum_kwarg(value: Any, enum_type: type[Enum]) -> Any:
+    """Coerce one bound kwarg value to the callable-owned Enum type."""
+    if value is None:
+        return None
+    if isinstance(value, tuple):
+        return tuple(_coerce_callable_enum_kwarg(item, enum_type) for item in value)
+    if isinstance(value, enum_type):
+        return value
+    return coerce_cellprofiler_enum(enum_type, value)
 
 
 GeneratedImportCollector = set[tuple[str, str]]
@@ -1221,6 +1264,9 @@ class CellProfilerModule(
         runtime_kwargs = cls.runtime_kwargs(module)
         if runtime_kwargs:
             bound = bound.with_kwargs(runtime_kwargs)
+        bound = bound.with_replaced_kwargs(
+            cls._coerce_kwargs_to_callable_signature(bound.kwargs)
+        )
         artifact_setting_names = frozenset(
             (
                 _normalize_setting_name(symbol.setting_name)
@@ -1283,6 +1329,46 @@ class CellProfilerModule(
         )
 
     @classmethod
+    def _coerce_kwargs_to_callable_signature(
+        cls,
+        kwargs: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """Return kwargs using enum classes declared by the runtime callable."""
+        from inspect import Parameter, signature
+        from openhcs.processing.backends.cellprofiler.library import require_function
+
+        if not kwargs:
+            return kwargs
+        absorbed_function = require_function(
+            str(cls.module_name), function_name=str(cls.function_name)
+        )
+        annotations = get_type_hints(absorbed_function)
+        parameters = signature(absorbed_function).parameters
+        coerced: dict[str, Any] = {}
+        for parameter_name, value in kwargs.items():
+            parameter = parameters.get(parameter_name)
+            if parameter is None:
+                coerced[parameter_name] = value
+                continue
+            annotation = annotations.get(parameter_name)
+            enum_type = (
+                _enum_type_from_annotation(annotation)
+                if annotation is not None
+                else None
+            )
+            if (
+                enum_type is None
+                and parameter.default is not Parameter.empty
+                and isinstance(parameter.default, Enum)
+            ):
+                enum_type = type(parameter.default)
+            if enum_type is None:
+                coerced[parameter_name] = value
+                continue
+            coerced[parameter_name] = _coerce_callable_enum_kwarg(value, enum_type)
+        return coerced
+
+    @classmethod
     def bind_settings(
         cls,
         module: "ModuleBlock",
@@ -1334,10 +1420,94 @@ class CellProfilerModule(
         return bound
 
     @classmethod
+    def generated_module_blocks(cls, module: "ModuleBlock") -> tuple["ModuleBlock", ...]:
+        """Return module-owned OpenHCS execution blocks for generated pipelines."""
+        return (module,)
+
+    @classmethod
     def runtime_kwargs(cls, module: "ModuleBlock") -> Mapping[str, Any]:
         """Return declaration-owned runtime-selection kwargs for this module."""
         del module
         return {}
+
+    @classmethod
+    def compile_time_setting_records_from_kwargs(
+        cls, kwargs: Mapping[str, Any]
+    ) -> tuple["ModuleSetting", ...]:
+        """Return module-owned CP setting rows reconstructed from public kwargs."""
+        from openhcs.interop.cellprofiler.cellprofiler_literals import (
+            cellprofiler_setting_literal,
+        )
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        return tuple(
+            ModuleSetting(
+                setting_names(binding.setting_name)[0],
+                cellprofiler_setting_literal(kwargs[binding.parameter_name]),
+            )
+            for binding in cls.setting_bindings
+            if binding.parameter_name in kwargs
+        )
+
+    @classmethod
+    def compile_time_public_setting_names(
+        cls,
+    ) -> tuple[str | "SettingNameFamily", ...]:
+        """Return declared CP setting families projected as public compile kwargs."""
+        return tuple(
+            setting
+            for setting, _capability_type in (
+                *cls.declared_artifact_input_settings(),
+                *cls.declared_artifact_output_settings(),
+            )
+        )
+
+    @classmethod
+    def compile_time_public_kwarg_names(cls) -> tuple[str, ...]:
+        """Return public compile-only kwarg names derived from CP setting names."""
+        return tuple(
+            dict.fromkeys(
+                normalize_cellprofiler_setting_name(concrete_name)
+                for setting_name in cls.compile_time_public_setting_names()
+                for concrete_name in setting_names(setting_name)
+            )
+        )
+
+    @classmethod
+    def compile_time_public_setting_records_from_kwargs(
+        cls, kwargs: Mapping[str, Any]
+    ) -> tuple["ModuleSetting", ...]:
+        """Return compile-time-only CP setting rows from public kwargs."""
+        from openhcs.interop.cellprofiler.cellprofiler_literals import (
+            cellprofiler_setting_literal,
+        )
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        records: list[ModuleSetting] = []
+        for setting_name in cls.compile_time_public_setting_names():
+            for concrete_name in setting_names(setting_name):
+                key = normalize_cellprofiler_setting_name(concrete_name)
+                if key not in kwargs:
+                    continue
+                value = kwargs[key]
+                if isinstance(value, tuple):
+                    records.extend(
+                        ModuleSetting(concrete_name, cellprofiler_setting_literal(item))
+                        for item in value
+                    )
+                else:
+                    records.append(
+                        ModuleSetting(concrete_name, cellprofiler_setting_literal(value))
+                    )
+        return tuple(records)
+
+    @classmethod
+    def compile_time_public_setting_records(
+        cls, module: "ModuleBlock", source_schema: "PipelineImageSchema | None" = None
+    ) -> tuple["ModuleSetting", ...]:
+        """Return CP setting rows needed by contracts but not runtime kwargs."""
+        del module, source_schema
+        return ()
 
     @classmethod
     def generated_invocation_options_literal(

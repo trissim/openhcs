@@ -415,7 +415,7 @@ def test_generated_runtime_binding_preserves_backend_callable_identity() -> None
         ]
     )
     namespace = _pipeline_namespace(generated)
-    step_func = namespace["pipeline_steps"][0].func
+    step_func = namespace["pipeline_steps"][0].func[0]
 
     assert step_func.__name__ == "identify_primary_objects"
     assert step_func.__module__ == "openhcs.processing.backends.cellprofiler"
@@ -438,7 +438,9 @@ def test_generated_runtime_binding_matches_reordered_steps_by_module_contract() 
     bind_generated_pipeline_runtime(SimpleNamespace(**namespace), runtime_contracts)
 
     rebound_contracts = [
-        CallableContract.from_callable(step.func).module_artifact_contract.module_name
+        CallableContract.from_callable(
+            step.func[0]
+        ).module_artifact_contract.module_name
         for step in pipeline_steps
     ]
     assert rebound_contracts[:2] == [
@@ -517,8 +519,9 @@ def test_materialized_generated_pipeline_contract_sidecar_is_python_source(
         Assignment("pipeline_steps", pipeline.steps),
         clean_mode=True,
     )
-    assert "CellProfilerModuleSettingsKwarg" in pipeline_source
-    assert "CellProfilerModuleSettingsPayload" in pipeline_source
+    assert "CellProfilerModuleSettingsKwarg" not in pipeline_source
+    assert "CellProfilerModuleSettingsPayload" not in pipeline_source
+    assert "compile_time_kwargs" not in pipeline_source
     assert "cellprofiler_module_callable" not in pipeline_source
     assert "ModuleArtifactContract(" not in pipeline_source
 
@@ -727,7 +730,7 @@ def test_generator_binds_canonical_morphology_alias_structuring_element():
 
     assert "erode_image," in generated.code
     assert "CellProfilerModuleRuntimeBinding" not in generated.code
-    assert "'structuring_element': 'disk'" in generated.code
+    assert "'structuring_element': StructuringElement.DISK" in generated.code
     assert "'size': 5" in generated.code
 
 
@@ -749,7 +752,7 @@ def test_generator_binds_untangle_worms_overlap_style():
         ]
     )
 
-    assert "'overlap_style': 'both'" in generated.code
+    assert "'overlap_style': OverlapStyle.BOTH" in generated.code
 
 
 def test_generator_binds_untangle_worms_training_xml(tmp_path: Path):

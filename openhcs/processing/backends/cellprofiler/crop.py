@@ -52,6 +52,10 @@ from openhcs.interop.cellprofiler.runtime.measurement_recording import (
 from openhcs.interop.cellprofiler.runtime.object_input_policies import (
     CroppingObjectLabelInputPolicy,
 )
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    cellprofiler_enum_value_setting_parser,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
@@ -160,6 +164,24 @@ class CropModule(
         def removes_internal_empty_rows_or_columns(self) -> bool:
             return self is type(self).ALL
 
+    setting_bindings = (
+        SettingToKeywordBinding(
+            shape_setting,
+            "crop_shape",
+            cellprofiler_enum_value_setting_parser(Shape),
+        ),
+        SettingToKeywordBinding(
+            method_setting,
+            "cropping_method",
+            cellprofiler_enum_value_setting_parser(Method),
+        ),
+        SettingToKeywordBinding(
+            removal_setting,
+            "removal_method",
+            cellprofiler_enum_value_setting_parser(RemovalMethod),
+        ),
+    )
+
     @classmethod
     def settings_source(
         cls, module: "ModuleBlock", binder: "SettingsBinder"
@@ -180,6 +202,34 @@ class CropModule(
             if raw_value is not None:
                 kwargs[parameter_name] = binder.parse_value(setting_name, raw_value)
         return kwargs
+
+    @classmethod
+    def compile_time_public_setting_records(cls, module, source_schema=None):
+        del source_schema
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        shape = cls.shape(module)
+        if shape is cls.Shape.CROPPING:
+            setting_name = cls.previous_image_setting
+        elif shape is cls.Shape.IMAGE:
+            setting_name = cls.mask_image_setting
+        elif shape is cls.Shape.OBJECTS:
+            setting_name = cls.objects_setting
+        else:
+            return ()
+        value = optional_setting_value(module, setting_name)
+        if value is None:
+            return ()
+        return (ModuleSetting(setting_name, value),)
+
+    @classmethod
+    def compile_time_public_setting_names(cls):
+        return (
+            *super().compile_time_public_setting_names(),
+            cls.previous_image_setting,
+            cls.mask_image_setting,
+            cls.objects_setting,
+        )
 
     @classmethod
     def shape(cls, module: "ModuleBlock") -> "CropModule.Shape":

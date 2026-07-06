@@ -114,6 +114,11 @@ class IdentifyTertiaryObjectsModule(
     validated = True
     contract = ProcessingContract.PURE_2D
     confidence = 1.0
+    object_input_settings = (
+        "Select the larger identified objects",
+        "Select the smaller identified objects",
+    )
+    object_output_settings = ("Name the tertiary objects to be identified",)
     setting_bindings = (
         SettingToKeywordBinding(
             "Shrink smaller object prior to subtraction?",
@@ -1271,6 +1276,9 @@ class IdentifySecondaryObjectsModule(
     validated = True
     contract = ProcessingContract.PURE_2D
     confidence = 1.0
+    image_input_settings = ("Select the input image",)
+    object_input_settings = ("Select the input objects",)
+    object_output_settings = ("Name the objects to be identified",)
     ignored_settings = (
         "Select the input objects",
         "Name the objects to be identified",

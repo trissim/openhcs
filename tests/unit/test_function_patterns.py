@@ -24,9 +24,6 @@ from openhcs.core.callable_contract import CallableContract
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.core.function_patterns import (
-    COMPILE_TIME_FUNCTION_KWARGS_KEY,
-    CompileTimeFunctionKwargs,
-    CompileTimeFunctionKwarg,
     FunctionInvocationKey,
     RuntimeInvocationDomain,
     compile_function_pattern,
@@ -900,40 +897,6 @@ def test_compile_function_pattern_moves_runtime_config_kwargs_to_bindings():
     binding = invocation.runtime_parameter_bindings[0]
     assert binding.parameter_type is DtypeConversionConfig
     assert binding.value is explicit_config
-
-
-def test_compile_function_pattern_strips_typed_compile_time_kwargs():
-    @dataclass(frozen=True, slots=True)
-    class LocalCompilePayload:
-        value: str
-
-    class LocalCompileTimeKwarg(CompileTimeFunctionKwarg[LocalCompilePayload]):
-        payload_type = LocalCompilePayload
-
-    payload = LocalCompilePayload("compile-only")
-
-    compile_time_kwargs = CompileTimeFunctionKwargs.of(
-        LocalCompileTimeKwarg,
-        payload,
-    )
-
-    compiled = compile_function_pattern(
-        (
-            second,
-            {
-                COMPILE_TIME_FUNCTION_KWARGS_KEY: compile_time_kwargs,
-                "sigma": 2,
-            },
-        ),
-        {},
-        {},
-    )
-    invocation = compiled.default_group.invocations[0]
-
-    assert LocalCompileTimeKwarg.payload_from_kwargs(
-        {COMPILE_TIME_FUNCTION_KWARGS_KEY: compile_time_kwargs}
-    ) == payload
-    assert invocation.kwargs_dict == {"sigma": 2}
 
 
 def test_compile_function_pattern_keeps_undeclared_runtime_config_kwargs_user_owned():

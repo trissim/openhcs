@@ -41,6 +41,7 @@ from openhcs.interop.cellprofiler.module_roles import (
 )
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock
 from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
+    CellProfilerGeneratedPipelineInvocationContracts,
     GeneratedPipelineFunctionRegistration,
     GeneratedPipelineModuleIdentity,
     GeneratedPipelineRuntimeModule,
@@ -136,9 +137,6 @@ class PreparedGeneratedPipeline(CPPipePipelineArtifact):
     @property
     def import_result(self) -> CellProfilerPipelineImportResult:
         """Return the product-facing import record for this prepared pipeline."""
-        runtime_contracts_by_module_num = (
-            self.generated_pipeline.runtime_module_contracts_by_module_num
-        )
         return CellProfilerPipelineImportResult(
             provenance=self.provenance,
             pipeline=self.pipeline,
@@ -147,8 +145,8 @@ class PreparedGeneratedPipeline(CPPipePipelineArtifact):
             generated_module_name=self.module_name,
             generated_module_path=self.module_path,
             artifact_contracts=tuple(
-                runtime_contracts_by_module_num[module.module_num]
-                for module in self.provenance.processing_modules
+                contract
+                for _module_num, contract in self.generated_pipeline.runtime_module_contracts
             ),
             semantic_contracts=self.generated_pipeline.artifact_contracts,
             pipeline_config=self.generated_pipeline.pipeline_config,
@@ -354,6 +352,9 @@ class CPPipePipelinePreparationRequest:
             pipeline_name=converted.generated_pipeline.name,
         )
         pipeline.metadata[PIPELINE_SOURCE_SCHEMA_METADATA_KEY] = converted.source_schema
+        pipeline.metadata[
+            CellProfilerGeneratedPipelineInvocationContracts.module_attribute
+        ] = artifact_contracts_by_module_num
         registered_functions = GeneratedPipelineFunctionRegistration(module).register()
         return PreparedGeneratedPipeline(
             cppipe_path=converted.cppipe_path,

@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache, wraps
 from types import FunctionType, ModuleType
-from typing import Any
+from typing import Any, get_type_hints
 
 from python_introspect import parameter_exclusions, set_parameter_exclusions
 from openhcs.processing.backends.cellprofiler.library import (
@@ -40,6 +40,12 @@ from openhcs.processing.backends.lib_registry.openhcs_registry import (
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
+# Import the compile-time contract provider with the public CellProfiler backend.
+# Public pipeline documents intentionally store plain backend callables; the
+# compiler discovers the CellProfiler artifact contract through this registered
+# provider instead of exposing runtime wrappers in user-editable code.
+from openhcs.interop.cellprofiler import compile_time_contracts as _compile_time_contracts
+
 CELLPROFILER_MODULE_ATTR = "__openhcs_cellprofiler_module__"
 CELLPROFILER_BACKEND_MODULE = "openhcs.processing.backends.cellprofiler"
 CELLPROFILER_PUBLIC_API_NAMES = (
@@ -47,6 +53,30 @@ CELLPROFILER_PUBLIC_API_NAMES = (
     "CellProfilerFunctionRuntimeMetadata",
 )
 _CELLPROFILER_FUNCTION_RESOLUTION_STACK: set[str] = set()
+
+
+def _resolved_function_annotations(func: Callable[..., Any]) -> dict[str, Any]:
+    """Return evaluated annotations for public CellProfiler wrapper signatures."""
+    try:
+        return dict(get_type_hints(func, include_extras=True))
+    except Exception:
+        return inspect.get_annotations(func, eval_str=False).copy()
+
+
+def _signature_with_resolved_annotations(func: Callable[..., Any]) -> inspect.Signature:
+    """Return a signature whose parameter annotations match the runtime type view."""
+    signature = inspect.signature(func)
+    annotations = _resolved_function_annotations(func)
+    parameters = [
+        parameter.replace(annotation=annotations[name])
+        if name in annotations
+        else parameter
+        for name, parameter in signature.parameters.items()
+    ]
+    return signature.replace(
+        parameters=parameters,
+        return_annotation=annotations.get("return", signature.return_annotation),
+    )
 
 
 class CellProfilerBackendModule(OpenHCSFunctionCatalogModule):
@@ -281,8 +311,8 @@ def _make_processing_wrapper(
     wrapper.__name__ = func.__name__
     wrapper.__qualname__ = func.__name__
     wrapper.__module__ = __name__
-    wrapper.__signature__ = inspect.signature(func)
-    wrapper.__annotations__ = inspect.get_annotations(func, eval_str=False).copy()
+    wrapper.__signature__ = _signature_with_resolved_annotations(func)
+    wrapper.__annotations__ = _resolved_function_annotations(func)
     callable_contract = CallableContract.from_callable(func)
     from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 

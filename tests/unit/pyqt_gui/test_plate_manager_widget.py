@@ -25,6 +25,7 @@ from openhcs.core.module_artifact_contract import (
     RuntimeArtifactInputPartition,
     SourceArtifactInputPartition,
 )
+from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.pipeline.step_snapshot import StepSnapshot
 from openhcs.core.source_binding_context import SourceBindingContext
@@ -172,6 +173,79 @@ class TestPlateManagerWidget:
         assert context.execution_plate_path == Path("/execution")
         close_widget(widget)
         ObjectStateRegistry.clear()
+
+    def test_cellprofiler_workspace_import_rebinds_runtime_kwargs(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        plate_root = tmp_path / "CropExample"
+        plate_root.mkdir()
+        plate_scope = PlateScopeIdentity.from_cellprofiler_pipeline(
+            plate_root,
+            plate_root / "crop.cppipe",
+        ).scope_id
+        crop_metadata = cellprofiler_backend.CellProfilerFunctionCatalog.runtime_metadata(
+            cellprofiler_backend.crop,
+        )
+        contract = ModuleArtifactContract(
+            module_name=crop_metadata.module_name,
+            items=(
+                *ModuleArtifactContract.items_for_partition(
+                    RecordedArtifactOutputPartition,
+                    (ArtifactSpec.output("CropBlue", ImageArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    DeclaredArtifactOutputPartition,
+                    (ArtifactSpec.output("CropBlue", ImageArtifactType),),
+                ),
+            ),
+        )
+        import_result = SimpleNamespace(
+            generated_module_name="generated_cellprofiler_pipeline",
+            provenance=SimpleNamespace(
+                processing_modules=(SimpleNamespace(module_num=1),),
+            ),
+            artifact_contracts=(contract,),
+            source_schema=PipelineImageSchema.empty(),
+            pipeline_config=None,
+        )
+        raw_step = FunctionStep(
+            func=(
+                cellprofiler_backend.crop,
+                {
+                    "crop_shape": "Rectangle",
+                    "select_the_input_image": "OrigBlue",
+                    "name_the_output_image": "CropBlue",
+                },
+            ),
+            name="Crop",
+        )
+
+        try:
+            widget._load_cellprofiler_pipeline_from_workspace(
+                plate_scope,
+                CellProfilerWorkspaceResultFixture.with_steps(
+                    (raw_step,),
+                    import_result=import_result,
+                ),
+            )
+
+            stored_step = PipelineObjectStateBinding.steps_for_plate(plate_scope)[0]
+            stored_func, stored_kwargs = stored_step.func
+            stored_contract = CallableContract.from_callable(
+                stored_func,
+            ).module_artifact_contract
+            assert stored_func.__name__ == "crop"
+            assert stored_contract == contract
+            assert stored_kwargs["crop_shape"] == "Rectangle"
+            assert stored_kwargs["select_the_input_image"] == "OrigBlue"
+            assert stored_kwargs["name_the_output_image"] == "CropBlue"
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
 
     def test_compile_validator_requires_initialized_orchestrator(self) -> None:
         plate_scope = "/plate"
@@ -432,7 +506,7 @@ class TestPlateManagerWidget:
                     "plate_paths": [plate_scope],
                     "global_config": widget.global_config,
                     "per_plate_configs": {plate_scope: config},
-                    "pipeline_data": {plate_scope: []},
+                    "pipeline_data": {plate_scope: Pipeline()},
                 }
             )
 
@@ -776,7 +850,9 @@ class TestPlateManagerWidget:
             name="Crop",
         )
 
-        PlateManagerCodeWorkflow(manager).apply_pipeline_data({plate_scope: [raw_step]})
+        PlateManagerCodeWorkflow(manager).apply_pipeline_data(
+            {plate_scope: Pipeline(steps=[raw_step])}
+        )
 
         updated_steps = PipelineObjectStateBinding.steps_for_plate(plate_scope)
         rebound_func = updated_steps[0].func[0]
@@ -831,7 +907,7 @@ class TestPlateManagerWidget:
         manager = PlateManagerCodeWorkflowHarness(selected_plate_path=plate_scope)
 
         PlateManagerCodeWorkflow(manager).apply_pipeline_data(
-            {plate_scope: [bound_step]}
+            {plate_scope: Pipeline(steps=[bound_step])}
         )
 
         updated_steps = PipelineObjectStateBinding.steps_for_plate(plate_scope)
@@ -860,12 +936,14 @@ class TestPlateManagerWidget:
         try:
             PlateManagerCodeWorkflow(manager).apply_pipeline_data(
                 {
-                    plate_scope: [
-                        FunctionStep(
-                            func=lambda image: image,
-                            name="Replacement",
-                        )
-                    ],
+                    plate_scope: Pipeline(
+                        steps=[
+                            FunctionStep(
+                                func=lambda image: image,
+                                name="Replacement",
+                            )
+                        ],
+                    )
                 }
             )
 
@@ -1066,19 +1144,27 @@ class CellProfilerWorkspaceResultFixture:
     """Minimal CellProfiler workspace result carrying prepared pipeline steps."""
 
     @classmethod
-    def with_steps(cls, steps, pipeline_config: PipelineConfig | None = None):
+    def with_steps(
+        cls,
+        steps,
+        pipeline_config: PipelineConfig | None = None,
+        import_result: object | None = None,
+    ):
+        pipeline = Pipeline(steps=list(steps), name="ImportedCellProfilerPipeline")
+        if import_result is None:
+            import_result = SimpleNamespace(
+                pipeline=pipeline,
+                source_schema=PipelineImageSchema.empty(),
+                pipeline_config=pipeline_config,
+            )
         return InputWorkspacePreparationResult(
             original_source_root=Path("/source"),
             execution_plate_path=Path("/execution"),
             pipeline_path=Path("/source/pipeline.cppipe"),
             source_schema=PipelineImageSchema.empty(),
             prepared_pipeline=CellProfilerPreparedPipelineFixture(
-                pipeline=CellProfilerPipelineFixture(steps=steps),
-                import_result=SimpleNamespace(
-                    pipeline=CellProfilerPipelineFixture(steps=steps),
-                    source_schema=PipelineImageSchema.empty(),
-                    pipeline_config=pipeline_config,
-                ),
+                pipeline=pipeline,
+                import_result=import_result,
             ),
         )
 
@@ -1087,8 +1173,3 @@ class CellProfilerWorkspaceResultFixture:
 class CellProfilerPreparedPipelineFixture:
     pipeline: object
     import_result: object
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerPipelineFixture:
-    steps: tuple[FunctionStep, ...]

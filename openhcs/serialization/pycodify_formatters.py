@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, fields
+from enum import Enum
 
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.steps.function_step import FunctionStep
@@ -135,6 +136,29 @@ class PythonSourceLiteralFormatter(SourceFormatter):
                 f"got {type(value).__name__}."
             )
         return SourceFragment(value.source_literal(), value.source_literal_imports())
+
+
+class EnumMemberFormatter(SourceFormatter):
+    priority = 115
+
+    def can_format(self, value) -> bool:
+        return isinstance(value, Enum)
+
+    def format(self, value, context: FormatContext) -> SourceFragment:
+        enum_type = type(value)
+        if "<locals>" in enum_type.__qualname__:
+            return SourceFragment(repr(value), frozenset())
+
+        root_name, _, nested_path = enum_type.__qualname__.partition(".")
+        import_pair = (enum_type.__module__, root_name)
+        mapped_root = NameMappingLookup.resolve(context, import_pair, root_name)
+        enum_reference = (
+            f"{mapped_root}.{nested_path}" if nested_path else mapped_root
+        )
+        return SourceFragment(
+            f"{enum_reference}.{value.name}",
+            frozenset([import_pair]),
+        )
 
 
 class MaterializationSpecFormatter(SourceFormatter):

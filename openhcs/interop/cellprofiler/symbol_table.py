@@ -260,9 +260,15 @@ class CellProfilerSymbolTable:
             ) from exc
 
     @classmethod
-    def compile(cls, modules: Iterable[ModuleBlock]) -> "CellProfilerSymbolTable":
+    def compile(
+        cls,
+        modules: Iterable[ModuleBlock],
+        source_schema: PipelineImageSchema | None = None,
+    ) -> "CellProfilerSymbolTable":
         ordered_modules = tuple(modules)
-        builder = _SymbolTableBuilder(compile_image_schema(ordered_modules))
+        builder = _SymbolTableBuilder(
+            source_schema if source_schema is not None else compile_image_schema(ordered_modules)
+        )
         for module in ordered_modules:
             if module.enabled:
                 builder.visit(module)

@@ -12,6 +12,13 @@ from pyqt_reactive.services.pattern_data_manager import (
 from pyqt_reactive.services.function_navigation import (
     build_function_token_field_path,
 )
+from pyqt_reactive.forms.parameter_form_manager import (
+    FormManagerConfig,
+    ParameterFormManager,
+)
+from pyqt_reactive.services.function_pattern_code_document import (
+    FunctionPatternCodeDocumentService,
+)
 from pyqt_reactive.services.scope_token_service import ScopeTokenService
 
 from openhcs.constants import GroupBy
@@ -21,18 +28,11 @@ from openhcs.core.config import (
     LazyStepWellFilterConfig,
     PipelineConfig,
 )
-from openhcs.core.function_patterns import (
-    COMPILE_TIME_FUNCTION_KWARGS_KEY,
-    CompileTimeFunctionKwargs,
-)
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
+from openhcs.core.pipeline import Pipeline
 from openhcs.core.debug import DebugCommandType
 from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.interop.cellprofiler.module_settings_payload import (
-    CellProfilerModuleSettingsKwarg,
-    CellProfilerModuleSettingsPayload,
-)
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.pyqt_gui.services.plate_scope_identity import (
     PipelineScopeIdentity,
@@ -55,6 +55,10 @@ from openhcs.pyqt_gui.widgets.shared.services.pipeline_editor_workflows import (
 )
 from openhcs.processing.backends.processors.numpy_processor import (
     stack_percentile_normalize,
+)
+from openhcs.processing.backends.cellprofiler import correct_illumination_apply
+from openhcs.processing.backends.cellprofiler.illumination import (
+    IlluminationCorrectionMethod,
 )
 
 
@@ -235,6 +239,63 @@ def test_pipeline_editor_code_document_driver_reads_validates_and_applies() -> N
             driver.validate_source("not_pipeline_steps = []\n")
     finally:
         widget.close()
+        ObjectStateRegistry.clear()
+
+
+def test_function_pattern_form_exposes_explicit_kwargs_outside_callable_signature() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    parent = ObjectState(Pipeline(name="plate"), scope_id="plate::pipeline")
+    ObjectStateRegistry.register(parent, _skip_snapshot=True)
+    binding = PipelineObjectStateBinding(parent)
+    step = FunctionStep(
+        func=(
+            correct_illumination_apply,
+            {
+                "name_the_output_image": "CorrectedStain1",
+                "truncate_low": True,
+                "truncate_high": True,
+                "method": IlluminationCorrectionMethod.DIVIDE,
+                "select_the_illumination_function": "IllumStain1",
+                "select_the_input_image": "OrigStain1",
+                "enabled": True,
+            },
+        ),
+        name="CorrectIlluminationApply",
+    )
+
+    try:
+        step_state, states = binding.collect_step_registration_states(
+            step=step,
+            scope_id="plate::pipeline::step",
+            parent_state=parent,
+        )
+        for state in (step_state, *states):
+            if ObjectStateRegistry.get_by_scope(state.scope_id) is None:
+                ObjectStateRegistry.register(state, _skip_snapshot=True)
+        child_state = next(state for state in states if callable(state.object_instance))
+        manager = ParameterFormManager(
+            child_state,
+            FormManagerConfig(color_scheme=ColorScheme()),
+        )
+
+        expected = {
+            "method",
+            "truncate_low",
+            "truncate_high",
+            "enabled",
+            "select_the_input_image",
+            "select_the_illumination_function",
+            "name_the_output_image",
+        }
+        assert expected <= set(manager.parameters)
+        assert expected <= set(manager.parameter_types)
+        entry = FunctionPatternCodeDocumentService().child_scope_entry(
+            child_state.scope_id
+        )
+        assert entry.func is correct_illumination_apply
+        assert entry.kwargs["name_the_output_image"] == "CorrectedStain1"
+    finally:
         ObjectStateRegistry.clear()
 
 
@@ -532,25 +593,17 @@ def test_step_registration_persists_function_editor_scope_tokens() -> None:
     ]
 
 
-def test_step_registration_hides_compile_time_kwargs_from_function_child_state() -> None:
+def test_step_registration_exposes_public_cellprofiler_settings_in_function_child_state() -> None:
     ObjectStateRegistry._states.clear()
     ScopeTokenService.clear_scope("plate::functionstep_0")
 
-    payload = CellProfilerModuleSettingsPayload(
-        "Crop",
-        1,
-        (("Select the input image", "input"),),
-    )
     runtime_callable = RuntimeCallable()
     step = FunctionStep(
         func=(
             runtime_callable,
             {
                 "threshold": 3,
-                COMPILE_TIME_FUNCTION_KWARGS_KEY: CompileTimeFunctionKwargs.of(
-                    CellProfilerModuleSettingsKwarg,
-                    payload,
-                ),
+                "select_the_input_image": "OrigBlue",
             },
         ),
         name="Crop",
@@ -569,9 +622,39 @@ def test_step_registration_hides_compile_time_kwargs_from_function_child_state()
     reconstructed_step = PipelineObjectStateBinding.step_from_state(states[0])
     reconstructed_kwargs = reconstructed_step.func[1]
 
-    assert child_state.reconstruct_top_level_parameters() == {"threshold": 3}
+    assert child_state.reconstruct_top_level_parameters() == {
+        "threshold": 3,
+        "select_the_input_image": "OrigBlue",
+    }
     assert reconstructed_kwargs["threshold"] == 3
-    assert COMPILE_TIME_FUNCTION_KWARGS_KEY in reconstructed_kwargs
+    assert reconstructed_kwargs["select_the_input_image"] == "OrigBlue"
+
+
+def test_pipeline_update_preserves_pipeline_metadata() -> None:
+    ObjectStateRegistry.clear()
+    ScopeTokenService.clear_scope("plate::functionstep_0")
+
+    pipeline = Pipeline(
+        steps=[
+            FunctionStep(
+                func=(RuntimeCallable(), {"threshold": 3}),
+                name="ImportedStep",
+            )
+        ],
+        name="ImportedPipeline",
+        metadata={"_openhcs_cp_contract_values": {"1": "contract"}},
+    )
+
+    PipelineObjectStateBinding.for_plate("plate")
+    PipelineObjectStateBinding.update_plate_pipeline("plate", pipeline)
+    binding = PipelineObjectStateBinding.for_plate("plate")
+    assert binding is not None
+
+    restored_pipeline = binding.state.to_object()
+    assert restored_pipeline.metadata["_openhcs_cp_contract_values"] == {
+        "1": "contract"
+    }
+    assert [step.name for step in binding.steps()] == ["ImportedStep"]
 
 
 def test_pipeline_update_refreshes_existing_step_scope_state() -> None:

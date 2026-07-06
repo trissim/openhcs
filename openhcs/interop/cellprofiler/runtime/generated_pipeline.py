@@ -15,9 +15,11 @@ from typing import Any, ClassVar
 
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
+from openhcs.core.function_reference import FunctionReference
 from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
 from openhcs.core.artifact_contract_preview import SourceBindingRuntimeContractGuard
 from openhcs.core.pipeline import Pipeline
+from openhcs.core.pipeline.step_snapshot import StepSnapshot
 from openhcs.core.source_bindings import StepSourceBindingsConfig
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
@@ -342,13 +344,26 @@ class GeneratedPipelineRuntimeModule:
         """Build a Pipeline object from generated module exports."""
         pipeline_steps = GeneratedPipelineModuleExports(module).pipeline_steps
         if isinstance(pipeline_steps, Pipeline):
-            return pipeline_steps
-        if not isinstance(pipeline_steps, list):
+            pipeline = pipeline_steps
+            pipeline.name = pipeline.name or pipeline_name
+        elif isinstance(pipeline_steps, list):
+            pipeline = Pipeline(steps=pipeline_steps, name=pipeline_name)
+        else:
             raise TypeError(
                 f"Generated module {module.__name__}.pipeline_steps must be list or "
                 f"Pipeline, got {type(pipeline_steps).__name__}."
             )
-        return Pipeline(steps=pipeline_steps, name=pipeline_name)
+        invocation_contracts = (
+            CellProfilerGeneratedPipelineInvocationContracts.from_module(module)
+        )
+        if invocation_contracts is not None:
+            pipeline.metadata[
+                CellProfilerGeneratedPipelineInvocationContracts.module_attribute
+            ] = invocation_contracts.contracts_by_module_num
+        semantic_contracts = getattr(module, "CELLPROFILER_SEMANTIC_CONTRACTS", None)
+        if semantic_contracts is not None:
+            pipeline.metadata["CELLPROFILER_SEMANTIC_CONTRACTS"] = semantic_contracts
+        return pipeline
 
 
 def bind_generated_pipeline_runtime(
@@ -448,11 +463,7 @@ class GeneratedPipelineRuntimeBindings:
                 "Generated CellProfiler tuple function specs must carry a dict "
                 f"of kwargs, got {type(kwargs).__name__}."
             )
-        from openhcs.core.function_patterns import CompileTimeFunctionKwarg
-
-        return dict(
-            CompileTimeFunctionKwarg.strip_from_items(tuple(kwargs.items()))
-        )
+        return dict(kwargs)
 
     def _bind_callable(
         self,
@@ -567,9 +578,9 @@ class CellProfilerPipelineRuntimeRebinder:
         return cls(
             generated_module_name=import_result.generated_module_name,
             contracts_by_module_num={
-                module.module_num: contract
-                for module, contract in zip(
-                    import_result.provenance.processing_modules,
+                semantic_contract.module_num: artifact_contract
+                for semantic_contract, artifact_contract in zip(
+                    import_result.semantic_contracts,
                     import_result.artifact_contracts,
                     strict=True,
                 )
@@ -646,6 +657,11 @@ class CellProfilerGeneratedStepFunctionSpec:
     def _metadata_items(self, func_spec: Any) -> Iterator[Any]:
         if isinstance(func_spec, CellProfilerRuntimeCallable):
             metadata = CellProfilerFunctionCatalog.runtime_metadata(func_spec.raw_func)
+            if metadata is not None:
+                yield metadata
+            return
+        if isinstance(func_spec, FunctionReference):
+            metadata = CellProfilerFunctionCatalog.runtime_metadata(func_spec.resolve())
             if metadata is not None:
                 yield metadata
             return
@@ -766,6 +782,63 @@ class CellProfilerGeneratedInvocationContractProvider:
     """Compile-time runtime contract provider for generated CellProfiler steps."""
 
     contracts_by_module_num: Mapping[int, ModuleArtifactContract]
+    contracts_by_step_index: Mapping[int, CellProfilerGeneratedStepContract] = field(
+        default_factory=dict
+    )
+
+    @classmethod
+    def for_steps(
+        cls,
+        contracts_by_module_num: Mapping[int, ModuleArtifactContract],
+        steps: Sequence[Any],
+    ) -> "CellProfilerGeneratedInvocationContractProvider":
+        """Build a provider aligned to the actual generated FunctionStep stream."""
+        return cls._for_step_specs(
+            contracts_by_module_num,
+            (
+                (step_index, step.func, step.source_bindings)
+                for step_index, step in enumerate(steps)
+                if isinstance(step, FunctionStep)
+            ),
+        )
+
+    @classmethod
+    def for_snapshots(
+        cls,
+        contracts_by_module_num: Mapping[int, ModuleArtifactContract],
+        snapshots: Sequence[StepSnapshot],
+    ) -> "CellProfilerGeneratedInvocationContractProvider":
+        """Build a provider aligned to compiler StepSnapshot indices."""
+        return cls._for_step_specs(
+            contracts_by_module_num,
+            (
+                (snapshot.index, snapshot.func, snapshot.source_bindings)
+                for snapshot in snapshots
+                if snapshot.is_function_step
+            ),
+        )
+
+    @classmethod
+    def _for_step_specs(
+        cls,
+        contracts_by_module_num: Mapping[int, ModuleArtifactContract],
+        step_specs: Iterator[tuple[int, Any, StepSourceBindingsConfig]],
+    ) -> "CellProfilerGeneratedInvocationContractProvider":
+        matcher = CellProfilerGeneratedStepContractMatcher(contracts_by_module_num)
+        contracts_by_step_index: dict[int, CellProfilerGeneratedStepContract] = {}
+        for step_index, func_spec, source_bindings in step_specs:
+            metadata = CellProfilerGeneratedStepFunctionSpec(func_spec).metadata()
+            if metadata is None:
+                continue
+            contracts_by_step_index[step_index] = matcher.match(
+                metadata,
+                source_bindings,
+            )
+        matcher.validate_complete()
+        return cls(
+            contracts_by_module_num=contracts_by_module_num,
+            contracts_by_step_index=contracts_by_step_index,
+        )
 
     def __call__(
         self,
@@ -797,6 +870,10 @@ class CellProfilerGeneratedInvocationContractProvider:
         metadata: Any,
         step_context: ArtifactDeclarationStepContext,
     ) -> CellProfilerGeneratedStepContract:
+        mapped = self._mapped_step_contract(metadata, step_context)
+        if mapped is not None:
+            return mapped
+
         indexed = self._indexed_contract(metadata, step_context)
         if indexed is not None:
             return indexed
@@ -824,6 +901,28 @@ class CellProfilerGeneratedInvocationContractProvider:
             "keep generated steps in module order or make source bindings "
             "distinguish the repeated module instances."
         )
+
+    def _mapped_step_contract(
+        self,
+        metadata: Any,
+        step_context: ArtifactDeclarationStepContext,
+    ) -> CellProfilerGeneratedStepContract | None:
+        step_index = step_context.step_index
+        if step_index is None:
+            return None
+        candidate = self.contracts_by_step_index.get(step_index)
+        if candidate is None:
+            return None
+        if candidate.contract.module_name != metadata.module_name:
+            return None
+        alignment = SourceBindingRuntimeContractGuard(
+            candidate.contract,
+            step_context.source_bindings,
+        ).alignment()
+        if not alignment.ok:
+            return None
+        candidate.validate_callable_metadata(metadata)
+        return candidate
 
     def _indexed_contract(
         self,

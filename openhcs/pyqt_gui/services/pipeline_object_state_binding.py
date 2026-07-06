@@ -7,10 +7,6 @@ from dataclasses import dataclass
 from typing import Self
 
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
-from openhcs.core.function_patterns import (
-    COMPILE_TIME_FUNCTION_KWARGS_KEY,
-    CompileTimeFunctionKwarg,
-)
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.steps.function_step import FunctionSpec, FunctionStep
 from openhcs.pyqt_gui.services.plate_manager_root_state import (
@@ -25,6 +21,7 @@ from openhcs.pyqt_gui.services.step_scope_identity import (
     SCOPE_SEGMENT_SEPARATOR,
 )
 from pyqt_reactive.services.function_pattern_code_document import (
+    EditableFunctionPatternCallable,
     FunctionPatternCodeDocumentService,
 )
 from pyqt_reactive.services.pattern_data_manager import (
@@ -106,6 +103,15 @@ class PipelineObjectStateBinding:
         return binding.steps()
 
     @classmethod
+    def pipeline_for_plate(cls, plate_path: str) -> Pipeline:
+        """Return the full Pipeline declaration for one plate, including metadata."""
+
+        binding = cls.for_plate(plate_path)
+        if binding is None:
+            return Pipeline()
+        return binding.pipeline_declaration()
+
+    @classmethod
     def update_plate_steps(
         cls,
         plate_path: str,
@@ -113,23 +119,45 @@ class PipelineObjectStateBinding:
     ) -> None:
         """Replace one plate's Pipeline ObjectState step list."""
 
+        cls.update_plate_pipeline(plate_path, Pipeline(steps=steps))
+
+    @classmethod
+    def update_plate_pipeline(
+        cls,
+        plate_path: str,
+        pipeline: Pipeline,
+    ) -> None:
+        """Replace one plate's Pipeline ObjectState while preserving metadata."""
+
         binding = cls.for_plate(plate_path, register=False)
         if binding is None:
             return
-        binding.replace_steps(steps)
+        binding.replace_pipeline(pipeline)
 
     @classmethod
-    def registered_plate_pipelines(cls) -> dict[str, list[FunctionStep]]:
-        """Return all visible plate pipeline declarations from ObjectState."""
+    def registered_plate_pipelines(cls) -> dict[str, Pipeline]:
+        """Return all visible plate Pipeline declarations from ObjectState."""
 
         root_state = ObjectStateRegistry.get_by_scope("__plates__")
         if root_state is None:
             return {}
 
-        result: dict[str, list[FunctionStep]] = {}
+        result: dict[str, Pipeline] = {}
         for plate_path in root_orchestrator_scope_ids(root_state):
-            result[plate_path] = cls.steps_for_plate(plate_path)
+            result[plate_path] = cls.pipeline_for_plate(plate_path)
         return result
+
+    def pipeline_declaration(self) -> Pipeline:
+        """Return Pipeline metadata plus step declarations from ObjectState."""
+
+        stored = self.state.to_object()
+        return Pipeline(
+            steps=self.steps(),
+            name=stored.name,
+            metadata=dict(stored.metadata),
+            description=stored.description,
+            step_scope_ids=tuple(self.step_scope_ids),
+        )
 
     def steps(self) -> list[FunctionStep]:
         """Return FunctionStep declarations derived from this Pipeline ObjectState."""
@@ -157,7 +185,13 @@ class PipelineObjectStateBinding:
     def replace_steps(self, steps: list[FunctionStep]) -> None:
         """Replace this Pipeline's declared step ObjectState scopes."""
 
+        self.replace_pipeline(Pipeline(steps=steps))
+
+    def replace_pipeline(self, pipeline: Pipeline) -> None:
+        """Replace this Pipeline ObjectState with a new pipeline declaration."""
+
         existing_step_scope_ids = self.step_scope_ids
+        steps = list(pipeline.steps)
         self.transfer_existing_step_scope_tokens(
             self.plate_scope,
             existing_step_scope_ids,
@@ -191,6 +225,15 @@ class PipelineObjectStateBinding:
                 removed_scope_id,
                 _skip_snapshot=True,
             )
+        self.state.update_object_instance(
+            Pipeline(
+                steps=[],
+                name=pipeline.name,
+                metadata=dict(pipeline.metadata),
+                description=pipeline.description,
+                step_scope_ids=step_scope_ids,
+            )
+        )
         self.state.update_parameter("step_scope_ids", step_scope_ids)
 
     @classmethod
@@ -260,18 +303,20 @@ class PipelineObjectStateBinding:
             func_scope_id = ScopeTokenService.build_scope_id(scope_id, func_obj)
             if ObjectStateRegistry.get_by_scope(func_scope_id) is not None:
                 continue
+            editable_func = EditableFunctionPatternCallable.for_entry(
+                func_obj,
+                kwargs,
+            )
             exclude_params = FunctionPatternCodeDocumentService.reserved_parameter_names(
-                func_obj
+                editable_func
             )
             to_register.append(
                 ObjectState(
-                    object_instance=func_obj,
+                    object_instance=editable_func,
                     scope_id=func_scope_id,
                     parent_state=step_state,
                     exclude_params=exclude_params,
-                    initial_values=CompileTimeFunctionKwarg.strip_from_mapping(
-                        kwargs
-                    ),
+                    initial_values=dict(kwargs),
                 )
             )
 
@@ -395,43 +440,20 @@ class PipelineObjectStateBinding:
     ) -> PipelineFunctionPattern:
         """Return one function-pattern entry with updated callable and kwargs."""
 
-        merged_kwargs = cls.merge_compile_time_kwargs(func_item, kwargs)
         if (
             isinstance(func_item, tuple)
             and len(func_item) == 3
             and callable(func_item[0])
             and isinstance(func_item[1], Mapping)
         ):
-            return (func_obj, merged_kwargs, func_item[2])
+            return (func_obj, kwargs, func_item[2])
         if (
             isinstance(func_item, tuple)
             and len(func_item) == 2
             and callable(func_item[0])
             and isinstance(func_item[1], Mapping)
         ):
-            return (func_obj, merged_kwargs)
+            return (func_obj, kwargs)
         if callable(func_item):
-            return (func_obj, merged_kwargs) if merged_kwargs else func_obj
+            return (func_obj, kwargs) if kwargs else func_obj
         return func_item
-
-    @staticmethod
-    def merge_compile_time_kwargs(
-        func_item: PipelineFunctionPattern,
-        kwargs: dict,
-    ) -> dict:
-        """Preserve hidden compile-time metadata while applying UI-edited kwargs."""
-        if (
-            isinstance(func_item, tuple)
-            and len(func_item) in {2, 3}
-            and callable(func_item[0])
-            and isinstance(func_item[1], Mapping)
-        ):
-            return {
-                **{
-                    key: value
-                    for key, value in func_item[1].items()
-                    if key == COMPILE_TIME_FUNCTION_KWARGS_KEY
-                },
-                **kwargs,
-            }
-        return kwargs

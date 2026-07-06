@@ -20,6 +20,9 @@ from openhcs.interop.cellprofiler.module_declarations import (
     UnmappedModuleSettingsError,
 )
 from openhcs.processing.backends.cellprofiler.morphology import ResizeObjectsModule
+from openhcs.processing.backends.cellprofiler.illumination import (
+    IlluminationCorrectionMethod,
+)
 from openhcs.processing.backends.cellprofiler.library import validated_contracts
 
 
@@ -43,6 +46,23 @@ def _bind_module_settings(
 
 
 _bind_declared_module_settings = _bind_module_settings
+
+
+def _semantic_value(value):
+    """Return literal values for legacy setting expectation comparisons."""
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, tuple):
+        return tuple(_semantic_value(item) for item in value)
+    if isinstance(value, list):
+        return [_semantic_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _semantic_value(item) for key, item in value.items()}
+    return value
+
+
+def _semantic_kwargs(kwargs):
+    return {key: _semantic_value(value) for key, value in kwargs.items()}
 
 
 def test_normalize_cellprofiler_setting_name_is_shared_authority():
@@ -119,13 +139,13 @@ def test_watershed_settings_bind_nominal_method_enums():
     )
     bound = _bind_declared_module_settings(module)
     assert bound.kwargs["use_advanced_settings"] is False
-    assert bound.kwargs["watershed_method"] == "markers"
-    assert bound.kwargs["declump_method"] == "intensity"
-    assert bound.kwargs["connectivity"] == 2
-    assert bound.kwargs["compactness"] == 0.25
-    assert bound.kwargs["max_seeds"] == 15
-    assert bound.kwargs["structuring_element"] == "disk"
-    assert bound.kwargs["structuring_element_size"] == 1
+    assert _semantic_value(bound.kwargs["watershed_method"]) == "markers"
+    assert _semantic_value(bound.kwargs["declump_method"]) == "intensity"
+    assert _semantic_value(bound.kwargs["connectivity"]) == 2
+    assert _semantic_value(bound.kwargs["compactness"]) == 0.25
+    assert _semantic_value(bound.kwargs["max_seeds"]) == 15
+    assert _semantic_value(bound.kwargs["structuring_element"]) == "disk"
+    assert _semantic_value(bound.kwargs["structuring_element_size"]) == 1
 
 
 def test_watershed_settings_bind_seed_dilation_structuring_element():
@@ -140,8 +160,8 @@ def test_watershed_settings_bind_seed_dilation_structuring_element():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs["structuring_element"] == "ball"
-    assert bound.kwargs["structuring_element_size"] == 5
+    assert _semantic_value(bound.kwargs["structuring_element"]) == "ball"
+    assert _semantic_value(bound.kwargs["structuring_element_size"]) == 5
 
 
 def test_combine_objects_binds_overlap_policy_nominally():
@@ -156,7 +176,7 @@ def test_combine_objects_binds_overlap_policy_nominally():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs["method"] == "merge"
+    assert _semantic_value(bound.kwargs["method"]) == "merge"
     assert not bound.unmapped_kwargs
 
 
@@ -194,8 +214,8 @@ def test_erode_objects_binds_preservation_settings():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs["structuring_element"] == "ball"
-    assert bound.kwargs["size"] == 5
+    assert _semantic_value(bound.kwargs["structuring_element"]) == "ball"
+    assert _semantic_value(bound.kwargs["size"]) == 5
     assert bound.kwargs["preserve_midpoints"] is True
     assert bound.kwargs["relabel_objects"] is False
 
@@ -207,8 +227,8 @@ def test_dilate_objects_binds_structuring_element_to_object_dilation_kwargs():
         settings={"Structuring element": "octahedron,1"},
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs["structuring_element_shape"] == "octahedron"
-    assert bound.kwargs["structuring_element_size"] == 1
+    assert _semantic_value(bound.kwargs["structuring_element_shape"]) == "octahedron"
+    assert _semantic_value(bound.kwargs["structuring_element_size"]) == 1
 
 
 def test_opening_module_class_inherits_structuring_element_binding():
@@ -216,7 +236,7 @@ def test_opening_module_class_inherits_structuring_element_binding():
         name="Opening", module_num=1, settings={"Structuring element": "Disk,5"}
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {"structuring_element": "disk", "size": 5}
+    assert _semantic_kwargs(bound.kwargs) == {"structuring_element": "disk", "size": 5}
     assert not bound.unmapped_kwargs
 
 
@@ -287,15 +307,15 @@ def test_identify_primary_objects_binds_threshold_semantics():
         },
     )
     bound = _bind_module_settings(module)
-    assert bound.kwargs["min_diameter"] == 10
-    assert bound.kwargs["max_diameter"] == 40
+    assert _semantic_value(bound.kwargs["min_diameter"]) == 10
+    assert _semantic_value(bound.kwargs["max_diameter"]) == 40
     assert bound.kwargs["use_advanced_settings"] is True
-    assert bound.kwargs["threshold_scope"] == "Global"
-    assert bound.kwargs["threshold_method"] == "Otsu"
-    assert bound.kwargs["otsu_class_count"] == "Three classes"
-    assert bound.kwargs["assign_middle_to_foreground"] == "Background"
-    assert bound.kwargs["threshold_min"] == 0
-    assert bound.kwargs["threshold_max"] == 1
+    assert _semantic_value(bound.kwargs["threshold_scope"]) == "Global"
+    assert _semantic_value(bound.kwargs["threshold_method"]) == "Otsu"
+    assert _semantic_value(bound.kwargs["otsu_class_count"]) == "Three classes"
+    assert _semantic_value(bound.kwargs["assign_middle_to_foreground"]) == "Background"
+    assert _semantic_value(bound.kwargs["threshold_min"]) == 0
+    assert _semantic_value(bound.kwargs["threshold_max"]) == 1
     assert "threshold_setting_version" not in bound.unmapped_kwargs
     assert "lower_and_upper_bounds_on_threshold" not in bound.unmapped_kwargs
 
@@ -326,13 +346,13 @@ def test_threshold_module_binds_shared_threshold_semantics():
         },
     )
     bound = _bind_module_settings(module)
-    assert bound.kwargs["threshold_scope"] == "Global"
-    assert bound.kwargs["threshold_method"] == "Minimum Cross-Entropy"
-    assert bound.kwargs["smoothing"] == 1.25
-    assert bound.kwargs["threshold_correction_factor"] == 0.9
-    assert bound.kwargs["threshold_min"] == 0.1
-    assert bound.kwargs["threshold_max"] == 0.8
-    assert bound.kwargs["window_size"] == 25
+    assert _semantic_value(bound.kwargs["threshold_scope"]) == "Global"
+    assert _semantic_value(bound.kwargs["threshold_method"]) == "Minimum Cross-Entropy"
+    assert _semantic_value(bound.kwargs["smoothing"]) == 1.25
+    assert _semantic_value(bound.kwargs["threshold_correction_factor"]) == 0.9
+    assert _semantic_value(bound.kwargs["threshold_min"]) == 0.1
+    assert _semantic_value(bound.kwargs["threshold_max"]) == 0.8
+    assert _semantic_value(bound.kwargs["window_size"]) == 25
     assert "manual_threshold" not in bound.kwargs
     assert "threshold_smoothing_scale" not in bound.kwargs
     assert "adaptive_window_size" not in bound.kwargs
@@ -368,13 +388,13 @@ def test_identify_secondary_objects_binds_global_threshold_method_semantics():
         ],
     )
     bound = _bind_module_settings(module)
-    assert bound.kwargs["method"] == "Propagation"
-    assert bound.kwargs["regularization_factor"] == 0.05
-    assert bound.kwargs["threshold_scope"] == "Global"
-    assert bound.kwargs["threshold_method"] == "Minimum Cross-Entropy"
-    assert bound.kwargs["threshold_smoothing_scale"] == 0
-    assert bound.kwargs["threshold_min"] == 0
-    assert bound.kwargs["threshold_max"] == 1
+    assert _semantic_value(bound.kwargs["method"]) == "propagation"
+    assert _semantic_value(bound.kwargs["regularization_factor"]) == 0.05
+    assert _semantic_value(bound.kwargs["threshold_scope"]) == "Global"
+    assert _semantic_value(bound.kwargs["threshold_method"]) == "Minimum Cross-Entropy"
+    assert _semantic_value(bound.kwargs["threshold_smoothing_scale"]) == 0
+    assert _semantic_value(bound.kwargs["threshold_min"]) == 0
+    assert _semantic_value(bound.kwargs["threshold_max"]) == 1
     assert "thresholding_method" not in bound.unmapped_kwargs
 
 
@@ -407,8 +427,8 @@ def test_identify_secondary_objects_binds_adaptive_threshold_method_semantics():
         ],
     )
     bound = _bind_module_settings(module)
-    assert bound.kwargs["threshold_scope"] == "Adaptive"
-    assert bound.kwargs["threshold_method"] == "Otsu"
+    assert _semantic_value(bound.kwargs["threshold_scope"]) == "Adaptive"
+    assert _semantic_value(bound.kwargs["threshold_method"]) == "Otsu"
     assert "thresholding_method" not in bound.unmapped_kwargs
 
 
@@ -437,8 +457,8 @@ def test_legacy_three_class_otsu_synthesizes_log_transform_upgrade():
         ],
     )
     bound = _bind_module_settings(module)
-    assert bound.kwargs["threshold_method"] == "Otsu"
-    assert bound.kwargs["otsu_class_count"] == "Three classes"
+    assert _semantic_value(bound.kwargs["threshold_method"]) == "Otsu"
+    assert _semantic_value(bound.kwargs["otsu_class_count"]) == "Three classes"
     assert bound.kwargs["log_transform"] is True
     assert "threshold_setting_version" not in bound.unmapped_kwargs
 
@@ -465,8 +485,8 @@ def test_legacy_duplicate_threshold_method_keeps_ordered_active_method():
         ],
     )
     bound = _bind_module_settings(module)
-    assert bound.kwargs["threshold_method"] == "Minimum Cross-Entropy"
-    assert bound.kwargs["otsu_class_count"] == "Two classes"
+    assert _semantic_value(bound.kwargs["threshold_method"]) == "Minimum Cross-Entropy"
+    assert _semantic_value(bound.kwargs["otsu_class_count"]) == "Two classes"
     assert bound.kwargs["log_transform"] is False
     assert "thresholding_method" not in bound.unmapped_kwargs
 
@@ -487,7 +507,7 @@ def test_legacy_threshold_method_names_are_upgraded_to_current_spellings():
         },
     )
     bound = _bind_module_settings(module)
-    assert bound.kwargs["threshold_method"] == "Robust Background"
+    assert _semantic_value(bound.kwargs["threshold_method"]) == "Robust Background"
     assert bound.kwargs["log_transform"] is False
     assert "threshold_setting_version" not in bound.unmapped_kwargs
 
@@ -511,15 +531,15 @@ def test_enhance_or_suppress_features_settings_bind_to_runtime_kwargs():
         },
     )
     bound = _bind_module_settings(module)
-    assert bound.kwargs["method"] == "Enhance"
-    assert bound.kwargs["radius"] == 5
-    assert bound.kwargs["enhance_method"] == "Speckles"
-    assert bound.kwargs["dark_hole_radius_min"] == 1
-    assert bound.kwargs["dark_hole_radius_max"] == 10
-    assert bound.kwargs["smoothing_value"] == 2.0
-    assert bound.kwargs["dic_decay"] == 0.95
-    assert bound.kwargs["neurite_method"] == "Tubeness"
-    assert bound.kwargs["speckle_accuracy"] == "Fast"
+    assert _semantic_value(bound.kwargs["method"]) == "Enhance"
+    assert _semantic_value(bound.kwargs["radius"]) == 5
+    assert _semantic_value(bound.kwargs["enhance_method"]) == "Speckles"
+    assert _semantic_value(bound.kwargs["dark_hole_radius_min"]) == 1
+    assert _semantic_value(bound.kwargs["dark_hole_radius_max"]) == 10
+    assert _semantic_value(bound.kwargs["smoothing_value"]) == 2.0
+    assert _semantic_value(bound.kwargs["dic_decay"]) == 0.95
+    assert _semantic_value(bound.kwargs["neurite_method"]) == "Tubeness"
+    assert _semantic_value(bound.kwargs["speckle_accuracy"]) == "Fast"
     assert not bound.unmapped_kwargs
 
 
@@ -538,8 +558,8 @@ def test_smooth_settings_bind_to_runtime_kwargs():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
-        "smoothing_method": "Gaussian Filter",
+    assert _semantic_kwargs(bound.kwargs) == {
+        "smoothing_method": "gaussian_filter",
         "auto_object_size": False,
         "object_size": 3.0,
         "edge_intensity_difference": 0.1,
@@ -567,12 +587,12 @@ def test_enhance_edges_settings_bind_to_runtime_kwargs():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
+    assert _semantic_kwargs(bound.kwargs) == {
         "automatic_threshold": True,
         "manual_threshold": 0.2,
         "threshold_adjustment_factor": 1.0,
-        "method": "Sobel",
-        "direction": "All",
+        "method": "sobel",
+        "direction": "all",
         "automatic_gaussian": False,
         "sigma": 10.0,
         "automatic_low_threshold": True,
@@ -602,9 +622,9 @@ def test_color_to_gray_split_kwargs_use_enabled_rgb_channels():
         ],
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs["mode"] == "split"
-    assert bound.kwargs["channel_indices"] == (1,)
-    assert bound.kwargs["contributions"] == (1.0,)
+    assert _semantic_value(bound.kwargs["mode"]) == "split"
+    assert _semantic_value(bound.kwargs["channel_indices"]) == (1,)
+    assert _semantic_value(bound.kwargs["contributions"]) == (1.0,)
 
 
 def test_calculate_math_settings_bind_from_module_declaration():
@@ -630,14 +650,14 @@ def test_calculate_math_settings_bind_from_module_declaration():
         ],
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs["output_name"] == "Ratio"
-    assert bound.kwargs["operation"] == "Divide"
-    assert bound.kwargs["operand1_object_name"] == "Nuclei"
-    assert bound.kwargs["operand1_feature"] == "Intensity_MeanIntensity_DNA"
+    assert _semantic_value(bound.kwargs["output_name"]) == "Ratio"
+    assert _semantic_value(bound.kwargs["operation"]) == "divide"
+    assert _semantic_value(bound.kwargs["operand1_object_name"]) == "Nuclei"
+    assert _semantic_value(bound.kwargs["operand1_feature"]) == "Intensity_MeanIntensity_DNA"
     assert bound.kwargs["operand2_object_name"] is None
-    assert bound.kwargs["operand2_feature"] == "AreaOccupied_Cells"
+    assert _semantic_value(bound.kwargs["operand2_feature"]) == "AreaOccupied_Cells"
     assert bound.kwargs["rounding"].value == "decimal_places"
-    assert bound.kwargs["rounding_digits"] == 2
+    assert _semantic_value(bound.kwargs["rounding_digits"]) == 2
 
 
 def test_classify_objects_alias_settings_bind_from_module_declaration():
@@ -655,10 +675,10 @@ def test_classify_objects_alias_settings_bind_from_module_declaration():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs["measurement_feature"] == "Math_Ratio"
-    assert bound.kwargs["bin_choice"] == "custom"
-    assert bound.kwargs["custom_thresholds"] == "0.25,0.75"
-    assert bound.kwargs["bin_names"] == "Low,High"
+    assert _semantic_value(bound.kwargs["measurement_feature"]) == "Math_Ratio"
+    assert _semantic_value(bound.kwargs["bin_choice"]) == "custom"
+    assert _semantic_value(bound.kwargs["custom_thresholds"]) == "0.25,0.75"
+    assert _semantic_value(bound.kwargs["bin_names"]) == "Low,High"
 
 
 def test_crop_settings_bind_from_module_declaration():
@@ -676,7 +696,7 @@ def test_crop_settings_bind_from_module_declaration():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
+    assert _semantic_kwargs(bound.kwargs) == {
         "crop_shape": "Rectangle",
         "cropping_method": "Coordinates",
         "removal_method": "Edges",
@@ -706,7 +726,7 @@ def test_define_grid_alias_settings_bind_invocation_options_on_module_declaratio
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
+    assert _semantic_kwargs(bound.kwargs) == {
         "grid_rows": 8,
         "grid_columns": 12,
         "origin": "bottom_left",
@@ -738,7 +758,7 @@ def test_identify_objects_in_grid_settings_bind_from_module_declaration():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
+    assert _semantic_kwargs(bound.kwargs) == {
         "shape_choice": "natural_shape_and_location",
         "diameter_choice": "automatic",
         "circle_diameter": 20,
@@ -762,7 +782,7 @@ def test_robust_background_threshold_binds_fractional_deviations():
         },
     )
     bound = _bind_module_settings(module)
-    assert bound.kwargs["number_of_deviations"] == 0.75
+    assert _semantic_value(bound.kwargs["number_of_deviations"]) == 0.75
 
 
 def test_mask_objects_binds_masking_policy_semantics():
@@ -777,7 +797,7 @@ def test_mask_objects_binds_masking_policy_semantics():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
+    assert _semantic_kwargs(bound.kwargs) == {
         "overlap_handling": "keep_overlapping_region",
         "overlap_fraction": 0.5,
         "numbering": "renumber",
@@ -801,8 +821,8 @@ def test_measure_texture_binds_repeated_texture_scales():
         ],
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs["scale"] == (5, 10, 20)
-    assert bound.kwargs["gray_levels"] == 128
+    assert _semantic_value(bound.kwargs["scale"]) == (5, 10, 20)
+    assert _semantic_value(bound.kwargs["gray_levels"]) == 128
     assert (
         bound.kwargs[CellProfilerInvocationOverrideKwarg.measurement_target_scope]
         is CellProfilerMeasurementTargetScope.BOTH
@@ -845,7 +865,7 @@ def test_measure_granularity_binds_shared_spectrum_settings():
         setting_records=setting_records,
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
+    assert _semantic_kwargs(bound.kwargs) == {
         "subsample_size": 1.0,
         "background_subsample_size": 0.25,
         "element_radius": 10,
@@ -900,7 +920,7 @@ def test_relate_objects_binds_distance_setting():
         ],
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs["calculate_distances"] == "none"
+    assert _semantic_value(bound.kwargs["calculate_distances"]) == "none"
     assert "calculate_child_parent_distances" not in bound.unmapped_kwargs
 
 
@@ -912,7 +932,7 @@ def test_correct_illumination_module_class_binds_legacy_object_size_alias():
         setting_records=[ModuleSetting("Approximate object size", "10")],
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs["object_width"] == 10
+    assert _semantic_value(bound.kwargs["object_width"]) == 10
     assert "approximate_object_size" not in bound.unmapped_kwargs
 
 
@@ -936,9 +956,9 @@ def test_correct_illumination_module_class_binds_scope_and_slice_dispatch():
             setting_records=[ModuleSetting(setting_name, "All: First cycle")],
         )
     )
-    assert each_bound.kwargs["calculation_scope"] == "each"
+    assert _semantic_value(each_bound.kwargs["calculation_scope"]) == "each"
     assert each_bound.kwargs["slice_by_slice"] is True
-    assert all_bound.kwargs["calculation_scope"] == "all_first_cycle"
+    assert _semantic_value(all_bound.kwargs["calculation_scope"]) == "all_first_cycle"
     assert all_bound.kwargs["slice_by_slice"] is False
 
 
@@ -958,7 +978,7 @@ def test_correct_illumination_apply_module_class_preserves_repeated_pairs():
         ],
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
+    assert _semantic_kwargs(bound.kwargs) == {
         "method": ("divide", "subtract"),
         "truncate_low": (False, True),
         "truncate_high": (True, False),
@@ -1074,7 +1094,7 @@ def test_measure_object_size_shape_binds_zernike_toggle():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {"calculate_zernikes": False, "calculate_advanced": False}
+    assert _semantic_kwargs(bound.kwargs) == {"calculate_zernikes": False, "calculate_advanced": False}
     assert bound.unmapped_kwargs == {}
 
 
@@ -1092,7 +1112,7 @@ def test_measure_object_intensity_distribution_binds_scalar_settings():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
+    assert _semantic_kwargs(bound.kwargs) == {
         "wants_zernikes": "magnitudes_and_phase",
         "zernike_degree": 9,
         "wants_scaled": True,
@@ -1127,8 +1147,8 @@ def test_measure_object_neighbors_binds_distance_semantics():
         setting_records=setting_records,
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
-        "distance_method": "Within a specified distance",
+    assert _semantic_kwargs(bound.kwargs) == {
+        "distance_method": "within",
         "neighbor_distance": 4,
         "consider_discarded_objects": True,
         "retain_neighbor_count_image": True,
@@ -1157,7 +1177,7 @@ def test_image_math_binds_operation_semantics():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
+    assert _semantic_kwargs(bound.kwargs) == {
         "operation": "invert",
         "exponent": 1.0,
         "after_factor": 1.0,
@@ -1184,7 +1204,7 @@ def test_expand_or_shrink_objects_binds_operation_semantics():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
+    assert _semantic_kwargs(bound.kwargs) == {
         "mode": "shrink_defined_pixels",
         "iterations": 1,
         "fill_holes": False,
@@ -1211,7 +1231,7 @@ def test_measure_colocalization_binds_metric_and_costes_semantics():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
+    assert _semantic_kwargs(bound.kwargs) == {
         "threshold_percent": 15.0,
         "do_correlation": True,
         "do_manders": True,
@@ -1235,7 +1255,7 @@ def test_tile_binds_within_cycles_to_row_montage_geometry():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
+    assert _semantic_kwargs(bound.kwargs) == {
         "rows": 1,
         "columns": 1,
         "place_first": "top_left",
@@ -1266,9 +1286,9 @@ def test_track_objects_binds_tracking_identity_settings():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs["object_name"] == "Embryos"
-    assert bound.kwargs["tracking_method"] == "overlap"
-    assert bound.kwargs["pixel_radius"] == 50
+    assert _semantic_value(bound.kwargs["object_name"]) == "Embryos"
+    assert _semantic_value(bound.kwargs["tracking_method"]) == "overlap"
+    assert _semantic_value(bound.kwargs["pixel_radius"]) == 50
 
 
 def test_resize_binds_factor_and_interpolation_settings():
@@ -1284,7 +1304,7 @@ def test_resize_binds_factor_and_interpolation_settings():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
+    assert _semantic_kwargs(bound.kwargs) == {
         "resize_method": "by_factor",
         "resizing_factor_x": 2.0,
         "resizing_factor_y": 2.0,
@@ -1315,7 +1335,7 @@ def test_resize_objects_binds_volumetric_factor_settings():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
+    assert _semantic_kwargs(bound.kwargs) == {
         "method": "factor",
         "factor_x": 2.0,
         "factor_y": 2.0,
@@ -1329,13 +1349,13 @@ def test_resize_objects_binds_volumetric_factor_settings():
 def test_median_filter_binds_window_size():
     module = ModuleBlock(name="MedianFilter", module_num=7, settings={"Window": "5"})
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {"window_size": 5}
+    assert _semantic_kwargs(bound.kwargs) == {"window_size": 5}
 
 
 def test_gaussian_filter_binds_sigma():
     module = ModuleBlock(name="GaussianFilter", module_num=5, settings={"Sigma": "1"})
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {"sigma": 1.0}
+    assert _semantic_kwargs(bound.kwargs) == {"sigma": 1.0}
 
 
 def test_rescale_intensity_binds_source_range_and_nominal_modes():
@@ -1358,7 +1378,7 @@ def test_rescale_intensity_binds_source_range_and_nominal_modes():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
+    assert _semantic_kwargs(bound.kwargs) == {
         "rescale_method": "stretch",
         "automatic_low": "custom",
         "automatic_high": "custom",
@@ -1385,7 +1405,7 @@ def test_mask_image_binds_mask_source_and_inversion():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {"mask_source": "image", "invert_mask": False}
+    assert _semantic_kwargs(bound.kwargs) == {"mask_source": "image", "invert_mask": False}
     assert not bound.unmapped_kwargs
 
 
@@ -1418,7 +1438,7 @@ def test_overlay_objects_binds_opacity_and_ignores_contract_routing():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {"opacity": 0.2}
+    assert _semantic_kwargs(bound.kwargs) == {"opacity": 0.2}
     assert not bound.unmapped_kwargs
 
 
@@ -1460,7 +1480,7 @@ def test_remove_holes_binds_hole_diameter():
         name="RemoveHoles", module_num=9, settings={"Size of holes to fill": "20.0"}
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {"diameter": 20.0}
+    assert _semantic_kwargs(bound.kwargs) == {"diameter": 20.0}
 
 
 def test_reduce_noise_binds_non_local_means_parameters():
@@ -1470,7 +1490,7 @@ def test_reduce_noise_binds_non_local_means_parameters():
         settings={"Size": "5", "Distance": "2", "Cut-off distance": "0.2"},
     )
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == {
+    assert _semantic_kwargs(bound.kwargs) == {
         "patch_size": 5,
         "patch_distance": 2,
         "cutoff_distance": 0.2,
@@ -1584,9 +1604,9 @@ def test_reduce_noise_binds_non_local_means_parameters():
             ),
             {
                 "blank_image": False,
-                "display_mode": "Color",
-                "line_mode": "Thick",
-                "max_type": "Max of image",
+                "display_mode": ("color", "Color"),
+                "line_mode": ("thick", "Thick"),
+                "max_type": ("max_image", "Max of image"),
                 "outline_source_kinds": ("objects",),
                 "outline_colors": ("Green",),
             },
@@ -1627,8 +1647,8 @@ def test_reduce_noise_binds_non_local_means_parameters():
                 ],
             ),
             {
-                "mode": "Measurements",
-                "filter_method": "Limits",
+                "mode": "measurements",
+                "filter_method": "limits",
                 "measurement_features": ("AreaShape_Area",),
                 "measurement_min_values": (12.0,),
                 "measurement_max_values": (None,),
@@ -1637,7 +1657,7 @@ def test_reduce_noise_binds_non_local_means_parameters():
                 "additional_object_count": 1,
                 "outline_object_indices": (0,),
                 "enclosing_object_name": "Tissue",
-                "per_object_assignment": "Parent with most overlap",
+                "per_object_assignment": "parent_with_most_overlap",
             },
         ),
         (
@@ -1650,7 +1670,7 @@ def test_reduce_noise_binds_non_local_means_parameters():
                 },
             ),
             {
-                "objects_or_image": "Image",
+                "objects_or_image": "image",
                 "measurement_feature": "Intensity_MeanIntensity_DNA",
             },
         ),
@@ -1706,5 +1726,5 @@ def test_reduce_noise_binds_non_local_means_parameters():
 )
 def test_module_only_helper_bindings_use_declared_module_path(module, expected_kwargs):
     bound = _bind_declared_module_settings(module)
-    assert bound.kwargs == expected_kwargs
+    assert _semantic_kwargs(bound.kwargs) == expected_kwargs
     assert not bound.unmapped_kwargs

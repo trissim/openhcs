@@ -136,16 +136,39 @@ def test_source_binding_variable_components_derive_timepoint_from_metadata() -> 
     )
 
 
-def test_generated_kwarg_literal_serializes_enum_values():
-    assert python_literal(RescaleMethod.STRETCH) == "'stretch'"
+def test_generated_kwarg_literal_serializes_enum_members_nominally():
+    imports = set()
+
     assert (
-        python_literal(CellProfilerMeasurementTargetScope.BOTH)
+        python_literal(RescaleMethod.STRETCH, import_collector=imports)
+        == "RescaleMethod.STRETCH"
+    )
+    assert (
+        python_literal(
+            CellProfilerMeasurementTargetScope.BOTH,
+            import_collector=imports,
+        )
         == "CellProfilerMeasurementTargetScope.BOTH"
     )
     assert (
-        python_literal(CellProfilerBackendProvider.LEGACY_FAST)
+        python_literal(
+            CellProfilerBackendProvider.LEGACY_FAST,
+            import_collector=imports,
+        )
         == "CellProfilerBackendProvider.LEGACY_FAST"
     )
+    assert (
+        "openhcs.processing.backends.cellprofiler.intensity",
+        "RescaleMethod",
+    ) in imports
+    assert (
+        "openhcs.interop.cellprofiler.measurement_scope",
+        "CellProfilerMeasurementTargetScope",
+    ) in imports
+    assert (
+        "openhcs.processing.backends.cellprofiler._backend",
+        "CellProfilerBackendProvider",
+    ) in imports
 
 
 def _identify_primary(module_num: int = 1) -> ModuleBlock:
@@ -688,6 +711,9 @@ def test_cellprofiler_symbol_table_compiles_filterobjects_relabel_rows():
         "MyObjects",
         "Cells",
         "Cytoplasm",
+        "IdentifyPrimaryObjects_1_measurements",
+        "IdentifyPrimaryObjects_2_measurements",
+        "IdentifyPrimaryObjects_3_measurements",
     ]
     assert [spec.name for spec in contract.outputs] == [
         "FilterObjects_4_measurements",
@@ -804,8 +830,15 @@ def test_cellprofiler_symbol_table_compiles_filterobjects_enclosing_input():
     assert [spec.name for spec in contract.runtime_artifact_inputs] == [
         "Cells",
         "Tiles",
+        "IdentifyPrimaryObjects_1_measurements",
+        "IdentifyPrimaryObjects_2_measurements",
     ]
-    assert [spec.name for spec in contract.inputs] == ["Cells", "Tiles"]
+    assert [spec.name for spec in contract.inputs] == [
+        "Cells",
+        "Tiles",
+        "IdentifyPrimaryObjects_1_measurements",
+        "IdentifyPrimaryObjects_2_measurements",
+    ]
 
 
 def test_filterobjects_uses_prior_enclosing_relationship_when_available():
@@ -848,11 +881,17 @@ def test_filterobjects_uses_prior_enclosing_relationship_when_available():
     assert [spec.name for spec in contract.runtime_artifact_inputs] == [
         "Cells",
         "Tiles",
+        "IdentifyPrimaryObjects_1_measurements",
+        "IdentifyPrimaryObjects_2_measurements",
+        "RelateObjects_3_measurements",
         parent_child_relationship_artifact_name("Tiles", "Cells"),
     ]
     assert [spec.artifact_type for spec in contract.runtime_artifact_inputs] == [
         ObjectLabelsArtifactType,
         ObjectLabelsArtifactType,
+        MeasurementsArtifactType,
+        MeasurementsArtifactType,
+        MeasurementsArtifactType,
         RelationshipsArtifactType,
     ]
 
@@ -894,10 +933,16 @@ def test_filterobjects_children_count_rule_uses_prior_relationship_input():
     contract = table.contracts_by_module_num[4]
     assert [spec.name for spec in contract.runtime_artifact_inputs] == [
         "Nuclei",
+        "IdentifyPrimaryObjects_1_measurements",
+        "IdentifyPrimaryObjects_2_measurements",
+        "RelateObjects_3_measurements",
         parent_child_relationship_artifact_name("Nuclei", "PH3"),
     ]
     assert [spec.artifact_type for spec in contract.runtime_artifact_inputs] == [
         ObjectLabelsArtifactType,
+        MeasurementsArtifactType,
+        MeasurementsArtifactType,
+        MeasurementsArtifactType,
         RelationshipsArtifactType,
     ]
 
@@ -1053,8 +1098,10 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
     assert "CellProfilerModuleContractBinding" not in generated.code
     assert "_CELLPROFILER_RUNTIME_CONTRACTS_BY_MODULE_NUM = {" not in generated.code
     assert "ModuleArtifactContract(" not in generated.code
-    assert "CellProfilerModuleSettingsKwarg" in generated.code
-    assert "CellProfilerModuleSettingsPayload" in generated.code
+    assert "CellProfilerModuleSettingsKwarg" not in generated.code
+    assert "CellProfilerModuleSettingsPayload" not in generated.code
+    assert "FunctionInvocationKey" not in generated.code
+    assert "compile_time_kwargs=" not in generated.code
     assert "source_bindings=LazyStepSourceBindingsConfig(" in generated.code
     assert "enabled=True" in generated.code
     assert "source_bindings=StepSourceBindingsConfig(" not in generated.code
@@ -1080,8 +1127,6 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
 
 def test_compiler_derives_cellprofiler_contracts_from_module_settings_kwargs():
     from openhcs.core.function_patterns import (
-        COMPILE_TIME_FUNCTION_KWARGS_KEY,
-        CompileTimeFunctionKwargs,
         normalize_function_pattern,
     )
     from openhcs.core.invocation_artifacts import (
@@ -1093,9 +1138,8 @@ def test_compiler_derives_cellprofiler_contracts_from_module_settings_kwargs():
         StepSourceBindingsConfig,
     )
     from openhcs.core.steps.function_step import FunctionStep
-    from openhcs.interop.cellprofiler.module_settings_payload import (
-        CellProfilerModuleSettingsKwarg,
-        CellProfilerModuleSettingsPayload,
+    from openhcs.interop.cellprofiler.pipeline_generator import (
+        CellProfilerCompileTimeSettingProjection,
     )
     from openhcs.processing.backends.cellprofiler import (
         identify_primary_objects,
@@ -1104,38 +1148,47 @@ def test_compiler_derives_cellprofiler_contracts_from_module_settings_kwargs():
 
     primary_module = _identify_primary()
     secondary_module = _identify_secondary()
+
+    def generated_kwargs_for(module):
+        projection = CellProfilerCompileTimeSettingProjection.from_module(
+            module=module,
+            existing_kwargs=(),
+        )
+        return projection.kwargs
+
+    primary_kwargs = generated_kwargs_for(primary_module)
+    secondary_kwargs = generated_kwargs_for(secondary_module)
+
     steps = [
         FunctionStep(
             func=(
                 identify_primary_objects,
-                {
-                    COMPILE_TIME_FUNCTION_KWARGS_KEY: (
-                        CompileTimeFunctionKwargs.of(
-                            CellProfilerModuleSettingsKwarg,
-                            CellProfilerModuleSettingsPayload.from_module(
-                                primary_module
-                            ),
-                        )
-                    )
-                },
+                primary_kwargs,
             ),
             name=primary_module.name,
+            source_bindings=StepSourceBindingsConfig(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="OrigBlue",
+                        artifact_kind=ImageArtifactType,
+                    ),
+                ),
+            ),
         ),
         FunctionStep(
             func=(
                 identify_secondary_objects,
-                {
-                    COMPILE_TIME_FUNCTION_KWARGS_KEY: (
-                        CompileTimeFunctionKwargs.of(
-                            CellProfilerModuleSettingsKwarg,
-                            CellProfilerModuleSettingsPayload.from_module(
-                                secondary_module
-                            ),
-                        )
-                    )
-                },
+                secondary_kwargs,
             ),
             name=secondary_module.name,
+            source_bindings=StepSourceBindingsConfig(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="OrigGreen",
+                        artifact_kind=ImageArtifactType,
+                    ),
+                ),
+            ),
         ),
     ]
     provider = PipelineInvocationContractProviderAuthority.provider_for_session(
@@ -1346,10 +1399,7 @@ def test_measure_image_area_occupied_resolves_object_variant():
         source_cppipe=Path("source.pipeline"),
         modules=modules,
     )
-    assert [spec.name for spec in contract.inputs] == [
-        "Nuclei",
-        "IdentifyPrimaryObjects_1_measurements",
-    ]
+    assert [spec.name for spec in contract.inputs] == ["Nuclei"]
     assert [spec.artifact_type for spec in contract.outputs] == [
         ImageArtifactType,
         MeasurementsArtifactType,
@@ -1428,7 +1478,7 @@ def test_align_compiles_two_image_contract():
         "Align_1_measurements",
     ]
     assert "align," in generated.code
-    assert "'crop_mode': 'Keep size'" in generated.code
+    assert "'crop_mode': AlignModule.CropMode.KEEP_SIZE" in generated.code
 
 
 def test_crop_contract_marks_mask_sidecar_with_typed_role():
@@ -1490,7 +1540,10 @@ def test_align_compiles_additional_similar_image_contract():
         "AlignedCombined",
         "Align_1_measurements",
     ]
-    assert "'additional_alignment_modes': ('Similarly',)" in generated.code
+    assert (
+        "'additional_alignment_modes': (AlignModule.AdditionalMode.SIMILARLY,)"
+        in generated.code
+    )
 
 
 def test_unmix_colors_compiles_escaped_multi_output_rows():
@@ -1637,18 +1690,58 @@ def test_pipeline_generator_binds_correct_illumination_settings_as_literals():
             ),
         ],
     )
-    assert "'intensity_choice': 'background'" in generated.code
+    assert "'intensity_choice': IntensityChoice.BACKGROUND" in generated.code
     assert "'block_size': 40" in generated.code
-    assert "'rescale_option': 'no'" in generated.code
-    assert "'calculation_scope': 'all_first_cycle'" in generated.code
-    assert "'smoothing_method': 'convex_hull'" in generated.code
-    assert "'filter_size_method': 'manually'" in generated.code
+    assert "'rescale_option': RescaleOption.NO" in generated.code
+    assert "'calculation_scope': CalculationScope.ALL_FIRST_CYCLE" in generated.code
+    assert "'smoothing_method': SmoothingMethod.CONVEX_HULL" in generated.code
+    assert "'filter_size_method': FilterSizeMethod.MANUALLY" in generated.code
     assert "'manual_filter_size': 10" in generated.code
     assert "variable_components=[VariableComponents.SITE]" in generated.code
     assert "group_by=GroupBy.CHANNEL" in generated.code
-    assert "'method': 'subtract'" in generated.code
+    assert "'method': IlluminationCorrectionMethod.SUBTRACT" in generated.code
     assert "'truncate_low': False" in generated.code
     assert "'truncate_high': True" in generated.code
+
+
+def test_pipeline_generator_splits_correct_illumination_apply_repeated_pairs():
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_illumination_apply_repeated",
+        source_cppipe=Path("source.cppipe"),
+        modules=[
+            _module_with_records(
+                7,
+                "CorrectIlluminationApply",
+                [
+                    ("Select the input image", "OrigStain1"),
+                    ("Name the output image", "CorrectedStain1"),
+                    ("Select the illumination function", "IllumStain1"),
+                    ("Select how the illumination function is applied", "Divide"),
+                    ("Select the input image", "OrigStain2"),
+                    ("Name the output image", "CorrectedStain2"),
+                    ("Select the illumination function", "IllumStain2"),
+                    ("Select how the illumination function is applied", "Divide"),
+                    ("Set output image values less than 0 equal to 0?", "Yes"),
+                    ("Set output image values greater than 1 equal to 1?", "Yes"),
+                ],
+            )
+        ],
+    )
+
+    assert generated.code.count('name="CorrectIlluminationApply"') == 2
+    assert "'select_the_input_image': 'OrigStain1'" in generated.code
+    assert "'select_the_input_image': 'OrigStain2'" in generated.code
+    assert "'select_the_illumination_function': 'IllumStain1'" in generated.code
+    assert "'select_the_illumination_function': 'IllumStain2'" in generated.code
+    assert "'name_the_output_image': 'CorrectedStain1'" in generated.code
+    assert "'name_the_output_image': 'CorrectedStain2'" in generated.code
+    assert "'method': (" not in generated.code
+    assert "'select_the_input_image': (" not in generated.code
+    assert "'name_the_output_image': (" not in generated.code
+    assert [
+        [spec.name for spec in contract.outputs]
+        for contract in generated.artifact_contracts
+    ] == [["CorrectedStain1"], ["CorrectedStain2"]]
 
 
 def test_cellprofiler_symbol_table_compiles_singular_aliases_and_image_artifacts():
@@ -1956,6 +2049,47 @@ def test_color_to_gray_split_contract_uses_enabled_rgb_outputs() -> None:
     assert [spec.name for spec in contract.outputs] == ["OrigRed", "OrigBlue"]
 
 
+def test_compile_time_public_projection_preserves_typed_literals() -> None:
+    from openhcs.interop.cellprofiler.pipeline_generator import (
+        CellProfilerCompileTimeSettingProjection,
+    )
+
+    module = _module_with_records(
+        1,
+        "ColorToGray",
+        [
+            ("Select the input image", "OrigColor"),
+            ("Conversion method", "Split"),
+            ("Image type", "RGB"),
+            ("Name the output image", "OrigGray"),
+            ("Relative weight of the red channel", "1.0"),
+            ("Relative weight of the green channel", "1.0"),
+            ("Relative weight of the blue channel", "1.0"),
+            ("Convert red to gray?", "Yes"),
+            ("Name the output image", "OrigRed"),
+            ("Convert green to gray?", "No"),
+            ("Name the output image", "OrigGreen"),
+            ("Convert blue to gray?", "Yes"),
+            ("Name the output image", "OrigBlue"),
+        ],
+    )
+
+    projection = CellProfilerCompileTimeSettingProjection.from_module(
+        module=module,
+        existing_kwargs={},
+    )
+
+    assert projection.kwargs["convert_red_to_gray"] is True
+    assert projection.kwargs["convert_green_to_gray"] is False
+    assert projection.kwargs["convert_blue_to_gray"] is True
+    assert projection.kwargs["name_the_output_image"] == (
+        "OrigGray",
+        "OrigRed",
+        "OrigGreen",
+        "OrigBlue",
+    )
+
+
 def test_cellprofiler_symbol_table_infers_common_image_transform_contract():
     modules = [
         _module(
@@ -2162,7 +2296,7 @@ def test_classifyobjects_alias_compiles_variant_contract_and_settings():
     ]
     assert "classify_objects_single_measurement," in generated.code
     assert "'measurement_feature': 'Math_Ratio'" in generated.code
-    assert "'bin_choice': 'custom'" in generated.code
+    assert "'bin_choice': ClassificationBinChoice.CUSTOM" in generated.code
     assert "'custom_thresholds': '0.25,0.75'" in generated.code
 
 
@@ -2489,7 +2623,7 @@ def test_straightenworms_compiles_repeated_image_outputs_and_settings():
     assert "'measure_intensity': True" in generated.code
     assert "'number_of_segments': 5" in generated.code
     assert "'number_of_stripes': 1" in generated.code
-    assert "'flip_mode': 'top_brightest'" in generated.code
+    assert "'flip_mode': FlipMode.TOP" in generated.code
 
 
 def test_partition_cppipe_modules_skips_setup_and_export_modules():
