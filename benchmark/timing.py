@@ -26,6 +26,8 @@ class BenchmarkPhase(Enum):
     INITIALIZE_RUNTIME = auto()
     COMPILE_OPENHCS = auto()
     EXECUTE_OPENHCS = auto()
+    SUBMIT_OPENHCS = auto()
+    WAIT_OPENHCS = auto()
     EXECUTE_NATIVE_CP = auto()
     VALIDATE_RUNTIME = auto()
     SNAPSHOT_OUTPUTS = auto()

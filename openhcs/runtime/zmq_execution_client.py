@@ -241,7 +241,7 @@ class PycodifiedPipelineStepSource(PipelineStepsCarrier):
             variable_name=PipelineSourceExport.PIPELINE_STEPS.value,
             value=self.source_pipeline.steps,
             header="# Edit this pipeline and save to apply changes",
-            clean_mode=False,
+            clean_mode=True,
         ).source()
         return ZMQPipelineCodeTransport.from_pipeline_source(
             ZMQPipelineSourcePayload(

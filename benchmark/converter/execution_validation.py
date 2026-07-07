@@ -5,6 +5,7 @@ from openhcs.interop.cellprofiler.execution_validation import (
     CPPipeExecutionValidationError,
     CPPipeInfrastructureProfile,
     validate_cppipe_execution,
+    validate_cppipe_runtime_observation,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "CPPipeExecutionValidationError",
     "CPPipeInfrastructureProfile",
     "validate_cppipe_execution",
+    "validate_cppipe_runtime_observation",
 ]

@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 import logging
+from pathlib import Path
 import sys
 import time
 import json
@@ -80,6 +81,7 @@ class ZMQAuxiliaryExecutionParams:
 
     axis_filter: tuple[str, ...] | None = None
     debug_execution_config: "DebugExecutionConfig | None" = None
+    runtime_observation_export_path: Path | None = None
 
     @classmethod
     def from_transport(
@@ -93,6 +95,11 @@ class ZMQAuxiliaryExecutionParams:
                 config_params.get(ZMQAuxiliaryParamField.WELL_FILTER.value)
             ),
             debug_execution_config=cls._debug_config_from_transport(config_params),
+            runtime_observation_export_path=cls._path_from_transport(
+                config_params.get(
+                    ZMQAuxiliaryParamField.RUNTIME_OBSERVATION_EXPORT_PATH.value
+                )
+            ),
         )
 
     @staticmethod
@@ -121,11 +128,25 @@ class ZMQAuxiliaryExecutionParams:
             return None
         return DebugExecutionConfig.from_payload(payload)
 
+    @staticmethod
+    def _path_from_transport(value: str | Path | None) -> Path | None:
+        if value is None:
+            return None
+        if isinstance(value, Path):
+            return value
+        if isinstance(value, str):
+            return Path(value)
+        raise TypeError(
+            "ZMQ config_params runtime observation export path must be a path "
+            f"string, got {type(value).__name__}."
+        )
+
 
 class ZMQAuxiliaryParamField(Enum):
     """Transport keys consumed as typed auxiliary execution inputs."""
 
     WELL_FILTER = "well_filter"
+    RUNTIME_OBSERVATION_EXPORT_PATH = "runtime_observation_export_path"
 
 
 @dataclass(frozen=True, slots=True)
@@ -619,6 +640,7 @@ class ZMQExecutionServer(ExecutionServer):
                 request_context.execution_id,
                 plate_path_str,
                 request_context.pipeline_config,
+                selected_pipeline_path=request_context.request_payload.selected_pipeline_path,
             )
             self._raise_if_cancelled(request_context.execution_id, "initialization")
             wells = self._wells_for_execution(
@@ -687,6 +709,7 @@ class ZMQExecutionServer(ExecutionServer):
         execution_id: str,
         plate_path_str: str,
         pipeline_config,
+        selected_pipeline_path: str | None = None,
     ):
         from pathlib import Path
 
@@ -695,6 +718,7 @@ class ZMQExecutionServer(ExecutionServer):
         orchestrator = PipelineOrchestrator(
             plate_path=Path(plate_path_str),
             pipeline_config=pipeline_config,
+            selected_pipeline_path=selected_pipeline_path,
             progress_callback=None,
         )
         orchestrator.execution_id = execution_id
@@ -810,7 +834,7 @@ class ZMQExecutionServer(ExecutionServer):
                 request_context=request_context,
                 compilation=compilation,
             )
-        return ZMQWorkerExecutionRequest(
+        execution_results = ZMQWorkerExecutionRequest(
             execution_id=request_context.execution_id,
             orchestrator=orchestrator,
             execution_bundle=compilation.execution_bundle,
@@ -821,6 +845,50 @@ class ZMQExecutionServer(ExecutionServer):
             ],
             forward_worker_progress=self._forward_worker_progress,
         ).execute()
+        self._export_runtime_observation(
+            request_context=request_context,
+            compilation=compilation,
+            execution_results=execution_results,
+        )
+        return execution_results
+
+    def _export_runtime_observation(
+        self,
+        *,
+        request_context: ZMQExecutionContext,
+        compilation,
+        execution_results,
+    ) -> None:
+        export_path = (
+            request_context.auxiliary_params.runtime_observation_export_path
+        )
+        if export_path is None:
+            return
+
+        from openhcs.core.runtime_execution_validation import runtime_output_roots
+        from openhcs.runtime.zmq_execution_observation import (
+            ZMQRuntimeExecutionObservationExport,
+        )
+
+        execution_bundle = compilation.execution_bundle
+        output_roots = runtime_output_roots(
+            execution_bundle.runtime_contexts,
+            compilation.output_plate_root,
+        )
+        ZMQRuntimeExecutionObservationExport.from_execution(
+            compiled_contexts=execution_bundle.runtime_contexts,
+            execution_results=execution_results,
+            output_roots=output_roots,
+        ).write(export_path)
+        self.active_executions[request_context.execution_id].set_extra(
+            "runtime_observation_export_path",
+            str(export_path),
+        )
+        logger.info(
+            "[%s] Exported runtime observation to %s",
+            request_context.execution_id,
+            export_path,
+        )
 
     def _store_compile_artifact(
         self,

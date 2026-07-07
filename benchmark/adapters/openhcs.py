@@ -22,11 +22,10 @@ from benchmark.adapters.cppipe_source import (
     materialize_cppipe_reference,
     resolve_cppipe_source,
 )
-from benchmark.converter.runtime_pipeline import execute_pipeline_direct
 from benchmark.converter.execution_validation import (
     CPPipeExecutionValidation,
     CPPipeExecutionValidationError,
-    validate_cppipe_execution,
+    validate_cppipe_runtime_observation,
 )
 from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
 from openhcs.interop.cellprofiler.measurement_dialect import (
@@ -47,10 +46,11 @@ from openhcs.core.config import (
 )
 from openhcs.core.equivalence import RuntimeEquivalencePolicy
 from openhcs.core.equivalence.outputs import RuntimeOutputSnapshot
+from openhcs.core.function_step_transport import FunctionStepTransportAuthority
+from openhcs.core.pipeline import Pipeline
 from openhcs.core.runtime_equivalence import (
     runtime_reference_artifact_equivalence,
 )
-from openhcs.core.runtime_execution_validation import runtime_output_roots
 from openhcs.core.runtime_exports import RuntimeExportObservation
 from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
 from openhcs.interop.cellprofiler.source_schema_ingestion import (
@@ -59,6 +59,16 @@ from openhcs.interop.cellprofiler.source_schema_ingestion import (
     CellProfilerSourceWorkspaceMaterializationError,
     prepare_cellprofiler_source_schema_workspace,
 )
+from openhcs.runtime.zmq_execution_client import (
+    OpenHCSExecutionSubmission,
+    PycodifiedPipelineCode,
+    PycodifiedSource,
+    ZMQExecutionClient,
+)
+from openhcs.runtime.zmq_execution_observation import (
+    ZMQRuntimeExecutionObservationExport,
+)
+from zmqruntime.execution import ExecutionSubmissionResponse, ExecutionWaitResult
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +76,88 @@ logger = logging.getLogger(__name__)
 _RUNTIME_EXECUTION_CACHE_SCHEMA_VERSION = 1
 _RUNTIME_EXECUTION_OBSERVATION_PICKLE_NAME = "runtime_execution_observation.pkl"
 _DUMP_COMPILED_PLANS_ENV = "OPENHCS_BENCHMARK_DUMP_COMPILED_PLANS"
+
+
+@dataclass(frozen=True, slots=True)
+class _ZMQOpenHCSExecution:
+    """Server-side execution observation returned to the benchmark adapter."""
+
+    execution_id: str
+    observation_export: ZMQRuntimeExecutionObservationExport
+    output_roots: tuple[Path, ...]
+    results_summary: Mapping[str, Any]
+
+    @property
+    def execution_output_root(self) -> Path:
+        if len(self.output_roots) == 1:
+            return self.output_roots[0]
+        summary_root = self.results_summary.get("output_plate_root")
+        if summary_root is not None:
+            return Path(str(summary_root))
+        return self.output_roots[0] if self.output_roots else Path(".")
+
+    @property
+    def axis_count(self) -> int:
+        return self.observation_export.axis_count
+
+
+@dataclass(slots=True)
+class _ZMQProgressTimingObserver:
+    """Capture server progress timestamps for benchmark phase accounting."""
+
+    compile_started_at: float | None = None
+    compile_completed_at: float | None = None
+    execution_started_at: float | None = None
+    execution_completed_at: float | None = None
+
+    def __call__(self, event: Mapping[str, Any]) -> None:
+        phase = str(event.get("phase", ""))
+        status = str(event.get("status", ""))
+        timestamp = self._timestamp(event)
+        if phase == "compile" and status == "started":
+            self.compile_started_at = self.compile_started_at or timestamp
+            return
+        if phase == "compile" and status == "success":
+            self.compile_completed_at = timestamp
+            return
+        if phase == "axis_started":
+            self.execution_started_at = self.execution_started_at or timestamp
+            return
+        if phase == "axis_completed":
+            self.execution_completed_at = timestamp
+
+    @staticmethod
+    def _timestamp(event: Mapping[str, Any]) -> float:
+        value = event.get("timestamp")
+        if isinstance(value, (int, float)):
+            return float(value)
+        return time.time()
+
+    def record_phase_timings(self, phase_timing: PhaseTimingTrace) -> None:
+        compile_seconds = self._duration(
+            self.compile_started_at,
+            self.compile_completed_at,
+        )
+        if compile_seconds is not None:
+            phase_timing.record(
+                BenchmarkPhase.COMPILE_OPENHCS,
+                seconds=compile_seconds,
+            )
+        execute_seconds = self._duration(
+            self.execution_started_at,
+            self.execution_completed_at,
+        )
+        if execute_seconds is not None:
+            phase_timing.record(
+                BenchmarkPhase.EXECUTE_OPENHCS,
+                seconds=execute_seconds,
+            )
+
+    @staticmethod
+    def _duration(started_at: float | None, ended_at: float | None) -> float | None:
+        if started_at is None or ended_at is None:
+            return None
+        return max(0.0, ended_at - started_at)
 
 
 def _strict_cellprofiler_runtime_equivalence_policy() -> RuntimeEquivalencePolicy:
@@ -85,6 +177,85 @@ def _strict_cellprofiler_runtime_equivalence_policy() -> RuntimeEquivalencePolic
         image_abs_tolerance=1e-6,
         image_rel_tolerance=1e-6,
         image_max_different_fraction=0.0,
+    )
+
+
+def _execute_pipeline_via_zmq_server(
+    *,
+    plate_id: str | Path,
+    execution_plate_id: str | Path,
+    selected_pipeline_path: str | Path,
+    pipeline: Pipeline,
+    global_config: GlobalPipelineConfig,
+    pipeline_config: Any,
+    observation_export_path: Path,
+    phase_timing: PhaseTimingTrace,
+) -> tuple[_ZMQOpenHCSExecution, str]:
+    """Submit pipeline through the ZMQ compiler/executor and load observation."""
+
+    transport_pipeline = FunctionStepTransportAuthority.normalize_pipeline(
+        pipeline.steps
+    )
+    submission = OpenHCSExecutionSubmission(
+        plate_id=plate_id,
+        execution_plate_id=execution_plate_id,
+        selected_pipeline_path=selected_pipeline_path,
+        pipeline_steps=transport_pipeline,
+        global_config=global_config,
+        pipeline_config=pipeline_config,
+        config_params={
+            "runtime_observation_export_path": str(observation_export_path),
+        },
+    )
+    pipeline_source = PycodifiedPipelineCode.from_task(submission).source
+    timing_observer = _ZMQProgressTimingObserver()
+    client = ZMQExecutionClient(persistent=True, progress_callback=timing_observer)
+    try:
+        with client:
+            with phase_timing.phase(BenchmarkPhase.SUBMIT_OPENHCS):
+                submission_response = ExecutionSubmissionResponse.from_wire(
+                    client.submit_pipeline(submission)
+                )
+            if not submission_response.accepted:
+                raise ToolExecutionError(
+                    submission_response.require_failure_text(
+                        "OpenHCS ZMQ execution submission"
+                    )
+                )
+            execution_id = submission_response.require_execution_id(
+                "OpenHCS ZMQ execution submission"
+            )
+            with phase_timing.phase(BenchmarkPhase.WAIT_OPENHCS):
+                wait_response = client.wait_for_completion(execution_id)
+            wait_result = ExecutionWaitResult.from_wire(wait_response)
+            wait_result.require_complete("OpenHCS ZMQ execution failed")
+    finally:
+        client.disconnect()
+
+    timing_observer.record_phase_timings(phase_timing)
+    if not observation_export_path.exists():
+        raise ToolExecutionError(
+            "OpenHCS ZMQ execution completed without writing runtime observation "
+            f"export: {observation_export_path}"
+        )
+    observation_export = ZMQRuntimeExecutionObservationExport.read(
+        observation_export_path
+    )
+    output_roots = tuple(Path(root) for root in observation_export.output_roots)
+    results_summary_payload = wait_response.get("results", {}) or wait_response.get(
+        "results_summary",
+        {},
+    )
+    if not isinstance(results_summary_payload, Mapping):
+        results_summary_payload = {}
+    return (
+        _ZMQOpenHCSExecution(
+            execution_id=execution_id,
+            observation_export=observation_export,
+            output_roots=output_roots,
+            results_summary=dict(results_summary_payload),
+        ),
+        pipeline_source,
     )
 
 
@@ -256,7 +427,6 @@ class OpenHCSAdapter(ToolAdapter):
             PipelineConfig,
             VFSConfig,
         )
-        from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 
         phase_timing = PhaseTimingTrace(
             run_id=f"{request.dataset_id}:{request.pipeline_name}:openhcs",
@@ -295,6 +465,7 @@ class OpenHCSAdapter(ToolAdapter):
             )
         equivalence_report = None
         equivalence_failure_message = None
+        submitted_pipeline_source_sha = None
         if cache_hit is not None:
             phase_timing.record(
                 BenchmarkPhase.COMPILE_OPENHCS, seconds=0.0, cached=True
@@ -383,40 +554,48 @@ class OpenHCSAdapter(ToolAdapter):
                 global_config,
                 GlobalPipelineConfig,
             )
-            orchestrator = PipelineOrchestrator(
-                execution_plate_path,
-                pipeline_config=pipeline_config,
+            observation_export_path = (
+                request.output_dir / "runtime_execution_server_observation.pkl"
             )
-            with phase_timing.phase(BenchmarkPhase.INITIALIZE_RUNTIME):
-                orchestrator.initialize()
             with ExitStack() as stack:
                 for metric in request.metrics:
                     stack.enter_context(metric)
                 with _openhcs_execution_watchdog(request.openhcs_timeout_seconds):
-                    execution = execute_pipeline_direct(
-                        orchestrator,
-                        prepared.pipeline,
-                        phase_timing=phase_timing,
+                    server_execution, pipeline_source = (
+                        _execute_pipeline_via_zmq_server(
+                            plate_id=request.dataset_path,
+                            execution_plate_id=execution_plate_path,
+                            selected_pipeline_path=cppipe_path,
+                            pipeline=prepared.pipeline,
+                            global_config=global_config,
+                            pipeline_config=pipeline_config,
+                            observation_export_path=observation_export_path,
+                            phase_timing=phase_timing,
+                        )
                     )
-            output_roots = runtime_output_roots(
-                execution.compiled_contexts,
-                output_plate_root,
-            )
+            submitted_pipeline_source_sha = PycodifiedSource(
+                pipeline_source
+            ).sha_label()
+            output_roots = server_execution.output_roots
             execution_output_root = (
-                output_roots[0] if len(output_roots) == 1 else request.output_dir
+                server_execution.execution_output_root
+                if server_execution.output_roots
+                else request.output_dir
             )
             try:
                 with phase_timing.phase(BenchmarkPhase.VALIDATE_RUNTIME):
-                    validation = validate_cppipe_execution(
+                    validation = validate_cppipe_runtime_observation(
                         prepared,
-                        execution,
-                        execution_output_root,
+                        server_execution.observation_export.observation(),
+                        execution_failures=(
+                            server_execution.observation_export.execution_failures()
+                        ),
                         validate_table_exports=request.materialize_runtime_artifacts,
                         validate_image_exports=request.compare_image_outputs,
                     )
             except CPPipeExecutionValidationError as exc:
                 raise ToolExecutionError(str(exc)) from exc
-            axis_count = len(execution.execution_results)
+            axis_count = server_execution.axis_count
             executed_axes = tuple(validation.observation.records_by_axis)
             csv_output_count = len(validation.observation.exports.table_outputs)
             image_output_count = len(validation.observation.exports.image_outputs)
@@ -482,6 +661,7 @@ class OpenHCSAdapter(ToolAdapter):
             "pipeline_source": "converted_cppipe",
             "cppipe_path": str(cppipe_path),
             "generated_pipeline_module": generated_pipeline_module_name,
+            "submitted_pipeline_source_sha": submitted_pipeline_source_sha,
             "axis_count": axis_count,
             "csv_output_count": csv_output_count,
             "image_output_count": image_output_count,

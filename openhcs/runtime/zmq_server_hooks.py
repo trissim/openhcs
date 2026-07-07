@@ -65,20 +65,24 @@ class ZMQResultsSummaryEnricher:
 
         output_plate_root = record.get_extra("output_plate_root")
         auto_add_output_plate = record.get_extra("auto_add_output_plate")
+        observation_export_path = record.get_extra("runtime_observation_export_path")
         if output_plate_root:
             summary["output_plate_root"] = str(output_plate_root)
         if auto_add_output_plate is not None:
             summary["auto_add_output_plate_to_plate_manager"] = bool(
                 auto_add_output_plate
             )
+        if observation_export_path:
+            summary["runtime_observation_export_path"] = str(observation_export_path)
         if isinstance(execution_payload, dict):
             execution_payload[MessageFields.RESULTS_SUMMARY] = summary
 
         logger.info(
-            "[%s] Attached results_summary extras: output_plate_root=%s auto_add=%s",
+            "[%s] Attached results_summary extras: output_plate_root=%s auto_add=%s observation=%s",
             execution_id,
             summary.get("output_plate_root"),
             summary.get("auto_add_output_plate_to_plate_manager"),
+            summary.get("runtime_observation_export_path"),
         )
 
     def attach_to_status_response(

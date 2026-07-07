@@ -117,6 +117,32 @@ def validate_cppipe_execution(
     return CPPipeExecutionValidation(expectation=expectation, observation=observation)
 
 
+def validate_cppipe_runtime_observation(
+    prepared: PreparedGeneratedPipeline,
+    observation: RuntimeArtifactExecutionObservation,
+    *,
+    execution_failures: tuple[str, ...] = (),
+    validate_table_exports: bool = True,
+    validate_image_exports: bool = True,
+) -> CPPipeExecutionValidation:
+    """Validate runtime artifacts and exports from a server-side observation."""
+    expectation = _runtime_expectation(
+        prepared,
+        validate_table_exports=validate_table_exports,
+        validate_image_exports=validate_image_exports,
+    )
+    failures = (
+        *execution_failures,
+        *runtime_artifact_execution_failures(expectation, observation),
+    )
+    if failures:
+        raise CPPipeExecutionValidationError(
+            "Converted CellProfiler pipeline violated compiled expectations:\n"
+            + "\n".join((f"- {failure}" for failure in failures))
+        )
+    return CPPipeExecutionValidation(expectation=expectation, observation=observation)
+
+
 def _runtime_expectation(
     prepared: PreparedGeneratedPipeline,
     *,
