@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 from benchmark.adapters.openhcs import (
@@ -259,6 +260,21 @@ def test_benchmark_transport_matches_pyqt_submission_source() -> None:
     ).source
 
     assert benchmark_source == ui_source
-    assert "invocation_contracts" not in benchmark_source
-    assert "ModuleArtifactContract" not in benchmark_source
-    assert "FunctionStepInvocationContracts" not in benchmark_source
+    module = ast.parse(benchmark_source)
+    assigned_names = {
+        target.id
+        for node in module.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    imported_names = {
+        alias.name
+        for node in module.body
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+    assert "pipeline_steps" in assigned_names
+    assert "__openhcs_step_invocation_contracts" not in assigned_names
+    assert "ModuleArtifactContract" not in imported_names
+    assert "FunctionStepInvocationContracts" not in imported_names

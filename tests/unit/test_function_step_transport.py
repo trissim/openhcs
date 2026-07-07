@@ -1,3 +1,4 @@
+import ast
 import pickle
 from dataclasses import replace
 from pathlib import Path
@@ -242,7 +243,7 @@ def test_zmq_execution_submission_source_omits_cellprofiler_runtime_contracts():
     pickle.dumps(restored.steps)
 
 
-def test_zmq_execution_submission_preserves_step_invocation_contracts():
+def test_zmq_execution_submission_emits_clean_source_without_step_invocation_contracts():
     from openhcs.core.config import GlobalPipelineConfig
 
     contract = ModuleArtifactContract(
@@ -281,15 +282,32 @@ def test_zmq_execution_submission_preserves_step_invocation_contracts():
     )
 
     source = PycodifiedPipelineCode.from_task(submission).source
+    module = ast.parse(source)
+    assigned_names = {
+        target.id
+        for node in module.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    imported_names = {
+        alias.name
+        for node in module.body
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
     namespace: dict[str, object] = {}
     exec(source, namespace)
     restored = PipelineStepsNamespaceProjection(namespace).boundary_or_none()
 
     assert "invocation_contracts" not in clean_source
     assert "cellprofiler_module_callable" not in source
-    assert "ModuleArtifactContract(" in source
+    assert "pipeline_steps" in assigned_names
+    assert "__openhcs_step_invocation_contracts" not in assigned_names
+    assert "ModuleArtifactContract" not in imported_names
+    assert "FunctionStepInvocationContracts" not in imported_names
     assert restored[0].func.__name__ == "identify_secondary_objects"
-    assert restored[0].invocation_contracts.contract_for(key) == contract
+    assert restored[0].invocation_contracts.contract_for(key) is None
     assert CallableContract.from_callable(
         restored[0].func
     ).module_artifact_contract is None

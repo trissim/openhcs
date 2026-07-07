@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import inspect
 import sys
+import textwrap
 from collections.abc import Sequence
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
@@ -43,49 +44,6 @@ from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.processing.backends.cellprofiler import (
     CellProfilerFunctionCatalog,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class GeneratedPipelineContractSidecar:
-    """Generated Python persistence for CellProfiler runtime artifact contracts."""
-
-    contracts_by_module_num: Mapping[int, ModuleArtifactContract]
-    export_name: ClassVar[str] = "CELLPROFILER_ARTIFACT_CONTRACTS"
-
-    def write(self, path: Path) -> None:
-        """Write runtime artifact contracts as importable Python source."""
-        import openhcs.serialization.pycodify_formatters  # noqa: F401
-        from pycodify import Assignment, generate_python_source
-
-        source = generate_python_source(
-            Assignment(
-                self.export_name,
-                dict(sorted(self.contracts_by_module_num.items())),
-            ),
-            header="# Generated CellProfiler runtime artifact contracts.",
-            clean_mode=False,
-        )
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if not path.exists() or path.read_text(encoding="utf-8") != source:
-            path.write_text(source, encoding="utf-8")
-
-    @classmethod
-    def read(cls, path: Path) -> dict[int, ModuleArtifactContract]:
-        """Load runtime artifact contracts from a generated Python sidecar."""
-        sidecar_path = Path(path)
-        module_name = f"_openhcs_{sidecar_path.stem}_artifact_contracts"
-        spec = importlib.util.spec_from_file_location(module_name, sidecar_path)
-        if spec is None or spec.loader is None:
-            raise ImportError(
-                f"Unable to create artifact contract module spec for {sidecar_path}."
-            )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        contracts = vars(module)[cls.export_name]
-        return {
-            int(module_num): contract
-            for module_num, contract in dict(contracts).items()
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,13 +224,7 @@ class GeneratedPipelineRuntimeModule:
             semantic_contract_fingerprint
         )
         if artifact_contracts:
-            setattr(
-                module,
-                CellProfilerGeneratedPipelineInvocationContracts.module_attribute,
-                CellProfilerGeneratedPipelineInvocationContracts.from_mapping(
-                    artifact_contracts
-                ).contracts_by_module_num,
-            )
+            bind_generated_pipeline_runtime(module, artifact_contracts)
         return module
 
     def materialize_import_module(
@@ -286,17 +238,27 @@ class GeneratedPipelineRuntimeModule:
         """Write an importable module that restores generated declarations on import."""
         output_dir = importable_path.parent
         output_dir.mkdir(parents=True, exist_ok=True)
-        contract_sidecar = output_dir / (
-            f"{self.module_name}.cellprofiler_contracts.py"
-        )
         contract_prelude = ""
         if artifact_contracts:
-            GeneratedPipelineContractSidecar(artifact_contracts).write(contract_sidecar)
+            import openhcs.serialization.pycodify_formatters  # noqa: F401
+            from pycodify import Assignment, generate_python_source
+
+            contract_source = generate_python_source(
+                Assignment(
+                    "_openhcs_cp_contract_values",
+                    dict(sorted(artifact_contracts.items())),
+                ),
+                header="# Generated CellProfiler runtime artifact contracts.",
+                clean_mode=False,
+            )
             contract_prelude = (
-                "    from openhcs.interop.cellprofiler.runtime.generated_pipeline import "
-                "GeneratedPipelineContractSidecar as _openhcs_cp_contract_sidecar\n"
-                "    _openhcs_cp_contract_values = _openhcs_cp_contract_sidecar.read("
-                f"{str(contract_sidecar)!r})\n"
+                textwrap.indent(contract_source, "    ")
+                + "\n"
+                + "    from openhcs.interop.cellprofiler.runtime.generated_pipeline import "
+                "GeneratedPipelineRuntimeBindings as _openhcs_cp_runtime_bindings\n"
+                "    _openhcs_cp_runtime_bindings("
+                "_openhcs_generated_sys.modules[__name__], "
+                "_openhcs_cp_contract_values).apply()\n"
             )
         semantic_sidecar = output_dir / (
             f"{self.module_name}.cellprofiler_semantic_contracts.py"
@@ -325,9 +287,9 @@ class GeneratedPipelineRuntimeModule:
             self.identity.code
             + "\n\n"
             + "if __name__ != '__main__':\n"
+            + "    import sys as _openhcs_generated_sys\n"
             + contract_prelude
             + semantic_prelude
-            + "    import sys as _openhcs_generated_sys\n"
             + "    from openhcs.interop.cellprofiler.runtime.generated_pipeline import "
             + "GeneratedPipelineFunctionRegistration as _openhcs_registration\n"
             + "    _openhcs_registration("
@@ -390,6 +352,10 @@ class GeneratedPipelineRuntimeBindings:
             return
         pipeline_steps = GeneratedPipelineModuleExports(self.module).pipeline_steps
         self._attach_invocation_contracts(pipeline_steps)
+        if not CellProfilerGeneratedRuntimeBindingState.pipeline_requires_rebinding(
+            pipeline_steps
+        ):
+            return
         if CellProfilerGeneratedRuntimeBindingState(
             pipeline_steps,
             self.artifact_contracts,
@@ -573,9 +539,21 @@ class CellProfilerGeneratedRuntimeBindingState:
         for step in pipeline_steps:
             if not isinstance(step, FunctionStep):
                 continue
-            if CellProfilerGeneratedStepFunctionSpec(step.func).metadata() is None:
+            if cls.step_requires_rebinding(step):
+                return True
+        return False
+
+    @classmethod
+    def step_requires_rebinding(cls, step: FunctionStep) -> bool:
+        """Return whether raw CP invocations need generated import-context rebinding."""
+        for item in _normalized_cellprofiler_invocation_items(step.func):
+            metadata = _cellprofiler_metadata_for_normalized_item(item)
+            if metadata is None:
                 continue
-            if not cls.step_has_runtime_bound_callable(step):
+            raw_callable = item.contract.resolve_runtime_callable()
+            if isinstance(raw_callable, cls.runtime_callable_type()):
+                continue
+            if step.invocation_contracts.contract_for(item.key) is None:
                 return True
         return False
 

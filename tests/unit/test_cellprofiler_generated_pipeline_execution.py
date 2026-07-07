@@ -1,3 +1,4 @@
+import ast
 import importlib.util
 import sys
 from dataclasses import dataclass, replace
@@ -12,7 +13,7 @@ import tifffile
 
 from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
     bind_generated_pipeline_runtime,
-    GeneratedPipelineContractSidecar,
+    CellProfilerStepInvocationContractProvider,
     GeneratedPipelineSemanticContractsFingerprint,
     GeneratedPipelineSemanticContractsModule,
     materialize_generated_pipeline_import_module,
@@ -80,7 +81,10 @@ from openhcs.core.function_patterns import (
     CompiledFunctionInvocation,
     CompiledFunctionPattern,
     FunctionInvocationKey,
+    compile_function_pattern,
 )
+from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
+from openhcs.core.runtime_invocation import RuntimeParameterBinding
 from openhcs.core.compiled_step_plan import (
     RuntimeArtifactMaterializationPlan,
     SequentialRuntimeFilterPlan,
@@ -170,6 +174,9 @@ class _CoreExecutionRequest:
     context: object
     artifact_inputs: Mapping[str, ArtifactInputPlan]
     artifact_outputs: Mapping[str, ArtifactOutputPlan]
+    compiled_function_pattern: CompiledFunctionPattern | None = None
+    compiled_group: CompiledFunctionGroup | None = None
+    compiled_invocation: CompiledFunctionInvocation | None = None
     source_binding_plan: CompiledSourceBindingPlan = CompiledSourceBindingPlan.empty()
     source_binding_context: SourceBindingRuntimeContext = (
         SourceBindingRuntimeContext.empty()
@@ -178,7 +185,13 @@ class _CoreExecutionRequest:
 
 
 def _execute_function_core(request: _CoreExecutionRequest):
-    contract = CallableContract.from_callable(request.func_callable)
+    invocation = request.compiled_invocation
+    compiled_group = request.compiled_group
+    compiled_pattern = request.compiled_function_pattern
+    if invocation is None:
+        contract = CallableContract.from_callable(request.func_callable)
+    else:
+        contract = invocation.contract
     if contract.input_memory_type is None or contract.output_memory_type is None:
         contract = replace(
             contract,
@@ -196,21 +209,30 @@ def _execute_function_core(request: _CoreExecutionRequest):
                 request_binding=contract.request_binding,
             ),
         )
-    invocation = CompiledFunctionInvocation(
-        key=FunctionInvocationKey.from_contract(
-            contract,
-            request.group_key,
-            0,
-        ),
-        contract=contract,
-        kwargs=tuple(request.base_kwargs.items()),
-        artifact_input_keys=tuple(request.artifact_inputs),
-        artifact_output_keys=tuple(request.artifact_outputs),
-    )
-    compiled_group = CompiledFunctionGroup(
-        group_key=request.group_key,
-        invocations=(invocation,),
-    )
+        if invocation is not None:
+            invocation = replace(invocation, contract=contract)
+    if invocation is None:
+        invocation = CompiledFunctionInvocation(
+            key=FunctionInvocationKey.from_contract(
+                contract,
+                request.group_key,
+                0,
+            ),
+            contract=contract,
+            kwargs=tuple(request.base_kwargs.items()),
+            artifact_input_keys=tuple(request.artifact_inputs),
+            artifact_output_keys=tuple(request.artifact_outputs),
+        )
+    if compiled_group is None:
+        compiled_group = CompiledFunctionGroup(
+            group_key=request.group_key,
+            invocations=(invocation,),
+        )
+    if compiled_pattern is None:
+        compiled_pattern = CompiledFunctionPattern(
+            groups=(compiled_group,),
+            is_grouped=False,
+        )
     execution_plan = FunctionStepExecutionPlan(
         step_index=0,
         step_scope_id="test::function_step",
@@ -243,10 +265,7 @@ def _execute_function_core(request: _CoreExecutionRequest):
         materialized_output=None,
         runtime_artifact_materialization=RuntimeArtifactMaterializationPlan.disabled(),
         streaming_configs=(),
-        compiled_function_pattern=CompiledFunctionPattern(
-            groups=(compiled_group,),
-            is_grouped=False,
-        ),
+        compiled_function_pattern=compiled_pattern,
         artifact_inputs_by_group={},
         artifact_outputs_by_group={},
     )
@@ -429,7 +448,16 @@ def test_generated_runtime_binding_preserves_backend_callable_identity() -> None
     assert step_func.__module__ == "openhcs.processing.backends.cellprofiler"
     assert "benchmark_generated" not in step_func.__name__
     assert "_runtime" not in step_func.__name__
-    assert runtime_adapter_spec_from_callable(step_func) is not None
+    assert runtime_adapter_spec_from_callable(step_func) is None
+
+    compiled_pattern = _compile_generated_step_pattern(
+        namespace["pipeline_steps"][0],
+        generated.artifact_contracts[0],
+    )
+    compiled_func = compiled_pattern.default_group.invocations[0].contract.func
+    assert compiled_func.__name__ == "identify_primary_objects"
+    assert compiled_func.__module__ == "openhcs.processing.backends.cellprofiler"
+    assert runtime_adapter_spec_from_callable(compiled_func) is not None
 
 
 def test_generated_runtime_binding_matches_reordered_steps_by_module_contract() -> None:
@@ -446,9 +474,7 @@ def test_generated_runtime_binding_matches_reordered_steps_by_module_contract() 
     bind_generated_pipeline_runtime(SimpleNamespace(**namespace), runtime_contracts)
 
     rebound_contracts = [
-        CallableContract.from_callable(
-            step.func
-        ).module_artifact_contract.module_name
+        step.invocation_contracts.bindings[0].contract.module_name
         for step in pipeline_steps
     ]
     assert rebound_contracts[:2] == [
@@ -511,10 +537,16 @@ def test_generated_runtime_binding_scopes_grouped_source_bindings() -> None:
     )
 
     rebound = module.pipeline_steps[0].func
-    assert isinstance(rebound["1"], CellProfilerRuntimeCallable)
-    assert isinstance(rebound["2"], CellProfilerRuntimeCallable)
-    assert rebound["1"].contract.inputs[0].name == "OrigStain1"
-    assert rebound["2"].contract.inputs[0].name == "OrigStain2"
+    assert rebound == {
+        "1": correct_illumination_calculate,
+        "2": correct_illumination_calculate,
+    }
+    assert module.pipeline_steps[0].invocation_contracts.contract_for(
+        FunctionInvocationKey("correct_illumination_calculate", "1", 0)
+    ).inputs[0].name == "OrigStain1"
+    assert module.pipeline_steps[0].invocation_contracts.contract_for(
+        FunctionInvocationKey("correct_illumination_calculate", "2", 0)
+    ).inputs[0].name == "OrigStain2"
 
 
 def test_generated_pipeline_save_can_use_explicit_filemanager_vfs(
@@ -537,11 +569,11 @@ def test_generated_pipeline_save_can_use_explicit_filemanager_vfs(
     assert not output_path.exists()
 
 
-def test_materialized_generated_pipeline_contract_sidecar_is_python_source(
+def test_materialized_generated_pipeline_inlines_artifact_contracts(
     tmp_path: Path,
 ) -> None:
     generated = _generated_pipeline(_image_artifact_pipeline_modules())
-    module_name = "test_generated_contract_sidecar"
+    module_name = "test_generated_inline_contracts"
     output_dir = tmp_path / "nested" / "generated"
 
     import_module_path = materialize_generated_pipeline_import_module(
@@ -551,21 +583,37 @@ def test_materialized_generated_pipeline_contract_sidecar_is_python_source(
         artifact_contracts=generated.runtime_module_contracts_by_module_num,
     )
 
-    sidecar_path = output_dir / f"{module_name}.cellprofiler_contracts.py"
-    assert sidecar_path.exists()
+    assert not (output_dir / f"{module_name}.cellprofiler_contracts.py").exists()
     assert not (output_dir / f"{module_name}.cellprofiler_contracts.json").exists()
     assert not (output_dir / f"{module_name}.cellprofiler_contracts.pkl").exists()
 
-    restored = GeneratedPipelineContractSidecar.read(sidecar_path)
-    assert restored[3].module_name == "Opening"
-    assert restored[3].outputs[0].name == OPENED_NUCLEI_IMAGE
-    sidecar_source = sidecar_path.read_text(encoding="utf-8")
-    assert "CELLPROFILER_ARTIFACT_CONTRACTS" in sidecar_source
-    assert "ModuleArtifactContract(" in sidecar_source
-    assert "MaterializationSpec(" in sidecar_source
-    assert "GeneratedPipelineContractSidecar" in import_module_path.read_text(
-        encoding="utf-8"
-    )
+    import_source_tree = ast.parse(import_module_path.read_text(encoding="utf-8"))
+    assigned_names = {
+        target.id
+        for node in ast.walk(import_source_tree)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    imported_names = {
+        alias.name
+        for node in ast.walk(import_source_tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+    call_names = {
+        node.func.id
+        if isinstance(node.func, ast.Name)
+        else node.func.attr
+        for node in ast.walk(import_source_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name | ast.Attribute)
+    }
+    assert "_openhcs_cp_contract_values" in assigned_names
+    assert "ModuleArtifactContract" in call_names
+    assert "MaterializationSpec" in call_names
+    assert "GeneratedPipelineRuntimeBindings" in imported_names
+    assert "GeneratedPipelineContractSidecar" not in imported_names
 
     spec = importlib.util.spec_from_file_location(module_name, import_module_path)
     assert spec is not None and spec.loader is not None
@@ -574,9 +622,18 @@ def test_materialized_generated_pipeline_contract_sidecar_is_python_source(
     spec.loader.exec_module(module)
     assert "pipeline_steps" in vars(module)
     assert not isinstance(module.pipeline_steps[0].func, CellProfilerRuntimeCallable)
+    attached_contracts = tuple(
+        binding.contract
+        for step in module.pipeline_steps
+        for binding in step.invocation_contracts.bindings
+    )
+    assert any(
+        contract.outputs and contract.outputs[0].name == OPENED_NUCLEI_IMAGE
+        for contract in attached_contracts
+    )
     pipeline = pipeline_from_generated_module(
         module,
-        pipeline_name="contract-sidecar-smoke",
+        pipeline_name="inline-contract-smoke",
     )
     assert "_openhcs_cp_contract_values" not in pipeline.metadata
     assert "CELLPROFILER_SEMANTIC_CONTRACTS" not in pipeline.metadata
@@ -903,6 +960,31 @@ def _step_function_and_kwargs(step) -> tuple:
     return step.func, {}
 
 
+def _compile_generated_step_pattern(
+    step,
+    contract,
+) -> CompiledFunctionPattern:
+    provider = CellProfilerStepInvocationContractProvider.for_steps([step])
+    assert provider is not None
+    return compile_function_pattern(
+        step.func,
+        _artifact_input_plans(contract),
+        _artifact_output_plans(contract),
+        invocation_contract_provider=provider,
+        step_context=ArtifactDeclarationStepContext(
+            step_index=0,
+            step_name=step.name,
+            source_bindings=step.source_bindings,
+        ),
+        runtime_parameter_bindings=(
+            RuntimeParameterBinding(
+                DtypeConfig.runtime_parameter_declaration(),
+                DtypeConfig(),
+            ),
+        ),
+    )
+
+
 def _run_generated_step(
     step,
     contract,
@@ -911,8 +993,11 @@ def _run_generated_step(
     *,
     source_binding_context=SourceBindingRuntimeContext.empty(),
 ):
+    compiled_pattern = _compile_generated_step_pattern(step, contract)
+    compiled_group = compiled_pattern.default_group
+    assert len(compiled_group.invocations) == 1
+    invocation = compiled_group.invocations[0]
     func, kwargs = _step_function_and_kwargs(step)
-    kwargs["dtype_config"] = DtypeConfig()
     return _execute_function_core(
         _CoreExecutionRequest(
             func_callable=func,
@@ -921,6 +1006,9 @@ def _run_generated_step(
             context=context,
             artifact_inputs=_artifact_input_plans(contract),
             artifact_outputs=_artifact_output_plans(contract),
+            compiled_function_pattern=compiled_pattern,
+            compiled_group=compiled_group,
+            compiled_invocation=invocation,
             source_binding_plan=CompiledSourceBindingPlan.from_config(
                 step.source_bindings
             ),

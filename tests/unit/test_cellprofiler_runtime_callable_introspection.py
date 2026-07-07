@@ -61,6 +61,9 @@ from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
     GeneratedFunctionSpec,
     bind_generated_pipeline_runtime,
 )
+from openhcs.pyqt_gui.widgets.shared.services.cellprofiler_pipeline_rebinding import (
+    CellProfilerPipelineRuntimeBindingService,
+)
 from openhcs.interop.cellprofiler.compile_time_contracts import (
     cellprofiler_module_settings_invocation_contract_provider_for_session,
 )
@@ -468,10 +471,13 @@ def test_generated_runtime_binding_accepts_matching_source_binding_contract():
         {1: crop_contract(inputs=(ArtifactSpec.input("OrigBlue", ImageArtifactType),))},
     )
 
-    assert isinstance(module.pipeline_steps[0].func, CellProfilerRuntimeCallable)
+    assert module.pipeline_steps[0].func is crop
     assert module.pipeline_steps[0].invocation_contracts.contract_for(
         FunctionInvocationKey("crop", "default", 0)
     ) == crop_contract(inputs=(ArtifactSpec.input("OrigBlue", ImageArtifactType),))
+    assert not CellProfilerGeneratedRuntimeBindingState.pipeline_requires_rebinding(
+        module.pipeline_steps
+    )
 
 
 def test_step_invocation_contract_provider_binds_raw_cellprofiler_callable():
@@ -756,6 +762,46 @@ def test_generated_runtime_binding_state_accepts_nested_function_patterns():
     )
 
     assert state.matches_expected_contracts()
+
+
+def test_generated_runtime_binding_state_accepts_raw_callable_with_step_contract():
+    """Step-owned invocation contracts remove the need for import-context rebinding."""
+    contract = crop_contract(
+        outputs=(ArtifactSpec.output("CropBlue", ImageArtifactType),)
+    )
+    key = FunctionInvocationKey("crop", "default", 0)
+    step = FunctionStep(
+        func=crop,
+        invocation_contracts=FunctionStepInvocationContracts(
+            (FunctionStepInvocationContractBinding(key, contract),)
+        ),
+    )
+
+    assert not CellProfilerGeneratedRuntimeBindingState.pipeline_requires_rebinding(
+        [step]
+    )
+
+
+def test_runtime_binding_service_uses_step_contracts_without_import_context():
+    """Code-mode CP steps with typed contracts do not depend on plate import state."""
+    contract = crop_contract(
+        outputs=(ArtifactSpec.output("CropBlue", ImageArtifactType),)
+    )
+    key = FunctionInvocationKey("crop", "default", 0)
+    step = FunctionStep(
+        func=crop,
+        invocation_contracts=FunctionStepInvocationContracts(
+            (FunctionStepInvocationContractBinding(key, contract),)
+        ),
+    )
+
+    rebound = CellProfilerPipelineRuntimeBindingService.runtime_bound_pipeline_for_plate(
+        import_result_provider=None,
+        plate_path="/tmp/example#openhcs-cppipe=Example.cppipe",
+        pipeline_steps=[step],
+    )
+
+    assert rebound == [step]
 
 
 def test_generated_function_spec_accepts_dict_patterns():
