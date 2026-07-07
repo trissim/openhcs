@@ -51,7 +51,7 @@ from openhcs.interop.cellprofiler.module_roles import (
     cellprofiler_infrastructure_import_note,
     cellprofiler_infrastructure_retained_artifacts,
 )
-from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
+from openhcs.interop.cellprofiler.parser import ModuleBlock
 from openhcs.interop.cellprofiler.artifact_semantics import artifact_setting_symbols
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingsBinder,
@@ -68,6 +68,7 @@ from openhcs.processing.materialization import MaterializedFilenameIdentity, tif
 from openhcs.interop.cellprofiler.symbol_table import (
     CellProfilerSymbolTable,
     ModuleArtifactContracts,
+    step_source_bindings_literal,
 )
 from openhcs.interop.cellprofiler.module_processing_components import (
     GeneratedLiteralValue,
@@ -75,9 +76,11 @@ from openhcs.interop.cellprofiler.module_processing_components import (
     GeneratedStepSettingKey,
     GeneratedStepSettings,
     ModuleProcessingComponentRequest,
+    ModuleProcessingComponents,
     RuntimeArtifactLineageScope,
     RuntimeArtifactSourceLineage,
     generated_function_step_semantic_argument_lines,
+    group_by_component_axis,
 )
 
 logger = logging.getLogger(__name__)
@@ -709,84 +712,34 @@ class StepInputSourceLiteral:
         lines.append(f"            input_source={self.value},")
 
 
-@dataclass(frozen=True, slots=True)
-class CellProfilerCompileTimeSettingProjection:
-    """Public kwargs used only to reconstruct CellProfiler module contracts."""
+@dataclass(frozen=True)
+class GeneratedStepEmission:
+    """Compiler-derived source for one generated FunctionStep item."""
 
-    kwargs: dict[str, object]
+    module: ModuleBlock
+    module_type: type[CellProfilerModule]
+    step_name: str
+    artifact_contract: ModuleArtifactContracts
+    func_name: str
+    translated_kwargs: GeneratedStepSettings
+    invocation_options_literal: str | None
+    processing_components: ModuleProcessingComponents
+    input_source_literal: StepInputSourceLiteral
 
-    @classmethod
-    def from_module(
-        cls,
-        *,
-        module: ModuleBlock,
-        existing_kwargs: Mapping[str, object],
-        source_schema: PipelineImageSchema | None = None,
-    ) -> "CellProfilerCompileTimeSettingProjection":
-        module_type = CellProfilerModule.for_module(module.name)
-        existing = set(existing_kwargs)
-        kwargs: dict[str, object] = {}
-        public_records = cls._public_records(module)
-        if module_type is not None:
-            public_records = (
-                *module_type.compile_time_public_setting_records(
-                    module, source_schema
-                ),
-                *public_records,
-            )
-        binder = SettingsBinder()
-        for setting in cls._dedupe_records(public_records):
-            setting_name = setting.name
-            value = binder.parse_value(setting_name, setting.value)
-            key = normalize_cellprofiler_setting_name(setting_name)
-            if key in existing:
-                continue
-            cls._append_setting_value(kwargs, key, value)
-        return cls(kwargs)
 
-    @classmethod
-    def _public_records(
-        cls,
-        module: ModuleBlock,
-    ) -> tuple[ModuleSetting, ...]:
-        records: list[ModuleSetting] = []
-        seen: set[tuple[str, str]] = set()
+@dataclass(frozen=True)
+class GeneratedStepEmissionGroup:
+    """One generated FunctionStep, possibly containing dict-pattern items."""
 
-        for symbol in artifact_setting_symbols(module):
-            key = (symbol.setting_name, symbol.name)
-            if key in seen:
-                continue
-            records.append(ModuleSetting(symbol.setting_name, symbol.name))
-            seen.add(key)
+    emissions: tuple[GeneratedStepEmission, ...]
 
-        return tuple(records)
+    @property
+    def first(self) -> GeneratedStepEmission:
+        return self.emissions[0]
 
-    @staticmethod
-    def _dedupe_records(records: tuple[ModuleSetting, ...]) -> tuple[ModuleSetting, ...]:
-        deduped: list[ModuleSetting] = []
-        seen: set[tuple[str, str]] = set()
-        for record in records:
-            key = (record.name, record.value)
-            if key in seen:
-                continue
-            deduped.append(record)
-            seen.add(key)
-        return tuple(deduped)
-
-    @staticmethod
-    def _append_setting_value(
-        kwargs: dict[str, object],
-        key: str,
-        value: object,
-    ) -> None:
-        existing = kwargs.get(key)
-        if existing is None:
-            kwargs[key] = value
-            return
-        if isinstance(existing, tuple):
-            kwargs[key] = (*existing, value)
-            return
-        kwargs[key] = (existing, value)
+    @property
+    def is_grouped(self) -> bool:
+        return len(self.emissions) > 1
 
 
 @dataclass(frozen=True)
@@ -812,6 +765,7 @@ class PipelineGeneratorCodeEmitter:
         literal_imports: set[tuple[str, str]] = set()
         setting_coverage: list[ModuleSettingCoverageRecord] = []
         source_lineage = RuntimeArtifactSourceLineage(artifact_contracts, source_schema)
+        emissions: list[GeneratedStepEmission] = []
         for module in modules:
             module_type = self.generator.registry.required_module_class(module.name)
             step_name = module.name
@@ -839,16 +793,6 @@ class PipelineGeneratorCodeEmitter:
                 param_mapping=param_mapping,
                 artifact_contract=artifact_contract,
             )
-            compile_time_projection = (
-                CellProfilerCompileTimeSettingProjection.from_module(
-                    module=module,
-                    existing_kwargs=dict(translated_kwargs.items()),
-                    source_schema=source_schema,
-                )
-            )
-            translated_kwargs = translated_kwargs.with_defaults(
-                compile_time_projection.kwargs
-            )
             invocation_options_literal = (
                 module_type.generated_invocation_options_literal(
                     bound_settings.invocation_options, import_collector=literal_imports
@@ -861,6 +805,9 @@ class PipelineGeneratorCodeEmitter:
                     artifact_contract,
                     source_lineage.variable_components_for(artifact_contract),
                     source_lineage.requires_pairwise_object_domain_scope_for(
+                        artifact_contract
+                    ),
+                    source_lineage.source_stack_runtime_image_names_for(
                         artifact_contract
                     ),
                 ),
@@ -878,50 +825,25 @@ class PipelineGeneratorCodeEmitter:
                 module,
                 component_request,
             )
-            lines.append("    FunctionStep(")
-            lines.extend(self.artifact_contract_comments(artifact_contract))
-            if translated_kwargs:
-                kwargs_lines = ["{"]
-                for k, v in translated_kwargs.items():
-                    kwargs_lines.append(
-                        "            "
-                        f"{self.kwarg_key_literal(k)}: "
-                        f"{python_literal(v, import_collector=literal_imports)},"
-                    )
-                kwargs_lines.append("        }")
-                kwargs_str = "\n".join(kwargs_lines)
-                if invocation_options_literal is None:
-                    lines.append(f"        func=({func_name}, {kwargs_str}),")
-                else:
-                    lines.append(
-                        f"        func=({func_name}, {kwargs_str}, {invocation_options_literal}),"
-                    )
-            elif invocation_options_literal is None:
-                lines.append(f"        func={func_name},")
-            else:
-                lines.append(
-                    f"        func=({func_name}, {{}}, {invocation_options_literal}),"
-                )
-            lines.append(f'        name="{step_name}",')
-            lines.extend(
-                generated_function_step_semantic_argument_lines(
-                    processing_components=processing_components,
+            emissions.append(
+                GeneratedStepEmission(
+                    module=module,
+                    module_type=module_type,
+                    step_name=step_name,
                     artifact_contract=artifact_contract,
-                    import_collector=literal_imports,
+                    func_name=func_name,
+                    translated_kwargs=translated_kwargs,
+                    invocation_options_literal=invocation_options_literal,
+                    processing_components=processing_components,
+                    input_source_literal=input_source_literal,
                 )
             )
-            lines.append("        processing_config=LazyProcessingConfig(")
-            lines.append(
-                "            variable_components=["
-                + ", ".join(processing_components.variable_component_literals)
-                + "],"
+        for emission_group in self.coalesced_emission_groups(tuple(emissions)):
+            self.emit_function_step(
+                lines,
+                emission_group,
+                import_collector=literal_imports,
             )
-            group_by_literal = processing_components.group_by_literal
-            if group_by_literal is not None:
-                lines.append(f"            group_by={group_by_literal},")
-            input_source_literal.append_to(lines)
-            lines.append("        ),")
-            lines.append("    ),")
         lines.append("]")
         if literal_imports:
             import_lines = [
@@ -930,6 +852,232 @@ class PipelineGeneratorCodeEmitter:
             ]
             return ("\n".join((*import_lines, "", *lines)), tuple(setting_coverage))
         return ("\n".join(lines), tuple(setting_coverage))
+
+    def coalesced_emission_groups(
+        self,
+        emissions: tuple[GeneratedStepEmission, ...],
+    ) -> tuple[GeneratedStepEmissionGroup, ...]:
+        """Coalesce adjacent emissions into dict-pattern steps when semantics match."""
+        groups: list[GeneratedStepEmissionGroup] = []
+        current: list[GeneratedStepEmission] = []
+        for emission in emissions:
+            if current and self.can_coalesce_with_group(tuple(current), emission):
+                current.append(emission)
+                continue
+            if current:
+                groups.append(GeneratedStepEmissionGroup(tuple(current)))
+            current = [emission]
+        if current:
+            groups.append(GeneratedStepEmissionGroup(tuple(current)))
+        return tuple(groups)
+
+    def can_coalesce_with_group(
+        self,
+        emissions: tuple[GeneratedStepEmission, ...],
+        candidate: GeneratedStepEmission,
+    ) -> bool:
+        """Return whether ``candidate`` can join an existing generated step group."""
+        first = emissions[0]
+        candidate_key = self.group_key_for_emission(candidate)
+        existing_keys = tuple(self.group_key_for_emission(emission) for emission in emissions)
+        return (
+            candidate_key is not None
+            and all(key is not None for key in existing_keys)
+            and candidate_key not in existing_keys
+            and candidate.module.name == first.module.name
+            and candidate.module_type is first.module_type
+            and candidate.step_name == first.step_name
+            and candidate.func_name == first.func_name
+            and candidate.processing_components == first.processing_components
+            and candidate.input_source_literal == first.input_source_literal
+            and self.source_binding_config_shape(candidate)
+            == self.source_binding_config_shape(first)
+        )
+
+    @staticmethod
+    def source_binding_config_shape(emission: GeneratedStepEmission):
+        """Return source-binding config with per-group bindings removed."""
+        return replace(emission.artifact_contract.source_bindings, bindings=())
+
+    @staticmethod
+    def group_key_for_emission(emission: GeneratedStepEmission) -> str | None:
+        """Return the dict-pattern key declared by source-binding component identity."""
+        group_axis = group_by_component_axis(
+            emission.processing_components.group_by_component
+        )
+        if group_axis is None:
+            return None
+        bindings = emission.artifact_contract.source_bindings.binding_declarations
+        matches = tuple(
+            selector.value
+            for binding in bindings
+            for selector in binding.component_identity
+            if selector.component is group_axis
+        )
+        unique_matches = tuple(dict.fromkeys(matches))
+        if len(unique_matches) != 1:
+            return None
+        return str(unique_matches[0])
+
+    def emit_function_step(
+        self,
+        lines: list[str],
+        emission_group: GeneratedStepEmissionGroup,
+        *,
+        import_collector: set[tuple[str, str]],
+    ) -> None:
+        """Append generated source for one FunctionStep emission group."""
+        first = emission_group.first
+        lines.append("    FunctionStep(")
+        for emission in emission_group.emissions:
+            lines.extend(self.artifact_contract_comments(emission.artifact_contract))
+        self.emit_function_spec(
+            lines,
+            emission_group,
+            import_collector=import_collector,
+        )
+        lines.append(f'        name="{first.step_name}",')
+        if emission_group.is_grouped:
+            source_bindings = self.merged_group_source_bindings(emission_group)
+            if not source_bindings.is_empty:
+                lines.append(
+                    "        source_bindings="
+                    f"{step_source_bindings_literal(source_bindings, import_collector=import_collector)},"
+                )
+        else:
+            lines.extend(
+                generated_function_step_semantic_argument_lines(
+                    processing_components=first.processing_components,
+                    artifact_contract=first.artifact_contract,
+                    import_collector=import_collector,
+                )
+            )
+        lines.append("        processing_config=LazyProcessingConfig(")
+        lines.append(
+            "            variable_components=["
+            + ", ".join(first.processing_components.variable_component_literals)
+            + "],"
+        )
+        group_by_literal = first.processing_components.group_by_literal
+        if group_by_literal is not None:
+            lines.append(f"            group_by={group_by_literal},")
+        first.input_source_literal.append_to(lines)
+        lines.append("        ),")
+        lines.append("    ),")
+
+    @staticmethod
+    def merged_group_source_bindings(emission_group: GeneratedStepEmissionGroup):
+        """Return one source-binding config containing every grouped binding."""
+        first_config = emission_group.first.artifact_contract.source_bindings
+        bindings_by_alias = {}
+        for emission in emission_group.emissions:
+            for binding in emission.artifact_contract.source_bindings.binding_declarations:
+                bindings_by_alias[binding.alias] = binding
+        return replace(first_config, bindings=tuple(bindings_by_alias.values()))
+
+    def emit_function_spec(
+        self,
+        lines: list[str],
+        emission_group: GeneratedStepEmissionGroup,
+        *,
+        import_collector: set[tuple[str, str]],
+    ) -> None:
+        """Append the ``func=`` source for one generated FunctionStep."""
+        if emission_group.is_grouped:
+            lines.append("        func={")
+            for emission in emission_group.emissions:
+                group_key = self.group_key_for_emission(emission)
+                if group_key is None:
+                    raise ValueError(
+                        f"Generated step {emission.step_name!r} cannot emit a "
+                        "dict-pattern item without a source-binding group key."
+                    )
+                lines.append(
+                    f"            {group_key!r}: "
+                    f"{self.compact_function_item_literal(emission, import_collector=import_collector)},"
+                )
+            lines.append("        },")
+            return
+        self.emit_single_function_spec(
+            lines,
+            emission_group.first,
+            import_collector=import_collector,
+        )
+
+    def emit_single_function_spec(
+        self,
+        lines: list[str],
+        emission: GeneratedStepEmission,
+        *,
+        import_collector: set[tuple[str, str]],
+    ) -> None:
+        """Append the legacy single-item ``func=`` source."""
+        if emission.translated_kwargs:
+            kwargs_str = self.multiline_kwargs_literal(
+                emission.translated_kwargs,
+                import_collector=import_collector,
+            )
+            if emission.invocation_options_literal is None:
+                lines.append(f"        func=({emission.func_name}, {kwargs_str}),")
+            else:
+                lines.append(
+                    f"        func=({emission.func_name}, {kwargs_str}, {emission.invocation_options_literal}),"
+                )
+        elif emission.invocation_options_literal is None:
+            lines.append(f"        func={emission.func_name},")
+        else:
+            lines.append(
+                f"        func=({emission.func_name}, {{}}, {emission.invocation_options_literal}),"
+            )
+
+    def compact_function_item_literal(
+        self,
+        emission: GeneratedStepEmission,
+        *,
+        import_collector: set[tuple[str, str]],
+    ) -> str:
+        """Return a compact callable-item literal for dict-pattern values."""
+        if not emission.translated_kwargs and emission.invocation_options_literal is None:
+            return emission.func_name
+        kwargs = self.compact_kwargs_literal(
+            emission.translated_kwargs,
+            import_collector=import_collector,
+        )
+        if emission.invocation_options_literal is None:
+            return f"({emission.func_name}, {kwargs})"
+        return f"({emission.func_name}, {kwargs}, {emission.invocation_options_literal})"
+
+    def compact_kwargs_literal(
+        self,
+        settings: GeneratedStepSettings,
+        *,
+        import_collector: set[tuple[str, str]],
+    ) -> str:
+        """Return a compact kwargs mapping literal."""
+        if not settings:
+            return "{}"
+        items = tuple(
+            f"{self.kwarg_key_literal(key)}: {python_literal(value, import_collector=import_collector)}"
+            for key, value in settings.items()
+        )
+        return "{" + ", ".join(items) + "}"
+
+    def multiline_kwargs_literal(
+        self,
+        settings: GeneratedStepSettings,
+        *,
+        import_collector: set[tuple[str, str]],
+    ) -> str:
+        """Return the existing multi-line kwargs mapping literal."""
+        kwargs_lines = ["{"]
+        for key, value in settings.items():
+            kwargs_lines.append(
+                "            "
+                f"{self.kwarg_key_literal(key)}: "
+                f"{python_literal(value, import_collector=import_collector)},"
+            )
+        kwargs_lines.append("        }")
+        return "\n".join(kwargs_lines)
 
     @staticmethod
     def kwarg_key_literal(key: GeneratedStepSettingKey) -> str:
@@ -1081,6 +1229,9 @@ class PipelineGeneratorBuildStage:
                             artifact_contract,
                             source_lineage.variable_components_for(artifact_contract),
                             source_lineage.requires_pairwise_object_domain_scope_for(
+                                artifact_contract
+                            ),
+                            source_lineage.source_stack_runtime_image_names_for(
                                 artifact_contract
                             ),
                         ),

@@ -4,21 +4,32 @@ import copy
 from inspect import signature
 import subprocess
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import get_args
 
 import pytest
 from python_introspect import SignatureAnalyzer, UnifiedParameterAnalyzer, is_enableable
 
-from openhcs.constants.constants import VariableComponents
+from openhcs.constants.constants import AllComponents, VariableComponents
 from openhcs.constants.input_source import InputSource
-from openhcs.core.config import LazyProcessingConfig
+from openhcs.core.compiled_step_plan import CompiledStepPlan
+from openhcs.core.config import (
+    GlobalPipelineConfig,
+    LazyProcessingConfig,
+    ProcessingConfig,
+    StepMaterializationConfig,
+)
+from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.artifacts import (
     ArtifactSpec,
     ImageArtifactType,
     ObjectLabelsArtifactType,
 )
-from openhcs.core.function_patterns import compile_function_pattern
+from openhcs.core.function_patterns import FunctionInvocationKey, compile_function_pattern
+from openhcs.core.function_step_invocation_contracts import (
+    FunctionStepInvocationContractBinding,
+    FunctionStepInvocationContracts,
+)
 from openhcs.core.function_reference import FunctionReferenceTransportAuthority
 from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
 from openhcs.core.module_artifact_contract import (
@@ -29,7 +40,15 @@ from openhcs.core.module_artifact_contract import (
     SourceArtifactInputPartition,
 )
 from openhcs.core.runtime_adapters import runtime_adapter_spec_from_callable
+from openhcs.core.pipeline.compilation_session import CompilationSession
+from openhcs.core.pipeline.step_config_universe import (
+    StepConfigRoot,
+    StepConfigUniverse,
+    step_config_declarations,
+)
+from openhcs.core.pipeline.step_snapshot import StepSnapshot
 from openhcs.core.source_bindings import (
+    ComponentSelector,
     NamedSourceBinding,
     StepSourceBindingsConfig,
 )
@@ -39,6 +58,7 @@ from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
     CellProfilerGeneratedInvocationContractProvider,
     CellProfilerGeneratedRuntimeBindingState,
     CellProfilerGeneratedPipelineInvocationContracts,
+    GeneratedFunctionSpec,
     bind_generated_pipeline_runtime,
 )
 from openhcs.interop.cellprofiler.compile_time_contracts import (
@@ -54,6 +74,7 @@ from openhcs.processing.backends.cellprofiler import (
     correct_illumination_calculate,
     crop,
     identify_tertiary_objects,
+    mask_objects,
 )
 from openhcs.processing.backends.cellprofiler.crop import CropModule
 from openhcs.processing.backends.cellprofiler.illumination import (
@@ -86,6 +107,65 @@ def crop_contract(
                 DeclaredArtifactOutputPartition, outputs
             ),
         ),
+    )
+
+
+def _config_universe_for_step(step: FunctionStep) -> StepConfigUniverse:
+    roots = []
+    declarations = step_config_declarations()
+    for config in (
+        step.source_bindings,
+        ProcessingConfig(),
+        StepMaterializationConfig(enabled=False),
+    ):
+        declaration = next(
+            declaration
+            for declaration in declarations
+            if type(config) is declaration.config_type
+        )
+        roots.append(StepConfigRoot(declaration=declaration, value=config))
+    return StepConfigUniverse(tuple(roots))
+
+
+def _snapshot_for_step(index: int, step: FunctionStep) -> StepSnapshot:
+    return StepSnapshot(
+        index=index,
+        scope_id=f"test::functionstep_{index}",
+        name=step.name,
+        step_type=step.__class__.__name__,
+        enabled=bool(step.enabled),
+        is_function_step=True,
+        func=step.func,
+        invocation_contracts=step.invocation_contracts,
+        configs=_config_universe_for_step(step),
+    )
+
+
+def _compilation_session_for_steps(
+    steps: list[FunctionStep],
+) -> CompilationSession:
+    snapshots = tuple(
+        _snapshot_for_step(index, step)
+        for index, step in enumerate(steps)
+    )
+    return CompilationSession.from_context(
+        context=ProcessingContext(
+            step_plans={
+                index: CompiledStepPlan(
+                    step_index=index,
+                    step_name=step.name,
+                    step_type=step.__class__.__name__,
+                    axis_id="A01",
+                )
+                for index, step in enumerate(steps)
+            },
+            axis_id="A01",
+        ),
+        steps=steps,
+        orchestrator=SimpleNamespace(),
+        global_config=GlobalPipelineConfig(),
+        step_state_map={index: object() for index in range(len(steps))},
+        snapshots=snapshots,
     )
 
 
@@ -389,6 +469,71 @@ def test_generated_runtime_binding_accepts_matching_source_binding_contract():
     )
 
     assert isinstance(module.pipeline_steps[0].func, CellProfilerRuntimeCallable)
+    assert module.pipeline_steps[0].invocation_contracts.contract_for(
+        FunctionInvocationKey("crop", "default", 0)
+    ) == crop_contract(inputs=(ArtifactSpec.input("OrigBlue", ImageArtifactType),))
+
+
+def test_step_invocation_contract_provider_binds_raw_cellprofiler_callable():
+    """Step-owned contracts compile raw CP callables without pipeline metadata."""
+    output = ArtifactSpec.output("ColocalizedRegion", ObjectLabelsArtifactType)
+    contract = ModuleArtifactContract(
+        module_name="MaskObjects",
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                SourceArtifactInputPartition,
+                (ArtifactSpec.input("None", ImageArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                RuntimeArtifactInputPartition,
+                (ArtifactSpec.input("Objects1", ObjectLabelsArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (output,),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (output,),
+            ),
+        ),
+    )
+    key = FunctionInvocationKey("mask_objects", "default", 0)
+    step = FunctionStep(
+        func=mask_objects,
+        name="MaskObjects",
+        invocation_contracts=FunctionStepInvocationContracts(
+            (FunctionStepInvocationContractBinding(key, contract),)
+        ),
+        source_bindings=StepSourceBindingsConfig(
+            enabled=True,
+            bindings=(
+                NamedSourceBinding(
+                    alias="None",
+                    artifact_kind=ImageArtifactType,
+                ),
+            ),
+        ),
+    )
+    session = _compilation_session_for_steps([step])
+
+    provider = cellprofiler_module_settings_invocation_contract_provider_for_session(
+        session
+    )
+    compiled = compile_function_pattern(
+        step.func,
+        {},
+        {},
+        invocation_contract_provider=provider,
+        step_context=ArtifactDeclarationStepContext(
+            step_index=0,
+            source_bindings=step.source_bindings,
+        ),
+    )
+    invocation = next(compiled.iter_invocations())
+
+    assert invocation.contract.module_artifact_contract == contract
+    assert isinstance(invocation.contract.func, CellProfilerRuntimeCallable)
 
 
 def test_generated_contract_provider_binds_cellprofiler_runtime_at_compile_time():
@@ -488,14 +633,7 @@ def test_cellprofiler_compile_time_contract_provider_derives_single_source_input
         name="CorrectIlluminationCalculate",
         source_bindings=source_bindings,
     )
-    session = type(
-        "Session",
-        (),
-        {
-            "steps": [step],
-            "pipeline_metadata": {},
-        },
-    )()
+    session = _compilation_session_for_steps([step])
 
     provider = cellprofiler_module_settings_invocation_contract_provider_for_session(
         session
@@ -505,6 +643,105 @@ def test_cellprofiler_compile_time_contract_provider_derives_single_source_input
     contract = provider.contracts_by_module_num[1]
     assert [spec.name for spec in contract.inputs] == ["OrigStain1"]
     assert [spec.name for spec in contract.outputs] == ["IllumStain1"]
+
+
+def test_cellprofiler_compile_time_contract_provider_scopes_grouped_source_bindings():
+    """Dict-pattern groups derive source inputs from matching component identities."""
+    source_bindings = StepSourceBindingsConfig(
+        enabled=True,
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigStain1",
+                artifact_kind=ImageArtifactType,
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "1"),
+                ),
+            ),
+            NamedSourceBinding(
+                alias="OrigStain2",
+                artifact_kind=ImageArtifactType,
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "2"),
+                ),
+            ),
+        ),
+    )
+    step = FunctionStep(
+        func={
+            "1": (
+                correct_illumination_calculate,
+                {"name_the_output_image": "IllumStain1"},
+            ),
+            "2": (
+                correct_illumination_calculate,
+                {"name_the_output_image": "IllumStain2"},
+            ),
+        },
+        name="CorrectIlluminationCalculate",
+        source_bindings=source_bindings,
+    )
+    session = _compilation_session_for_steps([step])
+
+    provider = cellprofiler_module_settings_invocation_contract_provider_for_session(
+        session
+    )
+
+    assert provider is not None
+    first_contract = provider.contracts_by_module_num[1]
+    second_contract = provider.contracts_by_module_num[2]
+    assert [spec.name for spec in first_contract.inputs] == ["OrigStain1"]
+    assert [spec.name for spec in first_contract.outputs] == ["IllumStain1"]
+    assert [spec.name for spec in second_contract.inputs] == ["OrigStain2"]
+    assert [spec.name for spec in second_contract.outputs] == ["IllumStain2"]
+
+
+def test_compile_time_contract_provider_skips_runtime_bound_cellprofiler_callable():
+    """Artifact-bound CP callables already carry their compiler contract."""
+    output = ArtifactSpec.output("ColocalizedRegion", ObjectLabelsArtifactType)
+    runtime_callable = declared_runtime_callable(
+        mask_objects,
+        ModuleArtifactContract(
+            module_name="MaskObjects",
+            items=(
+                *ModuleArtifactContract.items_for_partition(
+                    SourceArtifactInputPartition,
+                    (ArtifactSpec.input("None", ImageArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    RuntimeArtifactInputPartition,
+                    (ArtifactSpec.input("Objects1", ObjectLabelsArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    RecordedArtifactOutputPartition,
+                    (output,),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    DeclaredArtifactOutputPartition,
+                    (output,),
+                ),
+            ),
+        ),
+    )
+    step = FunctionStep(
+        func=runtime_callable,
+        name="MaskObjects",
+        source_bindings=StepSourceBindingsConfig(
+            enabled=True,
+            bindings=(
+                NamedSourceBinding(
+                    alias="None",
+                    artifact_kind=ImageArtifactType,
+                ),
+            ),
+        ),
+    )
+    session = _compilation_session_for_steps([step])
+
+    provider = cellprofiler_module_settings_invocation_contract_provider_for_session(
+        session
+    )
+
+    assert provider is None
 
 
 def test_generated_runtime_binding_state_accepts_nested_function_patterns():
@@ -519,6 +756,14 @@ def test_generated_runtime_binding_state_accepts_nested_function_patterns():
     )
 
     assert state.matches_expected_contracts()
+
+
+def test_generated_function_spec_accepts_dict_patterns():
+    """Generated module registration must traverse grouped FunctionStep specs."""
+    assert GeneratedFunctionSpec({"1": (crop, {}), "2": crop}).callables == (
+        crop,
+        crop,
+    )
 
 
 def test_generated_runtime_binding_rejects_callable_contract_order_mismatch():

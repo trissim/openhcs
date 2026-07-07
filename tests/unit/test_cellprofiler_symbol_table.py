@@ -1125,22 +1125,38 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
     assert "func=identify_secondary_objects_2_runtime" not in generated.code
 
 
-def test_compiler_derives_cellprofiler_contracts_from_module_settings_kwargs():
+def test_compiler_derives_cellprofiler_contracts_from_step_invocation_contracts():
     from openhcs.core.function_patterns import (
+        FunctionInvocationKey,
         normalize_function_pattern,
     )
+    from openhcs.core.function_step_invocation_contracts import (
+        FunctionStepInvocationContractBinding,
+        FunctionStepInvocationContracts,
+    )
+    from openhcs.core.compiled_step_plan import CompiledStepPlan
+    from openhcs.core.config import (
+        GlobalPipelineConfig,
+        ProcessingConfig,
+        StepMaterializationConfig,
+    )
+    from openhcs.core.context.processing_context import ProcessingContext
     from openhcs.core.invocation_artifacts import (
         ArtifactDeclarationStepContext,
         PipelineInvocationContractProviderAuthority,
     )
+    from openhcs.core.pipeline.compilation_session import CompilationSession
+    from openhcs.core.pipeline.step_config_universe import (
+        StepConfigRoot,
+        StepConfigUniverse,
+        step_config_declarations,
+    )
+    from openhcs.core.pipeline.step_snapshot import StepSnapshot
     from openhcs.core.source_bindings import (
         NamedSourceBinding,
         StepSourceBindingsConfig,
     )
     from openhcs.core.steps.function_step import FunctionStep
-    from openhcs.interop.cellprofiler.pipeline_generator import (
-        CellProfilerCompileTimeSettingProjection,
-    )
     from openhcs.processing.backends.cellprofiler import (
         identify_primary_objects,
         identify_secondary_objects,
@@ -1148,24 +1164,28 @@ def test_compiler_derives_cellprofiler_contracts_from_module_settings_kwargs():
 
     primary_module = _identify_primary()
     secondary_module = _identify_secondary()
-
-    def generated_kwargs_for(module):
-        projection = CellProfilerCompileTimeSettingProjection.from_module(
-            module=module,
-            existing_kwargs=(),
-        )
-        return projection.kwargs
-
-    primary_kwargs = generated_kwargs_for(primary_module)
-    secondary_kwargs = generated_kwargs_for(secondary_module)
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="contract_metadata",
+        source_cppipe=Path("source.cppipe"),
+        modules=[primary_module, secondary_module],
+    )
 
     steps = [
         FunctionStep(
-            func=(
-                identify_primary_objects,
-                primary_kwargs,
-            ),
+            func=identify_primary_objects,
             name=primary_module.name,
+            invocation_contracts=FunctionStepInvocationContracts(
+                (
+                    FunctionStepInvocationContractBinding(
+                        FunctionInvocationKey.from_callable(
+                            identify_primary_objects,
+                            "default",
+                            0,
+                        ),
+                        generated.runtime_module_contracts_by_module_num[1],
+                    ),
+                )
+            ),
             source_bindings=StepSourceBindingsConfig(
                 bindings=(
                     NamedSourceBinding(
@@ -1176,11 +1196,20 @@ def test_compiler_derives_cellprofiler_contracts_from_module_settings_kwargs():
             ),
         ),
         FunctionStep(
-            func=(
-                identify_secondary_objects,
-                secondary_kwargs,
-            ),
+            func=identify_secondary_objects,
             name=secondary_module.name,
+            invocation_contracts=FunctionStepInvocationContracts(
+                (
+                    FunctionStepInvocationContractBinding(
+                        FunctionInvocationKey.from_callable(
+                            identify_secondary_objects,
+                            "default",
+                            0,
+                        ),
+                        generated.runtime_module_contracts_by_module_num[2],
+                    ),
+                )
+            ),
             source_bindings=StepSourceBindingsConfig(
                 bindings=(
                     NamedSourceBinding(
@@ -1191,8 +1220,58 @@ def test_compiler_derives_cellprofiler_contracts_from_module_settings_kwargs():
             ),
         ),
     ]
+    declarations = step_config_declarations()
+
+    def config_universe_for(step: FunctionStep) -> StepConfigUniverse:
+        roots = []
+        for config in (
+            step.source_bindings,
+            ProcessingConfig(),
+            StepMaterializationConfig(enabled=False),
+        ):
+            declaration = next(
+                declaration
+                for declaration in declarations
+                if type(config) is declaration.config_type
+            )
+            roots.append(StepConfigRoot(declaration=declaration, value=config))
+        return StepConfigUniverse(tuple(roots))
+
+    snapshots = tuple(
+        StepSnapshot(
+            index=index,
+            scope_id=f"test::functionstep_{index}",
+            name=step.name,
+            step_type=step.__class__.__name__,
+            enabled=bool(step.enabled),
+            is_function_step=True,
+            func=step.func,
+            invocation_contracts=step.invocation_contracts,
+            configs=config_universe_for(step),
+        )
+        for index, step in enumerate(steps)
+    )
+    session = CompilationSession.from_context(
+        context=ProcessingContext(
+            step_plans={
+                index: CompiledStepPlan(
+                    step_index=index,
+                    step_name=step.name,
+                    step_type=step.__class__.__name__,
+                    axis_id="A01",
+                )
+                for index, step in enumerate(steps)
+            },
+            axis_id="A01",
+        ),
+        steps=steps,
+        orchestrator=SimpleNamespace(),
+        global_config=GlobalPipelineConfig(),
+        step_state_map={index: object() for index in range(len(steps))},
+        snapshots=snapshots,
+    )
     provider = PipelineInvocationContractProviderAuthority.provider_for_session(
-        SimpleNamespace(steps=steps, pipeline_metadata={})
+        session,
     )
     secondary_item = next(normalize_function_pattern(steps[1].func).iter_items())
 
@@ -1450,7 +1529,8 @@ def test_measure_image_area_occupied_compiles_mixed_rows():
         "MeasureImageAreaOccupied_2_measurements",
     ]
     assert "'operand_choices': ('binary_image', 'objects')" in generated.code
-    assert "'input_names': ('DNA', 'Nuclei')" in generated.code
+    assert "'input_names':" not in generated.code
+    assert "AreaOccupiedInvocationOptions" not in generated.code
 
 
 def test_align_compiles_two_image_contract():
@@ -1704,13 +1784,76 @@ def test_pipeline_generator_binds_correct_illumination_settings_as_literals():
     assert "'truncate_high': True" in generated.code
 
 
-def test_pipeline_generator_splits_correct_illumination_apply_repeated_pairs():
+def test_pipeline_generator_coalesces_correct_illumination_apply_repeated_pairs():
+    setup_modules = [
+        _module_with_records(
+            1,
+            "Metadata",
+            [
+                ("Metadata extraction method", "Extract from file/folder names"),
+                ("Metadata source", "File name"),
+                (
+                    "Regular expression to extract from file name",
+                    r"^(?P<Plate>.*)_s(?P<Site>[0-9])_ch(?P<ChannelNumber>[0-9])",
+                ),
+            ],
+        ),
+        _module_with_records(
+            2,
+            "NamesAndTypes",
+            [
+                ("Assignments count", "2"),
+                ("Assign a name to", "Images matching rules"),
+                ("Select the image type", "Grayscale image"),
+                ("Name to assign these images", "OrigStain1"),
+                ("Match metadata", "[]"),
+                ("Image set matching method", "Order"),
+                ("Select the rule criteria", 'and (metadata does ChannelNumber "1")'),
+                ("Assign a name to", "Images matching rules"),
+                ("Name to assign these images", "OrigStain2"),
+                ("Select the image type", "Grayscale image"),
+                ("Select the rule criteria", 'and (metadata does ChannelNumber "2")'),
+            ],
+        ),
+    ]
     generated = PipelineGenerator().generate_from_registry(
         pipeline_name="cp_illumination_apply_repeated",
         source_cppipe=Path("source.cppipe"),
         modules=[
             _module_with_records(
-                7,
+                3,
+                "CorrectIlluminationCalculate",
+                [
+                    ("Select the input image", "OrigStain1"),
+                    ("Name the output image", "IllumStain1"),
+                    ("Select how the illumination function is calculated", "Regular"),
+                    (
+                        "Calculate function for each image individually, or based on all images?",
+                        "Each",
+                    ),
+                    ("Smoothing method", "Fit Polynomial"),
+                    ("Method to calculate smoothing filter size", "Automatic"),
+                    ("Rescale the illumination function?", "Yes"),
+                ],
+            ),
+            _module_with_records(
+                4,
+                "CorrectIlluminationCalculate",
+                [
+                    ("Select the input image", "OrigStain2"),
+                    ("Name the output image", "IllumStain2"),
+                    ("Select how the illumination function is calculated", "Regular"),
+                    (
+                        "Calculate function for each image individually, or based on all images?",
+                        "Each",
+                    ),
+                    ("Smoothing method", "Fit Polynomial"),
+                    ("Method to calculate smoothing filter size", "Automatic"),
+                    ("Rescale the illumination function?", "Yes"),
+                ],
+            ),
+            _module_with_records(
+                5,
                 "CorrectIlluminationApply",
                 [
                     ("Select the input image", "OrigStain1"),
@@ -1726,21 +1869,21 @@ def test_pipeline_generator_splits_correct_illumination_apply_repeated_pairs():
                 ],
             )
         ],
+        skipped_modules=setup_modules,
     )
 
-    assert generated.code.count('name="CorrectIlluminationApply"') == 2
-    assert "'select_the_input_image': 'OrigStain1'" in generated.code
-    assert "'select_the_input_image': 'OrigStain2'" in generated.code
-    assert "'select_the_illumination_function': 'IllumStain1'" in generated.code
-    assert "'select_the_illumination_function': 'IllumStain2'" in generated.code
-    assert "'name_the_output_image': 'CorrectedStain1'" in generated.code
-    assert "'name_the_output_image': 'CorrectedStain2'" in generated.code
+    assert generated.code.count('name="CorrectIlluminationApply"') == 1
+    assert "func={" in generated.code
+    assert "'1': (correct_illumination_apply" in generated.code
+    assert "'2': (correct_illumination_apply" in generated.code
+    assert "select_the_input_image" not in generated.code
+    assert "select_the_illumination_function" not in generated.code
+    assert "name_the_output_image" not in generated.code
     assert "'method': (" not in generated.code
-    assert "'select_the_input_image': (" not in generated.code
-    assert "'name_the_output_image': (" not in generated.code
     assert [
         [spec.name for spec in contract.outputs]
         for contract in generated.artifact_contracts
+        if contract.module_name == "CorrectIlluminationApply"
     ] == [["CorrectedStain1"], ["CorrectedStain2"]]
 
 
@@ -2049,11 +2192,7 @@ def test_color_to_gray_split_contract_uses_enabled_rgb_outputs() -> None:
     assert [spec.name for spec in contract.outputs] == ["OrigRed", "OrigBlue"]
 
 
-def test_compile_time_public_projection_preserves_typed_literals() -> None:
-    from openhcs.interop.cellprofiler.pipeline_generator import (
-        CellProfilerCompileTimeSettingProjection,
-    )
-
+def test_pipeline_generator_keeps_color_to_gray_runtime_settings_public() -> None:
     module = _module_with_records(
         1,
         "ColorToGray",
@@ -2073,21 +2212,21 @@ def test_compile_time_public_projection_preserves_typed_literals() -> None:
             ("Name the output image", "OrigBlue"),
         ],
     )
-
-    projection = CellProfilerCompileTimeSettingProjection.from_module(
-        module=module,
-        existing_kwargs={},
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="color_to_gray",
+        source_cppipe=Path("source.cppipe"),
+        modules=[module],
     )
 
-    assert projection.kwargs["convert_red_to_gray"] is True
-    assert projection.kwargs["convert_green_to_gray"] is False
-    assert projection.kwargs["convert_blue_to_gray"] is True
-    assert projection.kwargs["name_the_output_image"] == (
-        "OrigGray",
+    assert "'mode': ColorToGrayMode.SPLIT" in generated.code
+    assert "'image_type': ImageChannelType.RGB" in generated.code
+    assert "'channel_indices': (0, 2)" in generated.code
+    assert "'contributions': (1.0, 1.0)" in generated.code
+    assert "name_the_output_image" not in generated.code
+    assert [spec.name for spec in generated.artifact_contracts[0].outputs] == [
         "OrigRed",
-        "OrigGreen",
         "OrigBlue",
-    )
+    ]
 
 
 def test_cellprofiler_symbol_table_infers_common_image_transform_contract():
@@ -2172,6 +2311,10 @@ def test_generated_inputless_measurement_only_step_disables_default_grouping():
         ],
     )
     assert 'name="CalculateMath"' in generated.code
+    assert "'output_name':" not in generated.code
+    assert "'operand1_object_name':" not in generated.code
+    assert "'operand2_object_name':" not in generated.code
+    assert "CalculateMathInvocationOptions(output_name='Ratio'" in generated.code
     assert "variable_components=[VariableComponents.SITE]" in generated.code
     assert "group_by=GroupBy.CHANNEL" in generated.code
 

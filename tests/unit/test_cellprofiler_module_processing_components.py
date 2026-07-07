@@ -13,9 +13,14 @@ from openhcs.interop.cellprofiler.symbol_table import (
     CellProfilerSymbol,
     ModuleArtifactContracts,
 )
-from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType, ObjectLabelsArtifactType
+from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+)
 from openhcs.core.pipeline_image_schema import PipelineImageSchema, SourceImageStackPlan
 from openhcs.core.source_bindings import (
+    ComponentSelector,
     MetadataSelector,
     NamedSourceBinding,
     SourceSelector,
@@ -26,6 +31,9 @@ from openhcs.processing.backends.cellprofiler.intensity import (
 )
 from openhcs.processing.backends.cellprofiler.image_geometry import MaskImageModule
 from openhcs.processing.backends.cellprofiler.morphology import ResizeObjectsModule
+from openhcs.processing.backends.cellprofiler.illumination import (
+    CorrectIlluminationApplyModule,
+)
 
 
 def test_generated_group_by_collapses_variable_component_conflict_to_none():
@@ -39,7 +47,10 @@ def test_plane_runtime_artifact_modules_preserve_stack_axes_as_variable_componen
         "ResizeObjects",
         2,
         input_symbols=(
-            CellProfilerSymbol(ArtifactSpec.input("Parents", ObjectLabelsArtifactType), producer_module_num=1),
+            CellProfilerSymbol(
+                ArtifactSpec.input("Parents", ObjectLabelsArtifactType),
+                producer_module_num=1,
+            ),
         ),
     )
     request = ModuleProcessingComponentRequest(
@@ -64,8 +75,13 @@ def test_runtime_image_artifact_inputs_keep_channel_batch_identity():
         "MaskImage",
         2,
         input_symbols=(
-            CellProfilerSymbol(ArtifactSpec.input("BF_image", ImageArtifactType), source_bound=True),
-            CellProfilerSymbol(ArtifactSpec.input("Mask_image", ImageArtifactType), producer_module_num=1),
+            CellProfilerSymbol(
+                ArtifactSpec.input("BF_image", ImageArtifactType), source_bound=True
+            ),
+            CellProfilerSymbol(
+                ArtifactSpec.input("Mask_image", ImageArtifactType),
+                producer_module_num=1,
+            ),
         ),
     )
     request = ModuleProcessingComponentRequest(
@@ -128,3 +144,44 @@ def test_source_bound_runtime_artifact_modules_use_source_stack_axis():
 
     assert components.variable_components == (AllComponents.Z_INDEX,)
     assert components.group_by_component is AllComponents.CHANNEL
+
+
+def test_source_bound_pairwise_module_falls_back_to_default_axis_when_scalar_bound():
+    contract = ModuleArtifactContracts(
+        "CorrectIlluminationApply",
+        4,
+        input_symbols=(
+            CellProfilerSymbol(
+                ArtifactSpec.input("OrigProtein", ImageArtifactType),
+                source_bound=True,
+            ),
+            CellProfilerSymbol(
+                ArtifactSpec.input("IllumProtein", ImageArtifactType),
+                source_bound=True,
+            ),
+        ),
+        source_bindings=StepSourceBindingsConfig(
+            enabled=True,
+            bindings=(
+                NamedSourceBinding(
+                    alias="OrigProtein",
+                    component_identity=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+                ),
+                NamedSourceBinding(
+                    alias="IllumProtein",
+                    participates_in_image_stack=False,
+                ),
+            ),
+        ),
+    )
+    request = ModuleProcessingComponentRequest(
+        module_type=CorrectIlluminationApplyModule,
+        function_name="correct_illumination_apply",
+        runtime_lineage=RuntimeArtifactLineageScope(contract),
+        bound_settings=GeneratedStepSettings(),
+        source_schema=PipelineImageSchema.empty(),
+    )
+
+    components = CorrectIlluminationApplyModule.processing_components(request)
+
+    assert components.variable_components == (AllComponents.SITE,)

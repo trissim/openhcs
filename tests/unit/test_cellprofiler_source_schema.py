@@ -772,6 +772,9 @@ def test_compile_image_schema_lowers_cellprofiler_file_equality_filter():
     assert illum.selector.filters[0].subject is SourceFilterSubject.FILE
     assert illum.selector.filters[0].match_type is SourceFilterMatchType.EQUALS
     assert illum.selector.filters[0].value == "VitraChannel1ILLUM.npy"
+    assert illum.component_identity == (
+        ComponentSelector(AllComponents.CHANNEL, "1"),
+    )
 
 
 def test_symbol_table_and_codegen_use_compiled_setup_schema():
@@ -1125,6 +1128,77 @@ def test_align_source_images_infer_axis_from_selected_source_aliases():
     assert "variable_components=[VariableComponents.CHANNEL]" in step_source
     assert "group_by=GroupBy.SITE" in step_source
     assert "VariableComponents.SITE" not in step_source.split("group_by=")[0]
+
+
+def test_runtime_image_artifacts_preserve_source_alias_axis_from_output_lineage():
+    setup_modules = [
+        _module_with_records(
+            1,
+            "Metadata",
+            [
+                ("Metadata extraction method", "Extract from file/folder names"),
+                ("Metadata source", "File name"),
+                (
+                    "Regular expression to extract from file name",
+                    r"^(?P<Plate>.*)_s(?P<Site>[0-9])_ch(?P<ChannelNumber>[0-9])",
+                ),
+            ],
+        ),
+        _module_with_records(
+            2,
+            "NamesAndTypes",
+            [
+                ("Assignments count", "2"),
+                ("Assign a name to", "Images matching rules"),
+                ("Select the image type", "Grayscale image"),
+                ("Name to assign these images", "OrigStain1"),
+                ("Match metadata", "[]"),
+                ("Image set matching method", "Order"),
+                ("Select the rule criteria", 'and (metadata does ChannelNumber "1")'),
+                ("Name to assign these images", "OrigStain2"),
+                ("Select the image type", "Grayscale image"),
+                ("Select the rule criteria", 'and (metadata does ChannelNumber "2")'),
+            ],
+        ),
+    ]
+    align_module = _module_with_records(
+        3,
+        "Align",
+        [
+            ("Select the alignment method", "Mutual Information"),
+            ("Crop mode", "Keep size"),
+            ("Select the first input image", "OrigStain1"),
+            ("Name the first output image", "Stain1"),
+            ("Select the second input image", "OrigStain2"),
+            ("Name the second output image", "Stain2"),
+        ],
+    )
+    colocalization_module = _module_with_records(
+        4,
+        "MeasureColocalization",
+        [
+            ("Select images to measure", "Stain1, Stain2"),
+            ("Select where to measure correlation", "Both"),
+        ],
+    )
+
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_colocalization_sources",
+        source_cppipe=Path("source.cppipe"),
+        modules=[align_module, colocalization_module],
+        skipped_modules=setup_modules,
+    )
+    step_start = generated.code.index(
+        "# CellProfiler artifact outputs: measurements:MeasureColocalization"
+    )
+    step_source = generated.code[step_start:]
+    processing_start = step_source.index("processing_config=LazyProcessingConfig(")
+    processing_end = step_source.index("        ),", processing_start)
+    processing_config = step_source[processing_start:processing_end]
+
+    assert "variable_components=[VariableComponents.CHANNEL]" in processing_config
+    assert "group_by=GroupBy.SITE" in processing_config
+    assert "select_images_to_measure" not in step_source
 
 
 def test_align_source_images_adapt_to_site_axis_from_selected_source_aliases():
@@ -1862,6 +1936,75 @@ def test_generated_runtime_callables_with_non_image_artifacts_are_flexible():
     assert "group_by=GroupBy.CHANNEL" in generated.code
 
 
+def test_shape_changing_runtime_images_do_not_recompose_source_alias_stack():
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_crop_colocalization",
+        source_cppipe=Path("source.cppipe"),
+        modules=[
+            _module_with_records(
+                1,
+                "Crop",
+                [
+                    ("Select the input image", "OrigBlue"),
+                    ("Name the output image", "CropBlue"),
+                    ("Select the cropping shape", "Rectangle"),
+                    ("Select the cropping method", "Coordinates"),
+                    ("Remove empty rows and columns?", "Edges"),
+                    ("Left and right rectangle positions", "1,10"),
+                    ("Top and bottom rectangle positions", "1,10"),
+                ],
+            ),
+            _module_with_records(
+                2,
+                "Crop",
+                [
+                    ("Select the input image", "OrigGreen"),
+                    ("Name the output image", "CropGreen"),
+                    ("Select the cropping shape", "Rectangle"),
+                    ("Select the cropping method", "Coordinates"),
+                    ("Remove empty rows and columns?", "Edges"),
+                    ("Left and right rectangle positions", "1,20"),
+                    ("Top and bottom rectangle positions", "1,20"),
+                ],
+            ),
+            ModuleBlock(
+                name="IdentifyPrimaryObjects",
+                module_num=3,
+                settings={
+                    "Select the input image": "CropBlue",
+                    "Name the primary objects to be identified": "Nuclei",
+                },
+            ),
+            _module_with_records(
+                4,
+                "MeasureColocalization",
+                [
+                    ("Select where to measure correlation", "Both"),
+                    ("Select objects to measure", "Nuclei"),
+                    ("Select images to measure", "CropBlue"),
+                    ("Select images to measure", "CropGreen"),
+                ],
+            ),
+        ],
+    )
+
+    assert (
+        "# Runtime artifact inputs: image:CropBlue, image:CropGreen, object_labels:Nuclei"
+        in generated.code
+    )
+    step_start = generated.code.index(
+        "# CellProfiler artifact outputs: measurements:MeasureColocalization"
+    )
+    step_source = generated.code[step_start:]
+    processing_start = step_source.index("processing_config=LazyProcessingConfig(")
+    processing_end = step_source.index("        ),", processing_start)
+    processing_config = step_source[processing_start:processing_end]
+
+    assert "name=\"MeasureColocalization\"," in generated.code
+    assert "variable_components=[VariableComponents.SITE]" in processing_config
+    assert "group_by=GroupBy.CHANNEL" in processing_config
+
+
 def test_compile_image_schema_for_bbbc021_analysis_preserves_real_matching_plan():
     schema = _schema_from_in_tree_cppipe("BBBC021_analysis.cppipe")
 
@@ -1887,6 +2030,9 @@ def test_compile_image_schema_for_bbbc021_analysis_preserves_real_matching_plan(
     assert actin_illum.origin is SourceBindingOrigin.PIPELINE_START
     assert actin_illum.selector.metadata == (
         MetadataSelector("illum", "Actin"),
+    )
+    assert actin_illum.component_identity == (
+        ComponentSelector(AllComponents.CHANNEL, "1"),
     )
 
     assert schema.grouping is not None

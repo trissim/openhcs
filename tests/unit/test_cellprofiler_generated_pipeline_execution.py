@@ -45,6 +45,11 @@ from openhcs.core.artifacts import (
     MeasurementsArtifactType,
     RelationshipsArtifactType,
 )
+from openhcs.core.module_artifact_contract import (
+    ModuleArtifactContract,
+    ModuleArtifactContractItem,
+    SourceArtifactInputPartition,
+)
 from openhcs.core.config import DtypeConfig
 from openhcs.core.runtime_adapters import runtime_adapter_spec_from_callable
 from openhcs.core.runtime_stores import RuntimeValueStore
@@ -83,12 +88,14 @@ from openhcs.core.compiled_step_plan import (
 from openhcs.core.source_load_plan import SourceLoadPlan
 from openhcs.core.step_dependencies import StepInputDependency
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
+from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.steps.function_runtime import (
     ComponentArtifactPlans,
     FunctionCoreExecutor,
     FunctionRuntimeScope,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.backends.cellprofiler import correct_illumination_calculate
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
 
@@ -147,6 +154,7 @@ def test_identify_objects_threshold_measurements_keep_source_payload():
         ],
         source=SimpleNamespace(payload=source_payload),
         single_output_object_name=lambda: "Mitochondria",
+        module_name=IDENTIFY_PRIMARY_OBJECTS,
     )
 
     record = IdentifyPrimaryObjectsModule.measurement_record(request)
@@ -415,7 +423,7 @@ def test_generated_runtime_binding_preserves_backend_callable_identity() -> None
         ]
     )
     namespace = _pipeline_namespace(generated)
-    step_func = namespace["pipeline_steps"][0].func[0]
+    step_func = namespace["pipeline_steps"][0].func
 
     assert step_func.__name__ == "identify_primary_objects"
     assert step_func.__module__ == "openhcs.processing.backends.cellprofiler"
@@ -439,7 +447,7 @@ def test_generated_runtime_binding_matches_reordered_steps_by_module_contract() 
 
     rebound_contracts = [
         CallableContract.from_callable(
-            step.func[0]
+            step.func
         ).module_artifact_contract.module_name
         for step in pipeline_steps
     ]
@@ -447,6 +455,66 @@ def test_generated_runtime_binding_matches_reordered_steps_by_module_contract() 
         IDENTIFY_SECONDARY_OBJECTS,
         IDENTIFY_PRIMARY_OBJECTS,
     ]
+
+
+def test_generated_runtime_binding_scopes_grouped_source_bindings() -> None:
+    def source_contract(image_name: str) -> ModuleArtifactContract:
+        return ModuleArtifactContract(
+            module_name="CorrectIlluminationCalculate",
+            items=(
+                ModuleArtifactContractItem(
+                    SourceArtifactInputPartition,
+                    ArtifactSpec(
+                        name=image_name,
+                        plan_type=ArtifactInputPlan,
+                        artifact_type=ImageArtifactType,
+                    ),
+                ),
+            ),
+        )
+
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigStain1",
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "1"),
+                ),
+            ),
+            NamedSourceBinding(
+                alias="OrigStain2",
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "2"),
+                ),
+            ),
+        )
+    )
+    module = SimpleNamespace(
+        pipeline_steps=[
+            FunctionStep(
+                func={
+                    "1": correct_illumination_calculate,
+                    "2": correct_illumination_calculate,
+                },
+                name="CorrectIlluminationCalculate",
+                source_bindings=source_bindings,
+            )
+        ]
+    )
+
+    bind_generated_pipeline_runtime(
+        module,
+        {
+            5: source_contract("OrigStain1"),
+            6: source_contract("OrigStain2"),
+        },
+    )
+
+    rebound = module.pipeline_steps[0].func
+    assert isinstance(rebound["1"], CellProfilerRuntimeCallable)
+    assert isinstance(rebound["2"], CellProfilerRuntimeCallable)
+    assert rebound["1"].contract.inputs[0].name == "OrigStain1"
+    assert rebound["2"].contract.inputs[0].name == "OrigStain2"
 
 
 def test_generated_pipeline_save_can_use_explicit_filemanager_vfs(
@@ -510,7 +578,8 @@ def test_materialized_generated_pipeline_contract_sidecar_is_python_source(
         module,
         pipeline_name="contract-sidecar-smoke",
     )
-    assert "invocation_contract_provider" not in pipeline.metadata
+    assert "_openhcs_cp_contract_values" not in pipeline.metadata
+    assert "CELLPROFILER_SEMANTIC_CONTRACTS" not in pipeline.metadata
     from pycodify import Assignment, generate_python_source
 
     import openhcs.serialization.pycodify_formatters  # noqa: F401

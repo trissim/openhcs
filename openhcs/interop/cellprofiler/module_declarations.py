@@ -7,7 +7,7 @@ Compatibility registry payloads are derived from these classes.
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
 from functools import lru_cache
 from types import UnionType
@@ -62,7 +62,6 @@ from openhcs.interop.cellprofiler.setting_names import SettingNameFamily, settin
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 _CELLPROFILER_BACKEND_PACKAGE = "openhcs.processing.backends.cellprofiler"
-_ARTIFACT_CONTRACT_MODULE_REGISTRY = LazyDiscoveryDict(enable_cache=False)
 _CELLPROFILER_MODULE_REGISTRY = LazyDiscoveryDict(enable_cache=False)
 AuthorityT = TypeVar("AuthorityT", bound="CellProfilerModuleAuthority")
 if TYPE_CHECKING:
@@ -187,6 +186,28 @@ class BoundModuleSettings:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CellProfilerCompileTimeSettingsRequest:
+    """Compiler request for module-owned CellProfiler setting reconstruction."""
+
+    module_name: str
+    module_num: int
+    kwargs: Mapping[str, Any]
+    invocation_options: RuntimeInvocationOptions | None = None
+    source_bindings: Any = None
+    group_key: str = "default"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "kwargs", dict(self.kwargs))
+        if self.invocation_options is not None and not isinstance(
+            self.invocation_options, RuntimeInvocationOptions
+        ):
+            raise TypeError(
+                "CellProfilerCompileTimeSettingsRequest.invocation_options must "
+                "inherit RuntimeInvocationOptions."
+            )
+
+
 def _enum_type_from_annotation(annotation: Any) -> type[Enum] | None:
     """Return the callable-owned Enum type declared by an annotation."""
     if isinstance(annotation, type) and issubclass(annotation, Enum):
@@ -212,6 +233,71 @@ def _coerce_callable_enum_kwarg(value: Any, enum_type: type[Enum]) -> Any:
 
 
 GeneratedImportCollector = set[tuple[str, str]]
+
+
+def runtime_invocation_options_source_literal(
+    options: RuntimeInvocationOptions,
+    *,
+    import_collector: GeneratedImportCollector,
+) -> str:
+    """Return a Python literal for a typed runtime invocation-options dataclass."""
+    if not is_dataclass(options):
+        raise TypeError(
+            "Runtime invocation options emitted into generated pipelines must be "
+            f"dataclass instances, got {type(options).__name__}."
+        )
+    options_type = type(options)
+    import_collector.add((options_type.__module__, options_type.__name__))
+    assignments = tuple(
+        f"{field.name}={runtime_invocation_options_value_literal(getattr(options, field.name), import_collector=import_collector)}"
+        for field in fields(options)
+    )
+    return f"{options_type.__name__}({', '.join(assignments)})"
+
+
+def runtime_invocation_options_value_literal(
+    value: Any,
+    *,
+    import_collector: GeneratedImportCollector,
+) -> str:
+    """Return a Python literal for one invocation-options field value."""
+    if isinstance(value, Enum):
+        enum_type = type(value)
+        import_collector.add((enum_type.__module__, enum_type.__name__))
+        return f"{enum_type.__name__}.{value.name}"
+    if is_dataclass(value):
+        return runtime_invocation_options_source_literal(
+            value,
+            import_collector=import_collector,
+        )
+    if isinstance(value, tuple):
+        inner = ", ".join(
+            runtime_invocation_options_value_literal(
+                item,
+                import_collector=import_collector,
+            )
+            for item in value
+        )
+        return f"({inner}{',' if len(value) == 1 else ''})"
+    if isinstance(value, list):
+        inner = ", ".join(
+            runtime_invocation_options_value_literal(
+                item,
+                import_collector=import_collector,
+            )
+            for item in value
+        )
+        return f"[{inner}]"
+    if isinstance(value, dict):
+        inner = ", ".join(
+            (
+                f"{runtime_invocation_options_value_literal(key, import_collector=import_collector)}: "
+                f"{runtime_invocation_options_value_literal(item, import_collector=import_collector)}"
+            )
+            for key, item in value.items()
+        )
+        return f"{{{inner}}}"
+    return repr(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,23 +374,8 @@ def _validate_unique_module_names(module_type: type["CellProfilerModule"]) -> No
         )
 
 
-class ArtifactContractModule(
-    ABC,
-    metaclass=AutoRegisterMeta,
-    registry_config=RegistryConfig(
-        registry_dict=_ARTIFACT_CONTRACT_MODULE_REGISTRY,
-        key_attribute="module_name",
-        skip_if_no_key=True,
-        registry_name="CellProfiler artifact contract module",
-        discovery_package=_CELLPROFILER_BACKEND_PACKAGE,
-    ),
-):
+class ArtifactContractModule(ABC):
     """Nominal marker for module declarations that own artifact flow."""
-
-    __registry__ = _ARTIFACT_CONTRACT_MODULE_REGISTRY
-    __registry_key__ = "module_name"
-    __skip_if_no_key__ = True
-    module_name: ClassVar[str | None] = None
 
 
 class CellProfilerArtifactCapability(ABC, metaclass=AutoRegisterMeta):
@@ -1450,6 +1521,108 @@ class CellProfilerModule(
         )
 
     @classmethod
+    def compile_time_setting_records_for_invocation(
+        cls,
+        request: CellProfilerCompileTimeSettingsRequest,
+    ) -> tuple["ModuleSetting", ...]:
+        """Return all compiler-only CellProfiler setting rows for one invocation."""
+        records = [
+            *cls.compile_time_setting_records_from_kwargs(request.kwargs),
+            *cls.compile_time_public_setting_records_from_kwargs(request.kwargs),
+        ]
+        records.extend(
+            cls.compile_time_source_binding_input_setting_records(
+                request,
+                existing_records=tuple(records),
+            )
+        )
+        return tuple(records)
+
+    @classmethod
+    def compile_time_source_binding_input_setting_records(
+        cls,
+        request: CellProfilerCompileTimeSettingsRequest,
+        *,
+        existing_records: tuple["ModuleSetting", ...],
+    ) -> tuple["ModuleSetting", ...]:
+        """Infer missing declared input settings from step source bindings."""
+        from openhcs.core.source_bindings import StepSourceBindingsConfig
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        source_bindings = request.source_bindings
+        if not isinstance(source_bindings, StepSourceBindingsConfig):
+            return ()
+        if not source_bindings.enabled:
+            return ()
+
+        missing_settings = cls._missing_declared_input_settings(existing_records)
+        if not missing_settings:
+            return ()
+
+        binding_declarations = cls._source_binding_declarations_for_group(request)
+        bindings_by_artifact_type: dict[type[ArtifactType], list[Any]] = {}
+        for binding in binding_declarations:
+            bindings_by_artifact_type.setdefault(binding.artifact_kind, []).append(
+                binding
+            )
+
+        inferred_records: list[ModuleSetting] = []
+        consumed_by_artifact_type: dict[type[ArtifactType], int] = {}
+        for setting_name, artifact_type in missing_settings:
+            candidates = bindings_by_artifact_type.get(artifact_type, [])
+            consumed = consumed_by_artifact_type.get(artifact_type, 0)
+            if consumed >= len(candidates):
+                raise ValueError(
+                    f"Module {request.module_name}({request.module_num}) is missing "
+                    f"CellProfiler input setting {setting_name!r}; source bindings "
+                    f"declare only {[binding.alias for binding in candidates]!r} "
+                    f"for {artifact_type.require_value()} artifacts."
+                )
+            inferred_records.append(ModuleSetting(setting_name, candidates[consumed].alias))
+            consumed_by_artifact_type[artifact_type] = consumed + 1
+
+        for artifact_type, consumed in consumed_by_artifact_type.items():
+            candidates = bindings_by_artifact_type.get(artifact_type, [])
+            if consumed != len(candidates):
+                unused_aliases = [binding.alias for binding in candidates[consumed:]]
+                raise ValueError(
+                    f"Module {request.module_name}({request.module_num}) has "
+                    f"ambiguous source bindings for {artifact_type.require_value()} "
+                    f"inputs; unused aliases={unused_aliases!r}."
+                )
+        return tuple(inferred_records)
+
+    @classmethod
+    def _source_binding_declarations_for_group(
+        cls,
+        request: CellProfilerCompileTimeSettingsRequest,
+    ) -> tuple[Any, ...]:
+        """Return source bindings addressed by this function-pattern group."""
+        return request.source_bindings.bindings_for_group_key(request.group_key)
+
+    @classmethod
+    def _missing_declared_input_settings(
+        cls, existing_records: tuple["ModuleSetting", ...]
+    ) -> tuple[tuple[str, type[ArtifactType]], ...]:
+        existing_setting_names = {record.name for record in existing_records}
+        missing_settings: list[tuple[str, type[ArtifactType]]] = []
+        for setting, capability_type in cls.compile_time_required_artifact_input_settings():
+            concrete_names = setting_names(setting)
+            if any(name in existing_setting_names for name in concrete_names):
+                continue
+            missing_settings.append(
+                (concrete_names[0], capability_type.require_artifact_type())
+            )
+        return tuple(missing_settings)
+
+    @classmethod
+    def compile_time_required_artifact_input_settings(
+        cls,
+    ) -> tuple[ArtifactSettingCapability, ...]:
+        """Return artifact input settings that must be reconstructable from steps."""
+        return cls.declared_artifact_input_settings()
+
+    @classmethod
     def compile_time_public_setting_names(
         cls,
     ) -> tuple[str | "SettingNameFamily", ...]:
@@ -1517,11 +1690,11 @@ class CellProfilerModule(
         import_collector: GeneratedImportCollector,
     ) -> str | None:
         """Return generated-source literal for declaration-owned invocation options."""
-        del import_collector
         if options is None:
             return None
-        raise TypeError(
-            f"{cls.__name__} does not declare generated lowering for {type(options).__name__}."
+        return runtime_invocation_options_source_literal(
+            options,
+            import_collector=import_collector,
         )
 
     @classmethod

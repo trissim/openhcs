@@ -19,7 +19,12 @@ from metaclass_registry import AutoRegisterMeta
 
 from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
-from openhcs.core.artifacts import MeasurementsArtifactType
+from openhcs.core.artifacts import (
+    GroupLineageSourceRelation,
+    ImageArtifactType,
+    MeasurementsArtifactType,
+    SourceStackLineageSourceRelation,
+)
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.component_set import ComponentSet
 from openhcs.core.pipeline.function_contracts import (
@@ -32,12 +37,14 @@ from openhcs.core.pipeline_image_schema import (
 )
 from openhcs.core.python_source_literal import PythonSourceLiteral
 from openhcs.core.source_bindings import (
+    NamedSourceBinding,
     SourceBindingMatchMethod,
     SourceSelector,
     StepSourceBindingsConfig,
 )
 from openhcs.core.source_matching import source_metadata_component
 from openhcs.interop.cellprofiler.symbol_table import (
+    CellProfilerSymbol,
     ModuleArtifactContracts,
     step_source_bindings_literal,
 )
@@ -49,8 +56,9 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
     SliceBySliceRuntimeParameter,
 )
 
-
-GeneratedLiteralScalar: TypeAlias = str | int | float | bool | None | Enum | PythonSourceLiteral
+GeneratedLiteralScalar: TypeAlias = (
+    str | int | float | bool | None | Enum | PythonSourceLiteral
+)
 GeneratedLiteralValue: TypeAlias = (
     "GeneratedLiteralScalar | tuple[GeneratedLiteralValue, ...] | "
     "list[GeneratedLiteralValue] | "
@@ -81,7 +89,9 @@ def all_component_literal(component: AllComponents) -> str:
     return f"AllComponents.{component.name}"
 
 
-def coerce_all_component(component: AllComponents | VariableComponents) -> AllComponents:
+def coerce_all_component(
+    component: AllComponents | VariableComponents,
+) -> AllComponents:
     if isinstance(component, AllComponents):
         return component
     return AllComponents(component.value)
@@ -112,6 +122,33 @@ def group_by_component_axis(
     if group_by.value is None:
         return None
     return AllComponents(group_by.value)
+
+
+def source_identity_group_by_component(
+    axis_plan: "SourceProcessingAxisPlan",
+    variable_components: tuple[AllComponents, ...],
+) -> AllComponents | None:
+    """Return the remaining source identity axis after stack axes are chosen."""
+    variable_component_set = ComponentSet(variable_components)
+    group_by_candidates = (
+        ComponentSet.collect(
+            axis_plan.source_alias_components,
+            axis_plan.image_set_components,
+        )
+        .excluding(variable_component_set)
+        .as_tuple()
+    )
+    if not group_by_candidates and axis_plan.sample_group_component is not None:
+        group_by_candidates = (
+            ComponentSet.collect((axis_plan.sample_group_component,))
+            .excluding(variable_component_set)
+            .as_tuple()
+        )
+    return ComponentSet(group_by_candidates).single_or_none(
+        "CellProfiler source bindings cannot infer one group_by component from "
+        "multiple remaining source identity axes: "
+        f"{tuple(component.value for component in group_by_candidates)!r}."
+    )
 
 
 class SourceProcessingAxisRole(Enum):
@@ -167,9 +204,8 @@ class SourceProcessingAxisPlan:
         """Return the grouping axis for scalar source-image invocations."""
         if self.sample_group_component is not None:
             return self.sample_group_component
-        source_identity_components = (
-            ComponentSet.collect(components)
-            .excluding(ComponentSet(self.source_stack_components))
+        source_identity_components = ComponentSet.collect(components).excluding(
+            ComponentSet(self.source_stack_components)
         )
         return source_identity_components.single_or_none(
             "Scalar CellProfiler source processing cannot infer one group-by "
@@ -223,7 +259,9 @@ class SourceProcessingAxisRolePolicy(ABC, metaclass=AutoRegisterMeta):
         return policy_type()
 
     @abstractmethod
-    def components(self, axis_plan: SourceProcessingAxisPlan) -> tuple[AllComponents, ...]:
+    def components(
+        self, axis_plan: SourceProcessingAxisPlan
+    ) -> tuple[AllComponents, ...]:
         """Return axis components owned by this source-processing role."""
 
 
@@ -232,7 +270,9 @@ class SampleGroupAxisRolePolicy(SourceProcessingAxisRolePolicy):
 
     role = SourceProcessingAxisRole.SAMPLE_GROUP
 
-    def components(self, axis_plan: SourceProcessingAxisPlan) -> tuple[AllComponents, ...]:
+    def components(
+        self, axis_plan: SourceProcessingAxisPlan
+    ) -> tuple[AllComponents, ...]:
         if axis_plan.sample_group_component is None:
             return ()
         return (axis_plan.sample_group_component,)
@@ -243,7 +283,9 @@ class ImageSetAxisRolePolicy(SourceProcessingAxisRolePolicy):
 
     role = SourceProcessingAxisRole.IMAGE_SET
 
-    def components(self, axis_plan: SourceProcessingAxisPlan) -> tuple[AllComponents, ...]:
+    def components(
+        self, axis_plan: SourceProcessingAxisPlan
+    ) -> tuple[AllComponents, ...]:
         if axis_plan.image_set_components:
             return axis_plan.image_set_components
         if axis_plan.use_default_axes:
@@ -259,7 +301,9 @@ class SourceStackAxisRolePolicy(SourceProcessingAxisRolePolicy):
 
     role = SourceProcessingAxisRole.SOURCE_STACK
 
-    def components(self, axis_plan: SourceProcessingAxisPlan) -> tuple[AllComponents, ...]:
+    def components(
+        self, axis_plan: SourceProcessingAxisPlan
+    ) -> tuple[AllComponents, ...]:
         if axis_plan.source_stack_components:
             return axis_plan.source_stack_components
         if axis_plan.use_default_axes:
@@ -356,7 +400,10 @@ class SourceProcessingComponentSemantics:
         selector: SourceSelector,
     ) -> tuple[AllComponents, ...]:
         return ComponentSet.collect(
-            (component_selector.component for component_selector in selector.components),
+            (
+                component_selector.component
+                for component_selector in selector.components
+            ),
             (
                 source_metadata_component(metadata_selector.field)
                 for metadata_selector in selector.metadata
@@ -366,7 +413,10 @@ class SourceProcessingComponentSemantics:
     def uses_ordinal_image_sets_without_declared_identity(self) -> bool:
         """Return whether ordered CP image sets need OpenHCS ordinal site identity."""
         match_plan = self.match_plan()
-        if match_plan is not None and match_plan.method is not SourceBindingMatchMethod.ORDER:
+        if (
+            match_plan is not None
+            and match_plan.method is not SourceBindingMatchMethod.ORDER
+        ):
             return False
         if self.source_metadata_components():
             return False
@@ -459,7 +509,10 @@ class SourceProcessingComponentSemantics:
         return self.source_schema.metadata_rules
 
     def match_plan(self):
-        if self.source_bindings is not None and self.source_bindings.match_plan is not None:
+        if (
+            self.source_bindings is not None
+            and self.source_bindings.match_plan is not None
+        ):
             return self.source_bindings.match_plan
         return self.source_schema.match_plan
 
@@ -571,6 +624,7 @@ class RuntimeArtifactLineageScope:
     contract: ModuleArtifactContracts
     variable_components: tuple[AllComponents, ...] = ()
     requires_pairwise_object_domain_scope: bool = False
+    source_stack_runtime_image_names: tuple[str, ...] = ()
 
     def with_variable_components(
         self,
@@ -580,6 +634,7 @@ class RuntimeArtifactLineageScope:
             self.contract,
             variable_components,
             self.requires_pairwise_object_domain_scope,
+            self.source_stack_runtime_image_names,
         )
 
     def variable_components_without_source_alias(
@@ -587,11 +642,34 @@ class RuntimeArtifactLineageScope:
         axis_plan: SourceProcessingAxisPlan,
     ) -> tuple[AllComponents, ...]:
         """Named CellProfiler artifacts already carry source-alias identity."""
+        if self.recomposes_source_alias_stack(axis_plan):
+            return tuple(
+                component
+                for component in self.variable_components
+                if component in axis_plan.source_alias_components
+            )
         return tuple(
             component
             for component in self.variable_components
             if component not in axis_plan.source_alias_components
         )
+
+    def recomposes_source_alias_stack(
+        self,
+        axis_plan: SourceProcessingAxisPlan,
+    ) -> bool:
+        """Return whether runtime image inputs rebuild a source-alias stack."""
+        if not axis_plan.source_alias_components:
+            return False
+        image_inputs = tuple(
+            spec
+            for spec in self.contract.runtime_artifact_inputs
+            if spec.artifact_type is ImageArtifactType
+        )
+        if len(image_inputs) <= 1:
+            return False
+        source_stack_names = set(self.source_stack_runtime_image_names)
+        return all(spec.name in source_stack_names for spec in image_inputs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -700,9 +778,13 @@ class ModuleProcessingComponentRequest:
         )
 
     def processing_contract(self) -> ProcessingContract | None:
-        return CallableContract.from_callable(self.resolved_callable()).processing_contract
+        return CallableContract.from_callable(
+            self.resolved_callable()
+        ).processing_contract
 
-    def generated_semantic_control_defaults(self) -> Mapping[str, GeneratedLiteralValue]:
+    def generated_semantic_control_defaults(
+        self,
+    ) -> Mapping[str, GeneratedLiteralValue]:
         """Return source-schema defaults for callable semantic-control parameters."""
         if self.processing_contract() is not ProcessingContract.FLEXIBLE:
             return {}
@@ -756,10 +838,7 @@ class ModuleProcessingComponentRequest:
         self,
         source_bindings: StepSourceBindingsConfig | None = None,
     ) -> tuple[AllComponents, ...]:
-        if (
-            source_bindings is not None
-            and not source_bindings.image_stack_bindings
-        ):
+        if source_bindings is not None and not source_bindings.image_stack_bindings:
             return ()
         return self.source_schema.source_stack_components
 
@@ -815,7 +894,15 @@ class RuntimeArtifactProcessingScope:
         components: ModuleProcessingComponents,
     ) -> ModuleProcessingComponents:
         """Return runtime artifact components without declaring phantom stack axes."""
-        return components
+        if not components.variable_components:
+            return components
+        group_by_component = source_identity_group_by_component(
+            self.axis_plan,
+            components.variable_components,
+        )
+        if group_by_component is None:
+            return components
+        return components.with_group_by(group_by_component)
 
     def requires_pairwise_object_domain_scope(self) -> bool:
         object_domain_inputs = tuple(
@@ -897,11 +984,15 @@ class SourceBindingProcessingScope:
     ) -> ModuleProcessingComponents | None:
         if not self.source_stack_components:
             return None
-        source_stack_components = ComponentSet(
-            self.source_stack_components,
-        ).excluding(
-            ComponentSet(self.axis_plan.source_alias_components),
-        ).as_tuple()
+        source_stack_components = (
+            ComponentSet(
+                self.source_stack_components,
+            )
+            .excluding(
+                ComponentSet(self.axis_plan.source_alias_components),
+            )
+            .as_tuple()
+        )
         return ModuleProcessingComponents(
             source_stack_components,
         )
@@ -923,25 +1014,9 @@ class SourceBindingProcessingScope:
         variable_components: tuple[AllComponents, ...],
     ) -> AllComponents | None:
         """Return the remaining source axis after bindings choose stack axes."""
-        variable_component_set = ComponentSet(variable_components)
-        group_by_candidates = (
-            ComponentSet.collect(
-                self.axis_plan.source_alias_components,
-                self.axis_plan.image_set_components,
-            )
-            .excluding(variable_component_set)
-            .as_tuple()
-        )
-        if not group_by_candidates and self.axis_plan.sample_group_component is not None:
-            group_by_candidates = (
-                ComponentSet.collect((self.axis_plan.sample_group_component,))
-                .excluding(variable_component_set)
-                .as_tuple()
-            )
-        return ComponentSet(group_by_candidates).single_or_none(
-            "CellProfiler source bindings cannot infer one group_by component from "
-            "multiple remaining source identity axes: "
-            f"{tuple(component.value for component in group_by_candidates)!r}."
+        return source_identity_group_by_component(
+            self.axis_plan,
+            variable_components,
         )
 
     def requires_image_set_stack(self) -> bool:
@@ -1092,7 +1167,7 @@ class SourceBindingModuleProcessingScopePolicy(ModuleProcessingScopePolicy):
         module_requires_pairwise_object_domain_scope: bool,
     ) -> ModuleProcessingComponents:
         del module_requires_pairwise_object_domain_scope
-        return SourceBindingProcessingScope(
+        components = SourceBindingProcessingScope(
             request.runtime_lineage.contract.source_bindings,
             request.source_schema,
             request.axis_plan(request.runtime_lineage.contract.source_bindings),
@@ -1100,6 +1175,13 @@ class SourceBindingModuleProcessingScopePolicy(ModuleProcessingScopePolicy):
                 request.runtime_lineage.contract.source_bindings,
             ),
         ).components()
+        if components.variable_components:
+            return components
+        if request.requires_source_stack_collapse():
+            return components.with_variable_components(
+                request.module_default_components()
+            )
+        return components
 
 
 class InputlessArtifactModuleProcessingScopePolicy(ModuleProcessingScopePolicy):
@@ -1208,6 +1290,34 @@ class RuntimeArtifactSourceLineage:
     ) -> bool:
         return self._collect_pairwise_object_domain_scope(contract, set())
 
+    def source_stack_runtime_image_names_for(
+        self,
+        contract: ModuleArtifactContracts,
+    ) -> tuple[str, ...]:
+        """Return runtime image inputs whose producer preserves source-stack scope."""
+        names: list[str] = []
+        for symbol in CellProfilerSymbol.unique_by_key(contract.input_symbols):
+            if (
+                symbol.is_external_source
+                or symbol.artifact_type is not ImageArtifactType
+            ):
+                continue
+            producer_module_num = symbol.producer_module_num
+            if producer_module_num is None:
+                continue
+            producer_contract = self.contracts_by_module_num.get(producer_module_num)
+            if producer_contract is None:
+                continue
+            producer_output = self._producer_output_symbol(producer_contract, symbol)
+            if producer_output is None:
+                continue
+            if any(
+                isinstance(relation, SourceStackLineageSourceRelation)
+                for relation in producer_output.artifact_spec.relations
+            ):
+                names.append(symbol.name)
+        return tuple(dict.fromkeys(names))
+
     def _collect(
         self,
         contract: ModuleArtifactContracts,
@@ -1219,28 +1329,139 @@ class RuntimeArtifactSourceLineage:
         seen_module_nums.add(contract.module_num)
 
         if not contract.source_bindings.is_empty:
-            source_semantics = SourceProcessingComponentSemantics(
-                self.source_schema,
-                contract.source_bindings,
+            self._extend_unique(
+                components,
+                self.source_binding_lineage_components(contract.source_bindings),
             )
-            source_components = (
-                self.source_schema.source_stack_components
-                if (
-                    contract.source_bindings.image_stack_bindings
-                    and self.source_schema.source_stack_components
-                )
-                else source_semantics.variable_components()
-            )
-            self._extend_unique(components, source_components)
 
         for symbol in contract.input_symbols:
-            producer_module_num = symbol.producer_module_num
-            if producer_module_num is None:
-                continue
-            producer_contract = self.contracts_by_module_num.get(producer_module_num)
-            if producer_contract is None:
-                continue
+            self._collect_input_symbol(symbol, components, seen_module_nums)
+
+    def _collect_input_symbol(
+        self,
+        symbol: CellProfilerSymbol,
+        components: list[AllComponents],
+        seen_module_nums: set[int],
+    ) -> None:
+        producer_module_num = symbol.producer_module_num
+        if producer_module_num is None:
+            return
+        producer_contract = self.contracts_by_module_num.get(producer_module_num)
+        if producer_contract is None:
+            return
+        producer_output = self._producer_output_symbol(producer_contract, symbol)
+        if producer_output is None:
             self._collect(producer_contract, components, seen_module_nums)
+            return
+        relation_sources = tuple(
+            relation.source
+            for relation in producer_output.artifact_spec.relations
+            if isinstance(relation, GroupLineageSourceRelation)
+        )
+        if not relation_sources:
+            self._collect(producer_contract, components, seen_module_nums)
+            return
+        for source_ref in relation_sources:
+            source_symbol = self._producer_input_symbol_for_ref(
+                producer_contract,
+                source_ref,
+            )
+            if source_symbol is None:
+                raise ValueError(
+                    f"{producer_contract.module_name}({producer_contract.module_num}) "
+                    f"declares output lineage from {producer_output.name!r} "
+                    f"to missing input artifact {source_ref.name!r}."
+                )
+            self._collect_symbol_lineage(
+                source_symbol,
+                components,
+                seen_module_nums,
+                owner_contract=producer_contract,
+            )
+
+    def _collect_symbol_lineage(
+        self,
+        symbol: CellProfilerSymbol,
+        components: list[AllComponents],
+        seen_module_nums: set[int],
+        *,
+        owner_contract: ModuleArtifactContracts,
+    ) -> None:
+        if symbol.is_external_source:
+            binding = self._source_binding_for_symbol(owner_contract, symbol)
+            source_bindings = (
+                StepSourceBindingsConfig(bindings=(binding,), enabled=True)
+                if binding is not None
+                else owner_contract.source_bindings
+            )
+            self._extend_unique(
+                components,
+                self.source_binding_lineage_components(source_bindings),
+            )
+            return
+        self._collect_input_symbol(symbol, components, seen_module_nums)
+
+    def source_binding_lineage_components(
+        self,
+        source_bindings: StepSourceBindingsConfig,
+    ) -> tuple[AllComponents, ...]:
+        if (
+            source_bindings.image_stack_bindings
+            and self.source_schema.source_stack_components
+        ):
+            return self.source_schema.source_stack_components
+        return SourceProcessingComponentSemantics(
+            self.source_schema,
+            source_bindings,
+        ).variable_components()
+
+    @staticmethod
+    def _producer_output_symbol(
+        producer_contract: ModuleArtifactContracts,
+        consumed_symbol: CellProfilerSymbol,
+    ) -> CellProfilerSymbol | None:
+        return next(
+            (
+                symbol
+                for symbol in producer_contract.output_symbols
+                if symbol.key == consumed_symbol.key
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _producer_input_symbol_for_ref(
+        producer_contract: ModuleArtifactContracts,
+        source_ref: object,
+    ) -> CellProfilerSymbol | None:
+        return next(
+            (
+                symbol
+                for symbol in producer_contract.input_symbols
+                if (
+                    symbol.name == source_ref.name
+                    and symbol.artifact_type is source_ref.artifact_type
+                )
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _source_binding_for_symbol(
+        contract: ModuleArtifactContracts,
+        source_symbol: CellProfilerSymbol,
+    ) -> NamedSourceBinding | None:
+        return next(
+            (
+                binding
+                for binding in contract.source_bindings.binding_declarations
+                if (
+                    binding.alias == source_symbol.name
+                    and binding.artifact_kind is source_symbol.artifact_type
+                )
+            ),
+            None,
+        )
 
     def _collect_pairwise_object_domain_scope(
         self,

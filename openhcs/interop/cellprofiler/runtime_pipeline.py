@@ -13,9 +13,6 @@ from typing import Any
 
 from openhcs.constants import Backend
 from openhcs.core.pipeline import Pipeline
-from openhcs.core.pipeline.compilation_session import (
-    PIPELINE_SOURCE_SCHEMA_METADATA_KEY,
-)
 from openhcs.core.process_local_cache import clear_registered_process_local_caches
 from openhcs.core.progress import set_progress_queue
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
@@ -41,7 +38,7 @@ from openhcs.interop.cellprofiler.module_roles import (
 )
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock
 from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
-    CellProfilerGeneratedPipelineInvocationContracts,
+    CellProfilerPipelineRuntimeRebinder,
     GeneratedPipelineFunctionRegistration,
     GeneratedPipelineModuleIdentity,
     GeneratedPipelineRuntimeModule,
@@ -351,10 +348,15 @@ class CPPipePipelinePreparationRequest:
             module,
             pipeline_name=converted.generated_pipeline.name,
         )
-        pipeline.metadata[PIPELINE_SOURCE_SCHEMA_METADATA_KEY] = converted.source_schema
-        pipeline.metadata[
-            CellProfilerGeneratedPipelineInvocationContracts.module_attribute
-        ] = artifact_contracts_by_module_num
+        pipeline = Pipeline(
+            steps=CellProfilerPipelineRuntimeRebinder(
+                generated_module_name=module_name,
+                contracts_by_module_num=artifact_contracts_by_module_num,
+            ).rebind(pipeline.steps),
+            name=pipeline.name,
+            description=pipeline.description,
+            step_scope_ids=pipeline.step_scope_ids,
+        )
         registered_functions = GeneratedPipelineFunctionRegistration(module).register()
         return PreparedGeneratedPipeline(
             cppipe_path=converted.cppipe_path,
