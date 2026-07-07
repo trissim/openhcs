@@ -106,6 +106,7 @@ class PipelineOrchestrator:
         pipeline_config: Optional["PipelineConfig"] = None,
         storage_registry: Optional[Any] = None,
         input_workspace_preparation: InputWorkspacePreparationRequest | None = None,
+        selected_pipeline_path: Union[str, Path, None] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ):
         # Lock removed - was orphaned code never used
@@ -172,6 +173,13 @@ class PipelineOrchestrator:
         self.source_plate_path = plate_path
         self.input_workspace_preparation = input_workspace_preparation
         self.input_workspace_preparation_result: InputWorkspacePreparationResult | None = None
+        if selected_pipeline_path is None and input_workspace_preparation is not None:
+            selected_pipeline_path = input_workspace_preparation.selected_pipeline_path
+        self.selected_pipeline_path = (
+            Path(selected_pipeline_path)
+            if selected_pipeline_path is not None
+            else None
+        )
 
         if self.plate_path is None and self.workspace_path is None:
             raise ValueError(

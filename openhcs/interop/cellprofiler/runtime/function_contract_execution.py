@@ -464,6 +464,10 @@ class CellProfilerFunctionContractExecutor:
         if contract.processing_contract is ProcessingContract.PURE_3D:
             projected_image = image
             projected_kwargs = dict(kwargs)
+            _validate_pure_3d_kwargs_do_not_carry_runtime_slice_alignment(
+                function_name,
+                projected_kwargs,
+            )
         else:
             projected_image = project_singleton_stack_image_domain(image)
             projected_kwargs = {
@@ -943,6 +947,25 @@ def _execute_runtime_batch_invocation(
         request.image,
         request.kwargs,
         execution_mode=request.execution_mode,
+    )
+
+
+def _validate_pure_3d_kwargs_do_not_carry_runtime_slice_alignment(
+    function_name: str,
+    kwargs: CellProfilerKwargs,
+) -> None:
+    aligned_names = tuple(
+        name
+        for name, value in kwargs.items()
+        if isinstance(value, RuntimeSliceAlignedValues)
+    )
+    if not aligned_names:
+        return
+    raise ValueError(
+        f"{function_name} has ProcessingContract.PURE_3D but received "
+        f"runtime-slice-aligned kwargs {list(aligned_names)}. PURE_3D callables "
+        "consume whole-stack values; bind object-label special inputs as dense "
+        "stack arrays or use a plane-local processing contract."
     )
 
 

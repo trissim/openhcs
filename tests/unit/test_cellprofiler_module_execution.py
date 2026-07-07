@@ -139,7 +139,9 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
 from openhcs.processing.backends.cellprofiler.alignment import AlignModule
 from openhcs.processing.backends.cellprofiler.classification import (
     ClassifyObjectsSingleMeasurementModule,
+    classify_objects_single_measurement,
 )
+from openhcs.processing.backends.cellprofiler.image_math import image_math
 from openhcs.interop.cellprofiler.runtime.measurement_recording import (
     FieldsFromRowsMeasurementRecordMixin,
     measurement_record_for_module,
@@ -166,6 +168,7 @@ from openhcs.processing.backends.cellprofiler.measurement_math import (
 )
 from openhcs.processing.backends.cellprofiler.morphology import (
     CombineObjectsInputPolicy,
+    closing,
     erode_image,
     resize_objects_3d,
 )
@@ -775,6 +778,190 @@ def test_special_object_label_input_preserves_runtime_slice_domain() -> None:
         )["guiding_labels"],
         np.array([[0, 0], [2, 0]], dtype=np.int32),
     )
+
+
+def test_track_objects_special_input_binds_full_stack_labels_for_pure_3d() -> None:
+    labels = np.array(
+        [
+            [[0, 1], [0, 0]],
+            [[0, 0], [2, 0]],
+        ],
+        dtype=np.int32,
+    )
+    objects = ObjectLabelSet(
+        name="Embryos",
+        labels=labels,
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((1,), (2,)),
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
+    request = SpecialInputBindingRequest(
+        module_name="TrackObjects",
+        func=track_objects,
+        adapter=_RuntimeSliceObjectAdapter(objects=objects, slice_index=1),
+        kwargs={},
+        current_image=np.zeros((2, 2, 2), dtype=np.float32),
+        binding_scope=EMPTY_RUNTIME_ARTIFACT_BINDING_SCOPE,
+        parameter_names=("labels",),
+        special_input_specs=(ArtifactSpec.input("Embryos", ObjectLabelsArtifactType),),
+        runtime_inputs=(ArtifactSpec.input("Embryos", ObjectLabelsArtifactType),),
+    )
+
+    bound = request.bind_positional_parameters()
+
+    assert isinstance(bound["labels"], np.ndarray)
+    np.testing.assert_array_equal(bound["labels"], labels)
+
+
+def test_pure_3d_object_label_special_inputs_reject_runtime_slice_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="TrackObjects",
+            items=(
+                *ModuleArtifactContract.items_for_partition(
+                    SourceArtifactInputPartition,
+                    (ArtifactSpec.input("Embryos", ObjectLabelsArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    RuntimeArtifactInputPartition,
+                    (ArtifactSpec.input("Embryos", ObjectLabelsArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    RecordedArtifactOutputPartition,
+                    (ArtifactSpec.output("Tracking", MeasurementsArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    DeclaredArtifactOutputPartition,
+                    (ArtifactSpec.output("Tracking", MeasurementsArtifactType),),
+                ),
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        CurrentRuntimePlaneKwargProjectionContract,
+        "projects_runtime_slice_kwargs",
+        lambda self: True,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="TrackObjects.*ProcessingContract.PURE_3D.*object-label special_inputs",
+    ):
+        executor.runtime_plan(track_objects)
+
+
+def test_optional_image_special_input_can_compile_without_runtime_artifacts() -> None:
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="Crop",
+            items=(
+                *ModuleArtifactContract.items_for_partition(
+                    SourceArtifactInputPartition,
+                    (ArtifactSpec.input("Orig", ImageArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    RecordedArtifactOutputPartition,
+                    (ArtifactSpec.output("Cropped", ImageArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    DeclaredArtifactOutputPartition,
+                    (ArtifactSpec.output("Cropped", ImageArtifactType),),
+                ),
+            ),
+        )
+    )
+
+    plan = executor.runtime_plan(crop)
+
+    assert plan.special_input_names == ("mask_plane",)
+    assert plan.runtime_inputs == ()
+
+
+def test_trailing_image_special_input_can_compile_without_operands() -> None:
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="ImageMath",
+            items=(
+                *ModuleArtifactContract.items_for_partition(
+                    SourceArtifactInputPartition,
+                    (ArtifactSpec.input("Image", ImageArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    RecordedArtifactOutputPartition,
+                    (ArtifactSpec.output("Output", ImageArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    DeclaredArtifactOutputPartition,
+                    (ArtifactSpec.output("Output", ImageArtifactType),),
+                ),
+            ),
+        )
+    )
+
+    plan = executor.runtime_plan(image_math)
+
+    assert plan.special_input_names == ("image_operands",)
+    assert plan.runtime_inputs == ()
+
+
+def test_object_special_input_can_compile_with_measurement_runtime_inputs() -> None:
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="ClassifyObjectsSingleMeasurement",
+            items=(
+                *ModuleArtifactContract.items_for_partition(
+                    SourceArtifactInputPartition,
+                    (
+                        ArtifactSpec.input("Objects", ObjectLabelsArtifactType),
+                        ArtifactSpec.input("Measurements", MeasurementsArtifactType),
+                    ),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    RecordedArtifactOutputPartition,
+                    (ArtifactSpec.output("Classifications", MeasurementsArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    DeclaredArtifactOutputPartition,
+                    (ArtifactSpec.output("Classifications", MeasurementsArtifactType),),
+                ),
+            ),
+        )
+    )
+
+    plan = executor.runtime_plan(classify_objects_single_measurement)
+
+    assert plan.special_input_names == ("labels",)
+    assert [spec.name for spec in plan.runtime_inputs] == [
+        "Objects",
+        "Measurements",
+    ]
+
+
+def test_pure_3d_executor_rejects_runtime_slice_aligned_label_kwargs() -> None:
+    def keep_stack(image: np.ndarray, labels: np.ndarray) -> np.ndarray:
+        del labels
+        return image
+
+    keep_stack.__processing_contract__ = ProcessingContract.PURE_3D
+
+    with pytest.raises(
+        ValueError,
+        match="keep_stack.*ProcessingContract.PURE_3D.*runtime-slice-aligned kwargs.*labels",
+    ):
+        CellProfilerFunctionContractExecutor().execute(
+            keep_stack,
+            np.zeros((2, 2, 2), dtype=np.float32),
+            {
+                "labels": RuntimeSliceAlignedValues(
+                    (np.zeros((2, 2), dtype=np.int32),)
+                )
+            },
+            execution_mode=ImagePayloadExecutionMode.NATURAL,
+        )
 
 
 def test_special_object_label_payload_preserves_full_stack_context() -> None:
@@ -9921,6 +10108,38 @@ def test_tile_preserves_color_stack_output_shape():
     np.testing.assert_array_equal(output[0, :, 4:, 1], np.full((3, 4), 2))
 
 
+def test_tile_aligned_multi_image_stack_tiles_each_runtime_slice() -> None:
+    aligned_stack = AlignedImageStack(
+        slices=(
+            np.stack(
+                (
+                    np.full((3, 4), 1, dtype=np.float32),
+                    np.full((3, 4), 2, dtype=np.float32),
+                )
+            ),
+            np.stack(
+                (
+                    np.full((3, 4), 3, dtype=np.float32),
+                    np.full((3, 4), 4, dtype=np.float32),
+                )
+            ),
+        )
+    )
+
+    result = CellProfilerFunctionContractExecutor().execute(
+        tile,
+        aligned_stack,
+        {"rows": 1, "columns": 2},
+        execution_mode=ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK,
+    )
+
+    assert result.shape == (2, 3, 8)
+    np.testing.assert_array_equal(result[0, :, :4], np.full((3, 4), 1))
+    np.testing.assert_array_equal(result[0, :, 4:], np.full((3, 4), 2))
+    np.testing.assert_array_equal(result[1, :, :4], np.full((3, 4), 3))
+    np.testing.assert_array_equal(result[1, :, 4:], np.full((3, 4), 4))
+
+
 def test_cellprofiler_contract_executor_applies_aligned_multi_image_stack():
     calls = []
 
@@ -16517,6 +16736,25 @@ def test_structuring_element_execution_policy_keeps_planewise_for_2d_footprint()
         },
     )
 
+    assert mode is ImagePayloadExecutionMode.NATURAL
+
+
+def test_structuring_element_execution_policy_uses_defaulted_callable_kwargs() -> (
+    None
+):
+    policy = CellProfilerInvocationExecutionModePolicy.for_module("Closing")
+    image = np.zeros((3, 5, 5), dtype=np.float32)
+    kwargs = CallableInvocationKwargSpec.from_callable(closing).coerce_kwargs(
+        {"size": 17}
+    )
+
+    mode = policy.execution_mode(
+        default=ImagePayloadExecutionMode.NATURAL,
+        image=image,
+        kwargs=kwargs,
+    )
+
+    assert kwargs["structuring_element"] is StructuringElement.DISK
     assert mode is ImagePayloadExecutionMode.NATURAL
 
 

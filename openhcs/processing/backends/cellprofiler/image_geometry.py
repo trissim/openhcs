@@ -314,7 +314,7 @@ class TileModule(
     module_name = "Tile"
     function_name = "tile"
     validated = True
-    contract = ProcessingContract.PURE_3D
+    contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
     image_input_settings = (
         "Select an input image",
@@ -1190,7 +1190,7 @@ def tile_output_shape(
     return (output_height, output_width)
 
 
-@numpy(contract=ProcessingContract.PURE_3D)
+@numpy(contract=ProcessingContract.FLEXIBLE)
 def tile(
     image: np.ndarray,
     rows: int = 8,

@@ -805,6 +805,7 @@ class CellProfilerModuleRuntimePlan:
     func: CellProfilerFunction
     function_name: str
     callable_contract: CallableContract
+    processing_contract: ProcessingContract
     kwarg_spec: "CallableInvocationKwargSpec"
     declared_input_specs: tuple[ArtifactSpec, ...]
     declared_input_collection: ArtifactSpecCollection
@@ -957,12 +958,13 @@ class CellProfilerModuleRuntimePlan:
                 dual_scope_image_function, processing_contract
             )
         )
-        return cls(
+        plan = cls(
             contract=contract,
             module_type=module_type,
             func=func,
             function_name=callable_contract.function_name,
             callable_contract=callable_contract,
+            processing_contract=processing_contract,
             kwarg_spec=CallableInvocationKwargSpec.from_callable_contract(
                 func, processing_contract
             ),
@@ -1031,6 +1033,33 @@ class CellProfilerModuleRuntimePlan:
             replaces_main_flow=CellProfilerMainFlowReplacementPolicy.for_module(
                 canonical_module_name
             ).replaces_main_flow(image_outputs),
+        )
+        plan.validate_compile_time_binding_contracts()
+        return plan
+
+    def validate_compile_time_binding_contracts(self) -> None:
+        """Validate static runtime-input semantics while compiling the plan."""
+        self._validate_pure_3d_object_label_special_inputs()
+
+    def _validate_pure_3d_object_label_special_inputs(self) -> None:
+        if self.processing_contract is not ProcessingContract.PURE_3D:
+            return
+        if not self.special_input_names or not self.object_inputs:
+            return
+        default_execution_mode = (
+            self.default_runtime_image_execution_mode or ImagePayloadExecutionMode.NATURAL
+        )
+        if not CurrentRuntimePlaneKwargProjectionContract(
+            self.func,
+            default_execution_mode,
+        ).projects_runtime_slice_kwargs():
+            return
+        raise ValueError(
+            f"{self.contract.module_name} has ProcessingContract.PURE_3D and "
+            f"object-label special_inputs {list(self.special_input_names)} bound "
+            f"to runtime inputs {[spec.name for spec in self.object_inputs]}, "
+            "which must bind whole-stack labels at compile time. Runtime-slice "
+            "kwarg projection is only valid for plane-local execution."
         )
 
     @property
@@ -2090,7 +2119,7 @@ class CellProfilerModuleExecutor:
                 )
             )
         composition = compose_aligned_image_payload(
-            self.module_name,
+            f"{self.module_name} image inputs {tuple(spec.name for spec in image_inputs)!r}",
             tuple(payloads),
             metadata_mode=ImagePayloadMetadataCompositionMode.STACK,
         )
@@ -2286,24 +2315,24 @@ class CellProfilerModuleExecutor:
             )
         if profile_enabled:
             phase_started_at = time.perf_counter()
-        execution_mode = plan.invocation_execution_mode_policy.execution_mode(
-            default_execution_mode,
-            image=invocation_image,
-            kwargs=runtime_kwargs,
-            invocation_options=invocation_options,
-        )
+        coerced_kwargs = plan.kwarg_spec.coerce_kwargs(runtime_kwargs)
         if profile_enabled:
             CellProfilerRuntimeProfileLogger.log_module_profile(
-                "cp_invocation_execution_mode_policy",
+                "cp_invocation_coerce_kwargs",
                 time.perf_counter() - phase_started_at,
                 module=self.module_name,
             )
         if profile_enabled:
             phase_started_at = time.perf_counter()
-        coerced_kwargs = plan.kwarg_spec.coerce_kwargs(runtime_kwargs)
+        execution_mode = plan.invocation_execution_mode_policy.execution_mode(
+            default_execution_mode,
+            image=invocation_image,
+            kwargs=coerced_kwargs,
+            invocation_options=invocation_options,
+        )
         if profile_enabled:
             CellProfilerRuntimeProfileLogger.log_module_profile(
-                "cp_invocation_coerce_kwargs",
+                "cp_invocation_execution_mode_policy",
                 time.perf_counter() - phase_started_at,
                 module=self.module_name,
             )

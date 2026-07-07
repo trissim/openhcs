@@ -62,11 +62,15 @@ from openhcs.interop.cellprofiler.runtime.payload_types import (
     CellProfilerRuntimeType,
     CellProfilerRuntimeValue,
 )
+from openhcs.interop.cellprofiler.runtime.processing_contracts import (
+    CellProfilerProcessingContractAuthority,
+)
 from openhcs.interop.cellprofiler.runtime.policy_registry import (
     EnumStrategyLabelRegistryMixin,
     NoSourceImageNameMixin,
 )
 from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
 def cellprofiler_image_payload(payload: CellProfilerRuntimeValue) -> CellProfilerRuntimeValue:
@@ -578,6 +582,8 @@ class RuntimeInputBindingRequestBase(
                 payload,
             )
             if slice_count is not None:
+                if self.callable_uses_true_stack_semantics():
+                    return object_label_dense_array(payload)
                 return RuntimeSliceAlignedValues(
                     tuple(
                         object_label_dense_array(
@@ -605,6 +611,15 @@ class RuntimeInputBindingRequestBase(
             return labels
         return SingletonObjectLabelStackCollapseStrategy.for_labels(labels).collapse(
             labels
+        )
+
+    def callable_uses_true_stack_semantics(self) -> bool:
+        """Return whether this callable semantically consumes the whole stack."""
+        if self.func is None:
+            return False
+        return (
+            CellProfilerProcessingContractAuthority.for_callable(self.func)
+            is ProcessingContract.PURE_3D
         )
 
     def current_plane_relationship_for(self, spec: ArtifactSpec) -> CellProfilerRuntimeValue:

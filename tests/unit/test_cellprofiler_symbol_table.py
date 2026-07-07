@@ -121,6 +121,30 @@ def _module_with_records(
     )
 
 
+def _step_config_universe_for_step(step):
+    from openhcs.core.config import ProcessingConfig, StepMaterializationConfig
+    from openhcs.core.pipeline.step_config_universe import (
+        StepConfigRoot,
+        StepConfigUniverse,
+        step_config_declarations,
+    )
+
+    declarations = step_config_declarations()
+    roots = []
+    for config in (
+        step.source_bindings,
+        ProcessingConfig(),
+        StepMaterializationConfig(enabled=False),
+    ):
+        declaration = next(
+            declaration
+            for declaration in declarations
+            if type(config) is declaration.config_type
+        )
+        roots.append(StepConfigRoot(declaration=declaration, value=config))
+    return StepConfigUniverse(tuple(roots))
+
+
 def test_source_binding_variable_components_derive_timepoint_from_metadata() -> None:
     source_bindings = StepSourceBindingsConfig(
         metadata_rules=(
@@ -1137,8 +1161,6 @@ def test_compiler_derives_cellprofiler_contracts_from_step_invocation_contracts(
     from openhcs.core.compiled_step_plan import CompiledStepPlan
     from openhcs.core.config import (
         GlobalPipelineConfig,
-        ProcessingConfig,
-        StepMaterializationConfig,
     )
     from openhcs.core.context.processing_context import ProcessingContext
     from openhcs.core.invocation_artifacts import (
@@ -1146,11 +1168,6 @@ def test_compiler_derives_cellprofiler_contracts_from_step_invocation_contracts(
         PipelineInvocationContractProviderAuthority,
     )
     from openhcs.core.pipeline.compilation_session import CompilationSession
-    from openhcs.core.pipeline.step_config_universe import (
-        StepConfigRoot,
-        StepConfigUniverse,
-        step_config_declarations,
-    )
     from openhcs.core.pipeline.step_snapshot import StepSnapshot
     from openhcs.core.source_bindings import (
         NamedSourceBinding,
@@ -1220,22 +1237,6 @@ def test_compiler_derives_cellprofiler_contracts_from_step_invocation_contracts(
             ),
         ),
     ]
-    declarations = step_config_declarations()
-
-    def config_universe_for(step: FunctionStep) -> StepConfigUniverse:
-        roots = []
-        for config in (
-            step.source_bindings,
-            ProcessingConfig(),
-            StepMaterializationConfig(enabled=False),
-        ):
-            declaration = next(
-                declaration
-                for declaration in declarations
-                if type(config) is declaration.config_type
-            )
-            roots.append(StepConfigRoot(declaration=declaration, value=config))
-        return StepConfigUniverse(tuple(roots))
 
     snapshots = tuple(
         StepSnapshot(
@@ -1247,7 +1248,7 @@ def test_compiler_derives_cellprofiler_contracts_from_step_invocation_contracts(
             is_function_step=True,
             func=step.func,
             invocation_contracts=step.invocation_contracts,
-            configs=config_universe_for(step),
+            configs=_step_config_universe_for_step(step),
         )
         for index, step in enumerate(steps)
     )
@@ -1293,6 +1294,135 @@ def test_compiler_derives_cellprofiler_contracts_from_step_invocation_contracts(
         contract.module_artifact_contract.runtime_artifact_inputs[0].name
         == "Nuclei"
     )
+
+
+def test_compiler_derives_cellprofiler_contracts_from_selected_cppipe(
+    monkeypatch,
+    tmp_path,
+):
+    from openhcs.core.compiled_step_plan import CompiledStepPlan
+    from openhcs.core.config import GlobalPipelineConfig
+    from openhcs.core.context.processing_context import ProcessingContext
+    from openhcs.core.function_patterns import normalize_function_pattern
+    from openhcs.core.invocation_artifacts import (
+        ArtifactDeclarationStepContext,
+        PipelineInvocationContractProviderAuthority,
+    )
+    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+    from openhcs.core.pipeline.compilation_session import CompilationSession
+    from openhcs.core.pipeline.step_snapshot import StepSnapshot
+    from openhcs.core.source_bindings import (
+        NamedSourceBinding,
+        StepSourceBindingsConfig,
+    )
+    from openhcs.core.steps.function_step import FunctionStep
+    import openhcs.interop.cellprofiler.compile_time_contracts as compile_time_contracts
+    from openhcs.processing.backends.cellprofiler import color_to_gray
+    from openhcs.processing.backends.cellprofiler.color import ColorToGrayMode
+
+    module = _module_with_records(
+        1,
+        "ColorToGray",
+        [
+            ("Select the input image", "OrigColor"),
+            ("Conversion method", "Combine"),
+            ("Image type", "RGB"),
+            ("Name the output image", "OrigGray"),
+            ("Relative weight of the red channel", "1.0"),
+            ("Relative weight of the green channel", "1.0"),
+            ("Relative weight of the blue channel", "1.0"),
+        ],
+    )
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="selected_cppipe_contracts",
+        source_cppipe=Path("source.cppipe"),
+        modules=[module],
+    )
+    cppipe_path = tmp_path / "selected.cppipe"
+    cppipe_path.write_text("", encoding="utf-8")
+
+    def contracts_from_selected_cppipe(path: Path):
+        assert path == cppipe_path
+        return generated.runtime_module_contracts_by_module_num
+
+    monkeypatch.setattr(
+        compile_time_contracts,
+        "_runtime_contracts_from_cppipe_path",
+        contracts_from_selected_cppipe,
+    )
+
+    step = FunctionStep(
+        func=(color_to_gray, {"mode": ColorToGrayMode.COMBINE}),
+        name="ColorToGray",
+        source_bindings=StepSourceBindingsConfig(
+            enabled=True,
+            bindings=(
+                NamedSourceBinding(
+                    alias="OrigColor",
+                    artifact_kind=ImageArtifactType,
+                ),
+            ),
+        ),
+    )
+    snapshots = (
+        StepSnapshot(
+            index=0,
+            scope_id="selected-cppipe::functionstep_0",
+            name=step.name,
+            step_type=step.__class__.__name__,
+            enabled=bool(step.enabled),
+            is_function_step=True,
+            func=step.func,
+            invocation_contracts=step.invocation_contracts,
+            configs=_step_config_universe_for_step(step),
+        ),
+    )
+    plate_path = tmp_path / "plate"
+    plate_path.mkdir()
+    orchestrator = PipelineOrchestrator(
+        plate_path=plate_path,
+        selected_pipeline_path=cppipe_path,
+    )
+    session = CompilationSession.from_context(
+        context=ProcessingContext(
+            step_plans={
+                0: CompiledStepPlan(
+                    step_index=0,
+                    step_name=step.name,
+                    step_type=step.__class__.__name__,
+                    axis_id="A01",
+                )
+            },
+            axis_id="A01",
+        ),
+        steps=(step,),
+        orchestrator=orchestrator,
+        global_config=GlobalPipelineConfig(),
+        step_state_map={0: object()},
+        snapshots=snapshots,
+    )
+    provider = PipelineInvocationContractProviderAuthority.provider_for_session(
+        session,
+    )
+    item = next(normalize_function_pattern(step.func).iter_items())
+
+    contract = provider(
+        item,
+        ArtifactDeclarationStepContext(
+            step_index=0,
+            source_bindings=step.source_bindings,
+        ),
+    )
+
+    assert contract is not None
+    assert contract.module_artifact_contract is not None
+    assert contract.module_artifact_contract.module_name == "ColorToGray"
+    assert [spec.name for spec in contract.module_artifact_contract.inputs] == [
+        "OrigColor",
+    ]
+    assert [spec.name for spec in contract.module_artifact_contract.outputs] == [
+        "OrigGray",
+    ]
 
 
 def test_pipeline_generator_resolves_object_measurement_function_variants():
