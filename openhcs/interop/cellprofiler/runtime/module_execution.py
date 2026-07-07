@@ -2099,6 +2099,14 @@ class CellProfilerModuleExecutor:
                 ),
             )
         adapter.require_resolvable_source_aliases(plan.external_primary_image_names)
+        default_execution_mode = (
+            plan.default_runtime_image_execution_mode
+            or ImagePayloadExecutionMode.NATURAL
+        )
+        projection_capabilities = CurrentRuntimePlaneKwargProjectionContract(
+            plan.func,
+            default_execution_mode,
+        ).projection_capabilities()
         payloads = []
         source_names: list[str | None] = []
         for spec in image_inputs:
@@ -2115,7 +2123,11 @@ class CellProfilerModuleExecutor:
             source_names.append(spec.name)
             payloads.append(
                 cellprofiler_image_payload(
-                    adapter.resolve_source_image(spec.name, current_image)
+                    adapter.resolve_source_image(
+                        spec.name,
+                        current_image,
+                        projection_capabilities=projection_capabilities,
+                    )
                 )
             )
         composition = compose_aligned_image_payload(
@@ -2268,7 +2280,14 @@ class CellProfilerModuleExecutor:
                 time.perf_counter() - phase_started_at,
                 module=self.module_name,
             )
-        runtime_kwargs = {**kwargs, **bound_runtime_kwargs}
+        runtime_kwargs = {
+            **_execution_mode_semantic_control_kwargs(
+                plan.processing_contract,
+                default_execution_mode,
+            ),
+            **kwargs,
+            **bound_runtime_kwargs,
+        }
         image_override = runtime_kwargs.pop(
             CellProfilerInvocationOverrideKwarg.image, None
         )

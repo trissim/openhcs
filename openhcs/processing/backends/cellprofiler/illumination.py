@@ -655,19 +655,6 @@ class CorrectIlluminationCalculateModule(
     )
 
     @classmethod
-    def postprocess_bound_settings(
-        cls, module: "ModuleBlock", bound: "BoundModuleSettings"
-    ) -> "BoundModuleSettings":
-        del module
-        raw_scope = bound.kwargs.get(
-            "calculation_scope", IlluminationCalculationScope.EACH
-        )
-        scope = coerce_cellprofiler_enum(IlluminationCalculationScope, raw_scope)
-        return bound.with_kwargs(
-            {"slice_by_slice": scope is IlluminationCalculationScope.EACH}
-        )
-
-    @classmethod
     def processing_components(
         cls, request: "ModuleProcessingComponentRequest"
     ) -> "ModuleProcessingComponents":

@@ -15,7 +15,11 @@ from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 
 from openhcs.constants.constants import AllComponents, Backend, VariableComponents
 from openhcs.core.aligned_image_payload import AlignedImageSliceContext
-from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
+from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+)
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     ImagePayloadSourceMetadataContext,
@@ -33,6 +37,7 @@ from openhcs.core.steps.function_output_manifest import (
     ProducedOutputSemantics,
     step_output_manifest,
 )
+from openhcs.core.step_dependencies import StepInputDependency
 from openhcs.utils.display_config_factory import ViewerDisplayConfigObject
 
 
@@ -205,6 +210,67 @@ def record_output_path(context, plan, path, output_context=None):
             )
         ],
     )
+
+
+def test_step_output_manifest_prefers_main_dependency_over_auxiliary_artifact_inputs():
+    context = context_stub(FileManagerStub({}))
+    manifest = step_output_manifest(context)
+
+    main_producer = function_step_plan("A01_s1_w1.tif", "ErodeImage")
+    main_producer.step_scope_id = "main-producer"
+    main_producer.pipeline_position = 24
+    seed_producer = function_step_plan("A01_s1_w2.tif", "ConvertObjectsToImage")
+    seed_producer.step_scope_id = "seed-producer"
+    seed_producer.pipeline_position = 14
+
+    record_output_path(
+        context,
+        main_producer,
+        "/tmp/output/A01_s1_w1.tif",
+        AlignedImageSliceContext.main_flow(
+            "MembFinal",
+            artifact_kind=ImageArtifactType.value,
+        ),
+    )
+    record_output_path(
+        context,
+        seed_producer,
+        "/tmp/output/A01_s1_w2.tif",
+        AlignedImageSliceContext.main_flow(
+            "cellSeeds",
+            artifact_kind=ImageArtifactType.value,
+        ),
+    )
+
+    consumer = function_step_plan("ignored.tif", "Watershed")
+    consumer.main_input_dependency = StepInputDependency.step_output(
+        source_step_index=24,
+        source_step_scope_id="main-producer",
+    )
+    consumer.source_binding_plan = SimpleNamespace(has_primary_content=False)
+    consumer.artifact_inputs = {
+        "MembFinal": ArtifactInputPlan(
+            name="MembFinal",
+            path="memb",
+            artifact_type=ImageArtifactType,
+            source_step_id=24,
+            source_step_scope_id="main-producer",
+        ),
+        "cellSeeds": ArtifactInputPlan(
+            name="cellSeeds",
+            path="seeds",
+            artifact_type=ImageArtifactType,
+            source_step_id=14,
+            source_step_scope_id="seed-producer",
+        ),
+    }
+
+    assert manifest.producer_paths_for(consumer) == ("A01_s1_w1.tif",)
+    assert manifest.filter_to_producer_paths(
+        consumer,
+        ("A01_s1_w1.tif", "A01_s1_w2.tif"),
+        context.microscope_handler.parser,
+    ) == ["A01_s1_w1.tif"]
 
 
 def image_payload_with_source_metadata(pixels, metadata, mask=None):

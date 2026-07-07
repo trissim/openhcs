@@ -1,3 +1,4 @@
+import ast
 import re
 from pathlib import Path
 
@@ -1472,14 +1473,35 @@ def test_codegen_preserves_source_timepoint_lineage_for_runtime_artifact_steps()
     assert "VariableComponents.SITE" not in measurement_config
     assert "variable_components=[VariableComponents.TIMEPOINT]," in measurement_config
     assert "group_by=GroupBy.CHANNEL" in measurement_config
-    measurement_step = re.search(
-        r"FunctionStep\(\n(?P<body>.*?)"
-        r'name="MeasureObjectSizeShape".*?\n    \),',
-        generated.code,
-        re.S,
+    tree = ast.parse(generated.code)
+    measurement_steps = tuple(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "FunctionStep"
+        and any(
+            keyword.arg == "name"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value == "MeasureObjectSizeShape"
+            for keyword in node.keywords
+        )
     )
-    assert measurement_step is not None
-    assert "'slice_by_slice': True" in measurement_step.group("body")
+    assert len(measurement_steps) == 1
+    func_keyword = next(
+        keyword.value
+        for keyword in measurement_steps[0].keywords
+        if keyword.arg == "func"
+    )
+    public_kwarg_names: set[str] = set()
+    if isinstance(func_keyword, ast.Tuple):
+        assert isinstance(func_keyword.elts[1], ast.Dict)
+        public_kwarg_names = {
+            key.value
+            for key in func_keyword.elts[1].keys
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        }
+    assert "slice_by_slice" not in public_kwarg_names
 
 
 def test_codegen_keeps_source_binding_channel_out_of_runtime_artifact_scope():
@@ -1687,6 +1709,35 @@ def test_correct_illumination_all_scope_allows_single_channel_schema():
     assert step_match is not None
     assert "variable_components=[VariableComponents.SITE]" in step_match.group("body")
     assert "group_by=GroupBy.CHANNEL" in step_match.group("body")
+    tree = ast.parse(generated.code)
+    illumination_steps = tuple(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "FunctionStep"
+        and any(
+            keyword.arg == "name"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value == "CorrectIlluminationCalculate"
+            for keyword in node.keywords
+        )
+    )
+    assert len(illumination_steps) == 1
+    func_keyword = next(
+        keyword.value
+        for keyword in illumination_steps[0].keywords
+        if keyword.arg == "func"
+    )
+    public_kwarg_names: set[str] = set()
+    if isinstance(func_keyword, ast.Tuple):
+        assert isinstance(func_keyword.elts[1], ast.Dict)
+        public_kwarg_names = {
+            key.value
+            for key in func_keyword.elts[1].keys
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        }
+    assert "slice_by_slice" not in public_kwarg_names
 
 
 def test_compile_image_schema_decodes_legacy_escaped_match_metadata():

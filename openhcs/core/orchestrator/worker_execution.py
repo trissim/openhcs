@@ -557,12 +557,20 @@ class InlineWorkerLaneRunner:
             )
 
         worker_slot, lane_contexts = active_lanes[0]
-        return execute_worker_lane(
-            pipeline_definition=pipeline_definition,
-            lane_axis_contexts=lane_contexts,
-            lane_context=execution_plan.lane_context(worker_slot),
-            runtime_observation_mode=execution_plan.runtime_observation_mode,
-        )
+        lane_context = execution_plan.lane_context(worker_slot)
+        profiling_policy = CProfileWorkerProfilingPolicy.from_environment()
+        with profiling_policy.profile(
+            execution_id=lane_context.execution_id,
+            plate_id=lane_context.plate_id,
+            worker_slot=lane_context.worker_slot,
+            owned_wells=list(lane_context.owned_wells),
+        ):
+            return execute_worker_lane(
+                pipeline_definition=pipeline_definition,
+                lane_axis_contexts=lane_contexts,
+                lane_context=lane_context,
+                runtime_observation_mode=execution_plan.runtime_observation_mode,
+            )
 
 
 class PooledWorkerLaneRunner:
@@ -742,8 +750,6 @@ def _execute_axis_with_sequential_combinations(
         reset_memory_backend()
         if cleanup_all_gpu_frameworks:
             cleanup_all_gpu_frameworks()
-        gc.collect()
-
         if not result.is_success():
             logger.error(
                 f"🔄 WORKER: Combination {context_key} failed for axis {axis_id}"
@@ -903,13 +909,16 @@ def execute_worker_lane(
     """Execute a deterministic worker lane: wells sequentially within one slot."""
 
     lane_results: Dict[str, ExecutionResult] = {}
-    for axis_id, axis_contexts in lane_axis_contexts:
-        lane_results[axis_id] = _execute_axis_with_sequential_combinations(
-            pipeline_definition=pipeline_definition,
-            axis_contexts=axis_contexts,
-            lane_context=lane_context,
-            runtime_observation_mode=runtime_observation_mode,
-        )
+    try:
+        for axis_id, axis_contexts in lane_axis_contexts:
+            lane_results[axis_id] = _execute_axis_with_sequential_combinations(
+                pipeline_definition=pipeline_definition,
+                axis_contexts=axis_contexts,
+                lane_context=lane_context,
+                runtime_observation_mode=runtime_observation_mode,
+            )
+    finally:
+        gc.collect()
     return lane_results
 
 

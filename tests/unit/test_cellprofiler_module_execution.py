@@ -2600,8 +2600,15 @@ class _FakeCellProfilerRuntime(RuntimePlaneAxisProjector):
         del image_name
         return ()
 
-    def resolve_source_image(self, alias: str, current_image: object) -> np.ndarray:
-        del current_image
+    def resolve_source_image(
+        self,
+        alias: str,
+        current_image: object,
+        projection_capabilities: (
+            frozenset[type[CellProfilerRuntimePlaneProjectionCapability]] | None
+        ) = None,
+    ) -> np.ndarray:
+        del current_image, projection_capabilities
         return self.images[alias].data
 
     def image_payload_for_current_runtime_plane(
@@ -12255,6 +12262,55 @@ def test_module_image_request_projects_current_image_to_grouped_runtime_plane() 
         np.full((5, 6), 29, dtype=np.float32),
     )
     metadata = image_payload_metadata(image_request.payload)
+    assert metadata.source_path == "site2.png"
+    assert metadata.source_component_metadata == {AllComponents.SITE.value: "2"}
+
+
+def test_source_bound_current_payload_projects_to_grouped_runtime_plane() -> None:
+    current_image = RuntimeImagePayloadContext(
+        np.stack(
+            [
+                np.full((5, 6), 11, dtype=np.float32),
+                np.full((5, 6), 29, dtype=np.float32),
+            ]
+        ),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("site1.png", "site2.png"),
+                component_metadata=(
+                    {AllComponents.SITE.value: "1"},
+                    {AllComponents.SITE.value: "2"},
+                ),
+            )
+        ),
+        mask=None,
+    ).payload()
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_scope=RuntimeExecutionAxisScope.from_raw(
+            "A01",
+            component=AllComponents.SITE,
+            value="2",
+        ),
+        source_binding_plan=CompiledSourceBindingPlan(
+            bindings=(NamedSourceBinding(alias="TrackedCells"),)
+        ),
+        plane_projection=RuntimePlaneProjection.group(1, 2),
+    )
+
+    projected = adapter.resolve_source_image(
+        "TrackedCells",
+        current_image,
+        projection_capabilities=frozenset(
+            (RuntimeArtifactImageInputProjectionCapability,)
+        ),
+    )
+
+    np.testing.assert_array_equal(
+        image_payload_data(projected),
+        np.full((5, 6), 29, dtype=np.float32),
+    )
+    metadata = image_payload_metadata(projected)
     assert metadata.source_path == "site2.png"
     assert metadata.source_component_metadata == {AllComponents.SITE.value: "2"}
 

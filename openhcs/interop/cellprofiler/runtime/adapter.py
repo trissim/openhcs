@@ -765,6 +765,9 @@ class CellProfilerRuntimeAdapter(
         self,
         alias: str,
         current_image: ImagePayloadValue,
+        projection_capabilities: (
+            frozenset[type[CellProfilerRuntimePlaneProjectionCapability]] | None
+        ) = None,
     ) -> ImagePayloadValue:
         request = self._source_resolution_request(
             alias,
@@ -774,22 +777,26 @@ class CellProfilerRuntimeAdapter(
         image = SourceBindingResolver.for_origin(request.binding.origin).resolve_image(
             request
         )
-        if image is current_image:
+        if image is current_image and projection_capabilities is None:
             return image
-        source_metadata = image_payload_metadata(image)
-        metadata = replace(
-            source_metadata,
-            source_image_names=source_metadata.source_image_names or (alias,),
-        )
-        return self.image_payload_for_current_runtime_plane(
-            cast(
+        projected_image = image
+        if image is not current_image:
+            source_metadata = image_payload_metadata(image)
+            metadata = replace(
+                source_metadata,
+                source_image_names=source_metadata.source_image_names or (alias,),
+            )
+            projected_image = cast(
                 ImagePayloadValue,
                 metadata.payload_with(
                     image_payload_data(image),
                     mask=image_payload_mask(image),
                 ),
-            ),
+            )
+        return self.image_payload_for_current_runtime_plane(
+            projected_image,
             current_image=current_image,
+            projection_capabilities=projection_capabilities,
         )
 
     def image_payload_for_current_runtime_plane(

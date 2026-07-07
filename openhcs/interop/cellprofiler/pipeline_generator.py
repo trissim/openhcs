@@ -814,13 +814,6 @@ class PipelineGeneratorCodeEmitter:
                 bound_settings=translated_kwargs,
                 source_schema=source_schema,
             )
-            translated_kwargs = translated_kwargs.with_defaults(
-                component_request.generated_semantic_control_defaults()
-            )
-            component_request = replace(
-                component_request,
-                bound_settings=translated_kwargs,
-            )
             processing_components = self.generator.registry.processing_components(
                 module,
                 component_request,

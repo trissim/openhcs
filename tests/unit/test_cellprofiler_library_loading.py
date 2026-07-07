@@ -110,6 +110,7 @@ from openhcs.core.runtime_values import (
 )
 from openhcs.core.runtime_semantics import ObjectLabelDomain, ObjectLabelDomainScope
 from openhcs.core.runtime_values import image_payload_data, image_payload_mask
+from openhcs.core.source_image_provenance import SourceImageProvenancePlanes
 from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.backends.cellprofiler.morphology import (
@@ -2759,6 +2760,65 @@ def test_image_math_combines_operand_masks_without_reexpanding_single_output():
     assert result.data.shape == image.shape[1:]
     np.testing.assert_array_equal(result.mask, expected_mask)
     np.testing.assert_allclose(result.data, image.sum(axis=0) * expected_mask)
+
+
+def test_image_math_preserves_source_plane_stack_as_single_operand():
+    image = np.linspace(0.0, 1.0, 3 * 2 * 2, dtype=np.float32).reshape((3, 2, 2))
+    payload = RuntimeImagePayloadContext(
+        data=image,
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=tuple(f"/input/z{index}.tif" for index in range(image.shape[0]))
+            )
+        ),
+    ).payload()
+
+    result = image_math(payload, operation="Invert", dtype_config=DtypeConfig())
+
+    assert isinstance(result, ImageMetadataPayload)
+    assert result.data.shape == image.shape
+    np.testing.assert_allclose(result.data, 1.0 - image)
+
+
+def test_image_math_pure_2d_batch_executor_vectorizes_source_plane_stack():
+    from openhcs.core.runtime_batch_contracts import RuntimeBatchExecutionDomain
+    from openhcs.core.runtime_batch_contracts import RuntimePure2DSliceBatchRequest
+    from openhcs.core.runtime_batch_contracts import runtime_batch_executors_from_callable
+
+    image = np.linspace(0.0, 1.0, 4 * 3 * 3, dtype=np.float32).reshape((4, 3, 3))
+    slices = tuple(
+        RuntimeImagePayloadContext(
+            data=image[index],
+            mask=None,
+            metadata=ImagePayloadMetadata(
+                source_path=f"/input/z{index}.tif",
+                source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                    paths=(f"/input/z{index}.tif",)
+                ),
+            ),
+        ).payload()
+        for index in range(image.shape[0])
+    )
+
+    def fail_slice_execute(*_args, **_kwargs):
+        raise AssertionError("ImageMath batch executor fell back to per-slice calls")
+
+    executor = runtime_batch_executors_from_callable(image_math)[
+        RuntimeBatchExecutionDomain.PURE_2D_SLICES
+    ]
+    results = executor(
+        RuntimePure2DSliceBatchRequest(
+            func=image_math,
+            slices_2d=slices,
+            kwargs={"operation": "Invert", "dtype_config": DtypeConfig()},
+            execute_slice=fail_slice_execute,
+        )
+    )
+
+    assert len(results) == image.shape[0]
+    for index, result in enumerate(results):
+        np.testing.assert_allclose(image_payload_data(result), 1.0 - image[index])
 
 
 def test_correct_illumination_apply_preserves_source_image_metadata() -> None:

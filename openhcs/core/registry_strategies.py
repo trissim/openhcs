@@ -35,6 +35,7 @@ class RegisteredStrategyTypesMixin(Generic[_StrategyT]):
     """Shared projection of an AutoRegisterMeta registry into concrete classes."""
 
     @classmethod
+    @lru_cache(maxsize=None)
     def registered_strategy_types(
         cls: type[_StrategyT],
     ) -> tuple[type[_StrategyT], ...]:
@@ -104,6 +105,7 @@ class EnumKeyedStrategyMixin(Generic[_EnumT]):
         return cast(type[_StrategyT], cls.__registry__[member.value])
 
     @classmethod
+    @lru_cache(maxsize=None)
     def registered_strategy_types(
         cls: type[_StrategyT],
     ) -> tuple[type[_StrategyT], ...]:
@@ -160,11 +162,20 @@ class NominalTypeKeyedStrategyMixin(RegisteredStrategyTypesMixin[_TypeStrategyT]
         value: object,
     ) -> tuple[type[_TypeStrategyT], ...]:
         """Return registered strategy classes ordered by runtime MRO specificity."""
-        value_mro = type(value).mro()
+        return cls.strategy_types_for_nominal_type(type(value))
+
+    @classmethod
+    @lru_cache(maxsize=None)
+    def strategy_types_for_nominal_type(
+        cls: type[_TypeStrategyT],
+        value_type: type[object],
+    ) -> tuple[type[_TypeStrategyT], ...]:
+        """Return registered strategy classes ordered by type MRO specificity."""
+        value_mro = value_type.mro()
         matches: list[tuple[int, type[_TypeStrategyT]]] = []
         for strategy_type in cls.registered_strategy_types():
             member = strategy_type.value_type
-            if _is_nominal_type_member(member) and isinstance(value, member):
+            if _is_nominal_type_member(member) and issubclass(value_type, member):
                 distance = cls.nominal_type_distance(value_mro, member)
                 matches.append((distance, strategy_type))
         matches.sort(key=lambda item: item[0])

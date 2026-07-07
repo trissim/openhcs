@@ -15,6 +15,7 @@ from openhcs.core.aligned_image_payload import AlignedImageSliceContext
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.path_pattern_matching import PathPatternTemplateMatcher
 
+from openhcs.core.step_dependencies import StepInputDependency
 from openhcs.core.step_dependencies import StepInputDependencyKind
 from openhcs.core.steps.function_output_identity import FunctionOutputIdentity
 from openhcs.core.steps.function_output_identity import FunctionOutputPathAuthority
@@ -217,14 +218,11 @@ class StepOutputManifestStore:
         self,
         plan: FunctionStepExecutionPlan,
     ) -> tuple[ProducedOutputSemantics, ...] | None:
-        artifact_records = self._artifact_input_producer_records_for(plan)
-        if artifact_records is not None:
-            return artifact_records
-
         key = self._main_input_producer_key(plan)
-        if key is None:
-            return None
-        return self.records_for_key(key)
+        if key is not None:
+            return self.records_for_key(key)
+
+        return self._artifact_input_producer_records_for(plan)
 
     def _artifact_input_producer_records_for(
         self,
@@ -419,29 +417,33 @@ class StepOutputManifestStore:
                 artifact_input.artifact_type.value,
             )
             for artifact_input in plan.artifact_inputs.values()
-            if (
-                artifact_input.source_step_scope_id is not None
-                or (
-                    dependency.kind is StepInputDependencyKind.STEP_OUTPUT
-                    and artifact_input.source_step_id in (
-                        dependency.source_step_index,
-                        "prev",
-                    )
-                )
-                or (
-                    dependency.kind is StepInputDependencyKind.STEP_OUTPUT
-                    and artifact_input.source_step_scope_id
-                    == dependency.source_step_scope_id
-                )
+            if StepOutputManifestStore._artifact_input_selects_producer_output(
+                artifact_input,
+                dependency,
             )
             and StepOutputManifestStore._is_main_flow_artifact_input(artifact_input)
         )
 
     @staticmethod
+    def _artifact_input_selects_producer_output(
+        artifact_input: ArtifactInputPlan,
+        dependency: StepInputDependency,
+    ) -> bool:
+        if dependency.kind is StepInputDependencyKind.STEP_OUTPUT:
+            return (
+                artifact_input.source_step_scope_id == dependency.source_step_scope_id
+                or artifact_input.source_step_id in (
+                    dependency.source_step_index,
+                    "prev",
+                )
+            )
+        return artifact_input.source_step_scope_id is not None
+
+    @staticmethod
     def _artifact_inputs_drive_anchor_filter(plan: FunctionStepExecutionPlan) -> bool:
         return (
-            plan.main_input_dependency.kind is StepInputDependencyKind.STEP_OUTPUT
-            or not plan.source_binding_plan.has_primary_content
+            plan.main_input_dependency.kind is not StepInputDependencyKind.STEP_OUTPUT
+            and not plan.source_binding_plan.has_primary_content
         )
 
     @staticmethod

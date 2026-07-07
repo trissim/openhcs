@@ -258,8 +258,19 @@ from typing import ClassVar
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
-from openhcs.core.aligned_image_payload import ImagePayloadSourceSpatialDomainAdapter
+from openhcs.core.aligned_image_payload import (
+    ImagePayloadSliceProjector,
+    ImagePayloadSourceSpatialDomainAdapter,
+)
+from openhcs.core.image_shapes import is_image_stack
 from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.core.runtime_batch_contracts import RuntimePure2DSliceBatchRequest
+from openhcs.core.runtime_batch_contracts import pure_2d_batch_executor
+from openhcs.core.runtime_slice_projection import (
+    RuntimeProjectionAxis,
+    RuntimeSliceProjection,
+    RuntimeSliceProjectionStrategy,
+)
 from openhcs.core.runtime_values import (
     DerivedImagePayloadContext,
     ImagePayloadMetadataCompositionRequest,
@@ -749,7 +760,13 @@ class ImageMathPreparedOperands:
         mask_policy: ImageMathMaskPolicy,
     ) -> "ImageMathPreparedOperands":
         source_payloads = cls._source_payloads(image, image_operands)
-        operand_pixels = cls._operand_pixels(image, source_payloads, image_operands)
+        source_plane_stack_operand = source_plane_stack_image_math_operand(image)
+        operand_pixels = cls._operand_pixels(
+            image,
+            source_payloads,
+            image_operands,
+            source_plane_stack_operand=source_plane_stack_operand,
+        )
         if operation_strategy.single_image:
             operand_count = 1
         else:
@@ -759,7 +776,12 @@ class ImageMathPreparedOperands:
             source_payloads=source_payloads,
             operand_pixels=operand_pixels,
             operand_masks=cls._operand_masks(
-                image, image_operands, source_payloads, operand_count, mask_policy
+                image,
+                image_operands,
+                source_payloads,
+                operand_count,
+                mask_policy,
+                source_plane_stack_operand=source_plane_stack_operand,
             ),
             factors=cls._factors_for_operands(
                 factors, cls._operand_count(operand_pixels)
@@ -781,12 +803,16 @@ class ImageMathPreparedOperands:
         image: RuntimeArrayData,
         source_payloads: tuple[ImagePayloadMetadataInput, ...],
         image_operands: tuple[ImagePayloadMetadataInput, ...],
+        *,
+        source_plane_stack_operand: bool,
     ) -> ImageMathOperandPixels:
         if image_operands:
             return tuple(
                 (np.asarray(image_payload_data(payload)) for payload in source_payloads)
             )
         operand_pixels = np.asarray(image_payload_data(image))
+        if source_plane_stack_operand:
+            return (operand_pixels,)
         if operand_pixels.ndim == 2:
             return operand_pixels[np.newaxis, :, :]
         return operand_pixels
@@ -816,9 +842,13 @@ class ImageMathPreparedOperands:
         source_payloads: tuple[ImagePayloadMetadataInput, ...],
         operand_count: int,
         mask_policy: ImageMathMaskPolicy,
+        *,
+        source_plane_stack_operand: bool,
     ) -> tuple[ImageMathMask, ...]:
         if image_operands:
             return mask_policy.operand_masks(source_payloads[:operand_count])
+        if source_plane_stack_operand:
+            return (image_payload_mask(image),)
         return mask_policy.stacked_operand_masks(image, operand_count)
 
     @staticmethod
@@ -918,3 +948,137 @@ def image_math(
     if ignore_masks:
         return output
     return prepared_operands.output_value(output, output_mask)
+
+
+IMAGE_MATH_RUNTIME_SEQUENCE_KWARGS = frozenset(("image_operands",))
+
+
+def source_plane_stack_image_math_operand(image: RuntimeArrayData) -> bool:
+    """Return whether ImageMath should treat axis 0 as source planes, not operands."""
+    data = image_payload_data(image)
+    if not is_image_stack(data):
+        return False
+    source_plane_count = image_payload_metadata(
+        image
+    ).source_provenance.source_plane_count
+    return source_plane_count > 1 and int(np.shape(data)[0]) == source_plane_count
+
+
+def _stack_image_math_slice_payloads(
+    payloads: tuple[ImagePayloadMetadataInput, ...],
+) -> ImagePayloadMetadataInput:
+    data = np.stack(
+        tuple(np.asarray(image_payload_data(payload)) for payload in payloads),
+        axis=0,
+    )
+    masks = tuple(image_payload_mask(payload) for payload in payloads)
+    mask = None
+    if any(item is not None for item in masks):
+        mask = np.stack(
+            tuple(
+                (
+                    np.ones_like(np.asarray(image_payload_data(payload)), dtype=bool)
+                    if item is None
+                    else np.asarray(item, dtype=bool)
+                )
+                for payload, item in zip(payloads, masks, strict=True)
+            ),
+            axis=0,
+        )
+    return RuntimeImagePayloadContext(
+        data,
+        mask=mask,
+        metadata=ImagePayloadMetadataCompositionRequest(payloads).metadata(),
+    ).payload()
+
+
+def _image_math_slice_kwargs(
+    request: RuntimePure2DSliceBatchRequest,
+) -> tuple[dict[str, RuntimeArrayData], ...]:
+    return tuple(
+        dict(
+            RuntimeSliceProjection.kwargs_for_slice(
+                request.kwargs,
+                RuntimeProjectionAxis(
+                    slice_index=slice_index,
+                    extent=request.slice_count,
+                ),
+                sequence_kwargs=IMAGE_MATH_RUNTIME_SEQUENCE_KWARGS,
+            )
+        )
+        for slice_index in range(request.slice_count)
+    )
+
+
+def _batched_image_math_operands(
+    slice_kwargs: tuple[dict[str, RuntimeArrayData], ...],
+) -> tuple[ImagePayloadMetadataInput, ...] | None:
+    operand_groups = tuple(
+        tuple(kwargs.get("image_operands", ())) for kwargs in slice_kwargs
+    )
+    if not operand_groups:
+        return ()
+    operand_count = len(operand_groups[0])
+    if any(len(group) != operand_count for group in operand_groups):
+        return None
+    return tuple(
+        _stack_image_math_slice_payloads(
+            tuple(group[operand_index] for group in operand_groups)
+        )
+        for operand_index in range(operand_count)
+    )
+
+
+def _unstack_image_math_batch_result(
+    result: ImagePayloadMetadataInput,
+    *,
+    slice_count: int,
+) -> list[ImagePayloadMetadataInput] | None:
+    result_data = np.asarray(image_payload_data(result))
+    if result_data.ndim < 3 or int(result_data.shape[0]) != slice_count:
+        return None
+    projector = ImagePayloadSliceProjector(
+        mask=image_payload_mask(result),
+        metadata=image_payload_metadata(result),
+    )
+    return [
+        RuntimeSliceProjectionStrategy.strategy_for_value(payload).identity_projected_value(
+            payload,
+            RuntimeProjectionAxis(slice_index=slice_index, extent=slice_count),
+        )
+        for slice_index in range(slice_count)
+        for payload in (
+            projector.payload_for_slice(result_data[slice_index], slice_index),
+        )
+    ]
+
+
+def image_math_batch(
+    request: RuntimePure2DSliceBatchRequest,
+) -> list[ImagePayloadMetadataInput]:
+    """Vectorize equivalent ImageMath PURE_2D slice calls as one stack operation."""
+    if request.slice_count <= 1:
+        return [
+            request.execute_one(slice_index)
+            for slice_index in range(request.slice_count)
+        ]
+    slice_kwargs = _image_math_slice_kwargs(request)
+    batched_operands = _batched_image_math_operands(slice_kwargs)
+    if batched_operands is None:
+        return [
+            request.execute_one(slice_index)
+            for slice_index in range(request.slice_count)
+        ]
+    batched_kwargs = dict(request.kwargs)
+    batched_kwargs["image_operands"] = batched_operands
+    result = request.func(
+        _stack_image_math_slice_payloads(tuple(request.slices_2d)),
+        **batched_kwargs,
+    )
+    unstacked = _unstack_image_math_batch_result(result, slice_count=request.slice_count)
+    if unstacked is None:
+        return [request.execute_one(slice_index) for slice_index in range(request.slice_count)]
+    return unstacked
+
+
+pure_2d_batch_executor(image_math_batch)(image_math)
