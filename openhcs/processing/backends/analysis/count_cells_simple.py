@@ -21,7 +21,7 @@ from scipy import ndimage as ndi
 from skimage.feature import peak_local_max
 from skimage.filters import threshold_otsu, threshold_li, threshold_yen
 from skimage.measure import regionprops
-from skimage.segmentation import relabel_sequential, watershed
+from skimage.segmentation import watershed
 
 
 class ThresholdMethod(str, Enum):
@@ -129,6 +129,7 @@ def count_cells_simple(
     max_size: int = 100000,
     max_eccentricity: float = 1.0,
     watershed_large_objects: bool = False,
+    watershed_min_size: Optional[int] = None,
     watershed_max_size: Optional[int] = None,
     watershed_min_distance: int = 5,
     watershed_footprint_size: int = 3
@@ -147,9 +148,11 @@ def count_cells_simple(
 
     1. ``min_size`` is used only in the final acceptance pass.
     2. If ``watershed_large_objects`` is enabled, raw connected components
-       whose area is greater than ``max_size`` are eligible for splitting.
-       When ``watershed_max_size`` is set, only components with
-       ``max_size < area <= watershed_max_size`` are split.
+       whose area is greater than ``watershed_min_size`` are eligible for
+       splitting. If ``watershed_min_size`` is ``None``, ``max_size`` is used
+       as the split trigger for backward compatibility. When
+       ``watershed_max_size`` is set, only components with
+       ``watershed_min_size < area <= watershed_max_size`` are split.
     3. ``min_size``, ``max_size``, and ``max_eccentricity`` are then applied to
        the resulting candidate regions.
 
@@ -188,9 +191,7 @@ def count_cells_simple(
         max_size: Maximum accepted object area in pixels after optional
             watershed splitting. Objects larger than this are treated as
             artifacts or unresolved merged objects and are removed from the
-            output mask. When ``watershed_large_objects=True``, this same value
-            also defines which raw connected components are considered large
-            enough to attempt splitting.
+            output mask.
         max_eccentricity: Maximum accepted object eccentricity after optional
             watershed splitting and size filtering. Eccentricity is the
             scikit-image region shape measure where ``0.0`` is circular and
@@ -199,19 +200,27 @@ def count_cells_simple(
             values reject elongated debris, scratches, neurites, or merged
             streak-like objects that otherwise satisfy the size filter.
         watershed_large_objects: If ``True``, apply distance-transform watershed
-            only to connected components whose raw area is greater than
-            ``max_size``. This is useful when touching cells merge into one
-            oversized component that would otherwise be rejected by the size
-            filter. It is disabled by default to preserve the original simple
-            connected-component behavior.
+            to oversized connected components. This is useful when touching
+            cells merge into one component that would otherwise be rejected by
+            the size filter. It is disabled by default to preserve the original
+            simple connected-component behavior.
+        watershed_min_size: Optional lower area threshold for watershed
+            attempts. If ``None``, the function uses ``max_size`` as the split
+            trigger, matching the original behavior. Set this lower than
+            ``max_size`` to force more aggressive declumping without also
+            lowering the final accepted object size. For example,
+            ``watershed_min_size=100`` and ``max_size=300`` means "try to split
+            raw components above 100 px, then keep final fragments up to
+            300 px."
         watershed_max_size: Optional upper area limit for watershed attempts.
-            If ``None``, every component larger than ``max_size`` is eligible
-            for watershed. If set, only components with area greater than
-            ``max_size`` and less than or equal to ``watershed_max_size`` are
-            split. Components above this cap are left unsplit and then rejected
-            by the final ``max_size`` filter, which is useful for preventing
-            huge debris, plate edges, bubbles, or illumination artifacts from
-            being over-segmented into plausible cell-sized fragments.
+            If ``None``, every component larger than the split trigger is
+            eligible for watershed. If set, only components with area greater
+            than the split trigger and less than or equal to
+            ``watershed_max_size`` are split. Components above this cap are
+            left unsplit and then rejected by the final ``max_size`` filter,
+            which is useful for preventing huge debris, plate edges, bubbles,
+            or illumination artifacts from being over-segmented into plausible
+            cell-sized fragments.
         watershed_min_distance: Minimum pixel spacing between local maxima used
             as watershed seeds for oversized objects. Larger values produce
             fewer, more conservative splits; smaller values can split dense or
@@ -239,6 +248,7 @@ def count_cells_simple(
         min_size=min_size,
         max_size=max_size,
         max_eccentricity=max_eccentricity,
+        watershed_min_size=watershed_min_size,
         watershed_max_size=watershed_max_size,
         watershed_min_distance=watershed_min_distance,
         watershed_footprint_size=watershed_footprint_size,
@@ -258,6 +268,7 @@ def count_cells_simple(
             max_size=max_size,
             max_eccentricity=max_eccentricity,
             watershed_large_objects=watershed_large_objects,
+            watershed_min_size=watershed_min_size,
             watershed_max_size=watershed_max_size,
             watershed_min_distance=watershed_min_distance,
             watershed_footprint_size=watershed_footprint_size,
@@ -295,6 +306,7 @@ def count_cells_simple_dual_channel(
     max_size: int = 100000,
     max_eccentricity: float = 1.0,
     watershed_large_objects: bool = False,
+    watershed_min_size: Optional[int] = None,
     watershed_max_size: Optional[int] = None,
     watershed_min_distance: int = 5,
     watershed_footprint_size: int = 3,
@@ -356,8 +368,12 @@ def count_cells_simple_dual_channel(
             components larger than this value are candidates for splitting.
         max_eccentricity: Maximum accepted object eccentricity after watershed
             and size filtering. ``1.0`` disables shape filtering.
-        watershed_large_objects: Whether to split raw connected components that
-            are larger than ``max_size`` before final filtering.
+        watershed_large_objects: Whether to split oversized raw connected
+            components before final filtering.
+        watershed_min_size: Optional lower area threshold for watershed
+            attempts. If ``None``, ``max_size`` is used as the split trigger.
+            Set this lower than ``max_size`` to split more aggressively while
+            still accepting larger final fragments.
         watershed_max_size: Optional upper area cap for watershed attempts.
             Components above this cap are not split and are rejected by the
             final ``max_size`` filter.
@@ -408,6 +424,7 @@ def count_cells_simple_dual_channel(
         min_size=min_size,
         max_size=max_size,
         max_eccentricity=max_eccentricity,
+        watershed_min_size=watershed_min_size,
         watershed_max_size=watershed_max_size,
         watershed_min_distance=watershed_min_distance,
         watershed_footprint_size=watershed_footprint_size,
@@ -423,6 +440,7 @@ def count_cells_simple_dual_channel(
         max_size=max_size,
         max_eccentricity=max_eccentricity,
         watershed_large_objects=watershed_large_objects,
+        watershed_min_size=watershed_min_size,
         watershed_max_size=watershed_max_size,
         watershed_min_distance=watershed_min_distance,
         watershed_footprint_size=watershed_footprint_size,
@@ -437,6 +455,7 @@ def count_cells_simple_dual_channel(
         max_size=max_size,
         max_eccentricity=max_eccentricity,
         watershed_large_objects=watershed_large_objects,
+        watershed_min_size=watershed_min_size,
         watershed_max_size=watershed_max_size,
         watershed_min_distance=watershed_min_distance,
         watershed_footprint_size=watershed_footprint_size,
@@ -506,6 +525,7 @@ def _validate_simple_segmentation_params(
     min_size: int,
     max_size: int,
     max_eccentricity: float,
+    watershed_min_size: Optional[int],
     watershed_max_size: Optional[int],
     watershed_min_distance: int,
     watershed_footprint_size: int,
@@ -517,8 +537,13 @@ def _validate_simple_segmentation_params(
         raise ValueError("max_size must be >= min_size")
     if not 0.0 <= max_eccentricity <= 1.0:
         raise ValueError("max_eccentricity must be in [0.0, 1.0]")
-    if watershed_max_size is not None and watershed_max_size <= max_size:
-        raise ValueError("watershed_max_size must be greater than max_size when set")
+    if watershed_min_size is not None and watershed_min_size < 1:
+        raise ValueError("watershed_min_size must be >= 1 when set")
+    split_size = max_size if watershed_min_size is None else watershed_min_size
+    if watershed_max_size is not None and watershed_max_size <= split_size:
+        raise ValueError(
+            "watershed_max_size must be greater than the watershed split threshold when set"
+        )
     if watershed_min_distance < 1:
         raise ValueError("watershed_min_distance must be >= 1")
     if watershed_footprint_size < 1:
@@ -536,6 +561,7 @@ def _segment_simple_slice(
     max_size: int,
     max_eccentricity: float,
     watershed_large_objects: bool,
+    watershed_min_size: Optional[int],
     watershed_max_size: Optional[int],
     watershed_min_distance: int,
     watershed_footprint_size: int,
@@ -564,26 +590,53 @@ def _segment_simple_slice(
     if watershed_large_objects and num_objects > 0:
         labeled = _watershed_large_objects(
             labeled,
-            max_size=max_size,
+            split_size=max_size if watershed_min_size is None else watershed_min_size,
             watershed_max_size=watershed_max_size,
             min_distance=watershed_min_distance,
             footprint_size=watershed_footprint_size,
         )
 
-    if num_objects == 0:
+    if labeled.max() == 0:
         return np.zeros_like(labeled, dtype=np.int32)
 
-    keep_labels = []
+    if max_eccentricity == 1.0:
+        return _filter_labels_by_area(labeled, min_size=min_size, max_size=max_size)
+
+    keep_mask = np.zeros(int(labeled.max()) + 1, dtype=bool)
     for region in regionprops(labeled):
         if (
             min_size <= region.area <= max_size
             and region.eccentricity <= max_eccentricity
         ):
-            keep_labels.append(region.label)
+            keep_mask[region.label] = True
 
-    labeled_filtered = np.where(np.isin(labeled, keep_labels), labeled, 0)
-    labeled_filtered, _, _ = relabel_sequential(labeled_filtered)
-    return labeled_filtered.astype(np.int32, copy=False)
+    return _relabel_by_keep_mask(labeled, keep_mask)
+
+
+def _filter_labels_by_area(
+    labeled: np.ndarray,
+    *,
+    min_size: int,
+    max_size: int,
+) -> np.ndarray:
+    """Filter labels by pixel area and relabel accepted objects densely."""
+    counts = np.bincount(labeled.ravel())
+    keep_mask = (counts >= min_size) & (counts <= max_size)
+    return _relabel_by_keep_mask(labeled, keep_mask)
+
+
+def _relabel_by_keep_mask(labeled: np.ndarray, keep_mask: np.ndarray) -> np.ndarray:
+    """Apply a boolean label keep mask and produce dense int32 labels."""
+    if keep_mask.size:
+        keep_mask[0] = False
+
+    kept_count = int(np.count_nonzero(keep_mask))
+    if kept_count == 0:
+        return np.zeros_like(labeled, dtype=np.int32)
+
+    remap = np.zeros(keep_mask.shape[0], dtype=np.int32)
+    remap[keep_mask] = np.arange(1, kept_count + 1, dtype=np.int32)
+    return remap[labeled]
 
 
 def _compute_threshold(
@@ -614,29 +667,34 @@ def _compute_threshold(
 
 def _watershed_large_objects(
     labeled: np.ndarray,
-    max_size: int,
+    split_size: int,
     watershed_max_size: Optional[int],
     min_distance: int,
     footprint_size: int,
 ) -> np.ndarray:
-    """Split components above max_size and at or below watershed_max_size."""
-    output = np.zeros_like(labeled, dtype=np.int32)
-    next_label = 1
+    """Split components above split_size and at or below watershed_max_size."""
+    counts = np.bincount(labeled.ravel())
+    split_mask = counts > split_size
+    if watershed_max_size is not None:
+        split_mask &= counts <= watershed_max_size
+    if split_mask.size:
+        split_mask[0] = False
+
+    split_labels = np.flatnonzero(split_mask)
+    if split_labels.size == 0:
+        return labeled.astype(np.int32, copy=False)
+
+    output = labeled.astype(np.int32, copy=True)
+    object_slices = ndi.find_objects(labeled)
+    next_label = int(labeled.max()) + 1
     footprint = np.ones((footprint_size, footprint_size), dtype=bool)
 
-    for region in regionprops(labeled):
-        component = labeled == region.label
-
-        if region.area <= max_size:
-            output[component] = next_label
-            next_label += 1
+    for label_id in split_labels:
+        component_slice = object_slices[label_id - 1]
+        if component_slice is None:
             continue
 
-        if watershed_max_size is not None and region.area > watershed_max_size:
-            output[component] = next_label
-            next_label += 1
-            continue
-
+        component = labeled[component_slice] == label_id
         distance = ndi.distance_transform_edt(component)
         seeds = peak_local_max(
             distance,
@@ -646,16 +704,16 @@ def _watershed_large_objects(
         )
 
         if len(seeds) <= 1:
-            output[component] = next_label
-            next_label += 1
             continue
 
-        markers = np.zeros_like(labeled, dtype=np.int32)
+        markers = np.zeros_like(component, dtype=np.int32)
         markers[seeds[:, 0], seeds[:, 1]] = np.arange(1, len(seeds) + 1)
-        split_labels = watershed(-distance, markers, mask=component)
+        component_splits = watershed(-distance, markers, mask=component)
 
-        for split_region in regionprops(split_labels):
-            output[split_labels == split_region.label] = next_label
+        output_view = output[component_slice]
+        output_view[component] = 0
+        for split_label in range(1, int(component_splits.max()) + 1):
+            output_view[component_splits == split_label] = next_label
             next_label += 1
 
     return output

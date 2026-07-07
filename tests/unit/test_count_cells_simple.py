@@ -1,3 +1,4 @@
+import importlib
 from inspect import unwrap
 
 import numpy as np
@@ -10,6 +11,10 @@ from openhcs.processing.backends.analysis.count_cells_simple import (
     count_cells_simple_dual_channel,
 )
 
+count_cells_simple_module = importlib.import_module(
+    "openhcs.processing.backends.analysis.count_cells_simple"
+)
+
 
 def _count_cells_simple_impl():
     return unwrap(count_cells_simple)
@@ -17,6 +22,32 @@ def _count_cells_simple_impl():
 
 def _count_cells_simple_dual_channel_impl():
     return unwrap(count_cells_simple_dual_channel)
+
+
+def test_count_cells_simple_area_filter_fast_path_does_not_use_regionprops(monkeypatch):
+    image = np.zeros((1, 32, 32), dtype=float)
+    rr, cc = disk((10, 10), 4, shape=image.shape[1:])
+    image[0, rr, cc] = 1.0
+    rr, cc = disk((22, 22), 4, shape=image.shape[1:])
+    image[0, rr, cc] = 1.0
+    image[0, 0, 0] = 1.0
+
+    def fail_regionprops(_labels):
+        raise AssertionError("regionprops should not be needed without shape filtering")
+
+    monkeypatch.setattr(count_cells_simple_module, "regionprops", fail_regionprops)
+
+    _, results, masks = _count_cells_simple_impl()(
+        image,
+        threshold_method=ThresholdMethod.MANUAL,
+        threshold=0.5,
+        min_size=20,
+        max_size=200,
+        max_eccentricity=1.0,
+    )
+
+    assert results == [{"slice_index": 0, "cell_count": 2}]
+    assert set(np.unique(masks[0])) == {0, 1, 2}
 
 
 def test_count_cells_simple_filters_eccentricity_after_size_filter():
@@ -89,6 +120,41 @@ def test_count_cells_simple_watersheds_large_objects_before_size_filter():
     assert set(np.unique(split_masks[0])) == {0, 1, 2}
     assert capped_results == [{"slice_index": 0, "cell_count": 0}]
     assert set(np.unique(capped_masks[0])) == {0}
+
+
+def test_count_cells_simple_watershed_min_size_separates_split_trigger_from_filter():
+    image = np.zeros((1, 80, 80), dtype=float)
+    rr, cc = disk((32, 32), 12, shape=image.shape[1:])
+    image[0, rr, cc] = 1.0
+    rr, cc = disk((48, 44), 12, shape=image.shape[1:])
+    image[0, rr, cc] = 1.0
+
+    _, unsplit_results, unsplit_masks = _count_cells_simple_impl()(
+        image,
+        threshold_method=ThresholdMethod.MANUAL,
+        threshold=0.5,
+        min_size=20,
+        max_size=900,
+        watershed_large_objects=True,
+        watershed_min_distance=1,
+        watershed_footprint_size=5,
+    )
+    _, split_results, split_masks = _count_cells_simple_impl()(
+        image,
+        threshold_method=ThresholdMethod.MANUAL,
+        threshold=0.5,
+        min_size=20,
+        max_size=900,
+        watershed_large_objects=True,
+        watershed_min_size=100,
+        watershed_min_distance=1,
+        watershed_footprint_size=5,
+    )
+
+    assert unsplit_results == [{"slice_index": 0, "cell_count": 1}]
+    assert set(np.unique(unsplit_masks[0])) == {0, 1}
+    assert split_results == [{"slice_index": 0, "cell_count": 2}]
+    assert set(np.unique(split_masks[0])) == {0, 1, 2}
 
 
 def test_count_cells_simple_dual_channel_reports_overlap_colocalization():
