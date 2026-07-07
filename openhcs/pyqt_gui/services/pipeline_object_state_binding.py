@@ -119,7 +119,21 @@ class PipelineObjectStateBinding:
     ) -> None:
         """Replace one plate's Pipeline ObjectState step list."""
 
-        cls.update_plate_pipeline(plate_path, Pipeline(steps=steps))
+        if isinstance(steps, Pipeline):
+            cls.update_plate_pipeline(plate_path, steps)
+            return
+
+        existing = cls.pipeline_for_plate(plate_path)
+        cls.update_plate_pipeline(
+            plate_path,
+            Pipeline(
+                steps=steps,
+                name=existing.name,
+                metadata=dict(existing.metadata),
+                description=existing.description,
+                step_scope_ids=existing.step_scope_ids,
+            ),
+        )
 
     @classmethod
     def update_plate_pipeline(

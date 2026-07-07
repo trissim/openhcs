@@ -28,6 +28,9 @@ from openhcs.core.module_artifact_contract import (
     RuntimeArtifactInputPartition,
     SourceArtifactInputPartition,
 )
+from openhcs.core.function_step_invocation_contracts import (
+    EMPTY_FUNCTION_STEP_INVOCATION_CONTRACTS,
+)
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline.compilation_session import CompilationSession
 from openhcs.core.pipeline.compiler import AxisCompilationRequest, PipelineCompiler
@@ -98,6 +101,7 @@ def _snapshot(
         enabled=True,
         is_function_step=True,
         func=_identity,
+        invocation_contracts=EMPTY_FUNCTION_STEP_INVOCATION_CONTRACTS,
         configs=_config_universe(
             source_bindings,
             ProcessingConfig(

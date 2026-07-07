@@ -10,6 +10,8 @@ Framework-agnostic - can be used by any UI framework (PyQt, Textual, etc.).
 import copy
 from typing import Union, List, Dict, Tuple, Optional, Callable, Any
 
+from openhcs.core.runtime_invocation import RuntimeInvocationOptions
+
 
 class PatternDataManager:
     """
@@ -75,27 +77,29 @@ class PatternDataManager:
     @staticmethod
     def extract_func_and_kwargs(func_item) -> Tuple[Optional[Callable], Dict]:
         """
-        Parse (func, kwargs) tuples and bare callables.
+        Parse (func, kwargs), (func, kwargs, invocation_options), and bare callables.
 
-        Handles both tuple format and bare callable format exactly as current logic.
+        Invocation options are non-editable runtime metadata and are not returned
+        as function kwargs.
 
         Args:
-            func_item: Either (callable, kwargs) tuple or bare callable
+            func_item: Either tuple function spec or bare callable
 
         Returns:
             Tuple of (callable, kwargs_dict)
         """
-        # EXACT current logic preservation
-        if isinstance(func_item, tuple) and len(func_item) == 2 and callable(func_item[0]):
-            result = func_item[0], func_item[1]
-            print(f"🔍 PATTERN DATA MANAGER extract_func_and_kwargs: tuple case - returning {result}")
-            return result
+        if isinstance(func_item, tuple) and len(func_item) in {2, 3} and callable(func_item[0]):
+            if len(func_item) == 3 and not isinstance(
+                func_item[2], RuntimeInvocationOptions
+            ):
+                raise TypeError(
+                    "Function tuple invocation metadata must inherit "
+                    f"RuntimeInvocationOptions, got {type(func_item[2]).__name__}."
+                )
+            return func_item[0], func_item[1]
         elif callable(func_item):
-            result = func_item, {}
-            print(f"🔍 PATTERN DATA MANAGER extract_func_and_kwargs: callable case - returning {result}")
-            return result
+            return func_item, {}
         else:
-            print("🔍 PATTERN DATA MANAGER extract_func_and_kwargs: neither tuple nor callable - returning None, {}")
             return None, {}
     
     @staticmethod
@@ -219,4 +223,3 @@ class PatternDataManager:
 
         # Check if should convert back to list (when empty)
         return PatternDataManager.convert_dict_to_list(new_pattern)
-

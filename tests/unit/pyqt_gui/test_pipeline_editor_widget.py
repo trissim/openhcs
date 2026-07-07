@@ -642,7 +642,7 @@ def test_pipeline_update_preserves_pipeline_metadata() -> None:
             )
         ],
         name="ImportedPipeline",
-        metadata={"_openhcs_cp_contract_values": {"1": "contract"}},
+        metadata={"custom_metadata": {"1": "value"}},
     )
 
     PipelineObjectStateBinding.for_plate("plate")
@@ -651,9 +651,7 @@ def test_pipeline_update_preserves_pipeline_metadata() -> None:
     assert binding is not None
 
     restored_pipeline = binding.state.to_object()
-    assert restored_pipeline.metadata["_openhcs_cp_contract_values"] == {
-        "1": "contract"
-    }
+    assert restored_pipeline.metadata["custom_metadata"] == {"1": "value"}
     assert [step.name for step in binding.steps()] == ["ImportedStep"]
 
 

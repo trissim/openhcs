@@ -10,7 +10,7 @@ from textual.reactive import reactive
 from textual.message import Message # Added Message
 
 from openhcs.processing.backends.lib_registry.registry_service import RegistryService
-from openhcs.textual_tui.services.pattern_data_manager import PatternDataManager
+from openhcs.ui.shared.pattern_data_manager import PatternDataManager
 from openhcs.textual_tui.widgets.function_pane import FunctionPaneWidget
 from openhcs.constants.constants import GroupBy
 

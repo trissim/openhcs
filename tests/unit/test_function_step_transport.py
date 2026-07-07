@@ -27,6 +27,10 @@ from openhcs.core.function_patterns import (
     CompiledFunctionPattern,
     FunctionInvocationKey,
 )
+from openhcs.core.function_step_invocation_contracts import (
+    FunctionStepInvocationContractBinding,
+    FunctionStepInvocationContracts,
+)
 from openhcs.core.config import LazyProcessingConfig
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
@@ -235,6 +239,60 @@ def test_zmq_execution_submission_source_omits_cellprofiler_runtime_contracts():
     assert "ModuleArtifactContract(" not in source
     assert restored_func.__name__ == "identify_secondary_objects"
     assert restored_contract.module_artifact_contract is None
+    pickle.dumps(restored.steps)
+
+
+def test_zmq_execution_submission_preserves_step_invocation_contracts():
+    from openhcs.core.config import GlobalPipelineConfig
+
+    contract = ModuleArtifactContract(
+        module_name="IdentifySecondaryObjects",
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                SourceArtifactInputPartition,
+                (ArtifactSpec.input("Primary", ObjectLabelsArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (ArtifactSpec.output("Secondary", ObjectLabelsArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (ArtifactSpec.output("Secondary", ObjectLabelsArtifactType),),
+            ),
+        ),
+    )
+    key = FunctionInvocationKey("identify_secondary_objects", "default", 0)
+    step = FunctionStep(
+        func=cellprofiler_backend.identify_secondary_objects,
+        name="IdentifySecondaryObjects",
+        invocation_contracts=FunctionStepInvocationContracts(
+            (FunctionStepInvocationContractBinding(key, contract),)
+        ),
+    )
+    clean_source = generate_python_source(
+        Assignment("pipeline_steps", [step]),
+        clean_mode=True,
+    )
+    submission = OpenHCSExecutionSubmission(
+        plate_id="/tmp/plate",
+        pipeline_steps=[step],
+        global_config=GlobalPipelineConfig(),
+    )
+
+    source = PycodifiedPipelineCode.from_task(submission).source
+    namespace: dict[str, object] = {}
+    exec(source, namespace)
+    restored = PipelineStepsNamespaceProjection(namespace).boundary_or_none()
+
+    assert "invocation_contracts" not in clean_source
+    assert "cellprofiler_module_callable" not in source
+    assert "ModuleArtifactContract(" in source
+    assert restored[0].func.__name__ == "identify_secondary_objects"
+    assert restored[0].invocation_contracts.contract_for(key) == contract
+    assert CallableContract.from_callable(
+        restored[0].func
+    ).module_artifact_contract is None
     pickle.dumps(restored.steps)
 
 

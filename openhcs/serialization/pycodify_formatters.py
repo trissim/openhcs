@@ -401,12 +401,17 @@ class LazyDataclassFormatEligibility:
 
 
 class FunctionStepCleanModeFieldPolicy:
+    internal_clean_hidden_fields = frozenset(("invocation_contracts",))
+
     def should_emit(
         self,
+        field_name,
         current_value,
         default_value,
         context: FormatContext,
     ) -> bool:
+        if context.clean_mode and field_name in self.internal_clean_hidden_fields:
+            return False
         if not context.clean_mode:
             return True
 
@@ -500,7 +505,12 @@ class FunctionStepFormatter(SourceFormatter):
             else:
                 default_value = param.default
 
-            if not field_policy.should_emit(current_value, default_value, context):
+            if not field_policy.should_emit(
+                name,
+                current_value,
+                default_value,
+                context,
+            ):
                 continue
 
             frag = to_source(current_value, field_ctx)

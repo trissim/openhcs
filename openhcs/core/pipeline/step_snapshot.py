@@ -10,6 +10,10 @@ from openhcs.core.config import (
     StepMaterializationConfig,
     WellFilterConfig,
 )
+from openhcs.core.function_step_invocation_contracts import (
+    EMPTY_FUNCTION_STEP_INVOCATION_CONTRACTS,
+    FunctionStepInvocationContracts,
+)
 from openhcs.core.pipeline.step_config_universe import StepConfigUniverse
 from openhcs.core.runtime_invocation import RuntimeParameterBinding
 from openhcs.core.source_bindings import (
@@ -46,6 +50,7 @@ class StepSnapshot:
     enabled: bool
     is_function_step: bool
     func: Any
+    invocation_contracts: FunctionStepInvocationContracts
     configs: StepConfigUniverse
 
     @classmethod
@@ -67,6 +72,11 @@ class StepSnapshot:
             enabled=bool(step.enabled),
             is_function_step=isinstance(step, FunctionStep),
             func=step.func if isinstance(step, FunctionStep) else None,
+            invocation_contracts=(
+                step.invocation_contracts
+                if isinstance(step, FunctionStep)
+                else EMPTY_FUNCTION_STEP_INVOCATION_CONTRACTS
+            ),
             configs=configs,
         )
 

@@ -208,6 +208,7 @@ class TestPlateManagerWidget:
             provenance=SimpleNamespace(
                 processing_modules=(SimpleNamespace(module_num=1),),
             ),
+            semantic_contracts=(SimpleNamespace(module_num=1),),
             artifact_contracts=(contract,),
             source_schema=PipelineImageSchema.empty(),
             pipeline_config=None,
@@ -841,6 +842,7 @@ class TestPlateManagerWidget:
             provenance=SimpleNamespace(
                 processing_modules=(SimpleNamespace(module_num=1),),
             ),
+            semantic_contracts=(SimpleNamespace(module_num=1),),
             artifact_contracts=(contract,),
         )
         manager = PlateManagerCodeWorkflowHarness(selected_plate_path=plate_scope)

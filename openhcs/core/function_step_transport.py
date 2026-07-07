@@ -29,7 +29,19 @@ class FunctionStepTransportAuthority:
 
     @classmethod
     def normalize_pipeline(cls, definition_pipeline: list[Any]) -> list[Any]:
-        return [cls.normalize_step(step) for step in definition_pipeline]
+        normalized = [cls.normalize_step(step) for step in definition_pipeline]
+        from openhcs.core.pipeline import Pipeline
+
+        if not isinstance(definition_pipeline, Pipeline):
+            return normalized
+
+        return Pipeline(
+            steps=normalized,
+            name=definition_pipeline.name,
+            metadata=dict(definition_pipeline.metadata),
+            description=definition_pipeline.description,
+            step_scope_ids=definition_pipeline.step_scope_ids,
+        )
 
     @classmethod
     def normalize_contexts(cls, contexts: Mapping[str, Any]) -> dict[str, Any]:

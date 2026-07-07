@@ -23,7 +23,23 @@ class PipelineStepsBoundary(Sequence[AbstractStep]):
     def __init__(self, steps: PipelineStepSequence) -> None:
         # Compilation resolves step ObjectState by replacing the submitted sequence
         # in-place, so the transport boundary owns the mutable list contract.
-        object.__setattr__(self, "steps", list(steps))
+        from openhcs.core.pipeline import Pipeline
+
+        if not isinstance(steps, Pipeline):
+            object.__setattr__(self, "steps", list(steps))
+            return
+
+        object.__setattr__(
+            self,
+            "steps",
+            Pipeline(
+                steps=list(steps),
+                name=steps.name,
+                metadata=dict(steps.metadata),
+                description=steps.description,
+                step_scope_ids=steps.step_scope_ids,
+            ),
+        )
 
     def __getitem__(self, index):
         return self.steps[index]
