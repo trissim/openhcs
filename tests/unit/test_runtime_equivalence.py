@@ -9306,6 +9306,61 @@ def test_runtime_reference_artifact_equivalence_ignores_duplicate_image_feature_
     assert report.is_equivalent
 
 
+def test_runtime_reference_artifact_equivalence_ignores_grouped_duplicate_image_feature_rows(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Image.csv").write_text(
+        "ImageNumber,Classify_Large_NumObjectsPerBin\n"
+        "1,2\n",
+        encoding="utf-8",
+    )
+    table = MeasurementTable(
+        name="ClassifyObjects_19_measurements",
+        rows=(
+            {
+                "image_number": 1,
+                "feature_name": "Classify_Large_NumObjectsPerBin",
+                "result_value": 2.0,
+            },
+        ),
+        source_path="/source/A01_s001_w1_z001_t001.TIF",
+        subject=MeasurementSubject(MeasurementScope.IMAGE, "Image"),
+    )
+    records = tuple(
+        StoredRuntimeValue(
+            RuntimeValue(
+                key=ArtifactKey(
+                    name=table.name,
+                    artifact_type=MeasurementsArtifactType,
+                    scope=ArtifactScope(axis_id="A01", group_key=group_key),
+                ),
+                data=table.rows,
+                schema=table.runtime_schema(table.rows),
+            ),
+            RuntimeArtifactLocation(
+                path=f"/memory/{table.name}_{group_key}.pkl",
+                backend="memory",
+            ),
+        )
+        for group_key in ("1", "2", "3")
+    )
+    observation = RuntimeArtifactExecutionObservation(
+        {"A01": records},
+        RuntimeExportObservation.from_output_root(candidate_root),
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
 def test_runtime_reference_artifact_equivalence_preserves_same_table_image_feature_rows(
     tmp_path: Path,
 ) -> None:

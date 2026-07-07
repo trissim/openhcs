@@ -509,6 +509,12 @@ class GroupLineageSourceRelation(ArtifactGroupScopeSourceRelation):
     relation_key: ClassVar[str] = "group_lineage_source"
 
 
+class SourceStackLineageSourceRelation(GroupLineageSourceRelation):
+    """Target artifact preserves source-stack compatibility with a source artifact."""
+
+    relation_key: ClassVar[str] = "source_stack_lineage_source"
+
+
 @dataclass(frozen=True)
 class ArtifactSpec:
     """Declared artifact contract for one plan role and one artifact type."""
@@ -632,6 +638,32 @@ class ArtifactSpec:
             relations=(
                 *relations,
                 GroupLineageSourceRelation(source=source_ref),
+            ),
+            **kwargs,
+        )
+
+    @classmethod
+    def output_preserving_source_stack_scope(
+        cls,
+        name: str,
+        artifact_type: ArtifactTypeValue,
+        source: ArtifactSpecRef | ArtifactSpec,
+        **kwargs,
+    ) -> ArtifactSpec:
+        """Declare an output artifact that remains compatible with the source stack."""
+        source_ref = source.ref() if isinstance(source, ArtifactSpec) else source
+        if not isinstance(source_ref, ArtifactSpecRef):
+            raise TypeError(
+                "ArtifactSpec.output_preserving_source_stack_scope source must be "
+                f"an ArtifactSpec or ArtifactSpecRef, got {type(source).__name__}."
+            )
+        relations = tuple(kwargs.pop("relations", ()))
+        return cls.output(
+            name,
+            artifact_type,
+            relations=(
+                *relations,
+                SourceStackLineageSourceRelation(source=source_ref),
             ),
             **kwargs,
         )

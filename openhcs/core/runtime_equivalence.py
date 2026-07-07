@@ -180,6 +180,7 @@ from openhcs.core.equivalence.relationships import (
     RuntimeAxisRecordPlaneIdentityResolver,
     RuntimeObjectRelationshipIdentity,
     RuntimeRecordPlaneIdentity,
+    RuntimeRecordPlaneIdentityAuthority,
     RuntimeScopedMeasurementTable,
     RuntimeScopedObjectRelationship,
     object_measurement_values_by_label,
@@ -1506,6 +1507,18 @@ class RuntimeTableRowProjectionRecorder(RuntimeMeasurementRowProjectionRecorder)
     aggregate_measurement_fact_counts: _AggregateValuesByFeature
     aggregate_input_key_cache: _AggregateMeanKeyCache
 
+    @staticmethod
+    def _image_feature_duplicate_plane_identity(
+        plane_identity: RuntimeRecordPlaneIdentity | None,
+    ) -> RuntimeRecordPlaneIdentity | None:
+        if (
+            plane_identity is not None
+            and plane_identity.authority
+            is RuntimeRecordPlaneIdentityAuthority.FILL_MISSING_ROW_IDENTITY
+        ):
+            return None
+        return plane_identity
+
     def object_row_identity_for_subject(
         self,
         row: RuntimeMeasurementRowMapping,
@@ -1593,7 +1606,9 @@ class RuntimeTableRowProjectionRecorder(RuntimeMeasurementRowProjectionRecorder)
         )
         identity = (
             image_identity,
-            self.scoped_table.plane_identity,
+            self._image_feature_duplicate_plane_identity(
+                self.scoped_table.plane_identity
+            ),
             self.scoped_table.table.source_provenance.equality_identity,
             key,
             value,

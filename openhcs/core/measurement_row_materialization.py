@@ -648,6 +648,8 @@ class MeasurementRowsAxisProjection(
             return None
         if self.has_image_number:
             return self.project_image_number(image_numbers.start)
+        if self.has_slice_index:
+            return self.project_slice_index(image_numbers)
         if self.has_source_qualified_image_rows:
             if source_image_numbers is None:
                 raise ValueError(
@@ -655,8 +657,6 @@ class MeasurementRowsAxisProjection(
                     "source-image ImageNumber provenance."
                 )
             return self.project_source_image_numbers(source_image_numbers)
-        if self.has_slice_index:
-            return self.project_slice_index(image_numbers)
         if not self.has_axis:
             return None
         return None

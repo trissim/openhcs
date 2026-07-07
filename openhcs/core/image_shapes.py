@@ -12,7 +12,8 @@ import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
 
-COLOR_CHANNEL_COUNTS = frozenset((2, 3, 4))
+COLOR_CHANNEL_COUNTS = frozenset((3, 4))
+CHANNEL_LAST_IMAGE_CHANNEL_COUNTS = frozenset((2, 3, 4))
 ArrayT = TypeVar("ArrayT", bound=np.ndarray)
 
 
@@ -38,6 +39,9 @@ class ArrayShape:
 
     def has_channel_last(self) -> bool:
         return self.shape[-1] in COLOR_CHANNEL_COUNTS
+
+    def has_channel_last_image_count(self) -> bool:
+        return self.shape[-1] in CHANNEL_LAST_IMAGE_CHANNEL_COUNTS
 
 
 class ImageShapeRole(ABC, metaclass=AutoRegisterMeta):
@@ -168,15 +172,23 @@ def is_color_image_stack(value: Any) -> bool:
 
 
 def is_channel_last_image_slice(value: Any) -> bool:
-    """Return True for one channel-last image plane, regardless of channel count."""
+    """Return True for one declared channel-last image plane."""
     array_shape = ArrayShape.from_value(value)
-    return array_shape is not None and array_shape.has_rank(3)
+    return (
+        array_shape is not None
+        and array_shape.has_rank(3)
+        and array_shape.has_channel_last_image_count()
+    )
 
 
 def is_channel_last_image_stack(value: Any) -> bool:
-    """Return True for an OpenHCS stack of channel-last image planes."""
+    """Return True for an OpenHCS stack of declared channel-last image planes."""
     array_shape = ArrayShape.from_value(value)
-    return array_shape is not None and array_shape.has_rank(4)
+    return (
+        array_shape is not None
+        and array_shape.has_rank(4)
+        and array_shape.has_channel_last_image_count()
+    )
 
 
 def is_grayscale_volume_slice(value: Any) -> bool:

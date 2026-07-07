@@ -383,6 +383,21 @@ def test_image_stack_layout_unstacks_single_grayscale_result_from_color_source()
     np.testing.assert_array_equal(observed[0], image)
 
 
+def test_image_stack_layout_unstacks_singleton_stack_for_grayscale_source_slice():
+    stack = np.zeros((1, 4, 5), dtype=np.float32)
+
+    observed = SourceSliceUnstackRequest(
+        array=stack,
+        source_slice_shapes=((4, 5),),
+        memory_type=MEMORY_TYPE_NUMPY,
+        gpu_id=0,
+    ).slices()
+
+    assert len(observed) == 1
+    assert observed[0].shape == (4, 5)
+    np.testing.assert_array_equal(observed[0], stack[0])
+
+
 def test_image_stack_layout_rejects_multiple_source_slices_without_stack_axis():
     image = np.zeros((4, 5), dtype=np.float32)
 

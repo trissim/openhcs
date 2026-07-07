@@ -468,6 +468,18 @@ def test_source_image_object_label_build_treats_repeated_source_names_as_runtime
     assert payload.source_image_names == ("OrigHoechst", "OrigHoechst")
 
 
+def test_source_image_object_label_payload_accepts_declared_representation() -> None:
+    image = np.zeros((5, 6), dtype=np.float32)
+    labels = SparseIJVLabelRows(np.zeros((0, 3), dtype=np.int32))
+
+    payload = SourceImageObjectLabelBuildRequest(
+        image=image,
+        labels=labels,
+    ).payload(representation=ObjectLabelRepresentation.SPARSE_IJV)
+
+    assert payload.representation is ObjectLabelRepresentation.SPARSE_IJV
+
+
 def test_source_image_object_label_build_keeps_distinct_source_names_as_bindings() -> (
     None
 ):
@@ -777,6 +789,32 @@ def test_object_label_pure_2d_aggregator_preserves_sparse_ijv_sets() -> None:
     assert aggregated.plane_axis is RuntimePlaneAxis.RUNTIME_SLICE
 
 
+def test_object_label_pure_2d_aggregator_preserves_sparse_ijv_payloads() -> None:
+    first = ObjectLabelPayload(
+        labels=SparseIJVLabelRows.from_dense_labels(
+            np.asarray([[0, 1], [0, 0]], dtype=np.int32)
+        ),
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+    )
+    second = ObjectLabelPayload(
+        labels=SparseIJVLabelRows.from_dense_labels(
+            np.asarray([[0, 2], [0, 0]], dtype=np.int32)
+        ),
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+    )
+
+    aggregated = ObjectLabelPure2DSliceAggregator.aggregate(
+        (first, second),
+        "numpy",
+    )
+
+    assert isinstance(aggregated, ObjectLabelPayload)
+    assert aggregated.representation is ObjectLabelRepresentation.SPARSE_IJV
+    assert isinstance(aggregated.labels, SparseIJVLabelRows)
+    assert aggregated.labels.has_slice_index
+    assert aggregated.plane_axis is RuntimePlaneAxis.RUNTIME_SLICE
+
+
 def test_empty_sparse_ijv_stack_preserves_runtime_slice_count() -> None:
     shape = (4, 5)
     empty = np.zeros(shape, dtype=np.int32)
@@ -852,26 +890,23 @@ def test_shape_object_feature_table_uses_registered_nominal_contract() -> None:
 
     rows = table.rows()
     assert rows[0]["object_label"] == 1
-    assert rows[0][MeasureObjectSizeShapeModule.MeasurementFeature.AREA.value] == 10.0
-    assert (
-        rows[0][MeasureObjectSizeShapeModule.MeasurementFeature.MAXIMUM_RADIUS.value]
-        == 2.0
-    )
+    assert np.isnan(rows[0][MeasureObjectSizeShapeModule.MeasurementFeature.AREA.value])
+    assert rows[0][MeasureObjectSizeShapeModule.MeasurementFeature.MAXIMUM_RADIUS.value] == 0.0
     assert (
         rows[0][MeasureObjectSizeShapeModule.MeasurementFeature.CENTER_Z.value] == 0.0
     )
     assert rows[1]["object_label"] == 2
-    assert np.isnan(rows[1][MeasureObjectSizeShapeModule.MeasurementFeature.AREA.value])
+    assert rows[1][MeasureObjectSizeShapeModule.MeasurementFeature.AREA.value] == 10.0
+    assert (
+        rows[1][MeasureObjectSizeShapeModule.MeasurementFeature.MAXIMUM_RADIUS.value]
+        == 2.0
+    )
 
 
 def test_shape_object_feature_table_rejects_undeclared_dense_feature_domain() -> None:
     table = ShapeObjectFeatureValueTable.from_feature_arrays(
         {
-            ShapeZernikeFeatureAuthority.shape_zernike_feature_name(
-                degree=0, repetition=0
-            ): np.asarray(
-                [0.1, 0.2, 0.3],
-            ),
+            "UndeclaredDenseFeature": np.asarray([0.1, 0.2, 0.3]),
         },
         measured_object_ids=(1, 3),
         object_domain=(1, 2, 3),
@@ -911,15 +946,16 @@ def test_shape_descriptor_row_ordinal_domain_is_registered_nominally() -> None:
         rows[1][
             MeasureObjectSizeShapeModule.MeasurementFeature.MAX_FERET_DIAMETER.value
         ]
-        == 20.0
+        == 0.0
     )
     assert (
         rows[2][
             MeasureObjectSizeShapeModule.MeasurementFeature.MAX_FERET_DIAMETER.value
         ]
-        == 0.0
+        == 20.0
     )
-    assert rows[2]["Zernike_0_0"] == 0.2
+    assert rows[1]["Zernike_0_0"] == 0.2
+    assert np.isnan(rows[2]["Zernike_0_0"])
 
 
 def test_shape_center_features_align_to_measured_sparse_object_ids() -> None:
@@ -985,9 +1021,7 @@ def test_sparse_shape_measurement_preserves_high_object_id_feature_domain() -> N
         rows[0][MeasureObjectSizeShapeModule.MeasurementFeature.CENTER_X.value] == 2.5
     )
     assert (
-        ShapeZernikeFeatureAuthority.shape_zernike_feature_name(
-            degree=0, repetition=0
-        )
+        ShapeZernikeFeatureAuthority.shape_zernike_feature_name(degree=0, repetition=0)
         in rows[0]
     )
 
@@ -1174,7 +1208,9 @@ def test_composed_image_metadata_preserves_transformed_scalar_image_type() -> No
     )
 
 
-def test_source_image_payload_role_uses_transformed_scalar_role_before_provenance() -> None:
+def test_source_image_payload_role_uses_transformed_scalar_role_before_provenance() -> (
+    None
+):
     payload = RuntimeImagePayloadContext(
         np.zeros((2, 4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(
@@ -1684,6 +1720,41 @@ def test_object_label_set_replacement_preserves_sparse_ijv_representation() -> N
 
     assert rebuilt.representation is ObjectLabelRepresentation.SPARSE_IJV
     assert rebuilt.labels is replacement_rows
+
+
+def test_object_label_payload_rebuild_preserves_sparse_ijv_representation() -> None:
+    source_rows = SparseIJVLabelRows(np.array([[0, 0, 1], [1, 1, 2]], dtype=np.int32))
+    replacement_rows = SparseIJVLabelRows(np.array([[0, 1, 1]], dtype=np.int32))
+    source = ObjectLabelPayload(
+        labels=source_rows,
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+    )
+
+    rebuilt = source.with_labels(replacement_rows)
+
+    assert isinstance(rebuilt, ObjectLabelPayload)
+    assert rebuilt.representation is ObjectLabelRepresentation.SPARSE_IJV
+    assert rebuilt.labels is replacement_rows
+
+
+def test_object_label_payload_source_context_preserves_sparse_ijv_representation() -> (
+    None
+):
+    image = RuntimeImagePayloadContext(
+        np.zeros((4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(),
+        mask=None,
+    ).payload()
+    sparse_rows = SparseIJVLabelRows(np.array([[0, 0, 1], [1, 1, 2]], dtype=np.int32))
+    source = SourceImageObjectLabelBuildRequest(
+        image=image,
+        labels=sparse_rows,
+    ).payload(representation=ObjectLabelRepresentation.SPARSE_IJV)
+
+    contextualized = source.with_source_image_context(image)
+
+    assert contextualized.representation is ObjectLabelRepresentation.SPARSE_IJV
+    assert contextualized.labels is sparse_rows
 
 
 def test_sparse_ijv_object_label_replacement_converts_dense_labels() -> None:

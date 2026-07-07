@@ -441,7 +441,7 @@ class MeasurementFeatureQuery:
             if isinstance(table.rows, ColumnarRows):
                 schema = ColumnarMeasurementTableSchema.from_table(table)
                 feature_column = schema.matching_feature_column(self)
-                row_count = str(len(table.rows))
+                row_count = str(table.rows.row_count())
                 query_object_name = self.query_object_name
                 object_mask = None
                 if (
@@ -1413,7 +1413,11 @@ class MeasurementFeatureValueIndex:
             ],
             dtype=bool,
         )
-        source_mask = schema.source_mask(query.source_candidates)
+        source_mask = (
+            None
+            if table.source_image_name is not None
+            else schema.source_mask(query.source_candidates)
+        )
         feature_mask = schema.feature_mask(query.field_candidates)
         source_feature_mask = (
             value_mask

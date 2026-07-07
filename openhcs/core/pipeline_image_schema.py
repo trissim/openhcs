@@ -25,6 +25,7 @@ from openhcs.core.source_bindings import (
     normalize_source_binding_values,
 )
 from openhcs.core.source_metadata import SourceVoxelSpacing
+from openhcs.core.image_shapes import CHANNEL_LAST_IMAGE_CHANNEL_COUNTS
 
 
 SOURCE_IMAGE_TYPE_METADATA_FIELD = "OpenHCSImageType"
@@ -125,6 +126,7 @@ class SourceArtifactAssignment(SourceAssignmentBase):
             artifact_kind=ImageArtifactType,
             selector=assignment.selector,
             origin=assignment.origin,
+            component_identity=assignment.component_identity,
             payload_type=assignment.image_type,
         )
 
@@ -150,6 +152,8 @@ class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
     LOAD_AS_MONOCHROME: ClassVar[bool] = False
     MATERIALIZE_SOURCE_MASK: ClassVar[bool] = False
     CHANNEL_LAST_SOURCE_PLANES: ClassVar[bool] = False
+    CHANNEL_LAST_SOURCE_CHANNEL_COUNTS: ClassVar[frozenset[int] | None] = None
+    SOURCE_ALIAS_IDENTITY_COMPONENT: ClassVar[AllComponents | None] = None
 
     @classmethod
     def for_image_type(cls, image_type: str) -> "ImageTypeSourceRole":
@@ -199,24 +203,38 @@ class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
 
         if not type(self).CHANNEL_LAST_SOURCE_PLANES:
             return False
-        from openhcs.core.image_shapes import is_color_image_slice
+        from openhcs.core.image_shapes import is_channel_last_image_slice
 
-        return is_color_image_slice(value)
+        return is_channel_last_image_slice(
+            value
+        ) and self._matches_declared_source_channel_count(value)
 
     def is_channel_last_source_stack(self, value: Any) -> bool:
         """Return whether the declared source type owns channel-last image planes."""
 
         if not type(self).CHANNEL_LAST_SOURCE_PLANES:
             return False
-        from openhcs.core.image_shapes import is_color_image_stack
+        from openhcs.core.image_shapes import is_channel_last_image_stack
 
-        return is_color_image_stack(value)
+        return is_channel_last_image_stack(
+            value
+        ) and self._matches_declared_source_channel_count(value)
+
+    def _matches_declared_source_channel_count(self, value: Any) -> bool:
+        channel_counts = type(self).CHANNEL_LAST_SOURCE_CHANNEL_COUNTS
+        return channel_counts is None or int(getattr(value, "shape")[-1]) in channel_counts
 
     @property
     def source_bindings_config_representable(self) -> bool:
         """Whether this role can be lowered to SourceBindingsConfig losslessly."""
 
         return isinstance(self, SourceBindingsRepresentableImageTypeSourceRole)
+
+    @property
+    def source_alias_identity_component(self) -> AllComponents | None:
+        """Component axis assigned to non-stack source artifacts of this role."""
+
+        return type(self).SOURCE_ALIAS_IDENTITY_COMPONENT
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,6 +303,8 @@ class ImageTypeSourceRoleSpec:
     image_type_key: str
     base_type: type[ImageTypeSourceRole]
     channel_last_source_planes: bool = False
+    channel_last_source_channel_counts: frozenset[int] | None = None
+    source_alias_identity_component: AllComponents | None = None
 
     def declare(self) -> type[ImageTypeSourceRole]:
         return type(
@@ -294,6 +314,12 @@ class ImageTypeSourceRoleSpec:
                 "__module__": __name__,
                 "image_type_key": self.image_type_key,
                 "CHANNEL_LAST_SOURCE_PLANES": self.channel_last_source_planes,
+                "CHANNEL_LAST_SOURCE_CHANNEL_COUNTS": (
+                    self.channel_last_source_channel_counts
+                ),
+                "SOURCE_ALIAS_IDENTITY_COMPONENT": (
+                    self.source_alias_identity_component
+                ),
             },
         )
 
@@ -309,6 +335,7 @@ for _image_type_role_spec in (
         "color image",
         ImageStackSourceRole,
         channel_last_source_planes=True,
+        channel_last_source_channel_counts=CHANNEL_LAST_IMAGE_CHANNEL_COUNTS,
     ),
     ImageTypeSourceRoleSpec(
         "BinaryImageTypeSourceRole",
@@ -329,6 +356,7 @@ for _image_type_role_spec in (
         "IlluminationFunctionImageTypeSourceRole",
         "illumination function",
         SourceArtifactImageTypeSourceRole,
+        source_alias_identity_component=AllComponents.CHANNEL,
     ),
     ImageTypeSourceRoleSpec(
         "ObjectsImageTypeSourceRole",
@@ -528,7 +556,11 @@ class PipelineImageSchema:
         object.__setattr__(
             self,
             "source_artifacts_by_alias",
-            MappingProxyType(dict(self.source_artifacts_by_alias)),
+            MappingProxyType(
+                source_artifact_component_identity_assignments(
+                    self.source_artifacts_by_alias
+                )
+            ),
         )
         for alias, assignment in self.assignments_by_alias.items():
             if alias != assignment.alias:
@@ -674,6 +706,32 @@ def source_stack_component_identity_assignments(
             ComponentSelector(AllComponents.CHANNEL, channel_value)
         )
         channel_index += 1
+    return normalized
+
+
+def source_artifact_component_identity_assignments(
+    assignments_by_alias: Mapping[str, SourceArtifactAssignment],
+) -> dict[str, SourceArtifactAssignment]:
+    """Return source artifacts with role-owned source-alias identity declared."""
+
+    normalized: dict[str, SourceArtifactAssignment] = {}
+    counters_by_component_and_payload: dict[tuple[AllComponents, str], int] = {}
+    for alias, assignment in assignments_by_alias.items():
+        if not assignment.payload_type:
+            normalized[alias] = assignment
+            continue
+        component = ImageTypeSourceRole.for_image_type(
+            assignment.payload_type
+        ).source_alias_identity_component
+        if component is None:
+            normalized[alias] = assignment
+            continue
+        counter_key = (component, assignment.payload_type)
+        component_value = str(counters_by_component_and_payload.get(counter_key, 0) + 1)
+        counters_by_component_and_payload[counter_key] = int(component_value)
+        normalized[alias] = assignment.with_component_identity(
+            ComponentSelector(component, component_value)
+        )
     return normalized
 
 

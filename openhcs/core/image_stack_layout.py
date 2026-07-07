@@ -102,15 +102,33 @@ class SourceSliceUnstackRequest(ImageStackUnstackRequest):
         return list(self.layout_slices())
 
     def output_is_source_slice(self) -> bool:
-        output_shape = tuple(np.shape(self.array))
+        from openhcs.core.runtime_values import runtime_array_operand
+
+        output_shape = tuple(np.shape(runtime_array_operand(self.array)))
         if not output_shape:
             return False
         if output_shape in set(self.source_slice_shapes):
             return True
+        if self.output_is_singleton_stack_for_only_source_slice(output_shape):
+            return False
         return (
             len(self.source_slice_shapes) == 1
             and ImageStackLayout.is_unambiguous_slice(self.array)
         )
+
+    def output_is_singleton_stack_for_only_source_slice(
+        self,
+        output_shape: tuple[int, ...],
+    ) -> bool:
+        if len(self.source_slice_shapes) != 1 or output_shape[:1] != (1,):
+            return False
+        if output_shape[1:] != tuple(self.source_slice_shapes[0]):
+            return False
+        try:
+            ImageStackLayout.for_stack(self.array)
+        except ValueError:
+            return False
+        return True
 
 
 @dataclass(frozen=True, slots=True)

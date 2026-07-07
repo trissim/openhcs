@@ -718,9 +718,7 @@ class DefaultMeasurementLabelSourceAlignmentStrategy(
         label_payload: ObjectLabelValue | None = None,
     ) -> ObjectLabelMeasurementSource:
         if self.preserves_runtime_slice_label_stack(image, label_payload):
-            return SingletonObjectLabelStackCollapseStrategy.for_labels(labels).collapse(
-                labels
-            )
+            return labels
         return self.source_aligned_labels(image, labels)
 
     @staticmethod
@@ -781,9 +779,7 @@ class AlignedStackMeasurementLabelSourceAlignmentStrategy(
                 slice_count=len(image.slices),
             )
         ):
-            return SingletonObjectLabelStackCollapseStrategy.for_labels(labels).collapse(
-                labels
-            )
+            return labels
         return self.source_aligned_labels(image, labels)
 
 

@@ -700,6 +700,46 @@ class SourceBindingsConfig(_SourceBindingPlanBase):
             if binding.participates_in_execution_anchoring
         )
 
+    def bindings_for_group_key(
+        self,
+        group_key: str,
+    ) -> tuple[NamedSourceBinding, ...]:
+        """Return bindings whose declared component identity matches a pattern group."""
+        normalized_group_key = str(group_key)
+        if normalized_group_key == "default":
+            return self.binding_declarations
+        matching_bindings = tuple(
+            binding
+            for binding in self.binding_declarations
+            if any(
+                str(selector.value) == normalized_group_key
+                for selector in binding.component_identity
+            )
+        )
+        if matching_bindings:
+            return matching_bindings
+        if len(self.binding_declarations) <= 1:
+            return self.binding_declarations
+        binding_identities = {
+            binding.alias: tuple(
+                (selector.component.value, selector.value)
+                for selector in binding.component_identity
+            )
+            for binding in self.binding_declarations
+        }
+        raise ValueError(
+            f"Source binding group {normalized_group_key!r} does not match any "
+            "declared component identity. Available binding identities: "
+            f"{binding_identities!r}."
+        )
+
+    def for_group_key(
+        self,
+        group_key: str,
+    ) -> Self:
+        """Return this source-binding config scoped to one function-pattern group."""
+        return replace(self, bindings=self.bindings_for_group_key(group_key))
+
     @property
     def is_empty(self) -> bool:
         return (

@@ -204,6 +204,65 @@ class RuntimeRecordPlaneIdentityAuthority(Enum):
     OVERRIDE_ROW_IDENTITY = auto()
 
 
+RuntimeRecordPlaneIdentityPayloadKey = tuple[tuple[str, str | None], ...]
+RuntimeRecordPlaneIdentityKey = tuple[
+    type[ArtifactType],
+    str,
+    RuntimeRecordPlaneIdentityPayloadKey,
+]
+
+
+def runtime_record_plane_identity_key(
+    record: StoredRuntimeValue,
+) -> RuntimeRecordPlaneIdentityKey:
+    """Return the semantic payload identity used for repeated-record plane scope."""
+    schema = record.value.schema
+    payload_key: list[tuple[str, str | None]] = []
+    if schema.measurement_subject is not None:
+        subject = schema.measurement_subject
+        payload_key.extend(
+            (
+                ("measurement_scope", subject.scope.value),
+                ("measurement_name", normalize_runtime_identifier(subject.name)),
+                ("measurement_id_field", subject.id_field),
+            )
+        )
+    if schema.object_name is not None:
+        payload_key.append(("object_name", normalize_runtime_identifier(schema.object_name)))
+    if schema.object_id_field is not None:
+        payload_key.append(("object_id_field", normalize_runtime_identifier(schema.object_id_field)))
+    if schema.source_image_name is not None:
+        payload_key.append(
+            (
+                "source_image_name",
+                normalize_runtime_identifier(schema.source_image_name),
+            )
+        )
+    if schema.relationship is not None:
+        relationship = schema.relationship
+        payload_key.extend(
+            (
+                (
+                    "relationship_source",
+                    normalize_runtime_identifier(relationship.source.name),
+                ),
+                (
+                    "relationship_target",
+                    normalize_runtime_identifier(relationship.target.name),
+                ),
+                (
+                    "relationship_type",
+                    normalize_runtime_identifier(relationship.relationship_type),
+                ),
+            )
+        )
+    return (
+        record.key.artifact_type,
+        record.key.name,
+        tuple(payload_key),
+    )
+
+
 @dataclass(slots=True)
 class RuntimeAxisGroupPlaneIndex:
     """Stable per-axis mapping from runtime group scope to plane identity."""
@@ -223,19 +282,17 @@ class RuntimeAxisGroupPlaneIndex:
 class RuntimeAxisRepeatedArtifactPlaneIndex:
     """Assign plane identity to repeated records without distinct runtime scope."""
 
-    next_index_by_artifact_key: dict[tuple[type[ArtifactType], str], int] = field(
+    next_index_by_artifact_key: dict[RuntimeRecordPlaneIdentityKey, int] = field(
         default_factory=dict
     )
 
     def plane_identity_for_record(
         self,
         *,
-        kind: type[ArtifactType],
-        name: str,
+        record_key: RuntimeRecordPlaneIdentityKey,
     ) -> RuntimeRecordPlaneIdentity:
-        key = (kind, name)
-        slice_index = self.next_index_by_artifact_key.get(key, 0)
-        self.next_index_by_artifact_key[key] = slice_index + 1
+        slice_index = self.next_index_by_artifact_key.get(record_key, 0)
+        self.next_index_by_artifact_key[record_key] = slice_index + 1
         return RuntimeRecordPlaneIdentity(
             slice_index,
             RuntimeRecordPlaneIdentityAuthority.OVERRIDE_ROW_IDENTITY,
@@ -246,7 +303,7 @@ class RuntimeAxisRepeatedArtifactPlaneIndex:
 class RuntimeAxisRecordPlaneIdentityResolver:
     """Resolve runtime record plane identity from scope and repeated artifacts."""
 
-    repeated_artifact_counts: Counter[tuple[ArtifactType, str]]
+    repeated_artifact_counts: Counter[RuntimeRecordPlaneIdentityKey]
     group_plane_index: RuntimeAxisGroupPlaneIndex = field(
         default_factory=RuntimeAxisGroupPlaneIndex
     )
@@ -261,7 +318,7 @@ class RuntimeAxisRecordPlaneIdentityResolver:
     ) -> "RuntimeAxisRecordPlaneIdentityResolver":
         return cls(
             Counter(
-                (record.key.artifact_type, record.key.name)
+                runtime_record_plane_identity_key(record)
                 for record in records
                 if record.key.artifact_type.participates_in_axis_plane_identity
             )
@@ -273,6 +330,7 @@ class RuntimeAxisRecordPlaneIdentityResolver:
         kind: ArtifactType,
         name: str,
         scope: ArtifactScope,
+        payload_key: RuntimeRecordPlaneIdentityPayloadKey = (),
     ) -> RuntimeRecordPlaneIdentity | None:
         slice_index = self.group_plane_index.slice_index_for_scope(scope)
         if slice_index is not None:
@@ -280,11 +338,10 @@ class RuntimeAxisRecordPlaneIdentityResolver:
                 slice_index,
                 RuntimeRecordPlaneIdentityAuthority.FILL_MISSING_ROW_IDENTITY,
             )
-        artifact_key = (kind, name)
-        if self.repeated_artifact_counts[artifact_key] > 1:
+        record_key = (kind, name, payload_key)
+        if self.repeated_artifact_counts[record_key] > 1:
             return self.repeated_artifact_plane_index.plane_identity_for_record(
-                kind=kind,
-                name=name,
+                record_key=record_key,
             )
         return None
 
@@ -293,10 +350,12 @@ class RuntimeAxisRecordPlaneIdentityResolver:
         record: StoredRuntimeValue,
     ) -> RuntimeRecordPlaneIdentity | None:
         """Resolve plane identity directly from a runtime artifact record."""
+        record_key = runtime_record_plane_identity_key(record)
         return self.plane_identity_for_record(
-            kind=record.key.artifact_type,
-            name=record.key.name,
+            kind=record_key[0],
+            name=record_key[1],
             scope=record.key.scope,
+            payload_key=record_key[2],
         )
 
 

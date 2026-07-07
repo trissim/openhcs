@@ -1263,6 +1263,10 @@ class RuntimeSliceProjection:
         if not isinstance(array, np.ndarray) or array.ndim < 3:
             return None
         if array.ndim > 3 and context.axis_matches(int(array.shape[0])):
+            domain = value.object_label_domain()
+            domain_count = len(domain.declared_object_id_domains)
+            if domain_count > context.extent and domain_count % context.extent == 0:
+                return context.contiguous_plane_indices(domain_count // context.extent)
             return (context.slice_index,)
         stack = cls.grayscale_plane_stack_view(
             array,

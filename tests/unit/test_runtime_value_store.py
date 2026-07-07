@@ -256,6 +256,37 @@ def test_runtime_value_store_preserves_same_artifact_measurement_subjects():
     ) == (parent_record, child_record)
 
 
+def test_runtime_axis_record_plane_identity_ignores_distinct_measurement_subject_repeats():
+    output_plan = ArtifactOutputPlan(
+        name="RelateObjects_measurements",
+        path="/memory/RelateObjects_measurements.pkl",
+        artifact_type=MeasurementsArtifactType,
+    )
+    records = tuple(
+        StoredRuntimeValue(
+            value=normalize_artifact_value(
+                output_plan,
+                MeasurementTable(
+                    name="RelateObjects_measurements",
+                    rows=({"object_label": 1, "value": value},),
+                    object_name=object_name,
+                ),
+                axis_id="A01",
+            ),
+            location=RuntimeArtifactLocation(
+                path=f"/memory/{object_name}.pkl",
+                backend="memory",
+            ),
+        )
+        for object_name, value in (("ParentObjects", 1), ("ChildObjects", 2))
+    )
+    resolver = RuntimeAxisRecordPlaneIdentityResolver.from_records(records)
+
+    assert tuple(
+        resolver.plane_identity_for_runtime_record(record) for record in records
+    ) == (None, None)
+
+
 def test_runtime_value_store_merges_observed_records_from_worker_boundary():
     worker_store = RuntimeValueStore()
     value = _runtime_value()
@@ -300,7 +331,7 @@ def test_runtime_measurement_observation_axis_accepts_table_record_once():
 
 def test_runtime_axis_record_plane_identity_prefers_group_scope():
     resolver = RuntimeAxisRecordPlaneIdentityResolver(
-        repeated_artifact_counts=Counter({(MeasurementsArtifactType, "measurements"): 2})
+        repeated_artifact_counts=Counter({(MeasurementsArtifactType, "measurements", ()): 2})
     )
 
     first = resolver.plane_identity_for_record(
