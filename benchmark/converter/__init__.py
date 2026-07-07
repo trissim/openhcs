@@ -25,14 +25,12 @@ from openhcs.core.public_api import public_names_from_objects
 from .source_locator import SourceLocator
 from .llm_converter import LLMFunctionConverter
 from .library_absorber import LibraryAbsorber
-from .runtime_pipeline import (
+from openhcs.interop.cellprofiler.runtime_pipeline import (
     CPPipeModulePartition,
     CPPipePipelineGenerationRequest,
     CPPipePipelinePreparationRequest,
-    DirectPipelineExecution,
     GeneratedCPPipePipeline,
     PreparedGeneratedPipeline,
-    execute_pipeline_direct,
     prepare_generated_pipeline,
 )
 from openhcs.core.pipeline_image_schema import (
@@ -50,10 +48,8 @@ __all__ = public_names_from_objects(
     CPPipeModulePartition,
     CPPipePipelineGenerationRequest,
     CPPipePipelinePreparationRequest,
-    DirectPipelineExecution,
     GeneratedCPPipePipeline,
     PreparedGeneratedPipeline,
-    execute_pipeline_direct,
     prepare_generated_pipeline,
     CellProfilerSymbol,
     CellProfilerSymbolTable,

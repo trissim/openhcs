@@ -1425,6 +1425,212 @@ def test_compiler_derives_cellprofiler_contracts_from_selected_cppipe(
     ]
 
 
+def test_raw_public_and_generated_cellprofiler_steps_compile_equivalent_contracts(
+    monkeypatch,
+    tmp_path,
+):
+    from openhcs.core.compiled_step_plan import CompiledStepPlan
+    from openhcs.core.config import GlobalPipelineConfig
+    from openhcs.core.context.processing_context import ProcessingContext
+    from openhcs.core.function_patterns import (
+        FunctionInvocationKey,
+        normalize_function_pattern,
+    )
+    from openhcs.core.function_step_invocation_contracts import (
+        FunctionStepInvocationContractBinding,
+        FunctionStepInvocationContracts,
+    )
+    from openhcs.core.invocation_artifacts import (
+        ArtifactDeclarationStepContext,
+        PipelineInvocationContractProviderAuthority,
+    )
+    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+    from openhcs.core.pipeline.compilation_session import CompilationSession
+    from openhcs.core.pipeline.step_snapshot import StepSnapshot
+    from openhcs.core.source_bindings import (
+        NamedSourceBinding,
+        StepSourceBindingsConfig,
+    )
+    from openhcs.core.steps.function_step import FunctionStep
+    import openhcs.interop.cellprofiler.compile_time_contracts as compile_time_contracts
+    from openhcs.processing.backends.cellprofiler import (
+        identify_primary_objects,
+        identify_secondary_objects,
+    )
+
+    modules = (_identify_primary(), _identify_secondary())
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="raw_generated_contract_parity",
+        source_cppipe=Path("source.cppipe"),
+        modules=list(modules),
+    )
+    expected_contracts = generated.runtime_module_contracts_by_module_num
+    source_bindings = (
+        StepSourceBindingsConfig(
+            enabled=True,
+            bindings=(
+                NamedSourceBinding(
+                    alias="OrigBlue",
+                    artifact_kind=ImageArtifactType,
+                ),
+            ),
+        ),
+        StepSourceBindingsConfig(
+            enabled=True,
+            bindings=(
+                NamedSourceBinding(
+                    alias="OrigGreen",
+                    artifact_kind=ImageArtifactType,
+                ),
+            ),
+        ),
+    )
+
+    raw_steps = (
+        FunctionStep(
+            func=identify_primary_objects,
+            name="IdentifyPrimaryObjects",
+            source_bindings=source_bindings[0],
+        ),
+        FunctionStep(
+            func=identify_secondary_objects,
+            name="IdentifySecondaryObjects",
+            source_bindings=source_bindings[1],
+        ),
+    )
+    generated_steps = (
+        FunctionStep(
+            func=identify_primary_objects,
+            name="IdentifyPrimaryObjects",
+            source_bindings=source_bindings[0],
+            invocation_contracts=FunctionStepInvocationContracts(
+                (
+                    FunctionStepInvocationContractBinding(
+                        FunctionInvocationKey.from_callable(
+                            identify_primary_objects,
+                            "default",
+                            0,
+                        ),
+                        expected_contracts[1],
+                    ),
+                )
+            ),
+        ),
+        FunctionStep(
+            func=identify_secondary_objects,
+            name="IdentifySecondaryObjects",
+            source_bindings=source_bindings[1],
+            invocation_contracts=FunctionStepInvocationContracts(
+                (
+                    FunctionStepInvocationContractBinding(
+                        FunctionInvocationKey.from_callable(
+                            identify_secondary_objects,
+                            "default",
+                            0,
+                        ),
+                        expected_contracts[2],
+                    ),
+                )
+            ),
+        ),
+    )
+
+    cppipe_path = tmp_path / "selected.cppipe"
+    cppipe_path.write_text("", encoding="utf-8")
+
+    def contracts_from_selected_cppipe(path: Path):
+        assert path == cppipe_path
+        return expected_contracts
+
+    monkeypatch.setattr(
+        compile_time_contracts,
+        "_runtime_contracts_from_cppipe_path",
+        contracts_from_selected_cppipe,
+    )
+
+    def compile_module_contracts(
+        steps,
+        *,
+        orchestrator,
+    ) -> tuple[ModuleArtifactContract, ...]:
+        snapshots = tuple(
+            StepSnapshot(
+                index=index,
+                scope_id=f"contract-parity::functionstep_{index}",
+                name=step.name,
+                step_type=step.__class__.__name__,
+                enabled=bool(step.enabled),
+                is_function_step=True,
+                func=step.func,
+                invocation_contracts=step.invocation_contracts,
+                configs=_step_config_universe_for_step(step),
+            )
+            for index, step in enumerate(steps)
+        )
+        session = CompilationSession.from_context(
+            context=ProcessingContext(
+                step_plans={
+                    index: CompiledStepPlan(
+                        step_index=index,
+                        step_name=step.name,
+                        step_type=step.__class__.__name__,
+                        axis_id="A01",
+                    )
+                    for index, step in enumerate(steps)
+                },
+                axis_id="A01",
+            ),
+            steps=tuple(steps),
+            orchestrator=orchestrator,
+            global_config=GlobalPipelineConfig(),
+            step_state_map={index: object() for index in range(len(steps))},
+            snapshots=snapshots,
+        )
+        provider = PipelineInvocationContractProviderAuthority.provider_for_session(
+            session,
+        )
+        resolved_contracts: list[ModuleArtifactContract] = []
+        for index, step in enumerate(steps):
+            item = next(normalize_function_pattern(step.func).iter_items())
+            contract = provider(
+                item,
+                ArtifactDeclarationStepContext(
+                    step_index=index,
+                    source_bindings=step.source_bindings,
+                ),
+            )
+            assert contract is not None
+            assert contract.module_artifact_contract is not None
+            resolved_contracts.append(contract.module_artifact_contract)
+        return tuple(resolved_contracts)
+
+    plate_path = tmp_path / "plate"
+    plate_path.mkdir()
+    raw_orchestrator = PipelineOrchestrator(
+        plate_path=plate_path,
+        selected_pipeline_path=cppipe_path,
+    )
+
+    raw_contracts = compile_module_contracts(
+        raw_steps,
+        orchestrator=raw_orchestrator,
+    )
+    generated_contracts = compile_module_contracts(
+        generated_steps,
+        orchestrator=SimpleNamespace(),
+    )
+
+    assert raw_contracts == generated_contracts
+    assert raw_contracts == (expected_contracts[1], expected_contracts[2])
+    assert [contract.module_name for contract in raw_contracts] == [
+        "IdentifyPrimaryObjects",
+        "IdentifySecondaryObjects",
+    ]
+    assert [spec.name for spec in raw_contracts[1].runtime_artifact_inputs] == [
+        "Nuclei",
+    ]
+
+
 def test_pipeline_generator_resolves_object_measurement_function_variants():
     generator = PipelineGenerator()
     modules = [
