@@ -2722,6 +2722,15 @@ class ThresholdResult(ThresholdMeasurementFeatureRecord):
     weighted_variance: float = 0.0
     sum_of_entropies: float = 0.0
 
+    def threshold_measurement_record(self) -> MeasurementFeatureRecord:
+        return ObjectThresholdResult(
+            slice_index=self.slice_index,
+            final_threshold=self.final_threshold,
+            original_threshold=self.original_threshold,
+            weighted_variance=self.weighted_variance,
+            sum_of_entropies=self.sum_of_entropies,
+        )
+
 
 @dataclass
 class ObjectThresholdResult(ThresholdMeasurementFeatureRecord):
@@ -3418,6 +3427,18 @@ class ThresholdMeasurementRecordRowsMixin(FieldDerivedMeasurementFeatureModule):
 
     measurement_feature_family = "Threshold"
     measurement_feature_token_aliases = (("original", "Orig"),)
+
+    @classmethod
+    def measurement_feature_name(
+        cls,
+        field_name: str,
+        *qualified_parts: object,
+    ) -> str:
+        parts = (
+            cls.measurement_feature_stem(field_name),
+            *(str(part) for part in qualified_parts if part not in (None, "")),
+        )
+        return "_".join(parts)
 
     @dataclass(frozen=True, slots=True)
     class MeasurementRows(ModuleOwnedResultMeasurementRows):

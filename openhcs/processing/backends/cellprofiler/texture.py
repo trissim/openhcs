@@ -222,7 +222,9 @@ class MeasureTextureObjectMeasurementRowPolicy(
             rows, label_payload=label_payload, func=func
         )
         if isinstance(completed_rows, ColumnarRows):
-            return completed_rows
+            if not missing_domain.is_multi_source_plane_domain():
+                return completed_rows
+            completed_rows = completed_rows.row_mappings()
         return missing_domain.normalize_existing_rows(
             completed_rows,
             field_names=schema.field_names,

@@ -31,6 +31,7 @@ from openhcs.core.runtime_semantics import (
     MeasurementObjectRowIdentity,
     MeasurementRowAxisField,
     MeasurementRowValueField,
+    ObjectFeatureArrayDomain,
     RuntimeMeasurementFeature,
     RuntimeMeasurementIndexedDescriptorDeclaration,
     coerce_enum,
@@ -445,6 +446,16 @@ class ShapeZernikeFeatureAuthority(ShapeDescriptorFeature):
             for degree in range(int(max_order) + 1)
             for repetition in range(degree % 2, degree + 1, 2)
         )
+
+    @classmethod
+    def shape_zernike_feature_array_domains(
+        cls, *, max_order: int
+    ) -> Mapping[str, ObjectFeatureArrayDomain]:
+        """Return feature-array domains for CP shape-Zernike vectors."""
+        return {
+            feature_name: ObjectFeatureArrayDomain.ROW_ORDINAL
+            for feature_name in cls.shape_zernike_feature_names(max_order=max_order)
+        }
 
 
 class ShapeZernikeMeasurementFeature(RuntimeMeasurementFeature):

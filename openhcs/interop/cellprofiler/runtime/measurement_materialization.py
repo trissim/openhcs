@@ -955,24 +955,40 @@ class CellProfilerMeasurementProjectionRequest(CellProfilerMeasurementRecord):
     ) -> Mapping[int, int]:
         if len(source_paths) == 1:
             return MappingProxyType({0: start})
-        if not self.adapter.can_resolve_source_candidates:
-            return MappingProxyType(
-                {
-                    slice_index: image_number
-                    for slice_index, source_path in enumerate(source_paths)
-                    for image_number in (
-                        self.adapter.cellprofiler_image_number_for_source_paths(
-                            (source_path,)
-                        ),
-                    )
-                    if image_number is not None
-                }
+        direct_image_numbers = {
+            slice_index: image_number
+            for slice_index, source_path in enumerate(source_paths)
+            for image_number in (
+                self.adapter.cellprofiler_image_number_for_source_paths(
+                    (source_path,)
+                ),
             )
-        return CellProfilerImageNumberResolver.for_adapter(
+            if image_number is not None
+        }
+        direct_values = tuple(direct_image_numbers.values())
+        duplicate_direct_values = {
+            image_number
+            for image_number in direct_values
+            if direct_values.count(image_number) > 1
+        }
+        if duplicate_direct_values:
+            direct_image_numbers = {
+                slice_index: image_number
+                for slice_index, image_number in direct_image_numbers.items()
+                if image_number not in duplicate_direct_values
+            }
+        if len(direct_image_numbers) == len(source_paths):
+            return MappingProxyType(direct_image_numbers)
+        if not self.adapter.can_resolve_source_candidates:
+            return MappingProxyType(direct_image_numbers)
+        resolved = CellProfilerImageNumberResolver.for_adapter(
             self.adapter
         ).image_numbers_by_source_path_index(
             source_paths
         )
+        if not direct_image_numbers:
+            return resolved
+        return MappingProxyType({**resolved, **direct_image_numbers})
 
     @property
     def has_measurement_object_name(self) -> bool:
@@ -1307,6 +1323,7 @@ class CellProfilerMeasurementMaterializer:
         axis_state: MeasurementRowAxisState | None = None,
         measurement_row_policy: "CellProfilerObjectMeasurementRowPolicy | None" = None,
     ) -> None:
+        rows = cls.filter_backend_only_record_fields(rows, measurement_row_policy)
         record = CellProfilerMeasurementRecord(
             rows=rows,
             fields=CellProfilerMeasurementFieldSchema.for_record(
@@ -1318,22 +1335,10 @@ class CellProfilerMeasurementMaterializer:
             source_context=source_context,
             clear_source_when_rows_declare_object_name=False,
         )
-        if (
-            measurement_row_policy is not None
-            and isinstance(record.rows, ColumnarRows)
-            and measurement_row_policy.record_rows_declare_ownership(record)
-        ):
-            record = record.with_ownership(
-                rows=record.rows,
-                object_name=None,
-                source_image_name=record.source_context.source_image_name,
-                source_image_payload=record.source_context.source_image_payload,
-            )
         records = (record,)
         if (
             measurement_row_policy is not None
             and object_name is None
-            and not isinstance(record.rows, ColumnarRows)
             and measurement_row_policy.record_rows_declare_ownership(record)
         ):
             records = measurement_row_policy.record_partitions(record)
@@ -1345,6 +1350,26 @@ class CellProfilerMeasurementMaterializer:
                     axis_state=axis_state,
                 )
             )
+
+    @staticmethod
+    def filter_backend_only_record_fields(
+        rows: MeasurementRowsInput,
+        measurement_row_policy: "CellProfilerObjectMeasurementRowPolicy | None",
+    ) -> MeasurementRowsInput:
+        """Remove backend-only fields declared by an object-row policy."""
+        if measurement_row_policy is None:
+            return rows
+        excluded_fields = frozenset(
+            str(field_name)
+            for field_name in measurement_row_policy.measurement_record_excluded_fields
+        )
+        if not excluded_fields:
+            return rows
+        from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+            filter_measurement_record_rows_by_fields,
+        )
+
+        return filter_measurement_record_rows_by_fields(rows, excluded_fields)
 
     @staticmethod
     def record(request: CellProfilerMeasurementMaterializationRequest) -> None:

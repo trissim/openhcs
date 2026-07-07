@@ -3,13 +3,27 @@ Converted from CellProfiler: MeasureImageAreaOccupied
 Measures the total area in an image that is occupied by objects or foreground.
 """
 
+import inspect
+
 from openhcs.interop.cellprofiler.setting_names import split_symbol_names
 import numpy as np
 from typing import Annotated, Optional, Sequence, Tuple
 from dataclasses import dataclass
 from enum import Enum
+from python_introspect import set_parameter_exclusions
+from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ArtifactSpec,
+    ArtifactSpecRef,
+    GroupLineageSourceRelation,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+)
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_invocation import (
+    SliceIndexRuntimeParameter,
+)
 from openhcs.core.runtime_semantics import (
     MeasurementRowAxisField,
     RuntimeMeasurementFeature,
@@ -22,6 +36,7 @@ from openhcs.processing.backends.analysis.region_properties import (
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import (
     composed_image_payload,
+    runtime_bound_parameters,
     special_inputs,
     special_outputs,
 )
@@ -48,6 +63,9 @@ from openhcs.interop.cellprofiler.setting_names import (
 )
 from openhcs.interop.cellprofiler.parser import ModuleSetting
 from openhcs.interop.cellprofiler.setting_names import normalized_symbol_name
+from openhcs.interop.cellprofiler.runtime.bound_parameters import (
+    RuntimeSliceSequenceParameterName,
+)
 from openhcs.interop.cellprofiler.runtime.object_input_policies import (
     ObjectRowsInputPolicy,
 )
@@ -64,8 +82,141 @@ from openhcs.interop.cellprofiler.runtime.measurement_rows import (
 from openhcs.interop.cellprofiler.runtime.payload_types import CellProfilerKwargs
 
 
+class AreaOccupiedInputNamesRuntimeParameter:
+    """Runtime-bound source artifact names for AreaOccupied measurement rows."""
+
+    @classmethod
+    def require_parameter_name(cls) -> str:
+        return "input_names"
+
+    @classmethod
+    def parameter(cls) -> inspect.Parameter:
+        return inspect.Parameter(
+            cls.require_parameter_name(),
+            inspect.Parameter.KEYWORD_ONLY,
+            default=("image",),
+            annotation=Sequence[str],
+        )
+
+
+class AreaOccupiedRetainedImageNamesRuntimeParameter:
+    """Runtime-bound retained-output names for AreaOccupied measurement rows."""
+
+    @classmethod
+    def require_parameter_name(cls) -> str:
+        return "retained_image_names"
+
+    @classmethod
+    def parameter(cls) -> inspect.Parameter:
+        return inspect.Parameter(
+            cls.require_parameter_name(),
+            inspect.Parameter.KEYWORD_ONLY,
+            default=(None,),
+            annotation=Sequence[str | None],
+        )
+
+
+class OperandChoice(Enum):
+    BINARY_IMAGE = "binary_image"
+    OBJECTS = "objects"
+
+    @classmethod
+    def from_literal(cls, value: "OperandChoice | str") -> "OperandChoice":
+        if isinstance(value, cls):
+            return value
+        normalized = value.strip().lower()
+        if "binary" in normalized:
+            return cls.BINARY_IMAGE
+        if "object" in normalized:
+            return cls.OBJECTS
+        return cls(normalized)
+
+
+class AreaOccupiedRuntimeInputPolicy(ObjectRowsInputPolicy):
+    """Bind AreaOccupied row identities from the declared artifact contract."""
+
+    binds_without_declared_inputs = True
+    input_names_kwarg = RuntimeSliceSequenceParameterName(
+        AreaOccupiedInputNamesRuntimeParameter.require_parameter_name()
+    )
+    retained_image_names_kwarg = RuntimeSliceSequenceParameterName(
+        AreaOccupiedRetainedImageNamesRuntimeParameter.require_parameter_name()
+    )
+
+    def bind(self, request: "ObjectInputBindingRequest") -> dict[str, object]:
+        bound = super().bind(request)
+        row_sources = self._row_sources(request)
+        return {
+            **bound,
+            self.input_names_kwarg: tuple(spec.name for spec in row_sources),
+            self.retained_image_names_kwarg: self._retained_image_names_for_sources(
+                request,
+                row_sources,
+            ),
+        }
+
+    @classmethod
+    def _row_sources(
+        cls,
+        request: "ObjectInputBindingRequest",
+    ) -> tuple[ArtifactSpec, ...]:
+        operands = tuple(
+            OperandChoice.from_literal(value)
+            for value in request.kwargs.get(
+                "operand_choices",
+                (OperandChoice.BINARY_IMAGE,),
+            )
+        )
+        image_inputs = iter(request.primary_image_inputs)
+        object_inputs = iter(request.object_inputs)
+        row_sources: list[ArtifactSpec] = []
+        try:
+            for operand in operands:
+                if operand is OperandChoice.BINARY_IMAGE:
+                    row_sources.append(next(image_inputs))
+                elif operand is OperandChoice.OBJECTS:
+                    row_sources.append(next(object_inputs))
+        except StopIteration as exc:
+            raise ValueError(
+                "MeasureImageAreaOccupied operand choices do not match declared "
+                "image/object artifact inputs."
+            ) from exc
+        remaining_images = tuple(image_inputs)
+        remaining_objects = tuple(object_inputs)
+        if remaining_images or remaining_objects:
+            raise ValueError(
+                "MeasureImageAreaOccupied declared artifact inputs exceed operand "
+                f"rows: extra_images={[spec.name for spec in remaining_images]!r}, "
+                f"extra_objects={[spec.name for spec in remaining_objects]!r}."
+            )
+        return tuple(row_sources)
+
+    @classmethod
+    def _retained_image_names_for_sources(
+        cls,
+        request: "ObjectInputBindingRequest",
+        row_sources: tuple[ArtifactSpec, ...],
+    ) -> tuple[str | None, ...]:
+        retained_by_source = {
+            source_ref: spec.name
+            for spec in request.output_specs
+            if spec.artifact_type is ImageArtifactType
+            for source_ref in cls._single_input_lineage_sources(spec)
+        }
+        return tuple((retained_by_source.get(source.ref()) for source in row_sources))
+
+    @staticmethod
+    def _single_input_lineage_sources(spec: ArtifactSpec) -> tuple[ArtifactSpecRef, ...]:
+        return tuple(
+            relation.source
+            for relation in spec.relations
+            if isinstance(relation, GroupLineageSourceRelation)
+            and relation.source.plan_type is ArtifactInputPlan
+        )
+
+
 class MeasureImageAreaOccupiedBinaryModule(
-    ObjectRowsInputPolicy,
+    AreaOccupiedRuntimeInputPolicy,
     NoObjectNameMeasurementRecordMixin,
     SourceQualifiedInputPayloadMeasurementRecordMixin,
     SourceQualifiedMeasurementFeatureModule,
@@ -135,13 +286,9 @@ class MeasureImageAreaOccupiedBinaryModule(
     retain_image_setting = "Retain a binary image of the object regions?"
     output_image_setting = "Name the output binary image"
 
-    class Operand(str, Enum):
-        BINARY_IMAGE = "binary_image"
-        OBJECTS = "objects"
-
     @dataclass(frozen=True, slots=True)
     class MeasurementRow:
-        operand: "MeasureImageAreaOccupiedBinaryModule.Operand"
+        operand: OperandChoice
         input_name: str
         binary_image_name: str | None
         objects_name: str | None
@@ -152,8 +299,6 @@ class MeasureImageAreaOccupiedBinaryModule(
         rows = cls.measurement_rows(module)
         return {
             "operand_choices": tuple((row.operand.value for row in rows)),
-            "input_names": tuple((row.input_name for row in rows)),
-            "retained_image_names": tuple((row.retained_image_name for row in rows)),
         }
 
     @classmethod
@@ -237,11 +382,11 @@ class MeasureImageAreaOccupiedBinaryModule(
                     input_name=expanded_input_name,
                     binary_image_name=(
                         expanded_input_name
-                        if operand is cls.Operand.BINARY_IMAGE
+                        if operand is OperandChoice.BINARY_IMAGE
                         else None
                     ),
                     objects_name=(
-                        expanded_input_name if operand is cls.Operand.OBJECTS else None
+                        expanded_input_name if operand is OperandChoice.OBJECTS else None
                     ),
                     retained_image_name=retained_image_name,
                 )
@@ -250,38 +395,36 @@ class MeasureImageAreaOccupiedBinaryModule(
         )
 
     @classmethod
-    def _operand_from_literal(
-        cls, value: str
-    ) -> "MeasureImageAreaOccupiedBinaryModule.Operand":
-        normalized = value.strip().lower()
-        if "binary" in normalized:
-            return cls.Operand.BINARY_IMAGE
-        if "object" in normalized:
-            return cls.Operand.OBJECTS
-        raise ValueError(f"Unsupported MeasureImageAreaOccupied mode {value!r}.")
+    def _operand_from_literal(cls, value: str) -> OperandChoice:
+        try:
+            return OperandChoice.from_literal(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"Unsupported MeasureImageAreaOccupied mode {value!r}."
+            ) from exc
 
     @classmethod
-    def _operand_from_kwarg(
-        cls, value: object
-    ) -> "MeasureImageAreaOccupiedBinaryModule.Operand":
-        if isinstance(value, cls.Operand):
+    def _operand_from_kwarg(cls, value: object) -> OperandChoice:
+        if isinstance(value, OperandChoice):
             return value
-        return cls.Operand(str(value))
+        return OperandChoice.from_literal(str(value))
 
     @classmethod
     def _compile_time_setting_records_for_row(
         cls,
-        operand: "MeasureImageAreaOccupiedBinaryModule.Operand",
+        operand: OperandChoice,
         *,
         input_name: str,
         retained_image_name: str | None,
     ) -> tuple[ModuleSetting, ...]:
-        binary_image_name = input_name if operand is cls.Operand.BINARY_IMAGE else "None"
-        objects_name = input_name if operand is cls.Operand.OBJECTS else "None"
+        binary_image_name = (
+            input_name if operand is OperandChoice.BINARY_IMAGE else "None"
+        )
+        objects_name = input_name if operand is OperandChoice.OBJECTS else "None"
         records = [
             ModuleSetting(
                 setting_names(cls.mode_setting)[0],
-                "Binary image" if operand is cls.Operand.BINARY_IMAGE else "Objects",
+                "Binary image" if operand is OperandChoice.BINARY_IMAGE else "Objects",
             ),
             ModuleSetting(setting_names(cls.binary_image_setting)[0], binary_image_name),
             ModuleSetting(setting_names(cls.objects_setting)[0], objects_name),
@@ -298,12 +441,12 @@ class MeasureImageAreaOccupiedBinaryModule(
     def _input_name_for_operand(
         cls,
         module: "ModuleBlock",
-        operand: "MeasureImageAreaOccupiedBinaryModule.Operand",
+        operand: OperandChoice,
         *,
         binary_image_name: str | None,
         objects_name: str | None,
     ) -> str:
-        if operand is cls.Operand.BINARY_IMAGE:
+        if operand is OperandChoice.BINARY_IMAGE:
             input_name = binary_image_name
             role = "binary image"
         else:
@@ -319,12 +462,12 @@ class MeasureImageAreaOccupiedBinaryModule(
     def _expanded_input_names(
         cls,
         module: "ModuleBlock",
-        operand: "MeasureImageAreaOccupiedBinaryModule.Operand",
+        operand: OperandChoice,
         *,
         input_name: str,
         block: Sequence["ModuleSetting"],
     ) -> tuple[str, ...]:
-        if operand is cls.Operand.BINARY_IMAGE:
+        if operand is OperandChoice.BINARY_IMAGE:
             return split_symbol_names(
                 block_setting_value(block, cls.binary_image_setting)
             ) or (input_name,)
@@ -352,40 +495,49 @@ class MeasureImageAreaOccupiedBinaryModule(
         retained_images = []
         for row in rows:
             if (
-                row.operand is cls.Operand.BINARY_IMAGE
+                row.operand is OperandChoice.BINARY_IMAGE
                 and row.binary_image_name is not None
             ):
                 inputs.append(
                     ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(row.binary_image_name))
                 )
-            if row.operand is cls.Operand.OBJECTS and row.objects_name is not None:
+                source_ref = ArtifactSpec.input(
+                    row.binary_image_name,
+                    ImageArtifactType,
+                )
+            elif row.operand is OperandChoice.OBJECTS and row.objects_name is not None:
                 inputs.append(
                     ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(row.objects_name))
                 )
+                source_ref = ArtifactSpec.input(
+                    row.objects_name,
+                    ObjectLabelsArtifactType,
+                )
+            else:
+                source_ref = None
             if row.retained_image_name is not None:
+                if source_ref is None:
+                    raise ValueError(
+                        f"Module {module.name}({module.module_num}) cannot bind "
+                        f"retained image {row.retained_image_name!r} without a "
+                        "declared row source."
+                    )
                 retained_images.append(
-                    ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(row.retained_image_name))
+                    ImageArtifactOutputCapability.bind_artifact(
+                        cls,
+                        builder,
+                        module,
+                        ArtifactSpec.output_inheriting_group_scope(
+                            row.retained_image_name,
+                            ImageArtifactType,
+                            source_ref,
+                        ),
+                    )
                 )
         measurements = cls.measurement_output_artifact(builder, module)
         return assembler.assemble_contract(
             module, builder, inputs=inputs, outputs=[*retained_images, measurements]
         )
-
-
-class OperandChoice(Enum):
-    BINARY_IMAGE = "binary_image"
-    OBJECTS = "objects"
-
-    @classmethod
-    def from_literal(cls, value: "OperandChoice | str") -> "OperandChoice":
-        if isinstance(value, cls):
-            return value
-        normalized = value.strip().lower()
-        if "binary" in normalized:
-            return cls.BINARY_IMAGE
-        if "object" in normalized:
-            return cls.OBJECTS
-        return cls(normalized)
 
 
 @dataclass(frozen=True, slots=True)
@@ -492,6 +644,11 @@ class ObjectLabelsAreaOccupiedRequest:
 
 @composed_image_payload
 @numpy(contract=ProcessingContract.FLEXIBLE)
+@runtime_bound_parameters(
+    AreaOccupiedInputNamesRuntimeParameter,
+    AreaOccupiedRetainedImageNamesRuntimeParameter,
+    SliceIndexRuntimeParameter,
+)
 @special_outputs(
     (
         "area_measurements",
@@ -509,10 +666,13 @@ def measure_image_area_occupied(
     retained_image_names: Sequence[str | None] = (None,),
     object_labels: Sequence[np.ndarray] = (),
     slice_by_slice: bool = True,
+    slice_index: int | None = None,
 ) -> tuple:
     """Measure area occupied for ordered binary-image and object rows."""
     rows = _area_occupied_runtime_rows(
-        operand_choices, input_names, retained_image_names
+        operand_choices,
+        input_names,
+        retained_image_names,
     )
     binary_images = _binary_images_from_payload(
         image, sum((row.operand is OperandChoice.BINARY_IMAGE for row in rows))
@@ -557,6 +717,16 @@ def measure_image_area_occupied(
     return (image, measurements)
 
 
+set_parameter_exclusions(
+    measure_image_area_occupied,
+    (
+        "input_names",
+        "retained_image_names",
+        SliceIndexRuntimeParameter.require_parameter_name(),
+    ),
+)
+
+
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_outputs(
     (
@@ -582,6 +752,12 @@ def measure_image_area_occupied_binary(
     return BinaryAreaOccupiedRequest(
         image=image, source_image_name=source_image_name
     ).measure()
+
+
+set_parameter_exclusions(
+    measure_image_area_occupied_binary,
+    ("source_image_name",),
+)
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -611,6 +787,12 @@ def measure_image_area_occupied_objects(
     return ObjectLabelsAreaOccupiedRequest(
         image=image, labels=labels, source_image_name=source_image_name
     ).measure()
+
+
+set_parameter_exclusions(
+    measure_image_area_occupied_objects,
+    ("source_image_name",),
+)
 
 
 def _area_occupied_runtime_rows(

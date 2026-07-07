@@ -1450,9 +1450,12 @@ def closing(
     morphology = MorphologyBackendStrategy.for_callable(
         closing, backend_provider=morphology_backend_provider
     )
+    footprint = adapt_structuring_element_rank(
+        build_structuring_element(structuring_element, size), pixel_data.ndim
+    )
     result = apply_structuring_element(
         pixel_data,
-        build_structuring_element(structuring_element, size),
+        footprint,
         morphology.grayscale_closing,
     )
     return with_image_payload_data(
@@ -1476,9 +1479,12 @@ def opening(
     morphology = MorphologyBackendStrategy.for_callable(
         opening, backend_provider=morphology_backend_provider
     )
+    footprint = adapt_structuring_element_rank(
+        build_structuring_element(structuring_element, size), pixel_data.ndim
+    )
     result = apply_structuring_element(
         pixel_data,
-        build_structuring_element(structuring_element, size),
+        footprint,
         morphology.grayscale_opening,
     )
     return with_image_payload_data(
@@ -1497,9 +1503,12 @@ def dilate_image(
     """Apply grayscale dilation to an image plane."""
     from skimage.morphology import dilation
 
+    footprint = adapt_structuring_element_rank(
+        build_structuring_element(structuring_element, size), np.asarray(image).ndim
+    )
     dilated = apply_structuring_element(
         image,
-        build_structuring_element(structuring_element, size),
+        footprint,
         lambda spatial_image, footprint: dilation(spatial_image, footprint),
     )
     return dilated.astype(image.dtype)
@@ -1514,9 +1523,12 @@ def erode_image(
     """Apply grayscale erosion to an image plane."""
     from skimage.morphology import erosion
 
+    footprint = adapt_structuring_element_rank(
+        build_structuring_element(structuring_element, size), np.asarray(image).ndim
+    )
     eroded = apply_structuring_element(
         image,
-        build_structuring_element(structuring_element, size),
+        footprint,
         lambda spatial_image, footprint: erosion(spatial_image, footprint),
     )
     return eroded.astype(image.dtype)

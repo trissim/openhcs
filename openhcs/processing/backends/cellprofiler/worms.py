@@ -53,10 +53,12 @@ from openhcs.interop.cellprofiler.runtime.special_input_policies import (
 from openhcs.interop.cellprofiler.worm_measurements import (
     WormControlPointMeasurementSchema,
 )
-from openhcs.core.runtime_semantics import ObjectLabelRepresentation
+from openhcs.core.runtime_semantics import (
+    MeasurementRowAxisField,
+    ObjectLabelRepresentation,
+)
 from openhcs.core.runtime_values import (
     ObjectLabelPayload,
-    ObjectLabelSet,
     ObjectLabelValue,
     SourceImageObjectLabelBuildRequest,
     SparseIJVLabelRows,
@@ -85,6 +87,10 @@ from openhcs.interop.cellprofiler.module_declarations import (
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
 )
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    CellProfilerMeasurementRecordModule,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_rows import measurement_table_rows
 from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
     required_setting_value,
@@ -106,6 +112,7 @@ MAX_CLUSTER_PATH_SETS_CONSIDERED = 50_000
 
 
 class UntangleWormsModule(
+    CellProfilerMeasurementRecordModule,
     ImageArtifactInputModule,
     ObjectArtifactOutputModule,
     MeasurementArtifactOutputModule,
@@ -165,12 +172,6 @@ class UntangleWormsModule(
         )
         kwargs: dict[str, str | int | float | tuple[Any, ...]] = {
             "overlap_style": overlap_style.value,
-            "overlapping_object_name": required_setting_value(
-                module, cls.overlapping_objects_setting
-            ),
-            "nonoverlapping_object_name": required_setting_value(
-                module, cls.nonoverlapping_objects_setting
-            ),
         }
         if (
             num_control_points := optional_setting_value(
@@ -180,6 +181,53 @@ class UntangleWormsModule(
             kwargs["num_control_points"] = int(float(num_control_points))
         kwargs.update(cls.training_parameter_kwargs(module))
         return kwargs
+
+    @classmethod
+    def measurement_record_rows(
+        cls, request: "CellProfilerOutputRecordRequest"
+    ) -> list[CellProfilerKwargDict]:
+        rows = tuple(measurement_table_rows(request.output_value))
+        if not rows:
+            return []
+        object_names: tuple[str, ...] | None = None
+        qualified_rows: list[CellProfilerKwargDict] = []
+        object_name_field = MeasurementRowAxisField.OBJECT_NAME.value
+        for row in rows:
+            row_mapping = dict(row)
+            if object_name_field in row_mapping or "object_number" not in row_mapping:
+                qualified_rows.append(row_mapping)
+                continue
+            if object_names is None:
+                object_names = cls.measurement_object_names(request)
+            qualified_rows.extend(
+                {object_name_field: object_name, **row_mapping}
+                for object_name in object_names
+            )
+        return [*qualified_rows, *super().measurement_record_rows(request)]
+
+    @classmethod
+    def measurement_object_names(
+        cls, request: "CellProfilerOutputRecordRequest"
+    ) -> tuple[str, ...]:
+        object_outputs = ArtifactSpecCollection(request.outputs).of_artifact_type(
+            ObjectLabelsArtifactType
+        )
+        if len(object_outputs) != 2:
+            raise ValueError(
+                "UntangleWorms measurement rows require exactly two declared "
+                f"object-label outputs, got {[spec.name for spec in object_outputs]!r}."
+            )
+        overlap_style = coerce_overlap_style(
+            MappingValueLookup(request.call_kwargs, "overlap_style").value_or(
+                OverlapStyle.WITHOUT_OVERLAP
+            )
+        )
+        return WormLabelOutputStrategy.for_overlap_style(
+            overlap_style
+        ).measurement_object_names(
+            overlapping_object_name=object_outputs[0].name,
+            nonoverlapping_object_name=object_outputs[1].name,
+        )
 
     @classmethod
     def training_parameter_kwargs(
@@ -961,7 +1009,7 @@ class DeadWormAdjacencyPolicy:
 
 @dataclass(frozen=True, slots=True)
 class WormLabelOutputRequest:
-    sparse_overlapping: ObjectLabelSet
+    sparse_overlapping: ObjectLabelValue
     overlapping: ObjectLabelPayload
     nonoverlapping: ObjectLabelPayload
 
@@ -1095,8 +1143,6 @@ def untangle_worms(
     mean_angles: tuple[float, ...] | None = None,
     inv_angles_covariance_matrix: tuple[tuple[float, ...], ...] | None = None,
     radii_from_training: tuple[float, ...] | None = None,
-    overlapping_object_name: str = "OverlappingWorms",
-    nonoverlapping_object_name: str = "NonOverlappingWorms",
 ) -> tuple[
     np.ndarray, list[dict[str, float | int | str]], ObjectLabelValue, ObjectLabelPayload
 ]:
@@ -1140,7 +1186,6 @@ def untangle_worms(
             image_shape=image.shape,
             radii_from_training=radii_array,
             overlap_style=overlap_style,
-            overlapping_object_name=overlapping_object_name,
         )
         return (image, [], empty_labels, empty_nonoverlapping_labels)
     skeleton = skeletonize_worm_mask(binary)
@@ -1221,14 +1266,10 @@ def untangle_worms(
         image_shape=image.shape,
         radii_from_training=radii_array,
         overlap_style=overlap_style,
-        overlapping_object_name=overlapping_object_name,
     )
     measurements = _worm_descriptor_rows(
         all_path_coords,
         num_control_points=num_control_points,
-        overlapping_object_name=overlapping_object_name,
-        nonoverlapping_object_name=nonoverlapping_object_name,
-        overlap_style=overlap_style,
     )
     return (image, measurements, overlapping_labels, nonoverlapping_labels)
 
@@ -1969,7 +2010,6 @@ def _worm_label_outputs(
     image_shape: tuple[int, int],
     radii_from_training: np.ndarray,
     overlap_style: OverlapStyle,
-    overlapping_object_name: str,
 ) -> tuple[ObjectLabelValue, ObjectLabelPayload]:
     ijv_parts: list[np.ndarray] = []
     overlap_hits = np.zeros(image_shape, dtype=np.int16)
@@ -2002,8 +2042,7 @@ def _worm_label_outputs(
     )
     sparse_overlapping = SourceImageObjectLabelBuildRequest(
         image=source_image, labels=SparseIJVLabelRows(ijv)
-    ).label_set(
-        name=overlapping_object_name,
+    ).payload(
         representation=ObjectLabelRepresentation.SPARSE_IJV,
     )
     overlapping_payload = SourceImageObjectLabelBuildRequest(
@@ -2107,27 +2146,16 @@ def _worm_descriptor_rows(
     all_path_coords: list[np.ndarray],
     *,
     num_control_points: int,
-    overlapping_object_name: str,
-    nonoverlapping_object_name: str,
-    overlap_style: OverlapStyle,
 ) -> list[dict[str, float | int | str]]:
     """Return CellProfiler-compatible per-object worm descriptor rows."""
-    rows: list[dict[str, float | int | str]] = []
-    object_names = WormLabelOutputStrategy.for_overlap_style(
-        overlap_style
-    ).measurement_object_names(
-        overlapping_object_name=overlapping_object_name,
-        nonoverlapping_object_name=nonoverlapping_object_name,
-    )
-    for object_number, path_coords in enumerate(all_path_coords, start=1):
-        descriptor = _worm_descriptor_row(
+    return [
+        _worm_descriptor_row(
             path_coords,
             object_number=object_number,
             num_control_points=num_control_points,
         )
-        for object_name in object_names:
-            rows.append({"object_name": object_name, **descriptor})
-    return rows
+        for object_number, path_coords in enumerate(all_path_coords, start=1)
+    ]
 
 
 def _worm_descriptor_row(

@@ -23,6 +23,9 @@ from openhcs.processing.backends.cellprofiler.morphology import ResizeObjectsMod
 from openhcs.processing.backends.cellprofiler.illumination import (
     IlluminationCorrectionMethod,
 )
+from openhcs.processing.backends.cellprofiler.measurement_math import (
+    CalculateMathInvocationOptions,
+)
 from openhcs.processing.backends.cellprofiler.library import validated_contracts
 
 
@@ -650,11 +653,15 @@ def test_calculate_math_settings_bind_from_module_declaration():
         ],
     )
     bound = _bind_declared_module_settings(module)
-    assert _semantic_value(bound.kwargs["output_name"]) == "Ratio"
+    assert "output_name" not in bound.kwargs
+    assert "operand1_object_name" not in bound.kwargs
+    assert "operand2_object_name" not in bound.kwargs
+    assert isinstance(bound.invocation_options, CalculateMathInvocationOptions)
+    assert bound.invocation_options.output_name == "Ratio"
+    assert bound.invocation_options.operand1_object_name == "Nuclei"
+    assert bound.invocation_options.operand2_object_name is None
     assert _semantic_value(bound.kwargs["operation"]) == "divide"
-    assert _semantic_value(bound.kwargs["operand1_object_name"]) == "Nuclei"
     assert _semantic_value(bound.kwargs["operand1_feature"]) == "Intensity_MeanIntensity_DNA"
-    assert bound.kwargs["operand2_object_name"] is None
     assert _semantic_value(bound.kwargs["operand2_feature"]) == "AreaOccupied_Cells"
     assert bound.kwargs["rounding"].value == "decimal_places"
     assert _semantic_value(bound.kwargs["rounding_digits"]) == 2
@@ -1275,7 +1282,7 @@ def test_tile_rejects_unsupported_assembly_method():
         _bind_declared_module_settings(module)
 
 
-def test_track_objects_binds_tracking_identity_settings():
+def test_track_objects_binds_tracking_behavior_settings():
     module = ModuleBlock(
         name="TrackObjects",
         module_num=9,
@@ -1286,7 +1293,6 @@ def test_track_objects_binds_tracking_identity_settings():
         },
     )
     bound = _bind_declared_module_settings(module)
-    assert _semantic_value(bound.kwargs["object_name"]) == "Embryos"
     assert _semantic_value(bound.kwargs["tracking_method"]) == "overlap"
     assert _semantic_value(bound.kwargs["pixel_radius"]) == 50
 
@@ -1552,8 +1558,6 @@ def test_reduce_noise_binds_non_local_means_parameters():
             ),
             {
                 "operand_choices": ("binary_image", "objects"),
-                "input_names": ("MaskDNA", "Cells"),
-                "retained_image_names": ("RetainedMask", None),
             },
         ),
         (
@@ -1654,9 +1658,6 @@ def test_reduce_noise_binds_non_local_means_parameters():
                 "measurement_max_values": (None,),
                 "measurement_use_minimum": (True,),
                 "measurement_use_maximum": (False,),
-                "additional_object_count": 1,
-                "outline_object_indices": (0,),
-                "enclosing_object_name": "Tissue",
                 "per_object_assignment": "parent_with_most_overlap",
             },
         ),
@@ -1687,8 +1688,6 @@ def test_reduce_noise_binds_non_local_means_parameters():
             ),
             {
                 "overlap_style": "both",
-                "overlapping_object_name": "OverlapWorms",
-                "nonoverlapping_object_name": "StraightWorms",
                 "num_control_points": 14,
             },
         ),

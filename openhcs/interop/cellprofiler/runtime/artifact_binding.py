@@ -37,6 +37,8 @@ from openhcs.core.runtime_values import (
     normalize_image_payload_intensity,
     object_label_dense_array,
 )
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
+from openhcs.core.runtime_slice_projection import RuntimeProjectionAxis, RuntimeSliceProjection
 from openhcs.interop.cellprofiler.image_normalization import (
     normalize_cellprofiler_image_payload,
 )
@@ -567,7 +569,43 @@ class RuntimeInputBindingRequestBase(
             ).accepts_native_value
         ):
             return value
-        return self.labels_for(spec)
+        payload = self.label_domain_payload_for(spec)
+        if not self.project_object_labels_to_current_plane and isinstance(
+            payload,
+            ObjectLabelValue,
+        ):
+            slice_count = ObjectLabelRuntimeSliceStackContract.runtime_slice_count(
+                payload,
+            )
+            if slice_count is not None:
+                return RuntimeSliceAlignedValues(
+                    tuple(
+                        object_label_dense_array(
+                            RuntimeSliceProjection.value_for_slice(
+                                payload,
+                                RuntimeProjectionAxis(
+                                    slice_index=slice_index,
+                                    extent=slice_count,
+                                ),
+                            )
+                        )
+                        for slice_index in range(slice_count)
+                    )
+                )
+        labels = (
+            object_label_dense_array(payload)
+            if isinstance(payload, (ObjectLabelPayload, ObjectLabelSet))
+            else payload
+        )
+        if (
+            not self.project_object_labels_to_current_plane
+            and isinstance(labels, np.ndarray)
+            and labels.ndim == 3
+        ):
+            return labels
+        return SingletonObjectLabelStackCollapseStrategy.for_labels(labels).collapse(
+            labels
+        )
 
     def current_plane_relationship_for(self, spec: ArtifactSpec) -> CellProfilerRuntimeValue:
         """Return a relationship payload projected to the invocation plane."""

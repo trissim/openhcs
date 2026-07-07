@@ -1,6 +1,7 @@
 """Tracking backends for CellProfiler-compatible TrackObjects."""
 
 from __future__ import annotations
+from python_introspect import set_parameter_exclusions
 from openhcs.constants.constants import VariableComponents
 from openhcs.core.measurement_row_materialization import (
     measurement_row_has_object_identity,
@@ -69,13 +70,58 @@ class TrackObjectsObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPol
         return MeasurementScope.IMAGE.value
 
 
+class TrackObjectsPrimaryImageInputPolicy(ObjectLabelDrivenPrimaryImageInputPolicy):
+    """Bind object-label topology into TrackObjects runtime kwargs."""
+
+    object_name_kwarg: ClassVar[RuntimeBoundParameterName] = RuntimeBoundParameterName(
+        "object_name"
+    )
+    image_number_start_kwarg: ClassVar[RuntimeBoundParameterName] = (
+        RuntimeBoundParameterName("image_number_start")
+    )
+
+    def invocation_runtime_kwargs(
+        self,
+        *,
+        module_name: str,
+        plan: "CellProfilerModuleRuntimePlan",
+        image_request: "CellProfilerImageRequest",
+        adapter: "CellProfilerRuntimeAdapter",
+        current_image: "CellProfilerRuntimeValue",
+        runtime_kwargs: "CellProfilerKwargs",
+        object_input_source_image_name: Callable[[], str | None],
+    ) -> "CellProfilerKwargs":
+        """Bind the first CellProfiler image number for tracked source paths."""
+        del module_name
+        source_paths = image_payload_metadata(current_image).source_image_paths
+        if not source_paths:
+            source_paths = adapter.cellprofiler_source_paths_for_image_name(
+                image_request.source_image_name or object_input_source_image_name()
+            )
+        object_inputs = plan.object_inputs
+        if len(object_inputs) != 1:
+            raise ValueError(
+                "TrackObjects requires exactly one declared object input to bind "
+                f"object_name, got {[spec.name for spec in object_inputs]!r}."
+            )
+        return {
+            **runtime_kwargs,
+            type(self).object_name_kwarg: object_inputs[0].name,
+            type(
+                self
+            ).image_number_start_kwarg: adapter.cellprofiler_image_number_start_for_source_paths(
+                source_paths
+            ),
+        }
+
+
 class TrackObjectsModule(
     TrackingMeasurementRecordRowsMixin,
     FieldDerivedMeasurementFeatureModule,
     NoObjectNameMeasurementRecordMixin,
     NoSourceMeasurementRecordMixin,
     FieldsFromRowsMeasurementRecordMixin,
-    ObjectLabelDrivenPrimaryImageInputPolicy,
+    TrackObjectsPrimaryImageInputPolicy,
     ObjectArtifactInputModule,
     MeasurementArtifactOutputModule,
     ObjectMeasurementRowsModule,
@@ -116,40 +162,10 @@ class TrackObjectsModule(
     )
     required_variable_components = (VariableComponents.TIMEPOINT,)
     tracked_objects_setting = "Select the objects to track"
-    image_number_start_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName("image_number_start")
-    )
 
     @classmethod
     def object_input_setting_names(cls):
         return (cls.tracked_objects_setting,)
-
-    def invocation_runtime_kwargs(
-        self,
-        *,
-        module_name: str,
-        plan: "CellProfilerModuleRuntimePlan",
-        image_request: "CellProfilerImageRequest",
-        adapter: "CellProfilerRuntimeAdapter",
-        current_image: "CellProfilerRuntimeValue",
-        runtime_kwargs: "CellProfilerKwargs",
-        object_input_source_image_name: Callable[[], str | None],
-    ) -> "CellProfilerKwargs":
-        """Bind the first CellProfiler image number for tracked source paths."""
-        del module_name, plan
-        source_paths = image_payload_metadata(current_image).source_image_paths
-        if not source_paths:
-            source_paths = adapter.cellprofiler_source_paths_for_image_name(
-                image_request.source_image_name or object_input_source_image_name()
-            )
-        return {
-            **runtime_kwargs,
-            type(
-                self
-            ).image_number_start_kwarg: adapter.cellprofiler_image_number_start_for_source_paths(
-                source_paths
-            ),
-        }
 
     @classmethod
     def bind_settings(
@@ -169,9 +185,6 @@ class TrackObjectsModule(
             raise NotImplementedError(
                 f"TrackObjects tracking method is not supported by the converter: {method!r}"
             )
-        object_name = module.get_setting(cls.tracked_objects_setting, "Objects").strip()
-        if not object_name:
-            raise ValueError("TrackObjects requires a non-empty tracked object name.")
         pixel_radius = parse_cellprofiler_int(
             module.get_setting("Maximum pixel distance to consider matches", "50")
         )
@@ -188,7 +201,6 @@ class TrackObjectsModule(
             bound=BoundModuleSettings(
                 {
                     **dict(generic.kwargs),
-                    "object_name": object_name,
                     "tracking_method": tracking_method,
                     "pixel_radius": pixel_radius,
                 },
@@ -661,6 +673,16 @@ def track_objects(
     if image.ndim == 2:
         return (image[np.newaxis, ...], rows)
     return (image, rows)
+
+
+set_parameter_exclusions(
+    track_objects,
+    (
+        str(TrackObjectsModule.object_name_kwarg),
+        str(TrackObjectsModule.image_number_start_kwarg),
+        "_tracking_state",
+    ),
+)
 
 
 def _initial_tracking_state() -> dict[str, Any]:

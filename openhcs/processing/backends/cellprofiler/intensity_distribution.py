@@ -3,7 +3,10 @@
 from __future__ import annotations
 from enum import Enum
 from openhcs.core.registry_strategies import enum_member_with_payload
-from openhcs.core.runtime_semantics import RuntimeMeasurementFeature
+from openhcs.core.runtime_semantics import (
+    MeasurementRowAxisField,
+    RuntimeMeasurementFeature,
+)
 from openhcs.interop.cellprofiler.setting_names import SettingNameFamily, setting_names
 from openhcs.interop.cellprofiler.settings_binder import (
     coerce_cellprofiler_enum,
@@ -128,6 +131,9 @@ class MeasureObjectIntensityDistributionModule(
         ("intensity", "distribution"),
         ("radial", "distribution"),
     )
+    measurement_record_excluded_fields = frozenset(
+        {MeasurementRowAxisField.OBJECT_ROW_IDENTITY.value}
+    )
 
     class MeasurementFeature(RuntimeMeasurementFeature):
         """Feature families emitted by MeasureObjectIntensityDistribution."""
@@ -246,7 +252,6 @@ from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
 from openhcs.core.runtime_semantics import (
     MeasurementObjectRowIdentity,
-    MeasurementRowAxisField,
     MeasurementRowValueField,
     dense_object_label_declared_or_extent_id_domain,
 )

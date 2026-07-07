@@ -344,38 +344,6 @@ class DefineGridManualModule(
     settings_source = staticmethod(define_grid_bound_kwargs)
     invocation_options_source = staticmethod(define_grid_invocation_options)
 
-    @classmethod
-    def generated_invocation_options_literal(
-        cls,
-        options: RuntimeInvocationOptions | None,
-        *,
-        import_collector: "GeneratedImportCollector",
-    ) -> str | None:
-        if options is None:
-            return None
-        if not isinstance(options, DefineGridInvocationOptions):
-            return super().generated_invocation_options_literal(
-                options, import_collector=import_collector
-            )
-        scope = options.cycle_scope
-        if not isinstance(scope, DefineGridCycleScope):
-            raise TypeError(
-                "DefineGridInvocationOptions.cycle_scope must be DefineGridCycleScope."
-            )
-        import_collector.update(
-            {
-                (
-                    "openhcs.processing.backends.cellprofiler.grid",
-                    "DefineGridCycleScope",
-                ),
-                (
-                    "openhcs.processing.backends.cellprofiler.grid",
-                    "DefineGridInvocationOptions",
-                ),
-            }
-        )
-        return f"DefineGridInvocationOptions(cycle_scope=DefineGridCycleScope.{scope.name})"
-
     class DefinitionMethod(str, Enum):
         manual = "Manual"
         automatic = "Automatic"

@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 from enum import Enum
-from openhcs.core.artifacts import ImageArtifactType
+from openhcs.core.artifacts import (
+    ArtifactSpecRef,
+    ArtifactSpecRelation,
+    GroupLineageSourceRelation,
+    ImageArtifactType,
+)
 from openhcs.interop.cellprofiler.runtime.payload_types import CellProfilerKwargDict
 from openhcs.interop.cellprofiler.runtime.special_input_policies import (
     SpecialInputBindingRequest,
@@ -21,6 +26,7 @@ from openhcs.interop.cellprofiler.module_declarations import (
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
+    ImageArtifactOutputCapability,
     ImageArtifactInputModule,
     ImageArtifactOutputModule,
     ModuleSettingsSourceModule,
@@ -166,6 +172,45 @@ class ImageMathModule(
             "Ignore the image masks?", "ignore_masks", parse_cellprofiler_bool
         ),
     )
+
+    @classmethod
+    def declared_output_artifact_relations(
+        cls,
+        builder,
+        module,
+        *,
+        setting,
+        capability_type,
+        name,
+    ) -> tuple[ArtifactSpecRelation, ...]:
+        relations = super().declared_output_artifact_relations(
+            builder,
+            module,
+            setting=setting,
+            capability_type=capability_type,
+            name=name,
+        )
+        if capability_type is not ImageArtifactOutputCapability:
+            return relations
+        source_names = cls.active_image_operand_names(module)
+        if len(source_names) != 1:
+            return relations
+        return (
+            *relations,
+            GroupLineageSourceRelation(
+                source=ArtifactSpecRef.input(source_names[0], ImageArtifactType)
+            ),
+        )
+
+    @classmethod
+    def active_image_operand_names(cls, module) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                name
+                for setting in cls.image_operand_settings
+                for name in cls.artifact_input_names_from_setting(module, setting)
+            )
+        )
 
     @classmethod
     def source_binding_participates_in_image_stack(

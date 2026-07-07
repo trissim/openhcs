@@ -94,7 +94,9 @@ from openhcs.core.runtime_artifact_queries import (
     runtime_spatial_grid,
 )
 from openhcs.core.runtime_adapters import RuntimeExecutionAxisScope
-from openhcs.core.measurement_feature_queries import MeasurementTableObjectFeatureSemantics
+from openhcs.core.measurement_feature_queries import (
+    MeasurementTableObjectFeatureSemantics,
+)
 from openhcs.core.runtime_semantics import (
     ObjectLabelDomain,
     ObjectLabelDomainScope,
@@ -117,6 +119,7 @@ from openhcs.core.runtime_values import (
     ObjectLabelPure2DSliceAggregator,
     ObjectLabelRepresentation,
     ObjectLabelSet,
+    ObjectLabelSetReplacementStrategy,
     ObjectLabelValue,
     ObjectLabelValueConstructionContext,
     ObjectRelationship,
@@ -252,6 +255,7 @@ logger = logging.getLogger(__name__)
 AdapterObjectLabelInput = ObjectLabelValue | ObjectLabelData
 RelationshipIdVector = np.ndarray | Sequence[int]
 
+
 @dataclass(frozen=True, slots=True)
 class SourceIdentitySetCardinality:
     """Closed cardinality authority for current source identity sets."""
@@ -261,6 +265,7 @@ class SourceIdentitySetCardinality:
     @property
     def has_single_identity(self) -> bool:
         return len(self.identities) in {1}
+
 
 @dataclass(frozen=True, slots=True)
 class DeclaredOutputResolution:
@@ -272,8 +277,11 @@ class DeclaredOutputResolution:
     def is_declared(self) -> bool:
         return self.plan is not None
 
+
 @dataclass(slots=True)
-class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAxisProjector):
+class CellProfilerRuntimeAdapter(
+    RuntimeSourceIdentityAdapterABC, RuntimePlaneAxisProjector
+):
     """CellProfiler-like API backed by typed OpenHCS runtime state.
 
     The adapter deliberately has no object/image/measurement dictionaries of its
@@ -376,6 +384,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         repr=False,
         compare=False,
     )
+
     def __post_init__(self) -> None:
         if not isinstance(self.runtime_value_store, RuntimeValueStore):
             raise TypeError(
@@ -624,9 +633,9 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         image_number: int,
     ) -> str | None:
         """Return a representative source path for one CellProfiler ImageNumber."""
-        return CellProfilerImageNumberResolver.for_adapter(self).source_path_for_image_number(
-            image_number
-        )
+        return CellProfilerImageNumberResolver.for_adapter(
+            self
+        ).source_path_for_image_number(image_number)
 
     def cellprofiler_source_paths_for_image_name(
         self,
@@ -788,10 +797,9 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         payload: ImagePayloadValue,
         *,
         current_image: ImagePayloadValue | None,
-        projection_capabilities: frozenset[
-            type[CellProfilerRuntimePlaneProjectionCapability]
-        ]
-        | None = None,
+        projection_capabilities: (
+            frozenset[type[CellProfilerRuntimePlaneProjectionCapability]] | None
+        ) = None,
     ) -> ImagePayloadValue:
         """Return image payload data projected to this invocation's runtime plane."""
         capabilities = (
@@ -943,9 +951,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         kind: ArtifactType | None = None,
     ) -> bool:
         binding = self.source_binding_plan.binding_for_alias(alias)
-        return binding is not None and (
-            kind is None or binding.artifact_kind is kind
-        )
+        return binding is not None and (kind is None or binding.artifact_kind is kind)
 
     def _require_source_binding(
         self,
@@ -1023,14 +1029,16 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         data = self.image_payload_for_current_runtime_plane(
             data,
             current_image=current_image,
-            projection_capabilities=frozenset(
-                (
-                    RuntimeArtifactImageInputProjectionCapability,
-                    CurrentSourceImagePayloadProjectionCapability,
+            projection_capabilities=(
+                frozenset(
+                    (
+                        RuntimeArtifactImageInputProjectionCapability,
+                        CurrentSourceImagePayloadProjectionCapability,
+                    )
                 )
-            )
-            if current_image is not None
-            else None,
+                if current_image is not None
+                else None
+            ),
         )
         schema = record.value.schema
         image = NamedImage(
@@ -1061,6 +1069,32 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
     ) -> StoredRuntimeValue:
         construct_started_at = time.perf_counter()
         if isinstance(labels, ObjectLabelValue):
+            replacement_strategy = ObjectLabelSetReplacementStrategy.for_enum_member(
+                labels.representation
+            )
+
+            def replacement_variant(label_variant: object | None) -> object | None:
+                if label_variant is None:
+                    return None
+                normalized_variant = (
+                    RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
+                        label_variant
+                    )
+                )
+                try:
+                    return replacement_strategy.replacement_labels(normalized_variant)
+                except Exception as exc:
+                    normalized_array = np.asarray(normalized_variant)
+                    raise ValueError(
+                        "Object-label representation conversion failed while storing "
+                        f"{name!r}: source_value={type(labels).__name__}, "
+                        f"source_representation={labels.representation.value!r}, "
+                        f"variant={type(label_variant).__name__}, "
+                        f"normalized_variant={type(normalized_variant).__name__}, "
+                        f"normalized_shape={normalized_array.shape!r}, "
+                        f"normalized_dtype={normalized_array.dtype!r}."
+                    ) from exc
+
             provenance_source_names = labels.source_image_names
             if not provenance_source_names:
                 provenance_source_names = source_image_names
@@ -1073,18 +1107,10 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
             resolved_dimensions = dimensions
             if not resolved_dimensions:
                 resolved_dimensions = labels.dimensions
-            normalized_labels = RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
-                labels.labels
-            )
-            normalized_unedited_labels = (
-                RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
-                    labels.unedited_labels
-                )
-            )
-            normalized_small_removed_labels = (
-                RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
-                    labels.small_removed_labels
-                )
+            normalized_labels = replacement_variant(labels.labels)
+            normalized_unedited_labels = replacement_variant(labels.unedited_labels)
+            normalized_small_removed_labels = replacement_variant(
+                labels.small_removed_labels
             )
             object_labels = ObjectLabelValueConstructionContext.from_value(
                 labels,
@@ -1163,7 +1189,9 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
                 representation=representation,
             )
         if source_image_payload is not None:
-            object_labels = object_labels.with_source_image_context(source_image_payload)
+            object_labels = object_labels.with_source_image_context(
+                source_image_payload
+            )
             SourceAlignedObjectLabelProvenanceRequest(
                 image=source_image_payload,
                 labels=object_labels,
@@ -1198,8 +1226,8 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         ),
     ) -> StoredRuntimeValue:
         construct_started_at = time.perf_counter()
-        normalized_labels = RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
-            labels
+        normalized_labels = (
+            RuntimeRecordStackAuthority.normalize_dense_object_label_payload(labels)
         )
         build_request = SourceImageObjectLabelBuildRequest(
             image=source_image_payload,
@@ -1299,12 +1327,17 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
 
     def get_objects_across_groups(self, name: str) -> ObjectLabelSet:
         """Return object labels stacked across all producer groups for this axis."""
-        records = RuntimeGroupMatchScope(
-            group_key=None,
-            match_group=False,
-        ).runtime_scope(self).artifact_query_context().find(
-            name=name,
-            artifact_type=ObjectLabelsArtifactType,
+        records = (
+            RuntimeGroupMatchScope(
+                group_key=None,
+                match_group=False,
+            )
+            .runtime_scope(self)
+            .artifact_query_context()
+            .find(
+                name=name,
+                artifact_type=ObjectLabelsArtifactType,
+            )
         )
         if not records:
             raise RuntimeError(
@@ -1328,11 +1361,13 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         input_plan = self.artifact_inputs.get(name)
         if input_plan is None or input_plan.artifact_type is not artifact_type:
             return requested_group_key
-        selected = RuntimeGroupMatchScope(group_key=None).runtime_scope(
-            self
-        ).artifact_group_key(
-            input_plan,
-            requested_group_key=requested_group_key,
+        selected = (
+            RuntimeGroupMatchScope(group_key=None)
+            .runtime_scope(self)
+            .artifact_group_key(
+                input_plan,
+                requested_group_key=requested_group_key,
+            )
         )
         if selected is not None or current_image is None:
             return selected
@@ -1349,10 +1384,10 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         )
         step_input_files = self.source_binding_context.step_input_files
         if current_source_cardinality.has_single_identity and step_input_files:
-            for candidate in self.source_candidates(
-                step_input_files
-            ):
-                if not self.current_image_matches_source_candidate(current_image, candidate):
+            for candidate in self.source_candidates(step_input_files):
+                if not self.current_image_matches_source_candidate(
+                    current_image, candidate
+                ):
                     continue
                 for value in candidate.metadata.values():
                     normalized = str(value)
@@ -1422,6 +1457,8 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         source_paths = metadata.source_image_paths
         if not source_paths:
             return None
+        if not self.can_resolve_source_candidates:
+            return None
         candidates = self.source_candidates(source_paths)
         if not candidates:
             return None
@@ -1453,12 +1490,21 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         group_component: AllComponents | None,
     ) -> str | None:
         """Return a group key carried by source-component payload metadata."""
-        if group_component is None:
-            return None
         metadata_values = (
-            (metadata.source_component_metadata,)
-            + metadata.source_image_provenance_planes.component_metadata
-        )
+            metadata.source_component_metadata,
+        ) + metadata.source_image_provenance_planes.component_metadata
+        if group_component is None:
+            return CellProfilerRuntimeAdapter.runtime_group_key_from_values(
+                group_keys,
+                (
+                    value
+                    for source_metadata in metadata_values
+                    if source_metadata is not None
+                    for _field_name, value in SourceMetadataRoleView(
+                        source_metadata
+                    ).original_items()
+                ),
+            )
         original_group_key = CellProfilerRuntimeAdapter.runtime_group_key_from_values(
             group_keys,
             (
@@ -1640,7 +1686,9 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         ).resolve()
         return MeasurementTableUnion(
             name,
-            tuple(MeasurementTable.from_runtime_value(record.value) for record in records),
+            tuple(
+                MeasurementTable.from_runtime_value(record.value) for record in records
+            ),
         ).as_table()
 
     def apply_measurement_table_cache_mutation(
@@ -1649,9 +1697,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
     ) -> None:
         """Apply registered cache policies for one measurement-table write."""
         semantics_started_at = time.perf_counter()
-        table_semantics = (
-            MeasurementTableObjectFeatureSemantics.from_table(table)
-        )
+        table_semantics = MeasurementTableObjectFeatureSemantics.from_table(table)
         AdapterProfileLog.measurement_cache(
             "adapter_measurement_table_semantics",
             time.perf_counter() - semantics_started_at,
@@ -1709,13 +1755,10 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
             current_image,
         ).select_runtime_scope(records)
         tables = tuple(
-            MeasurementTable.from_runtime_value(record.value)
-            for record in records
+            MeasurementTable.from_runtime_value(record.value) for record in records
         )
         if not records:
-            tables = runtime_measurement_tables(
-                query_context
-            )
+            tables = runtime_measurement_tables(query_context)
         self._measurement_cache[cache_key] = tables
         return tables
 
@@ -1811,9 +1854,11 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
         ).resolve()
         if len(records) == 1:
             return ObjectRelationship.from_runtime_value(records[0].value)
-        query_context = RuntimeGroupMatchScope(
-            group_key=group_key
-        ).runtime_scope(self).artifact_query_context()
+        query_context = (
+            RuntimeGroupMatchScope(group_key=group_key)
+            .runtime_scope(self)
+            .artifact_query_context()
+        )
         return runtime_relationship(
             query_context,
             name=name,
@@ -1844,8 +1889,7 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
             current_image=None,
         ).resolve()
         grids = tuple(
-            SpatialGridValueAuthority.record_value(name, record)
-            for record in records
+            SpatialGridValueAuthority.record_value(name, record) for record in records
         )
         return SpatialGridValueAuthority.single_spatial_grid(name, grids)
 
@@ -1894,11 +1938,13 @@ class CellProfilerRuntimeAdapter(RuntimeSourceIdentityAdapterABC, RuntimePlaneAx
                 else native_value
             )
             normalize_started_at = time.perf_counter()
-            runtime_value = RuntimeGroupMatchScope(group_key=None).runtime_scope(
-                self
-            ).normalize_artifact_value(
-                plan,
-                group_native_value,
+            runtime_value = (
+                RuntimeGroupMatchScope(group_key=None)
+                .runtime_scope(self)
+                .normalize_artifact_value(
+                    plan,
+                    group_native_value,
+                )
             )
             profile.normalized_value(
                 time.perf_counter() - normalize_started_at,

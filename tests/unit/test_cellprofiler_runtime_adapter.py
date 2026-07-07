@@ -127,9 +127,11 @@ from openhcs.core.runtime_values import (
     MeasurementTable,
     ObjectRelationship,
     ObjectLabelPayload,
+    ObjectLabelRepresentation,
     ObjectLabelSet,
     ColumnarRows,
     RuntimeArrayPayload,
+    SparseIJVLabelRows,
     SpatialGrid,
     image_payload_data,
     image_payload_metadata,
@@ -142,6 +144,9 @@ from openhcs.core.runtime_values import (
 from openhcs.constants.constants import AllComponents, Backend
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.backends.cellprofiler.measurement_math import (
+    CalculateMathInvocationOptions,
+)
 
 AXIS_ID = "A01"
 DNA_IMAGE = "DNA"
@@ -537,9 +542,7 @@ def test_image_number_resolver_source_path_lookup_ignores_current_axis_scope():
     )
     adapter = _image_number_resolver_adapter(
         candidates,
-        SourceAxisMetadataScope.from_component_values(
-            (("well", "A01"), ("site", "1"))
-        ),
+        SourceAxisMetadataScope.from_component_values((("well", "A01"), ("site", "1"))),
     )
 
     resolver = CellProfilerImageNumberResolver.for_adapter(adapter)
@@ -1264,6 +1267,35 @@ def test_cellprofiler_adapter_contextualizes_source_aligned_object_label_stack()
     )
 
 
+def test_cellprofiler_adapter_preserves_sparse_ijv_object_value_representation():
+    adapter, filemanager = _adapter({NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)})
+    sparse_rows = SparseIJVLabelRows(
+        np.array(
+            [
+                [0, 1, 2],
+                [1, 0, 3],
+            ],
+            dtype=np.int32,
+        )
+    )
+    labels = ObjectLabelPayload(
+        labels=sparse_rows,
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+    )
+
+    record = adapter.add_objects(NUCLEI, labels)
+
+    assert (
+        record.value.schema.label_representation is ObjectLabelRepresentation.SPARSE_IJV
+    )
+    assert record.value.data is sparse_rows
+    objects = adapter.get_objects(NUCLEI)
+    assert objects.representation is ObjectLabelRepresentation.SPARSE_IJV
+    assert objects.labels is sparse_rows
+    saved_payload = filemanager.saved[("memory", "/memory/Nuclei.pkl")]
+    assert saved_payload is sparse_rows
+
+
 def test_cellprofiler_adapter_rejects_unaddressable_source_aligned_label_stack():
     adapter, _filemanager = _adapter({NUCLEI: _plan(NUCLEI, ObjectLabelsArtifactType)})
     source_image = RuntimeImagePayloadContext(
@@ -1492,9 +1524,7 @@ def test_cellprofiler_adapter_source_paths_for_source_bound_image_alias():
         source_metadata_by_path={source_path: {"well": AXIS_ID, "channel": "1"}},
     )
 
-    assert adapter.cellprofiler_source_paths_for_image_name(DNA_IMAGE) == (
-        source_path,
-    )
+    assert adapter.cellprofiler_source_paths_for_image_name(DNA_IMAGE) == (source_path,)
 
 
 def test_cellprofiler_adapter_stacks_declared_default_image_input_runtime_groups():
@@ -6567,7 +6597,7 @@ def test_cellprofiler_module_executor_measures_each_declared_image_for_single_ob
     )
     measurements = adapter.get_measurements(MEASUREMENTS)
 
-    np.testing.assert_array_equal(result, np.stack((dna, ph3)))
+    assert isinstance(result, NoMainFlowOutput)
     assert seen == [(3.0, 1), (9.0, 1)]
     assert _measurement_rows_for_assertion(measurements) == [
         {
@@ -6888,7 +6918,10 @@ def test_adapter_batch_child_count_lookup_uses_parent_row_domain():
                 feature_name="Children_PH3_Count",
                 group_key=None,
                 labels=labels,
-                request=SimpleNamespace(adapter=adapter),
+            request=SimpleNamespace(
+                adapter=adapter,
+                declared_measurement_tables=lambda: (),
+            ),
             ),
         )
     ).vectors()
@@ -7617,17 +7650,19 @@ def test_calculate_math_records_object_indexed_measurements():
         get_function(CALCULATE_MATH),
         np.zeros((2, 2), dtype=np.float32),
         cellprofiler_runtime=adapter,
-        output_name="Ratio",
         operation="Divide",
         operand1_feature="Intensity_MeanIntensity_CropBlue",
         operand2_feature="AreaShape_Area",
-        operand1_object_name=NUCLEI,
-        operand2_object_name=NUCLEI,
+        invocation_options=CalculateMathInvocationOptions(
+            output_name="Ratio",
+            operand1_object_name=NUCLEI,
+            operand2_object_name=NUCLEI,
+        ),
         dtype_config=DtypeConfig(),
     )
     measurements = adapter.get_measurements(MEASUREMENTS)
 
-    assert isinstance(result, NoMainFlowOutput)
+    np.testing.assert_array_equal(result, np.zeros((2, 2), dtype=np.float32))
     assert measurements.object_name == NUCLEI
     assert [row["object_name"] for row in measurements.rows] == [NUCLEI, NUCLEI]
     assert [row["object_label"] for row in measurements.rows] == [1, 2]
@@ -7706,12 +7741,14 @@ def test_calculate_math_pads_missing_same_object_operand_values():
         get_function(CALCULATE_MATH),
         np.zeros((2, 2), dtype=np.float32),
         cellprofiler_runtime=adapter,
-        output_name="Ratio",
         operation="Divide",
         operand1_feature="Intensity_MeanIntensity_CropBlue",
         operand2_feature="AreaShape_Area",
-        operand1_object_name=NUCLEI,
-        operand2_object_name=NUCLEI,
+        invocation_options=CalculateMathInvocationOptions(
+            output_name="Ratio",
+            operand1_object_name=NUCLEI,
+            operand2_object_name=NUCLEI,
+        ),
         dtype_config=DtypeConfig(),
     )
 
@@ -7756,12 +7793,12 @@ def test_calculate_math_resolves_image_scoped_measurements_via_core_query():
         get_function(CALCULATE_MATH),
         np.zeros((2, 2), dtype=np.float32),
         cellprofiler_runtime=adapter,
-        output_name="Stain1Colocalized",
         operation="Divide",
         operand1_feature="AreaOccupied_AreaOccupied_ColocalizedRegion",
         operand2_feature="AreaOccupied_AreaOccupied_Objects1",
-        operand1_object_name=None,
-        operand2_object_name=None,
+        invocation_options=CalculateMathInvocationOptions(
+            output_name="Stain1Colocalized",
+        ),
         dtype_config=DtypeConfig(),
     )
     measurements = adapter.get_measurements(MEASUREMENTS)
@@ -7817,12 +7854,12 @@ def test_calculate_math_aligns_image_scoped_measurements_by_slice():
         get_function(CALCULATE_MATH),
         np.zeros((2, 2, 2), dtype=np.float32),
         cellprofiler_runtime=adapter,
-        output_name="Stain1Colocalized",
         operation="Divide",
         operand1_feature="AreaOccupied_AreaOccupied_ColocalizedRegion",
         operand2_feature="AreaOccupied_AreaOccupied_Objects1",
-        operand1_object_name=None,
-        operand2_object_name=None,
+        invocation_options=CalculateMathInvocationOptions(
+            output_name="Stain1Colocalized",
+        ),
         dtype_config=DtypeConfig(),
     )
     measurements = adapter.get_measurements(MEASUREMENTS)
@@ -8327,7 +8364,7 @@ def test_cellprofiler_module_executor_measures_each_declared_image_and_object():
     )
     measurements = adapter.get_measurements(MEASUREMENTS)
 
-    np.testing.assert_array_equal(result, np.stack((dna, ph3)))
+    assert isinstance(result, NoMainFlowOutput)
     assert seen == [(3.0, 1), (3.0, 2), (9.0, 1), (9.0, 2)]
     assert _measurement_rows_for_assertion(measurements) == [
         {
@@ -8338,17 +8375,17 @@ def test_cellprofiler_module_executor_measures_each_declared_image_and_object():
             "slice_index": 0,
         },
         {
-            "mean": 3.0,
-            "label": 2,
-            "object_name": CELLS,
-            "source_image_name": DNA_IMAGE,
-            "slice_index": 0,
-        },
-        {
             "mean": 9.0,
             "label": 1,
             "object_name": NUCLEI,
             "source_image_name": "PH3",
+            "slice_index": 0,
+        },
+        {
+            "mean": 3.0,
+            "label": 2,
+            "object_name": CELLS,
+            "source_image_name": DNA_IMAGE,
             "slice_index": 0,
         },
         {

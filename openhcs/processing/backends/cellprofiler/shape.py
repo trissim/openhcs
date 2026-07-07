@@ -5,10 +5,7 @@ from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     parse_cellprofiler_bool,
 )
-from openhcs.core.runtime_semantics import (
-    MeasurementObjectRowIdentity,
-    RuntimeMeasurementFeature,
-)
+from openhcs.core.runtime_semantics import RuntimeMeasurementFeature
 from openhcs.core.runtime_equivalence import (
     AngularShapeDescriptorFeatureSemantics,
     ShapeDescriptorFeatureContext,
@@ -67,17 +64,6 @@ class MeasureObjectSizeShapeObjectMeasurementRowPolicy(
     FeatureAnchoredCompactObjectMeasurementRowPolicy,
 ):
     """Object shape rows are object-qualified, not image-source-qualified."""
-
-    def object_identity_for_rows(
-        self,
-        rows: "CellProfilerRuntimeValueSequence",
-        *,
-        label_payload: "CellProfilerRuntimeValue",
-    ) -> MeasurementObjectRowIdentity:
-        """ShapeObjectMeasurementRows carry concrete object label IDs."""
-        if isinstance(rows, ShapeObjectMeasurementRows):
-            return MeasurementObjectRowIdentity.LABEL_ID
-        return super().object_identity_for_rows(rows, label_payload=label_payload)
 
     def retains_unmeasured_compact_row(
         self,
@@ -436,19 +422,6 @@ class MeasureObjectSizeShapeModule(
             )
         )
 
-    @classmethod
-    def row_ordinal_feature_names(cls) -> tuple[str, ...]:
-        """Return AreaShape fields emitted in CellProfiler row order."""
-        axis_fields = {
-            MeasurementRowAxisField.SLICE_INDEX.value,
-            MeasurementRowAxisField.OBJECT_LABEL.value,
-        }
-        return tuple(
-            field_name
-            for field_name in cls.measurement_all_field_names(calculate_zernikes=False)
-            if field_name not in axis_fields
-        )
-
     zernike_backend_provider = CellProfilerBackendProvider.LEGACY_FAST
     regionprops_backend_provider = AnalysisBackendProvider.NUMBA
     setting_bindings = (
@@ -505,7 +478,6 @@ from openhcs.core.runtime_semantics import (
     MeasurementRowAxisField,
     ObjectLabelDomainScope,
     ObjectLabelRepresentation,
-    ObjectFeatureArrayDomain,
     ObjectFeatureMissingValue,
     ObjectFeatureValueTable,
     dense_object_label_id_domain,
@@ -564,10 +536,11 @@ class ShapeObjectFeatureValueTable(ObjectFeatureValueTable):
     """Object shape feature rows with CellProfiler-compatible missing values."""
 
     table_label = "shape"
-    feature_array_domains = {
-        feature_name: ObjectFeatureArrayDomain.ROW_ORDINAL
-        for feature_name in MeasureObjectSizeShapeModule.row_ordinal_feature_names()
-    }
+    feature_array_domains = (
+        ShapeZernikeFeatureAuthority.shape_zernike_feature_array_domains(
+            max_order=MeasureObjectSizeShapeModule.zernike_max_order,
+        )
+    )
     feature_missing_values = {
         feature.value: ObjectFeatureMissingValue.ZERO
         for feature in (

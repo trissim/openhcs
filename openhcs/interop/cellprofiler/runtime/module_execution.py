@@ -1240,6 +1240,7 @@ class StandardImageExecutionPath(CellProfilerModuleExecutionPath):
             request.func,
             invocation.image,
             invocation.kwargs,
+            invocation_options=request.invocation_options,
             execution_mode=invocation.execution_mode,
             output_aggregation_contract=request.plan.function_output_aggregation_contract(),
             runtime_slice_sequence_parameter_names=request.plan.runtime_slice_sequence_parameter_names,
@@ -1270,7 +1271,21 @@ class StandardImageExecutionPath(CellProfilerModuleExecutionPath):
             profile.checkpoint("cp_replace_main_flow_check")
             profile.total()
             if not request.plan.publishes_side_effect_main_flow:
-                return NoMainFlowOutput()
+                measurement_images = ()
+                if request.plan.primary_image_inputs:
+                    measurement_images = (
+                        CellProfilerMeasurementImageResolver(
+                            request.executor
+                        ).composed_measurement_image(
+                            image_request,
+                            request.plan.primary_image_inputs,
+                        ),
+                    )
+                return request.executor._measurement_only_main_flow_output(
+                    input_image=request.current_image,
+                    plan=request.plan,
+                    measurement_images=measurement_images,
+                )
             return CELLPROFILER_SIDE_EFFECT_MAIN_FLOW.output_image(
                 current_image=request.current_image,
                 image_request=image_request,
@@ -1473,6 +1488,7 @@ class CellProfilerModuleExecutor:
             cellprofiler_runtime,
             kwargs,
             measurement_target_scope,
+            request.invocation_options,
         )
         if profile_enabled:
             profile_events.append(
@@ -1640,7 +1656,11 @@ class CellProfilerModuleExecutor:
             )
             profiler.record_events(tuple(profile_events))
         if plan.records_measurements_without_image_outputs:
-            return NoMainFlowOutput()
+            return self._measurement_only_main_flow_output(
+                input_image=input_image,
+                plan=plan,
+                measurement_images=measurement_images,
+            )
         return CELLPROFILER_MEASUREMENT_MAIN_FLOW.output_image(
             input_image=input_image,
             measurement_images=measurement_images,
@@ -1657,6 +1677,7 @@ class CellProfilerModuleExecutor:
         cellprofiler_runtime: CellProfilerRuntimeAdapter,
         kwargs: CellProfilerKwargs,
         target_scope: MeasurementScopeSelection,
+        invocation_options: RuntimeInvocationOptions | None,
     ) -> list[CellProfilerRuntimeValue]:
         function_name = plan.function_name
         profiler = CellProfilerRuntimeProfiler(self.module_name, function_name)
@@ -1687,6 +1708,7 @@ class CellProfilerModuleExecutor:
                 image_func,
                 _image_scope_measurement_payload(measurement_image.payload),
                 image_kwargs,
+                invocation_options=invocation_options,
                 execution_mode=measurement_image.execution_mode,
                 output_aggregation_contract=plan.function_output_aggregation_contract(),
                 runtime_slice_sequence_parameter_names=plan.runtime_slice_sequence_parameter_names,
@@ -1770,7 +1792,11 @@ class CellProfilerModuleExecutor:
         runtime_kwargs = {
             **kwargs,
             **self._runtime_input_kwargs(
-                plan, cellprofiler_runtime, current_image, kwargs
+                plan,
+                cellprofiler_runtime,
+                current_image,
+                kwargs,
+                invocation_options=request.invocation_options,
             ),
         }
         coerced_kwargs = plan.kwarg_spec.coerce_kwargs(runtime_kwargs)
@@ -1787,6 +1813,7 @@ class CellProfilerModuleExecutor:
                 func,
                 _image_scope_measurement_payload(measurement_image.payload),
                 coerced_kwargs,
+                invocation_options=request.invocation_options,
                 execution_mode=measurement_image.execution_mode,
                 output_aggregation_contract=plan.function_output_aggregation_contract(),
                 runtime_slice_sequence_parameter_names=plan.runtime_slice_sequence_parameter_names,
@@ -1873,7 +1900,11 @@ class CellProfilerModuleExecutor:
             time.perf_counter() - record_started_at, len(combined_rows)
         )
         if plan.records_measurements_without_image_outputs:
-            return NoMainFlowOutput()
+            return self._measurement_only_main_flow_output(
+                input_image=input_image,
+                plan=plan,
+                measurement_images=measurement_images,
+            )
         return CELLPROFILER_MEASUREMENT_MAIN_FLOW.output_image(
             input_image=input_image,
             measurement_images=measurement_images,
@@ -1881,6 +1912,28 @@ class CellProfilerModuleExecutor:
             parser=cellprofiler_runtime.filename_parser,
             identity_cache=cellprofiler_runtime.output_identity_cache,
         )
+
+    @staticmethod
+    def _measurement_only_main_flow_output(
+        *,
+        input_image: CellProfilerRuntimeValue,
+        plan: CellProfilerModuleRuntimePlan,
+        measurement_images: tuple["CellProfilerMeasurementImage", ...] = (),
+    ) -> CellProfilerRuntimeValue:
+        """Return main flow for measurement-only modules without image outputs."""
+        source_measurement_images = CELLPROFILER_MEASUREMENT_MAIN_FLOW.source_domain_images(
+            measurement_images
+        )
+        if len(source_measurement_images) == 1:
+            return source_measurement_images[0].payload
+        if not plan.primary_image_inputs:
+            return input_image
+        if all(
+            spec.name in plan.runtime_image_name_set
+            for spec in plan.primary_image_inputs
+        ):
+            return input_image
+        return NoMainFlowOutput()
 
     def pop_measurement_target_scope(
         self, kwargs: CellProfilerKwargDict, default_scope: MeasurementScopeSelection
@@ -1904,6 +1957,7 @@ class CellProfilerModuleExecutor:
         current_image: CellProfilerRuntimeValue,
         kwargs: CellProfilerKwargs,
         *,
+        invocation_options: RuntimeInvocationOptions | None = None,
         primary_image: CellProfilerRuntimeValue | None = None,
         project_object_labels_to_current_plane: bool = True,
     ) -> CellProfilerKwargDict:
@@ -1917,11 +1971,14 @@ class CellProfilerModuleExecutor:
                         module_name=self.module_name,
                         func=plan.func,
                         object_inputs=(),
+                        primary_image_inputs=plan.primary_image_inputs,
+                        output_specs=plan.declared_output_specs,
                         adapter=adapter,
                         kwargs=kwargs,
                         current_image=current_image,
                         binding_scope=binding_scope,
                         runtime_inputs=runtime_inputs,
+                        invocation_options=invocation_options,
                         project_object_labels_to_current_plane=project_object_labels_to_current_plane,
                     )
                 )
@@ -1964,11 +2021,14 @@ class CellProfilerModuleExecutor:
                 module_name=self.module_name,
                 func=plan.func,
                 object_inputs=plan.object_inputs,
+                primary_image_inputs=plan.primary_image_inputs,
+                output_specs=plan.declared_output_specs,
                 adapter=adapter,
                 kwargs=kwargs,
                 current_image=current_image,
                 binding_scope=binding_scope,
                 runtime_inputs=runtime_inputs,
+                invocation_options=invocation_options,
                 project_object_labels_to_current_plane=project_object_labels_to_current_plane,
             )
         )
@@ -2169,6 +2229,7 @@ class CellProfilerModuleExecutor:
             adapter,
             current_image,
             kwargs,
+            invocation_options=invocation_options,
             primary_image=image_request.payload,
             project_object_labels_to_current_plane=projects_runtime_slice_kwargs,
         )

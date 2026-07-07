@@ -32,6 +32,7 @@ from openhcs.core.measurement_feature_queries import (
 )
 from openhcs.core.measurement_row_materialization import measurement_rows
 from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
+from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from openhcs.core.runtime_semantics import (
     MeasurementRowAxisField,
     ObjectLabelMeasurementValues,
@@ -105,7 +106,10 @@ class ObjectInputBindingRequest(RuntimeInputBindingRequestBase):
     registry_key = "object_input"
 
     object_inputs: tuple[ArtifactSpec, ...]
+    primary_image_inputs: tuple[ArtifactSpec, ...] = ()
+    output_specs: tuple[ArtifactSpec, ...] = ()
     runtime_inputs: tuple[ArtifactSpec, ...] = ()
+    invocation_options: RuntimeInvocationOptions | None = None
 
     def with_object_inputs(
         self,
@@ -115,11 +119,14 @@ class ObjectInputBindingRequest(RuntimeInputBindingRequestBase):
             module_name=self.module_name,
             func=self.func,
             object_inputs=object_inputs,
+            primary_image_inputs=self.primary_image_inputs,
+            output_specs=self.output_specs,
             adapter=self.adapter,
             kwargs=self.kwargs,
             current_image=self.current_image,
             binding_scope=self.binding_scope,
             runtime_inputs=self.runtime_inputs,
+            invocation_options=self.invocation_options,
             project_object_labels_to_current_plane=(
                 self.project_object_labels_to_current_plane
             ),

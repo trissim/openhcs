@@ -5,7 +5,16 @@ from enum import Enum
 from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
     CellProfilerObjectInputCountAuthority,
 )
-from openhcs.interop.cellprofiler.runtime.payload_types import CellProfilerKwargDict
+from openhcs.interop.cellprofiler.runtime.output_contexts import (
+    CellProfilerImageOutputSourcePayloadPolicyMixin,
+)
+from openhcs.interop.cellprofiler.runtime.output_record_request import (
+    CellProfilerOutputRecordRequest,
+)
+from openhcs.interop.cellprofiler.runtime.payload_types import (
+    CellProfilerKwargDict,
+    CellProfilerRuntimeValue,
+)
 from openhcs.interop.cellprofiler.runtime.special_input_policies import (
     NoSpecialImageInputsMixin,
     SpecialInputBindingRequest,
@@ -58,7 +67,19 @@ class ConvertObjectsToImageSpecialInputPolicy(NoSpecialImageInputsMixin):
         return {"labels": request.object_label_payload(object_inputs[0])}
 
 
+class ConvertObjectsToImageOutputSourcePayloadPolicy(
+    CellProfilerImageOutputSourcePayloadPolicyMixin
+):
+    """Use the input object-label payload as provenance for rendered images."""
+
+    def source_payload(
+        self, request: CellProfilerOutputRecordRequest
+    ) -> CellProfilerRuntimeValue | None:
+        return request.input_object_label_output_source_payload()
+
+
 class ConvertObjectsToImageModule(
+    ConvertObjectsToImageOutputSourcePayloadPolicy,
     ConvertObjectsToImageSpecialInputPolicy,
     ObjectArtifactInputModule,
     ImageArtifactOutputModule,

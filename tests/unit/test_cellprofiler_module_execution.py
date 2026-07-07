@@ -160,10 +160,18 @@ from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
 )
 from openhcs.processing.backends.cellprofiler.measurement_math import (
     CalculateMathInputPolicy,
+    CalculateMathInvocationOptions,
+    MathOperation,
+    calculate_math,
 )
 from openhcs.processing.backends.cellprofiler.morphology import (
     CombineObjectsInputPolicy,
+    erode_image,
     resize_objects_3d,
+)
+from openhcs.processing.backends.cellprofiler.tracking import (
+    TrackObjectsModule,
+    track_objects,
 )
 from openhcs.processing.backends.cellprofiler.watershed import WatershedModule
 from openhcs.interop.cellprofiler.runtime.relationship_endpoints import (
@@ -207,6 +215,8 @@ from openhcs.interop.cellprofiler.runtime.runtime_plane_kwargs import (
 )
 from openhcs.processing.backends.cellprofiler.structuring_elements import (
     StructuringElement,
+    adapt_structuring_element_rank,
+    build_structuring_element,
 )
 from openhcs.processing.backends.cellprofiler.color import (
     color_to_gray as openhcs_color_to_gray,
@@ -290,6 +300,8 @@ from openhcs.core.artifacts import (
     ArtifactOutputPlan,
     ArtifactSidecarRole,
     ArtifactSpec,
+    ArtifactSpecRef,
+    GroupLineageSourceRelation,
     ImageArtifactType,
     ObjectLabelsArtifactType,
     MeasurementsArtifactType,
@@ -371,6 +383,18 @@ EMPTY_RUNTIME_ARTIFACT_BINDING_SCOPE = RuntimeArtifactBindingScope(
     external_object_names=frozenset(),
     runtime_image_names=frozenset(),
 )
+
+
+def _object_output_from_input(output_name: str, input_name: str) -> ArtifactSpec:
+    return ArtifactSpec.output(
+        output_name,
+        ObjectLabelsArtifactType,
+        relations=(
+            GroupLineageSourceRelation(
+                source=ArtifactSpecRef.input(input_name, ObjectLabelsArtifactType)
+            ),
+        ),
+    )
 
 
 def _resolved_output_values(
@@ -740,8 +764,10 @@ def test_special_object_label_input_preserves_runtime_slice_domain() -> None:
 
     bound = request.bind_positional_parameters()
 
-    assert isinstance(bound["guiding_labels"], np.ndarray)
-    np.testing.assert_array_equal(bound["guiding_labels"], labels)
+    assert isinstance(bound["guiding_labels"], RuntimeSliceAlignedValues)
+    assert bound["guiding_labels"].slice_count == 2
+    np.testing.assert_array_equal(bound["guiding_labels"].value_for_slice(0), labels[0])
+    np.testing.assert_array_equal(bound["guiding_labels"].value_for_slice(1), labels[1])
     np.testing.assert_array_equal(
         RuntimeSliceProjection.kwargs_for_slice(
             bound,
@@ -1419,7 +1445,11 @@ def test_object_label_output_source_payload_uses_current_image_when_invocation_i
         current_image=current_image,
     )
 
-    selected = request.runtime_plan.object_label_output_source_context_policy.source_context(request).source_payload
+    selected = (
+        request.runtime_plan.object_label_output_source_context_policy.source_context(
+            request
+        ).source_payload
+    )
 
     assert selected is current_image
 
@@ -1465,7 +1495,11 @@ def test_object_label_output_source_payload_prefers_context_explaining_label_pla
         current_image=current_image,
     )
 
-    selected = request.runtime_plan.object_label_output_source_context_policy.source_context(request).source_payload
+    selected = (
+        request.runtime_plan.object_label_output_source_context_policy.source_context(
+            request
+        ).source_payload
+    )
 
     assert selected is current_image
 
@@ -1548,7 +1582,9 @@ def test_watershed_output_source_policy_uses_declared_image_as_parent() -> None:
     assert source_context.parent_image_payload is image_payload
 
 
-def test_object_label_recorder_suppresses_parent_spacing_when_policy_declares_no_parent_image() -> None:
+def test_object_label_recorder_suppresses_parent_spacing_when_policy_declares_no_parent_image() -> (
+    None
+):
     image_payload = RuntimeImagePayloadContext(
         np.zeros((3, 4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(
@@ -1603,7 +1639,9 @@ def test_object_label_recorder_suppresses_parent_spacing_when_policy_declares_no
     assert kwargs["parent_image_source_voxel_spacing"] == SourceVoxelSpacing()
 
 
-def test_contextual_object_label_recorder_fills_missing_parent_spacing_from_declared_parent_image() -> None:
+def test_contextual_object_label_recorder_fills_missing_parent_spacing_from_declared_parent_image() -> (
+    None
+):
     image_payload = RuntimeImagePayloadContext(
         np.zeros((3, 4, 5), dtype=np.float32),
         metadata=ImagePayloadMetadata(
@@ -1733,7 +1771,12 @@ def test_object_label_output_source_payload_uses_primary_object_input() -> None:
         current_image=None,
     )
 
-    assert request.runtime_plan.object_label_output_source_context_policy.source_context(request).source_payload is primary_payload
+    assert (
+        request.runtime_plan.object_label_output_source_context_policy.source_context(
+            request
+        ).source_payload
+        is primary_payload
+    )
 
 
 def test_relationship_derived_object_label_output_uses_child_object_source_payload() -> (
@@ -1783,7 +1826,12 @@ def test_relationship_derived_object_label_output_uses_child_object_source_paylo
         current_image=None,
     )
 
-    assert request.runtime_plan.object_label_output_source_context_policy.source_context(request).source_payload is child_payload
+    assert (
+        request.runtime_plan.object_label_output_source_context_policy.source_context(
+            request
+        ).source_payload
+        is child_payload
+    )
     assert resolved_calls == [("Nucleoli", None)]
 
 
@@ -1870,7 +1918,12 @@ def test_relateobjects_object_label_source_payload_uses_declared_endpoint_policy
         current_image=None,
     )
 
-    assert request.runtime_plan.object_label_output_source_context_policy.source_context(request).source_payload is declared_child_payload
+    assert (
+        request.runtime_plan.object_label_output_source_context_policy.source_context(
+            request
+        ).source_payload
+        is declared_child_payload
+    )
     assert resolved_objects == [("DeclaredChild", None)]
     assert resolved_relationships == [
         ("RelateObjects", "NameEncodedParent_NameEncodedChild_relationships")
@@ -1918,7 +1971,12 @@ def test_multi_parent_relationship_object_output_uses_declared_primary_input() -
         current_image=None,
     )
 
-    assert request.runtime_plan.object_label_output_source_context_policy.source_context(request).source_payload is cells_payload
+    assert (
+        request.runtime_plan.object_label_output_source_context_policy.source_context(
+            request
+        ).source_payload
+        is cells_payload
+    )
     assert resolved_calls == [("Cells", None)]
 
 
@@ -1955,7 +2013,12 @@ def test_object_label_output_source_payload_resolves_primary_object_for_current_
         current_image=current_image,
     )
 
-    assert request.runtime_plan.object_label_output_source_context_policy.source_context(request).source_payload is primary_payload
+    assert (
+        request.runtime_plan.object_label_output_source_context_policy.source_context(
+            request
+        ).source_payload
+        is primary_payload
+    )
     assert resolved_calls == [("PrimaryObjects", current_image)]
 
 
@@ -1988,7 +2051,12 @@ def test_object_label_output_source_payload_resolves_external_primary_object() -
         current_image=current_image,
     )
 
-    assert request.runtime_plan.object_label_output_source_context_policy.source_context(request).source_payload is primary_payload
+    assert (
+        request.runtime_plan.object_label_output_source_context_policy.source_context(
+            request
+        ).source_payload
+        is primary_payload
+    )
     assert resolved_calls == [("PrimaryObjects", current_image)]
 
 
@@ -2699,7 +2767,11 @@ def test_object_label_output_source_uses_unique_primary_image_input() -> None:
         call_kwargs={},
     )
 
-    source_payload = request.runtime_plan.object_label_output_source_context_policy.source_context(request).source_payload
+    source_payload = (
+        request.runtime_plan.object_label_output_source_context_policy.source_context(
+            request
+        ).source_payload
+    )
     recorded = CellProfilerObjectLabelOutputContextStrategy.for_value(
         request.output_value
     ).runtime_object_label_value(
@@ -2758,7 +2830,11 @@ def test_object_label_output_source_uses_invocation_owned_unique_primary_image_i
         call_kwargs={},
     )
 
-    source_payload = request.runtime_plan.object_label_output_source_context_policy.source_context(request).source_payload
+    source_payload = (
+        request.runtime_plan.object_label_output_source_context_policy.source_context(
+            request
+        ).source_payload
+    )
     source_metadata = image_payload_metadata(source_payload)
     assert source_metadata.source_path == "/plate/A01_s001_w1_z001_t001.png"
     assert source_metadata.source_component_metadata == {"channel": "1"}
@@ -2830,10 +2906,13 @@ def test_calculate_math_object_operands_preserve_label_slice_domain() -> None:
         adapter=adapter,
         kwargs={
             "operand1_feature": "Intensity_MeanIntensity_DNA",
-            "operand1_object_name": "Nuclei",
         },
         current_image=np.zeros((2, 2), dtype=np.float32),
         binding_scope=EMPTY_RUNTIME_ARTIFACT_BINDING_SCOPE,
+        invocation_options=CalculateMathInvocationOptions(
+            output_name="Measurement",
+            operand1_object_name="Nuclei",
+        ),
     )
 
     value = CalculateMathInputPolicy().operand_value(
@@ -2846,6 +2925,57 @@ def test_calculate_math_object_operands_preserve_label_slice_domain() -> None:
     assert value.slice_count == 2
     np.testing.assert_array_equal(value.value_for_slice(0), [1.0, 2.0])
     np.testing.assert_array_equal(value.value_for_slice(1), [3.0, 4.0])
+
+
+def test_calculate_math_binds_output_identity_from_invocation_options() -> None:
+    _image, rows = calculate_math(
+        np.zeros((2, 2), dtype=np.float32),
+        operand1_value=4.0,
+        operand2_value=2.0,
+        operation=MathOperation.DIVIDE,
+        runtime_invocation_options=CalculateMathInvocationOptions(
+            output_name="Ratio"
+        ),
+    )
+
+    assert rows.output_name == "Ratio"
+
+
+def test_calculate_math_binds_operand_object_identity_from_invocation_options() -> None:
+    labels = np.asarray(
+        [
+            [[0, 1], [2, 0]],
+            [[0, 1], [0, 2]],
+        ],
+        dtype=np.int32,
+    )
+    adapter = _CalculateMathObjectOperandAdapter(labels)
+    request = ObjectInputBindingRequest(
+        module_name="CalculateMath",
+        func=lambda image: image,
+        object_inputs=(ArtifactSpec.input("Nuclei", ObjectLabelsArtifactType),),
+        adapter=adapter,
+        kwargs={
+            "operand1_feature": "Intensity_MeanIntensity_DNA",
+        },
+        current_image=np.zeros((2, 2), dtype=np.float32),
+        binding_scope=EMPTY_RUNTIME_ARTIFACT_BINDING_SCOPE,
+        invocation_options=CalculateMathInvocationOptions(
+            output_name="Ratio",
+            operand1_object_name="Nuclei",
+        ),
+    )
+
+    value = CalculateMathInputPolicy().operand_value(
+        request,
+        feature_kwarg="operand1_feature",
+        object_kwarg="operand1_object_name",
+    )
+
+    assert isinstance(value, CellProfilerSliceAlignedValues)
+    np.testing.assert_array_equal(value.value_for_slice(0), [1.0, 2.0])
+    np.testing.assert_array_equal(value.value_for_slice(1), [3.0, 4.0])
+    assert "operand1_object_name" not in request.kwargs
 
 
 def test_runtime_slice_projection_projects_cellprofiler_slice_aligned_values() -> None:
@@ -3064,7 +3194,9 @@ def test_object_row_binding_preserves_full_stack_dense_rank_without_domain() -> 
     np.testing.assert_array_equal(bound_labels, label_array)
 
 
-def test_adapter_object_record_preserves_single_runtime_slice_stack_for_full_stack_binding() -> None:
+def test_adapter_object_record_preserves_single_runtime_slice_stack_for_full_stack_binding() -> (
+    None
+):
     label_array = np.asarray(
         (((0, 1), (0, 0)),),
         dtype=np.int32,
@@ -4131,7 +4263,9 @@ def test_global_image_number_projection_uses_source_payload_for_columnar_rows() 
     ) == (2,)
 
 
-def test_per_object_materializer_partitions_row_owned_columnar_tables_for_projection() -> None:
+def test_per_object_materializer_partitions_row_owned_columnar_tables_for_projection() -> (
+    None
+):
     runtime = _FakeCellProfilerRuntime(
         {},
         objects={
@@ -5789,8 +5923,12 @@ def test_gray_to_color_consumes_channel_stack_as_single_rgb_image() -> None:
 
     assert result.shape == (4, 5, 3)
     np.testing.assert_array_equal(result[..., 0], np.zeros((4, 5), dtype=np.float32))
-    np.testing.assert_array_equal(result[..., 1], np.full((4, 5), 0.25, dtype=np.float32))
-    np.testing.assert_array_equal(result[..., 2], np.full((4, 5), 0.75, dtype=np.float32))
+    np.testing.assert_array_equal(
+        result[..., 1], np.full((4, 5), 0.25, dtype=np.float32)
+    )
+    np.testing.assert_array_equal(
+        result[..., 2], np.full((4, 5), 0.75, dtype=np.float32)
+    )
 
 
 def test_color_to_gray_combines_openhcs_color_stack() -> None:
@@ -6005,7 +6143,9 @@ def test_aligned_payload_slices_source_tagged_grayscale_stack() -> None:
     slices = payload_slices_for_alignment(payload)
 
     assert len(slices) == 2
-    assert all(isinstance(slice_payload, ImageMetadataPayload) for slice_payload in slices)
+    assert all(
+        isinstance(slice_payload, ImageMetadataPayload) for slice_payload in slices
+    )
     np.testing.assert_array_equal(slices[0].data, stack[0])
     np.testing.assert_array_equal(slices[1].data, stack[1])
 
@@ -6025,7 +6165,9 @@ def test_aligned_payload_slices_source_tagged_two_channel_color_stack() -> None:
     slices = payload_slices_for_alignment(payload)
 
     assert len(slices) == 2
-    assert all(isinstance(slice_payload, ImageMetadataPayload) for slice_payload in slices)
+    assert all(
+        isinstance(slice_payload, ImageMetadataPayload) for slice_payload in slices
+    )
     np.testing.assert_array_equal(slices[0].data, stack[0])
     np.testing.assert_array_equal(slices[1].data, stack[1])
 
@@ -6136,29 +6278,33 @@ def test_full_stack_pure_2d_declared_object_label_output_restores_slice_axis() -
     image = np.asarray([[[1.0, 2.0], [3.0, 4.0]]], dtype=np.float32)
     labels = np.asarray(((0, 1), (0, 0)), dtype=np.int32)
 
-    def segment_like(stack: np.ndarray) -> tuple[np.ndarray, dict[str, int], np.ndarray]:
+    def segment_like(
+        stack: np.ndarray,
+    ) -> tuple[np.ndarray, dict[str, int], np.ndarray]:
         assert stack.shape == (1, 2, 2)
         return stack, {"count": 1}, labels
 
     segment_like.__processing_contract__ = ProcessingContract.PURE_2D
 
-    result_image, result_measurements, result_labels = (
-        CellProfilerFunctionContractExecutor().execute(
-            segment_like,
-            image,
-            {},
-            execution_mode=ImagePayloadExecutionMode.FULL_STACK,
-            output_aggregation_contract=(
-                CellProfilerFunctionOutputAggregationContract.from_main_flow_replacement(
-                    True,
-                    (
-                        ArtifactSpec.output("Image", ImageArtifactType),
-                        ArtifactSpec.output("Measurements", MeasurementsArtifactType),
-                        ArtifactSpec.output("Labels", ObjectLabelsArtifactType),
-                    ),
-                )
-            ),
-        )
+    (
+        result_image,
+        result_measurements,
+        result_labels,
+    ) = CellProfilerFunctionContractExecutor().execute(
+        segment_like,
+        image,
+        {},
+        execution_mode=ImagePayloadExecutionMode.FULL_STACK,
+        output_aggregation_contract=(
+            CellProfilerFunctionOutputAggregationContract.from_main_flow_replacement(
+                True,
+                (
+                    ArtifactSpec.output("Image", ImageArtifactType),
+                    ArtifactSpec.output("Measurements", MeasurementsArtifactType),
+                    ArtifactSpec.output("Labels", ObjectLabelsArtifactType),
+                ),
+            )
+        ),
     )
 
     assert result_image is image
@@ -6171,7 +6317,9 @@ def test_full_stack_pure_2d_declared_object_label_output_restores_slice_axis() -
     )
 
 
-def test_full_stack_pure_2d_implicit_main_output_aligns_declared_object_labels() -> None:
+def test_full_stack_pure_2d_implicit_main_output_aligns_declared_object_labels() -> (
+    None
+):
     image = np.asarray([[[1.0, 2.0], [3.0, 4.0]]], dtype=np.float32)
     labels = np.asarray([[[0, 1], [0, 0]]], dtype=np.int32)
 
@@ -6183,22 +6331,24 @@ def test_full_stack_pure_2d_implicit_main_output_aligns_declared_object_labels()
 
     watershed_like.__processing_contract__ = ProcessingContract.PURE_2D
 
-    result_image, result_measurements, result_labels = (
-        CellProfilerFunctionContractExecutor().execute(
-            watershed_like,
-            image,
-            {},
-            execution_mode=ImagePayloadExecutionMode.FULL_STACK,
-            output_aggregation_contract=(
-                CellProfilerFunctionOutputAggregationContract.from_main_flow_replacement(
-                    True,
-                    (
-                        ArtifactSpec.output("Measurements", MeasurementsArtifactType),
-                        ArtifactSpec.output("Labels", ObjectLabelsArtifactType),
-                    ),
-                )
-            ),
-        )
+    (
+        result_image,
+        result_measurements,
+        result_labels,
+    ) = CellProfilerFunctionContractExecutor().execute(
+        watershed_like,
+        image,
+        {},
+        execution_mode=ImagePayloadExecutionMode.FULL_STACK,
+        output_aggregation_contract=(
+            CellProfilerFunctionOutputAggregationContract.from_main_flow_replacement(
+                True,
+                (
+                    ArtifactSpec.output("Measurements", MeasurementsArtifactType),
+                    ArtifactSpec.output("Labels", ObjectLabelsArtifactType),
+                ),
+            )
+        ),
     )
 
     assert result_image is image
@@ -6226,26 +6376,29 @@ def test_full_stack_pure_2d_non_flow_main_keeps_relationship_output_alignment() 
 
     object_transform_like.__processing_contract__ = ProcessingContract.PURE_2D
 
-    result_image, result_measurements, result_relationship, result_labels = (
-        CellProfilerFunctionContractExecutor().execute(
-            object_transform_like,
-            image,
-            {},
-            execution_mode=ImagePayloadExecutionMode.FULL_STACK,
-            output_aggregation_contract=(
-                CellProfilerFunctionOutputAggregationContract.from_main_flow_replacement(
-                    False,
-                    (
-                        ArtifactSpec.output("Measurements", MeasurementsArtifactType),
-                        ArtifactSpec.output(
-                            "Parent_Child_relationships",
-                            RelationshipsArtifactType,
-                        ),
-                        ArtifactSpec.output("Labels", ObjectLabelsArtifactType),
+    (
+        result_image,
+        result_measurements,
+        result_relationship,
+        result_labels,
+    ) = CellProfilerFunctionContractExecutor().execute(
+        object_transform_like,
+        image,
+        {},
+        execution_mode=ImagePayloadExecutionMode.FULL_STACK,
+        output_aggregation_contract=(
+            CellProfilerFunctionOutputAggregationContract.from_main_flow_replacement(
+                False,
+                (
+                    ArtifactSpec.output("Measurements", MeasurementsArtifactType),
+                    ArtifactSpec.output(
+                        "Parent_Child_relationships",
+                        RelationshipsArtifactType,
                     ),
-                )
-            ),
-        )
+                    ArtifactSpec.output("Labels", ObjectLabelsArtifactType),
+                ),
+            )
+        ),
     )
 
     assert result_image is image
@@ -10411,6 +10564,59 @@ def test_track_objects_record_builder_uses_nominal_image_table_ownership() -> No
     assert "object_name" not in image_row
 
 
+def test_track_objects_primary_policy_binds_declared_object_name() -> None:
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="TrackObjects",
+            items=(
+                *ModuleArtifactContract.items_for_partition(
+                    SourceArtifactInputPartition,
+                    (ArtifactSpec.input("Embryos", ObjectLabelsArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    RuntimeArtifactInputPartition,
+                    (ArtifactSpec.input("Embryos", ObjectLabelsArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    RecordedArtifactOutputPartition,
+                    (ArtifactSpec.output("Tracking", MeasurementsArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    DeclaredArtifactOutputPartition,
+                    (ArtifactSpec.output("Tracking", MeasurementsArtifactType),),
+                ),
+            ),
+        )
+    )
+    plan = executor.runtime_plan(track_objects)
+    image = RuntimeImagePayloadContext(
+        np.zeros((1, 5, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(),
+        mask=None,
+    ).payload()
+
+    runtime_kwargs = plan.primary_image_input_policy.invocation_runtime_kwargs(
+        module_name="TrackObjects",
+        plan=plan,
+        image_request=CellProfilerImageRequest(
+            source_image_name=None,
+            payload=image,
+            image_count=1,
+            execution_mode=ImagePayloadExecutionMode.NATURAL,
+        ),
+        adapter=SimpleNamespace(
+            cellprofiler_source_paths_for_image_name=lambda _name: (),
+            cellprofiler_image_number_start_for_source_paths=lambda _paths: 1,
+        ),
+        current_image=image,
+        runtime_kwargs={"tracking_method": "overlap", "pixel_radius": 50},
+        object_input_source_image_name=lambda: None,
+    )
+
+    assert runtime_kwargs[TrackObjectsModule.object_name_kwarg] == "Embryos"
+    assert runtime_kwargs[TrackObjectsModule.image_number_start_kwarg] == 1
+
+
 def test_object_label_output_recorder_uses_output_label_domain() -> None:
     input_labels = np.zeros((5, 5), dtype=np.int32)
     input_labels[1, 1] = 1
@@ -11035,6 +11241,125 @@ def test_module_executor_records_multiple_declared_object_outputs() -> None:
     np.testing.assert_array_equal(runtime.objects[1][1], labels_without_overlap)
 
 
+def test_untangleworms_measurement_rows_use_declared_output_object_names() -> None:
+    labels_without_overlap = np.ones((4, 5), dtype=np.int32)
+    labels_with_overlap = np.full((4, 5), 2, dtype=np.int32)
+
+    def untangle_like(
+        image: np.ndarray,
+        overlap_style: str = "both",
+    ) -> tuple[np.ndarray, list[dict[str, object]], np.ndarray, np.ndarray]:
+        del overlap_style
+        return (
+            image,
+            [{"object_number": 1, "worm_length": 7.0}],
+            labels_with_overlap,
+            labels_without_overlap,
+        )
+
+    untangle_like.__processing_contract__ = ProcessingContract.PURE_2D
+    fallback = np.zeros((4, 5), dtype=np.float32)
+    runtime = _FakeCellProfilerRuntime(
+        {
+            "WormBinary": _FakeRuntimeImage(
+                fallback,
+                source_image_name="WormBinary",
+            ),
+        }
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="UntangleWorms",
+            items=(
+                *ModuleArtifactContract.items_for_partition(
+                    SourceArtifactInputPartition,
+                    (ArtifactSpec.input("WormBinary", ImageArtifactType),),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    RecordedArtifactOutputPartition,
+                    (
+                        ArtifactSpec.output(
+                            "UntangleWorms_3_measurements", MeasurementsArtifactType
+                        ),
+                        ArtifactSpec.output(
+                            "OverlappingWorms", ObjectLabelsArtifactType
+                        ),
+                        ArtifactSpec.output(
+                            "NonOverlappingWorms", ObjectLabelsArtifactType
+                        ),
+                    ),
+                ),
+                *ModuleArtifactContract.items_for_partition(
+                    DeclaredArtifactOutputPartition,
+                    (
+                        ArtifactSpec.output(
+                            "UntangleWorms_3_measurements", MeasurementsArtifactType
+                        ),
+                        ArtifactSpec.output(
+                            "OverlappingWorms", ObjectLabelsArtifactType
+                        ),
+                        ArtifactSpec.output(
+                            "NonOverlappingWorms", ObjectLabelsArtifactType
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+
+    executor.run(
+        untangle_like,
+        fallback,
+        cellprofiler_runtime=runtime,
+        overlap_style="both",
+    )
+
+    assert _recorded_measurements_for_assertion(runtime.measurements) == [
+        (
+            "UntangleWorms_3_measurements",
+            [
+                {
+                    "object_name": "OverlappingWorms",
+                    "object_number": 1,
+                    "worm_length": 7.0,
+                    "slice_index": 0,
+                }
+            ],
+            {
+                "object_name": "OverlappingWorms",
+                "source_image_name": None,
+                "fields": (
+                    "slice_index",
+                    "object_name",
+                    "object_number",
+                    "worm_length",
+                ),
+            },
+        ),
+        (
+            "UntangleWorms_3_measurements",
+            [
+                {
+                    "object_name": "NonOverlappingWorms",
+                    "object_number": 1,
+                    "worm_length": 7.0,
+                    "slice_index": 0,
+                }
+            ],
+            {
+                "object_name": "NonOverlappingWorms",
+                "source_image_name": None,
+                "fields": (
+                    "slice_index",
+                    "object_name",
+                    "object_number",
+                    "worm_length",
+                ),
+            },
+        ),
+    ]
+
+
 def test_default_measurement_builder_preserves_row_declared_object_scope() -> None:
     image = np.zeros((4, 5), dtype=np.float32)
 
@@ -11615,8 +11940,13 @@ def test_runtime_plane_projection_contract_uses_nominal_registered_capabilities(
     def full_stack_identity(image):
         return image
 
+    @runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
+    def pure_3d_identity(image):
+        return image
+
     two_dimensional_identity.__processing_contract__ = ProcessingContract.PURE_2D
     full_stack_identity.__processing_contract__ = ProcessingContract.PURE_2D
+    pure_3d_identity.__processing_contract__ = ProcessingContract.PURE_3D
     registered_capabilities = (
         CellProfilerRuntimePlaneProjectionCapability.registered_capability_types()
     )
@@ -11626,7 +11956,11 @@ def test_runtime_plane_projection_contract_uses_nominal_registered_capabilities(
     )
     full_stack_contract = CurrentRuntimePlaneKwargProjectionContract(
         full_stack_identity,
-        ImagePayloadExecutionMode.NATURAL,
+        ImagePayloadExecutionMode.FULL_STACK,
+    )
+    pure_3d_contract = CurrentRuntimePlaneKwargProjectionContract(
+        pure_3d_identity,
+        ImagePayloadExecutionMode.FULL_STACK,
     )
 
     assert RuntimeArtifactImageInputProjectionCapability in registered_capabilities
@@ -11641,7 +11975,8 @@ def test_runtime_plane_projection_contract_uses_nominal_registered_capabilities(
             RuntimeSliceKwargProjectionCapability,
         )
     )
-    assert full_stack_contract.projection_capabilities() == frozenset()
+    assert full_stack_contract.projection_capabilities() == plane_contract.projection_capabilities()
+    assert pure_3d_contract.projection_capabilities() == frozenset()
 
 
 def test_module_image_request_projects_current_image_to_grouped_runtime_plane() -> None:
@@ -11973,11 +12308,11 @@ def test_flexible_object_module_slices_tuple_label_stack() -> None:
                 ),
                 *ModuleArtifactContract.items_for_partition(
                     RecordedArtifactOutputPartition,
-                    (ArtifactSpec.output("FilteredCells", ObjectLabelsArtifactType),),
+                    (_object_output_from_input("FilteredCells", "Cells"),),
                 ),
                 *ModuleArtifactContract.items_for_partition(
                     DeclaredArtifactOutputPartition,
-                    (ArtifactSpec.output("FilteredCells", ObjectLabelsArtifactType),),
+                    (_object_output_from_input("FilteredCells", "Cells"),),
                 ),
             ),
         )
@@ -12082,11 +12417,11 @@ def test_flexible_object_module_slices_measurement_tables_with_label_stack() -> 
                 ),
                 *ModuleArtifactContract.items_for_partition(
                     RecordedArtifactOutputPartition,
-                    (ArtifactSpec.output("FilteredCells", ObjectLabelsArtifactType),),
+                    (_object_output_from_input("FilteredCells", "Cells"),),
                 ),
                 *ModuleArtifactContract.items_for_partition(
                     DeclaredArtifactOutputPartition,
-                    (ArtifactSpec.output("FilteredCells", ObjectLabelsArtifactType),),
+                    (_object_output_from_input("FilteredCells", "Cells"),),
                 ),
             ),
         )
@@ -12165,7 +12500,11 @@ def test_filterobjects_binds_selection_measurement_values_to_label_slices() -> N
                         ArtifactSpec.output(
                             "FilterObjects_measurements", MeasurementsArtifactType
                         ),
-                        ArtifactSpec.output("FilteredCells", ObjectLabelsArtifactType),
+                        ArtifactSpec.output_inheriting_group_scope(
+                            "FilteredCells",
+                            ObjectLabelsArtifactType,
+                            ArtifactSpec.input("Cells", ObjectLabelsArtifactType),
+                        ),
                         ArtifactSpec.output(
                             "Cells_FilteredCells_relationships",
                             RelationshipsArtifactType,
@@ -12178,7 +12517,11 @@ def test_filterobjects_binds_selection_measurement_values_to_label_slices() -> N
                         ArtifactSpec.output(
                             "FilterObjects_measurements", MeasurementsArtifactType
                         ),
-                        ArtifactSpec.output("FilteredCells", ObjectLabelsArtifactType),
+                        ArtifactSpec.output_inheriting_group_scope(
+                            "FilteredCells",
+                            ObjectLabelsArtifactType,
+                            ArtifactSpec.input("Cells", ObjectLabelsArtifactType),
+                        ),
                         ArtifactSpec.output(
                             "Cells_FilteredCells_relationships",
                             RelationshipsArtifactType,
@@ -12196,7 +12539,6 @@ def test_filterobjects_binds_selection_measurement_values_to_label_slices() -> N
         mode=FilterMode.MEASUREMENTS,
         filter_method=FilterMethod.MAXIMAL_PER_OBJECT,
         measurement_features=("AreaShape_Area",),
-        enclosing_object_name="Tiles",
         per_object_assignment=PerObjectAssignment.BOTH_PARENTS,
         slice_by_slice=True,
     )
@@ -12302,7 +12644,7 @@ def test_mixed_object_measurement_rows_partition_by_declared_owner() -> None:
                         ArtifactSpec.output(
                             "FilterObjects_measurements", MeasurementsArtifactType
                         ),
-                        ArtifactSpec.output("FilteredCells", ObjectLabelsArtifactType),
+                        _object_output_from_input("FilteredCells", "Cells"),
                         ArtifactSpec.output(
                             "Cells_FilteredCells_relationships",
                             RelationshipsArtifactType,
@@ -12315,7 +12657,7 @@ def test_mixed_object_measurement_rows_partition_by_declared_owner() -> None:
                         ArtifactSpec.output(
                             "FilterObjects_measurements", MeasurementsArtifactType
                         ),
-                        ArtifactSpec.output("FilteredCells", ObjectLabelsArtifactType),
+                        _object_output_from_input("FilteredCells", "Cells"),
                         ArtifactSpec.output(
                             "Cells_FilteredCells_relationships",
                             RelationshipsArtifactType,
@@ -12480,11 +12822,11 @@ def test_artifact_measurement_table_does_not_drive_object_only_slicing() -> None
                 ),
                 *ModuleArtifactContract.items_for_partition(
                     RecordedArtifactOutputPartition,
-                    (ArtifactSpec.output("FilteredCells", ObjectLabelsArtifactType),),
+                    (_object_output_from_input("FilteredCells", "Cells"),),
                 ),
                 *ModuleArtifactContract.items_for_partition(
                     DeclaredArtifactOutputPartition,
-                    (ArtifactSpec.output("FilteredCells", ObjectLabelsArtifactType),),
+                    (_object_output_from_input("FilteredCells", "Cells"),),
                 ),
             ),
         )
@@ -12539,7 +12881,7 @@ def test_flexible_object_module_aggregates_sliced_relationship_payloads() -> Non
                 *ModuleArtifactContract.items_for_partition(
                     RecordedArtifactOutputPartition,
                     (
-                        ArtifactSpec.output("FilteredCells", ObjectLabelsArtifactType),
+                        _object_output_from_input("FilteredCells", "Cells"),
                         ArtifactSpec.output(
                             "Cells_FilteredCells_relationships",
                             RelationshipsArtifactType,
@@ -12549,7 +12891,7 @@ def test_flexible_object_module_aggregates_sliced_relationship_payloads() -> Non
                 *ModuleArtifactContract.items_for_partition(
                     DeclaredArtifactOutputPartition,
                     (
-                        ArtifactSpec.output("FilteredCells", ObjectLabelsArtifactType),
+                        _object_output_from_input("FilteredCells", "Cells"),
                         ArtifactSpec.output(
                             "Cells_FilteredCells_relationships",
                             RelationshipsArtifactType,
@@ -12632,7 +12974,7 @@ def test_flexible_filter_objects_aggregates_measurement_prefixed_relationships()
                         ArtifactSpec.output(
                             "FilterObjects_measurements", MeasurementsArtifactType
                         ),
-                        ArtifactSpec.output("FilteredCells", ObjectLabelsArtifactType),
+                        _object_output_from_input("FilteredCells", "Cells"),
                         ArtifactSpec.output(
                             "Cells_FilteredCells_relationships",
                             RelationshipsArtifactType,
@@ -12645,7 +12987,7 @@ def test_flexible_filter_objects_aggregates_measurement_prefixed_relationships()
                         ArtifactSpec.output(
                             "FilterObjects_measurements", MeasurementsArtifactType
                         ),
-                        ArtifactSpec.output("FilteredCells", ObjectLabelsArtifactType),
+                        _object_output_from_input("FilteredCells", "Cells"),
                         ArtifactSpec.output(
                             "Cells_FilteredCells_relationships",
                             RelationshipsArtifactType,
@@ -12901,8 +13243,7 @@ def test_relationship_measurements_broadcast_singleton_label_counts() -> None:
         row
         for row in rows
         if row.get("object_name") == "Children"
-        and RelationshipMeasurementRows.parent_feature_name("Parents")
-        in row
+        and RelationshipMeasurementRows.parent_feature_name("Parents") in row
     ]
     assert {(row["slice_index"], row["object_label"]) for row in parent_rows} == {
         (0, 1),
@@ -13056,8 +13397,7 @@ def test_relationship_rows_do_not_slice_payload_scoped_3d_lineage_by_z_plane() -
         row
         for row in rows
         if row.get("object_name") == "Children"
-        and RelationshipMeasurementRows.parent_feature_name("Parents")
-        in row
+        and RelationshipMeasurementRows.parent_feature_name("Parents") in row
     ]
     assert [row["Parent_Parents"] for row in parent_rows] == [1, 2]
 
@@ -14377,7 +14717,9 @@ def test_measurement_domain_alignment_projects_source_owned_object_labels() -> N
     assert aligned_labels.source_image_name == "rawGFP"
 
 
-def test_prepared_measurement_labels_project_runtime_slice_payload_with_dense_labels() -> None:
+def test_prepared_measurement_labels_project_runtime_slice_payload_with_dense_labels() -> (
+    None
+):
     class Projector(RuntimePlaneAxisProjector):
         def runtime_slice_plane_index(self) -> int | None:
             return 1
@@ -14411,8 +14753,13 @@ def test_prepared_measurement_labels_project_runtime_slice_payload_with_dense_la
     )
 
     assert isinstance(prepared.source_projected_payload, ObjectLabelPayload)
-    assert prepared.source_projected_payload.domain.scope is ObjectLabelDomainScope.PAYLOAD
-    assert prepared.source_projected_payload.object_label_domain().declared_object_ids == (7,)
+    assert (
+        prepared.source_projected_payload.domain.scope is ObjectLabelDomainScope.PAYLOAD
+    )
+    assert (
+        prepared.source_projected_payload.object_label_domain().declared_object_ids
+        == (7,)
+    )
     np.testing.assert_array_equal(
         object_label_dense_array(prepared.source_projected_payload),
         label_planes[1],
@@ -14424,7 +14771,9 @@ def test_prepared_measurement_labels_project_runtime_slice_payload_with_dense_la
     )
 
 
-def test_prepared_measurement_labels_project_payload_plane_by_image_source_identity() -> None:
+def test_prepared_measurement_labels_project_payload_plane_by_image_source_identity() -> (
+    None
+):
     label_planes = np.stack(
         (
             np.full((4, 5), 3, dtype=np.int32),
@@ -14457,8 +14806,13 @@ def test_prepared_measurement_labels_project_payload_plane_by_image_source_ident
 
     prepared = measurement_image.prepare_object_labels(labels)
 
-    assert prepared.source_projected_payload.domain.scope is ObjectLabelDomainScope.PAYLOAD
-    assert prepared.source_projected_payload.object_label_domain().declared_object_ids == (7,)
+    assert (
+        prepared.source_projected_payload.domain.scope is ObjectLabelDomainScope.PAYLOAD
+    )
+    assert (
+        prepared.source_projected_payload.object_label_domain().declared_object_ids
+        == (7,)
+    )
     np.testing.assert_array_equal(
         object_label_dense_array(prepared.source_projected_payload),
         label_planes[1],
@@ -16135,6 +16489,19 @@ def test_structuring_element_execution_policy_uses_full_stack_for_3d_footprint()
     assert mode is ImagePayloadExecutionMode.FULL_STACK
 
 
+def test_image_morphology_adapts_volumetric_footprint_to_plane_domain() -> None:
+    from skimage.morphology import erosion
+
+    image = np.arange(25, dtype=np.uint8).reshape(5, 5)
+    footprint = adapt_structuring_element_rank(
+        build_structuring_element(StructuringElement.BALL, 1), image.ndim
+    )
+
+    result = erode_image(image, structuring_element=StructuringElement.BALL, size=1)
+
+    np.testing.assert_array_equal(result, erosion(image, footprint).astype(image.dtype))
+
+
 def test_structuring_element_execution_policy_keeps_planewise_for_2d_footprint() -> (
     None
 ):
@@ -16192,7 +16559,9 @@ def test_object_measurement_execution_policy_uses_full_stack_for_3d_labels() -> 
     assert mode is ImagePayloadExecutionMode.FULL_STACK
 
 
-def test_object_measurement_execution_policy_uses_full_stack_for_source_bound_volume_labels() -> None:
+def test_object_measurement_execution_policy_uses_full_stack_for_source_bound_volume_labels() -> (
+    None
+):
     policy = CellProfilerObjectMeasurementExecutionDomainPolicy.for_module(
         "MeasureObjectIntensity"
     )
@@ -16214,7 +16583,9 @@ def test_object_measurement_execution_policy_uses_full_stack_for_source_bound_vo
     assert mode is ImagePayloadExecutionMode.FULL_STACK
 
 
-def test_object_measurement_execution_policy_keeps_payload_domain_labels_full_stack() -> None:
+def test_object_measurement_execution_policy_keeps_payload_domain_labels_full_stack() -> (
+    None
+):
     policy = CellProfilerObjectMeasurementExecutionDomainPolicy.for_module(
         "MeasureObjectIntensity"
     )
@@ -16234,7 +16605,9 @@ def test_object_measurement_execution_policy_keeps_payload_domain_labels_full_st
     assert mode is ImagePayloadExecutionMode.FULL_STACK
 
 
-def test_object_measurement_execution_policy_preserves_plane_domain_runtime_slice_labels() -> None:
+def test_object_measurement_execution_policy_preserves_plane_domain_runtime_slice_labels() -> (
+    None
+):
     policy = CellProfilerObjectMeasurementExecutionDomainPolicy.for_module(
         "MeasureObjectIntensity"
     )
@@ -16516,7 +16889,9 @@ def test_measure_object_size_shape_plane_scoped_volume_rows_are_3d() -> None:
         calculate_zernikes=False,
     )
 
-    assert [(row["slice_index"], row["object_label"], row["Volume"]) for row in rows] == [
+    assert [
+        (row["slice_index"], row["object_label"], row["Volume"]) for row in rows
+    ] == [
         (0, 1, 12.0),
         (1, 1, 27.0),
     ]

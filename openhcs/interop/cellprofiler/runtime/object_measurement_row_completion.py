@@ -283,6 +283,21 @@ class ObjectMeasurementRowCompletionSchema:
             label_ids = dense_object_label_id_domain(axis_payload)
         return tuple(label_ids)
 
+    def explicit_label_ids_for_axis(
+        self,
+        *,
+        label_payload: CellProfilerRuntimeValue,
+        axis_key: CellProfilerRuntimeValues,
+    ) -> tuple[int, ...] | None:
+        """Return explicitly declared source label IDs for one measurement axis."""
+        axis_payload = self.label_payload_for_axis(label_payload, axis_key=axis_key)
+        label_domain = ObjectLabelDomainMetadataStrategy.for_value(
+            axis_payload
+        ).object_label_domain(axis_payload)
+        if label_domain.declared_object_ids:
+            return tuple(label_domain.declared_object_ids)
+        return None
+
     def label_payload_for_axis(
         self,
         label_payload: CellProfilerRuntimeValue,

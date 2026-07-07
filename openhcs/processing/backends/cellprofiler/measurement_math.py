@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
+from python_introspect import set_parameter_exclusions
 from openhcs.core.artifacts import (
     ArtifactSpecCollection,
     ArtifactSpecRef,
@@ -58,6 +59,7 @@ from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
 )
 from openhcs.core.registry_strategies import enum_member_with_payload
+from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from openhcs.interop.cellprofiler.module_declarations import (
     ProcessingContract,
     BinderSettingsSourceModule,
@@ -92,6 +94,8 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicyMixin):
     supported_non_object_input_kinds = frozenset({MeasurementsArtifactType})
     operand1_value_kwarg = RuntimeBoundParameterName("operand1_value")
     operand2_value_kwarg = RuntimeBoundParameterName("operand2_value")
+    operand1_object_name_kwarg = RuntimeBoundParameterName("operand1_object_name")
+    operand2_object_name_kwarg = RuntimeBoundParameterName("operand2_object_name")
 
     def bind(self, request: ObjectInputBindingRequest) -> CellProfilerKwargDict:
         started_at = time.perf_counter()
@@ -111,7 +115,7 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicyMixin):
         operand1_value = self.operand_value(
             request,
             feature_kwarg="operand1_feature",
-            object_kwarg="operand1_object_name",
+            object_kwarg=self.operand1_object_name_kwarg,
         )
         CellProfilerRuntimeProfileLogger.log_module_profile(
             "calculate_math_operand_bind",
@@ -122,7 +126,7 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicyMixin):
         operand2_value = self.operand_value(
             request,
             feature_kwarg="operand2_feature",
-            object_kwarg="operand2_object_name",
+            object_kwarg=self.operand2_object_name_kwarg,
         )
         CellProfilerRuntimeProfileLogger.log_module_profile(
             "calculate_math_operand_bind",
@@ -145,20 +149,48 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicyMixin):
             self.operand2_value_kwarg: operand2_value,
         }
 
+    def operand_object_name(
+        self, request: ObjectInputBindingRequest, object_kwarg: str
+    ) -> str | None:
+        """Return CalculateMath operand object identity."""
+        options = self.invocation_options(request)
+        if options is None:
+            return CellProfilerStringKwargAuthority.optional(
+                request.kwargs, object_kwarg
+            )
+        if object_kwarg == self.operand1_object_name_kwarg:
+            return options.operand1_object_name
+        if object_kwarg == self.operand2_object_name_kwarg:
+            return options.operand2_object_name
+        raise ValueError(f"Unknown CalculateMath operand object kwarg {object_kwarg!r}.")
+
+    @staticmethod
+    def invocation_options(
+        request: ObjectInputBindingRequest,
+    ) -> "CalculateMathInvocationOptions | None":
+        """Return typed CalculateMath invocation options, if supplied."""
+        options = request.invocation_options
+        if options is None:
+            return None
+        if not isinstance(options, CalculateMathInvocationOptions):
+            raise TypeError(
+                "CalculateMath runtime invocation options must be "
+                "CalculateMathInvocationOptions."
+            )
+        return options
+
     def object_operand_bindings(
         self, request: ObjectInputBindingRequest
     ) -> tuple[CellProfilerObjectMeasurementVectorBinding, ...] | None:
         bindings: list[CellProfilerObjectMeasurementVectorBinding] = []
         for feature_kwarg, object_kwarg in (
-            ("operand1_feature", "operand1_object_name"),
-            ("operand2_feature", "operand2_object_name"),
+            ("operand1_feature", self.operand1_object_name_kwarg),
+            ("operand2_feature", self.operand2_object_name_kwarg),
         ):
             feature_name = CellProfilerStringKwargAuthority.required(
                 request.kwargs, feature_kwarg, "CalculateMath"
             )
-            object_name = CellProfilerStringKwargAuthority.optional(
-                request.kwargs, object_kwarg
-            )
+            object_name = self.operand_object_name(request, object_kwarg)
             if (
                 object_name is None
                 or count_feature_object_name(feature_name) is not None
@@ -186,9 +218,7 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicyMixin):
         feature_name = CellProfilerStringKwargAuthority.required(
             request.kwargs, feature_kwarg, "CalculateMath"
         )
-        object_name = CellProfilerStringKwargAuthority.optional(
-            request.kwargs, object_kwarg
-        )
+        object_name = self.operand_object_name(request, object_kwarg)
         count_object_name = count_feature_object_name(feature_name)
         if count_object_name is not None:
             return float(
@@ -356,6 +386,15 @@ class CalculateMathRoundingMethod(Enum):
         return coerce_cellprofiler_enum(cls, value)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CalculateMathInvocationOptions(RuntimeInvocationOptions):
+    """Non-editable CalculateMath measurement-feature identity."""
+
+    output_name: str
+    operand1_object_name: str | None = None
+    operand2_object_name: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class CalculateMathSettingValue:
     """One CalculateMath setting with default and required-setting semantics."""
@@ -498,18 +537,11 @@ class CalculateMathBoundSettings:
     @property
     def kwargs(self) -> dict[str, Any]:
         return {
-            "output_name": CalculateMathSettingValue(
-                self.module,
-                self.settings.output_measurement_setting,
-                default="Measurement",
-            ).value,
             "operation": CalculateMathSettingValue(
                 self.module, self.settings.operation_setting, default="None"
             ).value,
             "operand1_feature": self.operand1.feature_name,
             "operand2_feature": self.operand2.feature_name,
-            "operand1_object_name": self.operand1.object_name,
-            "operand2_object_name": self.operand2.object_name,
             "operand1_multiplicand": self.operand1.multiplicand,
             "operand1_exponent": self.operand1.exponent,
             "operand2_multiplicand": self.operand2.multiplicand,
@@ -578,6 +610,25 @@ def calculate_math_bound_kwargs(
     ).kwargs
 
 
+def calculate_math_invocation_options(
+    module: "ModuleBlock",
+) -> CalculateMathInvocationOptions:
+    """Return CalculateMath invocation metadata owned by module settings."""
+    return CalculateMathInvocationOptions(
+        output_name=CalculateMathSettingValue(
+            module,
+            CalculateMathModule.output_measurement_setting,
+            default="Measurement",
+        ).value,
+        operand1_object_name=CalculateMathObjectSetting(
+            module, CalculateMathModule.numerator_objects_setting
+        ).object_name,
+        operand2_object_name=CalculateMathObjectSetting(
+            module, CalculateMathModule.denominator_objects_setting
+        ).object_name,
+    )
+
+
 def calculate_math_object_dependencies(module: "ModuleBlock") -> tuple[str, ...]:
     """Return object names referenced by CalculateMath measurement operands."""
     return CalculateMathObjectDependencies(module, CalculateMathModule).object_names
@@ -610,6 +661,7 @@ class CalculateMathModule(
         "Select the denominator measurement"
     )
     settings_source = staticmethod(calculate_math_bound_kwargs)
+    invocation_options_source = staticmethod(calculate_math_invocation_options)
 
     @classmethod
     def artifact_contract_inputs(cls, builder, module):
@@ -811,8 +863,6 @@ def calculate_math(
     operand2_value: Any = 0.0,
     operand1_feature: str | None = None,
     operand2_feature: str | None = None,
-    operand1_object_name: str | None = None,
-    operand2_object_name: str | None = None,
     operation: MathOperation = MathOperation.NONE,
     operand1_multiplicand: float = 1.0,
     operand1_exponent: float = 1.0,
@@ -828,10 +878,13 @@ def calculate_math(
     lower_bound: float = 0.0,
     constrain_upper_bound: bool = False,
     upper_bound: float = 1.0,
-    output_name: str = "Measurement",
+    runtime_invocation_options: RuntimeInvocationOptions | None = None,
 ) -> tuple[np.ndarray, MathResult | list[MathResult]]:
     """Perform CellProfiler CalculateMath measurement-row execution."""
     del operand1_feature, operand2_feature
+    invocation_options = calculate_math_runtime_invocation_options(
+        runtime_invocation_options
+    )
     request = MathCalculationRequest(
         operand1=MathOperand(
             value=operand1_value,
@@ -858,18 +911,41 @@ def calculate_math(
             constrain_upper=constrain_upper_bound,
             upper=upper_bound,
         ),
-        output_name=output_name,
+        output_name=invocation_options.output_name,
         object_names=tuple(
             dict.fromkeys(
                 (
                     name
-                    for name in (operand1_object_name, operand2_object_name)
+                    for name in (
+                        invocation_options.operand1_object_name,
+                        invocation_options.operand2_object_name,
+                    )
                     if name is not None
                 )
             )
         ),
     )
     return (image, CalculateMathExecution(request).result_rows)
+
+
+def calculate_math_runtime_invocation_options(
+    options: RuntimeInvocationOptions | None,
+) -> CalculateMathInvocationOptions:
+    """Return CalculateMath invocation metadata with direct-call defaults."""
+    if options is None:
+        return CalculateMathInvocationOptions(output_name="Measurement")
+    if not isinstance(options, CalculateMathInvocationOptions):
+        raise TypeError(
+            "calculate_math runtime_invocation_options must be "
+            f"CalculateMathInvocationOptions, got {type(options).__name__}."
+        )
+    return options
+
+
+set_parameter_exclusions(
+    calculate_math,
+    (RuntimeInvocationOptions.require_parameter_name(),),
+)
 
 
 class MathOperationStrategy(
@@ -1191,6 +1267,7 @@ def optional_str(value: Any) -> str | None:
 
 __all__ = public_names_from_objects(
     CalculateMathExecution,
+    CalculateMathInvocationOptions,
     MathBounds,
     MathCalculationRequest,
     MathFinalTransform,

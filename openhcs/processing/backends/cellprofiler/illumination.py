@@ -307,7 +307,7 @@ class CorrectIlluminationApplyModule(
     module_name = "CorrectIlluminationApply"
     function_name = "correct_illumination_apply"
     validated = True
-    contract = ProcessingContract.PURE_3D
+    contract = ProcessingContract.PURE_2D
     confidence = 1.0
     input_image_setting = "Select the input image"
     output_image_setting = "Name the output image"
@@ -509,7 +509,16 @@ class CorrectIlluminationApplyModule(
                 ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(illumination_name))
             )
             outputs.append(
-                ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(output_name))
+                ImageArtifactOutputCapability.bind_artifact(
+                    cls,
+                    builder,
+                    module,
+                    ArtifactSpec.output_preserving_source_stack_scope(
+                        output_name,
+                        ImageArtifactType,
+                        ArtifactSpec.input(image_name, ImageArtifactType),
+                    ),
+                )
             )
         return assembler.assemble_contract(
             module, builder, inputs=inputs, outputs=outputs
@@ -1498,7 +1507,7 @@ def _prepare_correct_illumination_calculate() -> None:
     )
 
 
-@numpy(contract=ProcessingContract.PURE_3D)
+@numpy(contract=ProcessingContract.PURE_2D)
 def correct_illumination_apply(
     image: ImagePayloadMetadataInput,
     method: (

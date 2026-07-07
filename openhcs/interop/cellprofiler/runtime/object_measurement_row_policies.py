@@ -49,6 +49,7 @@ from openhcs.interop.cellprofiler.runtime.object_measurement_row_completion impo
     ObjectMeasurementRowCompletionSchema,
     ObjectMeasurementRowIdentityProjectionRequest,
     ObjectMeasurementRowIdentityProjectionResult,
+    ObjectMeasurementRowOrdinalProjectionState,
     ObjectMeasurementRowsByName,
 )
 from openhcs.interop.cellprofiler.runtime.payload_types import (
@@ -189,6 +190,7 @@ class CellProfilerObjectMeasurementRowPolicy(
         MissingObjectMeasurementValuePolicy.NAN
     )
     explicit_row_ownership_required: ClassVar[bool] = False
+    measurement_record_excluded_fields: ClassVar[frozenset[str]] = frozenset()
 
     @classmethod
     @lru_cache(maxsize=None)
@@ -1066,23 +1068,37 @@ class DeclaredDomainCompactMeasuredObjectMeasurementRowPolicy(
             object_id_field=request.object_id_field,
             axis_fields=request.axis_fields,
         )
-        ordinal_by_axis_label: dict[CellProfilerRuntimeValues, dict[int, int]] = {}
+        ordinal_by_axis_label: dict[
+            CellProfilerRuntimeValues, dict[int, int] | None
+        ] = {}
+        ordinal_state = ObjectMeasurementRowOrdinalProjectionState()
         rows: list[CellProfilerRuntimeValue] = []
         row_keys: list[tuple[int, CellProfilerRuntimeValues]] = []
         measured_row_keys: list[tuple[int, CellProfilerRuntimeValues]] = []
         axis_keys: list[CellProfilerRuntimeValues] = []
+        row_entries: list[
+            tuple[
+                CellProfilerRuntimeValue,
+                MeasurementRowMapping,
+                CellProfilerRuntimeValues,
+                bool,
+            ]
+        ] = []
         for row in request.rows:
             row_mapping = measurement_row_mapping(row)
             axis_key = request.axis_key_from_mapping(row_mapping)
             if axis_key not in ordinal_by_axis_label:
-                label_ids = schema.label_ids_for_axis(
+                explicit_label_ids = schema.explicit_label_ids_for_axis(
                     label_payload=label_payload,
                     axis_key=axis_key,
                 )
-                ordinal_by_axis_label[axis_key] = {
-                    label_id: ordinal
-                    for ordinal, label_id in enumerate(label_ids, start=1)
-                }
+                if explicit_label_ids is None:
+                    ordinal_by_axis_label[axis_key] = None
+                else:
+                    ordinal_by_axis_label[axis_key] = {
+                        label_id: ordinal
+                        for ordinal, label_id in enumerate(explicit_label_ids, start=1)
+                    }
             if axis_key not in axis_keys:
                 axis_keys.append(axis_key)
             measured = self.row_has_measured_object(
@@ -1090,6 +1106,14 @@ class DeclaredDomainCompactMeasuredObjectMeasurementRowPolicy(
                 object_id_field=request.object_id_field,
                 axis_fields=request.axis_fields,
             )
+            row_entries.append((row, row_mapping, axis_key, measured))
+            if measured and ordinal_by_axis_label[axis_key] is None:
+                ordinal_state.register_measured_object(
+                    row_mapping,
+                    axis_key=axis_key,
+                    object_id_field=request.object_id_field,
+                )
+        for row, row_mapping, axis_key, measured in row_entries:
             if not measured and not self.retains_unmeasured_compact_row(
                 row_mapping,
                 object_id_field=request.object_id_field,
@@ -1102,13 +1126,24 @@ class DeclaredDomainCompactMeasuredObjectMeasurementRowPolicy(
                     f"{type(self).__name__} cannot project a compact "
                     "declared-domain row without an object ID."
                 )
-            if source_object_id not in ordinal_by_axis_label[axis_key]:
+            explicit_ordinal_by_label = ordinal_by_axis_label[axis_key]
+            if explicit_ordinal_by_label is None:
+                if measured:
+                    ordinal = ordinal_state.ordinal_for_measured_object(
+                        row_mapping,
+                        axis_key=axis_key,
+                        object_id_field=request.object_id_field,
+                    )
+                else:
+                    ordinal = ordinal_state.next_unbound_ordinal(axis_key)
+            elif source_object_id not in explicit_ordinal_by_label:
                 raise ValueError(
                     f"{type(self).__name__} cannot project source object "
                     f"{source_object_id} on axis {axis_key!r}; it is absent from "
                     "the declared label domain."
                 )
-            ordinal = ordinal_by_axis_label[axis_key][source_object_id]
+            else:
+                ordinal = explicit_ordinal_by_label[source_object_id]
             rows.append(
                 MeasurementObjectRowIdentityProjectionStrategy
                 .for_enum_member(object_identity)

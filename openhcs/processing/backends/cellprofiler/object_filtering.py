@@ -18,6 +18,7 @@ from enum import Enum
 from typing import Any, ClassVar
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
+from python_introspect import set_parameter_exclusions
 from numba import njit
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
@@ -105,6 +106,7 @@ from openhcs.interop.cellprofiler.runtime.object_input_policies import (
 )
 from openhcs.interop.cellprofiler.runtime.bound_parameters import (
     RuntimeBoundParameterName,
+    declared_runtime_bound_parameter_names,
 )
 from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
     CellProfilerObjectMeasurementVectorBinding,
@@ -122,8 +124,6 @@ from openhcs.interop.cellprofiler.runtime.runtime_profile import (
     CellProfilerRuntimeProfileLogger,
 )
 
-_FILTER_OBJECTS_ADDITIONAL_OBJECT_COUNT_KWARG = "additional_object_count"
-_FILTER_OBJECTS_ENCLOSING_OBJECT_NAME_KWARG = "enclosing_object_name"
 _FILTER_OBJECTS_MEASUREMENT_FEATURES_KWARG = "measurement_features"
 
 
@@ -131,22 +131,10 @@ _FILTER_OBJECTS_MEASUREMENT_FEATURES_KWARG = "measurement_features"
 class FilterObjectsKwargSettings:
     """Typed FilterObjects settings projected from CellProfiler kwargs."""
 
-    additional_object_count: int
-    enclosing_object_name: str | None
     measurement_features: tuple[str, ...]
 
     @classmethod
     def from_kwargs(cls, kwargs: CellProfilerKwargs) -> "FilterObjectsKwargSettings":
-        raw_additional_count = kwargs.get(_FILTER_OBJECTS_ADDITIONAL_OBJECT_COUNT_KWARG)
-        if raw_additional_count is None:
-            additional_object_count = 0
-        else:
-            additional_object_count = int(raw_additional_count)
-        raw_enclosing_name = kwargs.get(_FILTER_OBJECTS_ENCLOSING_OBJECT_NAME_KWARG)
-        if raw_enclosing_name is None:
-            enclosing_object_name = None
-        else:
-            enclosing_object_name = str(raw_enclosing_name)
         raw_measurement_features = kwargs.get(
             _FILTER_OBJECTS_MEASUREMENT_FEATURES_KWARG
         )
@@ -156,11 +144,30 @@ class FilterObjectsKwargSettings:
             measurement_features = tuple(
                 (str(value) for value in raw_measurement_features)
             )
-        return cls(
-            additional_object_count=additional_object_count,
-            enclosing_object_name=enclosing_object_name,
-            measurement_features=measurement_features,
-        )
+        return cls(measurement_features=measurement_features)
+
+
+class FilterObjectsRuntimeBindingParameters:
+    """Runtime-bound topology and measurement inputs for FilterObjects."""
+
+    measurement_values_kwarg: ClassVar[RuntimeBoundParameterName] = (
+        RuntimeBoundParameterName("measurement_values")
+    )
+    enclosing_object_labels_kwarg: ClassVar[RuntimeBoundParameterName] = (
+        RuntimeBoundParameterName("enclosing_object_labels")
+    )
+    parent_child_relationship_kwarg: ClassVar[RuntimeBoundParameterName] = (
+        RuntimeBoundParameterName("parent_child_relationship")
+    )
+    parent_child_relationships_kwarg: ClassVar[RuntimeBoundParameterName] = (
+        RuntimeBoundParameterName("parent_child_relationships")
+    )
+    additional_object_count_kwarg: ClassVar[RuntimeBoundParameterName] = (
+        RuntimeBoundParameterName("additional_object_count")
+    )
+    outline_object_indices_kwarg: ClassVar[RuntimeBoundParameterName] = (
+        RuntimeBoundParameterName("outline_object_indices")
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,46 +177,47 @@ class FilterObjectsRuntimeInputPlan:
     measurement_tables_kwarg: ClassVar[RuntimeBoundParameterName] = (
         ObjectRowsWithMeasurementsInputPolicy.measurement_tables_kwarg
     )
-    measurement_values_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName("measurement_values")
-    )
     object_specs: tuple[ArtifactSpec, ...]
     enclosing_spec: ArtifactSpec | None
     settings: FilterObjectsKwargSettings
+    outline_object_indices: tuple[int, ...] = ()
     relationship_spec: ArtifactSpec | None = None
     measurement_relationship_specs: tuple[ArtifactSpec, ...] = ()
 
     @classmethod
-    def from_inputs(
-        cls, runtime_inputs: tuple[ArtifactSpec, ...], kwargs: CellProfilerKwargs
+    def from_request(
+        cls, request: ObjectInputBindingRequest
     ) -> "FilterObjectsRuntimeInputPlan":
+        runtime_inputs = request.runtime_inputs or request.object_inputs
         object_inputs = ArtifactSpecCollection(runtime_inputs).of_artifact_type(
             ObjectLabelsArtifactType
         )
-        settings = FilterObjectsKwargSettings.from_kwargs(kwargs)
-        object_count = settings.additional_object_count + 1
-        enclosing_name = settings.enclosing_object_name
-        object_specs = object_inputs[:object_count]
-        enclosing_spec = None
+        settings = FilterObjectsKwargSettings.from_kwargs(request.kwargs)
+        object_specs = cls._object_specs_from_output_lineage(
+            object_inputs,
+            request.output_specs,
+            module_name=request.module_name,
+        )
+        filtered_refs = {spec.ref() for spec in object_specs}
+        remaining_object_specs = tuple(
+            spec for spec in object_inputs if spec.ref() not in filtered_refs
+        )
+        enclosing_spec = cls._enclosing_object_spec(
+            remaining_object_specs,
+            module_name=request.module_name,
+        )
         relationship_spec = None
         measurement_relationship_specs: list[ArtifactSpec] = []
-        if enclosing_name is not None:
-            enclosing_spec = ArtifactSpecCollection(object_inputs).by_name(
-                enclosing_name
+        if enclosing_spec is not None and object_specs:
+            relationship_spec = ArtifactSpecCollection(
+                runtime_inputs
+            ).by_name_and_artifact_type(
+                parent_child_relationship_artifact_name(
+                    enclosing_spec.name,
+                    object_specs[0].name,
+                ),
+                RelationshipsArtifactType,
             )
-            if enclosing_spec is None:
-                raise RuntimeError(
-                    f"FilterObjects enclosing object input {enclosing_name!r} was not declared in the runtime contract."
-                )
-            if object_specs:
-                relationship_spec = ArtifactSpecCollection(
-                    runtime_inputs
-                ).by_name_and_artifact_type(
-                    parent_child_relationship_artifact_name(
-                        enclosing_name, object_specs[0].name
-                    ),
-                    RelationshipsArtifactType,
-                )
         if object_specs:
             for (
                 child_object_name
@@ -230,11 +238,111 @@ class FilterObjectsRuntimeInputPlan:
             object_specs=object_specs,
             enclosing_spec=enclosing_spec,
             settings=settings,
+            outline_object_indices=cls._outline_object_indices(
+                object_specs,
+                request.output_specs,
+            ),
             relationship_spec=relationship_spec,
             measurement_relationship_specs=ArtifactSpecCollection(
                 measurement_relationship_specs
             ).unique(conflict_context="CellProfiler input spec"),
         )
+
+    @classmethod
+    def _object_specs_from_output_lineage(
+        cls,
+        object_inputs: tuple[ArtifactSpec, ...],
+        output_specs: tuple[ArtifactSpec, ...],
+        *,
+        module_name: str,
+    ) -> tuple[ArtifactSpec, ...]:
+        output_objects = ArtifactSpecCollection(output_specs).of_artifact_type(
+            ObjectLabelsArtifactType
+        )
+        if not output_objects:
+            raise ValueError(
+                f"{module_name} requires declared object output lineage to bind object inputs."
+            )
+        object_specs: list[ArtifactSpec] = []
+        for output_spec in output_objects:
+            source = cls._single_object_input_lineage_source(output_spec)
+            if source is None:
+                if len(output_objects) == 1 and len(object_inputs) == 1:
+                    return object_inputs
+                raise ValueError(
+                    f"{module_name} object output {output_spec.name!r} has no "
+                    "GroupLineageSourceRelation to an input object artifact, "
+                    "and the runtime contract does not declare exactly one "
+                    "object input and one object output."
+                )
+            source_spec = ArtifactSpecCollection(object_inputs).by_ref(source)
+            if source_spec is None:
+                raise ValueError(
+                    f"{module_name} object output {output_spec.name!r} references "
+                    f"input object {source.name!r}, but the runtime contract declares "
+                    f"object inputs={[spec.name for spec in object_inputs]!r}."
+                )
+            object_specs.append(source_spec)
+        return tuple(object_specs)
+
+    @staticmethod
+    def _single_object_input_lineage_source(
+        spec: ArtifactSpec,
+    ) -> ArtifactSpecRef | None:
+        sources = tuple(
+            relation.source
+            for relation in spec.relations
+            if isinstance(relation, GroupLineageSourceRelation)
+            and relation.source.artifact_type is ObjectLabelsArtifactType
+        )
+        if len(sources) > 1:
+            raise ValueError(
+                f"Artifact {spec.name!r} has multiple object lineage sources."
+            )
+        return sources[0] if sources else None
+
+    @staticmethod
+    def _enclosing_object_spec(
+        remaining_object_specs: tuple[ArtifactSpec, ...],
+        *,
+        module_name: str,
+    ) -> ArtifactSpec | None:
+        match remaining_object_specs:
+            case ():
+                return None
+            case (enclosing_spec,):
+                return enclosing_spec
+            case _:
+                raise ValueError(
+                    f"{module_name} cannot infer a unique enclosing object input "
+                    f"from extra object inputs={[spec.name for spec in remaining_object_specs]!r}."
+                )
+
+    @classmethod
+    def _outline_object_indices(
+        cls,
+        object_specs: tuple[ArtifactSpec, ...],
+        output_specs: tuple[ArtifactSpec, ...],
+    ) -> tuple[int, ...]:
+        input_index_by_ref = {
+            spec.ref(): index for index, spec in enumerate(object_specs)
+        }
+        indices: list[int] = []
+        for image_output in ArtifactSpecCollection(output_specs).of_artifact_type(
+            ImageArtifactType
+        ):
+            source = cls._single_object_input_lineage_source(image_output)
+            if source is None:
+                continue
+            try:
+                indices.append(input_index_by_ref[source])
+            except KeyError as exc:
+                raise ValueError(
+                    f"FilterObjects outline image {image_output.name!r} references "
+                    f"object input {source.name!r}, which is not one of the filtered "
+                    f"object rows={[spec.name for spec in object_specs]!r}."
+                ) from exc
+        return tuple(indices)
 
     @property
     def primary_object_spec(self) -> ArtifactSpec | None:
@@ -249,7 +357,9 @@ class FilterObjectsRuntimeInputPlan:
         scoped_request = request.with_object_inputs(self.object_specs)
         measurement_values = self.measurement_vector(scoped_request)
         if measurement_values is not None:
-            return {self.measurement_values_kwarg: measurement_values}
+            return {
+                FilterObjectsRuntimeBindingParameters.measurement_values_kwarg: measurement_values
+            }
         measurement_tables = self.measurement_tables(scoped_request)
         if measurement_tables is None:
             return {}
@@ -315,14 +425,18 @@ class FilterObjectsBoundMeasurementInputs:
 
     @property
     def measurement_tables(self) -> tuple[MeasurementTable, ...]:
-        value = self.bound.get(FilterObjectsRuntimeInputPlan.measurement_tables_kwarg)
+        value = self.bound.get(
+            ObjectRowsWithMeasurementsInputPolicy.measurement_tables_kwarg
+        )
         if value is None:
             return ()
         return tuple(value)
 
     @property
     def measurement_values(self) -> CellProfilerRuntimeValue | None:
-        return self.bound.get(FilterObjectsRuntimeInputPlan.measurement_values_kwarg)
+        return self.bound.get(
+            FilterObjectsRuntimeBindingParameters.measurement_values_kwarg
+        )
 
     @property
     def measurement_values_type(self) -> str:
@@ -332,7 +446,10 @@ class FilterObjectsBoundMeasurementInputs:
         return type(measurement_values).__name__
 
 
-class FilterObjectsInputPolicy(ObjectRowsWithMeasurementsInputPolicy):
+class FilterObjectsInputPolicy(
+    FilterObjectsRuntimeBindingParameters,
+    ObjectRowsWithMeasurementsInputPolicy,
+):
     """Bind ordered primary/additional object rows for FilterObjects."""
 
     supported_non_object_input_kinds = frozenset(
@@ -340,12 +457,11 @@ class FilterObjectsInputPolicy(ObjectRowsWithMeasurementsInputPolicy):
     )
 
     def bind(self, request: ObjectInputBindingRequest) -> CellProfilerKwargDict:
-        runtime_inputs = request.runtime_inputs
-        if not runtime_inputs:
-            runtime_inputs = request.object_inputs
-        plan = FilterObjectsRuntimeInputPlan.from_inputs(runtime_inputs, request.kwargs)
+        plan = FilterObjectsRuntimeInputPlan.from_request(request)
         bound = super().bind(request.with_object_inputs(plan.object_specs))
         bound.update(plan.bind_measurement_inputs(request))
+        bound[self.additional_object_count_kwarg] = max(len(plan.object_specs) - 1, 0)
+        bound[self.outline_object_indices_kwarg] = plan.outline_object_indices
         bound_measurements = FilterObjectsBoundMeasurementInputs(bound)
         measurement_values = bound_measurements.measurement_values
         CellProfilerRuntimeProfileLogger.log_module_profile(
@@ -358,13 +474,15 @@ class FilterObjectsInputPolicy(ObjectRowsWithMeasurementsInputPolicy):
             measurement_features=len(plan.settings.measurement_features),
         )
         if plan.enclosing_spec is not None:
-            bound["enclosing_object_labels"] = request.labels_for(plan.enclosing_spec)
+            bound[self.enclosing_object_labels_kwarg] = request.labels_for(
+                plan.enclosing_spec
+            )
         if plan.relationship_spec is not None:
-            bound["parent_child_relationship"] = request.current_plane_relationship_for(
-                plan.relationship_spec
+            bound[self.parent_child_relationship_kwarg] = (
+                request.current_plane_relationship_for(plan.relationship_spec)
             )
         if plan.measurement_relationship_specs:
-            bound["parent_child_relationships"] = tuple(
+            bound[self.parent_child_relationships_kwarg] = tuple(
                 (
                     request.current_plane_relationship_for(relationship_spec)
                     for relationship_spec in plan.measurement_relationship_specs
@@ -683,9 +801,6 @@ class FilterObjectsModule(
             "measurement_use_maximum": tuple(
                 (rule.use_maximum for rule in measurement_rules)
             ),
-            "additional_object_count": len(plan.additional_rows),
-            "outline_object_indices": plan.outline_object_indices,
-            "enclosing_object_name": plan.enclosing_object_name,
             "per_object_assignment": plan.per_object_assignment,
         }
 
@@ -2068,6 +2183,12 @@ def filter_objects(
         *(plane.relationship for plane in relabeled_planes),
         *filter_objects_outline_images(relabeled_objects, outline_object_indices),
     )
+
+
+set_parameter_exclusions(
+    filter_objects,
+    declared_runtime_bound_parameter_names(FilterObjectsInputPolicy),
+)
 
 
 @numpy(contract=ProcessingContract.PURE_2D)

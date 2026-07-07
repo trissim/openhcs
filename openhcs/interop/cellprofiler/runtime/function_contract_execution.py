@@ -32,6 +32,7 @@ from openhcs.core.pipeline.function_contracts import (
 )
 from openhcs.core.runtime_invocation import (
     RuntimeBatchInvocationRequest,
+    RuntimeInvocationOptions,
     SliceIndexRuntimeParameter,
 )
 from openhcs.core.runtime_semantics import (
@@ -297,6 +298,7 @@ class CellProfilerFunctionContractExecutor:
         image: CellProfilerRuntimeValue,
         kwargs: CellProfilerKwargs,
         *,
+        invocation_options: RuntimeInvocationOptions | None = None,
         force_full_stack: bool = False,
         execution_mode: ImagePayloadExecutionMode | None = None,
         output_aggregation_contract: CellProfilerFunctionOutputAggregationContract = (
@@ -341,7 +343,11 @@ class CellProfilerFunctionContractExecutor:
                 executor,
                 func,
                 image,
-                kwargs,
+                executor.raw_callable_kwargs(
+                    func,
+                    kwargs,
+                    invocation_options,
+                ),
             )
         CellProfilerRuntimeProfileLogger.log_module_profile(
             "cp_executor_strategy_execute",
@@ -350,6 +356,23 @@ class CellProfilerFunctionContractExecutor:
             mode=mode.value,
         )
         return result
+
+    @staticmethod
+    def raw_callable_kwargs(
+        func: CellProfilerFunction,
+        kwargs: CellProfilerKwargs,
+        invocation_options: RuntimeInvocationOptions | None,
+    ) -> CellProfilerKwargDict:
+        """Return raw-call kwargs with typed invocation metadata when declared."""
+        invocation_options_parameter = CallableContract.from_callable(
+            func
+        ).runtime_invocation_options_parameter
+        if invocation_options_parameter is None or invocation_options is None:
+            return dict(kwargs)
+        return {
+            **dict(kwargs),
+            invocation_options_parameter: invocation_options,
+        }
 
     def with_output_aggregation_contract(
         self,
@@ -435,17 +458,22 @@ class CellProfilerFunctionContractExecutor:
         image: CellProfilerRuntimeValue,
         **kwargs: CellProfilerRuntimeValue,
     ) -> CellProfilerRuntimeValue:
-        function_name = CallableContract.from_callable(func).function_name
+        contract = CallableContract.from_callable(func)
+        function_name = contract.function_name
         projection_started_at = time.perf_counter()
-        projected_image = project_singleton_stack_image_domain(image)
-        projected_kwargs = {
-            key: (
-                value
-                if isinstance(value, ObjectLabelValue)
-                else project_singleton_stack_image_domain(value)
-            )
-            for key, value in kwargs.items()
-        }
+        if contract.processing_contract is ProcessingContract.PURE_3D:
+            projected_image = image
+            projected_kwargs = dict(kwargs)
+        else:
+            projected_image = project_singleton_stack_image_domain(image)
+            projected_kwargs = {
+                key: (
+                    value
+                    if isinstance(value, ObjectLabelValue)
+                    else project_singleton_stack_image_domain(value)
+                )
+                for key, value in kwargs.items()
+            }
         label_value = projected_kwargs.get("labels")
         CellProfilerRuntimeProfileLogger.log_module_profile(
             "cp_full_stack_project_domains",
@@ -480,8 +508,30 @@ class CellProfilerFunctionContractExecutor:
         **kwargs: CellProfilerRuntimeValue,
     ) -> CellProfilerRuntimeValue:
         """Execute one full-stack invocation, preserving volumetric semantics."""
-        result = self.execute_pure_3d(func, image, **kwargs)
         contract = CallableContract.from_callable(func)
+        function_name = contract.function_name
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "cp_full_stack_project_domains",
+            0.0,
+            function=function_name,
+            image_shape=RuntimeShapeInspection(image_payload_data(image)).shape_tuple(),
+            labels_shape=(
+                RuntimeShapeInspection(kwargs["labels"]).shape_tuple()
+                if "labels" in kwargs
+                else None
+            ),
+        )
+        call_started_at = time.perf_counter()
+        result = _CELLPROFILER_RUNTIME_CALLABLE_POLICY.invocation(
+            func,
+            (image,),
+            kwargs,
+        ).call()
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "cp_full_stack_raw_call",
+            time.perf_counter() - call_started_at,
+            function=function_name,
+        )
         if contract.processing_contract is not ProcessingContract.PURE_2D:
             return result
         plane_axis = (
@@ -506,6 +556,12 @@ class CellProfilerFunctionContractExecutor:
             raise TypeError(
                 "ALIGNED_MULTI_IMAGE_STACK execution requires "
                 f"AlignedImageStack, got {type(image).__name__}."
+            )
+        processing_contract = CellProfilerProcessingContractAuthority.for_callable(func)
+        if processing_contract is ProcessingContract.PURE_3D:
+            raise ValueError(
+                "ALIGNED_MULTI_IMAGE_STACK execution is slice-batched and cannot "
+                "execute ProcessingContract.PURE_3D callables."
             )
         def execute_aligned_stack_slice(
             slice_func: CellProfilerFunction,

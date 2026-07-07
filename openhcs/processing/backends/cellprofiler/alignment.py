@@ -184,6 +184,17 @@ class AlignModule(
         additional_output_setting,
     )
 
+    @classmethod
+    def compile_time_required_artifact_input_settings(cls):
+        return tuple(
+            (
+                setting,
+                capability_type,
+            )
+            for setting, capability_type in super().compile_time_required_artifact_input_settings()
+            if setting != cls.additional_input_setting
+        )
+
     class AdditionalMode(str, Enum):
         SIMILARLY = "Similarly"
 
@@ -277,9 +288,21 @@ class AlignModule(
             ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(name))
             for name in cls.image_input_names(module)
         ]
+        output_names = cls.image_output_names(module)
         outputs = [
-            ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(name))
-            for name in cls.image_output_names(module)
+            ImageArtifactOutputCapability.bind_artifact(
+                cls,
+                builder,
+                module,
+                ArtifactSpec.output_preserving_source_stack_scope(
+                    output_name,
+                    ImageArtifactType,
+                    ArtifactSpec.input(input_name, ImageArtifactType),
+                ),
+            )
+            for input_name, output_name in zip(
+                cls.image_input_names(module), output_names, strict=True
+            )
         ]
         outputs.append(
             MeasurementArtifactOutputCapability.bind_artifact(cls, builder, module, MeasurementArtifactOutputCapability.spec(cls.measurement_artifact_name(module)))

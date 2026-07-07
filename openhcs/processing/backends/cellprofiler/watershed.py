@@ -142,6 +142,8 @@ class WatershedSpecialInputBindingStrategy(
         request: SpecialInputBindingRequest,
         semantics: CellProfilerSpecialInputPayloadSemantics = CellProfilerSpecialInputPayloadSemantics.INTENSITY_IMAGE,
     ) -> CellProfilerRuntimeValue:
+        if spec.artifact_type is ObjectLabelsArtifactType:
+            return request.labels_for(spec)
         return request.runtime_value(spec, semantics=semantics)
 
 

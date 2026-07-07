@@ -76,22 +76,8 @@ class CellProfilerPrimaryImageInputPolicyMixin(ABC):
         return runtime_kwargs
 
 
-class CellProfilerPrimaryImageInputPolicy(
-    CellProfilerPrimaryImageInputPolicyMixin,
-    CellProfilerModulePolicyLookupMixin,
-    ABC,
-    metaclass=CellProfilerModulePolicyAutoRegisterMeta,
-):
-    """Registered fallback policy root for CellProfiler primary-image inputs."""
-
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
-    declaration_policy_bases = (CellProfilerPrimaryImageInputPolicyMixin,)
-
-
-class DefaultPrimaryImageInputPolicy(CellProfilerPrimaryImageInputPolicy):
+class DefaultPrimaryImageInputPolicyMixin(CellProfilerPrimaryImageInputPolicyMixin):
     """Use non-special image inputs as the algorithmic image domain."""
-
-    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
 
     def primary_image_inputs(
         self,
@@ -114,6 +100,27 @@ class DefaultPrimaryImageInputPolicy(CellProfilerPrimaryImageInputPolicy):
         if special_image_count == 0:
             return image_inputs
         return image_inputs[: len(image_inputs) - special_image_count]
+
+
+class CellProfilerPrimaryImageInputPolicy(
+    CellProfilerPrimaryImageInputPolicyMixin,
+    CellProfilerModulePolicyLookupMixin,
+    ABC,
+    metaclass=CellProfilerModulePolicyAutoRegisterMeta,
+):
+    """Registered fallback policy root for CellProfiler primary-image inputs."""
+
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
+    declaration_policy_bases = (CellProfilerPrimaryImageInputPolicyMixin,)
+
+
+class DefaultPrimaryImageInputPolicy(
+    DefaultPrimaryImageInputPolicyMixin,
+    CellProfilerPrimaryImageInputPolicy,
+):
+    """Use non-special image inputs as the algorithmic image domain."""
+
+    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
 
 
 class ObjectLabelDrivenPrimaryImageInputPolicy(CellProfilerPrimaryImageInputPolicyMixin):

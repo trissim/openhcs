@@ -90,16 +90,14 @@ class RuntimePlaneProjectionRequirementContext:
 
     @property
     def callable_accepts_plane_scoped_runtime_values(self) -> bool:
-        callable_contract = CallableContract.from_callable(self.func)
-        if (
-            callable_contract.runtime_image_execution_mode
-            is ImagePayloadExecutionMode.FULL_STACK
-        ):
-            return False
         return (
             CellProfilerProcessingContractAuthority.for_callable(self.func)
             is not ProcessingContract.PURE_3D
         )
+
+    @property
+    def uses_full_stack_batch_execution(self) -> bool:
+        return self.default_execution_mode is ImagePayloadExecutionMode.FULL_STACK
 
 
 class RuntimePlaneProjectionRequirement(
@@ -146,6 +144,30 @@ class NaturalRuntimePlaneProjectionRequirement(NoRuntimePlaneProjectionRequireme
     def matches(self, context: RuntimePlaneProjectionRequirementContext) -> bool:
         return (
             context.uses_natural_image_execution
+            and context.callable_accepts_plane_scoped_runtime_values
+        )
+
+    def projection_capabilities(
+        self,
+    ) -> frozenset[type[CellProfilerRuntimePlaneProjectionCapability]]:
+        return frozenset(
+            (
+                RuntimeArtifactImageInputProjectionCapability,
+                RuntimeSliceKwargProjectionCapability,
+            )
+        )
+
+
+class FullStackBatchRuntimePlaneProjectionRequirement(
+    NoRuntimePlaneProjectionRequirement
+):
+    """Plane-scoped runtime values for full-stack batched non-3D callables."""
+
+    strategy_key = "full_stack_batch_runtime_plane"
+
+    def matches(self, context: RuntimePlaneProjectionRequirementContext) -> bool:
+        return (
+            context.uses_full_stack_batch_execution
             and context.callable_accepts_plane_scoped_runtime_values
         )
 

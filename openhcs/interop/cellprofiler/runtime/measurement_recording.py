@@ -34,6 +34,44 @@ def measurement_record_for_module(
     return record
 
 
+def filter_measurement_record_rows_by_fields(
+    rows: MeasurementRowsInput,
+    excluded_fields: frozenset[str],
+) -> MeasurementRowsInput:
+    """Remove backend-only fields from measurement-record rows."""
+    if not excluded_fields:
+        return rows
+
+    from openhcs.core.measurement_row_materialization import (
+        MeasurementProjectedColumnarRows,
+    )
+    from openhcs.core.runtime_values import ColumnarRows
+
+    if isinstance(rows, ColumnarRows):
+        return MeasurementProjectedColumnarRows(
+            {
+                str(column): rows.column_values(column)
+                for column in rows.columns
+                if str(column) not in excluded_fields
+            },
+            declared_object_measurement_domain_covered=(
+                rows.covers_declared_object_measurement_domain
+            ),
+        )
+
+    filtered_rows: list[CellProfilerKwargs] = []
+    for row in rows:
+        row_mapping = measurement_row_mapping(row)
+        filtered_rows.append(
+            {
+                field_name: value
+                for field_name, value in row_mapping.items()
+                if field_name not in excluded_fields
+            }
+        )
+    return filtered_rows
+
+
 class CellProfilerMeasurementRecordModule(ABC):
     """Generic measurement-record assembly contract for module declarations."""
 
@@ -49,7 +87,7 @@ class CellProfilerMeasurementRecordModule(ABC):
         )
 
         rows = cls.measurement_record_rows(request)
-        rows = cls.filter_measurement_record_rows(rows)
+        rows = cls.filter_measurement_record_rows(request, rows)
         object_name = cls.measurement_record_object_name(request, rows)
         source_context = cls.measurement_record_source_context(request, rows)
         clear_source = cls.clear_source_when_rows_declare_object_name()
@@ -79,41 +117,33 @@ class CellProfilerMeasurementRecordModule(ABC):
 
     @classmethod
     def filter_measurement_record_rows(
-        cls, rows: MeasurementRowsInput
+        cls,
+        request: CellProfilerOutputRecordRequest,
+        rows: MeasurementRowsInput,
     ) -> MeasurementRowsInput:
         """Remove module-declared backend-only fields before CP materialization."""
-        excluded_fields = cls.measurement_record_excluded_fields
-        if not excluded_fields:
-            return rows
+        excluded_fields = cls.measurement_record_excluded_field_names(request)
+        return filter_measurement_record_rows_by_fields(rows, excluded_fields)
 
-        from openhcs.core.measurement_row_materialization import (
-            MeasurementProjectedColumnarRows,
+    @classmethod
+    def measurement_record_excluded_field_names(
+        cls, request: CellProfilerOutputRecordRequest
+    ) -> frozenset[str]:
+        """Return backend-only fields declared by the record class or module."""
+        from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
+
+        module_type = CellProfilerModule.for_module(request.module_name)
+        module_excluded_fields: frozenset[str] = frozenset()
+        if module_type is not None and issubclass(
+            module_type, CellProfilerMeasurementRecordModule
+        ):
+            module_excluded_fields = module_type.measurement_record_excluded_fields
+        return frozenset(
+            (
+                *cls.measurement_record_excluded_fields,
+                *module_excluded_fields,
+            )
         )
-        from openhcs.core.runtime_values import ColumnarRows
-
-        if isinstance(rows, ColumnarRows):
-            return MeasurementProjectedColumnarRows(
-                {
-                    str(column): rows.column_values(column)
-                    for column in rows.columns
-                    if str(column) not in excluded_fields
-                },
-                declared_object_measurement_domain_covered=(
-                    rows.covers_declared_object_measurement_domain
-                ),
-            )
-
-        filtered_rows: list[CellProfilerKwargs] = []
-        for row in rows:
-            row_mapping = measurement_row_mapping(row)
-            filtered_rows.append(
-                {
-                    field_name: value
-                    for field_name, value in row_mapping.items()
-                    if field_name not in excluded_fields
-                }
-            )
-        return filtered_rows
 
     @classmethod
     def measurement_row_projection_types(
