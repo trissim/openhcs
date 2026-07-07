@@ -149,8 +149,9 @@ class CellProfilerPlateWorkspacePreparer(CellProfilerPlateWorkspaceRequest):
             CellProfilerSourceSchemaWorkspaceRequest.from_paths(
                 source_root=plate_root,
                 cppipe_path=cppipe_path,
-                workspace_root=plate_root,
+                workspace_root=self.source_schema_workspace_root(cppipe_path),
                 generated_pipeline_path=self.generated_pipeline_path(cppipe_path),
+                force_materialization=True,
             )
         )
         return CellProfilerPlateWorkspaceResult(
@@ -166,7 +167,6 @@ class CellProfilerPlateWorkspacePreparer(CellProfilerPlateWorkspaceRequest):
             InputWorkspacePreparationRequest(
                 selected_path=self.plate_root,
                 selected_pipeline_path=self.cppipe_path,
-                workspace_root=self.plate_root,
             )
         )
 
@@ -244,6 +244,11 @@ class CellProfilerPlateWorkspacePreparer(CellProfilerPlateWorkspaceRequest):
         generated_dir.mkdir(parents=True, exist_ok=True)
         return generated_dir / f"{cppipe_path.stem}_openhcs.py"
 
+    def source_schema_workspace_root(self, cppipe_path: Path) -> Path:
+        generated_dir = self.plate_root / ".openhcs_cellprofiler"
+        generated_dir.mkdir(parents=True, exist_ok=True)
+        return generated_dir / f"{cppipe_path.stem}_source_workspace"
+
 
 def prepare_cellprofiler_input_workspace(
     request: InputWorkspacePreparationRequest,
@@ -267,7 +272,11 @@ def prepare_cellprofiler_input_workspace(
         if request.generated_pipeline_path is not None
         else preparer.generated_pipeline_path(cppipe_path)
     )
-    workspace_root = request.workspace_root or plate_root
+    workspace_root = (
+        request.workspace_root
+        if request.workspace_root is not None
+        else preparer.source_schema_workspace_root(cppipe_path)
+    )
     source_schema_request = CellProfilerSourceSchemaWorkspaceRequest.from_paths(
         source_root=plate_root,
         cppipe_path=cppipe_path,

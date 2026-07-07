@@ -24,7 +24,16 @@ def test_prepare_cellprofiler_plate_workspace_materializes_metadata(
 
     assert result.materialized is True
     assert result.cppipe_path == fixture.plate_root / "ExampleFly.cppipe"
-    assert (fixture.plate_root / "openhcs_metadata.json").exists()
+    assert result.ingestion is not None
+    assert result.ingestion.source_workspace_path == (
+        fixture.plate_root / ".openhcs_cellprofiler" / "ExampleFly_source_workspace"
+    )
+    assert (
+        fixture.plate_root
+        / ".openhcs_cellprofiler"
+        / "ExampleFly_source_workspace"
+        / "openhcs_metadata.json"
+    ).exists()
     generated_pipeline = (
         fixture.plate_root / ".openhcs_cellprofiler" / "ExampleFly_openhcs.py"
     )
@@ -43,7 +52,9 @@ def test_prepare_cellprofiler_plate_workspace_refreshes_metadata_when_metadata_e
 
     assert result.materialized is True
     assert result.ingestion is not None
-    assert result.ingestion.source_workspace_path == fixture.plate_root
+    assert result.ingestion.source_workspace_path == (
+        fixture.plate_root / ".openhcs_cellprofiler" / "ExampleFly_source_workspace"
+    )
     assert result.ingestion.runtime_pipeline_steps
     assert set(result.ingestion.materialization.primary_mappings) == {
         "A01_s001_w1_z001_t001.TIF",
@@ -137,7 +148,9 @@ def test_prepare_cellprofiler_input_workspace_preserves_external_object_inputs(
         fixture.plate_root
     ).prepare_input_workspace()
 
-    assert result.execution_plate_path == fixture.plate_root
+    assert result.execution_plate_path == (
+        fixture.plate_root / ".openhcs_cellprofiler" / "ExampleFly_source_workspace"
+    )
     assert result.materialization is not None
     assert result.source_schema is not None
     assert result.pipeline_import_error is None
@@ -173,7 +186,11 @@ def test_prepare_cellprofiler_input_workspace_refreshes_stale_root_metadata(
     ).prepare_input_workspace()
 
     assert result.original_source_root == image_dir
-    assert result.execution_plate_path == fixture.plate_root
+    assert result.execution_plate_path == (
+        fixture.plate_root
+        / ".openhcs_cellprofiler"
+        / "BBBC022_Analysis_Final_source_workspace"
+    )
     assert result.materialization is not None
     assert set(result.materialization.primary_mappings) == {
         "A01_s001_w1_z001_t001.TIF",

@@ -471,6 +471,7 @@ class SourceSchemaIngestionFixture:
                 generated_pipeline_path=(
                     self.tmp_path / f"{cppipe_path.stem}_openhcs.py"
                 ),
+                force_materialization=True,
             )
         )
 
