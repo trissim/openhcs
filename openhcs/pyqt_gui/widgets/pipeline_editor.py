@@ -117,6 +117,7 @@ if TYPE_CHECKING:
 
 StepFunctionDeclaration = FunctionSpec | dict[str, FunctionSpec] | None
 PIPELINE_EDITOR_EXTERNAL_EDITOR_ENV = "OPENHCS_USE_EXTERNAL_EDITOR"
+SHOW_PIPELINE_DEBUG_TOOLBAR = False
 
 
 def pipeline_editor_external_editor_enabled() -> bool:
@@ -472,6 +473,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
             self,
             style_generator=self.style_generator,
         )
+        self.debug_toolbar.setVisible(SHOW_PIPELINE_DEBUG_TOOLBAR)
         self.item_list = create_manager_list_widget(
             color_scheme=self.color_scheme,
             style_generator=self.style_generator,
@@ -490,7 +492,8 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
         main_layout.setContentsMargins(2, 2, 2, 2)
         main_layout.setSpacing(2)
         main_layout.addWidget(header_parts.header)
-        main_layout.addWidget(self.debug_toolbar)
+        if SHOW_PIPELINE_DEBUG_TOOLBAR:
+            main_layout.addWidget(self.debug_toolbar)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(self.item_list)

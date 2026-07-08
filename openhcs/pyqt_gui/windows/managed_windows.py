@@ -178,14 +178,11 @@ class ZMQServerManagerWindow(QDialog):
             ZMQServerManagerWidget,
         )
 
-        from openhcs.core.config import get_all_streaming_ports
-
         layout = QVBoxLayout(self)
-        ports_to_scan = get_all_streaming_ports(num_ports_per_type=10)
 
         self.widget = ZMQServerManagerWidget(
-            ports_to_scan=ports_to_scan,
-            title="ZMQ Servers (Execution + Napari + Fiji)",
+            ports_to_scan=self.main_window.zmq_server_manager_ports_to_scan(),
+            title="ZMQ Servers (Execution + UI Bridge + Napari + Fiji)",
             style_generator=self.service_adapter.get_style_generator(),
         )
         layout.addWidget(self.widget)
