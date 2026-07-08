@@ -27,6 +27,7 @@ from openhcs.core.artifacts import (
     ArtifactSpecRef,
     ArtifactSpecRelation,
     ArtifactSpec,
+    grouped_artifact_path,
 )
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.function_patterns import (
@@ -163,7 +164,7 @@ class PathPlannerGroupScope:
 
     @property
     def is_ungrouped(self) -> bool:
-        return self.keys == (None,)
+        return self.keys == (None,) and self.component is None
 
     def output_groups_for(
         self,
@@ -358,8 +359,29 @@ class PathPlannerExecutionGroups:
             source_scope = self.source_binding_scope_for_group_by(snapshot, group_by)
             if not source_scope.is_ungrouped:
                 scope = source_scope
+        if scope.is_ungrouped:
+            scope = self.dynamic_source_scope_for_group_by(snapshot, group_by)
         logger.debug("FunctionStep groups for %s: %s", snapshot.name, scope.keys)
         return scope
+
+    def dynamic_source_scope_for_group_by(
+        self,
+        snapshot: StepSnapshot,
+        group_by: GroupBy | None,
+    ) -> PathPlannerGroupScope:
+        """Return a runtime-discovered source scope for source-loaded inputs."""
+        if snapshot.input_source is not InputSource.PIPELINE_START:
+            return PathPlannerGroupScope.ungrouped()
+
+        group_by_component = PathPlannerComponentScopes.component_from_group_by(
+            group_by
+        )
+        if group_by_component is None:
+            return PathPlannerGroupScope.ungrouped()
+        return PathPlannerGroupScope.from_raw(
+            (None,),
+            component=ComponentSet.coerce_component(group_by_component),
+        )
 
     def source_binding_scope_for_group_by(
         self,
@@ -1861,11 +1883,7 @@ def _cached_axis_filename(
 @lru_cache(maxsize=65536)
 def _cached_dict_pattern_path(base_path: str, dict_key: str) -> str:
     """Return the grouped artifact path for one base path and group key."""
-    path = Path(base_path)
-    dir_part = path.parent
-    filename = path.name
-    well_id, rest = filename.split("_", 1)
-    return str(dir_part / f"{well_id}_w{dict_key}_{rest}")
+    return grouped_artifact_path(base_path, dict_key)
 
 
 @lru_cache(maxsize=32768)

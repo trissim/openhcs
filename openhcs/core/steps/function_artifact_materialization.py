@@ -750,6 +750,54 @@ def actual_materialization_records(
             f"Artifact output plan '{output_plan.name}' has no group keys."
         )
 
+    if (
+        output_plan.group_component is not None
+        and tuple(output_plan.group_keys) == (None,)
+    ):
+        dynamic_records = tuple(
+            record
+            for record in store.find(
+                name=output_plan.name,
+                artifact_type=output_plan.artifact_type,
+                axis_id=plan.axis_id,
+            )
+            if record.key.scope.group_key is not None
+            and record.backend == Backend.MEMORY.value
+            and store.get(record.key).location == record.location
+        )
+        if dynamic_records:
+            reducer = ArtifactMaterializationRecordReducer.for_artifact_type(
+                output_plan.artifact_type
+            )
+            record_sort_items = []
+            dynamic_group_keys = tuple(
+                dict.fromkeys(
+                    str(record.key.scope.group_key)
+                    for record in dynamic_records
+                )
+            )
+            group_order = {
+                group_key: index
+                for index, group_key in enumerate(sorted(dynamic_group_keys))
+            }
+            for group_key in dynamic_group_keys:
+                records_for_group = tuple(
+                    record
+                    for record in dynamic_records
+                    if str(record.key.scope.group_key) == group_key
+                )
+                for record in reducer.records_for_group(
+                    records=records_for_group,
+                    output_plan=output_plan,
+                    axis_id=plan.axis_id,
+                    group_key=group_key,
+                ):
+                    record_sort_items.append((group_order[group_key], record))
+            return tuple(
+                record
+                for _, record in sorted(record_sort_items, key=lambda item: item[0])
+            )
+
     group_order = {
         group_key: index
         for index, group_key in enumerate(output_plan.group_keys)

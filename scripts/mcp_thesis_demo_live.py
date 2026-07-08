@@ -10,19 +10,33 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DEMO_ROOT = ROOT / "mcp_outputs" / "thesis_demo" / "live"
+DEFAULT_TEST_PLATE_DIR = (
+    ROOT
+    / "tests"
+    / "integration"
+    / "tests_data"
+    / "imagexpress_pipeline"
+    / "test_main[ImageXpress]"
+    / "zstack_plate"
+)
 ORCHESTRATOR_DOCUMENT_ID = "plate_manager.orchestrator_config"
 PYTHON = os.environ.get("PYTHON_BIN", sys.executable)
+FINAL_DEMO_STEP_DISPLAY_INDEX = 8
+FINAL_DEMO_STEP_ROUTE_INDEX = FINAL_DEMO_STEP_DISPLAY_INDEX - 1
+FINAL_DEMO_STEP_NAME = "Cell Counting"
+VIEWER_COMMAND_TIMEOUT_MS = 2000
 
 
 class RehearsalFailure(RuntimeError):
@@ -68,11 +82,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reuse-processes", action="store_true")
     parser.add_argument("--allow-dirty", action="store_true")
     parser.add_argument("--demo-root", type=Path, default=DEFAULT_DEMO_ROOT)
+    parser.add_argument("--plate-dir", type=Path, default=DEFAULT_TEST_PLATE_DIR)
     parser.add_argument("--max-run-seconds", type=float, default=240.0)
     parser.add_argument("--zmq-port", type=int, default=7777)
     parser.add_argument("--napari-port", type=int, default=5555)
     parser.add_argument("--ui-start-timeout", type=float, default=90.0)
-    parser.add_argument("--workflow-timeout", type=float, default=120.0)
+    parser.add_argument("--workflow-timeout", type=float, default=180.0)
     parser.add_argument("--viewer-timeout-ms", type=int, default=2000)
     return parser.parse_args()
 
@@ -436,15 +451,38 @@ def verify_ui_bridge_runtime_scan(ctx: RunContext) -> None:
 
 def demo_source(ctx: RunContext) -> str:
     plate = str(ctx.plate_dir)
+    output_root = str(ctx.output_plate_dir)
     return f"""# Edit this orchestrator configuration and save to apply changes
 
+from openhcs.constants.constants import (
+    GroupBy,
+    VariableComponents,
+)
+from openhcs.constants.input_source import InputSource
+from openhcs.core.memory import DtypeConversion
 from openhcs.core.config import (
     GlobalPipelineConfig,
+    LazyDtypeConfig,
     LazyNapariStreamingConfig,
+    LazyPathPlanningConfig,
+    LazyProcessingConfig,
+    LazyStepMaterializationConfig,
+    LazyStepWellFilterConfig,
+    NapariVariableSizeHandling,
     PipelineConfig,
 )
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.processing.backends.processors.numpy_processor import gaussian_blur
+from openhcs.processing.backends.analysis.cell_counting_cpu import (
+    DetectionMethod,
+    count_cells_single_channel,
+)
+from openhcs.processing.backends.assemblers.assemble_stack_cpu import assemble_stack_cpu
+from openhcs.processing.backends.pos_gen.ashlar_main_cpu import ashlar_compute_tile_positions_cpu
+from openhcs.processing.backends.processors.numpy_processor import (
+    create_composite,
+    create_projection,
+    stack_percentile_normalize,
+)
 
 # MCP thesis demo live rehearsal run: {ctx.run_id}
 
@@ -458,6 +496,9 @@ global_config = GlobalPipelineConfig(
 
 per_plate_configs = {{
     {plate!r}: PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            global_output_folder={output_root!r}
+        ),
         napari_streaming_config=LazyNapariStreamingConfig(
             enabled=True,
             persistent=True,
@@ -469,10 +510,82 @@ per_plate_configs = {{
 pipeline_data = {{
     {plate!r}: [
         FunctionStep(
-            func=(gaussian_blur, {{
-                    'sigma': 1.2
+            func=(stack_percentile_normalize, {{
+                    'low_percentile': 0.5,
+                    'high_percentile': 99.5
                 }}),
-            name='MCP Thesis Demo Blur {ctx.run_id}'
+            name='Image Enhancement Processing {ctx.run_id}',
+            step_well_filter_config=LazyStepWellFilterConfig(
+                well_filter=4
+            ),
+            step_materialization_config=LazyStepMaterializationConfig()
+        ),
+        FunctionStep(
+            func=create_composite,
+            name='create_composite',
+            processing_config=LazyProcessingConfig(
+                variable_components=[
+                    VariableComponents.CHANNEL
+                ],
+                group_by=GroupBy.NONE
+            )
+        ),
+        FunctionStep(
+            func=(create_projection, {{
+                    'method': 'max_projection'
+                }}),
+            name='Z-Stack Flattening',
+            processing_config=LazyProcessingConfig(
+                variable_components=[
+                    VariableComponents.Z_INDEX
+                ]
+            ),
+            step_materialization_config=LazyStepMaterializationConfig()
+        ),
+        FunctionStep(
+            func=ashlar_compute_tile_positions_cpu,
+            name='Position Computation'
+        ),
+        FunctionStep(
+            func=(stack_percentile_normalize, {{
+                    'low_percentile': 0.5,
+                    'high_percentile': 99.5
+                }}),
+            name='Secondary Enhancement',
+            processing_config=LazyProcessingConfig(
+                input_source=InputSource.PIPELINE_START
+            )
+        ),
+        FunctionStep(
+            func=assemble_stack_cpu,
+            name='CPU Assembly'
+        ),
+        FunctionStep(
+            func=(create_projection, {{
+                    'method': 'max_projection'
+                }}),
+            name='Z-Stack Flattening',
+            processing_config=LazyProcessingConfig(
+                variable_components=[
+                    VariableComponents.Z_INDEX
+                ]
+            )
+        ),
+        FunctionStep(
+            func=(count_cells_single_channel, {{
+                    'min_cell_area': 40,
+                    'max_cell_area': 200,
+                    'enable_preprocessing': False,
+                    'detection_method': DetectionMethod.WATERSHED,
+                    'return_segmentation_mask': True
+                }}),
+            name='Cell Counting',
+            dtype_config=LazyDtypeConfig(
+                default_dtype_conversion=DtypeConversion.UINT8
+            ),
+            napari_streaming_config=LazyNapariStreamingConfig(
+                variable_size_handling=NapariVariableSizeHandling.PAD_TO_MAX
+            )
         )
     ]
 }}
@@ -480,37 +593,35 @@ pipeline_data = {{
 
 
 def ensure_demo_plate(ctx: RunContext) -> None:
-    command_json(
-        ctx,
-        "generate_plate",
-        mcp_cmd(
-            "generate-synthetic-plate",
-            ctx.plate_dir,
-            "--grid-rows",
-            "1",
-            "--grid-cols",
-            "1",
-            "--tile-width",
-            "96",
-            "--tile-height",
-            "96",
-            "--wavelengths",
-            "2",
-            "--z-stack-levels",
-            "1",
-            "--num-cells",
-            "12",
-            "--well",
-            "A01",
-            "--openhcs-format",
-            "--random-seed",
-            "17",
-            "--sample-file-limit",
-            "5",
-        ),
-        timeout=60,
+    started_at = time.perf_counter()
+    if not ctx.plate_dir.is_dir():
+        raise RehearsalFailure(f"Existing test plate is missing: {ctx.plate_dir}")
+    metadata_path = ctx.plate_dir / "openhcs_metadata.json"
+    if not metadata_path.is_file():
+        raise RehearsalFailure(f"Existing test plate has no openhcs_metadata.json: {ctx.plate_dir}")
+    image_count = sum(
+        1
+        for path in ctx.plate_dir.rglob("*")
+        if path.suffix.lower() in {".tif", ".tiff"}
     )
+    if image_count < 1:
+        raise RehearsalFailure(f"Existing test plate has no TIFF images: {ctx.plate_dir}")
+    ctx.output_plate_dir.mkdir(parents=True, exist_ok=True)
     ctx.source_path.write_text(demo_source(ctx), encoding="utf-8")
+    ctx.steps.append(
+        StepRecord(
+            "verify_existing_test_plate",
+            time.perf_counter() - started_at,
+            True,
+            None,
+            {
+                "plate_dir": str(ctx.plate_dir),
+                "metadata_path": str(metadata_path),
+                "image_count": image_count,
+                "output_root": str(ctx.output_plate_dir),
+            },
+        )
+    )
 
 
 def inspect_and_apply_code_document(ctx: RunContext) -> None:
@@ -728,33 +839,131 @@ def selected_plate_state(ctx: RunContext) -> dict[str, Any]:
     return row
 
 
-def validate_viewer(ctx: RunContext) -> dict[str, Any]:
-    viewer_payload = command_json(
-        ctx,
-        "validate_napari_viewer",
-        mcp_cmd(
-            "validate-viewer",
-            "--port",
-            str(ctx.napari_port),
-            "--transport-mode",
-            "ipc",
-            "--required-component-label",
-            "well",
-            "--required-component-label",
-            "site",
-            "--required-component-label",
-            "channel",
-            "--require-nonzero-payloads",
-            "--include-state",
-            "--timeout-ms",
-            str(ctx.viewer_timeout_ms if hasattr(ctx, "viewer_timeout_ms") else 10000),
+def viewer_command_timeout_ms(ctx: RunContext) -> int:
+    return min(
+        int(
+            ctx.viewer_timeout_ms
+            if hasattr(ctx, "viewer_timeout_ms")
+            else VIEWER_COMMAND_TIMEOUT_MS
         ),
-        timeout=30,
+        VIEWER_COMMAND_TIMEOUT_MS,
     )
-    validation = first_payload(viewer_payload)
-    if validation.get("valid") is not True:
-        raise RehearsalFailure("Napari viewer validation did not return valid=True.")
 
+
+def final_demo_layer(layers: list[Any]) -> dict[str, Any]:
+    final_layers = final_demo_layers(layers)
+    image_layers = [
+        layer
+        for layer in final_layers
+        if not layer.get("data_types") or "image" in tuple(layer.get("data_types") or ())
+    ]
+    return (image_layers or final_layers)[0]
+
+
+def final_demo_layers(layers: list[Any]) -> list[dict[str, Any]]:
+    layer_dicts = [layer for layer in layers if isinstance(layer, dict)]
+    image_layers = [
+        layer
+        for layer in layer_dicts
+        if not layer.get("data_types") or "image" in tuple(layer.get("data_types") or ())
+    ]
+    candidates = image_layers or layer_dicts
+    if not candidates:
+        raise RehearsalFailure("Napari viewer has no layers.")
+
+    exact_matches = [
+        layer
+        for layer in layer_dicts
+        if _layer_matches_final_demo_step(layer)
+    ]
+    if exact_matches:
+        return exact_matches
+
+    indexed = [
+        (step_index, layer)
+        for layer in candidates
+        if (step_index := _layer_step_index(layer)) is not None
+    ]
+    if indexed:
+        max_step_index = max(step_index for step_index, _layer in indexed)
+        return [layer for step_index, layer in indexed if step_index == max_step_index]
+    return [candidates[-1]]
+
+
+def _layer_matches_final_demo_step(layer: dict[str, Any]) -> bool:
+    route_key = str(layer.get("route_key") or "")
+    title = str(layer.get("title") or "")
+    return (
+        f"step_{FINAL_DEMO_STEP_ROUTE_INDEX}" in route_key
+        or title.startswith(f"{FINAL_DEMO_STEP_DISPLAY_INDEX}. ")
+        or FINAL_DEMO_STEP_NAME.lower() in title.lower()
+    )
+
+
+def _layer_step_index(layer: dict[str, Any]) -> int | None:
+    route_key = str(layer.get("route_key") or "")
+    route_match = re.search(r"(?:^|_)step_(\d+)(?:_|$)", route_key)
+    if route_match is not None:
+        return int(route_match.group(1))
+    title = str(layer.get("title") or "")
+    title_match = re.match(r"\s*(\d+)\.", title)
+    if title_match is not None:
+        return int(title_match.group(1)) - 1
+    return None
+
+
+def fixed_demo_axis_indices(layer: dict[str, Any], *, well_index: int | None = None) -> dict[str, int]:
+    axes = set(_layer_axis_names(layer))
+    axis_indices: dict[str, int] = {}
+    if "site" in axes:
+        axis_indices["site"] = 0
+    for z_axis in ("z_index", "z", "zstep"):
+        if z_axis in axes:
+            axis_indices[z_axis] = 0
+            break
+    if well_index is not None and "well" in axes:
+        axis_indices["well"] = well_index
+    return axis_indices
+
+
+def _layer_axis_names(layer: dict[str, Any]) -> tuple[str, ...]:
+    axis_names: list[str] = []
+    for field_name in ("stack_axes", "axis_labels"):
+        values = layer.get(field_name)
+        if isinstance(values, (list, tuple)):
+            axis_names.extend(str(value) for value in values if isinstance(value, str))
+    axis_component_values = layer.get("axis_component_values")
+    if isinstance(axis_component_values, dict):
+        axis_names.extend(str(key) for key in axis_component_values)
+    return tuple(dict.fromkeys(axis_names))
+
+
+def well_axis_count(layer: dict[str, Any]) -> int:
+    values = layer.get("axis_component_values")
+    if isinstance(values, dict):
+        well_values = values.get("well")
+        if isinstance(well_values, (list, tuple)):
+            return len(well_values)
+    component_values = layer.get("component_values")
+    if not isinstance(component_values, (list, tuple)):
+        return 0
+    wells = {
+        str(record.get("well"))
+        for record in component_values
+        if isinstance(record, dict) and record.get("well") is not None
+    }
+    return len(wells)
+
+
+def axis_index_args(axis_indices: Mapping[str, int]) -> list[str]:
+    args: list[str] = []
+    for axis_name, axis_index in axis_indices.items():
+        args.extend(["--axis-index", f"{axis_name}={axis_index}"])
+    return args
+
+
+def validate_viewer(ctx: RunContext) -> dict[str, Any]:
+    viewer_timeout_ms = viewer_command_timeout_ms(ctx)
     state = command_json(
         ctx,
         "napari_viewer_state",
@@ -764,8 +973,10 @@ def validate_viewer(ctx: RunContext) -> dict[str, Any]:
             str(ctx.napari_port),
             "--transport-mode",
             "ipc",
+            "--max-component-values-per-layer",
+            "256",
             "--timeout-ms",
-            str(ctx.viewer_timeout_ms if hasattr(ctx, "viewer_timeout_ms") else 10000),
+            str(viewer_timeout_ms),
         ),
         timeout=30,
     )
@@ -773,16 +984,74 @@ def validate_viewer(ctx: RunContext) -> dict[str, Any]:
     layers = state_payload.get("layers")
     if not isinstance(layers, list) or not layers:
         raise RehearsalFailure("Napari viewer has no layers.")
-    route_key = next(
-        (
-            layer.get("route_key")
-            for layer in layers
-            if isinstance(layer, dict) and layer.get("route_key")
-        ),
-        None,
-    )
+    final_layers = final_demo_layers(layers)
+    layer = final_demo_layer(final_layers)
+    route_key = layer.get("route_key")
     if not isinstance(route_key, str):
-        raise RehearsalFailure("Napari viewer layer route key missing.")
+        raise RehearsalFailure("Final Napari viewer layer route key missing.")
+    visible_route_keys = [
+        route
+        for final_layer in final_layers
+        if isinstance(route := final_layer.get("route_key"), str)
+    ]
+    if not visible_route_keys:
+        raise RehearsalFailure("Final Napari viewer layers have no route keys.")
+
+    fixed_axes = fixed_demo_axis_indices(layer, well_index=0)
+    isolation_args = [
+        "isolate-viewer",
+        "--port",
+        str(ctx.napari_port),
+        "--transport-mode",
+        "ipc",
+        "--selected-route-key",
+        route_key,
+        *axis_index_args(fixed_axes),
+        "--timeout-ms",
+        str(viewer_timeout_ms),
+        *visible_route_keys,
+    ]
+    isolation = command_json(
+        ctx,
+        "isolate_napari_final_step_layer",
+        mcp_cmd(*isolation_args),
+        timeout=30,
+    )
+    isolation_payload = first_payload(isolation)
+    if isolation_payload.get("applied") is not True:
+        raise RehearsalFailure("Napari final layer isolation did not apply.")
+
+    viewer_payload = command_json(
+        ctx,
+        "validate_napari_final_step_viewer",
+        mcp_cmd(
+            "validate-viewer",
+            "--port",
+            str(ctx.napari_port),
+            "--transport-mode",
+            "ipc",
+            "--route-key",
+            route_key,
+            "--expected-layer-count",
+            "1",
+            "--required-component-label",
+            "well",
+            "--required-component-label",
+            "site",
+            "--required-component-label",
+            "channel",
+            "--required-component-label",
+            "z_index",
+            "--require-nonzero-payloads",
+            "--include-state",
+            "--timeout-ms",
+            str(viewer_timeout_ms),
+        ),
+        timeout=30,
+    )
+    validation = first_payload(viewer_payload)
+    if validation.get("valid") is not True:
+        raise RehearsalFailure("Napari final step viewer validation did not return valid=True.")
 
     command_json(
         ctx,
@@ -795,13 +1064,16 @@ def validate_viewer(ctx: RunContext) -> dict[str, Any]:
             "ipc",
             "--route-key",
             route_key,
+            *axis_index_args(fixed_axes),
             "--visible",
             "--selected",
             "--timeout-ms",
-            str(ctx.viewer_timeout_ms if hasattr(ctx, "viewer_timeout_ms") else 10000),
+            str(viewer_timeout_ms),
         ),
         timeout=30,
     )
+
+    scrolled_well_count = scroll_well_axis(ctx, route_key, layer, viewer_timeout_ms)
 
     payloads = command_json(
         ctx,
@@ -816,7 +1088,7 @@ def validate_viewer(ctx: RunContext) -> dict[str, Any]:
             route_key,
             "--no-array-values",
             "--timeout-ms",
-            str(ctx.viewer_timeout_ms if hasattr(ctx, "viewer_timeout_ms") else 10000),
+            str(viewer_timeout_ms),
         ),
         timeout=30,
     )
@@ -828,11 +1100,58 @@ def validate_viewer(ctx: RunContext) -> dict[str, Any]:
         raise RehearsalFailure("Napari payload inspection returned no payload records.")
     if not any(record.get("components") and record.get("path") for record in payload_records):
         raise RehearsalFailure("Napari payload records lack provenance/component context.")
-    return {"route_key": route_key, "payload_record_count": len(payload_records)}
+    return {
+        "route_key": route_key,
+        "visible_route_keys": visible_route_keys,
+        "layer_title": layer.get("title"),
+        "fixed_axes": fixed_axes,
+        "scrolled_well_count": scrolled_well_count,
+        "payload_record_count": len(payload_records),
+    }
+
+
+def scroll_well_axis(
+    ctx: RunContext,
+    route_key: str,
+    layer: dict[str, Any],
+    viewer_timeout_ms: int,
+) -> int:
+    well_count = well_axis_count(layer)
+    if well_count <= 1:
+        return 0
+    scroll_count = min(well_count, 4)
+    for well_index in range(scroll_count):
+        command_json(
+            ctx,
+            f"scroll_napari_well_{well_index + 1:02d}",
+            mcp_cmd(
+                "navigate-viewer",
+                "--port",
+                str(ctx.napari_port),
+                "--transport-mode",
+                "ipc",
+                "--route-key",
+                route_key,
+                *axis_index_args(
+                    fixed_demo_axis_indices(layer, well_index=well_index)
+                ),
+                "--visible",
+                "--selected",
+                "--timeout-ms",
+                str(viewer_timeout_ms),
+            ),
+            timeout=30,
+        )
+        time.sleep(0.35)
+    return scroll_count
 
 
 def snapshot_windows(ctx: RunContext) -> None:
     assert ctx.descriptor_path is not None
+    viewer_timeout_ms = min(
+        int(ctx.viewer_timeout_ms if hasattr(ctx, "viewer_timeout_ms") else 2000),
+        2000,
+    )
     command_json(
         ctx,
         "ui_windows",
@@ -863,7 +1182,7 @@ def snapshot_windows(ctx: RunContext) -> None:
             "--transport-mode",
             "ipc",
             "--timeout-ms",
-            str(ctx.viewer_timeout_ms if hasattr(ctx, "viewer_timeout_ms") else 2000),
+            str(viewer_timeout_ms),
         ),
         timeout=30,
     )
@@ -871,14 +1190,15 @@ def snapshot_windows(ctx: RunContext) -> None:
 
 def run_one(args: argparse.Namespace, index: int, session_dir: Path, fresh: bool) -> dict[str, Any]:
     run_id = f"run{index}_{now_id()}"
+    run_dir = session_dir / f"run_{index:02d}"
     ctx = RunContext(
         index=index,
         run_id=run_id,
-        run_dir=session_dir / f"run_{index:02d}",
-        plate_dir=args.demo_root / "plate",
-        output_plate_dir=args.demo_root / "plate_openhcs",
-        source_path=session_dir / f"run_{index:02d}" / "orchestrator_config.py",
-        descriptor_dir=session_dir / f"run_{index:02d}" / "ui_bridge",
+        run_dir=run_dir,
+        plate_dir=args.plate_dir.expanduser().resolve(strict=False),
+        output_plate_dir=run_dir / "outputs",
+        source_path=run_dir / "orchestrator_config.py",
+        descriptor_dir=run_dir / "ui_bridge",
         napari_port=args.napari_port,
         zmq_port=args.zmq_port,
     )

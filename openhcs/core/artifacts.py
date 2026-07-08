@@ -11,6 +11,7 @@ from abc import ABC
 from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import astuple, asdict, dataclass, fields, is_dataclass, replace
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Self, cast
 
 from metaclass_registry import AutoRegisterMeta
@@ -987,6 +988,12 @@ class ArtifactPlan(ABC, metaclass=AutoRegisterMeta):
             return self.path
         if group_key in self.paths_by_group:
             return self.paths_by_group[group_key]
+        if (
+            group_key is not None
+            and self.group_component is not None
+            and None in self.paths_by_group
+        ):
+            return grouped_artifact_path(self.paths_by_group[None], group_key)
         if None in self.paths_by_group:
             return self.paths_by_group[None]
         if self._missing_group_uses_default_path:
@@ -1100,6 +1107,16 @@ class ArtifactInputPlan(ArtifactPlan):
 
 
 GroupLineageSourceRelation.target_plan_type = ArtifactOutputPlan
+
+
+def grouped_artifact_path(base_path: str, group_key: str) -> str:
+    """Return the existing grouped artifact path form for a runtime group."""
+    path = Path(base_path)
+    filename = path.name
+    if "_" not in filename:
+        return str(path.with_name(f"{path.stem}_w{group_key}{path.suffix}"))
+    axis_id, rest = filename.split("_", 1)
+    return str(path.parent / f"{axis_id}_w{group_key}_{rest}")
 
 
 @dataclass(frozen=True)

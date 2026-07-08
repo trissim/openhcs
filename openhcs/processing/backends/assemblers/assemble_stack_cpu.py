@@ -178,7 +178,11 @@ def assemble_stack_cpu(
     """
     # --- 1. Validate inputs ---
     if not isinstance(image_tiles, np.ndarray) or image_tiles.ndim != 3:
-        raise TypeError("image_tiles must be a 3D NumPy ndarray of shape (N, H, W).")
+        raise TypeError(
+            "image_tiles must be a 3D NumPy ndarray of shape (N, H, W); "
+            f"got {type(image_tiles).__name__} with shape "
+            f"{getattr(image_tiles, 'shape', None)!r}."
+        )
     
     if image_tiles.shape[0] == 0:
         logger.warning("image_tiles array is empty (0 tiles).")

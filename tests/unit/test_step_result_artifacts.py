@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 import numpy as np
 
-from openhcs.constants.constants import MEMORY_TYPE_NUMPY
+from openhcs.constants.constants import AllComponents, MEMORY_TYPE_NUMPY
 from openhcs.core.artifacts import (
     CROP_MASK_ARTIFACT_SIDECAR,
     ArtifactInputPlan,
@@ -117,6 +117,7 @@ class CoreExecutionRequest:
     artifact_inputs: Mapping[str, ArtifactInputPlan]
     artifact_outputs: Mapping[str, ArtifactOutputPlan]
     group_key: str = "default"
+    execution_group_component: AllComponents | None = None
 
 
 def _execute_function_core(request: CoreExecutionRequest):
@@ -158,6 +159,7 @@ def _execute_function_core(request: CoreExecutionRequest):
             source_load_plan=SourceLoadPlan(),
             variable_components=(),
             group_by_value=None,
+            execution_group_component=request.execution_group_component,
             group_projects_runtime_plane=False,
         ),
         compiled_group=CompiledFunctionGroup(
@@ -441,6 +443,132 @@ def test_execute_function_core_saves_named_step_result_artifacts():
     )
     assert len(stored) == 1
     assert stored[0].value.data == [{"count": 2}]
+
+
+def test_execute_function_core_attaches_execution_group_identity_to_step_result_artifact():
+    context = ContextStub()
+    source = RuntimeImagePayloadContext(
+        np.zeros((3, 4, 5), dtype=np.uint16),
+        metadata=ImagePayloadMetadata(
+            source_path="/input/A01_s001_w1_z001.tif",
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "z_index": "1",
+            },
+        ),
+        mask=None,
+    ).payload()
+
+    def segment(image):
+        del image
+        return StepResult(
+            image=np.zeros((3, 4, 5), dtype=np.uint16),
+            artifacts={
+                "segmentation_masks": np.ones((3, 4, 5), dtype=np.int32),
+            },
+        )
+
+    _execute_function_core(
+        CoreExecutionRequest(
+            func_callable=segment,
+            main_data_arg=source,
+            base_kwargs={},
+            context=context,
+            artifact_inputs={},
+            artifact_outputs={
+                "segmentation_masks": ArtifactOutputPlan(
+                    name="segmentation_masks",
+                    path="/memory/A01_w2_segmentation_masks.pkl",
+                    artifact_type=ObjectLabelsArtifactType,
+                    group_keys=("2",),
+                    paths_by_group={
+                        "2": "/memory/A01_w2_segmentation_masks.pkl",
+                    },
+                )
+            },
+            group_key="2",
+            execution_group_component=AllComponents.CHANNEL,
+        )
+    )
+
+    stored = context.runtime_value_store.find(
+        name="segmentation_masks",
+        axis_id="A01",
+        group_key="2",
+        match_group=True,
+    )
+    assert len(stored) == 1
+    metadata = image_payload_metadata(stored[0].value.data)
+    assert dict(metadata.source_component_metadata) == {
+        "well": "A01",
+        "site": "1",
+        "channel": "2",
+        "z_index": "1",
+    }
+
+
+def test_execute_function_core_attaches_dynamic_execution_group_to_tuple_artifact():
+    context = ContextStub()
+    source = RuntimeImagePayloadContext(
+        np.zeros((3, 4, 5), dtype=np.uint16),
+        metadata=ImagePayloadMetadata(
+            source_path="/input/A01_s001_z001.tif",
+            source_component_metadata={
+                "well": "A01",
+                "site": "1",
+                "z_index": "1",
+            },
+        ),
+        mask=None,
+    ).payload()
+
+    def segment(image):
+        return image, np.ones((3, 4, 5), dtype=np.int32)
+
+    _execute_function_core(
+        CoreExecutionRequest(
+            func_callable=segment,
+            main_data_arg=source,
+            base_kwargs={},
+            context=context,
+            artifact_inputs={},
+            artifact_outputs={
+                "segmentation_masks": ArtifactOutputPlan(
+                    name="segmentation_masks",
+                    path="/memory/A01_segmentation_masks.pkl",
+                    artifact_type=ObjectLabelsArtifactType,
+                    group_keys=(None,),
+                    group_component=AllComponents.CHANNEL,
+                    paths_by_group={
+                        None: "/memory/A01_segmentation_masks.pkl",
+                    },
+                )
+            },
+            group_key="2",
+            execution_group_component=AllComponents.CHANNEL,
+        )
+    )
+
+    assert (
+        "/memory/A01_w2_segmentation_masks.pkl",
+        "memory",
+    ) in context.filemanager.saved
+    stored = context.runtime_value_store.find(
+        name="segmentation_masks",
+        axis_id="A01",
+        group_key="2",
+        match_group=True,
+    )
+    assert len(stored) == 1
+    assert stored[0].path == "/memory/A01_w2_segmentation_masks.pkl"
+    metadata = image_payload_metadata(stored[0].value.data)
+    assert dict(metadata.source_component_metadata) == {
+        "well": "A01",
+        "site": "1",
+        "channel": "2",
+        "z_index": "1",
+    }
 
 
 def test_execute_function_core_preserves_tuple_main_output_without_artifact_plan():

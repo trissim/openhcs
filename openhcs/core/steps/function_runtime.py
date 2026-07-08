@@ -90,6 +90,7 @@ from openhcs.core.source_binding_selection import (
     SourceBindingRuntimeContextRequest,
     SourcePatternResolutionContext,
 )
+from openhcs.core.source_matching import with_source_component_metadata
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     SourceBindingRuntimeContext,
@@ -1134,12 +1135,13 @@ class FunctionCoreExecutor:
 
     def execute(self) -> RuntimePayload | NoMainFlowOutput:
         memory_types = self.memory_types()
-        main_data_arg = MainFlowMemoryConversion(
+        source_payload = MainFlowMemoryConversion(
             payload=self.main_data_arg,
             source_type=self.source_memory_type,
             target_type=memory_types.input_type,
             gpu_id=self.runtime_scope.execution_plan.device_id,
         ).converted_payload()
+        main_data_arg = self.main_flow_call_argument(source_payload)
         final_kwargs = dict(self.base_kwargs)
         self.bind_compiled_runtime_parameters(final_kwargs)
         loads_artifact_inputs = self.should_load_artifact_inputs()
@@ -1151,7 +1153,7 @@ class FunctionCoreExecutor:
         raw_output = self.invoke(main_data_arg, final_kwargs)
         main_output = self.save_artifact_outputs(
             raw_output,
-            main_data_arg,
+            source_payload,
             loaded_artifact_payloads=loaded_artifact_payloads,
         )
         if isinstance(main_output, NoMainFlowOutput):
@@ -1159,14 +1161,26 @@ class FunctionCoreExecutor:
         if RuntimeImageSourceIdentityCompleteness(main_output).complete():
             return main_output
         main_output_source = self.main_output_source_payload(
-            main_data_arg,
+            source_payload,
             loaded_artifact_payloads=loaded_artifact_payloads,
         )
         return FunctionOutputContextStrategy.for_output_plan(None).contextualize(
-            main_output_source,
+            self.execution_group_source_payload(main_output_source),
             main_output,
             None,
         )
+
+    def main_flow_call_argument(self, source_payload: RuntimePayload) -> RuntimeCallableArgument:
+        """Return the first argument for the user callable.
+
+        OpenHCS owns image payload metadata for identity, masks, and provenance.
+        Plain array callables should still receive the concrete array operand;
+        adapter-backed callables receive the payload because the adapter owns
+        source/artifact projection for that invocation.
+        """
+        if self.invocation.runtime_argument_plan.adapter_parameter_name is not None:
+            return source_payload
+        return image_payload_data(source_payload)
 
     def memory_types(self) -> "FunctionChainInvocationMemoryTypes":
         return FunctionChainInvocationMemoryTypes.from_invocation(self.invocation)
@@ -1192,6 +1206,26 @@ class FunctionCoreExecutor:
                 "object-label artifact inputs with no image artifact input."
             )
         return object_label_sources[0]
+
+    def execution_group_source_payload(
+        self,
+        source_payload: RuntimePayload,
+    ) -> RuntimePayload:
+        """Return source payload metadata carrying the current grouped identity."""
+        component = self.runtime_scope.execution_plan.execution_group_component
+        if component is None or self.group_key is None:
+            return source_payload
+        metadata = image_payload_metadata(source_payload)
+        component_metadata = dict(metadata.source_component_metadata or {})
+        component_metadata = with_source_component_metadata(
+            component_metadata,
+            component,
+            self.group_key,
+        )
+        return with_image_payload_metadata(
+            source_payload,
+            metadata.with_source_component_metadata(component_metadata),
+        )
 
     def object_label_source_payloads(
         self,
@@ -1550,16 +1584,17 @@ class FunctionCoreExecutor:
             "(memory backend)"
         )
         save_started_at = time.perf_counter()
+        artifact_source_payload = self.artifact_output_source_payload(
+            output_plan,
+            value,
+            source_payload,
+            loaded_artifact_payloads=loaded_artifact_payloads,
+        )
         _save_artifact_value(
             self.runtime_scope.context,
             output_plan,
             value,
-            self.artifact_output_source_payload(
-                output_plan,
-                value,
-                source_payload,
-                loaded_artifact_payloads=loaded_artifact_payloads,
-            ),
+            self.execution_group_source_payload(artifact_source_payload),
             group_key=self.group_key,
         )
         RuntimeProfileSink.record(

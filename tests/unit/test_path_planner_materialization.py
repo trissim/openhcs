@@ -660,6 +660,31 @@ def test_non_dict_group_by_does_not_create_execution_scope_from_plate_keys():
     assert source_scope == PathPlannerGroupScope.ungrouped()
 
 
+def test_non_dict_group_by_uses_dynamic_source_scope_for_pipeline_start():
+    planner = _artifact_planner_stub()
+    planner.orchestrator = SimpleNamespace(
+        pipeline_config=SimpleNamespace(source_bindings_config=SourceBindingsConfig())
+    )
+    source_snapshot = SimpleNamespace(
+        is_function_step=True,
+        func=lambda image: image,
+        group_by=GroupBy.CHANNEL,
+        variable_components=(VariableComponents.SITE,),
+        name="source_loaded_channel_callable",
+        source_bindings=EMPTY_SOURCE_BINDINGS,
+        input_source=InputSource.PIPELINE_START,
+    )
+
+    source_scope = planner.execution_groups.get_execution_groups(
+        source_snapshot,
+        PathPlannerComponentScopes.empty(),
+    )
+    assert source_scope == PathPlannerGroupScope.from_raw(
+        (None,),
+        component=AllComponents.CHANNEL,
+    )
+
+
 def test_dict_pattern_group_by_declares_execution_group_component():
     planner = _artifact_planner_stub()
     snapshot = SimpleNamespace(
@@ -756,6 +781,49 @@ def test_non_dict_group_by_uses_input_component_scope_before_plate_keys():
     assert scope == PathPlannerGroupScope.ungrouped()
 
 
+def test_non_dict_group_by_namespaces_artifact_outputs_with_dynamic_component():
+    planner = _artifact_planner_stub()
+    declarations = ArtifactGraph(
+        producers=(
+            ArtifactProducer(
+                name="segmentation_masks",
+                spec=ArtifactSpec.output(
+                    "segmentation_masks",
+                    ObjectLabelsArtifactType,
+                ),
+                groups=(None,),
+                invocation_keys=(),
+            ),
+        )
+    )
+    snapshot = SimpleNamespace(
+        is_function_step=True,
+        func=lambda image: image,
+        group_by=GroupBy.CHANNEL,
+        variable_components=(VariableComponents.SITE,),
+        name="single_callable_channel_artifacts",
+        source_bindings=EMPTY_SOURCE_BINDINGS,
+        input_source=InputSource.PREVIOUS_STEP,
+    )
+
+    maps = planner.artifacts.compile_plan_maps(
+        snapshot,
+        2,
+        declarations,
+        PathPlannerGroupScope.from_raw(
+            (None,),
+            component=AllComponents.CHANNEL,
+        ),
+    )
+
+    output_plan = maps.outputs["segmentation_masks"]
+    assert output_plan.group_keys == (None,)
+    assert output_plan.group_component is AllComponents.CHANNEL
+    assert maps.outputs_by_group[None]["segmentation_masks"].group_component is (
+        AllComponents.CHANNEL
+    )
+
+
 def test_non_dict_group_by_uses_source_binding_identity_for_pipeline_start_scope():
     planner = _artifact_planner_stub()
     planner.orchestrator = SimpleNamespace(
@@ -834,7 +902,10 @@ def test_non_dict_group_by_ignores_source_binding_identity_for_other_components(
         PathPlannerComponentScopes.empty(),
     )
 
-    assert scope == PathPlannerGroupScope.ungrouped()
+    assert scope == PathPlannerGroupScope.from_raw(
+        (None,),
+        component=AllComponents.SITE,
+    )
 
 
 def test_compiled_group_by_preserves_identity_for_ungrouped_execution_scope():

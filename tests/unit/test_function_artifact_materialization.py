@@ -43,6 +43,7 @@ from openhcs.core.steps.function_artifact_materialization import (
     AnalysisOutputDescriptorAuthority,
     PersistentArtifactMaterializationTargetPlan,
     StreamingOnlyArtifactMaterializationTargetPlan,
+    actual_materialization_records,
     materialize_artifact_outputs,
     planned_materialization_preview,
 )
@@ -876,6 +877,45 @@ def test_materialize_artifact_outputs_uses_actual_group_records(monkeypatch):
     assert isinstance(spec.outputs[0], CsvOptions)
     assert data == [{"site": "1", "area": 42}]
     assert path == "/analysis/A01_w1_measurements_step7.roi.zip"
+
+
+def test_actual_materialization_records_uses_dynamic_runtime_groups():
+    output_plan = ArtifactOutputPlan(
+        name="segmentation_masks",
+        path="/memory/A01_segmentation_masks_step7.pkl",
+        artifact_type=ObjectLabelsArtifactType,
+        group_keys=(None,),
+        group_component=AllComponents.CHANNEL,
+        paths_by_group={None: "/memory/A01_segmentation_masks_step7.pkl"},
+    )
+    group_one = output_plan.for_group("1")
+    group_two = output_plan.for_group("2")
+    store = RuntimeValueStore()
+    for group_plan, value in (
+        (group_one, np.ones((3, 4, 5), dtype=np.int32)),
+        (group_two, np.full((3, 4, 5), 2, dtype=np.int32)),
+    ):
+        store.record(
+            normalize_artifact_value(
+                group_plan,
+                value,
+                axis_id="A01",
+            ),
+            path=group_plan.path,
+            backend="memory",
+        )
+
+    records = actual_materialization_records(
+        store=store,
+        plan=_plan(output_plan, group_by_value="channel"),
+        output_plan=output_plan,
+    )
+
+    assert tuple(record.key.scope.group_key for record in records) == ("1", "2")
+    assert tuple(record.path for record in records) == (
+        "/memory/A01_w1_segmentation_masks_step7.pkl",
+        "/memory/A01_w2_segmentation_masks_step7.pkl",
+    )
 
 
 def test_materialize_artifact_outputs_uses_group_measurement_artifact_identity(
