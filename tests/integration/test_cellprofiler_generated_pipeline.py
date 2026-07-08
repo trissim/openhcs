@@ -10,6 +10,10 @@ from openhcs.interop.cellprofiler.runtime_pipeline import (
     execute_pipeline_direct,
     prepare_generated_pipeline,
 )
+from openhcs.interop.cellprofiler.source_schema_ingestion import (
+    CellProfilerSourceSchemaWorkspaceRequest,
+    prepare_cellprofiler_source_schema_workspace,
+)
 from openhcs.interop.cellprofiler.execution_validation import validate_cppipe_execution
 import numpy as np
 import pytest
@@ -47,6 +51,7 @@ from openhcs.core.source_bindings import (
     SourceFilterSubject,
 )
 from openhcs.core.source_schema_workspace import (
+    SourceSchemaImageSetSelection,
     SourceSchemaWorkspaceMaterialization,
     materialize_source_schema_workspace,
 )
@@ -629,15 +634,20 @@ def test_official_examplefly_cppipe_executes_through_zmq_server(
             f"looked under {examples_root}."
         )
 
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_official_examplefly_zmq_pipeline.py",
+    workspace = prepare_cellprofiler_source_schema_workspace(
+        CellProfilerSourceSchemaWorkspaceRequest.from_paths(
+            source_root=source_root,
+            cppipe_path=cppipe_path,
+            workspace_root=tmp_path / "official_examplefly_zmq_openhcs_workspace",
+            generated_pipeline_path=(
+                tmp_path / "generated_official_examplefly_zmq_pipeline.py"
+            ),
+            image_set_selection=SourceSchemaImageSetSelection(
+                max_image_set_count=1,
+            ),
+        )
     )
-    workspace = materialize_source_schema_workspace(
-        source_root,
-        tmp_path / "official_examplefly_zmq_openhcs_workspace",
-        prepared.source_schema,
-    )
+    prepared = workspace.prepared_pipeline
 
     global_config = GlobalPipelineConfig(
         num_workers=1,
@@ -665,10 +675,12 @@ def test_official_examplefly_cppipe_executes_through_zmq_server(
         client.connect(timeout=30)
         response = client.execute_pipeline(
             OpenHCSExecutionSubmission(
-                plate_id=str(workspace.workspace_root),
+                plate_id=str(workspace.source_root),
+                execution_plate_id=str(workspace.execution_plate_path),
                 pipeline_steps=prepared.pipeline.steps,
                 global_config=global_config,
                 pipeline_config=pipeline_config,
+                selected_pipeline_path=cppipe_path,
             )
         )
     finally:
