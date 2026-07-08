@@ -4,8 +4,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from openhcs.constants.constants import GroupBy, VariableComponents
+from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
 from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
+from openhcs.core.function_patterns import compile_function_pattern
 from openhcs.core.steps.function_output_manifest import StepOutputManifestStore
 from openhcs.core.steps.function_execution import (
     FunctionStepExecutor,
@@ -15,10 +16,19 @@ from openhcs.core.steps.function_execution import (
 from openhcs.core.aligned_image_payload import AlignedImageSliceContext
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
+    ArtifactOutputPlan,
     ArtifactSidecarRole,
+    ArtifactSpec,
     ImageArtifactType,
     ObjectLabelsArtifactType,
 )
+from openhcs.core.module_artifact_contract import (
+    DeclaredArtifactOutputPartition,
+    ModuleArtifactContract,
+    RecordedArtifactOutputPartition,
+    module_artifact_contract,
+)
+from openhcs.core.runtime_adapters import runtime_adapter
 from openhcs.core.steps.function_output_identity import (
     FunctionOutputIdentity,
     FunctionOutputIdentityAuthority,
@@ -33,12 +43,23 @@ from openhcs.core.source_workspace_projection import (
 )
 from openhcs.core.aligned_image_payload import (
     ImagePayloadBundleContext,
+    payload_slices_for_alignment,
     stack_image_payload_context,
 )
+from openhcs.core.pipeline_image_schema import (
+    ColorImageTypeSourceRole,
+    GrayscaleImageTypeSourceRole,
+    SOURCE_IMAGE_TYPE_METADATA_FIELD,
+)
+from openhcs.core.source_image_semantics import source_image_payload_role
 from openhcs.core.step_dependencies import StepInputDependency
 from openhcs.core.source_bindings import (
+    ComponentSelector,
     CompiledSourceBindingPlan,
     NamedSourceBinding,
+    SourceBindingMatchMethod,
+    SourceBindingMatchPlan,
+    SourceBindingOrigin,
     SourceFilterClause,
     SourceFilterMatchType,
     SourceFilterSubject,
@@ -162,6 +183,47 @@ def test_virtual_workspace_axis_filter_uses_virtual_filename_metadata_when_missi
     }
 
 
+def test_virtual_workspace_runtime_metadata_projection_validates_explicit_metadata(
+    tmp_path: Path,
+) -> None:
+    plate_path = tmp_path / "plate"
+    real_path = tmp_path / "source" / "image.tif"
+    virtual_path = plate_path / "A01_s001_w1_z001_t001.tif"
+    projection = VirtualWorkspaceSourceProjection(
+        source_paths_by_virtual_path={
+            virtual_path.name: str(real_path),
+            str(virtual_path): str(real_path),
+        },
+        source_metadata_by_path={
+            virtual_path.name: {"OpenHCSSourceVoxelSpacingZYX": "2,1,1"},
+            str(virtual_path): {"OpenHCSSourceVoxelSpacingZYX": "2,1,1"},
+        },
+        workspace_root=str(plate_path),
+    )
+
+    projection.validate_runtime_metadata_projection()
+
+
+def test_virtual_workspace_runtime_metadata_projection_rejects_path_spelling_drift(
+    tmp_path: Path,
+) -> None:
+    plate_path = tmp_path / "plate"
+    real_path = tmp_path / "source" / "image.tif"
+    virtual_path = plate_path / "A01_s001_w1_z001_t001.tif"
+    projection = VirtualWorkspaceSourceProjection(
+        source_paths_by_virtual_path={
+            virtual_path.name: str(real_path),
+        },
+        source_metadata_by_path={
+            virtual_path.name: {"OpenHCSSourceVoxelSpacingZYX": "2,1,1"},
+        },
+        workspace_root=str(plate_path),
+    )
+
+    with pytest.raises(ValueError, match="OpenHCSSourceVoxelSpacingZYX"):
+        projection.validate_runtime_metadata_projection()
+
+
 def test_stack_payload_context_promotes_single_channel_slice_metadata() -> None:
     first = RuntimeImagePayloadContext(
         np.zeros((4, 5), dtype=np.float32),
@@ -242,6 +304,35 @@ def test_bundle_payload_context_preserves_source_binding_plane_metadata() -> Non
         "site": 1,
         "extension": ".tif",
     }
+
+
+def test_mixed_source_role_payload_slices_by_source_plane() -> None:
+    metadata = ImagePayloadMetadata(
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=("grayscale.tif", "color.tif"),
+            component_metadata=(
+                {
+                    SOURCE_IMAGE_TYPE_METADATA_FIELD: (
+                        GrayscaleImageTypeSourceRole.image_type()
+                    )
+                },
+                {
+                    SOURCE_IMAGE_TYPE_METADATA_FIELD: (
+                        ColorImageTypeSourceRole.image_type()
+                    )
+                },
+            ),
+        )
+    )
+    payload = metadata.payload_with(np.zeros((2, 4, 5), dtype=np.float32))
+
+    slices = payload_slices_for_alignment(payload)
+
+    assert len(slices) == 2
+    assert type(source_image_payload_role(slices[0])) is GrayscaleImageTypeSourceRole
+    assert type(source_image_payload_role(slices[1])) is ColorImageTypeSourceRole
+    assert image_payload_metadata(slices[0]).source_path == "grayscale.tif"
+    assert image_payload_metadata(slices[1]).source_path == "color.tif"
 
 
 def test_step_output_manifest_scopes_previous_step_inputs(tmp_path: Path) -> None:
@@ -592,7 +683,7 @@ def test_step_output_manifest_uses_declared_artifact_producer_scope(
             "A01_s001_w2_z001_t001.tif",
         ],
         SourceSchemaFilenameParser(),
-    ) == ["A01_s001_w1_z001_t001.tif"]
+    ) == ["A01_s001_w2_z001_t001.tif"]
 
 
 def test_step_output_manifest_ignores_sidecar_artifact_for_anchor_filtering() -> None:
@@ -664,6 +755,141 @@ def test_step_output_anchor_filter_skips_source_binding_filter() -> None:
     )
 
     assert pattern_filter.source_bound_anchor_patterns(grouped_patterns) is grouped_patterns
+
+
+def test_source_bound_anchor_filter_scopes_bindings_to_execution_component() -> None:
+    source_binding_plan = CompiledSourceBindingPlan(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigStain1",
+                selector=SourceSelector(
+                    components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+                ),
+                origin=SourceBindingOrigin.PIPELINE_START,
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "1"),
+                ),
+            ),
+            NamedSourceBinding(
+                alias="OrigStain2",
+                selector=SourceSelector(
+                    components=(ComponentSelector(AllComponents.CHANNEL, "2"),),
+                ),
+                origin=SourceBindingOrigin.PIPELINE_START,
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "2"),
+                ),
+            ),
+        ),
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+    )
+    plan = SimpleNamespace(
+        axis_id="A01",
+        main_input_dependency=StepInputDependency.pipeline_start(),
+        source_binding_plan=source_binding_plan,
+        execution_group_component=AllComponents.CHANNEL,
+        compiled_function_pattern=compile_function_pattern(lambda image: image, {}, {}),
+    )
+    pattern_filter = StepAnchorPatternFilter(
+        plan=plan,
+        parser=SourceSchemaFilenameParser(),
+        output_manifest=None,
+        source_workspace_authority=SimpleNamespace(
+            projection_or_empty=lambda: VirtualWorkspaceSourceProjection.empty()
+        ),
+        source_workspace_projection_cache=VirtualWorkspaceSourceProjectionCache(),
+    )
+
+    filtered = pattern_filter.source_bound_anchor_patterns(
+        PatternGroups(
+            {
+                "1": ("A01_s001_w1_z001_t001.tif",),
+                "2": ("A01_s001_w2_z001_t001.tif",),
+            }
+        )
+    )
+
+    assert filtered.groups == {
+        "1": ("A01_s001_w1_z001_t001.tif",),
+        "2": ("A01_s001_w2_z001_t001.tif",),
+    }
+
+
+def test_source_bound_artifact_managed_step_keeps_source_anchors() -> None:
+    contract = ModuleArtifactContract(
+        module_name="SourceBoundArtifactManaged",
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (ArtifactSpec.output("IllumStain1", ImageArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (ArtifactSpec.output("IllumStain1", ImageArtifactType),),
+            ),
+        ),
+    )
+
+    @module_artifact_contract(contract)
+    @runtime_adapter("runtime", lambda _request: object())
+    def source_bound_module(image, *, runtime):
+        return image
+
+    source_binding_plan = CompiledSourceBindingPlan(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigStain1",
+                selector=SourceSelector(
+                    components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+                ),
+                origin=SourceBindingOrigin.PIPELINE_START,
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "1"),
+                ),
+            ),
+        ),
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+    )
+    compiled_pattern = compile_function_pattern(
+        source_bound_module,
+        {},
+        {
+            "IllumStain1": ArtifactOutputPlan(
+                name="IllumStain1",
+                path="/memory/IllumStain1.pkl",
+                artifact_type=ImageArtifactType,
+            ),
+        },
+    )
+    plan = SimpleNamespace(
+        axis_id="A01",
+        main_input_dependency=StepInputDependency.pipeline_start(),
+        source_binding_plan=source_binding_plan,
+        execution_group_component=None,
+        compiled_function_pattern=compiled_pattern,
+    )
+    pattern_filter = StepAnchorPatternFilter(
+        plan=plan,
+        parser=SourceSchemaFilenameParser(),
+        output_manifest=None,
+        source_workspace_authority=SimpleNamespace(
+            projection_or_empty=lambda: VirtualWorkspaceSourceProjection.empty()
+        ),
+        source_workspace_projection_cache=VirtualWorkspaceSourceProjectionCache(),
+    )
+    grouped_patterns = PatternGroups(
+        {
+            None: (
+                "A01_s001_w1_z001_t001.tif",
+                "A01_s002_w1_z001_t001.tif",
+            )
+        }
+    )
+
+    assert (
+        pattern_filter.artifact_driven_anchor_patterns(grouped_patterns).groups
+        == grouped_patterns.groups
+    )
 
 
 def test_step_output_load_filter_skips_source_binding_filter() -> None:

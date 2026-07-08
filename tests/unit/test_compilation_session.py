@@ -5,7 +5,7 @@ import pytest
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.config_framework.object_state import ObjectState
 from openhcs.config_framework.object_state_registry import ObjectStateRegistry
-from openhcs.constants.constants import AllComponents, VariableComponents
+from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
 from openhcs.core.compiled_step_plan import CompiledStepPlan
@@ -34,6 +34,7 @@ from openhcs.core.function_step_invocation_contracts import (
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline.compilation_session import CompilationSession
 from openhcs.core.pipeline.compiler import AxisCompilationRequest, PipelineCompiler
+from openhcs.core.pipeline.path_planner import PathPlannerExecutionGroups
 from openhcs.core.pipeline.step_config_universe import (
     StepConfigRoot,
     StepConfigUniverse,
@@ -92,6 +93,7 @@ def _snapshot(
     name: str = "step",
     variable_components=(VariableComponents.SITE,),
     source_bindings=EMPTY_SOURCE_BINDINGS,
+    input_source: InputSource = InputSource.PREVIOUS_STEP,
 ) -> StepSnapshot:
     return StepSnapshot(
         index=index,
@@ -107,7 +109,7 @@ def _snapshot(
             ProcessingConfig(
                 variable_components=list(variable_components),
                 group_by=None,
-                input_source=InputSource.PREVIOUS_STEP,
+                input_source=input_source,
             ),
             StepMaterializationConfig(enabled=False),
         ),
@@ -128,6 +130,10 @@ def _context() -> SimpleNamespace:
             )
         },
     )
+
+
+def _orchestrator(pipeline_config: PipelineConfig | None = None) -> SimpleNamespace:
+    return SimpleNamespace(pipeline_config=pipeline_config or PipelineConfig())
 
 
 class _EffectiveConfigContextOrchestrator:
@@ -160,7 +166,7 @@ def test_compilation_session_owns_step_snapshot_plan_invariants():
     session = CompilationSession.from_context(
         context=_context(),
         steps=[step],
-        orchestrator=SimpleNamespace(),
+        orchestrator=_orchestrator(),
         global_config=GlobalPipelineConfig(),
         step_state_map={0: step_state},
         snapshots=(_snapshot(0),),
@@ -180,7 +186,7 @@ def test_compilation_session_rejects_missing_snapshot():
         CompilationSession.from_context(
             context=_context(),
             steps=[step],
-            orchestrator=SimpleNamespace(),
+            orchestrator=_orchestrator(),
             global_config=GlobalPipelineConfig(),
             step_state_map={0: object()},
             snapshots=(),
@@ -194,7 +200,7 @@ def test_compilation_session_rejects_non_contiguous_snapshot_index():
         CompilationSession.from_context(
             context=_context(),
             steps=[step],
-            orchestrator=SimpleNamespace(),
+            orchestrator=_orchestrator(),
             global_config=GlobalPipelineConfig(),
             step_state_map={0: object()},
             snapshots=(_snapshot(1),),
@@ -206,7 +212,7 @@ def test_compiler_keeps_variable_components_as_stack_source():
     session = CompilationSession.from_context(
         context=_context(),
         steps=[step],
-        orchestrator=SimpleNamespace(),
+        orchestrator=_orchestrator(),
         global_config=GlobalPipelineConfig(),
         step_state_map={0: object()},
         snapshots=(
@@ -272,7 +278,7 @@ def test_compiler_enabled_source_binding_plan_comes_from_objectstate_snapshot():
         session = CompilationSession.from_context(
             context=_context(),
             steps=[resolved_step],
-            orchestrator=SimpleNamespace(),
+            orchestrator=_orchestrator(pipeline_state.to_object()),
             global_config=GlobalPipelineConfig(),
             step_state_map={0: step_state},
             snapshots=(snapshot,),
@@ -300,7 +306,7 @@ def test_compiler_disabled_source_bindings_stay_inert_without_contract_requireme
     session = CompilationSession.from_context(
         context=_context(),
         steps=[step],
-        orchestrator=SimpleNamespace(),
+        orchestrator=_orchestrator(),
         global_config=GlobalPipelineConfig(),
         step_state_map={0: object()},
         snapshots=(snapshot,),
@@ -309,6 +315,68 @@ def test_compiler_disabled_source_bindings_stay_inert_without_contract_requireme
     PipelineCompiler._supplement_step_plans(session)
 
     assert session.plan(0).source_binding_plan.is_empty
+
+
+def test_compiler_activates_pipeline_source_binding_defaults_for_pipeline_start():
+    binding = NamedSourceBinding(alias="DNA")
+    step = FunctionStep(func=_identity, name="source-bound")
+    snapshot = _snapshot(
+        0,
+        input_source=InputSource.PIPELINE_START,
+    )
+    session = CompilationSession.from_context(
+        context=_context(),
+        steps=[step],
+        orchestrator=_orchestrator(
+            PipelineConfig(
+                source_bindings_config=SourceBindingsConfig(bindings=(binding,)),
+                step_source_bindings_config=LazyStepSourceBindingsConfig(
+                    enabled=None,
+                    metadata_rules=None,
+                    match_plan=None,
+                    source_filters=None,
+                    bindings=None,
+                ),
+            ),
+        ),
+        global_config=GlobalPipelineConfig(),
+        step_state_map={0: object()},
+        snapshots=(snapshot,),
+    )
+
+    PipelineCompiler._supplement_step_plans(session)
+
+    assert session.plan(0).source_binding_plan.bindings == (binding,)
+
+
+def test_path_planner_execution_groups_use_effective_source_binding_defaults():
+    bindings = (
+        NamedSourceBinding(
+            alias="OrigStain1",
+            component_identity=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+        ),
+        NamedSourceBinding(
+            alias="OrigStain2",
+            component_identity=(ComponentSelector(AllComponents.CHANNEL, "2"),),
+        ),
+    )
+    snapshot = SimpleNamespace(
+        source_bindings=LazyStepSourceBindingsConfig(enabled=None),
+    )
+    planner = SimpleNamespace(
+        source_bindings_for_snapshot=lambda _snapshot: StepSourceBindingsConfig(
+            enabled=True,
+            bindings=bindings,
+        )
+    )
+
+    scope = PathPlannerExecutionGroups(planner).source_binding_scope_for_group_by(
+        snapshot,
+        GroupBy.CHANNEL,
+    )
+
+    assert scope.keys == ("1", "2")
+    assert scope.component is AllComponents.CHANNEL
 
 
 def test_compiler_freezes_enabled_source_binding_set_without_contract_filtering():
@@ -325,7 +393,7 @@ def test_compiler_freezes_enabled_source_binding_set_without_contract_filtering(
     session = CompilationSession.from_context(
         context=_context(),
         steps=[step],
-        orchestrator=SimpleNamespace(),
+        orchestrator=_orchestrator(),
         global_config=GlobalPipelineConfig(),
         step_state_map={0: object()},
         snapshots=(snapshot,),

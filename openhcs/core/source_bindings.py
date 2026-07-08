@@ -550,6 +550,127 @@ class NamedSourceBinding(SourceAssignmentBase):
         )
 
 
+class SourceBindingDeclarationsMixin:
+    """Shared named-binding view for editable and compiled source plans."""
+
+    bindings: tuple[NamedSourceBinding, ...] | None
+
+    @property
+    def binding_declarations(self) -> tuple[NamedSourceBinding, ...]:
+        """Named bindings explicitly declared on this plan."""
+
+        return tuple(self.bindings or ())
+
+    @property
+    def image_stack_bindings(self) -> tuple[NamedSourceBinding, ...]:
+        """Bindings that anchor execution to the primary source-image stack."""
+
+        return tuple(
+            binding
+            for binding in self.binding_declarations
+            if binding.participates_in_execution_anchoring
+        )
+
+    def bindings_for_group_key(
+        self,
+        group_key: str,
+    ) -> tuple[NamedSourceBinding, ...]:
+        """Return bindings whose declared component identity matches a pattern group."""
+        normalized_group_key = str(group_key)
+        if normalized_group_key == "default":
+            return self.binding_declarations
+        matching_bindings = tuple(
+            binding
+            for binding in self.binding_declarations
+            if any(
+                str(selector.value) == normalized_group_key
+                for selector in binding.component_identity
+            )
+        )
+        if matching_bindings:
+            return matching_bindings
+        if len(self.binding_declarations) <= 1:
+            return self.binding_declarations
+        binding_identities = {
+            binding.alias: tuple(
+                (selector.component.value, selector.value)
+                for selector in binding.component_identity
+            )
+            for binding in self.binding_declarations
+        }
+        raise ValueError(
+            f"Source binding group {normalized_group_key!r} does not match any "
+            "declared component identity. Available binding identities: "
+            f"{binding_identities!r}."
+        )
+
+    def bindings_for_component_group(
+        self,
+        component: AllComponents | None,
+        group_key: str | None,
+    ) -> tuple[NamedSourceBinding, ...]:
+        """Return bindings whose identity matches one typed execution group."""
+        if component is None or group_key is None:
+            return self.binding_declarations
+        normalized_group_key = str(group_key)
+        if normalized_group_key == "default":
+            return self.binding_declarations
+        normalized_component = _coerce_component(
+            component,
+            "SourceBindingDeclarationsMixin.bindings_for_component_group.component",
+        )
+        matching_bindings = tuple(
+            binding
+            for binding in self.binding_declarations
+            if any(
+                selector.component is normalized_component
+                and str(selector.value) == normalized_group_key
+                for selector in binding.component_identity
+            )
+        )
+        return matching_bindings or self.binding_declarations
+
+    def for_group_key(
+        self,
+        group_key: str,
+    ) -> Self:
+        """Return this source-binding config scoped to one function-pattern group."""
+        return replace(self, bindings=self.bindings_for_group_key(group_key))
+
+    def bindings_for_artifact_keys(
+        self,
+        artifact_keys: tuple[tuple[str, ArtifactType], ...],
+    ) -> tuple[NamedSourceBinding, ...]:
+        """Return bindings whose alias/kind pair is present in artifact keys."""
+        keys = set(artifact_keys)
+        return tuple(
+            binding
+            for binding in self.binding_declarations
+            if (binding.alias, binding.artifact_kind) in keys
+        )
+
+    def for_artifact_keys(
+        self,
+        artifact_keys: tuple[tuple[str, ArtifactType], ...],
+    ) -> Self:
+        """Return this source-binding config scoped to typed artifact keys."""
+        return replace(
+            self,
+            bindings=self.bindings_for_artifact_keys(artifact_keys),
+        )
+
+    def for_component_group(
+        self,
+        component: AllComponents | None,
+        group_key: str | None,
+    ) -> Self:
+        """Return this source-binding config scoped to one typed execution group."""
+        return replace(
+            self,
+            bindings=self.bindings_for_component_group(component, group_key),
+        )
+
+
 @dataclass(frozen=True, kw_only=True)
 class _SourceBindingPlanBase(ABC, metaclass=SourceBindingPlanMeta):
     """Shared typed source-binding plan fields across editable and compiled views."""
@@ -636,7 +757,7 @@ class _SourceBindingPlanBase(ABC, metaclass=SourceBindingPlanMeta):
 
 
 @dataclass(frozen=True)
-class SourceBindingsConfig(_SourceBindingPlanBase):
+class SourceBindingsConfig(SourceBindingDeclarationsMixin, _SourceBindingPlanBase):
     """Pipeline/plate source-binding defaults and init-time discovery config."""
 
     registry_key: ClassVar[str] = "source"
@@ -685,62 +806,6 @@ class SourceBindingsConfig(_SourceBindingPlanBase):
         return tuple(self.source_filters or ())
 
     @property
-    def binding_declarations(self) -> tuple[NamedSourceBinding, ...]:
-        """Named bindings explicitly declared on this plan."""
-
-        return tuple(self.bindings or ())
-
-    @property
-    def image_stack_bindings(self) -> tuple[NamedSourceBinding, ...]:
-        """Bindings that anchor execution to the primary source-image stack."""
-
-        return tuple(
-            binding
-            for binding in self.binding_declarations
-            if binding.participates_in_execution_anchoring
-        )
-
-    def bindings_for_group_key(
-        self,
-        group_key: str,
-    ) -> tuple[NamedSourceBinding, ...]:
-        """Return bindings whose declared component identity matches a pattern group."""
-        normalized_group_key = str(group_key)
-        if normalized_group_key == "default":
-            return self.binding_declarations
-        matching_bindings = tuple(
-            binding
-            for binding in self.binding_declarations
-            if any(
-                str(selector.value) == normalized_group_key
-                for selector in binding.component_identity
-            )
-        )
-        if matching_bindings:
-            return matching_bindings
-        if len(self.binding_declarations) <= 1:
-            return self.binding_declarations
-        binding_identities = {
-            binding.alias: tuple(
-                (selector.component.value, selector.value)
-                for selector in binding.component_identity
-            )
-            for binding in self.binding_declarations
-        }
-        raise ValueError(
-            f"Source binding group {normalized_group_key!r} does not match any "
-            "declared component identity. Available binding identities: "
-            f"{binding_identities!r}."
-        )
-
-    def for_group_key(
-        self,
-        group_key: str,
-    ) -> Self:
-        """Return this source-binding config scoped to one function-pattern group."""
-        return replace(self, bindings=self.bindings_for_group_key(group_key))
-
-    @property
     def is_empty(self) -> bool:
         return (
             not self.has_primary_content
@@ -772,6 +837,101 @@ class StepSourceBindingsConfig(
 
     enabled: bool = False
     """Whether this step uses source-binding resolution instead of the prior step image stack."""
+
+    @property
+    def inherits_metadata_rules(self) -> bool:
+        """Whether metadata rules should be inherited from the pipeline scope."""
+        return object.__getattribute__(self, "metadata_rules") is None
+
+    @property
+    def inherits_match_plan(self) -> bool:
+        """Whether the match plan should be inherited from the pipeline scope."""
+        return object.__getattribute__(self, "match_plan") is None
+
+    @property
+    def inherits_source_filters(self) -> bool:
+        """Whether source filters should be inherited from the pipeline scope."""
+        return object.__getattribute__(self, "source_filters") is None
+
+    @property
+    def inherits_bindings(self) -> bool:
+        """Whether named source bindings should be inherited from the pipeline scope."""
+        return object.__getattribute__(self, "bindings") is None
+
+    def can_inherit_from(
+        self,
+        defaults: SourceBindingsConfig,
+    ) -> bool:
+        """Return whether this config can be represented by inherited defaults."""
+        base_defaults = source_bindings_defaults_to_base(defaults)
+
+        def _matches_or_erased_empty_inherits(
+            declared_values: tuple[SourceBindingValue, ...],
+            default_values: tuple[SourceBindingValue, ...],
+        ) -> bool:
+            return declared_values == default_values or (
+                not declared_values and bool(default_values)
+            )
+
+        return (
+            (
+                self.inherits_source_filters
+                or _matches_or_erased_empty_inherits(
+                    self.source_filter_declarations,
+                    base_defaults.source_filter_declarations,
+                )
+            )
+            and (
+                self.inherits_bindings
+                or self.binding_declarations == base_defaults.binding_declarations
+            )
+            and (
+                self.inherits_metadata_rules
+                or _matches_or_erased_empty_inherits(
+                    self.metadata_rule_declarations,
+                    base_defaults.metadata_rule_declarations,
+                )
+            )
+            and (
+                self.inherits_match_plan
+                or self.match_plan == base_defaults.match_plan
+            )
+        )
+
+    def resolved_against(
+        self,
+        defaults: SourceBindingsConfig,
+    ) -> "StepSourceBindingsConfig":
+        """Return this step config with inherited source-binding fields resolved."""
+        if not isinstance(defaults, SourceBindingsConfig):
+            raise TypeError(
+                "StepSourceBindingsConfig.resolved_against requires "
+                f"SourceBindingsConfig defaults, got {type(defaults).__name__}."
+            )
+
+        return replace(
+            self,
+            metadata_rules=(
+                defaults.metadata_rule_declarations
+                if self.inherits_metadata_rules
+                else self.metadata_rule_declarations
+            ),
+            match_plan=(
+                defaults.match_plan
+                if self.inherits_match_plan
+                else self.match_plan
+            ),
+            source_filters=(
+                defaults.source_filter_declarations
+                if self.inherits_source_filters
+                else self.source_filter_declarations
+            ),
+            bindings=(
+                defaults.binding_declarations
+                if self.inherits_bindings
+                else self.binding_declarations
+            ),
+        )
 
     def requires_step_input_component_stack(
         self,
@@ -822,8 +982,161 @@ class StepSourceBindingsConfig(
         )
 
 
+def source_bindings_defaults_to_base(
+    defaults: SourceBindingsConfig,
+) -> SourceBindingsConfig:
+    """Return concrete source-binding defaults from eager or lazy config values."""
+    from objectstate import get_base_type_for_lazy
+
+    if isinstance(defaults, SourceBindingsConfig):
+        return defaults
+    if get_base_type_for_lazy(type(defaults)) is SourceBindingsConfig:
+        return defaults.to_base_config()
+    raise TypeError(
+        "Source-binding defaults must resolve to SourceBindingsConfig, got "
+        f"{type(defaults).__name__}."
+    )
+
+
+def _step_source_bindings_explicitly_sets(
+    config: StepSourceBindingsConfig,
+    field_name: str,
+) -> bool:
+    """Return whether a step source-binding field was explicitly declared."""
+    from objectstate.lazy_factory import LazyDataclass
+
+    if isinstance(config, LazyDataclass):
+        explicit_fields = object.__getattribute__(config, "_explicitly_set_fields")
+        return field_name in explicit_fields
+    default_config = StepSourceBindingsConfig()
+    return object.__getattribute__(config, field_name) != object.__getattribute__(
+        default_config,
+        field_name,
+    )
+
+
+def _step_source_bindings_raw_enabled(
+    config: StepSourceBindingsConfig,
+) -> bool | None:
+    """Return raw enablement, preserving ``None`` as inherited/no override."""
+    return object.__getattribute__(config, "enabled")
+
+
+def _resolve_step_source_binding_defaults(
+    source_bindings: StepSourceBindingsConfig,
+    defaults: StepSourceBindingsConfig | None,
+    *,
+    activate_source_bindings: bool = False,
+) -> StepSourceBindingsConfig:
+    """Apply pipeline step-source defaults while preserving explicit overrides."""
+    if defaults is not None and not isinstance(defaults, StepSourceBindingsConfig):
+        raise TypeError(
+            "Step source-binding defaults must be StepSourceBindingsConfig, got "
+            f"{type(defaults).__name__}."
+        )
+
+    source_enabled = _step_source_bindings_raw_enabled(source_bindings)
+    default_enabled = (
+        None if defaults is None else _step_source_bindings_raw_enabled(defaults)
+    )
+    if (
+        _step_source_bindings_explicitly_sets(source_bindings, "enabled")
+        and source_enabled is not None
+    ):
+        enabled = source_enabled
+    elif (
+        defaults is not None
+        and _step_source_bindings_explicitly_sets(defaults, "enabled")
+        and default_enabled is not None
+    ):
+        enabled = default_enabled
+    elif activate_source_bindings:
+        enabled = True
+    else:
+        enabled = source_bindings.enabled
+
+    return replace(
+        source_bindings,
+        enabled=enabled,
+        metadata_rules=(
+            source_bindings.metadata_rule_declarations
+            if not source_bindings.inherits_metadata_rules
+            else (() if defaults is None else defaults.metadata_rule_declarations)
+        ),
+        match_plan=(
+            source_bindings.match_plan
+            if not source_bindings.inherits_match_plan
+            else (None if defaults is None else defaults.match_plan)
+        ),
+        source_filters=(
+            source_bindings.source_filter_declarations
+            if not source_bindings.inherits_source_filters
+            else (() if defaults is None else defaults.source_filter_declarations)
+        ),
+        bindings=(
+            source_bindings.binding_declarations
+            if not source_bindings.inherits_bindings
+            else (() if defaults is None else defaults.binding_declarations)
+        ),
+    )
+
+
+def resolve_step_source_bindings(
+    source_bindings: StepSourceBindingsConfig,
+    defaults: SourceBindingsConfig | None,
+) -> StepSourceBindingsConfig:
+    """Resolve enabled step-local source bindings against pipeline defaults."""
+    if defaults is None or not source_bindings.enabled:
+        return source_bindings
+
+    base_defaults = source_bindings_defaults_to_base(defaults)
+    resolved = source_bindings.resolved_against(base_defaults)
+
+    def _inherit_erased_empty_tuple(
+        resolved_values: tuple[SourceBindingValue, ...],
+        default_values: tuple[SourceBindingValue, ...],
+    ) -> tuple[SourceBindingValue, ...]:
+        if resolved_values or not default_values:
+            return resolved_values
+        return default_values
+
+    return replace(
+        resolved,
+        metadata_rules=_inherit_erased_empty_tuple(
+            resolved.metadata_rule_declarations,
+            base_defaults.metadata_rule_declarations,
+        ),
+        source_filters=_inherit_erased_empty_tuple(
+            resolved.source_filter_declarations,
+            base_defaults.source_filter_declarations,
+        ),
+        bindings=_inherit_erased_empty_tuple(
+            resolved.binding_declarations,
+            base_defaults.binding_declarations,
+        ),
+    )
+
+
+def resolve_effective_step_source_bindings(
+    source_bindings: StepSourceBindingsConfig,
+    *,
+    source_bindings_defaults: SourceBindingsConfig | None = None,
+    step_source_bindings_defaults: StepSourceBindingsConfig | None = None,
+    activate_source_bindings: bool = False,
+) -> StepSourceBindingsConfig:
+    """Resolve step-local source bindings through pipeline step and source defaults."""
+    return resolve_step_source_bindings(
+        _resolve_step_source_binding_defaults(
+            source_bindings,
+            step_source_bindings_defaults,
+            activate_source_bindings=activate_source_bindings,
+        ),
+        source_bindings_defaults,
+    )
+
+
 @dataclass(frozen=True, slots=True)
-class CompiledSourceBindingPlan(_SourceBindingPlanBase):
+class CompiledSourceBindingPlan(SourceBindingDeclarationsMixin, _SourceBindingPlanBase):
     """Immutable compile-time source binding plan for one step."""
 
     registry_key: ClassVar[str] = "compiled"

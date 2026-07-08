@@ -227,6 +227,64 @@ class VirtualWorkspaceSourceProjection:
             )
         )
 
+    def validate_runtime_metadata_projection(
+        self,
+        *,
+        axis_id: str | None = None,
+    ) -> None:
+        """Fail if explicit source metadata cannot survive runtime path spelling."""
+
+        failures: list[str] = []
+        for virtual_path in self.relative_virtual_paths():
+            if not self._path_belongs_to_axis(virtual_path, axis_id):
+                continue
+            loadable_path = self._loadable_virtual_path(virtual_path)
+            expected_metadata = self.explicit_metadata_for_virtual_path(
+                virtual_path,
+                loadable_path,
+            )
+            if not expected_metadata:
+                continue
+            runtime_metadata = self.source_metadata_for(
+                VirtualWorkspacePathLookup.from_paths(
+                    loadable_path,
+                    loadable_path,
+                )
+            )
+            if runtime_metadata is None:
+                failures.append(f"{loadable_path}: missing source metadata")
+                continue
+            mismatched = tuple(
+                key
+                for key, expected_value in expected_metadata.items()
+                if runtime_metadata.get(key) != expected_value
+            )
+            if mismatched:
+                failures.append(
+                    f"{loadable_path}: metadata mismatch for {mismatched!r}"
+                )
+
+        if failures:
+            preview = "; ".join(failures[:10])
+            if len(failures) > 10:
+                preview = f"{preview}; ... ({len(failures)} paths total)"
+            raise ValueError(
+                "Source workspace projection cannot preserve explicit source "
+                f"metadata for runtime load paths: {preview}."
+            )
+
+    def explicit_metadata_for_virtual_path(
+        self,
+        virtual_path: str,
+        loadable_path: str,
+    ) -> SourceMetadataMapping | None:
+        """Return metadata explicitly declared for one virtual path spelling."""
+
+        metadata = self.source_metadata_by_path.get(virtual_path)
+        if metadata is not None:
+            return metadata
+        return self.source_metadata_by_path.get(loadable_path)
+
     def relative_virtual_paths(self) -> tuple[str, ...]:
         """Return canonical relative virtual paths for source projection traversal."""
 

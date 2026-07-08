@@ -112,6 +112,8 @@ def source_image_payload_role(payload: RuntimeArrayData) -> ImageTypeSourceRole 
             return ImageTypeSourceRole.for_image_type(scalar_image_type)
     image_types: list[str] = []
     for component_metadata in metadata.source_image_provenance_planes.component_metadata:
+        if component_metadata is None:
+            continue
         image_type = source_metadata_value(
             component_metadata,
             SOURCE_IMAGE_TYPE_METADATA_FIELD,
@@ -123,10 +125,7 @@ def source_image_payload_role(payload: RuntimeArrayData) -> ImageTypeSourceRole 
     roles = tuple(ImageTypeSourceRole.for_image_type(image_type) for image_type in image_types)
     role_type = type(roles[0])
     if any(type(role) is not role_type for role in roles):
-        raise ValueError(
-            "Runtime image payload carries mixed source image types: "
-            f"{tuple(type(role).__name__ for role in roles)!r}."
-        )
+        return None
     return roles[0]
 
 

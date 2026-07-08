@@ -226,6 +226,58 @@ def test_source_schema_candidate_discovery_uses_openhcs_workspace_metadata(
     assert source_metadata_value(candidates[0].metadata, "ChannelNumber") == "2"
 
 
+def test_materialize_schema_declared_image_type_overrides_workspace_image_type(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "openhcs_workspace"
+    source_root.mkdir()
+    (source_root / "raw").mkdir()
+    _write_image(source_root / "raw" / "source.tif", value=1)
+    virtual_path = "A01_s001_w1_z001_t001.tif"
+    (source_root / "openhcs_metadata.json").write_text(
+        json.dumps(
+            {
+                "subdirectories": {
+                    "default": {
+                        "workspace_mapping": {
+                            virtual_path: "raw/source.tif",
+                        },
+                        "source_metadata": {
+                            virtual_path: {
+                                "channel": "1",
+                                SOURCE_IMAGE_TYPE_METADATA_FIELD: "Color image",
+                            },
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = materialize_A01_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            assignments_by_alias={
+                "DNA": ImageAssignment(
+                    alias="DNA",
+                    image_type="Grayscale image",
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                    selector=SourceSelector(
+                        components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+                    ),
+                ),
+            },
+        ),
+    )
+
+    metadata = result.source_metadata[virtual_path]
+    assert source_metadata_value(metadata, SOURCE_IMAGE_TYPE_METADATA_FIELD) == (
+        "Grayscale image"
+    )
+
+
 def test_source_schema_candidate_discovery_folder_metadata_uses_folder_basename_for_imported_join(
     tmp_path: Path,
 ) -> None:

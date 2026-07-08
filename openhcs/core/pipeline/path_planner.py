@@ -62,7 +62,11 @@ from openhcs.core.pipeline.step_snapshot import (
     StepSnapshot,
 )
 from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
-from openhcs.core.source_bindings import NamedSourceBinding, StepSourceBindingsConfig
+from openhcs.core.source_bindings import (
+    NamedSourceBinding,
+    StepSourceBindingsConfig,
+    resolve_effective_step_source_bindings,
+)
 from openhcs.core.step_dependencies import (
     StepInputDependency,
     StepInputDependencyKind,
@@ -350,8 +354,41 @@ class PathPlannerExecutionGroups:
         scope = component_scopes.scope_for_group_by(
             group_by,
         )
+        if scope.is_ungrouped:
+            source_scope = self.source_binding_scope_for_group_by(snapshot, group_by)
+            if not source_scope.is_ungrouped:
+                scope = source_scope
         logger.debug("FunctionStep groups for %s: %s", snapshot.name, scope.keys)
         return scope
+
+    def source_binding_scope_for_group_by(
+        self,
+        snapshot: StepSnapshot,
+        group_by: GroupBy | None,
+    ) -> PathPlannerGroupScope:
+        """Derive execution groups declared by source-binding component identity."""
+        group_by_component = PathPlannerComponentScopes.component_from_group_by(
+            group_by
+        )
+        if group_by_component is None:
+            return PathPlannerGroupScope.ungrouped()
+
+        source_bindings = self.planner.source_bindings_for_snapshot(snapshot)
+        if not source_bindings.enabled:
+            return PathPlannerGroupScope.ungrouped()
+
+        component = ComponentSet.coerce_component(group_by_component)
+        group_keys = tuple(
+            dict.fromkeys(
+                selector.value
+                for binding in source_bindings.image_stack_bindings
+                for selector in binding.component_identity
+                if selector.component is component
+            )
+        )
+        if not group_keys:
+            return PathPlannerGroupScope.ungrouped()
+        return PathPlannerGroupScope.from_raw(group_keys, component=component)
 
     @staticmethod
     def execution_component_for_dict_pattern(
@@ -397,12 +434,16 @@ class PathPlannerArtifactStage:
             return ArtifactGraph.empty(), PathPlannerGroupScope.ungrouped(), None
 
         func_pattern = strip_disabled_functions(snapshot.func)
+        source_bindings = self.planner.source_bindings_for_snapshot(snapshot)
 
         declarations = extract_artifact_declarations(
             self.declaration_pattern(func_pattern),
             declaration_provider=self.planner.declaration_provider,
             invocation_contract_provider=self.planner.invocation_contract_provider,
-            step_context=self.artifact_declaration_context(snapshot),
+            step_context=self.artifact_declaration_context(
+                snapshot,
+                source_bindings=source_bindings,
+            ),
         )
         group_scope = self.planner.execution_groups.get_execution_groups(
             snapshot,
@@ -463,6 +504,7 @@ class PathPlannerArtifactStage:
         """Compile artifact declarations into runtime I/O maps."""
         step_name = snapshot.name
         group_by = PathPlannerExecutionGroups.normalized_group_by(snapshot)
+        source_bindings = self.planner.source_bindings_for_snapshot(snapshot)
         artifact_inputs = self.process_artifact_inputs(
             declarations.inputs,
             declarations.outputs,
@@ -474,7 +516,7 @@ class PathPlannerArtifactStage:
             declarations,
             artifact_inputs,
             group_scope=group_scope,
-            source_bindings=snapshot.source_bindings,
+            source_bindings=source_bindings,
             group_by=group_by,
             step_index=step_index,
             step_name=step_name,
@@ -497,7 +539,7 @@ class PathPlannerArtifactStage:
                 declarations,
                 artifact_inputs,
                 group_scope=group_scope,
-                source_bindings=snapshot.source_bindings,
+                source_bindings=source_bindings,
                 group_by=group_by,
                 step_index=step_index,
                 step_name=step_name,
@@ -737,15 +779,19 @@ class PathPlannerArtifactStage:
             runtime_parameter_bindings=snapshot.callable_runtime_config_bindings,
         )
 
-    @staticmethod
     def artifact_declaration_context(
+        self,
         snapshot: StepSnapshot,
+        *,
+        source_bindings: StepSourceBindingsConfig | None = None,
     ) -> ArtifactDeclarationStepContext:
         """Return compile-time context for invocation artifact providers."""
+        if source_bindings is None:
+            source_bindings = self.planner.source_bindings_for_snapshot(snapshot)
         return ArtifactDeclarationStepContext(
             step_name=snapshot.name,
             step_index=snapshot.index,
-            source_bindings=snapshot.source_bindings,
+            source_bindings=source_bindings,
             processing_config=snapshot.processing_config,
         )
 
@@ -1616,6 +1662,12 @@ class PathPlanner:
         self.plans: dict[int, CompiledStepPlan] = session.plans
         self.declared = {}  # Tracks artifact outputs
         self.orchestrator = session.orchestrator
+        self.source_bindings_defaults = (
+            session.orchestrator.pipeline_config.source_bindings_config
+        )
+        self.step_source_bindings_defaults = (
+            session.orchestrator.pipeline_config.step_source_bindings_config
+        )
         self.declaration_provider = declaration_provider
         self.invocation_contract_provider = invocation_contract_provider
         self.future_artifact_inputs: List[Set[str]] = [
@@ -1633,6 +1685,20 @@ class PathPlanner:
         self.initial_input = Path(self.ctx.input_dir)
         self.plate_scope = CompilationPlateScope.from_context(self.ctx)
         self.plate_path = self.plate_scope.path
+
+    def source_bindings_for_snapshot(
+        self,
+        snapshot: StepSnapshot,
+    ) -> StepSourceBindingsConfig:
+        """Return step source bindings resolved through pipeline defaults."""
+        return resolve_effective_step_source_bindings(
+            snapshot.source_bindings,
+            source_bindings_defaults=self.source_bindings_defaults,
+            step_source_bindings_defaults=self.step_source_bindings_defaults,
+            activate_source_bindings=(
+                snapshot.input_source == InputSource.PIPELINE_START
+            ),
+        )
 
     def plan(self) -> dict[int, CompiledStepPlan]:
         """Plan all paths with zero duplication."""

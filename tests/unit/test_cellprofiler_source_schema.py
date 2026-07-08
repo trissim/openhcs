@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from openhcs.constants.constants import AllComponents, VariableComponents
+from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.module_processing_components import (
     SourceBindingProcessingScope,
@@ -17,6 +17,7 @@ from openhcs.interop.cellprofiler.pipeline_generator import (
 from openhcs.interop.cellprofiler.source_schema import compile_image_schema
 from openhcs.interop.cellprofiler.symbol_table import CellProfilerSymbolTable
 from openhcs.core.artifacts import ObjectLabelsArtifactType
+from openhcs.core.config import LazySourceBindingsConfig
 from openhcs.core.pipeline_image_schema import (
     ImagePlaneSource,
     PipelineImageSchema,
@@ -74,6 +75,18 @@ def _schema_from_in_tree_cppipe(cppipe_name: str):
         if module.name in setup_module_names
     ]
     return compile_image_schema(setup_modules)
+
+
+def _assert_generated_processing_default(
+    generated,
+    *,
+    variable_components: list[VariableComponents],
+    group_by: GroupBy,
+) -> None:
+    assert generated.pipeline_config is not None
+    processing_config = generated.pipeline_config.processing_config
+    assert processing_config.variable_components == variable_components
+    assert processing_config.group_by is group_by
 
 
 def test_cppipe_parser_preserves_repeated_settings_in_order(tmp_path: Path):
@@ -560,7 +573,7 @@ def test_codegen_groups_metadata_free_ordered_image_sets_by_workspace_site():
         generated.pipeline_config.source_bindings_config.match_plan.method
         is SourceBindingMatchMethod.ORDER
     )
-    assert "variable_components=[VariableComponents.SITE]" in generated.code
+    assert "VariableComponents.SITE" in generated.code
     assert "group_by=GroupBy.CHANNEL" in generated.code
 
 
@@ -598,7 +611,7 @@ def test_codegen_preserves_single_source_alias_image_set_axis():
     processing_end = step_source.index("        ),", processing_start)
     processing_config = step_source[processing_start:processing_end]
 
-    assert "source_bindings=LazyStepSourceBindingsConfig" in step_source
+    assert "source_bindings=LazyStepSourceBindingsConfig" not in step_source
     assert "variable_components=[VariableComponents.SITE]" in processing_config
     assert "group_by=GroupBy.CHANNEL" in processing_config
 
@@ -851,12 +864,18 @@ def test_symbol_table_and_codegen_use_compiled_setup_schema():
         skipped_modules=setup_modules,
     )
 
-    assert "MetadataSelector('channel', '1')" in generated.code
-    assert "MetadataSelector('illum', 'DAPI')" in generated.code
     assert generated.pipeline_config is not None
-    assert generated.pipeline_config.source_bindings_config.match_plan is not None
-    assert "SourceBindingOrigin.PIPELINE_START" in generated.code
+    source_bindings = generated.pipeline_config.source_bindings_config.to_base_config()
+    assert source_bindings.match_plan is not None
+    assert source_bindings.binding_declarations[0].selector.metadata == (
+        MetadataSelector("channel", "1"),
+    )
+    assert source_bindings.binding_declarations[1].selector.metadata == (
+        MetadataSelector("illum", "DAPI"),
+    )
+    assert source_bindings.binding_declarations[1].origin is SourceBindingOrigin.PIPELINE_START
     assert "input_source=InputSource.PIPELINE_START" in generated.code
+    assert "VariableComponents.SITE" in generated.code
     assert "group_by=GroupBy.CHANNEL" in generated.code
 
 
@@ -927,8 +946,12 @@ def test_measure_image_quality_all_loaded_images_uses_module_declared_sources():
         skipped_modules=setup_modules,
     )
 
-    assert "source_bindings=LazyStepSourceBindingsConfig(" in generated.code
-    assert "enabled=True" in generated.code
+    assert generated.pipeline_config is not None
+    assert isinstance(
+        generated.pipeline_config.source_bindings_config,
+        LazySourceBindingsConfig,
+    )
+    assert "source_bindings=LazyStepSourceBindingsConfig(" not in generated.code
     assert "source_bindings=StepSourceBindingsConfig(" not in generated.code
     assert "# CellProfiler artifact inputs: image:DAPI, image:GFP" in generated.code
     assert "VariableComponents.CHANNEL" in generated.code
@@ -1193,12 +1216,11 @@ def test_runtime_image_artifacts_preserve_source_alias_axis_from_output_lineage(
         "# CellProfiler artifact outputs: measurements:MeasureColocalization"
     )
     step_source = generated.code[step_start:]
-    processing_start = step_source.index("processing_config=LazyProcessingConfig(")
-    processing_end = step_source.index("        ),", processing_start)
-    processing_config = step_source[processing_start:processing_end]
-
-    assert "variable_components=[VariableComponents.CHANNEL]" in processing_config
-    assert "group_by=GroupBy.SITE" in processing_config
+    _assert_generated_processing_default(
+        generated,
+        variable_components=[VariableComponents.CHANNEL],
+        group_by=GroupBy.SITE,
+    )
     assert "select_images_to_measure" not in step_source
 
 
@@ -1259,7 +1281,7 @@ def test_align_source_images_adapt_to_site_axis_from_selected_source_aliases():
     processing_end = step_source.index("        ),", processing_start)
     processing_config = step_source[processing_start:processing_end]
 
-    assert "source_bindings=LazyStepSourceBindingsConfig" in step_source
+    assert "source_bindings=LazyStepSourceBindingsConfig" not in step_source
     assert "variable_components=[VariableComponents.SITE]" in processing_config
     assert "VariableComponents.CHANNEL" not in processing_config.split("group_by=")[0]
     assert "group_by=GroupBy.CHANNEL" in processing_config
@@ -1393,9 +1415,20 @@ def test_codegen_uses_pipeline_start_for_load_images_filter_bindings():
         skipped_modules=setup_modules,
     )
 
-    assert "SourceFilterClause(" in generated.code
-    assert "SourceFilterMatchType.CONTAINS" in generated.code
+    assert generated.pipeline_config is not None
+    source_bindings = generated.pipeline_config.source_bindings_config.to_base_config()
+    filters = tuple(
+        filter_clause
+        for binding in source_bindings.binding_declarations
+        for filter_clause in binding.selector.filters
+    )
+    assert filters
+    assert any(
+        clause.match_type is SourceFilterMatchType.CONTAINS
+        for clause in filters
+    )
     assert "input_source=InputSource.PIPELINE_START," in generated.code
+    assert "variable_components=[]" in generated.code
     assert "group_by=GroupBy.CHANNEL" in generated.code
 
 
@@ -1451,28 +1484,11 @@ def test_codegen_preserves_source_timepoint_lineage_for_runtime_artifact_steps()
         skipped_modules=setup_modules,
     )
 
-    primary_match = re.search(
-        r'name="IdentifyPrimaryObjects".*?'
-        r"processing_config=LazyProcessingConfig\(\n(?P<body>.*?)\n        \),",
-        generated.code,
-        re.S,
+    _assert_generated_processing_default(
+        generated,
+        variable_components=[VariableComponents.TIMEPOINT],
+        group_by=GroupBy.CHANNEL,
     )
-    assert primary_match is not None
-    primary_config = primary_match.group("body")
-    assert "variable_components=[VariableComponents.TIMEPOINT]," in primary_config
-    assert "group_by=GroupBy.CHANNEL" in primary_config
-
-    measurement_match = re.search(
-        r'name="MeasureObjectSizeShape".*?'
-        r"processing_config=LazyProcessingConfig\(\n(?P<body>.*?)\n        \),",
-        generated.code,
-        re.S,
-    )
-    assert measurement_match is not None
-    measurement_config = measurement_match.group("body")
-    assert "VariableComponents.SITE" not in measurement_config
-    assert "variable_components=[VariableComponents.TIMEPOINT]," in measurement_config
-    assert "group_by=GroupBy.CHANNEL" in measurement_config
     tree = ast.parse(generated.code)
     measurement_steps = tuple(
         node
@@ -1559,29 +1575,11 @@ def test_codegen_keeps_source_binding_channel_out_of_runtime_artifact_scope():
         skipped_modules=setup_modules,
     )
 
-    primary_match = re.search(
-        r'name="IdentifyPrimaryObjects".*?'
-        r"processing_config=LazyProcessingConfig\(\n(?P<body>.*?)\n        \),",
-        generated.code,
-        re.S,
+    _assert_generated_processing_default(
+        generated,
+        variable_components=[VariableComponents.SITE],
+        group_by=GroupBy.CHANNEL,
     )
-    assert primary_match is not None
-    primary_config = primary_match.group("body")
-    assert "VariableComponents.CHANNEL" not in primary_config
-    assert "variable_components=[VariableComponents.SITE]," in primary_config
-    assert "group_by=GroupBy.CHANNEL" in primary_config
-
-    secondary_match = re.search(
-        r'name="IdentifySecondaryObjects".*?'
-        r"processing_config=LazyProcessingConfig\(\n(?P<body>.*?)\n        \),",
-        generated.code,
-        re.S,
-    )
-    assert secondary_match is not None
-    secondary_config = secondary_match.group("body")
-    assert "VariableComponents.CHANNEL" not in secondary_config
-    assert "variable_components=[VariableComponents.SITE]," in secondary_config
-    assert "group_by=GroupBy.CHANNEL" in secondary_config
 
 
 def test_straightenworms_does_not_declare_step_source_identity_axis():
@@ -1983,8 +1981,11 @@ def test_generated_runtime_callables_with_non_image_artifacts_are_flexible():
     assert "identify_tertiary_objects," in generated.code
     assert "CellProfilerModuleRuntimeBinding" not in generated.code
     assert "name=\"IdentifyTertiaryObjects\"," in generated.code
-    assert "variable_components=[VariableComponents.SITE]," in generated.code
-    assert "group_by=GroupBy.CHANNEL" in generated.code
+    _assert_generated_processing_default(
+        generated,
+        variable_components=[VariableComponents.SITE],
+        group_by=GroupBy.CHANNEL,
+    )
 
 
 def test_shape_changing_runtime_images_do_not_recompose_source_alias_stack():
@@ -2047,13 +2048,12 @@ def test_shape_changing_runtime_images_do_not_recompose_source_alias_stack():
         "# CellProfiler artifact outputs: measurements:MeasureColocalization"
     )
     step_source = generated.code[step_start:]
-    processing_start = step_source.index("processing_config=LazyProcessingConfig(")
-    processing_end = step_source.index("        ),", processing_start)
-    processing_config = step_source[processing_start:processing_end]
-
     assert "name=\"MeasureColocalization\"," in generated.code
-    assert "variable_components=[VariableComponents.SITE]" in processing_config
-    assert "group_by=GroupBy.CHANNEL" in processing_config
+    _assert_generated_processing_default(
+        generated,
+        variable_components=[VariableComponents.SITE],
+        group_by=GroupBy.CHANNEL,
+    )
 
 
 def test_compile_image_schema_for_bbbc021_analysis_preserves_real_matching_plan():

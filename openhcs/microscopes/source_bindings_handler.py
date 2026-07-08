@@ -8,7 +8,10 @@ from typing import Type, Union
 from polystore.filemanager import FileManager
 
 from openhcs.constants.constants import Backend, Microscope
-from openhcs.core.source_bindings import SourceBindingsConfig
+from openhcs.core.source_bindings import (
+    SourceBindingsConfig,
+    source_bindings_defaults_to_base,
+)
 from openhcs.microscopes.microscope_base import MicroscopeHandler
 from openhcs.microscopes.microscope_interfaces import MetadataHandler
 from openhcs.microscopes.openhcs import (
@@ -48,11 +51,9 @@ class SourceBindingsHandler(MicroscopeHandler):
         source_bindings_config: SourceBindingsConfig,
         pattern_format: str | None = None,
     ):
-        if not isinstance(source_bindings_config, SourceBindingsConfig):
-            raise TypeError(
-                "SourceBindingsHandler requires SourceBindingsConfig, got "
-                f"{type(source_bindings_config).__name__}."
-            )
+        source_bindings_config = source_bindings_defaults_to_base(
+            source_bindings_config
+        )
         if source_bindings_config.is_empty:
             raise ValueError(
                 "SourceBindingsHandler requires non-empty SourceBindingsConfig "

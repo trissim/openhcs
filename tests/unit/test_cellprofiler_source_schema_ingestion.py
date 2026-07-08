@@ -29,6 +29,10 @@ from openhcs.core.source_bindings import (
     SourceFilterSubject,
     SourceSelector,
 )
+from openhcs.core.source_metadata import (
+    SOURCE_VOXEL_SPACING_FIELD,
+    SourceVoxelSpacing,
+)
 from openhcs.interop.cellprofiler.source_schema_ingestion import (
     CellProfilerPipelinePreparationError,
     CellProfilerSourceRootResolver,
@@ -131,6 +135,64 @@ def test_prepare_source_bindings_pipeline_materializes_when_image_sets_are_selec
             result.materialization.primary_wells()
         )
     } == {"CometTails.tif"}
+
+
+def test_prepare_source_bindings_pipeline_materializes_unrepresentable_schema_features(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    tifffile.imwrite(source_root / "Nuclei.tif", np.full((3, 4), 1, dtype=np.uint16))
+    cppipe_path = tmp_path / "source_bindings.cppipe"
+    cppipe_path.write_text("CellProfiler Pipeline: http://www.cellprofiler.org\n")
+    schema = PipelineImageSchema(
+        assignments_by_alias={
+            "Nuclei": ImageAssignment(
+                alias="Nuclei",
+                image_type="Grayscale image",
+                selector=SourceSelector(
+                    filters=(
+                        SourceFilterClause(
+                            SourceFilterSubject.FILE,
+                            SourceFilterMatchType.CONTAINS,
+                            "Nuclei",
+                        ),
+                    )
+                ),
+                origin=SourceBindingOrigin.PIPELINE_START,
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "1"),
+                ),
+            )
+        },
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        source_voxel_spacing=SourceVoxelSpacing((2.0, 1.0, 1.0)),
+    )
+    prepared = SimpleNamespace(
+        source_schema=schema,
+        generated_pipeline=SimpleNamespace(
+            pipeline_config=PipelineConfig(microscope=Microscope.SOURCE_BINDINGS),
+        ),
+    )
+    monkeypatch.setattr(
+        "openhcs.interop.cellprofiler.source_schema_ingestion.prepare_generated_pipeline",
+        lambda *args, **kwargs: prepared,
+    )
+
+    result = prepare_cellprofiler_source_schema_workspace(
+        CellProfilerSourceSchemaWorkspaceRequest(
+            source_root=source_root,
+            cppipe_path=cppipe_path,
+            workspace_root=tmp_path / "workspace",
+            generated_pipeline_path=tmp_path / "generated.py",
+        )
+    )
+
+    assert result.materialization is not None
+    assert result.execution_plate_path == result.materialization.workspace_root
+    metadata = next(iter(result.materialization.source_metadata.values()))
+    assert metadata[SOURCE_VOXEL_SPACING_FIELD] == "2,1,1"
 
 
 def test_prepare_cellprofiler_source_schema_workspace_reports_missing_sources(

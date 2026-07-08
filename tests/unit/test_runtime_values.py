@@ -590,6 +590,19 @@ def test_object_label_projected_plane_reduces_domain_to_payload_scope() -> None:
     assert projected.source_image_names == ("rawGFP",)
 
 
+def test_object_label_domain_payload_scope_collapses_plane_id_domains() -> None:
+    domain = ObjectLabelDomain(
+        declared_object_id_domains=((1,), (1, 3), (2, 3)),
+        scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    payload_domain = domain.with_scope(ObjectLabelDomainScope.PAYLOAD)
+
+    assert payload_domain.scope is ObjectLabelDomainScope.PAYLOAD
+    assert payload_domain.declared_object_ids == (1, 2, 3)
+    assert payload_domain.declared_object_id_domains == ()
+
+
 def test_object_label_projected_plane_promotes_channel_provenance_to_scalar() -> None:
     labels = ObjectLabelPayload(
         labels=np.asarray(
@@ -1231,6 +1244,21 @@ def test_source_image_payload_role_uses_transformed_scalar_role_before_provenanc
 
     assert role is not None
     assert role.image_type() == "grayscale image"
+
+
+def test_source_image_payload_role_ignores_missing_provenance_metadata() -> None:
+    payload = RuntimeImagePayloadContext(
+        np.zeros((2, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("/input/A01_s001_w1_z001_t001.TIF",),
+                component_metadata=(None,),
+            ),
+        ),
+        mask=None,
+    ).payload()
+
+    assert source_image_payload_role(payload) is None
 
 
 def test_bundle_image_metadata_keeps_agreed_present_component_values() -> None:

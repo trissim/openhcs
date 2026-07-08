@@ -29,9 +29,14 @@ from openhcs.core.source_bindings import (
     MetadataSource,
     SourceBindingOrigin,
     SourceSelector,
+    source_bindings_defaults_to_base,
 )
+from openhcs.core.source_metadata import SourceVoxelSpacing
 from openhcs.constants.constants import Microscope
-from openhcs.interop.cellprofiler.pipeline_generator import PipelineGeneratorBuildStage
+from openhcs.interop.cellprofiler.pipeline_generator import (
+    GeneratedPipelineConfigDefaults,
+    PipelineGeneratorBuildStage,
+)
 
 
 def test_pipeline_image_schema_builder_deduplicates_metadata_rules():
@@ -152,11 +157,17 @@ def test_pipeline_image_schema_lowers_to_source_bindings_pipeline_config():
         },
     )
 
-    pipeline_config = PipelineGeneratorBuildStage._pipeline_config(schema)
+    pipeline_config = PipelineGeneratorBuildStage._pipeline_config(
+        schema,
+        pipeline_defaults=GeneratedPipelineConfigDefaults(),
+    )
 
     assert pipeline_config is not None
     assert pipeline_config.microscope is Microscope.SOURCE_BINDINGS
-    assert pipeline_config.source_bindings_config == schema.to_source_bindings_config()
+    assert (
+        source_bindings_defaults_to_base(pipeline_config.source_bindings_config)
+        == schema.to_source_bindings_config()
+    )
 
 
 @pytest.mark.parametrize(
@@ -186,6 +197,12 @@ def test_pipeline_image_schema_lowers_to_source_bindings_pipeline_config():
                 ),
             ),
             "source_image_stack",
+        ),
+        (
+            PipelineImageSchema(
+                source_voxel_spacing=SourceVoxelSpacing((1.5, 1.0, 1.0)),
+            ),
+            "source_voxel_spacing",
         ),
         (
             PipelineImageSchema(grouping=GroupingPlan(metadata_fields=("Plate",))),

@@ -69,6 +69,7 @@ from openhcs.constants.constants import (
     WRITE_BACKEND,
     Backend,
 )
+from openhcs.constants.input_source import InputSource
 
 from openhcs.core.compiled_execution import (
     CompiledExecutionBundle,
@@ -119,6 +120,10 @@ from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     CompiledSourceUniversePlan,
     StepSourceBindingsConfig,
+    resolve_effective_step_source_bindings,
+)
+from openhcs.core.source_workspace_projection import (
+    VirtualWorkspaceSourceProjectionAuthority,
 )
 from openhcs.core.source_load_plan import SourceLoadPlan
 from openhcs.core.invocation_artifacts import PipelineInvocationContractProviderAuthority
@@ -562,7 +567,8 @@ class PipelineCompiler:
             )
             current_plan.source_binding_plan = (
                 PipelineCompiler._compile_source_binding_plan(
-                    snapshot.source_bindings,
+                    session,
+                    snapshot,
                 )
             )
             current_plan.source_universe_plan = (
@@ -613,8 +619,21 @@ class PipelineCompiler:
 
     @staticmethod
     def _compile_source_binding_plan(
-        source_bindings: StepSourceBindingsConfig,
+        session: CompilationSession,
+        snapshot: StepSnapshot,
     ) -> CompiledSourceBindingPlan:
+        source_bindings = resolve_effective_step_source_bindings(
+            snapshot.source_bindings,
+            source_bindings_defaults=(
+                session.orchestrator.pipeline_config.source_bindings_config
+            ),
+            step_source_bindings_defaults=(
+                session.orchestrator.pipeline_config.step_source_bindings_config
+            ),
+            activate_source_bindings=(
+                snapshot.input_source == InputSource.PIPELINE_START
+            ),
+        )
         return CompiledSourceBindingPlan.from_config(source_bindings)
 
     @staticmethod
@@ -1480,6 +1499,7 @@ class PipelineCompiler:
         enable_visualizer_override: bool,
     ) -> None:
         PipelineCompiler.validate_memory_contracts(session)
+        PipelineCompiler.validate_source_workspace_projection(session)
         PipelineCompiler.assign_gpu_resources(session)
         if enable_visualizer_override:
             PipelineCompiler.apply_global_visualizer_override(
@@ -1487,6 +1507,18 @@ class PipelineCompiler:
                 True,
             )
         PipelineCompiler.resolve_lazy_dataclasses(session)
+
+    @staticmethod
+    def validate_source_workspace_projection(session: CompilationSession) -> None:
+        """Validate source-workspace metadata before runtime image loading."""
+
+        projection = VirtualWorkspaceSourceProjectionAuthority.from_context(
+            session.context,
+            cache=session.context.runtime_source_workspace_projection_cache,
+        ).projection_if_available()
+        if projection is None:
+            return
+        projection.validate_runtime_metadata_projection(axis_id=session.axis_id)
 
     @staticmethod
     def _validate_sequential_components_for_session(

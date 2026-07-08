@@ -803,7 +803,10 @@ class MetadataMatchedImageSetAnchorPatternPolicy(MatchedImageSetAnchorPatternPol
             key = self._metadata_image_set_key(
                 metadata,
                 binding=binding.require_binding(),
+                allow_missing=source_context.has_virtual_source_workspace,
             )
+            if key is None:
+                return list(compatible)
             if key in seen:
                 continue
             seen.add(key)
@@ -847,7 +850,8 @@ class MetadataMatchedImageSetAnchorPatternPolicy(MatchedImageSetAnchorPatternPol
         metadata: SourceMetadataMapping,
         *,
         binding: NamedSourceBinding,
-    ) -> tuple[str, ...]:
+        allow_missing: bool = False,
+    ) -> tuple[str, ...] | None:
         if self._match_plan is None:
             raise ValueError("METADATA source binding policy has no match plan.")
         values: list[str] = []
@@ -857,9 +861,11 @@ class MetadataMatchedImageSetAnchorPatternPolicy(MatchedImageSetAnchorPatternPol
                 raise ValueError(
                     "METADATA source binding dimension is missing alias "
                     f"{binding.alias!r}."
-                )
+            )
             value = source_metadata_value(metadata, field)
             if value is None:
+                if allow_missing:
+                    return None
                 raise ValueError(
                     "METADATA source binding could not read match field "
                     f"{field!r} for alias {binding.alias!r}."
@@ -1014,7 +1020,23 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
         source_universe: Sequence[SourceCandidatePath],
     ) -> tuple[SourceCandidatePath, ...]:
         anchor_metadata = self.candidate_metadata(anchor).first_required(anchor)
-        anchor_values = self._dimension_values(anchor_metadata, anchor_binding)
+        anchor_values = self._dimension_values(
+            anchor_metadata,
+            anchor_binding,
+            allow_missing=self.has_virtual_source_workspace,
+        )
+        if anchor_values is None:
+            return tuple(
+                dict.fromkeys(
+                    candidate
+                    for binding in selector_bindings
+                    for candidate in self._expand_single_alias(
+                        (anchor,),
+                        binding=binding,
+                        source_universe=source_universe,
+                    )
+                )
+            )
         if not anchor_values:
             raise ValueError(
                 "Matched source image-set anchor lacks metadata declared by the "
@@ -1100,7 +1122,13 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
         ):
             return False
         metadata = self.candidate_metadata(candidate).first_required(candidate)
-        candidate_values = self._dimension_values(metadata, binding)
+        candidate_values = self._dimension_values(
+            metadata,
+            binding,
+            allow_missing=self.has_virtual_source_workspace,
+        )
+        if candidate_values is None:
+            return False
         if not candidate_values:
             raise ValueError(
                 f"Source alias {binding.alias!r} has no match-plan dimensions."
@@ -1114,7 +1142,9 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
         self,
         metadata: SourceMetadataRecord,
         binding: NamedSourceBinding,
-    ) -> Mapping[int, str]:
+        *,
+        allow_missing: bool = False,
+    ) -> Mapping[int, str] | None:
         values: dict[int, str] = {}
         for dimension_index, dimension in enumerate(self.match_plan.dimensions):
             field = dimension.field_for_alias(binding.alias)
@@ -1122,6 +1152,8 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
                 continue
             value = source_metadata_value(metadata, field)
             if value is None:
+                if allow_missing:
+                    return None
                 raise ValueError(
                     "Source binding match plan could not read metadata field "
                     f"{field!r} for alias {binding.alias!r}."

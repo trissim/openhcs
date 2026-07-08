@@ -48,6 +48,7 @@ from openhcs.core.source_bindings import (
     ComponentSelector,
     EMPTY_SOURCE_BINDINGS,
     NamedSourceBinding,
+    SourceBindingsConfig,
     StepSourceBindingsConfig,
 )
 from openhcs.core.step_dependencies import StepInputDependency
@@ -88,6 +89,8 @@ def _artifact_planner_stub() -> PathPlanner:
         )
     }
     planner.declared = {}
+    planner.source_bindings_defaults = SourceBindingsConfig()
+    planner.step_source_bindings_defaults = StepSourceBindingsConfig()
     planner.invocation_contract_provider = public_callable_invocation_contract
     planner.main_flow_component_scopes = {}
     planner.execution_groups = PathPlannerExecutionGroups(planner)
@@ -111,6 +114,7 @@ def _function_step_snapshot(
         source_bindings=source_bindings,
         group_by=group_by,
         variable_components=variable_components,
+        input_source=InputSource.PREVIOUS_STEP,
     )
 
 
@@ -587,6 +591,7 @@ def test_planner_uses_invocation_aware_artifact_declaration_provider():
         source_bindings=EMPTY_SOURCE_BINDINGS,
         processing_config=None,
         callable_runtime_config_bindings=(),
+        input_source=InputSource.PREVIOUS_STEP,
     )
 
     declarations, _execution_groups, func_pattern = planner.artifacts.prepare_step_declarations(
@@ -645,6 +650,7 @@ def test_non_dict_group_by_does_not_create_execution_scope_from_plate_keys():
         variable_components=(VariableComponents.SITE,),
         name="enhance",
         source_bindings=EMPTY_SOURCE_BINDINGS,
+        input_source=InputSource.PREVIOUS_STEP,
     )
 
     source_scope = planner.execution_groups.get_execution_groups(
@@ -742,9 +748,91 @@ def test_non_dict_group_by_uses_input_component_scope_before_plate_keys():
         variable_components=(VariableComponents.SITE,),
         name="measure_channel_named_artifacts_over_site_stack",
         source_bindings=EMPTY_SOURCE_BINDINGS,
+        input_source=InputSource.PREVIOUS_STEP,
     )
 
     scope = planner.execution_groups.get_execution_groups(snapshot, input_scopes)
+
+    assert scope == PathPlannerGroupScope.ungrouped()
+
+
+def test_non_dict_group_by_uses_source_binding_identity_for_pipeline_start_scope():
+    planner = _artifact_planner_stub()
+    planner.orchestrator = SimpleNamespace(
+        pipeline_config=SimpleNamespace(source_bindings_config=SourceBindingsConfig())
+    )
+    snapshot = SimpleNamespace(
+        is_function_step=True,
+        func=lambda image: image,
+        group_by=GroupBy.CHANNEL,
+        variable_components=(VariableComponents.SITE,),
+        name="source_bound_channel_groups",
+        source_bindings=StepSourceBindingsConfig(
+            enabled=True,
+            bindings=(
+                NamedSourceBinding(
+                    alias="OrigStain1",
+                    component_identity=(
+                        ComponentSelector(AllComponents.CHANNEL, "1"),
+                    ),
+                ),
+                NamedSourceBinding(
+                    alias="OrigStain2",
+                    component_identity=(
+                        ComponentSelector(AllComponents.CHANNEL, "2"),
+                    ),
+                ),
+            ),
+        ),
+        input_source=InputSource.PIPELINE_START,
+    )
+
+    scope = planner.execution_groups.get_execution_groups(
+        snapshot,
+        PathPlannerComponentScopes.empty(),
+    )
+
+    assert scope == PathPlannerGroupScope.from_raw(
+        ("1", "2"),
+        component=AllComponents.CHANNEL,
+    )
+
+
+def test_non_dict_group_by_ignores_source_binding_identity_for_other_components():
+    planner = _artifact_planner_stub()
+    planner.orchestrator = SimpleNamespace(
+        pipeline_config=SimpleNamespace(source_bindings_config=SourceBindingsConfig())
+    )
+    snapshot = SimpleNamespace(
+        is_function_step=True,
+        func=lambda image: image,
+        group_by=GroupBy.SITE,
+        variable_components=(VariableComponents.CHANNEL,),
+        name="source_bound_site_groups",
+        source_bindings=StepSourceBindingsConfig(
+            enabled=True,
+            bindings=(
+                NamedSourceBinding(
+                    alias="OrigStain1",
+                    component_identity=(
+                        ComponentSelector(AllComponents.CHANNEL, "1"),
+                    ),
+                ),
+                NamedSourceBinding(
+                    alias="OrigStain2",
+                    component_identity=(
+                        ComponentSelector(AllComponents.CHANNEL, "2"),
+                    ),
+                ),
+            ),
+        ),
+        input_source=InputSource.PIPELINE_START,
+    )
+
+    scope = planner.execution_groups.get_execution_groups(
+        snapshot,
+        PathPlannerComponentScopes.empty(),
+    )
 
     assert scope == PathPlannerGroupScope.ungrouped()
 

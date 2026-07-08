@@ -36,6 +36,8 @@ from openhcs.core.source_bindings import (
     SourceSelector,
     SourceBindingsConfig,
     StepSourceBindingsConfig,
+    resolve_effective_step_source_bindings,
+    resolve_step_source_bindings,
 )
 from openhcs.core.source_binding_selection import (
     SourceBindingMatchedImageSet,
@@ -109,6 +111,139 @@ def test_lazy_step_source_bindings_preserve_inherited_payload_sentinels():
     assert object.__getattribute__(config, "source_filters") is None
     assert object.__getattribute__(config, "metadata_rules") is None
     assert object.__getattribute__(config, "match_plan") is None
+
+
+def test_step_source_bindings_resolved_against_source_defaults():
+    inherited_binding = NamedSourceBinding(alias="DNA")
+    override_binding = NamedSourceBinding(alias="GFP")
+    source_filter = SourceFilterClause(
+        subject=SourceFilterSubject.EXTENSION,
+        match_type=SourceFilterMatchType.IS_IMAGE,
+    )
+    metadata_rule = MetadataExtractionRule(
+        source=MetadataSource.FILE_NAME,
+        pattern=r"(?P<site>[0-9]+)",
+    )
+    match_plan = SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER)
+    defaults = SourceBindingsConfig(
+        source_filters=(source_filter,),
+        bindings=(inherited_binding,),
+        metadata_rules=(metadata_rule,),
+        match_plan=match_plan,
+    )
+
+    inherited = StepSourceBindingsConfig(enabled=True).resolved_against(defaults)
+
+    assert inherited.enabled is True
+    assert inherited.source_filters == (source_filter,)
+    assert inherited.bindings == (inherited_binding,)
+    assert inherited.metadata_rules == (metadata_rule,)
+    assert inherited.match_plan == match_plan
+
+    narrowed = StepSourceBindingsConfig(
+        bindings=(override_binding,),
+        enabled=True,
+    ).resolved_against(defaults)
+
+    assert narrowed.bindings == (override_binding,)
+    assert narrowed.source_filters == (source_filter,)
+    assert narrowed.metadata_rules == (metadata_rule,)
+    assert narrowed.match_plan == match_plan
+
+
+def test_resolve_step_source_bindings_inherits_after_objectstate_erases_sentinels():
+    binding = NamedSourceBinding(alias="DNA")
+    source_filter = SourceFilterClause(
+        subject=SourceFilterSubject.EXTENSION,
+        match_type=SourceFilterMatchType.IS_IMAGE,
+    )
+    metadata_rule = MetadataExtractionRule(
+        source=MetadataSource.FILE_NAME,
+        pattern=r"(?P<site>[0-9]+)",
+    )
+    match_plan = SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER)
+    defaults = SourceBindingsConfig(
+        source_filters=(source_filter,),
+        bindings=(binding,),
+        metadata_rules=(metadata_rule,),
+        match_plan=match_plan,
+    )
+
+    resolved = resolve_step_source_bindings(
+        StepSourceBindingsConfig(
+            enabled=True,
+            source_filters=(),
+            bindings=(),
+            metadata_rules=(),
+            match_plan=None,
+        ),
+        defaults,
+    )
+
+    assert resolved.source_filters == (source_filter,)
+    assert resolved.bindings == (binding,)
+    assert resolved.metadata_rules == (metadata_rule,)
+    assert resolved.match_plan == match_plan
+
+
+def test_effective_step_source_bindings_inherits_pipeline_step_enablement():
+    binding = NamedSourceBinding(alias="DNA")
+
+    resolved = resolve_effective_step_source_bindings(
+        LazyStepSourceBindingsConfig(),
+        source_bindings_defaults=SourceBindingsConfig(bindings=(binding,)),
+        step_source_bindings_defaults=StepSourceBindingsConfig(enabled=True),
+    )
+
+    assert resolved.enabled is True
+    assert resolved.bindings == (binding,)
+
+
+def test_effective_step_source_bindings_activates_pipeline_source_defaults():
+    binding = NamedSourceBinding(alias="DNA")
+
+    resolved = resolve_effective_step_source_bindings(
+        LazyStepSourceBindingsConfig(),
+        source_bindings_defaults=SourceBindingsConfig(bindings=(binding,)),
+        activate_source_bindings=True,
+    )
+
+    assert resolved.enabled is True
+    assert resolved.bindings == (binding,)
+
+
+def test_effective_step_source_bindings_none_default_does_not_disable_activation():
+    binding = NamedSourceBinding(alias="DNA")
+
+    resolved = resolve_effective_step_source_bindings(
+        LazyStepSourceBindingsConfig(),
+        source_bindings_defaults=SourceBindingsConfig(bindings=(binding,)),
+        step_source_bindings_defaults=LazyStepSourceBindingsConfig(
+            enabled=None,
+            metadata_rules=None,
+            match_plan=None,
+            source_filters=None,
+            bindings=None,
+        ),
+        activate_source_bindings=True,
+    )
+
+    assert resolved.enabled is True
+    assert resolved.bindings == (binding,)
+
+
+def test_effective_step_source_bindings_respects_explicit_disable_override():
+    binding = NamedSourceBinding(alias="DNA")
+
+    resolved = resolve_effective_step_source_bindings(
+        LazyStepSourceBindingsConfig(enabled=False),
+        source_bindings_defaults=SourceBindingsConfig(bindings=(binding,)),
+        step_source_bindings_defaults=StepSourceBindingsConfig(enabled=True),
+        activate_source_bindings=True,
+    )
+
+    assert resolved.enabled is False
+    assert resolved.bindings == ()
 
 
 def test_step_source_bindings_keeps_class_identity_after_config_import():

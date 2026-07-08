@@ -696,17 +696,42 @@ def source_stack_component_identity_assignments(
     """Return image assignments with OpenHCS stack component identity declared."""
 
     normalized: dict[str, ImageAssignment] = {}
+    used_channels: set[str] = set()
     channel_index = 1
     for alias, assignment in assignments_by_alias.items():
         if not assignment.participates_in_image_stack:
             normalized[alias] = assignment
             continue
-        channel_value = str(channel_index)
-        normalized[alias] = assignment.with_component_identity(
-            ComponentSelector(AllComponents.CHANNEL, channel_value)
+        selector = source_assignment_component_selector(
+            assignment,
+            AllComponents.CHANNEL,
         )
+        if selector is None:
+            while str(channel_index) in used_channels:
+                channel_index += 1
+            selector = ComponentSelector(AllComponents.CHANNEL, str(channel_index))
+        normalized[alias] = assignment.with_component_identity(selector)
+        used_channels.add(selector.value)
         channel_index += 1
     return normalized
+
+
+def source_assignment_component_selector(
+    assignment: SourceAssignmentBase,
+    component: AllComponents,
+) -> ComponentSelector | None:
+    """Return a declared source component selector for one OpenHCS component."""
+
+    for selector in assignment.component_identity:
+        if selector.component is component:
+            return selector
+    for selector in assignment.selector.components:
+        if selector.component is component:
+            return selector
+    for selector in assignment.selector.metadata:
+        if selector.field == component.value:
+            return ComponentSelector(component, selector.value)
+    return None
 
 
 def source_artifact_component_identity_assignments(
@@ -811,6 +836,15 @@ class SourceImageStackSourceBindingsFeature(PipelineImageSchemaSourceBindingsFea
 
     def present(self, schema: PipelineImageSchema) -> bool:
         return not schema.source_image_stack.is_empty
+
+
+class SourceVoxelSpacingSourceBindingsFeature(PipelineImageSchemaSourceBindingsFeature):
+    """Source voxel spacing requires source-schema materialization."""
+
+    schema_field_name = "source_voxel_spacing"
+
+    def present(self, schema: PipelineImageSchema) -> bool:
+        return schema.source_voxel_spacing.has_values
 
 
 class GroupingSourceBindingsFeature(PipelineImageSchemaSourceBindingsFeature):

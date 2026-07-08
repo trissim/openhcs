@@ -1316,6 +1316,8 @@ class ImageSetRecord:
 
     def selection_identity(self) -> tuple[tuple[str, tuple[object, ...]], ...]:
         """Return logical source identities for image-set selection."""
+        if not self.candidates_by_alias:
+            return (("__image_set_index__", (self.index,)),)
         return tuple(
             (
                 alias,
@@ -1467,12 +1469,26 @@ class SourceVirtualPathMetadata:
         )
         image_type = SourceAssignmentImageTypeProjection(self.assignment).image_type()
         if image_type is not None:
-            merge_source_metadata(
-                metadata,
-                {SOURCE_SCHEMA_IMAGE_TYPE_METADATA_FIELD: image_type},
-                path="source_metadata",
-            )
+            SourceSchemaImageTypeMetadata(
+                SOURCE_SCHEMA_IMAGE_TYPE_METADATA_FIELD,
+                image_type,
+            ).apply(metadata)
         return MappingProxyType(metadata)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSchemaImageTypeMetadata:
+    """Apply the declared source-schema image role to virtual source metadata."""
+
+    field: str
+    image_type: str
+
+    def apply(self, metadata: dict[str, SourceMetadataValue]) -> None:
+        canonical_field = normalize_source_metadata_key(self.field)
+        for key in tuple(metadata):
+            if normalize_source_metadata_key(key) == canonical_field:
+                del metadata[key]
+        metadata[self.field] = self.image_type
 
 
 @dataclass(frozen=True, slots=True)
