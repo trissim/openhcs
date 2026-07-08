@@ -993,6 +993,24 @@ def _remove_authoritative_object_label_location_facts(
             measurement_fact_counts.pop(key, None)
 
 
+def _object_location_subjects_matching_statistic(
+    measurement_fact_counts: RuntimeMeasurementFactCounterMap,
+    statistic: MeasurementStatistic,
+    policy: RuntimeEquivalencePolicy,
+) -> frozenset[RuntimeMeasurementSubjectKey]:
+    """Return subjects with explicit object-location facts for ``statistic``."""
+    return frozenset(
+        key.subject
+        for key in measurement_fact_counts
+        if key.statistic == statistic.value
+        and object_measurement_feature_matches_marker(
+            key,
+            ObjectLocationFeatureMarker,
+            policy,
+        )
+    )
+
+
 @dataclass(slots=True, kw_only=True)
 class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
     """Mutable authority for one runtime measurement projection."""
@@ -1194,40 +1212,59 @@ class RuntimeMeasurementProjectionState(RuntimeObjectMeasurementFactRowDomain):
         measurement_fact_counts = self.measurement_fact_counts
         row_merge_cache = self.row_merge_cache
         primary_row_identities = self.primary_row_identities
-        object_location_aggregate_subjects = (
-            RuntimeObjectLocationRowMergeContract.registered_projection(
-                RuntimeObjectLocationRowMergeProjectionKey.AGGREGATE_LOCATION,
-                self.policy,
-            ).subjects(row_merge_cache)
-        )
         object_label_measurement_authority = (
             RuntimeObjectLabelMeasurementAuthority.from_object_label_records(
                 self.object_label_records,
                 self.policy,
             )
         )
-        object_location_aggregate_subjects = (
-            object_location_aggregate_subjects.difference(
-                object_label_measurement_authority.location_subjects
+        self.project_recorded_row_fact_counts()
+        explicit_object_location_subjects = _object_location_subjects_matching_statistic(
+            measurement_fact_counts,
+            MeasurementStatistic.VALUE,
+            self.policy,
+        )
+        explicit_object_location_aggregate_subjects = (
+            _object_location_subjects_matching_statistic(
+                measurement_fact_counts,
+                MeasurementStatistic.MEAN,
+                self.policy,
             )
         )
-        self.project_recorded_row_fact_counts()
+        explicit_location_subjects = (
+            explicit_object_location_subjects
+            | explicit_object_location_aggregate_subjects
+        )
+        object_label_owned_location_subjects = (
+            object_label_measurement_authority.location_subjects.difference(
+                explicit_location_subjects
+            )
+        )
         _remove_authoritative_object_label_location_facts(
             measurement_fact_counts,
-            object_label_measurement_authority.location_subjects,
+            object_label_owned_location_subjects,
             self.policy,
         )
-        object_location_subjects = object_measurement_subjects_matching_marker(
-            measurement_fact_counts,
-            ObjectLocationFeatureMarker,
-            self.policy,
-        ) | RuntimeObjectLocationRowMergeContract.registered_projection(
-            RuntimeObjectLocationRowMergeProjectionKey.LOCATION,
-            self.policy,
-        ).subjects(
-            row_merge_cache
-        ).difference(
-            object_label_measurement_authority.location_subjects
+        object_location_subjects = explicit_object_location_subjects | (
+            RuntimeObjectLocationRowMergeContract.registered_projection(
+                RuntimeObjectLocationRowMergeProjectionKey.LOCATION,
+                self.policy,
+            )
+            .subjects(row_merge_cache)
+            .difference(
+                object_label_owned_location_subjects
+            )
+        )
+        object_location_aggregate_subjects = (
+            explicit_object_location_aggregate_subjects
+            | RuntimeObjectLocationRowMergeContract.registered_projection(
+                RuntimeObjectLocationRowMergeProjectionKey.AGGREGATE_LOCATION,
+                self.policy,
+            )
+            .subjects(row_merge_cache)
+            .difference(
+                object_label_owned_location_subjects
+            )
         )
         record_measurement_facts(
             measurement_fact_counts,

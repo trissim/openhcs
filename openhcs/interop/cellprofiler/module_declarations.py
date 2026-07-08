@@ -720,6 +720,7 @@ class CellProfilerModule(
     )
     confidence: ClassVar[float] = 0.5
     validated: ClassVar[bool] = False
+    respects_masks: ClassVar[bool] = False
     required_variable_components: ClassVar[tuple[VariableComponents, ...]] = ()
     group_by: ClassVar[GroupBy] = GroupBy.CHANNEL
     allowed_group_by: ClassVar[tuple[GroupBy, ...]] = ()
@@ -733,6 +734,14 @@ class CellProfilerModule(
     measurement_feature_part_aliases: ClassVar[
         Mapping[tuple[str, ...], tuple[tuple[str, ...], ...]]
     ] = {}
+    force_grouped_public_function_spec: ClassVar[bool] = False
+    """Whether coalesced generated emissions must stay explicit per group.
+
+    Most grouped emissions with identical public callable settings can be exposed
+    as one normal OpenHCS callable. Modules that need per-group invocation
+    contracts can opt into explicit dict-pattern emission at the declaration
+    boundary.
+    """
     measurement_feature_part_rewrites: ClassVar[
         Mapping[tuple[str, ...], tuple[str, ...]]
     ] = {}

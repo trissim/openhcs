@@ -1,4 +1,4 @@
-"""Shared UI service for preserving CellProfiler runtime bindings."""
+"""Shared UI service for preserving CellProfiler invocation contracts."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from openhcs.interop.cellprofiler.import_records import (
     CellProfilerPipelineImportResult,
 )
 from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
-    CellProfilerGeneratedRuntimeBindingState,
+    CellProfilerGeneratedInvocationContractState,
     CellProfilerPipelineRuntimeRebinder,
 )
 from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
@@ -28,7 +28,7 @@ class CellProfilerImportResultProvider(Protocol):
 
 
 class CellProfilerPipelineRuntimeBindingService:
-    """Rebind generated CellProfiler steps to artifact-aware runtime callables."""
+    """Attach generated CellProfiler artifact contracts to public step callables."""
 
     @classmethod
     def runtime_bound_pipeline_for_plate(
@@ -39,7 +39,7 @@ class CellProfilerPipelineRuntimeBindingService:
         pipeline_steps: Sequence[FunctionStep],
     ) -> list[FunctionStep]:
         steps = list(pipeline_steps)
-        if not CellProfilerGeneratedRuntimeBindingState.pipeline_requires_rebinding(
+        if not CellProfilerGeneratedInvocationContractState.pipeline_requires_rebinding(
             steps
         ):
             return steps

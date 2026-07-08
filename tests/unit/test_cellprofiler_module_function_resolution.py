@@ -1,8 +1,17 @@
 """Focused tests for CellProfiler module function-resolution policies."""
 
 from openhcs.interop.cellprofiler import module_function_resolution
+from openhcs.constants.constants import AllComponents
 from openhcs.interop.cellprofiler.parser import ModuleBlock
 from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
+from openhcs.interop.cellprofiler.module_processing_components import (
+    GeneratedStepSettings,
+    ModuleProcessingComponentRequest,
+    RuntimeArtifactLineageScope,
+)
+from openhcs.interop.cellprofiler.symbol_table import ModuleArtifactContracts
+from openhcs.core.pipeline_image_schema import PipelineImageSchema
+from openhcs.processing.backends.cellprofiler.morphology import DilateObjectsModule
 
 
 def _module(name: str, settings: dict[str, str]) -> ModuleBlock:
@@ -92,3 +101,24 @@ def test_resize_objects_resolution_is_declared_on_module_class() -> None:
         _resolved_function_name(_module("ResizeObjects", {"Planes (Z)": "10"}))
         == "resize_objects_3d"
     )
+
+
+def test_dilate_objects_uses_3d_variant_for_z_stack_lineage() -> None:
+    request = ModuleProcessingComponentRequest(
+        module_type=DilateObjectsModule,
+        function_name="dilate_objects",
+        runtime_lineage=RuntimeArtifactLineageScope(
+            ModuleArtifactContracts("DilateObjects", 1),
+            (AllComponents.Z_INDEX,),
+        ),
+        bound_settings=GeneratedStepSettings(),
+        source_schema=PipelineImageSchema.empty(),
+    )
+
+    resolved = DilateObjectsModule.resolve_semantic_function(
+        _module("DilateObjects", {}),
+        default_function_name="dilate_objects",
+        request=request,
+    )
+
+    assert resolved.function_name == "dilate_objects_3d"

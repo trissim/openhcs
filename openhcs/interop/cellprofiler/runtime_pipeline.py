@@ -337,9 +337,21 @@ class CPPipePipelinePreparationRequest:
                 explicit_module_name=module_name,
             )
         )
+        pipeline_source_bindings_config = (
+            None
+            if converted.generated_pipeline.pipeline_config is None
+            else converted.generated_pipeline.pipeline_config.source_bindings_config
+        )
+        pipeline_step_source_bindings_config = (
+            None
+            if converted.generated_pipeline.pipeline_config is None
+            else converted.generated_pipeline.pipeline_config.step_source_bindings_config
+        )
         runtime_module.materialize_import_module(
             importable_path=self.output_path,
             artifact_contracts=artifact_contracts_by_module_num,
+            source_bindings_config=pipeline_source_bindings_config,
+            step_source_bindings_config=pipeline_step_source_bindings_config,
             semantic_contracts=semantic_contracts,
             semantic_contract_fingerprint=semantic_fingerprint,
         )
@@ -352,10 +364,13 @@ class CPPipePipelinePreparationRequest:
             steps=CellProfilerPipelineRuntimeRebinder(
                 generated_module_name=module_name,
                 contracts_by_module_num=artifact_contracts_by_module_num,
+                source_bindings_config=pipeline_source_bindings_config,
+                step_source_bindings_config=pipeline_step_source_bindings_config,
             ).rebind(pipeline.steps),
             name=pipeline.name,
             description=pipeline.description,
             step_scope_ids=pipeline.step_scope_ids,
+            pipeline_config=converted.generated_pipeline.pipeline_config,
         )
         registered_functions = GeneratedPipelineFunctionRegistration(module).register()
         return PreparedGeneratedPipeline(

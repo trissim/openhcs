@@ -16,14 +16,20 @@ from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field as dataclass_field, replace
 from enum import Enum
 from pathlib import Path
 from typing import ClassVar, List, Optional, TypeAlias
 from metaclass_registry import AutoRegisterMeta
 from openhcs.constants import Backend
-from openhcs.constants.constants import Microscope
+from openhcs.constants.constants import (
+    GroupBy,
+    Microscope,
+    VariableComponents,
+    get_default_group_by,
+)
 from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
 from openhcs.core.artifact_observability import externally_required_artifact_outputs
 from openhcs.core.artifacts import (
@@ -32,7 +38,11 @@ from openhcs.core.artifacts import (
     SpecialArtifactType,
     ImageArtifactType,
 )
-from openhcs.core.config import PipelineConfig
+from openhcs.core.config import (
+    LazyProcessingConfig,
+    LazySourceBindingsConfig,
+    PipelineConfig,
+)
 from openhcs.core.module_artifact_contract import (
     DeclaredArtifactOutputPartition,
     ModuleArtifactContract,
@@ -45,6 +55,7 @@ from openhcs.core.pipeline_image_schema import (
     PipelineImageSchemaSourceBindingsRepresentability,
 )
 from openhcs.core.python_source_literal import PythonSourceLiteral
+from openhcs.core.source_bindings import SourceBindingsConfig
 from openhcs.core.vfs_protocol import FileManagerLike
 from openhcs.interop.cellprofiler.module_roles import (
     ArtifactSpecKey,
@@ -79,7 +90,6 @@ from openhcs.interop.cellprofiler.module_processing_components import (
     ModuleProcessingComponents,
     RuntimeArtifactLineageScope,
     RuntimeArtifactSourceLineage,
-    generated_function_step_semantic_argument_lines,
     group_by_component_axis,
 )
 
@@ -114,7 +124,7 @@ class GeneratedPipeline:
     artifact_contracts: tuple[ModuleArtifactContracts, ...] = ()
     runtime_module_contracts: tuple[tuple[int, ModuleArtifactContract], ...] = ()
     source_schema: PipelineImageSchema = PipelineImageSchema.empty()
-    pipeline_config: PipelineConfig | None = None
+    pipeline_config: PipelineConfig = dataclass_field(default_factory=PipelineConfig)
     setting_coverage: tuple[ModuleSettingCoverageRecord, ...] = ()
 
     @property
@@ -712,6 +722,125 @@ class StepInputSourceLiteral:
         lines.append(f"            input_source={self.value},")
 
 
+@dataclass(frozen=True, slots=True)
+class GeneratedProcessingConfigShape:
+    """Concrete processing-config semantics emitted or inherited by a step."""
+
+    variable_components: tuple[str, ...]
+    group_by: str | None
+    input_source: str | None = None
+
+    @classmethod
+    def from_emission(
+        cls,
+        emission: "GeneratedStepEmission",
+    ) -> "GeneratedProcessingConfigShape":
+        return cls(
+            variable_components=(
+                emission.processing_components.variable_component_literals
+            ),
+            group_by=effective_group_by_literal(emission.processing_components),
+            input_source=emission.input_source_literal.value,
+        )
+
+    def without_input_source(self) -> "GeneratedProcessingConfigShape":
+        return GeneratedProcessingConfigShape(
+            variable_components=self.variable_components,
+            group_by=self.group_by,
+        )
+
+    def to_lazy_processing_config(self) -> LazyProcessingConfig:
+        variable_components = [
+            VariableComponents[literal.rsplit(".", 1)[1]]
+            for literal in self.variable_components
+        ]
+        return LazyProcessingConfig(
+            variable_components=variable_components,
+            group_by=(
+                None if self.group_by is None else GroupBy[self.group_by.rsplit(".", 1)[1]]
+            ),
+        )
+
+
+def effective_group_by_literal(
+    processing_components: ModuleProcessingComponents,
+) -> str | None:
+    """Return concrete group_by literal, resolving inherited generator default."""
+
+    explicit_literal = processing_components.group_by_literal
+    if explicit_literal is not None:
+        return explicit_literal
+    default_group_by = get_default_group_by()
+    if default_group_by is None:
+        return None
+    return f"GroupBy.{default_group_by.name}"
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedPipelineConfigDefaults:
+    """Pipeline-scope defaults that generated FunctionSteps may inherit."""
+
+    processing: GeneratedProcessingConfigShape | None = None
+    source_bindings: SourceBindingsConfig | None = None
+
+    @classmethod
+    def from_emission_groups(
+        cls,
+        emission_groups: tuple["GeneratedStepEmissionGroup", ...],
+        source_schema: PipelineImageSchema,
+    ) -> "GeneratedPipelineConfigDefaults":
+        processing_default = cls._processing_default(emission_groups)
+        source_bindings_default = cls._source_bindings_default(source_schema)
+        return cls(
+            processing=processing_default,
+            source_bindings=source_bindings_default,
+        )
+
+    @staticmethod
+    def _processing_default(
+        emission_groups: tuple["GeneratedStepEmissionGroup", ...],
+    ) -> GeneratedProcessingConfigShape | None:
+        shapes = tuple(
+            GeneratedProcessingConfigShape.from_emission(group.first)
+            .without_input_source()
+            for group in emission_groups
+        )
+        if not shapes:
+            return None
+        shape, count = Counter(shapes).most_common(1)[0]
+        if count < 2:
+            return None
+        return shape
+
+    @staticmethod
+    def _source_bindings_default(
+        source_schema: PipelineImageSchema,
+    ) -> SourceBindingsConfig | None:
+        if source_schema.is_empty:
+            return None
+        source_bindings = source_schema.to_runtime_source_bindings_config()
+        if source_bindings.is_empty:
+            return None
+        return source_bindings
+
+    @staticmethod
+    def _lazy_source_bindings_config(
+        source_bindings: SourceBindingsConfig,
+    ) -> LazySourceBindingsConfig:
+        return LazySourceBindingsConfig(
+            metadata_rules=source_bindings.metadata_rule_declarations,
+            match_plan=source_bindings.match_plan,
+            source_filters=source_bindings.source_filter_declarations,
+            bindings=source_bindings.binding_declarations,
+        )
+
+    def pipeline_config_kwargs(self) -> dict:
+        kwargs = {}
+        if self.processing is not None:
+            kwargs["processing_config"] = self.processing.to_lazy_processing_config()
+        return kwargs
+
+
 @dataclass(frozen=True)
 class GeneratedStepEmission:
     """Compiler-derived source for one generated FunctionStep item."""
@@ -741,6 +870,23 @@ class GeneratedStepEmissionGroup:
     def is_grouped(self) -> bool:
         return len(self.emissions) > 1
 
+    @property
+    def public_function_spec_is_grouped(self) -> bool:
+        """Return whether public callable behavior differs across grouped emissions."""
+        if not self.is_grouped:
+            return False
+        if self.first.module_type.force_grouped_public_function_spec:
+            return True
+        signatures = {
+            (
+                emission.func_name,
+                emission.translated_kwargs,
+                emission.invocation_options_literal,
+            )
+            for emission in self.emissions
+        }
+        return len(signatures) > 1
+
 
 @dataclass(frozen=True)
 class PipelineGeneratorCodeEmitter:
@@ -754,7 +900,11 @@ class PipelineGeneratorCodeEmitter:
         function_names_by_module: Mapping[int, str],
         artifact_contracts: dict[int, ModuleArtifactContracts],
         source_schema: PipelineImageSchema,
-    ) -> tuple[str, tuple[ModuleSettingCoverageRecord, ...]]:
+    ) -> tuple[
+        str,
+        tuple[ModuleSettingCoverageRecord, ...],
+        GeneratedPipelineConfigDefaults,
+    ]:
         """Generate pipeline_steps using registry functions with bound settings."""
         lines = [
             "# Pipeline Steps",
@@ -831,11 +981,17 @@ class PipelineGeneratorCodeEmitter:
                     input_source_literal=input_source_literal,
                 )
             )
-        for emission_group in self.coalesced_emission_groups(tuple(emissions)):
+        emission_groups = self.coalesced_emission_groups(tuple(emissions))
+        pipeline_defaults = GeneratedPipelineConfigDefaults.from_emission_groups(
+            emission_groups,
+            source_schema,
+        )
+        for emission_group in emission_groups:
             self.emit_function_step(
                 lines,
                 emission_group,
                 import_collector=literal_imports,
+                pipeline_defaults=pipeline_defaults,
             )
         lines.append("]")
         if literal_imports:
@@ -843,8 +999,12 @@ class PipelineGeneratorCodeEmitter:
                 f"from {module_name} import {symbol_name}"
                 for module_name, symbol_name in sorted(literal_imports)
             ]
-            return ("\n".join((*import_lines, "", *lines)), tuple(setting_coverage))
-        return ("\n".join(lines), tuple(setting_coverage))
+            return (
+                "\n".join((*import_lines, "", *lines)),
+                tuple(setting_coverage),
+                pipeline_defaults,
+            )
+        return ("\n".join(lines), tuple(setting_coverage), pipeline_defaults)
 
     def coalesced_emission_groups(
         self,
@@ -918,6 +1078,7 @@ class PipelineGeneratorCodeEmitter:
         emission_group: GeneratedStepEmissionGroup,
         *,
         import_collector: set[tuple[str, str]],
+        pipeline_defaults: GeneratedPipelineConfigDefaults,
     ) -> None:
         """Append generated source for one FunctionStep emission group."""
         first = emission_group.first
@@ -932,31 +1093,86 @@ class PipelineGeneratorCodeEmitter:
         lines.append(f'        name="{first.step_name}",')
         if emission_group.is_grouped:
             source_bindings = self.merged_group_source_bindings(emission_group)
-            if not source_bindings.is_empty:
-                lines.append(
-                    "        source_bindings="
-                    f"{step_source_bindings_literal(source_bindings, import_collector=import_collector)},"
-                )
-        else:
-            lines.extend(
-                generated_function_step_semantic_argument_lines(
-                    processing_components=first.processing_components,
-                    artifact_contract=first.artifact_contract,
-                    import_collector=import_collector,
-                )
+            self.emit_source_bindings(
+                lines,
+                source_bindings,
+                import_collector=import_collector,
+                pipeline_defaults=pipeline_defaults,
             )
-        lines.append("        processing_config=LazyProcessingConfig(")
-        lines.append(
-            "            variable_components=["
-            + ", ".join(first.processing_components.variable_component_literals)
-            + "],"
+        else:
+            self.emit_source_bindings(
+                lines,
+                first.artifact_contract.source_bindings,
+                import_collector=import_collector,
+                pipeline_defaults=pipeline_defaults,
+            )
+        self.emit_processing_config(
+            lines,
+            first,
+            pipeline_defaults=pipeline_defaults,
         )
-        group_by_literal = first.processing_components.group_by_literal
-        if group_by_literal is not None:
-            lines.append(f"            group_by={group_by_literal},")
-        first.input_source_literal.append_to(lines)
-        lines.append("        ),")
         lines.append("    ),")
+
+    def emit_source_bindings(
+        self,
+        lines: list[str],
+        source_bindings,
+        *,
+        import_collector: set[tuple[str, str]],
+        pipeline_defaults: GeneratedPipelineConfigDefaults,
+    ) -> None:
+        """Append sparse step source bindings, inheriting pipeline defaults when exact."""
+        if source_bindings.is_empty:
+            return
+        if self.source_bindings_can_inherit_pipeline_defaults(
+            source_bindings,
+            pipeline_defaults.source_bindings,
+        ):
+            return
+        lines.append(
+            "        source_bindings="
+            f"{step_source_bindings_literal(source_bindings, import_collector=import_collector)},"
+        )
+
+    @staticmethod
+    def source_bindings_can_inherit_pipeline_defaults(
+        source_bindings,
+        defaults: SourceBindingsConfig | None,
+    ) -> bool:
+        """Return whether step bindings can be represented by inherited defaults."""
+        return defaults is not None and source_bindings.can_inherit_from(defaults)
+
+    def emit_processing_config(
+        self,
+        lines: list[str],
+        emission: GeneratedStepEmission,
+        *,
+        pipeline_defaults: GeneratedPipelineConfigDefaults,
+    ) -> None:
+        """Append a sparse LazyProcessingConfig override for one generated step."""
+
+        step_shape = GeneratedProcessingConfigShape.from_emission(emission)
+        default_shape = pipeline_defaults.processing
+        emit_component_shape = (
+            default_shape is None
+            or step_shape.without_input_source() != default_shape
+        )
+        emit_input_source = step_shape.input_source is not None
+        if not emit_component_shape and not emit_input_source:
+            return
+
+        lines.append("        processing_config=LazyProcessingConfig(")
+        if emit_component_shape:
+            lines.append(
+                "            variable_components=["
+                + ", ".join(step_shape.variable_components)
+                + "],"
+            )
+            if step_shape.group_by is not None:
+                lines.append(f"            group_by={step_shape.group_by},")
+        if emit_input_source:
+            lines.append(f"            input_source={step_shape.input_source},")
+        lines.append("        ),")
 
     @staticmethod
     def merged_group_source_bindings(emission_group: GeneratedStepEmissionGroup):
@@ -966,7 +1182,10 @@ class PipelineGeneratorCodeEmitter:
         for emission in emission_group.emissions:
             for binding in emission.artifact_contract.source_bindings.binding_declarations:
                 bindings_by_alias[binding.alias] = binding
-        return replace(first_config, bindings=tuple(bindings_by_alias.values()))
+        return replace(
+            first_config,
+            bindings=tuple(bindings_by_alias.values()),
+        )
 
     def emit_function_spec(
         self,
@@ -976,7 +1195,7 @@ class PipelineGeneratorCodeEmitter:
         import_collector: set[tuple[str, str]],
     ) -> None:
         """Append the ``func=`` source for one generated FunctionStep."""
-        if emission_group.is_grouped:
+        if emission_group.public_function_spec_is_grouped:
             lines.append("        func={")
             for emission in emission_group.emissions:
                 group_key = self.group_key_for_emission(emission)
@@ -1138,7 +1357,6 @@ class PipelineGeneratorBuildStage:
             )
         ordered_modules = [*skipped_modules, *registry_modules]
         symbol_table = CellProfilerSymbolTable.compile(ordered_modules)
-        pipeline_config = self._pipeline_config(symbol_table.source_schema)
         contracts_by_module = {
             module.module_num: symbol_table.contract_for(module)
             for module in registry_modules
@@ -1238,11 +1456,19 @@ class PipelineGeneratorBuildStage:
             imports += self.generator.emitter.backend_function_import_block(
                 function_names_by_module.values()
             )
-        steps, setting_coverage = self.generator.emitter.generate_steps_from_registry(
+        (
+            steps,
+            setting_coverage,
+            pipeline_defaults,
+        ) = self.generator.emitter.generate_steps_from_registry(
             executable_modules,
             function_names_by_module,
             contracts_by_module,
             symbol_table.source_schema,
+        )
+        pipeline_config = self._pipeline_config(
+            symbol_table.source_schema,
+            pipeline_defaults=pipeline_defaults,
         )
         code = imports + steps
         return GeneratedPipeline(
@@ -1273,22 +1499,35 @@ class PipelineGeneratorBuildStage:
         )
 
     @staticmethod
-    def _pipeline_config(source_schema: PipelineImageSchema) -> PipelineConfig | None:
+    def _pipeline_config(
+        source_schema: PipelineImageSchema,
+        *,
+        pipeline_defaults: GeneratedPipelineConfigDefaults,
+    ) -> PipelineConfig:
         """Return ObjectState-owned pipeline config derived from source schema."""
+        default_kwargs = pipeline_defaults.pipeline_config_kwargs()
         if source_schema.is_empty:
-            return None
+            return PipelineConfig(**default_kwargs)
         source_bindings_config = source_schema.to_runtime_source_bindings_config()
         if source_bindings_config.is_empty:
-            return None
+            return PipelineConfig(**default_kwargs)
+        lazy_source_bindings_config = (
+            GeneratedPipelineConfigDefaults._lazy_source_bindings_config(
+                source_bindings_config
+            )
+        )
         if PipelineImageSchemaSourceBindingsRepresentability(
             source_schema
         ).unsupported_fields():
-            return PipelineConfig(source_bindings_config=source_bindings_config)
+            return PipelineConfig(
+                source_bindings_config=lazy_source_bindings_config,
+                **default_kwargs,
+            )
         return PipelineConfig(
             microscope=Microscope.SOURCE_BINDINGS,
-            source_bindings_config=source_bindings_config,
+            source_bindings_config=lazy_source_bindings_config,
+            **default_kwargs,
         )
-
 
 class PipelineGenerator:
     """
@@ -1305,7 +1544,7 @@ class PipelineGenerator:
     4. pipeline_steps list
     """
 
-    IMPORTS_BASE = '"""\nOpenHCS Pipeline - Converted from CellProfiler\nSource: {source_file}\n\nAuto-generated by CellProfiler to OpenHCS converter.\n"""\n\nimport numpy as np\nfrom typing import Tuple, List, Optional, Dict, Any\nfrom dataclasses import dataclass\nfrom enum import Enum\n\n# OpenHCS imports\nfrom openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION\nfrom openhcs.core.artifacts import ArtifactSidecarRole, ArtifactSpec\nfrom openhcs.core.steps.function_step import FunctionStep\nfrom openhcs.core.source_bindings import (\n    ComponentSelector,\n    EMPTY_SOURCE_BINDINGS,\n    MetadataExtractionRule,\n    MetadataSource,\n    MetadataSelector,\n    NamedSourceBinding,\n    SourceBindingMatchDimension,\n    SourceBindingMatchField,\n    SourceBindingMatchMethod,\n    SourceBindingMatchPlan,\n    SourceBindingOrigin,\n    SourceFilterClause,\n    SourceFilterMatchType,\n    SourceFilterSubject,\n    SourceSelector,\n)\nfrom openhcs.core.config import LazyProcessingConfig, LazyStepSourceBindingsConfig\nfrom openhcs.constants.constants import VariableComponents, GroupBy\nfrom openhcs.constants.constants import AllComponents\nfrom openhcs.constants.input_source import InputSource\nfrom openhcs.interop.cellprofiler.measurement_scope import CellProfilerMeasurementTargetScope\nfrom openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider\nfrom openhcs.processing.materialization import MaterializedFilenameIdentity, tiff_stack\n\n'
+    IMPORTS_BASE = '"""\nOpenHCS Pipeline - Converted from CellProfiler\nSource: {source_file}\n\nAuto-generated by CellProfiler to OpenHCS converter.\n"""\n\nimport numpy as np\nfrom typing import Tuple, List, Optional, Dict, Any\nfrom dataclasses import dataclass\nfrom enum import Enum\n\n# OpenHCS imports\nfrom openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION\nfrom openhcs.core.artifacts import ArtifactSidecarRole, ArtifactSpec\nfrom openhcs.core.steps.function_step import FunctionStep\nfrom openhcs.core.source_bindings import (\n    ComponentSelector,\n    EMPTY_SOURCE_BINDINGS,\n    MetadataExtractionRule,\n    MetadataSource,\n    MetadataSelector,\n    NamedSourceBinding,\n    SourceBindingMatchDimension,\n    SourceBindingMatchField,\n    SourceBindingMatchMethod,\n    SourceBindingMatchPlan,\n    SourceBindingOrigin,\n    SourceFilterClause,\n    SourceFilterMatchType,\n    SourceFilterSubject,\n    SourceSelector,\n)\nfrom openhcs.core.config import LazyProcessingConfig, LazySourceBindingsConfig, LazyStepSourceBindingsConfig\nfrom openhcs.constants.constants import VariableComponents, GroupBy\nfrom openhcs.constants.constants import AllComponents\nfrom openhcs.constants.input_source import InputSource\nfrom openhcs.interop.cellprofiler.measurement_scope import CellProfilerMeasurementTargetScope\nfrom openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider\nfrom openhcs.processing.materialization import MaterializedFilenameIdentity, tiff_stack\n\n'
 
     def __init__(self, library_root: Optional[Path] = None):
         """

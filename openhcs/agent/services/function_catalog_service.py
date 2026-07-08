@@ -927,7 +927,7 @@ def _pattern_compatibility_rule(
 ) -> str | None:
     if cellprofiler_module is None:
         return "Regular OpenHCS callables may participate in standard FunctionStep callable, tuple, list, or dict patterns subject to compiler validation."
-    return "Generated CellProfiler lowering uses one CP module contract per FunctionStep by default. Do not mix multiple CP module callables in one generated step unless declarations and runtime binding explicitly allow it."
+    return "Generated CellProfiler lowering uses one CP module contract per FunctionStep by default. Do not mix multiple CP module callables in one generated step unless declarations and compile-time invocation contracts explicitly allow it."
 
 
 def _enum_member_name(value: Enum | None) -> str | None:

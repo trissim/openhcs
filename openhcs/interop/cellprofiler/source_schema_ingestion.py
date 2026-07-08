@@ -13,7 +13,10 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.constants import Backend
 from openhcs.constants.constants import Microscope
 from openhcs.core.pipeline import Pipeline
-from openhcs.core.pipeline_image_schema import PipelineImageSchema
+from openhcs.core.pipeline_image_schema import (
+    PipelineImageSchema,
+    PipelineImageSchemaSourceBindingsRepresentability,
+)
 from openhcs.core.source_matching import is_image_path, source_filters_match
 from openhcs.core.source_schema_workspace import (
     SourceSchemaCandidateDiscoveryMode,
@@ -228,12 +231,16 @@ def prepare_cellprofiler_source_schema_workspace(
         request.image_set_selection is not None
         and request.image_set_selection.constrains_image_sets()
     )
+    representable_by_source_bindings = not (
+        PipelineImageSchemaSourceBindingsRepresentability(
+            prepared.source_schema
+        ).unsupported_fields()
+    )
     if (
         not request.force_materialization
         and not selection_constrains_image_sets
-        and
-        pipeline_config is not None
         and pipeline_config.microscope is Microscope.SOURCE_BINDINGS
+        and representable_by_source_bindings
     ):
         return CellProfilerSourceSchemaWorkspace(
             materialization=None,

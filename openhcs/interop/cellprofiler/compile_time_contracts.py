@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from openhcs.core.artifacts import ImageArtifactType
+from openhcs.constants.input_source import InputSource
 from openhcs.core.function_patterns import normalize_function_pattern
 from openhcs.core.invocation_artifacts import (
     CompositeInvocationContractProvider,
@@ -21,7 +22,13 @@ from openhcs.core.pipeline_image_schema import (
     PipelineImageSchema,
     SourceArtifactAssignment,
 )
-from openhcs.core.source_bindings import SourceBindingOrigin
+from openhcs.core.source_bindings import (
+    SourceBindingOrigin,
+    SourceBindingsConfig,
+    StepSourceBindingsConfig,
+    resolve_effective_step_source_bindings,
+    source_bindings_defaults_to_base,
+)
 from openhcs.interop.cellprofiler.parser import ModuleBlock
 
 
@@ -33,12 +40,9 @@ def cellprofiler_module_settings_invocation_contract_provider_for_session(
         raise TypeError(
             "CellProfiler compile-time contract provider requires "
             f"CompilationSession, got {type(session).__name__}."
-        )
+    )
     providers: list[InvocationContractProviderLike] = []
-    step_contract_provider = _step_invocation_contract_provider_for_session(session)
-    if step_contract_provider is not None:
-        providers.append(step_contract_provider)
-
+    source_bindings_config = _source_bindings_config_for_session(session)
     runtime_contracts = _runtime_contracts_from_selected_cppipe(session)
     if runtime_contracts:
         from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
@@ -49,10 +53,14 @@ def cellprofiler_module_settings_invocation_contract_provider_for_session(
             CellProfilerGeneratedInvocationContractProvider.for_snapshots(
                 runtime_contracts,
                 session.snapshots,
+                source_bindings_config=source_bindings_config,
+                step_source_bindings_config=_step_source_bindings_config_for_session(
+                    session
+                ),
             )
         )
     else:
-        module_items = _module_items_from_snapshots(session.snapshots)
+        module_items = _module_items_from_session(session)
         if module_items:
             from openhcs.interop.cellprofiler.pipeline_generator import (
                 PipelineGenerator,
@@ -64,7 +72,7 @@ def cellprofiler_module_settings_invocation_contract_provider_for_session(
                 CellProfilerSymbolTable,
             )
 
-            modules = [module for module, _kwargs, _step in module_items]
+            modules = [module for module, _kwargs, _step, _bindings in module_items]
             symbol_table = CellProfilerSymbolTable.compile(
                 modules,
                 source_schema=_source_schema_for_session(module_items),
@@ -81,8 +89,15 @@ def cellprofiler_module_settings_invocation_contract_provider_for_session(
                 CellProfilerGeneratedInvocationContractProvider.for_snapshots(
                     runtime_contracts,
                     session.snapshots,
+                    source_bindings_config=source_bindings_config,
+                    step_source_bindings_config=(
+                        _step_source_bindings_config_for_session(session)
+                    ),
                 )
             )
+    step_contract_provider = _step_invocation_contract_provider_for_session(session)
+    if step_contract_provider is not None:
+        providers.append(step_contract_provider)
     if not providers:
         return None
     if len(providers) == 1:
@@ -99,7 +114,25 @@ def _step_invocation_contract_provider_for_session(
 
     return CellProfilerStepInvocationContractProvider.for_snapshots(
         session.snapshots,
+        source_bindings_config=_source_bindings_config_for_session(session),
+        step_source_bindings_config=_step_source_bindings_config_for_session(session),
     )
+
+
+def _source_bindings_config_for_session(
+    session: CompilationSession,
+) -> SourceBindingsConfig:
+    """Return pipeline source-binding defaults visible to compile-time providers."""
+    return source_bindings_defaults_to_base(
+        session.orchestrator.pipeline_config.source_bindings_config
+    )
+
+
+def _step_source_bindings_config_for_session(
+    session: CompilationSession,
+) -> StepSourceBindingsConfig:
+    """Return pipeline step-source-binding defaults visible to providers."""
+    return session.orchestrator.pipeline_config.step_source_bindings_config
 
 
 class CellProfilerInvocationContractProviderFactory(InvocationContractProviderFactory):
@@ -160,17 +193,33 @@ def _runtime_contracts_from_cppipe_path(
     return generated.generated_pipeline.runtime_module_contracts_by_module_num
 
 
-def _module_items_from_snapshots(
-    snapshots: tuple[StepSnapshot, ...],
-) -> tuple[tuple[ModuleBlock, dict, StepSnapshot], ...]:
-    modules: list[tuple[ModuleBlock, dict, StepSnapshot]] = []
+def _effective_source_bindings_for_snapshot(
+    snapshot: StepSnapshot,
+    session: CompilationSession,
+) -> StepSourceBindingsConfig:
+    """Return source bindings with pipeline defaults applied for compile-time CP use."""
+    return resolve_effective_step_source_bindings(
+        snapshot.source_bindings,
+        source_bindings_defaults=_source_bindings_config_for_session(session),
+        step_source_bindings_defaults=_step_source_bindings_config_for_session(session),
+        activate_source_bindings=(
+            snapshot.input_source == InputSource.PIPELINE_START
+        ),
+    )
+
+
+def _module_items_from_session(
+    session: CompilationSession,
+) -> tuple[tuple[ModuleBlock, dict, StepSnapshot, StepSourceBindingsConfig], ...]:
+    modules: list[tuple[ModuleBlock, dict, StepSnapshot, StepSourceBindingsConfig]] = []
     module_num = 0
-    for snapshot in snapshots:
+    for snapshot in session.snapshots:
         if not snapshot.is_function_step:
             continue
         function_spec = snapshot.func
         if function_spec is None:
             continue
+        source_bindings = _effective_source_bindings_for_snapshot(snapshot, session)
         for item in normalize_function_pattern(function_spec).iter_items():
             if snapshot.invocation_contracts.contract_for(item.key) is not None:
                 continue
@@ -178,10 +227,11 @@ def _module_items_from_snapshots(
                 item,
                 module_num=module_num + 1,
                 snapshot=snapshot,
+                source_bindings=source_bindings,
             )
             if module is not None:
                 module_num += 1
-                modules.append((module, item.kwargs_dict, snapshot))
+                modules.append((module, item.kwargs_dict, snapshot, source_bindings))
     return tuple(modules)
 
 
@@ -190,6 +240,7 @@ def _module_from_item(
     *,
     module_num: int,
     snapshot: StepSnapshot,
+    source_bindings: StepSourceBindingsConfig,
 ) -> ModuleBlock | None:
     from openhcs.interop.cellprofiler.runtime.module_execution import (
         CellProfilerRuntimeCallable,
@@ -216,7 +267,7 @@ def _module_from_item(
                     module_num=module_num,
                     kwargs=item.kwargs_dict,
                     invocation_options=item.invocation_options,
-                    source_bindings=snapshot.source_bindings,
+                    source_bindings=source_bindings,
                     group_key=item.key.group_key,
                 )
             )
@@ -232,11 +283,10 @@ def _module_from_item(
 
 
 def _source_schema_for_session(
-    module_items: tuple[tuple[ModuleBlock, dict, StepSnapshot], ...],
+    module_items: tuple[tuple[ModuleBlock, dict, StepSnapshot, StepSourceBindingsConfig], ...],
 ) -> PipelineImageSchema:
     source_artifacts: dict[str, SourceArtifactAssignment] = {}
-    for _module, _kwargs, snapshot in module_items:
-        source_bindings = snapshot.source_bindings
+    for _module, _kwargs, _snapshot, source_bindings in module_items:
         if not source_bindings.enabled:
             continue
         for binding in source_bindings.binding_declarations:

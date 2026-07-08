@@ -1328,7 +1328,7 @@ class FunctionCoreExecutor:
         logger.info(f"Executing function: {self.function_name}")
         call_started_at = time.perf_counter()
         raw_output = self.func_callable(
-            image_payload_data(main_data_arg),
+            main_data_arg,
             **final_kwargs,
         )
         RuntimeProfileSink.record(
@@ -2379,6 +2379,12 @@ class PatternGroupRuntime:
             return
 
         retained_paths = {Path(path).as_posix() for path in output_paths}
+        retained_paths.update(
+            Path(record.output_path).as_posix()
+            for record in step_output_manifest(context).produced_records_for(
+                self.request.execution_plan
+            )
+        )
         for j in range(num_outputs, num_inputs):
             unused_filename = matching_files[j]
             unused_relative_path = self._input_relative_path(

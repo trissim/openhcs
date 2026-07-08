@@ -17,6 +17,7 @@ from openhcs.core.measurement_row_materialization import (
 from openhcs.core.runtime_semantics import (
     MeasurementObjectRowIdentity,
     MeasurementRowAxisField,
+    ObjectLabelDomainScope,
     ObjectLabelDomainMetadataStrategy,
     dense_object_label_id_domain,
     measurement_row_mapping,
@@ -304,6 +305,11 @@ class ObjectMeasurementRowCompletionSchema:
         *,
         axis_key: CellProfilerRuntimeValues,
     ) -> CellProfilerRuntimeValue:
+        label_domain = ObjectLabelDomainMetadataStrategy.for_value(
+            label_payload
+        ).object_label_domain(label_payload)
+        if label_domain.scope is ObjectLabelDomainScope.PAYLOAD:
+            return label_payload
         normalized_axis_fields = tuple(
             str(field_name).strip().lower() for field_name in self.axis_fields
         )
@@ -337,6 +343,11 @@ class ObjectMeasurementRowCompletionSchema:
         axis_key: CellProfilerRuntimeValues,
     ) -> CellProfilerRuntimeValues:
         """Return the axis subset that changes the label-id domain."""
+        label_domain = ObjectLabelDomainMetadataStrategy.for_value(
+            label_payload
+        ).object_label_domain(label_payload)
+        if label_domain.scope is ObjectLabelDomainScope.PAYLOAD:
+            return ()
         normalized_axis_fields = tuple(
             str(field_name).strip().lower() for field_name in self.axis_fields
         )

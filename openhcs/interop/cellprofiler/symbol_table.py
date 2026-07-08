@@ -725,7 +725,7 @@ def source_bindings_config_literal(
     """Render a deterministic Python literal for generated pipeline source bindings."""
     imports = import_collector if import_collector is not None else set()
     return (
-        "SourceBindingsConfig("
+        "LazySourceBindingsConfig("
         + ", ".join(
             _source_bindings_field_literals(
                 config, artifact_types=ArtifactTypeLiteralAuthority(imports)

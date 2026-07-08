@@ -13,6 +13,7 @@ import tifffile
 
 from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
     bind_generated_pipeline_runtime,
+    CellProfilerGeneratedInvocationContractProvider,
     CellProfilerStepInvocationContractProvider,
     GeneratedPipelineSemanticContractsFingerprint,
     GeneratedPipelineSemanticContractsModule,
@@ -20,6 +21,7 @@ from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
     pipeline_from_generated_module,
 )
 from openhcs.interop.cellprofiler.runtime.module_execution import (
+    CellProfilerGroupedRuntimeCallable,
     CellProfilerRuntimeCallable,
     cellprofiler_runtime_adapter_factory,
 )
@@ -47,10 +49,14 @@ from openhcs.core.artifacts import (
     RelationshipsArtifactType,
 )
 from openhcs.core.module_artifact_contract import (
+    DeclaredArtifactOutputPartition,
     ModuleArtifactContract,
     ModuleArtifactContractItem,
+    RecordedArtifactOutputPartition,
+    RuntimeArtifactInputPartition,
     SourceArtifactInputPartition,
 )
+from openhcs.core.function_reference import FunctionReferenceTransportAuthority
 from openhcs.core.config import DtypeConfig
 from openhcs.core.runtime_adapters import runtime_adapter_spec_from_callable
 from openhcs.core.runtime_stores import RuntimeValueStore
@@ -64,6 +70,7 @@ from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     CompiledSourceUniversePlan,
     NamedSourceBinding,
+    SourceBindingsConfig,
     SourceBindingRuntimeContext,
     SourceSelector,
     StepSourceBindingsConfig,
@@ -99,7 +106,10 @@ from openhcs.core.steps.function_runtime import (
     FunctionRuntimeScope,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.backends.cellprofiler import correct_illumination_calculate
+from openhcs.processing.backends.cellprofiler import (
+    correct_illumination_calculate,
+    identify_primary_objects,
+)
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
 
@@ -422,13 +432,30 @@ def _pipeline_namespace(generated: GeneratedPipeline) -> dict:
     return namespace
 
 
+def _effective_processing_config(generated: GeneratedPipeline, step: FunctionStep):
+    step_config = step.processing_config
+    pipeline_config = generated.pipeline_config.processing_config
+    return SimpleNamespace(
+        variable_components=(
+            step_config.variable_components
+            if step_config.variable_components is not None
+            else pipeline_config.variable_components
+        ),
+        group_by=(
+            step_config.group_by
+            if step_config.group_by is not None
+            else pipeline_config.group_by
+        ),
+    )
+
+
 def test_generated_pipeline_omits_legacy_artifact_type_enum_import():
     generated = _generated_pipeline(_image_artifact_pipeline_modules())
 
     assert "from openhcs.core.artifacts import ArtifactType" not in generated.code
 
 
-def test_generated_runtime_binding_preserves_backend_callable_identity() -> None:
+def test_generated_runtime_contract_attachment_preserves_backend_callable_identity() -> None:
     generated = _generated_pipeline(
         [
             _module(
@@ -444,6 +471,7 @@ def test_generated_runtime_binding_preserves_backend_callable_identity() -> None
     namespace = _pipeline_namespace(generated)
     step_func = namespace["pipeline_steps"][0].func
 
+    assert not isinstance(step_func, CellProfilerRuntimeCallable)
     assert step_func.__name__ == "identify_primary_objects"
     assert step_func.__module__ == "openhcs.processing.backends.cellprofiler"
     assert "benchmark_generated" not in step_func.__name__
@@ -537,16 +565,303 @@ def test_generated_runtime_binding_scopes_grouped_source_bindings() -> None:
     )
 
     rebound = module.pipeline_steps[0].func
-    assert rebound == {
-        "1": correct_illumination_calculate,
-        "2": correct_illumination_calculate,
-    }
+    assert set(rebound) == {"1", "2"}
+    assert all(func is correct_illumination_calculate for func in rebound.values())
     assert module.pipeline_steps[0].invocation_contracts.contract_for(
         FunctionInvocationKey("correct_illumination_calculate", "1", 0)
     ).inputs[0].name == "OrigStain1"
     assert module.pipeline_steps[0].invocation_contracts.contract_for(
         FunctionInvocationKey("correct_illumination_calculate", "2", 0)
     ).inputs[0].name == "OrigStain2"
+
+
+def test_generated_runtime_binding_groups_native_default_invocation_contracts() -> None:
+    def source_contract(image_name: str) -> ModuleArtifactContract:
+        return ModuleArtifactContract(
+            module_name="CorrectIlluminationCalculate",
+            items=(
+                ModuleArtifactContractItem(
+                    SourceArtifactInputPartition,
+                    ArtifactSpec(
+                        name=image_name,
+                        plan_type=ArtifactInputPlan,
+                        artifact_type=ImageArtifactType,
+                    ),
+                ),
+            ),
+        )
+
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigStain1",
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "1"),
+                ),
+            ),
+            NamedSourceBinding(
+                alias="OrigStain2",
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "2"),
+                ),
+            ),
+        )
+    )
+    module = SimpleNamespace(
+        pipeline_steps=[
+            FunctionStep(
+                func=correct_illumination_calculate,
+                name="CorrectIlluminationCalculate",
+                source_bindings=source_bindings,
+            )
+        ]
+    )
+
+    bind_generated_pipeline_runtime(
+        module,
+        {
+            5: source_contract("OrigStain1"),
+            6: source_contract("OrigStain2"),
+        },
+    )
+
+    rebound = module.pipeline_steps[0].func
+    assert rebound is correct_illumination_calculate
+    planning_contract = module.pipeline_steps[0].invocation_contracts.contract_for(
+        FunctionInvocationKey("correct_illumination_calculate", "default", 0)
+    )
+    assert [spec.name for spec in planning_contract.inputs] == [
+        "OrigStain1",
+        "OrigStain2",
+    ]
+
+
+def test_generated_provider_rebinds_transported_grouped_callable() -> None:
+    def source_contract(image_name: str, output_name: str) -> ModuleArtifactContract:
+        output = ArtifactSpec(
+            name=output_name,
+            plan_type=ArtifactOutputPlan,
+            artifact_type=ImageArtifactType,
+        )
+        return ModuleArtifactContract(
+            module_name="CorrectIlluminationCalculate",
+            items=(
+                ModuleArtifactContractItem(
+                    SourceArtifactInputPartition,
+                    ArtifactSpec(
+                        name=image_name,
+                        plan_type=ArtifactInputPlan,
+                        artifact_type=ImageArtifactType,
+                    ),
+                ),
+                ModuleArtifactContractItem(RecordedArtifactOutputPartition, output),
+                ModuleArtifactContractItem(DeclaredArtifactOutputPartition, output),
+            ),
+        )
+
+    source_bindings = StepSourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigStain1",
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "1"),
+                ),
+            ),
+            NamedSourceBinding(
+                alias="OrigStain2",
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "2"),
+                ),
+            ),
+        )
+    )
+    module = SimpleNamespace(
+        pipeline_steps=[
+            FunctionStep(
+                func=correct_illumination_calculate,
+                name="CorrectIlluminationCalculate",
+                source_bindings=source_bindings,
+            )
+        ]
+    )
+    contracts_by_module = {
+        5: source_contract("OrigStain1", "IllumStain1"),
+        6: source_contract("OrigStain2", "IllumStain2"),
+    }
+
+    bind_generated_pipeline_runtime(module, contracts_by_module)
+    assert module.pipeline_steps[0].func is correct_illumination_calculate
+    FunctionReferenceTransportAuthority.reference_pipeline_in_place(
+        module.pipeline_steps
+    )
+    assert not isinstance(module.pipeline_steps[0].func, CellProfilerGroupedRuntimeCallable)
+    provider = CellProfilerGeneratedInvocationContractProvider.for_steps(
+        contracts_by_module,
+        module.pipeline_steps,
+    )
+    compiled = compile_function_pattern(
+        module.pipeline_steps[0].func,
+        {},
+        {},
+        invocation_contract_provider=provider,
+        step_context=ArtifactDeclarationStepContext(
+            step_index=0,
+            step_name="CorrectIlluminationCalculate",
+            source_bindings=source_bindings,
+        ),
+    )
+
+    invocation = next(compiled.iter_invocations())
+    rebound = invocation.contract.resolve_runtime_callable()
+    assert isinstance(rebound, CellProfilerGroupedRuntimeCallable)
+    assert {
+        key: [spec.name for spec in contract.outputs]
+        for key, contract in rebound.grouped_contracts.contracts_by_group_key.items()
+    } == {
+        "1": ["IllumStain1"],
+        "2": ["IllumStain2"],
+    }
+
+
+def test_generated_runtime_binding_resolves_inherited_source_bindings() -> None:
+    def source_contract(image_name: str) -> ModuleArtifactContract:
+        return ModuleArtifactContract(
+            module_name="CorrectIlluminationCalculate",
+            items=(
+                ModuleArtifactContractItem(
+                    SourceArtifactInputPartition,
+                    ArtifactSpec(
+                        name=image_name,
+                        plan_type=ArtifactInputPlan,
+                        artifact_type=ImageArtifactType,
+                    ),
+                ),
+            ),
+        )
+
+    source_bindings_config = SourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigStain1",
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "1"),
+                ),
+            ),
+            NamedSourceBinding(
+                alias="OrigStain2",
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "2"),
+                ),
+            ),
+        )
+    )
+    module = SimpleNamespace(
+        pipeline_steps=[
+            FunctionStep(
+                func=correct_illumination_calculate,
+                name="CorrectIlluminationCalculate",
+            )
+        ]
+    )
+
+    bind_generated_pipeline_runtime(
+        module,
+        {
+            5: source_contract("OrigStain1"),
+            6: source_contract("OrigStain2"),
+        },
+        source_bindings_config=source_bindings_config,
+        step_source_bindings_config=StepSourceBindingsConfig(enabled=True),
+    )
+
+    rebound = module.pipeline_steps[0].func
+    assert rebound is correct_illumination_calculate
+    provider = CellProfilerGeneratedInvocationContractProvider.for_steps(
+        {
+            5: source_contract("OrigStain1"),
+            6: source_contract("OrigStain2"),
+        },
+        module.pipeline_steps,
+        source_bindings_config=source_bindings_config,
+        step_source_bindings_config=StepSourceBindingsConfig(enabled=True),
+    )
+    compiled = compile_function_pattern(
+        module.pipeline_steps[0].func,
+        {},
+        {},
+        invocation_contract_provider=provider,
+        step_context=ArtifactDeclarationStepContext(
+            step_index=0,
+            step_name="CorrectIlluminationCalculate",
+            source_bindings=StepSourceBindingsConfig(enabled=True),
+        ),
+    )
+    runtime_callable = next(compiled.iter_invocations()).contract.resolve_runtime_callable()
+    assert isinstance(runtime_callable, CellProfilerGroupedRuntimeCallable)
+    assert set(runtime_callable.grouped_contracts.contracts_by_group_key) == {"1", "2"}
+
+
+def test_generated_provider_does_not_group_runtime_only_repeated_modules() -> None:
+    def runtime_image_contract(image_name: str) -> ModuleArtifactContract:
+        return ModuleArtifactContract(
+            module_name="IdentifyPrimaryObjects",
+            items=(
+                ModuleArtifactContractItem(
+                    RuntimeArtifactInputPartition,
+                    ArtifactSpec(
+                        name=image_name,
+                        plan_type=ArtifactInputPlan,
+                        artifact_type=ImageArtifactType,
+                    ),
+                ),
+            ),
+        )
+
+    source_bindings_config = SourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigStain1",
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "1"),
+                ),
+            ),
+            NamedSourceBinding(
+                alias="OrigStain2",
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "2"),
+                ),
+            ),
+        )
+    )
+    steps = [
+        FunctionStep(
+            func=identify_primary_objects,
+            name="IdentifyPrimaryObjects",
+        ),
+        FunctionStep(
+            func=identify_primary_objects,
+            name="IdentifyPrimaryObjects",
+        ),
+    ]
+
+    provider = CellProfilerGeneratedInvocationContractProvider.for_steps(
+        {
+            10: runtime_image_contract("Stain1"),
+            11: runtime_image_contract("Stain2"),
+        },
+        steps,
+        source_bindings_config=source_bindings_config,
+        step_source_bindings_config=StepSourceBindingsConfig(enabled=True),
+    )
+
+    first = provider.contracts_by_invocation_key[
+        (0, FunctionInvocationKey("identify_primary_objects", "default", 0))
+    ]
+    second = provider.contracts_by_invocation_key[
+        (1, FunctionInvocationKey("identify_primary_objects", "default", 0))
+    ]
+    assert first.contract.runtime_artifact_inputs[0].name == "Stain1"
+    assert second.contract.runtime_artifact_inputs[0].name == "Stain2"
 
 
 def test_generated_pipeline_save_can_use_explicit_filemanager_vfs(
@@ -610,6 +925,7 @@ def test_materialized_generated_pipeline_inlines_artifact_contracts(
         and isinstance(node.func, ast.Name | ast.Attribute)
     }
     assert "_openhcs_cp_contract_values" in assigned_names
+    assert "pipeline_config" not in assigned_names
     assert "ModuleArtifactContract" in call_names
     assert "MaterializationSpec" in call_names
     assert "GeneratedPipelineRuntimeBindings" in imported_names
@@ -621,6 +937,7 @@ def test_materialized_generated_pipeline_inlines_artifact_contracts(
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     assert "pipeline_steps" in vars(module)
+    assert "pipeline_config" not in vars(module)
     assert not isinstance(module.pipeline_steps[0].func, CellProfilerRuntimeCallable)
     attached_contracts = tuple(
         binding.contract
@@ -743,84 +1060,77 @@ def test_generator_scopes_runtime_artifact_only_step_once_per_axis():
     generated = _generated_pipeline(_measurement_pipeline_modules())
     namespace = _pipeline_namespace(generated)
     measurement_step = namespace["pipeline_steps"][1]
+    processing_config = _effective_processing_config(generated, measurement_step)
 
     assert measurement_step.name == MEASURE_OBJECT_SIZE_SHAPE
-    assert measurement_step.processing_config.variable_components == [
-        VariableComponents.SITE
-    ]
-    assert measurement_step.processing_config.group_by is GroupBy.CHANNEL
+    assert processing_config.variable_components == [VariableComponents.SITE]
+    assert processing_config.group_by is GroupBy.CHANNEL
 
 
 def test_generator_scopes_runtime_artifact_object_outputs_per_image_set():
     generated = _generated_pipeline(_filter_objects_pipeline_modules())
     namespace = _pipeline_namespace(generated)
     filter_step = namespace["pipeline_steps"][2]
+    processing_config = _effective_processing_config(generated, filter_step)
 
     assert filter_step.name == FILTER_OBJECTS
-    assert filter_step.processing_config.variable_components == [
-        VariableComponents.SITE
-    ]
-    assert filter_step.processing_config.group_by is GroupBy.CHANNEL
+    assert processing_config.variable_components == [VariableComponents.SITE]
+    assert processing_config.group_by is GroupBy.CHANNEL
 
 
 def test_generator_scopes_runtime_artifact_relationship_outputs_per_image_set():
     generated = _generated_pipeline(_relationship_pipeline_modules())
     namespace = _pipeline_namespace(generated)
     relate_step = namespace["pipeline_steps"][2]
+    processing_config = _effective_processing_config(generated, relate_step)
 
     assert relate_step.name == RELATE_OBJECTS
-    assert relate_step.processing_config.variable_components == [
-        VariableComponents.SITE
-    ]
-    assert relate_step.processing_config.group_by is GroupBy.CHANNEL
+    assert processing_config.variable_components == [VariableComponents.SITE]
+    assert processing_config.group_by is GroupBy.CHANNEL
 
 
 def test_generator_scopes_grid_guided_object_outputs_per_image_set():
     generated = _generated_pipeline(_grid_guided_object_pipeline_modules())
     namespace = _pipeline_namespace(generated)
     identify_grid_step = namespace["pipeline_steps"][2]
+    processing_config = _effective_processing_config(generated, identify_grid_step)
 
     assert identify_grid_step.name == "IdentifyObjectsInGrid"
-    assert identify_grid_step.processing_config.variable_components == [
-        VariableComponents.SITE
-    ]
-    assert identify_grid_step.processing_config.group_by is GroupBy.CHANNEL
+    assert processing_config.variable_components == [VariableComponents.SITE]
+    assert processing_config.group_by is GroupBy.CHANNEL
 
 
 def test_generator_scopes_multi_object_measurements_per_image_set():
     generated = _generated_pipeline(_multi_object_area_occupied_pipeline_modules())
     namespace = _pipeline_namespace(generated)
     area_occupied_step = namespace["pipeline_steps"][2]
+    processing_config = _effective_processing_config(generated, area_occupied_step)
 
     assert area_occupied_step.name == "MeasureImageAreaOccupied"
-    assert area_occupied_step.processing_config.variable_components == [
-        VariableComponents.SITE
-    ]
-    assert area_occupied_step.processing_config.group_by is GroupBy.CHANNEL
+    assert processing_config.variable_components == [VariableComponents.SITE]
+    assert processing_config.group_by is GroupBy.CHANNEL
 
 
 def test_generator_propagates_pairwise_object_scope_to_measurement_consumers():
     generated = _generated_pipeline(_multi_object_area_math_pipeline_modules())
     namespace = _pipeline_namespace(generated)
     calculate_math_step = namespace["pipeline_steps"][3]
+    processing_config = _effective_processing_config(generated, calculate_math_step)
 
     assert calculate_math_step.name == "CalculateMath"
-    assert calculate_math_step.processing_config.variable_components == [
-        VariableComponents.SITE
-    ]
-    assert calculate_math_step.processing_config.group_by is GroupBy.CHANNEL
+    assert processing_config.variable_components == [VariableComponents.SITE]
+    assert processing_config.group_by is GroupBy.CHANNEL
 
 
 def test_generator_does_not_propagate_pairwise_scope_to_direct_object_measurements():
     generated = _generated_pipeline(_filtered_object_measurement_pipeline_modules())
     namespace = _pipeline_namespace(generated)
     measurement_step = namespace["pipeline_steps"][3]
+    processing_config = _effective_processing_config(generated, measurement_step)
 
     assert measurement_step.name == MEASURE_OBJECT_SIZE_SHAPE
-    assert measurement_step.processing_config.variable_components == [
-        VariableComponents.SITE
-    ]
-    assert measurement_step.processing_config.group_by is GroupBy.CHANNEL
+    assert processing_config.variable_components == [VariableComponents.SITE]
+    assert processing_config.group_by is GroupBy.CHANNEL
 
 
 def test_generator_binds_canonical_morphology_alias_structuring_element():

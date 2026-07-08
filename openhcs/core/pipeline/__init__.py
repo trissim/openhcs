@@ -49,7 +49,16 @@ class Pipeline(list):
     - Method chaining for fluent pipeline construction
     """
 
-    def __init__(self, steps=None, *, name=None, metadata=None, description=None, step_scope_ids=None):
+    def __init__(
+        self,
+        steps=None,
+        *,
+        name=None,
+        metadata=None,
+        description=None,
+        step_scope_ids=None,
+        pipeline_config=None,
+    ):
         """
         Initialize a pipeline that behaves like a list of steps.
 
@@ -59,6 +68,7 @@ class Pipeline(list):
             metadata: Additional metadata dictionary
             description: Optional description of what this pipeline does
             step_scope_ids: List of ObjectState scope IDs for steps (for UI state tracking)
+            pipeline_config: Optional pipeline-level configuration carried with steps
         """
         # Initialize the list part with steps
         super().__init__(steps or [])
@@ -67,6 +77,7 @@ class Pipeline(list):
         self.name = name or f"Pipeline_{id(self)}"
         self.description = description
         self.metadata = metadata or {}
+        self.pipeline_config = pipeline_config
 
         # ObjectState tracking - list of scope IDs for steps
         self.step_scope_ids = step_scope_ids or []
@@ -117,7 +128,8 @@ class Pipeline(list):
             steps=self.copy(),  # Shallow copy of the step list
             name=name or f"{self.name}_copy",
             metadata=new_metadata,
-            description=self.description
+            description=self.description,
+            pipeline_config=self.pipeline_config,
         )
 
     def to_dict(self):
@@ -132,6 +144,7 @@ class Pipeline(list):
             "description": self.description,
             "steps": list(self),  # Convert to plain list for serialization
             "metadata": self.metadata,
+            "pipeline_config": self.pipeline_config,
             "step_count": len(self)
         }
 

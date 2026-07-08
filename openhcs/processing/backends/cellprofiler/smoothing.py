@@ -1,6 +1,14 @@
 """Shared CellProfiler mask-normalized smoothing primitives."""
 
 from __future__ import annotations
+from collections.abc import Callable
+from typing import Any
+from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.core.callable_contract import runtime_image_execution_mode
+from openhcs.core.runtime_values import image_payload_data, with_image_payload_data
+from openhcs.interop.cellprofiler.semantic_defaults import (
+    SourceVolumetricPixelDataExecutionContract,
+)
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     parse_cellprofiler_float,
@@ -31,11 +39,28 @@ from openhcs.processing.backends.cellprofiler.thresholding import (
 )
 
 
-class ReducenoiseModule(CellProfilerModule):
+class ReduceNoiseExecutionDomainContract(SourceVolumetricPixelDataExecutionContract):
+    contract_key = "ReduceNoise.execution_domain"
+    source_filename = "reducenoise.py"
+    callable_name = "reducenoise"
+
+    @property
+    def absorbed_callable(self) -> Callable[..., Any]:
+        return reducenoise
+
+
+class ReducenoiseModule(
+    ImageArtifactInputModule, ImageArtifactOutputModule, CellProfilerModule
+):
     module_name = "Reducenoise"
+    aliases = ("ReduceNoise",)
     function_name = "reducenoise"
     validated = True
     confidence = 1.0
+    image_input_settings = ("Select the input image",)
+    image_output_settings = ("Name the output image",)
+    semantic_default_contract_types = (ReduceNoiseExecutionDomainContract,)
+    semantic_default_contract_module_name = "ReduceNoise"
     setting_bindings = (
         SettingToKeywordBinding("Size", "patch_size", parse_cellprofiler_int),
         SettingToKeywordBinding("Distance", "patch_distance", parse_cellprofiler_int),
@@ -68,10 +93,9 @@ class SmoothModule(
 
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, ClassVar
+from typing import ClassVar
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
@@ -709,7 +733,8 @@ def smooth(
     )
 
 
-@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
+@numpy_decorator(contract=ProcessingContract.FLEXIBLE)
 def reducenoise(
     image: np.ndarray,
     patch_size: int = 5,
@@ -717,22 +742,20 @@ def reducenoise(
     cutoff_distance: float = 0.1,
 ) -> np.ndarray:
     """Reduce image noise using CellProfiler-compatible non-local means."""
-    from skimage.restoration import denoise_nl_means, estimate_sigma
+    from skimage.restoration import denoise_nl_means
 
-    image_data = image
+    image_data = image_payload_data(image)
     if image_data.dtype != np.float32 and image_data.dtype != np.float64:
         image_data = image_data.astype(np.float32)
-    sigma_estimate = estimate_sigma(image_data)
-    h_value = cutoff_distance if cutoff_distance > 0.01 else sigma_estimate * 1.15
     denoised = denoise_nl_means(
         image_data,
-        h=h_value,
+        h=cutoff_distance,
         patch_size=patch_size,
         patch_distance=patch_distance,
         fast_mode=True,
         channel_axis=None,
     )
-    return denoised.astype(np.float32)
+    return with_image_payload_data(image, denoised.astype(np.float32))
 
 
 def smooth_batch(request: RuntimePure2DSliceBatchRequest) -> list[Any]:

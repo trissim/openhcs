@@ -257,6 +257,17 @@ class CellProfilerFunctionReferenceTransportStrategy(FunctionReferenceTransportS
         except KeyError:
             return None
 
+    def preserve_callable(self, func: Callable) -> bool:
+        from openhcs.interop.cellprofiler.runtime.module_execution import (
+            CellProfilerGroupedRuntimeCallable,
+            CellProfilerRuntimeCallable,
+        )
+
+        return isinstance(
+            func,
+            (CellProfilerRuntimeCallable, CellProfilerGroupedRuntimeCallable),
+        )
+
     @staticmethod
     def function_name_for_callable(func: Callable) -> str | None:
         """Return the CellProfiler catalog name for a backend callable."""

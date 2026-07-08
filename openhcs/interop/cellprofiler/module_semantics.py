@@ -151,6 +151,8 @@ def _declared_dimensionality(
 def _declared_category(module_type: type[object]) -> CellProfilerModuleCategory:
     from openhcs.interop.cellprofiler.module_declarations import (
         InfrastructureCellProfilerModule,
+        ObjectArtifactInputModule,
+        ObjectArtifactOutputModule,
         ObjectMeasurementRowsModule,
         ScopedMeasurementModule,
     )
@@ -159,6 +161,8 @@ def _declared_category(module_type: type[object]) -> CellProfilerModuleCategory:
         return CellProfilerModuleCategory.FILE_PROCESSING
     if issubclass(module_type, (ObjectMeasurementRowsModule, ScopedMeasurementModule)):
         return CellProfilerModuleCategory.MEASUREMENT
+    if issubclass(module_type, (ObjectArtifactInputModule, ObjectArtifactOutputModule)):
+        return CellProfilerModuleCategory.OBJECT_PROCESSING
     return CellProfilerModuleCategory.IMAGE_PROCESSING
 
 
@@ -172,7 +176,7 @@ def _declared_semantics() -> tuple[CellProfilerModuleSemantics, ...]:
                 module_name=str(module_type.module_name),
                 category=_declared_category(module_type),
                 dimensionality=_declared_dimensionality(module_type.contract),
-                respects_masks=False,
+                respects_masks=module_type.respects_masks,
             )
             for module_type in CellProfilerModule.__registry__.values()
         )

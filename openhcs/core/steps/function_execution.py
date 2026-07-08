@@ -271,9 +271,13 @@ class StepAnchorPatternFilter:
             )
             if compiled_group is None:
                 return pattern_list
+            bindings = self.plan.source_binding_plan.bindings_for_component_group(
+                self.plan.execution_group_component,
+                component_value,
+            )
             return policy.select(
                 pattern_list,
-                bindings=self.plan.source_binding_plan.bindings,
+                bindings=bindings,
                 source_context=source_context,
             )
 
@@ -314,6 +318,13 @@ class StepAnchorPatternFilter:
         grouped_patterns: PatternGroups,
     ) -> PatternGroups:
         """Keep one source anchor per artifact-managed invocation group."""
+
+        if (
+            self.plan.main_input_dependency.kind
+            is not StepInputDependencyKind.STEP_OUTPUT
+            and self.plan.source_binding_plan.has_primary_content
+        ):
+            return grouped_patterns
 
         def collapse_if_artifact_driven(
             component_value: FunctionGroupKey,

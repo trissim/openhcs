@@ -59,9 +59,7 @@ from openhcs.core.source_plane_alignment import (
 
 
 logger = logging.getLogger(__name__)
-MEASUREMENT_SOURCE_PLANE_IDENTITY_POLICY = SourceImageSetIdentityPolicy(
-    plane_member_components=frozenset()
-)
+MEASUREMENT_SOURCE_PLANE_IDENTITY_POLICY = SourceImageSetIdentityPolicy()
 
 
 class MeasurementImageAlignmentContractNotDeclared(ValueError):

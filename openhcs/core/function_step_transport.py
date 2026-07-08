@@ -41,6 +41,7 @@ class FunctionStepTransportAuthority:
             metadata=dict(definition_pipeline.metadata),
             description=definition_pipeline.description,
             step_scope_ids=definition_pipeline.step_scope_ids,
+            pipeline_config=definition_pipeline.pipeline_config,
         )
 
     @classmethod

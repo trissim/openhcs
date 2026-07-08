@@ -1469,14 +1469,15 @@ def _measurement_fields_covering_mappings(
         return (*fields, *(FieldSpec(field_name) for field_name in extra_names))
     declared_names = {field.name for field in fields}
     if rows:
+        row_mappings = tuple(measurement_row_mapping(row) for row in rows)
         first_extra_names = tuple(
             field_name
-            for field_name in rows[0]
+            for field_name in row_mappings[0]
             if field_name not in declared_names
         )
         if not first_extra_names and all(
-            len(row) <= len(declared_names)
-            for row in rows[1:]
+            len(row_mapping) <= len(declared_names)
+            for row_mapping in row_mappings[1:]
         ):
             return fields
         extra_names = tuple(
@@ -1485,22 +1486,12 @@ def _measurement_fields_covering_mappings(
                     *first_extra_names,
                     *(
                         field_name
-                        for row in rows[1:]
-                        for field_name in row
+                        for row_mapping in row_mappings[1:]
+                        for field_name in row_mapping
                         if field_name not in declared_names
                     ),
                 )
             )
         )
         return (*fields, *(FieldSpec(field_name) for field_name in extra_names))
-    extra_names = tuple(
-        dict.fromkeys(
-            field_name
-            for row in rows
-            for field_name in row
-            if field_name not in declared_names
-        )
-    )
-    if not extra_names:
-        return fields
-    return (*fields, *(FieldSpec(field_name) for field_name in extra_names))
+    return fields

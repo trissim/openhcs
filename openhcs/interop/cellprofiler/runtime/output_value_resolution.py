@@ -5,9 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from inspect import unwrap
 
-from openhcs.core.artifacts import ArtifactSpec
+from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
 from openhcs.core.callable_contract import CallableContract
+from openhcs.core.aligned_image_payload import unstack_image_payload_context
+from openhcs.core.image_shapes import is_image_stack
+from openhcs.core.image_stack_layout import ImageStackLayoutUnstackRequest
+from openhcs.core.memory import detect_memory_type
 from openhcs.core.pipeline.function_contracts import special_output_specs_from_callable
+from openhcs.core.runtime_values import image_payload_data
 from openhcs.core.runtime_output_matching import RuntimeReturnedOutputMatcher
 from openhcs.core.special_output_declarations import SpecialOutputDeclaration
 from openhcs.core.special_outputs import SpecialOutputKindClassifier, special_output_name
@@ -77,10 +82,38 @@ class CellProfilerOutputValueResolutionRequest:
         ).resolve()
         if resolved is not None:
             return resolved
+        stack_resolved = self.image_stack_outputs_by_name()
+        if stack_resolved is not None:
+            return stack_resolved
         raise ValueError(
             f"CellProfiler module declared {len(self.output_specs)} outputs but "
             f"returned {len(self.artifact_values)} artifact values."
         )
+
+    def image_stack_outputs_by_name(self) -> CellProfilerKwargDict | None:
+        """Resolve several image artifacts from one native OpenHCS image stack."""
+        if len(self.output_specs) <= 1:
+            return None
+        if any(spec.artifact_type is not ImageArtifactType for spec in self.output_specs):
+            return None
+        data = image_payload_data(self.main_output)
+        if not is_image_stack(data):
+            return None
+        if len(data) != len(self.output_specs):
+            return None
+        memory_type = detect_memory_type(data)
+        slices = ImageStackLayoutUnstackRequest(
+            data,
+            memory_type,
+            0,
+        ).slices()
+        if len(slices) != len(self.output_specs):
+            return None
+        payloads = unstack_image_payload_context(self.main_output, slices)
+        return {
+            spec.name: payload
+            for spec, payload in zip(self.output_specs, payloads, strict=True)
+        }
 
 
 @dataclass(frozen=True, slots=True)

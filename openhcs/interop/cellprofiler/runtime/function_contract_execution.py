@@ -562,10 +562,15 @@ class CellProfilerFunctionContractExecutor:
                 f"AlignedImageStack, got {type(image).__name__}."
             )
         processing_contract = CellProfilerProcessingContractAuthority.for_callable(func)
-        if processing_contract is ProcessingContract.PURE_3D:
+        if (
+            processing_contract is ProcessingContract.PURE_3D
+            and not _aligned_stack_slices_carry_source_binding_planes(image)
+        ):
+            function_name = CallableContract.from_callable(func).function_name
             raise ValueError(
-                "ALIGNED_MULTI_IMAGE_STACK execution is slice-batched and cannot "
-                "execute ProcessingContract.PURE_3D callables."
+                f"{function_name} has ProcessingContract.PURE_3D but received "
+                "ALIGNED_MULTI_IMAGE_STACK input whose aligned slices do not "
+                "carry source-binding plane semantics."
             )
         def execute_aligned_stack_slice(
             slice_func: CellProfilerFunction,
@@ -947,6 +952,19 @@ def _execute_runtime_batch_invocation(
         request.image,
         request.kwargs,
         execution_mode=request.execution_mode,
+    )
+
+
+def _aligned_stack_slices_carry_source_binding_planes(
+    image: AlignedImageStack,
+) -> bool:
+    """Return whether each aligned slice is itself a source-binding stack."""
+    return all(
+        SourceImagePlaneAxisPolicy.for_request(
+            SourceImagePlaneAxisRequest(aligned_slice)
+        ).axis()
+        is RuntimePlaneAxis.SOURCE_BINDING
+        for aligned_slice in image.slices
     )
 
 

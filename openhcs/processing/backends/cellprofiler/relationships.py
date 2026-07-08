@@ -68,13 +68,22 @@ class RelateObjectsDistanceMethod(Enum):
     MINIMUM = ("minimum", False, True)
     BOTH = ("both", True, True)
 
+    def __new__(
+        cls,
+        label: str,
+        calculates_centroid_distance: bool,
+        calculates_minimum_distance: bool,
+    ) -> "RelateObjectsDistanceMethod":
+        obj = object.__new__(cls)
+        obj._value_ = label
+        return obj
+
     def __init__(
         self,
         label: str,
         calculates_centroid_distance: bool,
         calculates_minimum_distance: bool,
     ) -> None:
-        self._value_ = label
         self._calculates_centroid_distance = calculates_centroid_distance
         self._calculates_minimum_distance = calculates_minimum_distance
 

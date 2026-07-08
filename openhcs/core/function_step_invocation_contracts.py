@@ -2,10 +2,25 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from openhcs.core.function_patterns import FunctionInvocationKey
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
+
+
+class FunctionStepInvocationContractPayload(ABC):
+    """Nominal payload for invocation contracts with richer runtime identity."""
+
+    @property
+    @abstractmethod
+    def planning_contract(self) -> ModuleArtifactContract:
+        """Return the aggregate module artifact contract visible to planners."""
+
+
+FunctionStepInvocationContractValue = (
+    ModuleArtifactContract | FunctionStepInvocationContractPayload
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,7 +28,7 @@ class FunctionStepInvocationContractBinding:
     """Runtime artifact contract for one FunctionStep function-pattern item."""
 
     key: FunctionInvocationKey
-    contract: ModuleArtifactContract
+    contract: FunctionStepInvocationContractValue
 
     def __post_init__(self) -> None:
         if not isinstance(self.key, FunctionInvocationKey):
@@ -21,11 +36,23 @@ class FunctionStepInvocationContractBinding:
                 "FunctionStepInvocationContractBinding.key must be "
                 f"FunctionInvocationKey, got {type(self.key).__name__}."
             )
-        if not isinstance(self.contract, ModuleArtifactContract):
+        if not isinstance(
+            self.contract,
+            (ModuleArtifactContract, FunctionStepInvocationContractPayload),
+        ):
             raise TypeError(
                 "FunctionStepInvocationContractBinding.contract must be "
-                f"ModuleArtifactContract, got {type(self.contract).__name__}."
+                "ModuleArtifactContract or FunctionStepInvocationContractPayload, "
+                f"got {type(self.contract).__name__}."
             )
+
+    @property
+    def planning_contract(self) -> ModuleArtifactContract:
+        """Return the aggregate contract used by generic artifact planning."""
+
+        if isinstance(self.contract, ModuleArtifactContract):
+            return self.contract
+        return self.contract.planning_contract
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,11 +93,11 @@ class FunctionStepInvocationContracts:
         self,
         key: FunctionInvocationKey,
     ) -> ModuleArtifactContract | None:
-        """Return the contract bound to ``key``, if one is declared."""
+        """Return the planning contract bound to ``key``, if one is declared."""
 
         for binding in self.bindings:
             if binding.key == key:
-                return binding.contract
+                return binding.planning_contract
         return None
 
 

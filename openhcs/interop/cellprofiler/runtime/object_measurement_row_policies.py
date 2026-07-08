@@ -1025,7 +1025,9 @@ class CompactMeasuredObjectMeasurementRowPolicy(
                     raise ValueError(
                         f"{type(self).__name__} projected object {object_id} "
                         f"outside declared object domain {declared_ids!r} for "
-                        f"axis {axis_key!r}."
+                        f"axis {axis_key!r}; "
+                        f"axis_keys={tuple(axis_keys)!r}; "
+                        f"projection_row_keys={tuple(projection.row_keys)!r}."
                     )
                 continue
             if axis_key not in max_object_id_by_axis:

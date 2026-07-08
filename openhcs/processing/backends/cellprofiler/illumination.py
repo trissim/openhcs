@@ -1,7 +1,7 @@
 """Illumination backends for CellProfiler-compatible processing."""
 
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import ClassVar
 import numpy as np
@@ -53,6 +53,7 @@ from openhcs.interop.cellprofiler.module_declarations import (
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
 )
+from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
     required_setting_value,
@@ -62,7 +63,6 @@ from openhcs.interop.cellprofiler.setting_names import (
 from openhcs.interop.cellprofiler.cellprofiler_literals import (
     cellprofiler_enum_from_literal,
 )
-from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 
 
 class IlluminationIntensityChoice(Enum):
@@ -197,53 +197,6 @@ class CorrectIlluminationOriginalImageName:
 
 
 @dataclass(frozen=True, slots=True)
-class CorrectIlluminationApplySettingPair:
-    """One repeated CorrectIlluminationApply row from a CellProfiler module."""
-
-    input_image: str
-    illumination_function: str
-    output_image: str
-    method: str | None
-    truncate_low: str | None
-    truncate_high: str | None
-
-    def module_block(self, source: ModuleBlock, module_num: int) -> ModuleBlock:
-        records = [
-            ModuleSetting(
-                CorrectIlluminationApplyModule.input_image_setting,
-                self.input_image,
-            ),
-            ModuleSetting(
-                CorrectIlluminationApplyModule.output_image_setting,
-                self.output_image,
-            ),
-            ModuleSetting(
-                CorrectIlluminationApplyModule.illumination_function_setting,
-                self.illumination_function,
-            ),
-        ]
-        optional_records = (
-            (CorrectIlluminationApplyModule.method_setting, self.method),
-            (CorrectIlluminationApplyModule.truncate_low_setting, self.truncate_low),
-            (CorrectIlluminationApplyModule.truncate_high_setting, self.truncate_high),
-        )
-        records.extend(
-            ModuleSetting(setting_name, value)
-            for setting_name, value in optional_records
-            if value is not None
-        )
-        return ModuleBlock(
-            name=source.name,
-            module_num=module_num,
-            enabled=source.enabled,
-            settings={record.name: record.value for record in records},
-            setting_records=records,
-            metadata=dict(source.metadata),
-            cppipe_path=source.cppipe_path,
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class CorrectedImageOutputPlaneStack:
     """Detect corrected-image output stacks that represent one source plane."""
 
@@ -307,6 +260,7 @@ class CorrectIlluminationApplyModule(
     module_name = "CorrectIlluminationApply"
     function_name = "correct_illumination_apply"
     validated = True
+    force_grouped_public_function_spec = True
     contract = ProcessingContract.PURE_2D
     confidence = 1.0
     input_image_setting = "Select the input image"
@@ -335,6 +289,74 @@ class CorrectIlluminationApplyModule(
             parse_cellprofiler_bool,
         ),
     )
+
+    @classmethod
+    def generated_module_blocks(cls, module: ModuleBlock) -> tuple[ModuleBlock, ...]:
+        """Expose repeated image/function/output pairs as grouped invocations."""
+        image_names = setting_values(module, cls.input_image_setting)
+        illumination_names = setting_values(module, cls.illumination_function_setting)
+        output_names = setting_values(module, cls.output_image_setting)
+        if not image_names or not illumination_names or not output_names:
+            return (module,)
+        pair_count = len(image_names)
+        if len({pair_count, len(illumination_names), len(output_names)}) != 1:
+            return (module,)
+        if pair_count <= 1:
+            return (module,)
+        return tuple(
+            cls._generated_pair_module(module, pair_index, pair_count)
+            for pair_index in range(pair_count)
+        )
+
+    @classmethod
+    def _generated_pair_module(
+        cls,
+        module: ModuleBlock,
+        pair_index: int,
+        pair_count: int,
+    ) -> ModuleBlock:
+        setting_records = cls._pair_setting_records(module, pair_index, pair_count)
+        return replace(
+            module,
+            module_num=module.module_num * 1000 + pair_index + 1,
+            setting_records=list(setting_records),
+            settings={record.name: record.value for record in setting_records},
+            metadata={
+                **module.metadata,
+                "module_num": str(module.module_num * 1000 + pair_index + 1),
+            },
+        )
+
+    @classmethod
+    def _pair_setting_records(
+        cls,
+        module: ModuleBlock,
+        pair_index: int,
+        pair_count: int,
+    ) -> tuple[ModuleSetting, ...]:
+        pair_setting_names = {
+            cls.input_image_setting,
+            cls.illumination_function_setting,
+            cls.output_image_setting,
+            cls.method_setting,
+            cls.truncate_low_setting,
+            cls.truncate_high_setting,
+        }
+        occurrences: dict[str, int] = {}
+        records: list[ModuleSetting] = []
+        for record in module.iter_settings():
+            if record.name not in pair_setting_names:
+                records.append(record)
+                continue
+            values = module.get_setting_values(record.name)
+            if len(values) == pair_count:
+                occurrence = occurrences.get(record.name, 0)
+                occurrences[record.name] = occurrence + 1
+                if occurrence == pair_index:
+                    records.append(record)
+                continue
+            records.append(record)
+        return tuple(records)
 
     @classmethod
     def preserve_duplicate_artifact_inputs(cls, module: "ModuleBlock") -> bool:
@@ -400,88 +422,6 @@ class CorrectIlluminationApplyModule(
         return (
             *super().compile_time_public_setting_names(),
             cls.illumination_function_setting,
-        )
-
-    @classmethod
-    def generated_module_blocks(cls, module: ModuleBlock) -> tuple[ModuleBlock, ...]:
-        pairs = cls.setting_pairs(module)
-        if len(pairs) <= 1:
-            return (module,)
-        return tuple(
-            pair.module_block(
-                module,
-                cls.generated_pair_module_num(module.module_num, pair_index),
-            )
-            for pair_index, pair in enumerate(pairs)
-        )
-
-    @staticmethod
-    def generated_pair_module_num(module_num: int, pair_index: int) -> int:
-        return module_num * 1000 + pair_index + 1
-
-    @classmethod
-    def setting_pairs(
-        cls, module: ModuleBlock
-    ) -> tuple[CorrectIlluminationApplySettingPair, ...]:
-        image_names = setting_values(module, cls.input_image_setting)
-        illumination_names = setting_values(module, cls.illumination_function_setting)
-        output_names = setting_values(module, cls.output_image_setting)
-        if not image_names or not illumination_names or not output_names:
-            return ()
-        if len({len(image_names), len(illumination_names), len(output_names)}) != 1:
-            raise ValueError(
-                f"Module {module.name}({module.module_num}) has mismatched CorrectIlluminationApply pair settings."
-            )
-        pair_count = len(image_names)
-        method_values = setting_values(module, cls.method_setting)
-        truncate_low_values = setting_values(module, cls.truncate_low_setting)
-        truncate_high_values = setting_values(module, cls.truncate_high_setting)
-        return tuple(
-            CorrectIlluminationApplySettingPair(
-                input_image=image_names[pair_index],
-                illumination_function=illumination_names[pair_index],
-                output_image=output_names[pair_index],
-                method=cls.row_setting_value(
-                    method_values,
-                    pair_index,
-                    pair_count,
-                    cls.method_setting,
-                    module,
-                ),
-                truncate_low=cls.row_setting_value(
-                    truncate_low_values,
-                    pair_index,
-                    pair_count,
-                    cls.truncate_low_setting,
-                    module,
-                ),
-                truncate_high=cls.row_setting_value(
-                    truncate_high_values,
-                    pair_index,
-                    pair_count,
-                    cls.truncate_high_setting,
-                    module,
-                ),
-            )
-            for pair_index in range(pair_count)
-        )
-
-    @staticmethod
-    def row_setting_value(
-        values: tuple[str, ...],
-        pair_index: int,
-        pair_count: int,
-        setting_name: str,
-        module: ModuleBlock,
-    ) -> str | None:
-        if not values:
-            return None
-        if len(values) == 1:
-            return values[0]
-        if len(values) == pair_count:
-            return values[pair_index]
-        raise ValueError(
-            f"Module {module.name}({module.module_num}) has {len(values)} values for {setting_name!r} but {pair_count} image/function pairs."
         )
 
     @classmethod

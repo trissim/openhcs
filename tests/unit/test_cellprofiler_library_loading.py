@@ -1795,11 +1795,13 @@ def test_cellprofiler_legacy_watershed_keeps_descending_pixel_priority():
 
 def test_cellprofiler4_marker_watershed_matches_cellprofiler_source_path():
     import inspect
-    from benchmark.cellprofiler_library.functions.watershed import watershed
+    from benchmark.cellprofiler_library.functions.watershed import (
+        watershed_cellprofiler4,
+    )
 
     image = np.array([[0.0, 1.0, 0.0]], dtype=np.float64)
     markers = np.array([[1, 0, 2]], dtype=np.int32)
-    raw_watershed = inspect.unwrap(watershed)
+    raw_watershed = inspect.unwrap(watershed_cellprofiler4)
     _image, _stats, labels = raw_watershed(
         image,
         markers=markers,
@@ -1807,7 +1809,6 @@ def test_cellprofiler4_marker_watershed_matches_cellprofiler_source_path():
         watershed_method="markers",
         declump_method="shape",
         use_advanced_settings=False,
-        runtime_family="cellprofiler4",
     )
     np.testing.assert_array_equal(labels, np.array([[1, 1, 2]], dtype=np.int32))
 
@@ -3946,7 +3947,7 @@ def test_align_returns_two_registered_images_and_shift_measurements():
     assert measurements[1].output_index == 1
     assert measurements[1].x_shift == 0.0
     assert measurements[1].y_shift > 0.0
-    assert align.__processing_contract__ is ProcessingContract.FLEXIBLE
+    assert align.__processing_contract__ is ProcessingContract.PURE_3D
 
 
 def test_align_applies_similar_shift_to_additional_images():

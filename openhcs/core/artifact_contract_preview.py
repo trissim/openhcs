@@ -144,9 +144,20 @@ class SourceBindingRuntimeContractGuard:
             f"{alignment.message}."
         )
 
+    def validate_required(self) -> None:
+        """Reject missing required source-bound inputs while allowing inherited supersets."""
+        alignment = self.required_alignment()
+        if alignment.ok:
+            return
+        raise ValueError(
+            "CellProfiler source bindings are missing runtime artifact contract "
+            f"inputs for module {self.contract.module_name!r}. "
+            f"{alignment.message}."
+        )
+
     def alignment(self) -> SourceBindingContractAlignment:
         """Return a non-throwing alignment report for UI preview surfaces."""
-        expected = self._source_bound_contract_inputs()
+        expected = set(self.source_bound_input_keys)
         if not expected:
             return SourceBindingContractAlignment()
         actual = self._source_binding_specs()
@@ -154,6 +165,25 @@ class SourceBindingRuntimeContractGuard:
             missing=tuple(sorted(expected - actual)),
             unexpected=tuple(sorted(actual - expected)),
         )
+
+    def required_alignment(self) -> SourceBindingContractAlignment:
+        """Return missing required source-bound inputs, ignoring extra inherited aliases."""
+        expected = set(self.source_bound_input_keys)
+        if not expected:
+            return SourceBindingContractAlignment()
+        actual = self._source_binding_specs()
+        return SourceBindingContractAlignment(
+            missing=tuple(sorted(expected - actual)),
+        )
+
+    def projected_source_bindings(self) -> StepSourceBindingsConfig:
+        """Return source bindings scoped to this contract's source-bound inputs."""
+        return self.source_bindings.for_artifact_keys(self.source_bound_input_keys)
+
+    @property
+    def source_bound_input_keys(self) -> ArtifactBindingKeys:
+        """Return contract inputs that must be satisfied by source bindings."""
+        return tuple(sorted(self._source_bound_contract_inputs()))
 
     def _source_bound_contract_inputs(self) -> set[tuple[str, ArtifactType]]:
         runtime_inputs = {

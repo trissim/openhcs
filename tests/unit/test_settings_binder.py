@@ -183,7 +183,9 @@ def test_combine_objects_binds_overlap_policy_nominally():
     assert not bound.unmapped_kwargs
 
 
-def test_watershed_runtime_family_follows_module_revision():
+def test_watershed_function_selection_follows_module_revision():
+    from openhcs.interop.cellprofiler.pipeline_generator import PipelineGenerator
+
     legacy_module = ModuleBlock(
         name="Watershed",
         module_num=1,
@@ -196,14 +198,28 @@ def test_watershed_runtime_family_follows_module_revision():
         settings={"Use advanced settings?": "No"},
         metadata={"variable_revision_number": "4"},
     )
+    module_type = CellProfilerModule.for_module("Watershed")
+    assert module_type is not None
     assert (
-        _bind_declared_module_settings(legacy_module).kwargs["runtime_family"]
-        == "cellprofiler4"
+        module_type.resolve_function(legacy_module).function_name
+        == "watershed_cellprofiler4"
     )
     assert (
-        _bind_declared_module_settings(current_module).kwargs["runtime_family"]
-        == "library"
+        module_type.resolve_function(current_module).function_name
+        == "watershed_library"
     )
+    assert (
+        "runtime_family" not in _bind_declared_module_settings(legacy_module).kwargs
+    )
+    assert (
+        "runtime_family" not in _bind_declared_module_settings(current_module).kwargs
+    )
+    generator = PipelineGenerator()
+    assert (
+        generator.registry.resolve_function(legacy_module)
+        == "watershed_cellprofiler4"
+    )
+    assert generator.registry.resolve_function(current_module) == "watershed_library"
 
 
 def test_erode_objects_binds_preservation_settings():
@@ -964,9 +980,9 @@ def test_correct_illumination_module_class_binds_scope_and_slice_dispatch():
         )
     )
     assert _semantic_value(each_bound.kwargs["calculation_scope"]) == "each"
-    assert each_bound.kwargs["slice_by_slice"] is True
+    assert "slice_by_slice" not in each_bound.kwargs
     assert _semantic_value(all_bound.kwargs["calculation_scope"]) == "all_first_cycle"
-    assert all_bound.kwargs["slice_by_slice"] is False
+    assert "slice_by_slice" not in all_bound.kwargs
 
 
 def test_correct_illumination_apply_module_class_preserves_repeated_pairs():

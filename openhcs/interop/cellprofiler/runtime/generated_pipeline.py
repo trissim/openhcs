@@ -15,10 +15,13 @@ from types import ModuleType
 from typing import Any, ClassVar
 
 from openhcs.core.callable_contract import CallableContract
+from openhcs.constants.input_source import InputSource
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.core.function_patterns import FunctionInvocationKey, normalize_function_pattern
 from openhcs.core.function_step_invocation_contracts import (
     FunctionStepInvocationContractBinding,
+    FunctionStepInvocationContractPayload,
+    FunctionStepInvocationContractValue,
     FunctionStepInvocationContracts,
 )
 from openhcs.core.function_reference import FunctionReference
@@ -26,7 +29,11 @@ from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
 from openhcs.core.artifact_contract_preview import SourceBindingRuntimeContractGuard
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline.step_snapshot import StepSnapshot
-from openhcs.core.source_bindings import StepSourceBindingsConfig
+from openhcs.core.source_bindings import (
+    SourceBindingsConfig,
+    StepSourceBindingsConfig,
+    resolve_effective_step_source_bindings,
+)
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
 from openhcs.processing.backends.lib_registry.registry_service import RegistryService
@@ -36,6 +43,9 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 )
 from openhcs.processing.func_registry import register_function
 from openhcs.interop.cellprofiler.runtime.module_execution import (
+    CellProfilerGroupedModuleContracts,
+    CellProfilerGroupedRuntimeCallable,
+    CellProfilerGroupedRuntimeStepBinding,
     CellProfilerRuntimeCallable,
     CellProfilerRuntimeStepBinding,
 )
@@ -211,6 +221,8 @@ class GeneratedPipelineRuntimeModule:
         *,
         filename: str,
         artifact_contracts: dict[int, Any] | None = None,
+        source_bindings_config: SourceBindingsConfig | None = None,
+        step_source_bindings_config: StepSourceBindingsConfig | None = None,
         semantic_contracts: tuple[ModuleArtifactContracts, ...] = (),
         semantic_contract_fingerprint: str | None = None,
     ) -> ModuleType:
@@ -224,7 +236,12 @@ class GeneratedPipelineRuntimeModule:
             semantic_contract_fingerprint
         )
         if artifact_contracts:
-            bind_generated_pipeline_runtime(module, artifact_contracts)
+            bind_generated_pipeline_runtime(
+                module,
+                artifact_contracts,
+                source_bindings_config=source_bindings_config,
+                step_source_bindings_config=step_source_bindings_config,
+            )
         return module
 
     def materialize_import_module(
@@ -232,6 +249,8 @@ class GeneratedPipelineRuntimeModule:
         *,
         importable_path: Path,
         artifact_contracts: dict[int, Any] | None = None,
+        source_bindings_config: SourceBindingsConfig | None = None,
+        step_source_bindings_config: StepSourceBindingsConfig | None = None,
         semantic_contracts: tuple[ModuleArtifactContracts, ...] = (),
         semantic_contract_fingerprint: str | None = None,
     ) -> Path:
@@ -241,13 +260,42 @@ class GeneratedPipelineRuntimeModule:
         contract_prelude = ""
         if artifact_contracts:
             import openhcs.serialization.pycodify_formatters  # noqa: F401
-            from pycodify import Assignment, generate_python_source
+            from pycodify import Assignment, CodeBlock, generate_python_source
 
-            contract_source = generate_python_source(
+            assignments = [
                 Assignment(
                     "_openhcs_cp_contract_values",
                     dict(sorted(artifact_contracts.items())),
-                ),
+                )
+            ]
+            runtime_binding_args = []
+            if source_bindings_config is not None:
+                assignments.append(
+                    Assignment(
+                        "_openhcs_cp_source_bindings_config",
+                        source_bindings_config,
+                    )
+                )
+                runtime_binding_args.append(
+                    "source_bindings_config=_openhcs_cp_source_bindings_config"
+                )
+            if step_source_bindings_config is not None:
+                assignments.append(
+                    Assignment(
+                        "_openhcs_cp_step_source_bindings_config",
+                        step_source_bindings_config,
+                    )
+                )
+                runtime_binding_args.append(
+                    "step_source_bindings_config="
+                    "_openhcs_cp_step_source_bindings_config"
+                )
+            runtime_binding_args_literal = ""
+            if runtime_binding_args:
+                runtime_binding_args_literal = ", " + ", ".join(runtime_binding_args)
+
+            contract_source = generate_python_source(
+                assignments[0] if len(assignments) == 1 else CodeBlock(tuple(assignments)),
                 header="# Generated CellProfiler runtime artifact contracts.",
                 clean_mode=False,
             )
@@ -258,7 +306,8 @@ class GeneratedPipelineRuntimeModule:
                 "GeneratedPipelineRuntimeBindings as _openhcs_cp_runtime_bindings\n"
                 "    _openhcs_cp_runtime_bindings("
                 "_openhcs_generated_sys.modules[__name__], "
-                "_openhcs_cp_contract_values).apply()\n"
+                "_openhcs_cp_contract_values"
+                f"{runtime_binding_args_literal}).apply()\n"
             )
         semantic_sidecar = output_dir / (
             f"{self.module_name}.cellprofiler_semantic_contracts.py"
@@ -326,8 +375,11 @@ class GeneratedPipelineRuntimeModule:
 def bind_generated_pipeline_runtime(
     module: ModuleType,
     artifact_contracts: Mapping[int, Any],
+    *,
+    source_bindings_config: SourceBindingsConfig | None = None,
+    step_source_bindings_config: StepSourceBindingsConfig | None = None,
 ) -> None:
-    """Apply product-owned runtime wrappers to imported generated FunctionSteps."""
+    """Attach product-owned invocation contracts to generated FunctionSteps."""
     normalized: dict[int, ModuleArtifactContract] = {}
     for module_num, contract in artifact_contracts.items():
         if not isinstance(contract, ModuleArtifactContract):
@@ -336,32 +388,28 @@ def bind_generated_pipeline_runtime(
                 f"ModuleArtifactContract values, got {type(contract).__name__}."
             )
         normalized[int(module_num)] = contract
-    GeneratedPipelineRuntimeBindings(module, normalized).apply()
+    GeneratedPipelineRuntimeBindings(
+        module,
+        normalized,
+        source_bindings_config=source_bindings_config,
+        step_source_bindings_config=step_source_bindings_config,
+    ).apply()
 
 
 @dataclass(frozen=True, slots=True)
 class GeneratedPipelineRuntimeBindings:
-    """Artifact-aware binding authority for imported generated pipeline modules."""
+    """Attach CellProfiler artifact contracts to imported generated steps."""
 
     module: ModuleType
     artifact_contracts: Mapping[int, ModuleArtifactContract]
+    source_bindings_config: SourceBindingsConfig | None = None
+    step_source_bindings_config: StepSourceBindingsConfig | None = None
 
     def apply(self) -> None:
-        """Replace direct backend callables with artifact-managed runtime callables."""
+        """Attach compile-time invocation contracts without mutating public callables."""
         if not self.artifact_contracts:
             return
         pipeline_steps = GeneratedPipelineModuleExports(self.module).pipeline_steps
-        self._attach_invocation_contracts(pipeline_steps)
-        if not CellProfilerGeneratedRuntimeBindingState.pipeline_requires_rebinding(
-            pipeline_steps
-        ):
-            return
-        if CellProfilerGeneratedRuntimeBindingState(
-            pipeline_steps,
-            self.artifact_contracts,
-        ).matches_expected_contracts():
-            return
-
         contract_matcher = CellProfilerGeneratedStepContractMatcher(
             self.artifact_contracts
         )
@@ -371,30 +419,25 @@ class GeneratedPipelineRuntimeBindings:
                     "Generated CellProfiler pipeline steps must be FunctionStep "
                     f"instances, got {type(step).__name__}."
                 )
-            step.func = self._bind_func_spec(
-                step.func,
-                step.source_bindings,
-                contract_matcher,
-            )
-        contract_matcher.validate_complete()
-
-    def _attach_invocation_contracts(self, pipeline_steps: Sequence[Any]) -> None:
-        """Attach generated CP contracts to FunctionStep declarations."""
-        contract_matcher = CellProfilerGeneratedStepContractMatcher(
-            self.artifact_contracts
-        )
-        for step in pipeline_steps:
-            if not isinstance(step, FunctionStep):
-                raise TypeError(
-                    "Generated CellProfiler pipeline steps must be FunctionStep "
-                    f"instances, got {type(step).__name__}."
-                )
+            source_bindings = self._source_bindings_for_step(step)
             step.invocation_contracts = self._invocation_contracts_for_func_spec(
                 step.func,
-                step.source_bindings,
+                source_bindings,
                 contract_matcher,
             )
         contract_matcher.validate_complete()
+
+    def _source_bindings_for_step(
+        self,
+        step: FunctionStep,
+    ) -> StepSourceBindingsConfig:
+        """Return source bindings resolved against generated pipeline defaults."""
+        return resolve_effective_step_source_bindings(
+            step.source_bindings,
+            source_bindings_defaults=self.source_bindings_config,
+            step_source_bindings_defaults=self.step_source_bindings_config,
+            activate_source_bindings=_step_activates_pipeline_source_bindings(step),
+        )
 
     def _invocation_contracts_for_func_spec(
         self,
@@ -407,103 +450,27 @@ class GeneratedPipelineRuntimeBindings:
             metadata = _cellprofiler_metadata_for_normalized_item(item)
             if metadata is None:
                 continue
-            step_contract = contract_matcher.match(
+            step_contract = contract_matcher.match_public_invocation(
                 metadata,
                 source_bindings.for_group_key(item.key.group_key),
             )
+            contract: FunctionStepInvocationContractValue
+            if isinstance(step_contract, CellProfilerGeneratedGroupedStepContract):
+                contract = step_contract
+            else:
+                contract = step_contract.contract
             bindings.append(
                 FunctionStepInvocationContractBinding(
                     key=item.key,
-                    contract=step_contract.contract,
+                    contract=contract,
                 )
             )
         return FunctionStepInvocationContracts.from_bindings(tuple(bindings))
 
-    def _bind_func_spec(
-        self,
-        func_spec: Any,
-        source_bindings: StepSourceBindingsConfig,
-        contract_matcher: "CellProfilerGeneratedStepContractMatcher",
-    ) -> Any:
-        if callable(func_spec):
-            metadata = CellProfilerFunctionCatalog.runtime_metadata(func_spec)
-            if metadata is None:
-                return func_spec
-            step_contract = contract_matcher.match(metadata, source_bindings)
-            return self._bind_callable(
-                func_spec,
-                step_contract,
-                source_bindings,
-            )
-        if isinstance(func_spec, tuple) and len(func_spec) in {2, 3}:
-            metadata = CellProfilerFunctionCatalog.runtime_metadata(func_spec[0])
-            if metadata is None:
-                return func_spec
-            bound_callable = self._bind_callable(
-                func_spec[0],
-                contract_matcher.match(metadata, source_bindings),
-                source_bindings,
-            )
-            kwargs = self._runtime_kwargs(func_spec[1])
-            tail = func_spec[2:]
-            if kwargs or tail:
-                return (bound_callable, kwargs, *tail)
-            return bound_callable
-        if isinstance(func_spec, list):
-            return [
-                self._bind_func_spec(
-                    item,
-                    source_bindings,
-                    contract_matcher,
-                )
-                for item in func_spec
-            ]
-        if isinstance(func_spec, dict):
-            return {
-                group_key: self._bind_func_spec(
-                    item,
-                    source_bindings.for_group_key(group_key),
-                    contract_matcher,
-                )
-                for group_key, item in func_spec.items()
-            }
-        return func_spec
-
-    @staticmethod
-    def _runtime_kwargs(kwargs: Any) -> dict:
-        if not isinstance(kwargs, dict):
-            raise TypeError(
-                "Generated CellProfiler tuple function specs must carry a dict "
-                f"of kwargs, got {type(kwargs).__name__}."
-            )
-        return dict(kwargs)
-
-    def _bind_callable(
-        self,
-        func: Callable[..., Any],
-        step_contract: "CellProfilerGeneratedStepContract",
-        source_bindings: StepSourceBindingsConfig,
-    ) -> Callable[..., Any]:
-        metadata = CellProfilerFunctionCatalog.runtime_metadata(func)
-        if metadata is None:
-            return func
-        step_contract.validate_callable_metadata(metadata)
-        contract = step_contract.contract
-        SourceBindingRuntimeContractGuard(
-            contract,
-            source_bindings,
-        ).validate()
-        return CellProfilerRuntimeStepBinding(
-            raw_callable=func,
-            contract=contract,
-            processing_contract=metadata.processing_contract,
-            declared_processing_contract=metadata.declared_processing_contract,
-        ).load()
-
 
 @dataclass(frozen=True, slots=True)
-class CellProfilerGeneratedRuntimeBindingState:
-    """Detect whether generated CP steps already use runtime-bound callables."""
+class CellProfilerGeneratedInvocationContractState:
+    """Detect whether generated CP steps carry compile-time invocation contracts."""
 
     pipeline_steps: Sequence[Any]
     contracts_by_module_num: Mapping[int, ModuleArtifactContract]
@@ -519,9 +486,14 @@ class CellProfilerGeneratedRuntimeBindingState:
         for step in self.pipeline_steps:
             if not isinstance(step, FunctionStep):
                 continue
-            for func in self.function_spec_callables(step.func):
-                if isinstance(func, self.runtime_callable_type()):
-                    actual_contracts.append(func.contract)
+            for binding in step.invocation_contracts.bindings:
+                if isinstance(binding.contract, CellProfilerGeneratedGroupedStepContract):
+                    actual_contracts.extend(
+                        contract.contract
+                        for contract in binding.contract.contracts_by_group_key.values()
+                    )
+                else:
+                    actual_contracts.append(binding.planning_contract)
         if len(actual_contracts) != len(unmatched_contracts):
             return False
         for actual_contract in actual_contracts:
@@ -535,7 +507,7 @@ class CellProfilerGeneratedRuntimeBindingState:
 
     @classmethod
     def pipeline_requires_rebinding(cls, pipeline_steps: Sequence[Any]) -> bool:
-        """Return whether any generated CellProfiler step still uses raw callables."""
+        """Return whether any generated CellProfiler step lacks contracts."""
         for step in pipeline_steps:
             if not isinstance(step, FunctionStep):
                 continue
@@ -545,33 +517,14 @@ class CellProfilerGeneratedRuntimeBindingState:
 
     @classmethod
     def step_requires_rebinding(cls, step: FunctionStep) -> bool:
-        """Return whether raw CP invocations need generated import-context rebinding."""
+        """Return whether CP invocations lack generated contracts."""
         for item in _normalized_cellprofiler_invocation_items(step.func):
             metadata = _cellprofiler_metadata_for_normalized_item(item)
             if metadata is None:
                 continue
-            raw_callable = item.contract.resolve_runtime_callable()
-            if isinstance(raw_callable, cls.runtime_callable_type()):
-                continue
             if step.invocation_contracts.contract_for(item.key) is None:
                 return True
         return False
-
-    @classmethod
-    def step_has_runtime_bound_callable(cls, step: FunctionStep) -> bool:
-        """Return whether one generated step already carries runtime contracts."""
-        return any(
-            isinstance(func, cls.runtime_callable_type())
-            for func in cls.function_spec_callables(step.func)
-        )
-
-    @staticmethod
-    def runtime_callable_type() -> type:
-        from openhcs.interop.cellprofiler.runtime.module_execution import (
-            CellProfilerRuntimeCallable,
-        )
-
-        return CellProfilerRuntimeCallable
 
     @classmethod
     def function_spec_callables(cls, func_spec: Any) -> Iterator[Callable[..., Any]]:
@@ -598,12 +551,23 @@ class CellProfilerPipelineRuntimeRebinder:
 
     generated_module_name: str
     contracts_by_module_num: Mapping[int, ModuleArtifactContract]
+    source_bindings_config: SourceBindingsConfig | None = None
+    step_source_bindings_config: StepSourceBindingsConfig | None = None
 
     @classmethod
     def from_import_result(
         cls,
         import_result: Any,
     ) -> "CellProfilerPipelineRuntimeRebinder":
+        pipeline_config = import_result.pipeline_config
+        source_bindings_config = (
+            None if pipeline_config is None else pipeline_config.source_bindings_config
+        )
+        step_source_bindings_config = (
+            None
+            if pipeline_config is None
+            else pipeline_config.step_source_bindings_config
+        )
         return cls(
             generated_module_name=import_result.generated_module_name,
             contracts_by_module_num={
@@ -614,6 +578,8 @@ class CellProfilerPipelineRuntimeRebinder:
                     strict=True,
                 )
             },
+            source_bindings_config=source_bindings_config,
+            step_source_bindings_config=step_source_bindings_config,
         )
 
     def rebind(self, pipeline_steps: Sequence[Any]) -> list[Any]:
@@ -624,6 +590,8 @@ class CellProfilerPipelineRuntimeRebinder:
         GeneratedPipelineRuntimeBindings(
             module,
             self.contracts_by_module_num,
+            source_bindings_config=self.source_bindings_config,
+            step_source_bindings_config=self.step_source_bindings_config,
         ).apply()
         return list(module.pipeline_steps)
 
@@ -635,6 +603,11 @@ class CellProfilerGeneratedStepContract:
     module_num: int
     contract: ModuleArtifactContract
 
+    @property
+    def planning_contract(self) -> ModuleArtifactContract:
+        """Return the compile-time artifact declaration for this invocation."""
+        return self.contract
+
     def validate_callable_metadata(self, metadata: Any) -> None:
         """Ensure generated step callable and contract describe the same CP module."""
         if metadata.module_name == self.contract.module_name:
@@ -644,6 +617,37 @@ class CellProfilerGeneratedStepContract:
             f"artifact contract for module {self.module_num}: callable "
             f"{metadata.module_name!r}, contract {self.contract.module_name!r}."
         )
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerGeneratedGroupedStepContract(FunctionStepInvocationContractPayload):
+    """Several source-grouped CP module contracts represented by one invocation."""
+
+    contracts_by_group_key: Mapping[str, CellProfilerGeneratedStepContract]
+
+    def __post_init__(self) -> None:
+        normalized = {
+            str(group_key): contract
+            for group_key, contract in self.contracts_by_group_key.items()
+        }
+        if not normalized:
+            raise ValueError("Grouped CellProfiler generated contract cannot be empty.")
+        object.__setattr__(self, "contracts_by_group_key", normalized)
+
+    @property
+    def planning_contract(self) -> ModuleArtifactContract:
+        """Return the aggregate contract visible to native artifact planning."""
+        return CellProfilerGroupedModuleContracts(
+            {
+                group_key: contract.contract
+                for group_key, contract in self.contracts_by_group_key.items()
+            }
+        ).planning_contract()
+
+    def validate_callable_metadata(self, metadata: Any) -> None:
+        """Ensure every grouped contract matches the public callable."""
+        for contract in self.contracts_by_group_key.values():
+            contract.validate_callable_metadata(metadata)
 
 
 @dataclass(frozen=True, slots=True)
@@ -684,6 +688,11 @@ class CellProfilerGeneratedStepFunctionSpec:
             if metadata is not None:
                 yield metadata
             return
+        if isinstance(func_spec, CellProfilerGroupedRuntimeCallable):
+            metadata = CellProfilerFunctionCatalog.runtime_metadata(func_spec.raw_func)
+            if metadata is not None:
+                yield metadata
+            return
         if isinstance(func_spec, FunctionReference):
             metadata = CellProfilerFunctionCatalog.runtime_metadata(func_spec.resolve())
             if metadata is not None:
@@ -718,10 +727,37 @@ def _normalized_cellprofiler_invocation_items(func_spec: Any) -> tuple[Any, ...]
 
 def _cellprofiler_metadata_for_normalized_item(item: Any) -> Any | None:
     """Return CellProfiler callable metadata for one normalized function item."""
-    raw_callable = item.contract.resolve_runtime_callable()
-    if isinstance(raw_callable, CellProfilerRuntimeCallable):
-        raw_callable = raw_callable.raw_func
+    raw_callable = _cellprofiler_public_callable(
+        item.contract.resolve_runtime_callable()
+    )
     return CellProfilerFunctionCatalog.runtime_metadata(raw_callable)
+
+
+def _cellprofiler_public_callable(raw_callable: Callable[..., Any]) -> Callable[..., Any]:
+    """Return the public CP callable represented by a runtime-bound wrapper."""
+    if isinstance(raw_callable, CellProfilerRuntimeCallable):
+        return raw_callable.raw_func
+    if isinstance(raw_callable, CellProfilerGroupedRuntimeCallable):
+        return raw_callable.raw_func
+    return raw_callable
+
+
+def _source_binding_group_keys(
+    source_bindings: StepSourceBindingsConfig,
+) -> tuple[str, ...]:
+    """Return declared source-binding component values usable as group keys."""
+    keys: list[str] = []
+    for binding in source_bindings.binding_declarations:
+        for selector in binding.component_identity:
+            key = str(selector.value)
+            if key not in keys:
+                keys.append(key)
+    return tuple(keys)
+
+
+def _step_activates_pipeline_source_bindings(step: FunctionStep) -> bool:
+    """Return whether generic OpenHCS input semantics should activate source aliases."""
+    return step.processing_config.input_source == InputSource.PIPELINE_START
 
 
 @dataclass(frozen=True, slots=True)
@@ -729,20 +765,31 @@ class CellProfilerStepInvocationContractProvider:
     """Compile-time provider backed by FunctionStep invocation contracts."""
 
     contracts_by_invocation_key: Mapping[
-        tuple[int, FunctionInvocationKey], ModuleArtifactContract
+        tuple[int, FunctionInvocationKey],
+        ModuleArtifactContract | CellProfilerGeneratedGroupedStepContract,
     ]
 
     @classmethod
     def for_steps(
         cls,
         steps: Sequence[FunctionStep],
+        *,
+        source_bindings_config: SourceBindingsConfig | None = None,
+        step_source_bindings_config: StepSourceBindingsConfig | None = None,
     ) -> "CellProfilerStepInvocationContractProvider | None":
         return cls._for_step_specs(
             (
                 (
                     step_index,
                     step.func,
-                    step.source_bindings,
+                    resolve_effective_step_source_bindings(
+                        step.source_bindings,
+                        source_bindings_defaults=source_bindings_config,
+                        step_source_bindings_defaults=step_source_bindings_config,
+                        activate_source_bindings=(
+                            _step_activates_pipeline_source_bindings(step)
+                        ),
+                    ),
                     step.invocation_contracts,
                 )
                 for step_index, step in enumerate(steps)
@@ -754,13 +801,23 @@ class CellProfilerStepInvocationContractProvider:
     def for_snapshots(
         cls,
         snapshots: Sequence[StepSnapshot],
+        *,
+        source_bindings_config: SourceBindingsConfig | None = None,
+        step_source_bindings_config: StepSourceBindingsConfig | None = None,
     ) -> "CellProfilerStepInvocationContractProvider | None":
         return cls._for_step_specs(
             (
                 (
                     snapshot.index,
                     snapshot.func,
-                    snapshot.source_bindings,
+                    resolve_effective_step_source_bindings(
+                        snapshot.source_bindings,
+                        source_bindings_defaults=source_bindings_config,
+                        step_source_bindings_defaults=step_source_bindings_config,
+                        activate_source_bindings=(
+                            snapshot.input_source == InputSource.PIPELINE_START
+                        ),
+                    ),
                     snapshot.invocation_contracts,
                 )
                 for snapshot in snapshots
@@ -781,7 +838,8 @@ class CellProfilerStepInvocationContractProvider:
         ],
     ) -> "CellProfilerStepInvocationContractProvider | None":
         contracts_by_invocation_key: dict[
-            tuple[int, FunctionInvocationKey], ModuleArtifactContract
+            tuple[int, FunctionInvocationKey],
+            ModuleArtifactContract | CellProfilerGeneratedGroupedStepContract,
         ] = {}
         for (
             step_index,
@@ -806,7 +864,7 @@ class CellProfilerStepInvocationContractProvider:
                 cls._validate_contract_for_metadata(
                     binding.contract,
                     metadata,
-                    source_bindings.for_group_key(binding.key.group_key),
+                    source_bindings,
                 )
                 contracts_by_invocation_key[(step_index, binding.key)] = (
                     binding.contract
@@ -820,9 +878,13 @@ class CellProfilerStepInvocationContractProvider:
         invocation: Any,
         step_context: ArtifactDeclarationStepContext,
     ) -> CallableContract | None:
-        raw_callable = invocation.contract.resolve_runtime_callable()
-        if isinstance(raw_callable, CellProfilerRuntimeCallable):
+        resolved_callable = invocation.contract.resolve_runtime_callable()
+        if isinstance(
+            resolved_callable,
+            (CellProfilerRuntimeCallable, CellProfilerGroupedRuntimeCallable),
+        ):
             return invocation.contract
+        raw_callable = _cellprofiler_public_callable(resolved_callable)
 
         metadata = CellProfilerFunctionCatalog.runtime_metadata(raw_callable)
         if metadata is None or step_context.step_index is None:
@@ -837,29 +899,57 @@ class CellProfilerStepInvocationContractProvider:
         self._validate_contract_for_metadata(
             contract,
             metadata,
-            step_context.source_bindings.for_group_key(invocation.key.group_key),
+            step_context.source_bindings,
         )
-        runtime_callable = CellProfilerRuntimeStepBinding(
-            raw_callable=raw_callable,
-            contract=contract,
-            processing_contract=metadata.processing_contract,
-            declared_processing_contract=metadata.declared_processing_contract,
-        ).load()
+        if isinstance(contract, CellProfilerGeneratedGroupedStepContract):
+            runtime_callable = CellProfilerGroupedRuntimeStepBinding(
+                raw_callable=raw_callable,
+                contracts_by_group_key={
+                    group_key: item.contract
+                    for group_key, item in contract.contracts_by_group_key.items()
+                },
+                processing_contract=metadata.processing_contract,
+                declared_processing_contract=metadata.declared_processing_contract,
+            ).load()
+        else:
+            runtime_callable = CellProfilerRuntimeStepBinding(
+                raw_callable=raw_callable,
+                contract=contract,
+                processing_contract=metadata.processing_contract,
+                declared_processing_contract=metadata.declared_processing_contract,
+            ).load()
         return CallableContract.from_callable(runtime_callable)
 
     @staticmethod
     def _validate_contract_for_metadata(
-        contract: ModuleArtifactContract,
+        contract: ModuleArtifactContract | CellProfilerGeneratedGroupedStepContract,
         metadata: Any,
         source_bindings: StepSourceBindingsConfig,
     ) -> None:
+        if isinstance(contract, CellProfilerGeneratedGroupedStepContract):
+            contract.validate_callable_metadata(metadata)
+            for group_key, grouped_contract in contract.contracts_by_group_key.items():
+                SourceBindingRuntimeContractGuard(
+                    grouped_contract.contract,
+                    source_bindings.for_group_key(group_key),
+                ).validate()
+            return
+        if not isinstance(contract, ModuleArtifactContract):
+            raise TypeError(
+                "CellProfiler invocation contract provider requires "
+                "ModuleArtifactContract or CellProfilerGeneratedGroupedStepContract, "
+                f"got {type(contract).__name__}."
+            )
         if contract.module_name != metadata.module_name:
             raise ValueError(
                 "FunctionStep invocation contract module does not match "
                 f"callable metadata: contract {contract.module_name!r}, "
                 f"callable {metadata.module_name!r}."
             )
-        SourceBindingRuntimeContractGuard(contract, source_bindings).validate()
+        SourceBindingRuntimeContractGuard(
+            contract,
+            source_bindings,
+        ).validate_required()
 
 
 @dataclass(slots=True)
@@ -876,12 +966,94 @@ class CellProfilerGeneratedStepContractMatcher:
         )
         self._matched_module_nums: set[int] = set()
 
+    def match_public_invocation(
+        self,
+        metadata: Any,
+        source_bindings: StepSourceBindingsConfig,
+    ) -> CellProfilerGeneratedStepContract | CellProfilerGeneratedGroupedStepContract:
+        """Match one public invocation to one or more grouped CP module contracts."""
+        grouped = self.match_grouped(metadata, source_bindings)
+        if grouped is not None:
+            return grouped
+        return self.match(metadata, source_bindings)
+
+    def match_grouped(
+        self,
+        metadata: Any,
+        source_bindings: StepSourceBindingsConfig,
+    ) -> CellProfilerGeneratedGroupedStepContract | None:
+        """Match repeated CP modules represented by one native default invocation."""
+        candidates = self._unmatched_module_candidates(metadata.module_name)
+        if len(candidates) <= 1:
+            return None
+        group_keys = _source_binding_group_keys(source_bindings)
+        if not group_keys:
+            return None
+        if len(group_keys) < len(candidates):
+            return None
+        if any(
+            not SourceBindingRuntimeContractGuard(
+                candidate.contract,
+                source_bindings,
+            ).source_bound_input_keys
+            for candidate in candidates
+        ):
+            return None
+
+        grouped: dict[str, CellProfilerGeneratedStepContract] = {}
+        used_module_nums: set[int] = set()
+        for group_key in group_keys:
+            scoped_source_bindings = source_bindings.for_group_key(group_key)
+            aligned = tuple(
+                candidate
+                for candidate in candidates
+                if candidate.module_num not in used_module_nums
+                and SourceBindingRuntimeContractGuard(
+                    candidate.contract,
+                    scoped_source_bindings,
+                )
+                .alignment()
+                .ok
+            )
+            if not aligned:
+                continue
+            if len(aligned) > 1:
+                raise ValueError(
+                    "Generated CellProfiler grouped invocation has ambiguous "
+                    f"runtime artifact contracts for group {group_key!r}: "
+                    f"{[candidate.module_num for candidate in aligned]!r}."
+                )
+            selected = aligned[0]
+            selected.validate_callable_metadata(metadata)
+            SourceBindingRuntimeContractGuard(
+                selected.contract,
+                scoped_source_bindings,
+            ).validate()
+            grouped[str(group_key)] = selected
+            used_module_nums.add(selected.module_num)
+
+        if len(used_module_nums) != len(candidates):
+            return None
+
+        self._matched_module_nums.update(used_module_nums)
+        return CellProfilerGeneratedGroupedStepContract(grouped)
+
     def match(
         self,
         metadata: Any,
         source_bindings: StepSourceBindingsConfig,
     ) -> CellProfilerGeneratedStepContract:
         candidates = self._unmatched_module_candidates(metadata.module_name)
+        if len(candidates) == 1:
+            selected = candidates[0]
+            selected.validate_callable_metadata(metadata)
+            SourceBindingRuntimeContractGuard(
+                selected.contract,
+                source_bindings,
+            ).validate_required()
+            self._matched_module_nums.add(selected.module_num)
+            return selected
+
         aligned = tuple(
             candidate
             for candidate in candidates
@@ -966,7 +1138,8 @@ class CellProfilerGeneratedInvocationContractProvider:
 
     contracts_by_module_num: Mapping[int, ModuleArtifactContract]
     contracts_by_invocation_key: Mapping[
-        tuple[int, FunctionInvocationKey], CellProfilerGeneratedStepContract
+        tuple[int, FunctionInvocationKey],
+        CellProfilerGeneratedStepContract | CellProfilerGeneratedGroupedStepContract,
     ] = field(default_factory=dict)
     contracts_by_step_index: Mapping[int, CellProfilerGeneratedStepContract] = field(
         default_factory=dict
@@ -977,12 +1150,26 @@ class CellProfilerGeneratedInvocationContractProvider:
         cls,
         contracts_by_module_num: Mapping[int, ModuleArtifactContract],
         steps: Sequence[Any],
+        *,
+        source_bindings_config: SourceBindingsConfig | None = None,
+        step_source_bindings_config: StepSourceBindingsConfig | None = None,
     ) -> "CellProfilerGeneratedInvocationContractProvider":
         """Build a provider aligned to the actual generated FunctionStep stream."""
         return cls._for_step_specs(
             contracts_by_module_num,
             (
-                (step_index, step.func, step.source_bindings)
+                (
+                    step_index,
+                    step.func,
+                    resolve_effective_step_source_bindings(
+                        step.source_bindings,
+                        source_bindings_defaults=source_bindings_config,
+                        step_source_bindings_defaults=step_source_bindings_config,
+                        activate_source_bindings=(
+                            _step_activates_pipeline_source_bindings(step)
+                        ),
+                    ),
+                )
                 for step_index, step in enumerate(steps)
                 if isinstance(step, FunctionStep)
             ),
@@ -993,12 +1180,26 @@ class CellProfilerGeneratedInvocationContractProvider:
         cls,
         contracts_by_module_num: Mapping[int, ModuleArtifactContract],
         snapshots: Sequence[StepSnapshot],
+        *,
+        source_bindings_config: SourceBindingsConfig | None = None,
+        step_source_bindings_config: StepSourceBindingsConfig | None = None,
     ) -> "CellProfilerGeneratedInvocationContractProvider":
         """Build a provider aligned to compiler StepSnapshot indices."""
         return cls._for_step_specs(
             contracts_by_module_num,
             (
-                (snapshot.index, snapshot.func, snapshot.source_bindings)
+                (
+                    snapshot.index,
+                    snapshot.func,
+                    resolve_effective_step_source_bindings(
+                        snapshot.source_bindings,
+                        source_bindings_defaults=source_bindings_config,
+                        step_source_bindings_defaults=step_source_bindings_config,
+                        activate_source_bindings=(
+                            snapshot.input_source == InputSource.PIPELINE_START
+                        ),
+                    ),
+                )
                 for snapshot in snapshots
                 if snapshot.is_function_step
             ),
@@ -1012,7 +1213,8 @@ class CellProfilerGeneratedInvocationContractProvider:
     ) -> "CellProfilerGeneratedInvocationContractProvider":
         matcher = CellProfilerGeneratedStepContractMatcher(contracts_by_module_num)
         contracts_by_invocation_key: dict[
-            tuple[int, FunctionInvocationKey], CellProfilerGeneratedStepContract
+            tuple[int, FunctionInvocationKey],
+            CellProfilerGeneratedStepContract | CellProfilerGeneratedGroupedStepContract,
         ] = {}
         contracts_by_step_index: dict[int, CellProfilerGeneratedStepContract] = {}
         for step_index, func_spec, source_bindings in step_specs:
@@ -1024,12 +1226,13 @@ class CellProfilerGeneratedInvocationContractProvider:
                 scoped_source_bindings = source_bindings.for_group_key(
                     item.key.group_key,
                 )
-                matched_contract = matcher.match(
+                matched_contract = matcher.match_public_invocation(
                     metadata,
                     scoped_source_bindings,
                 )
                 contracts_by_invocation_key[(step_index, item.key)] = matched_contract
-                step_matches.append(matched_contract)
+                if isinstance(matched_contract, CellProfilerGeneratedStepContract):
+                    step_matches.append(matched_contract)
             if len(step_matches) == 1:
                 contracts_by_step_index[step_index] = step_matches[0]
         matcher.validate_complete()
@@ -1044,9 +1247,9 @@ class CellProfilerGeneratedInvocationContractProvider:
         invocation: Any,
         step_context: ArtifactDeclarationStepContext,
     ) -> CallableContract | None:
-        raw_callable = invocation.contract.resolve_runtime_callable()
-        if isinstance(raw_callable, CellProfilerRuntimeCallable):
-            return invocation.contract
+        raw_callable = _cellprofiler_public_callable(
+            invocation.contract.resolve_runtime_callable()
+        )
 
         metadata = CellProfilerFunctionCatalog.runtime_metadata(raw_callable)
         if metadata is None:
@@ -1057,12 +1260,23 @@ class CellProfilerGeneratedInvocationContractProvider:
             step_context,
             invocation.key,
         )
-        runtime_callable = CellProfilerRuntimeStepBinding(
-            raw_callable=raw_callable,
-            contract=step_contract.contract,
-            processing_contract=metadata.processing_contract,
-            declared_processing_contract=metadata.declared_processing_contract,
-        ).load()
+        if isinstance(step_contract, CellProfilerGeneratedGroupedStepContract):
+            runtime_callable = CellProfilerGroupedRuntimeStepBinding(
+                raw_callable=raw_callable,
+                contracts_by_group_key={
+                    group_key: contract.contract
+                    for group_key, contract in step_contract.contracts_by_group_key.items()
+                },
+                processing_contract=metadata.processing_contract,
+                declared_processing_contract=metadata.declared_processing_contract,
+            ).load()
+        else:
+            runtime_callable = CellProfilerRuntimeStepBinding(
+                raw_callable=raw_callable,
+                contract=step_contract.contract,
+                processing_contract=metadata.processing_contract,
+                declared_processing_contract=metadata.declared_processing_contract,
+            ).load()
         return CallableContract.from_callable(runtime_callable)
 
     def step_contract_for(
@@ -1070,7 +1284,7 @@ class CellProfilerGeneratedInvocationContractProvider:
         metadata: Any,
         step_context: ArtifactDeclarationStepContext,
         invocation_key: FunctionInvocationKey | None = None,
-    ) -> CellProfilerGeneratedStepContract:
+    ) -> CellProfilerGeneratedStepContract | CellProfilerGeneratedGroupedStepContract:
         mapped = self._mapped_step_contract(metadata, step_context, invocation_key)
         if mapped is not None:
             return mapped
@@ -1094,7 +1308,7 @@ class CellProfilerGeneratedInvocationContractProvider:
         if not aligned:
             return CellProfilerGeneratedStepContractMatcher(
                 self.contracts_by_module_num
-            ).match(metadata, step_context.source_bindings)
+            ).match_public_invocation(metadata, step_context.source_bindings)
         raise ValueError(
             "Generated CellProfiler step has ambiguous runtime artifact "
             f"contracts for module {metadata.module_name!r}. "
@@ -1108,7 +1322,7 @@ class CellProfilerGeneratedInvocationContractProvider:
         metadata: Any,
         step_context: ArtifactDeclarationStepContext,
         invocation_key: FunctionInvocationKey | None,
-    ) -> CellProfilerGeneratedStepContract | None:
+    ) -> CellProfilerGeneratedStepContract | CellProfilerGeneratedGroupedStepContract | None:
         step_index = step_context.step_index
         if step_index is None:
             return None
@@ -1117,6 +1331,9 @@ class CellProfilerGeneratedInvocationContractProvider:
                 (step_index, invocation_key)
             )
             if candidate is not None:
+                if isinstance(candidate, CellProfilerGeneratedGroupedStepContract):
+                    candidate.validate_callable_metadata(metadata)
+                    return candidate
                 if candidate.contract.module_name != metadata.module_name:
                     return None
                 scoped_source_bindings = step_context.source_bindings.for_group_key(
@@ -1261,7 +1478,7 @@ class GeneratedFunctionSpec:
     @property
     def callables(self) -> tuple[Callable[..., Any], ...]:
         callables = tuple(
-            CellProfilerGeneratedRuntimeBindingState.function_spec_callables(
+            CellProfilerGeneratedInvocationContractState.function_spec_callables(
                 self.func_spec
             )
         )
@@ -1275,7 +1492,7 @@ class GeneratedFunctionSpec:
 
 @dataclass(frozen=True, slots=True)
 class GeneratedPipelineFunctionRegistration:
-    """OpenHCS registry registration authority for generated runtime wrappers."""
+    """OpenHCS registry registration authority for generated public callables."""
 
     module: ModuleType
 
@@ -1393,6 +1610,8 @@ def load_generated_pipeline_module_from_source(
     module_name: str,
     filename: str,
     artifact_contracts: dict[int, Any] | None = None,
+    source_bindings_config: SourceBindingsConfig | None = None,
+    step_source_bindings_config: StepSourceBindingsConfig | None = None,
     semantic_contracts: tuple[ModuleArtifactContracts, ...] = (),
     semantic_contract_fingerprint: str | None = None,
 ) -> ModuleType:
@@ -1407,6 +1626,8 @@ def load_generated_pipeline_module_from_source(
     ).load_from_source(
         filename=filename,
         artifact_contracts=artifact_contracts,
+        source_bindings_config=source_bindings_config,
+        step_source_bindings_config=step_source_bindings_config,
         semantic_contracts=semantic_contracts,
         semantic_contract_fingerprint=semantic_contract_fingerprint,
     )
@@ -1418,6 +1639,8 @@ def materialize_generated_pipeline_import_module(
     module_name: str,
     output_dir: Path,
     artifact_contracts: dict[int, Any] | None = None,
+    source_bindings_config: SourceBindingsConfig | None = None,
+    step_source_bindings_config: StepSourceBindingsConfig | None = None,
     semantic_contracts: tuple[ModuleArtifactContracts, ...] = (),
     semantic_contract_fingerprint: str | None = None,
 ) -> Path:
@@ -1432,6 +1655,8 @@ def materialize_generated_pipeline_import_module(
     ).materialize_import_module(
         importable_path=module_path,
         artifact_contracts=artifact_contracts,
+        source_bindings_config=source_bindings_config,
+        step_source_bindings_config=step_source_bindings_config,
         semantic_contracts=semantic_contracts,
         semantic_contract_fingerprint=semantic_contract_fingerprint,
     )

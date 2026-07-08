@@ -21,6 +21,7 @@ from openhcs.interop.cellprofiler.runtime.primary_image_input_policies import (
 )
 from openhcs.interop.cellprofiler.settings_binder import (
     normalize_cellprofiler_setting_name,
+    parse_cellprofiler_bool,
     parse_cellprofiler_int,
 )
 from openhcs.interop.cellprofiler.module_declarations import (
@@ -28,6 +29,8 @@ from openhcs.interop.cellprofiler.module_declarations import (
     BinderSettingsSourceModule,
     BoundModuleSettings,
     CellProfilerModule,
+    ImageArtifactOutputCapability,
+    ImageArtifactOutputModule,
     MeasurementArtifactOutputModule,
     ModuleSettingsSourceModule,
     ObjectArtifactInputModule,
@@ -48,6 +51,7 @@ from openhcs.interop.cellprofiler.runtime.measurement_recording import (
 )
 from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
+    required_setting_value,
     setting_values,
     split_symbol_names,
 )
@@ -124,6 +128,7 @@ class TrackObjectsModule(
     TrackObjectsPrimaryImageInputPolicy,
     ObjectArtifactInputModule,
     MeasurementArtifactOutputModule,
+    ImageArtifactOutputModule,
     ObjectMeasurementRowsModule,
     TrackObjectsObjectMeasurementRowPolicy,
 ):
@@ -151,21 +156,40 @@ class TrackObjectsModule(
         "Number of standard deviations for search radius",
         "Run the second phase of the LAP algorithm?",
         "Save color-coded image?",
-        "Name the output image",
         "Search radius limit, in pixel units",
         "Select display option",
         "Select object measurement to use for tracking",
         "Select the movement model",
         "Split alternative cost",
+        "Name the output image",
         "Use advanced configuration parameters",
         "Weight of area difference in function matching cost",
     )
     required_variable_components = (VariableComponents.TIMEPOINT,)
     tracked_objects_setting = "Select the objects to track"
+    retain_image_setting = "Save color-coded image?"
+    output_image_setting = "Name the output image"
 
     @classmethod
     def object_input_setting_names(cls):
         return (cls.tracked_objects_setting,)
+
+    @classmethod
+    def artifact_contract_outputs(cls, builder, module):
+        outputs = list(super().artifact_contract_outputs(builder, module))
+        retain_value = optional_setting_value(module, cls.retain_image_setting)
+        if retain_value is not None and parse_cellprofiler_bool(retain_value):
+            outputs.append(
+                ImageArtifactOutputCapability.bind_artifact(
+                    cls,
+                    builder,
+                    module,
+                    ImageArtifactOutputCapability.spec(
+                        required_setting_value(module, cls.output_image_setting)
+                    ),
+                )
+            )
+        return tuple(outputs)
 
     @classmethod
     def bind_settings(

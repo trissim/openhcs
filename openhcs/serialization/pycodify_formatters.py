@@ -110,10 +110,11 @@ class CellProfilerRuntimeCallableFormatter(SourceFormatter):
 
     def can_format(self, value) -> bool:
         from openhcs.interop.cellprofiler.runtime.module_execution import (
+            CellProfilerGroupedRuntimeCallable,
             CellProfilerRuntimeCallable,
         )
 
-        return isinstance(value, CellProfilerRuntimeCallable)
+        return isinstance(value, (CellProfilerRuntimeCallable, CellProfilerGroupedRuntimeCallable))
 
     def format(self, value, context: FormatContext) -> SourceFragment:
         return to_source(value.raw_func, context)

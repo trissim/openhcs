@@ -34,7 +34,7 @@ from openhcs.core.source_bindings import (
     MetadataSource,
     StepSourceBindingsConfig,
 )
-from openhcs.constants.constants import VariableComponents
+from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.processing.backends.cellprofiler.tracking import TrackObjectsModule
 from benchmark.cellprofiler_library.functions.rescaleintensity import RescaleMethod
 
@@ -307,6 +307,109 @@ def test_cellprofiler_symbol_table_compiles_object_measurement_graph():
     assert measure_contract.outputs[0].artifact_type is MeasurementsArtifactType
 
 
+def test_simple_image_filter_modules_infer_image_artifact_contracts():
+    from openhcs.processing.backends.cellprofiler.gaussian_filter import (
+        GaussianFilterModule,
+    )
+    from openhcs.processing.backends.cellprofiler.smoothing import ReducenoiseModule
+
+    assert GaussianFilterModule.module_name == "GaussianFilter"
+    assert ReducenoiseModule.module_name == "Reducenoise"
+
+    modules = [
+        _module(
+            1,
+            "GaussianFilter",
+            {
+                "Select the input image": "Nuclei",
+                "Name the output image": "GaussianFilter",
+                "Sigma": "1",
+            },
+        ),
+        _module(
+            2,
+            "ReduceNoise",
+            {
+                "Select the input image": "GaussianFilter",
+                "Name the output image": "ReduceNoise",
+                "Size": "5",
+                "Distance": "2",
+                "Cut-off distance": "0.2",
+            },
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+
+    gaussian_contract = table.contracts_by_module_num[1]
+    assert [spec.name for spec in gaussian_contract.inputs] == ["Nuclei"]
+    assert [spec.artifact_type for spec in gaussian_contract.inputs] == [
+        ImageArtifactType
+    ]
+    assert [spec.name for spec in gaussian_contract.outputs] == ["GaussianFilter"]
+    assert [spec.artifact_type for spec in gaussian_contract.outputs] == [
+        ImageArtifactType
+    ]
+
+    reduce_noise_contract = table.contracts_by_module_num[2]
+    assert reduce_noise_contract.module_name == "Reducenoise"
+    assert [spec.name for spec in reduce_noise_contract.inputs] == ["GaussianFilter"]
+    assert [spec.artifact_type for spec in reduce_noise_contract.inputs] == [
+        ImageArtifactType
+    ]
+    assert [spec.name for spec in reduce_noise_contract.outputs] == ["ReduceNoise"]
+    assert [spec.artifact_type for spec in reduce_noise_contract.outputs] == [
+        ImageArtifactType
+    ]
+
+
+def test_dilate_objects_infers_singular_object_artifact_settings():
+    from openhcs.processing.backends.cellprofiler.morphology import DilateObjectsModule
+    from openhcs.processing.backends.cellprofiler.primary_objects import (
+        IdentifyPrimaryObjectsModule,
+    )
+
+    assert IdentifyPrimaryObjectsModule.module_name == "IdentifyPrimaryObjects"
+    assert DilateObjectsModule.module_name == "DilateObjects"
+
+    modules = [
+        _module(
+            1,
+            "IdentifyPrimaryObjects",
+            {
+                "Select the input image": "Nuclei",
+                "Name the primary objects to be identified": "ReduceNoiseObjects",
+            },
+        ),
+        _module(
+            2,
+            "DilateObjects",
+            {
+                "Select the input object": "ReduceNoiseObjects",
+                "Name the output object": "DilatedObjects",
+            },
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+
+    dilate_objects_contract = table.contracts_by_module_num[2]
+    assert [spec.name for spec in dilate_objects_contract.inputs] == [
+        "ReduceNoiseObjects"
+    ]
+    assert [spec.artifact_type for spec in dilate_objects_contract.inputs] == [
+        ObjectLabelsArtifactType
+    ]
+    assert [spec.name for spec in dilate_objects_contract.outputs] == [
+        "DilateObjects_2_measurements",
+        "DilatedObjects",
+    ]
+    assert [spec.artifact_type for spec in dilate_objects_contract.outputs] == [
+        MeasurementsArtifactType,
+        ObjectLabelsArtifactType,
+    ]
+
+
 def test_watershed_contract_preserves_marker_image_dependency():
     modules = [
         _identify_primary(),
@@ -399,6 +502,48 @@ def test_watershed_contract_preserves_same_runtime_image_as_mask_role():
     assert [spec.name for spec in watershed_contract.runtime_artifact_inputs] == [
         "MembFinal",
         "cellSeeds",
+    ]
+
+
+def test_watershed_contract_preserves_reference_image_dependency():
+    modules = [
+        _module(
+            1,
+            "Threshold",
+            {
+                "Select the input image": "Input",
+                "Name the output image": "Threshold",
+            },
+        ),
+        _module(
+            2,
+            "GaussianFilter",
+            {
+                "Select the input image": "Input",
+                "Name the output image": "GaussianFilter",
+            },
+        ),
+        _module(
+            3,
+            "Watershed",
+            {
+                "Select the input image": "Threshold",
+                "Generate from": "Distance",
+                "Declump method": "Intensity",
+                "Reference Image": "GaussianFilter",
+                "Name the output object": "Watershed",
+            },
+        ),
+    ]
+    table = CellProfilerSymbolTable.compile(modules)
+    watershed_contract = table.contracts_by_module_num[3]
+    assert [spec.name for spec in watershed_contract.inputs] == [
+        "Threshold",
+        "GaussianFilter",
+    ]
+    assert [spec.name for spec in watershed_contract.runtime_artifact_inputs] == [
+        "Threshold",
+        "GaussianFilter",
     ]
 
 
@@ -1161,6 +1306,7 @@ def test_compiler_derives_cellprofiler_contracts_from_step_invocation_contracts(
     from openhcs.core.compiled_step_plan import CompiledStepPlan
     from openhcs.core.config import (
         GlobalPipelineConfig,
+        PipelineConfig,
     )
     from openhcs.core.context.processing_context import ProcessingContext
     from openhcs.core.invocation_artifacts import (
@@ -1266,7 +1412,7 @@ def test_compiler_derives_cellprofiler_contracts_from_step_invocation_contracts(
             axis_id="A01",
         ),
         steps=steps,
-        orchestrator=SimpleNamespace(),
+        orchestrator=SimpleNamespace(pipeline_config=PipelineConfig()),
         global_config=GlobalPipelineConfig(),
         step_state_map={index: object() for index in range(len(steps))},
         snapshots=snapshots,
@@ -1301,7 +1447,7 @@ def test_compiler_derives_cellprofiler_contracts_from_selected_cppipe(
     tmp_path,
 ):
     from openhcs.core.compiled_step_plan import CompiledStepPlan
-    from openhcs.core.config import GlobalPipelineConfig
+    from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
     from openhcs.core.context.processing_context import ProcessingContext
     from openhcs.core.function_patterns import normalize_function_pattern
     from openhcs.core.invocation_artifacts import (
@@ -1430,7 +1576,7 @@ def test_raw_public_and_generated_cellprofiler_steps_compile_equivalent_contract
     tmp_path,
 ):
     from openhcs.core.compiled_step_plan import CompiledStepPlan
-    from openhcs.core.config import GlobalPipelineConfig
+    from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
     from openhcs.core.context.processing_context import ProcessingContext
     from openhcs.core.function_patterns import (
         FunctionInvocationKey,
@@ -1617,7 +1763,7 @@ def test_raw_public_and_generated_cellprofiler_steps_compile_equivalent_contract
     )
     generated_contracts = compile_module_contracts(
         generated_steps,
-        orchestrator=SimpleNamespace(),
+        orchestrator=SimpleNamespace(pipeline_config=PipelineConfig()),
     )
 
     assert raw_contracts == generated_contracts
@@ -2113,8 +2259,11 @@ def test_pipeline_generator_binds_correct_illumination_settings_as_literals():
     assert "'smoothing_method': SmoothingMethod.CONVEX_HULL" in generated.code
     assert "'filter_size_method': FilterSizeMethod.MANUALLY" in generated.code
     assert "'manual_filter_size': 10" in generated.code
-    assert "variable_components=[VariableComponents.SITE]" in generated.code
-    assert "group_by=GroupBy.CHANNEL" in generated.code
+    assert generated.pipeline_config is not None
+    assert generated.pipeline_config.processing_config.variable_components == [
+        VariableComponents.SITE
+    ]
+    assert generated.pipeline_config.processing_config.group_by is GroupBy.CHANNEL
     assert "'method': IlluminationCorrectionMethod.SUBTRACT" in generated.code
     assert "'truncate_low': False" in generated.code
     assert "'truncate_high': True" in generated.code
@@ -2215,7 +2364,7 @@ def test_pipeline_generator_coalesces_correct_illumination_apply_repeated_pairs(
     assert "select_the_input_image" not in generated.code
     assert "select_the_illumination_function" not in generated.code
     assert "name_the_output_image" not in generated.code
-    assert "'method': (" not in generated.code
+    assert "'method': IlluminationCorrectionMethod.DIVIDE" in generated.code
     assert [
         [spec.name for spec in contract.outputs]
         for contract in generated.artifact_contracts

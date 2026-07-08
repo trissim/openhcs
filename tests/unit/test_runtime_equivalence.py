@@ -9192,6 +9192,107 @@ def test_runtime_reference_artifact_equivalence_uses_nominal_image_identity_domi
     assert report.is_equivalent
 
 
+def test_runtime_reference_artifact_equivalence_prefers_explicit_object_location_rows_over_labels(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "BF_cells_on_grid.csv").write_text(
+        "Image,BF_cells_on_grid,BF_cells_on_grid,BF_cells_on_grid,"
+        "BF_cells_on_grid\n"
+        "ImageNumber,ObjectNumber,AreaShape_Center_X,AreaShape_Center_Y,"
+        "Number_Object_Number\n"
+        "1,1,8.5,6.5,1\n"
+        "1,2,9.5,7.5,2\n",
+        encoding="utf-8",
+    )
+    (reference_root / "Image.csv").write_text(
+        "ImageNumber,Mean_BF_cells_on_grid_AreaShape_Center_X,"
+        "Mean_BF_cells_on_grid_AreaShape_Center_Y\n"
+        "1,9.0,7.0\n",
+        encoding="utf-8",
+    )
+
+    store = RuntimeValueStore()
+    measurement_table = MeasurementTable(
+        name="MeasureObjectSizeShape",
+        rows=(
+            {
+                "image_number": 1,
+                "object_label": 1,
+                "Center_X": 8.5,
+                "Center_Y": 6.5,
+                "object_name": "BF_cells_on_grid",
+            },
+            {
+                "image_number": 1,
+                "object_label": 2,
+                "Center_X": 9.5,
+                "Center_Y": 7.5,
+                "object_name": "BF_cells_on_grid",
+            },
+        ),
+        subject=MeasurementSubject(
+            MeasurementScope.OBJECT,
+            "BF_cells_on_grid",
+        ),
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=measurement_table.name,
+                artifact_type=MeasurementsArtifactType,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=measurement_table.rows,
+            schema=measurement_table.runtime_schema(measurement_table.rows),
+        ),
+        path="/memory/MeasureObjectSizeShape.pkl",
+        backend="memory",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="BF_cells_on_grid",
+                artifact_type=ObjectLabelsArtifactType,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=ObjectLabelPayload(
+                labels=np.asarray(
+                    (
+                        ((1, 0, 0), (0, 0, 0), (0, 0, 2)),
+                        ((1, 0, 0), (0, 0, 0), (0, 0, 2)),
+                    ),
+                    dtype=np.uint16,
+                ),
+                domain=ObjectLabelDomain(
+                    declared_object_count=2,
+                    scope=ObjectLabelDomainScope.PAYLOAD,
+                ),
+            ),
+            schema=RuntimeValueSchema(
+                artifact_type=ObjectLabelsArtifactType,
+                object_name="BF_cells_on_grid",
+            ),
+        ),
+        path="/memory/BF_cells_on_grid.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store, step_plans={})},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
 def test_runtime_reference_artifact_equivalence_ignores_duplicate_measurement_artifacts(
     tmp_path: Path,
 ) -> None:

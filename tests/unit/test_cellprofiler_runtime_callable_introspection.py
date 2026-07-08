@@ -16,6 +16,7 @@ from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.config import (
     GlobalPipelineConfig,
     LazyProcessingConfig,
+    PipelineConfig,
     ProcessingConfig,
     StepMaterializationConfig,
 )
@@ -56,7 +57,7 @@ from openhcs.core.steps.function_step import FunctionStep
 from openhcs.config_framework.object_state import ObjectState
 from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
     CellProfilerGeneratedInvocationContractProvider,
-    CellProfilerGeneratedRuntimeBindingState,
+    CellProfilerGeneratedInvocationContractState,
     CellProfilerGeneratedPipelineInvocationContracts,
     GeneratedFunctionSpec,
     bind_generated_pipeline_runtime,
@@ -68,6 +69,7 @@ from openhcs.interop.cellprofiler.compile_time_contracts import (
     cellprofiler_module_settings_invocation_contract_provider_for_session,
 )
 from openhcs.interop.cellprofiler.runtime.module_execution import (
+    CellProfilerGroupedRuntimeCallable,
     CellProfilerProcessingContractAuthority,
     CellProfilerRuntimeCallable,
     cellprofiler_module_callable,
@@ -165,7 +167,7 @@ def _compilation_session_for_steps(
             axis_id="A01",
         ),
         steps=steps,
-        orchestrator=SimpleNamespace(),
+        orchestrator=SimpleNamespace(pipeline_config=PipelineConfig()),
         global_config=GlobalPipelineConfig(),
         step_state_map={index: object() for index in range(len(steps))},
         snapshots=snapshots,
@@ -475,7 +477,7 @@ def test_generated_runtime_binding_accepts_matching_source_binding_contract():
     assert module.pipeline_steps[0].invocation_contracts.contract_for(
         FunctionInvocationKey("crop", "default", 0)
     ) == crop_contract(inputs=(ArtifactSpec.input("OrigBlue", ImageArtifactType),))
-    assert not CellProfilerGeneratedRuntimeBindingState.pipeline_requires_rebinding(
+    assert not CellProfilerGeneratedInvocationContractState.pipeline_requires_rebinding(
         module.pipeline_steps
     )
 
@@ -701,6 +703,116 @@ def test_cellprofiler_compile_time_contract_provider_scopes_grouped_source_bindi
     assert [spec.name for spec in second_contract.outputs] == ["IllumStain2"]
 
 
+def test_compile_time_provider_prefers_generated_group_contracts_after_transport(
+    monkeypatch,
+):
+    """Selected/generated CP contracts must not collapse to hidden aggregate contracts."""
+    first_output = ArtifactSpec.output("IllumStain1", ImageArtifactType)
+    second_output = ArtifactSpec.output("IllumStain2", ImageArtifactType)
+    first_contract = ModuleArtifactContract(
+        module_name="CorrectIlluminationCalculate",
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                SourceArtifactInputPartition,
+                (ArtifactSpec.input("OrigStain1", ImageArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (first_output,),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (first_output,),
+            ),
+        ),
+    )
+    second_contract = ModuleArtifactContract(
+        module_name="CorrectIlluminationCalculate",
+        items=(
+            *ModuleArtifactContract.items_for_partition(
+                SourceArtifactInputPartition,
+                (ArtifactSpec.input("OrigStain2", ImageArtifactType),),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                RecordedArtifactOutputPartition,
+                (second_output,),
+            ),
+            *ModuleArtifactContract.items_for_partition(
+                DeclaredArtifactOutputPartition,
+                (second_output,),
+            ),
+        ),
+    )
+    source_bindings = StepSourceBindingsConfig(
+        enabled=True,
+        bindings=(
+            NamedSourceBinding(
+                alias="OrigStain1",
+                artifact_kind=ImageArtifactType,
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "1"),
+                ),
+            ),
+            NamedSourceBinding(
+                alias="OrigStain2",
+                artifact_kind=ImageArtifactType,
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, "2"),
+                ),
+            ),
+        ),
+    )
+    module = SimpleNamespace(
+        pipeline_steps=[
+            FunctionStep(
+                func=correct_illumination_calculate,
+                name="CorrectIlluminationCalculate",
+                source_bindings=source_bindings,
+            )
+        ]
+    )
+    contracts_by_module_num = {5: first_contract, 6: second_contract}
+    bind_generated_pipeline_runtime(module, contracts_by_module_num)
+    FunctionReferenceTransportAuthority.reference_pipeline_in_place(
+        module.pipeline_steps
+    )
+    assert not isinstance(module.pipeline_steps[0].func, CellProfilerGroupedRuntimeCallable)
+
+    import openhcs.interop.cellprofiler.compile_time_contracts as compile_time_contracts
+
+    monkeypatch.setattr(
+        compile_time_contracts,
+        "_runtime_contracts_from_selected_cppipe",
+        lambda _session: contracts_by_module_num,
+    )
+    session = _compilation_session_for_steps(module.pipeline_steps)
+    provider = cellprofiler_module_settings_invocation_contract_provider_for_session(
+        session
+    )
+
+    assert provider is not None
+    compiled = compile_function_pattern(
+        module.pipeline_steps[0].func,
+        {},
+        {},
+        invocation_contract_provider=provider,
+        step_context=ArtifactDeclarationStepContext(
+            step_index=0,
+            source_bindings=source_bindings,
+        ),
+    )
+    invocation = next(compiled.iter_invocations())
+    rebound = invocation.contract.resolve_runtime_callable()
+    assert isinstance(rebound, CellProfilerGroupedRuntimeCallable)
+    assert {
+        key: [spec.name for spec in contract.outputs]
+        for key, contract in rebound.grouped_contracts.contracts_by_group_key.items()
+    } == {
+        "1": ["IllumStain1"],
+        "2": ["IllumStain2"],
+    }
+
+
 def test_compile_time_contract_provider_skips_runtime_bound_cellprofiler_callable():
     """Artifact-bound CP callables already carry their compiler contract."""
     output = ArtifactSpec.output("ColocalizedRegion", ObjectLabelsArtifactType)
@@ -750,21 +862,28 @@ def test_compile_time_contract_provider_skips_runtime_bound_cellprofiler_callabl
     assert provider is None
 
 
-def test_generated_runtime_binding_state_accepts_nested_function_patterns():
-    """Generated CP runtime contract checks must traverse list-shaped FunctionStep specs."""
+def test_generated_invocation_contract_state_accepts_nested_function_patterns():
+    """Generated CP contract checks must traverse list-shaped FunctionStep specs."""
     contract = crop_contract(
         outputs=(ArtifactSpec.output("CropBlue", ImageArtifactType),)
     )
-    runtime_callable = declared_runtime_callable(crop, contract)
-    state = CellProfilerGeneratedRuntimeBindingState(
-        pipeline_steps=[FunctionStep(func=[(runtime_callable, {})])],
+    key = FunctionInvocationKey("crop", "default", 0)
+    state = CellProfilerGeneratedInvocationContractState(
+        pipeline_steps=[
+            FunctionStep(
+                func=[(crop, {})],
+                invocation_contracts=FunctionStepInvocationContracts(
+                    (FunctionStepInvocationContractBinding(key, contract),)
+                ),
+            )
+        ],
         contracts_by_module_num={1: contract},
     )
 
     assert state.matches_expected_contracts()
 
 
-def test_generated_runtime_binding_state_accepts_raw_callable_with_step_contract():
+def test_generated_invocation_contract_state_accepts_raw_callable_with_step_contract():
     """Step-owned invocation contracts remove the need for import-context rebinding."""
     contract = crop_contract(
         outputs=(ArtifactSpec.output("CropBlue", ImageArtifactType),)
@@ -777,7 +896,7 @@ def test_generated_runtime_binding_state_accepts_raw_callable_with_step_contract
         ),
     )
 
-    assert not CellProfilerGeneratedRuntimeBindingState.pipeline_requires_rebinding(
+    assert not CellProfilerGeneratedInvocationContractState.pipeline_requires_rebinding(
         [step]
     )
 

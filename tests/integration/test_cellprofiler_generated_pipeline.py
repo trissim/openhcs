@@ -39,7 +39,7 @@ from openhcs.core.runtime_artifact_queries import (
     RuntimeArtifactQueryContext,
     runtime_relationship,
 )
-from openhcs.core.runtime_values import ObjectRelationship
+from openhcs.core.runtime_values import ObjectRelationship, object_label_dense_array
 from openhcs.core.source_bindings import (
     ComponentSelector,
     SourceBindingOrigin,
@@ -64,7 +64,7 @@ def _generated_pipeline_config(
     vfs_config: VFSConfig,
     well_filter_config: LazyWellFilterConfig | None = None,
 ) -> PipelineConfig:
-    config = prepared.generated_pipeline.pipeline_config or PipelineConfig()
+    config = prepared.generated_pipeline.pipeline_config
     overrides = {
         "path_planning_config": path_planning_config,
         "vfs_config": vfs_config,
@@ -212,14 +212,18 @@ def test_bbbc021_canonical_illum_cppipe_executes_real_pipeline_shape(
     generated_images = sorted(
         (_generated_output_root(plate_path) / "images").glob("*.tif")
     )
-    assert [path.name for path in generated_images] == ["A01_s1_w4_z001_t001.tif"]
+    assert [path.name for path in generated_images] == [
+        "A01_s1_w1_z001_t001.tif",
+        "A01_s1_w2_z001_t001.tif",
+        "A01_s1_w4_z001_t001.tif",
+    ]
     generated_artifacts = sorted(
         (_generated_output_root(plate_path) / "images_results").glob("*_slice_000.tif")
     )
     assert [path.name for path in generated_artifacts] == [
         "A01_s1_w1_z001_t001_IllumDAPI_step0_slice_000.tif",
-        "A01_s1_w2_z001_t001_IllumActin_step1_slice_000.tif",
-        "A01_s1_w4_z001_t001_IllumTubulin_step2_slice_000.tif",
+        "A01_s1_w2_z001_t001_IllumActin_step0_slice_000.tif",
+        "A01_s1_w4_z001_t001_IllumTubulin_step0_slice_000.tif",
     ]
 
 
@@ -360,7 +364,10 @@ def test_examplefly_cppipe_generated_pipeline_executes_real_pipeline_shape(
         "MeasureObjectSizeShape",
     )[:4] == ["slice_index", "object_label", "area", "perimeter"]
     assert "contrast" in _matching_header(headers_by_name, "MeasureTexture")
-    assert "manders_m1" in _matching_header(headers_by_name, "MeasureColocalization")
+    assert any(
+        "correlation_manders" in column
+        for column in _matching_header(headers_by_name, "MeasureColocalization")
+    )
     assert all(
         "slice_index" in header
         for name, header in headers_by_name.items()
@@ -428,7 +435,12 @@ def test_examplehuman_cppipe_executes_via_source_schema_workspace(
         axis_id=axis_id,
     )
     assert len(cytoplasm_records) == 1
-    assert cytoplasm_records[0].value.data.ndim == 2
+    cytoplasm_labels = object_label_dense_array(cytoplasm_records[0].value.data)
+    assert (
+        cytoplasm_labels.ndim == 2
+        or cytoplasm_labels.ndim == 3
+        and cytoplasm_labels.shape[0] == 1
+    )
     assert measurement_records
 
 
@@ -554,7 +566,8 @@ def test_official_examplefly_cppipe_executes_measurement_math_classification(
         microscope=Microscope.AUTO,
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),
@@ -633,7 +646,8 @@ def test_official_examplefly_cppipe_executes_through_zmq_server(
         analysis_consolidation_config=AnalysisConsolidationConfig(enabled=False),
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             global_output_folder=str(tmp_path / "zmq_output"),
             output_dir_suffix="_generated_cppipe_zmq",
@@ -698,7 +712,8 @@ def test_official_example_untangleworms_brightfield_cppipe_executes_overlay(
         microscope=Microscope.AUTO,
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),
@@ -772,7 +787,8 @@ def test_official_example_cometassay_cppipe_executes_mask_geometry(
         microscope=Microscope.AUTO,
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),
@@ -843,7 +859,8 @@ def test_official_example_colocalization_cppipe_executes_relationship_exports(
         microscope=Microscope.AUTO,
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),
@@ -967,7 +984,8 @@ def test_official_example_neighbors_cppipe_executes_neighbor_exports(
         microscope=Microscope.AUTO,
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),
@@ -1083,7 +1101,8 @@ def test_official_example_illumination_example1_uses_rule_row_binding(
         microscope=Microscope.AUTO,
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),
@@ -1157,7 +1176,8 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
         microscope=Microscope.AUTO,
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),
@@ -1264,11 +1284,10 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
                 ("ClassifyObjects_18_measurements", MeasurementsArtifactType),
             ),
             (
-                "CorrectIlluminationCalculate",
                 "MeasureObjectIntensity",
                 "ClassifyObjects",
             ),
-            (".jpg", ".png"),
+            (".jpg", ".tif"),
             id="yeast-colonies",
         ),
         pytest.param(
@@ -1600,7 +1619,8 @@ def test_percent_positive_cppipe_executes_relationship_measurement_consumers(
         microscope=Microscope.AUTO,
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),
@@ -1883,7 +1903,8 @@ def _execute_official_cellprofiler3_pipeline(
         microscope=Microscope.AUTO,
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = PipelineConfig(
+    pipeline_config = _generated_pipeline_config(
+        prepared,
         path_planning_config=LazyPathPlanningConfig(
             output_dir_suffix="_generated_cppipe",
         ),

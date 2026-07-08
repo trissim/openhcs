@@ -1279,6 +1279,14 @@ def object_granularity_values(
     spectrum_length: int,
 ) -> np.ndarray:
     """Return CP granularity spectrum values for each object id."""
+    image = np.asarray(image)
+    labels = np.asarray(labels)
+    if image.ndim != 2 or labels.ndim != 2 or image.shape != labels.shape:
+        raise ValueError(
+            "MeasureGranularity object measurements require one 2-D image plane "
+            "and one same-shaped 2-D object-label plane; got "
+            f"image shape {image.shape!r} and labels shape {labels.shape!r}."
+        )
     orig_shape = image.shape
     new_shape = series.new_shape
     label_pixels = GranularityLabelPixels.from_labels(labels, object_range)

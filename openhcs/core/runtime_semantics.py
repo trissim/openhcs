@@ -685,11 +685,33 @@ class ObjectLabelDomain:
 
     def with_scope(self, scope: ObjectLabelDomainScope) -> "ObjectLabelDomain":
         """Return this object-label declaration with the requested domain scope."""
+        normalized_scope = coerce_enum(
+            ObjectLabelDomainScope, scope, "ObjectLabelDomain.scope"
+        )
+        if (
+            normalized_scope is ObjectLabelDomainScope.PAYLOAD
+            and self.scope is ObjectLabelDomainScope.PLANE
+            and self.declared_object_id_domains
+        ):
+            declared_object_ids = tuple(
+                sorted(
+                    {
+                        object_id
+                        for domain in self.declared_object_id_domains
+                        for object_id in domain
+                    }
+                )
+            )
+            return ObjectLabelDomain(
+                declared_object_count=self.declared_object_count,
+                declared_object_ids=declared_object_ids,
+                scope=normalized_scope,
+            )
         return ObjectLabelDomain(
             declared_object_count=self.declared_object_count,
             declared_object_ids=self.declared_object_ids,
             declared_object_id_domains=self.declared_object_id_domains,
-            scope=scope,
+            scope=normalized_scope,
         )
 
     @classmethod

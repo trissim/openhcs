@@ -9,6 +9,7 @@ from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
     ArtifactSpec,
+    ArtifactSpecCollection,
     ImageArtifactType,
     GroupLineageSourceRelation,
     ObjectLabelsArtifactType,
@@ -20,6 +21,7 @@ from openhcs.core.runtime_values import (
     SourceImageObjectLabelDomainRequest,
     image_payload_metadata,
 )
+from openhcs.core.callable_contract import CallableContract
 from openhcs.interop.cellprofiler.runtime.current_image_context import (
     CellProfilerOptionalCurrentImageContext,
 )
@@ -39,6 +41,7 @@ from openhcs.interop.cellprofiler.runtime.payload_types import (
 from openhcs.interop.cellprofiler.runtime.relationship_endpoints import (
     RelationshipEndpointResolver,
 )
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 if TYPE_CHECKING:
     from openhcs.interop.cellprofiler.runtime.adapter import CellProfilerRuntimeAdapter
@@ -74,6 +77,11 @@ class CellProfilerOutputRecordContext(
     @property
     def declared_input_specs(self) -> tuple[ArtifactSpec, ...]:
         return self.contract.declared_input_specs()
+
+    @property
+    def declared_input_collection(self) -> ArtifactSpecCollection:
+        """Return the unique keyed view of declared runtime inputs."""
+        return self.runtime_plan.declared_input_collection
 
     @property
     def outputs(self) -> tuple[ArtifactSpec, ...]:
@@ -135,7 +143,7 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
     def group_lineage_source_payload(self) -> CellProfilerRuntimeValue | None:
         """Resolve source payload from this output's declared group-lineage source."""
         source_specs = tuple(
-            self.contract.declared_input_collection().by_ref(relation.source)
+            self.declared_input_collection.by_ref(relation.source)
             for relation in self.spec.relations
             if (
                 isinstance(relation, GroupLineageSourceRelation)
@@ -256,7 +264,7 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
 
     def default_object_label_output_source_payload(self) -> CellProfilerRuntimeValue:
         """Resolve default source context for object-label outputs."""
-        object_inputs = self.contract.declared_input_collection().of_artifact_type(
+        object_inputs = self.declared_input_collection.of_artifact_type(
             ObjectLabelsArtifactType
         )
         if object_inputs and not self.runtime_plan.primary_image_inputs:
@@ -275,7 +283,7 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
 
     def input_object_label_output_source_payload(self) -> CellProfilerRuntimeValue:
         """Resolve source context from the declared object-label input."""
-        object_inputs = self.contract.declared_input_collection().of_artifact_type(
+        object_inputs = self.declared_input_collection.of_artifact_type(
             ObjectLabelsArtifactType
         )
         if not object_inputs:
@@ -295,7 +303,22 @@ class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
 
     def object_label_output_domain_scope(self) -> ObjectLabelDomainScope | None:
         """Return the declared object-label output domain for this invocation."""
+        if (
+            self.runtime_plan.default_runtime_image_execution_mode
+            is ImagePayloadExecutionMode.FULL_STACK
+        ):
+            return ObjectLabelDomainScope.PAYLOAD
+        if self.runtime_plan.processing_contract is ProcessingContract.PURE_3D:
+            return ObjectLabelDomainScope.PAYLOAD
         if self.source.execution_mode is ImagePayloadExecutionMode.FULL_STACK:
+            return ObjectLabelDomainScope.PAYLOAD
+        callable_contract = CallableContract.from_callable(self.func)
+        if (
+            callable_contract.runtime_image_execution_mode
+            is ImagePayloadExecutionMode.FULL_STACK
+        ):
+            return ObjectLabelDomainScope.PAYLOAD
+        if callable_contract.processing_contract is ProcessingContract.PURE_3D:
             return ObjectLabelDomainScope.PAYLOAD
         return None
 

@@ -77,6 +77,11 @@ class FunctionReferenceTransportStrategy(ABC, metaclass=AutoRegisterMeta):
         del module
         return None
 
+    def preserve_callable(self, func: Callable) -> bool:
+        """Return whether this callable should stay in object form for transport."""
+        del func
+        return False
+
     @classmethod
     def reference_for_registered_callable(
         cls,
@@ -106,6 +111,14 @@ class FunctionReferenceTransportStrategy(ABC, metaclass=AutoRegisterMeta):
             if normalized is not None:
                 return normalized
         return None
+
+    @classmethod
+    def should_preserve_callable(cls, func: Callable) -> bool:
+        """Return whether any strategy owns this callable as already transportable."""
+        for strategy_type in cls.__registry__.values():
+            if strategy_type().preserve_callable(func):
+                return True
+        return False
 
 
 class FunctionReferenceTransportAuthority:
@@ -174,6 +187,8 @@ class FunctionReferenceTransportAuthority:
     def reference_function_spec(cls, func_value: object) -> object:
         """Convert callable function-pattern leaves to FunctionReference."""
         if callable(func_value):
+            if FunctionReferenceTransportStrategy.should_preserve_callable(func_value):
+                return func_value
             return cls.function_reference(func_value)
 
         if isinstance(func_value, tuple) and len(func_value) in {2, 3}:

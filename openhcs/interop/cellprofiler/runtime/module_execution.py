@@ -634,6 +634,235 @@ class CellProfilerRuntimeCallable:
         self.executor.prepare(self.raw_func)
 
 
+@dataclass(frozen=True, slots=True)
+class CellProfilerGroupedModuleContracts:
+    """Runtime-selectable CellProfiler module contracts keyed by execution group."""
+
+    contracts_by_group_key: Mapping[str, ModuleArtifactContract]
+
+    def __post_init__(self) -> None:
+        contracts = {
+            str(group_key): CellProfilerModuleContractResolution(contract).resolve()
+            for group_key, contract in self.contracts_by_group_key.items()
+        }
+        if not contracts:
+            raise ValueError("Grouped CellProfiler callable requires at least one contract.")
+        module_names = {contract.module_name for contract in contracts.values()}
+        if len(module_names) != 1:
+            raise ValueError(
+                "Grouped CellProfiler callable contracts must describe one module, "
+                f"got {sorted(module_names)!r}."
+            )
+        object.__setattr__(self, "contracts_by_group_key", MappingProxyType(contracts))
+
+    @property
+    def module_name(self) -> str:
+        return next(iter(self.contracts_by_group_key.values())).module_name
+
+    @property
+    def ordered_contracts(self) -> tuple[ModuleArtifactContract, ...]:
+        return tuple(self.contracts_by_group_key.values())
+
+    def planning_contract(self) -> ModuleArtifactContract:
+        """Return the aggregate compile-time declaration for grouped execution."""
+
+        items = []
+        for contract in self.ordered_contracts:
+            for item in contract.items:
+                if item not in items:
+                    items.append(item)
+        required_components = []
+        for contract in self.ordered_contracts:
+            for component in contract.required_variable_components:
+                if component not in required_components:
+                    required_components.append(component)
+        return ModuleArtifactContract(
+            module_name=self.module_name,
+            items=tuple(items),
+            required_variable_components=tuple(required_components),
+        )
+
+    def contract_for_group_key(
+        self,
+        group_key: str | None,
+    ) -> ModuleArtifactContract:
+        return self.group_item_for_key(group_key)[1]
+
+    def group_item_for_key(
+        self,
+        group_key: str | None,
+    ) -> tuple[str, ModuleArtifactContract]:
+        if group_key is None:
+            if len(self.contracts_by_group_key) == 1:
+                return next(iter(self.contracts_by_group_key.items()))
+            raise ValueError(
+                "Grouped CellProfiler callable requires a runtime group key; "
+                f"available groups are {tuple(self.contracts_by_group_key)!r}."
+            )
+        normalized = str(group_key)
+        contract = self.contracts_by_group_key.get(normalized)
+        if contract is None:
+            raise ValueError(
+                f"Grouped CellProfiler callable has no contract for group {normalized!r}; "
+                f"available groups are {tuple(self.contracts_by_group_key)!r}."
+            )
+        return normalized, contract
+
+
+class CellProfilerGroupedRuntimeCallable:
+    """Picklable callable wrapper for source-grouped CellProfiler module instances."""
+
+    def __init__(
+        self,
+        raw_func: CellProfilerFunction,
+        contracts: CellProfilerGroupedModuleContracts,
+        *,
+        declared_processing_contract: str | None = None,
+        processing_contract: ProcessingContract,
+    ) -> None:
+        from openhcs.processing.backends.cellprofiler import CellProfilerFunctionCatalog
+
+        try:
+            raw_func = CellProfilerFunctionCatalog.get_function(raw_func.__name__)
+        except KeyError:
+            pass
+        _attach_runtime_processing_contract(raw_func, processing_contract)
+        self.raw_func = raw_func
+        self.grouped_contracts = contracts
+        self.contract = contracts.planning_contract()
+        self.executors = MappingProxyType(
+            {
+                group_key: CellProfilerModuleExecutor(contract)
+                for group_key, contract in contracts.contracts_by_group_key.items()
+            }
+        )
+        self.declared_processing_contract = declared_processing_contract
+        self.processing_contract = processing_contract
+        raw_contract = CallableContract.from_callable(raw_func)
+        self.__name__ = raw_func.__name__
+        self.__qualname__ = raw_func.__qualname__
+        self.__module__ = raw_func.__module__
+        self.__doc__ = raw_func.__doc__
+        self.__signature__ = _cellprofiler_runtime_callable_signature(raw_func)
+        self.__annotations__ = _cellprofiler_runtime_callable_annotations(raw_func)
+        if raw_contract.input_memory_type is not None:
+            self.input_memory_type = raw_contract.input_memory_type
+        if raw_contract.output_memory_type is not None:
+            self.output_memory_type = raw_contract.output_memory_type
+        vars(self)[FunctionContractAttribute.processing_contract] = processing_contract
+        module_artifact_contract(self.contract)(self)
+        analysis_func = raw_contract.raw_processing_function or raw_func
+        set_signature_analysis_target(self, analysis_func)
+        mark_enableable(self)
+        bound_parameter_names = tuple(
+            dict.fromkeys(
+                bound_parameter
+                for executor in self.executors.values()
+                for bound_parameter in executor.runtime_plan(raw_func).bound_parameter_names
+            )
+        )
+        runtime_adapter(
+            CellProfilerRuntimeAdapter.require_parameter_name(),
+            cellprofiler_runtime_adapter_factory,
+            manages_artifact_inputs=True,
+            prepare=prepare_cellprofiler_runtime_adapter,
+        )(self)
+        set_parameter_exclusions(
+            self,
+            (
+                *parameter_exclusions(raw_func),
+                CellProfilerRuntimeAdapter.require_parameter_name(),
+                RuntimeInvocationOptions.require_parameter_name(),
+                *bound_parameter_names,
+            ),
+        )
+        attach_callable_contract_metadata(
+            self,
+            declared_processing_contract=declared_processing_contract,
+            raw_processing_function=raw_func,
+            prepare=self.prepare_runtime_callable,
+            runtime_image_execution_mode=raw_contract.runtime_image_execution_mode,
+        )
+
+    def __call__(
+        self,
+        image: CellProfilerRuntimeValue,
+        *,
+        cellprofiler_runtime: CellProfilerRuntimeAdapter,
+        runtime_invocation_options: CellProfilerRuntimeValue | None = None,
+        enabled: bool = True,
+        **kwargs: CellProfilerRuntimeValue,
+    ) -> CellProfilerRuntimeValue:
+        if not enabled:
+            return image
+        original_group_key = cellprofiler_runtime.group_key
+        runtime_group_key = original_group_key
+        if runtime_group_key is None:
+            runtime_group_key = (
+                cellprofiler_runtime.runtime_input_group_key_from_current_sources(
+                    set(self.grouped_contracts.contracts_by_group_key)
+                )
+            )
+        group_key, contract = self.grouped_contracts.group_item_for_key(
+            runtime_group_key,
+        )
+        if cellprofiler_runtime.group_key is None:
+            cellprofiler_runtime.group_key = group_key
+        executor = self.executors[group_key]
+        if executor.contract != contract:
+            raise ValueError(
+                "Grouped CellProfiler callable executor contract drifted from "
+                f"group contract for {group_key!r}."
+            )
+        try:
+            return executor.run(
+                self.raw_func,
+                image,
+                cellprofiler_runtime=cellprofiler_runtime,
+                invocation_options=runtime_invocation_options,
+                **kwargs,
+            )
+        finally:
+            if original_group_key is None:
+                cellprofiler_runtime.group_key = None
+
+    def __reduce__(self) -> tuple[CellProfilerFunction, CellProfilerRuntimeValues]:
+        return (
+            rebuild_cellprofiler_grouped_runtime_callable,
+            (
+                self.raw_func,
+                dict(self.grouped_contracts.contracts_by_group_key),
+                self.declared_processing_contract,
+                self.processing_contract,
+            ),
+        )
+
+    def __eq__(self, other: CellProfilerRuntimeValue) -> bool:
+        if not isinstance(other, CellProfilerGroupedRuntimeCallable):
+            return NotImplemented
+        return (
+            self.raw_func == other.raw_func
+            and self.grouped_contracts == other.grouped_contracts
+            and self.declared_processing_contract == other.declared_processing_contract
+            and self.processing_contract == other.processing_contract
+        )
+
+    def __hash__(self) -> int:
+        return hash(
+            (
+                self.raw_func,
+                tuple(self.grouped_contracts.contracts_by_group_key.items()),
+                self.declared_processing_contract,
+                self.processing_contract,
+            )
+        )
+
+    def prepare_runtime_callable(self) -> None:
+        prepare_processing_callable(self.raw_func)
+        for executor in self.executors.values():
+            executor.prepare(self.raw_func)
+
+
 def _cellprofiler_callable_annotations(raw_func: CellProfilerFunction) -> dict[str, object]:
     """Return evaluated callable annotations with a raw fallback for broken imports."""
     try:
@@ -722,6 +951,21 @@ def rebuild_cellprofiler_runtime_callable(
     )
 
 
+def rebuild_cellprofiler_grouped_runtime_callable(
+    raw_func: CellProfilerFunction,
+    contracts_by_group_key: Mapping[str, ModuleArtifactContract],
+    declared_processing_contract: str | None,
+    processing_contract: ProcessingContract,
+) -> CellProfilerGroupedRuntimeCallable:
+    """Rebuild a pickled grouped CellProfiler runtime callable."""
+    return CellProfilerGroupedRuntimeCallable(
+        raw_func,
+        CellProfilerGroupedModuleContracts(contracts_by_group_key),
+        declared_processing_contract=declared_processing_contract,
+        processing_contract=processing_contract,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CellProfilerRuntimeStepBinding:
     """Runtime wrapper binding for an already-declared generated FunctionStep."""
@@ -736,6 +980,25 @@ class CellProfilerRuntimeStepBinding:
         return cellprofiler_module_callable(
             self.raw_callable,
             self.contract,
+            declared_processing_contract=self.declared_processing_contract,
+            processing_contract=self.processing_contract,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerGroupedRuntimeStepBinding:
+    """Runtime wrapper binding for grouped CellProfiler modules in one FunctionStep."""
+
+    raw_callable: CellProfilerFunction
+    contracts_by_group_key: Mapping[str, ModuleArtifactContract]
+    processing_contract: ProcessingContract
+    declared_processing_contract: str | None
+
+    def load(self) -> CellProfilerFunction:
+        """Return the artifact-managed grouped runtime callable."""
+        return cellprofiler_grouped_module_callable(
+            self.raw_callable,
+            self.contracts_by_group_key,
             declared_processing_contract=self.declared_processing_contract,
             processing_contract=self.processing_contract,
         )
@@ -757,6 +1020,26 @@ def cellprofiler_module_callable(
     return CellProfilerRuntimeCallable(
         raw_func,
         resolved_contract,
+        declared_processing_contract=declared_processing_contract,
+        processing_contract=processing_contract,
+    )
+
+
+def cellprofiler_grouped_module_callable(
+    raw_func: CellProfilerFunction,
+    contracts_by_group_key: Mapping[str, ModuleArtifactContract],
+    *,
+    declared_processing_contract: str | None = None,
+    processing_contract: ProcessingContract,
+) -> CellProfilerFunction:
+    """Build the product-owned runtime callable for grouped CellProfiler modules."""
+    if not callable(raw_func):
+        raise TypeError(
+            f"cellprofiler_grouped_module_callable raw_func must be callable, got {type(raw_func).__name__}."
+        )
+    return CellProfilerGroupedRuntimeCallable(
+        raw_func,
+        CellProfilerGroupedModuleContracts(contracts_by_group_key),
         declared_processing_contract=declared_processing_contract,
         processing_contract=processing_contract,
     )
@@ -897,7 +1180,9 @@ class CellProfilerModuleRuntimePlan:
         processing_contract: ProcessingContract,
     ) -> "CellProfilerModuleRuntimePlan":
         declared_input_specs = contract.declared_input_specs()
-        declared_input_collection = contract.declared_input_collection()
+        declared_input_collection = ArtifactSpecCollection(
+            dict.fromkeys(declared_input_specs)
+        )
         callable_contract = CallableContract.from_callable(func)
         special_input_policy = CellProfilerSpecialInputPolicy.for_module(
             canonical_module_name
@@ -1314,6 +1599,7 @@ class StandardImageExecutionPath(CellProfilerModuleExecutionPath):
                     input_image=request.current_image,
                     plan=request.plan,
                     measurement_images=measurement_images,
+                    adapter=request.adapter,
                 )
             return CELLPROFILER_SIDE_EFFECT_MAIN_FLOW.output_image(
                 current_image=request.current_image,
@@ -1444,7 +1730,15 @@ class CellProfilerModuleExecutor:
             composition = compose_aligned_image_payload(
                 self.module_name,
                 tuple(
-                    (adapter.get_image(output.name).data for output in image_outputs)
+                    (
+                        adapter.get_image(
+                            output.name,
+                            group_key=adapter.artifact_outputs[
+                                output.name
+                            ].single_group_key,
+                        ).data
+                        for output in image_outputs
+                    )
                 ),
                 slice_contexts=tuple(
                     (
@@ -1689,6 +1983,7 @@ class CellProfilerModuleExecutor:
                 input_image=input_image,
                 plan=plan,
                 measurement_images=measurement_images,
+                adapter=cellprofiler_runtime,
             )
         return CELLPROFILER_MEASUREMENT_MAIN_FLOW.output_image(
             input_image=input_image,
@@ -1933,6 +2228,7 @@ class CellProfilerModuleExecutor:
                 input_image=input_image,
                 plan=plan,
                 measurement_images=measurement_images,
+                adapter=cellprofiler_runtime,
             )
         return CELLPROFILER_MEASUREMENT_MAIN_FLOW.output_image(
             input_image=input_image,
@@ -1948,21 +2244,17 @@ class CellProfilerModuleExecutor:
         input_image: CellProfilerRuntimeValue,
         plan: CellProfilerModuleRuntimePlan,
         measurement_images: tuple["CellProfilerMeasurementImage", ...] = (),
+        adapter: CellProfilerRuntimeAdapter,
     ) -> CellProfilerRuntimeValue:
         """Return main flow for measurement-only modules without image outputs."""
-        source_measurement_images = CELLPROFILER_MEASUREMENT_MAIN_FLOW.source_domain_images(
-            measurement_images
+        del plan
+        return CELLPROFILER_MEASUREMENT_MAIN_FLOW.output_image(
+            input_image=input_image,
+            measurement_images=measurement_images,
+            variable_components=adapter.variable_components,
+            parser=adapter.filename_parser,
+            identity_cache=adapter.output_identity_cache,
         )
-        if len(source_measurement_images) == 1:
-            return source_measurement_images[0].payload
-        if not plan.primary_image_inputs:
-            return input_image
-        if all(
-            spec.name in plan.runtime_image_name_set
-            for spec in plan.primary_image_inputs
-        ):
-            return input_image
-        return NoMainFlowOutput()
 
     def pop_measurement_target_scope(
         self, kwargs: CellProfilerKwargDict, default_scope: MeasurementScopeSelection

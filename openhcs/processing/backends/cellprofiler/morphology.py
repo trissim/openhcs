@@ -146,10 +146,12 @@ class ObjectTransformContractModule(
     """Shared declaration for object modules that emit measurements plus objects."""
 
     input_objects_setting = SettingNameFamily(
-        "Select the input objects", aliases=("Select objects to be masked",)
+        "Select the input objects",
+        aliases=("Select the input object", "Select objects to be masked"),
     )
     output_objects_setting = SettingNameFamily(
-        "Name the output objects", aliases=("Name the masked objects",)
+        "Name the output objects",
+        aliases=("Name the output object", "Name the masked objects"),
     )
 
     @classmethod
@@ -329,12 +331,30 @@ class DilateObjectsModule(
 ):
     module_name = "DilateObjects"
     function_name = "dilate_objects"
+    function_variants = ("dilate_objects_3d",)
+    contract = ProcessingContract.FLEXIBLE
     validated = True
     confidence = 1.0
     structuring_element_binding = StructuringElementSettingBinding(
         shape_keyword="structuring_element_shape",
         size_keyword="structuring_element_size",
     )
+
+    @classmethod
+    def resolve_semantic_function(
+        cls,
+        module: "ModuleBlock",
+        *,
+        default_function_name: str | None = None,
+        request: "ModuleProcessingComponentRequest",
+    ) -> "ResolvedModuleFunction":
+        del default_function_name
+        function_name = (
+            cls.function_variants[0]
+            if AllComponents.Z_INDEX in request.runtime_lineage.variable_components
+            else str(cls.function_name)
+        )
+        return super().resolve_function(module, default_function_name=function_name)
 
 
 class ErodeImageModule(ImageStructuringElementModule):

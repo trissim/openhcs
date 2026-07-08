@@ -975,8 +975,12 @@ class FunctionOutputIdentityAuthority:
                 identity.filename_component_values or identity.component_values
             )
             for component_name, component_value in payload_filename_component_values.items():
-                if component_name not in filename_component_values:
-                    filename_component_values[component_name] = component_value
+                if (
+                    request.input_aligned_output
+                    and component_name in split_component_values
+                ):
+                    continue
+                filename_component_values[component_name] = component_value
         else:
             filename_component_values = (
                 dict(identity.filename_component_values)
