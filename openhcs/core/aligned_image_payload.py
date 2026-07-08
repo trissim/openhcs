@@ -308,10 +308,13 @@ class ImagePayloadSliceProjector:
     ) -> list[ImagePayloadMetadataInput]:
         """Return payloads for every child slice using one projection pass."""
         if self.mask is None:
-            if not self.metadata.has_plane_specific_values:
-                return [self.metadata.payload_with(slice_data) for slice_data in slices]
+            metadata = self._unmasked_metadata_for_slices(slices)
+            if not metadata.has_plane_specific_values:
+                return [metadata.payload_with(slice_data) for slice_data in slices]
+            if len(slices) == 1 and is_image_stack(slices[0]):
+                return [metadata.payload_with(slices[0])]
             return [
-                self.metadata.for_source_plane(index).payload_with(slice_data)
+                metadata.for_source_plane(index).payload_with(slice_data)
                 for index, slice_data in enumerate(slices)
             ]
         direct_payloads = self._direct_grayscale_plane_payloads(slices)
@@ -321,6 +324,19 @@ class ImagePayloadSliceProjector:
             self.payload_for_slice(slice_data, index)
             for index, slice_data in enumerate(slices)
         ]
+
+    def _unmasked_metadata_for_slices(
+        self,
+        slices: Sequence[RuntimeArrayData],
+    ) -> ImagePayloadMetadata:
+        """Return metadata with indexed scalar source provenance expanded."""
+        if len(slices) == 1 and is_image_stack(slices[0]):
+            expected_plane_count = int(np.shape(slices[0])[0])
+        else:
+            expected_plane_count = len(slices) if len(slices) > 1 else None
+        return self.metadata.with_indexed_source_plane_provenance(
+            expected_plane_count
+        )
 
     def _direct_grayscale_plane_payloads(
         self,

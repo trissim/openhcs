@@ -83,10 +83,15 @@ class SourceImageIdentity:
 
     path: str | None = None
     component_metadata: SourceComponentMetadata | None = None
+    _identity: SourceProvenanceIdentity = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.path = normalize_source_path(self.path)
         self.component_metadata = _normalize_component_metadata(self.component_metadata)
+        self._identity = (
+            self.path,
+            _component_metadata_identity(self.component_metadata),
+        )
 
     @property
     def addressable(self) -> bool:
@@ -94,10 +99,12 @@ class SourceImageIdentity:
 
     @property
     def identity(self) -> SourceProvenanceIdentity:
-        return (
-            self.path,
-            _component_metadata_identity(self.component_metadata),
-        )
+        if not hasattr(self, "_identity"):
+            self._identity = (
+                self.path,
+                _component_metadata_identity(self.component_metadata),
+            )
+        return self._identity
 
     def with_missing_from(
         self,
@@ -195,6 +202,12 @@ class SourceImageProvenancePlanes:
     """Nominal carrier for source-image provenance across payload planes."""
 
     planes: tuple[SourceImageProvenancePlane, ...] = ()
+    _paths: SourceImageProvenancePlanePathValues = field(init=False, repr=False)
+    _component_metadata: SourceImageProvenancePlaneMetadataValues = field(
+        init=False,
+        repr=False,
+    )
+    _identity: tuple[SourceProvenanceIdentity, ...] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.planes = tuple(
@@ -203,6 +216,11 @@ class SourceImageProvenancePlanes:
             else SourceImageProvenancePlane()
             for plane in self.planes
         )
+        self._paths = tuple(plane.path for plane in self.planes)
+        self._component_metadata = tuple(
+            plane.component_metadata for plane in self.planes
+        )
+        self._identity = tuple(plane.identity for plane in self.planes)
 
     @classmethod
     def from_components(
@@ -263,11 +281,13 @@ class SourceImageProvenancePlanes:
 
     @property
     def paths(self) -> SourceImageProvenancePlanePathValues:
-        return self._plane_values(lambda plane: plane.path)
+        self._ensure_identity_cache()
+        return self._paths
 
     @property
     def component_metadata(self) -> SourceImageProvenancePlaneMetadataValues:
-        return self._plane_values(lambda plane: plane.component_metadata)
+        self._ensure_identity_cache()
+        return self._component_metadata
 
     @property
     def count(self) -> int:
@@ -289,7 +309,18 @@ class SourceImageProvenancePlanes:
 
     @property
     def identity(self) -> tuple[SourceProvenanceIdentity, ...]:
-        return self._plane_values(lambda plane: plane.identity)
+        self._ensure_identity_cache()
+        return self._identity
+
+    def _ensure_identity_cache(self) -> None:
+        """Populate cached identity fields for older unpickled instances."""
+        if hasattr(self, "_identity"):
+            return
+        self._paths = tuple(plane.path for plane in self.planes)
+        self._component_metadata = tuple(
+            plane.component_metadata for plane in self.planes
+        )
+        self._identity = tuple(plane.identity for plane in self.planes)
 
     def _plane_values(
         self,
@@ -331,6 +362,7 @@ class SourceImageProvenance:
         "source_identity",
         "source_image_provenance_planes",
         "source_image_names",
+        "_equality_identity",
     )
 
     def __init__(
@@ -348,6 +380,11 @@ class SourceImageProvenance:
             source_image_provenance_planes or SourceImageProvenancePlanes()
         )
         self.source_image_names = tuple(str(name) for name in source_image_names)
+        self._equality_identity = (
+            self.source_identity.identity,
+            self.source_image_provenance_planes.identity,
+            self.source_image_names,
+        )
 
     @classmethod
     def from_init_values(
@@ -452,11 +489,13 @@ class SourceImageProvenance:
     @property
     def equality_identity(self) -> SourceImageProvenanceIdentity:
         """Return every semantic field that defines this provenance value."""
-        return (
-            self.source_identity.identity,
-            self.source_image_provenance_planes.identity,
-            self.source_image_names,
-        )
+        if not hasattr(self, "_equality_identity"):
+            self._equality_identity = (
+                self.source_identity.identity,
+                self.source_image_provenance_planes.identity,
+                self.source_image_names,
+            )
+        return self._equality_identity
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, SourceImageProvenance):

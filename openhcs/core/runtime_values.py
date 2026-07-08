@@ -482,7 +482,10 @@ class ImagePayloadMetadata(
             self.source_provenance,
             expected_plane_count=expected_plane_count,
         ).expanded()
-        if source_provenance == self.source_provenance:
+        if (
+            source_provenance is self.source_provenance
+            or source_provenance == self.source_provenance
+        ):
             return self
         return self.with_source_provenance(source_provenance)
 
