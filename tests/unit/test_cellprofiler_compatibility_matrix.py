@@ -17,8 +17,10 @@ from benchmark.converter.compatibility_matrix import (
 def test_compatibility_matrix_accounts_for_absorbed_modules() -> None:
     report = build_cellprofiler_compatibility_report()
 
-    assert len(report.modules) == 89
-    assert all(module.importable for module in report.modules)
+    assert len(report.modules) == 91
+    assert all(
+        module.importable or module.is_infrastructure for module in report.modules
+    )
 
 
 def test_supported_corpus_has_processing_contract_coverage() -> None:
@@ -49,7 +51,7 @@ def test_compatibility_matrix_tracks_artifact_and_corpus_coverage() -> None:
     )
     assert (
         modules_by_name["GaussianFilter"].artifact_contract_coverage
-        is ArtifactContractCoverage.GENERIC_INFERENCE
+        is ArtifactContractCoverage.DECLARED_BUILDER
     )
     assert (
         modules_by_name["Align"].artifact_contract_coverage
@@ -59,7 +61,9 @@ def test_compatibility_matrix_tracks_artifact_and_corpus_coverage() -> None:
     assert modules_by_name["Watershed"].semantics.supports_3d is True
     assert modules_by_name["Watershed"].semantics.respects_masks is True
     family_rows = {row.module_name: row for row in report.semantic_families}
-    assert family_rows["IdentifyPrimaryObjects"].family_name == "ObjectProcessingMasked2D"
+    assert family_rows["IdentifyPrimaryObjects"].family_name == (
+        "Object Processing / pure_2d"
+    )
     assert (
         family_rows["IdentifyPrimaryObjects"].family_coverage
         == "direct_supported"

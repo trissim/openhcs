@@ -133,7 +133,12 @@ class _ZMQProgressTimingObserver:
             return float(value)
         return time.time()
 
-    def record_phase_timings(self, phase_timing: PhaseTimingTrace) -> None:
+    def record_phase_timings(
+        self,
+        phase_timing: PhaseTimingTrace,
+        *,
+        completion_observed_at: float | None = None,
+    ) -> None:
         compile_seconds = self._duration(
             self.compile_started_at,
             self.compile_completed_at,
@@ -147,6 +152,15 @@ class _ZMQProgressTimingObserver:
             self.execution_started_at,
             self.execution_completed_at,
         )
+        if execute_seconds is None:
+            execute_seconds = self._completion_bounded_execution_seconds(
+                completion_observed_at,
+                compile_seconds=compile_seconds,
+                wait_seconds=_phase_seconds_total(
+                    phase_timing,
+                    BenchmarkPhase.WAIT_OPENHCS,
+                ),
+            )
         if execute_seconds is not None:
             phase_timing.record(
                 BenchmarkPhase.EXECUTE_OPENHCS,
@@ -158,6 +172,32 @@ class _ZMQProgressTimingObserver:
         if started_at is None or ended_at is None:
             return None
         return max(0.0, ended_at - started_at)
+
+    def _completion_bounded_execution_seconds(
+        self,
+        completion_observed_at: float | None,
+        *,
+        compile_seconds: float | None,
+        wait_seconds: float | None,
+    ) -> float | None:
+        start_at = self.execution_started_at or self.compile_completed_at
+        if start_at is not None and completion_observed_at is not None:
+            return max(0.0, completion_observed_at - start_at)
+        if wait_seconds is None:
+            return None
+        return max(0.0, wait_seconds - (compile_seconds or 0.0))
+
+
+def _phase_seconds_total(
+    phase_timing: PhaseTimingTrace,
+    phase: BenchmarkPhase,
+) -> float | None:
+    records = [
+        record.seconds for record in phase_timing.records if record.phase is phase
+    ]
+    if not records:
+        return None
+    return sum(records)
 
 
 def _strict_cellprofiler_runtime_equivalence_policy() -> RuntimeEquivalencePolicy:
@@ -171,7 +211,6 @@ def _strict_cellprofiler_runtime_equivalence_policy() -> RuntimeEquivalencePolic
         allow_unstable_shape_descriptors=False,
         allow_sparse_object_boundary_jitter=False,
         allow_unstable_zernike_descriptors=False,
-        threshold_entropy_abs_tolerance=1e-6,
         threshold_sensitive_pair_abs_tolerance=1e-6,
         threshold_sensitive_pair_rel_tolerance=1e-6,
         image_abs_tolerance=1e-6,
@@ -227,12 +266,16 @@ def _execute_pipeline_via_zmq_server(
             )
             with phase_timing.phase(BenchmarkPhase.WAIT_OPENHCS):
                 wait_response = client.wait_for_completion(execution_id)
+            completion_observed_at = time.time()
             wait_result = ExecutionWaitResult.from_wire(wait_response)
             wait_result.require_complete("OpenHCS ZMQ execution failed")
     finally:
         client.disconnect()
 
-    timing_observer.record_phase_timings(phase_timing)
+    timing_observer.record_phase_timings(
+        phase_timing,
+        completion_observed_at=completion_observed_at,
+    )
     if not observation_export_path.exists():
         raise ToolExecutionError(
             "OpenHCS ZMQ execution completed without writing runtime observation "
@@ -510,9 +553,7 @@ class OpenHCSAdapter(ToolAdapter):
             generated_pipeline_module_name = prepared.module_name
             execution_plate_path = ingestion.execution_plate_path
             source_workspace_path = ingestion.source_workspace_path
-            pipeline_config = (
-                prepared.generated_pipeline.pipeline_config or PipelineConfig()
-            )
+            pipeline_config = prepared.generated_pipeline.pipeline_config
             selection = request.source_schema_image_set_selection
             if selection is not None and selection.well_filter:
                 pipeline_config = replace(

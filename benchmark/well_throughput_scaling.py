@@ -2083,7 +2083,7 @@ def run_case_well_throughput(
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
     pipeline_config = replace(
-        prepared.generated_pipeline.pipeline_config or PipelineConfig(),
+        prepared.generated_pipeline.pipeline_config,
         well_filter_config=LazyWellFilterConfig(well_filter=list(well_ids)),
         path_planning_config=LazyPathPlanningConfig(
             global_output_folder=output_root,

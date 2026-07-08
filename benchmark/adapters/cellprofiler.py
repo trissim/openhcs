@@ -79,6 +79,7 @@ class HeadlessCellProfilerPipelinePatch(StrEnum):
     """Headless native CellProfiler pipeline patches with explicit semantics."""
 
     ALLOW_SAVE_OVERWRITE = "allow_save_overwrite"
+    DISABLE_PAUSES = "disable_pauses"
     TRUST_SELECTED_SOURCE_UNIVERSE = "trust_selected_source_universe"
 
     def apply(self, source_text: str) -> str:
@@ -88,6 +89,8 @@ class HeadlessCellProfilerPipelinePatch(StrEnum):
                 "Overwrite existing files without warning?:No",
                 "Overwrite existing files without warning?:Yes",
             )
+        if self is HeadlessCellProfilerPipelinePatch.DISABLE_PAUSES:
+            return source_text.replace("wants_pause:True", "wants_pause:False")
         if self is HeadlessCellProfilerPipelinePatch.TRUST_SELECTED_SOURCE_UNIVERSE:
             return source_text.replace(
                 "Filter images?:Images only",
@@ -120,6 +123,7 @@ class HeadlessCellProfilerPipelinePolicy:
         output_dir: Path,
         patches: tuple[HeadlessCellProfilerPipelinePatch, ...] = (
             HeadlessCellProfilerPipelinePatch.ALLOW_SAVE_OVERWRITE,
+            HeadlessCellProfilerPipelinePatch.DISABLE_PAUSES,
         ),
     ) -> Path:
         source_text = Path(cppipe_path).read_text(encoding="utf-8")

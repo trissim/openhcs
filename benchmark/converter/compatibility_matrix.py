@@ -41,7 +41,6 @@ from .cppipe_corpus import (
     comparison_manifests_cppipe_corpus,
     default_cppipe_corpus,
 )
-from .cppipe_module_roles import CPPipeModuleRole, cppipe_module_role
 from openhcs.interop.cellprofiler.processing_contract_resolution import (
     ProcessingContractResolutionSource,
     resolve_processing_contract,
@@ -140,6 +139,14 @@ class ModuleCompatibilityCoverage:
     @property
     def has_processing_contract(self) -> bool:
         return self.processing_contract is not None
+
+    @property
+    def is_infrastructure(self) -> bool:
+        return self.semantics is not None and self.semantics.is_infrastructure
+
+    @property
+    def requires_processing_contract(self) -> bool:
+        return not self.is_infrastructure
 
 
 @dataclass(frozen=True, slots=True)
@@ -354,7 +361,12 @@ class CellProfilerCompatibilityReport:
         self,
     ) -> tuple[ModuleCompatibilityCoverage, ...]:
         return tuple(
-            (module for module in self.modules if not module.has_processing_contract)
+            (
+                module
+                for module in self.modules
+                if module.requires_processing_contract
+                and not module.has_processing_contract
+            )
         )
 
     @property
@@ -515,7 +527,7 @@ def _cppipe_module_compatibility_coverage(
 def _cppipe_module_absorption_coverage(
     module_name: str, absorbed_modules: frozenset[str]
 ) -> CPPipeModuleAbsorptionCoverage:
-    if cppipe_module_role(module_name).role is CPPipeModuleRole.INFRASTRUCTURE:
+    if _module_is_infrastructure(module_name):
         return CPPipeModuleAbsorptionCoverage.INFRASTRUCTURE
     if module_name in absorbed_modules:
         return CPPipeModuleAbsorptionCoverage.ABSORBED_PROCESSING
@@ -525,7 +537,7 @@ def _cppipe_module_absorption_coverage(
 def _source_module_compatibility_coverage(
     module_name: str,
 ) -> SourceModuleCompatibilityCoverage:
-    if cppipe_module_role(module_name).role is CPPipeModuleRole.INFRASTRUCTURE:
+    if _module_is_infrastructure(module_name):
         coverage = SourceModuleCoverage.INFRASTRUCTURE
     elif get_contract(module_name) is not None:
         coverage = SourceModuleCoverage.ABSORBED
@@ -536,6 +548,11 @@ def _source_module_compatibility_coverage(
         semantics=cellprofiler_module_semantics(module_name),
         coverage=coverage,
     )
+
+
+def _module_is_infrastructure(module_name: str) -> bool:
+    semantics = cellprofiler_module_semantics(module_name)
+    return semantics is not None and semantics.is_infrastructure
 
 
 def _semantic_family_compatibility_coverage(
@@ -680,6 +697,7 @@ def _benchmark_coverage_summary(
                 module.module_name
                 for module in modules
                 if module.corpus_coverage is ModuleCorpusCoverage.SUPPORTED_CORPUS
+                and module.requires_processing_contract
             )
         ),
         known_invalid_absorbed_processing_modules=tuple(
@@ -687,6 +705,7 @@ def _benchmark_coverage_summary(
                 module.module_name
                 for module in modules
                 if module.corpus_coverage is ModuleCorpusCoverage.KNOWN_INVALID_CORPUS
+                and module.requires_processing_contract
             )
         ),
         untested_absorbed_processing_modules=tuple(
@@ -694,6 +713,7 @@ def _benchmark_coverage_summary(
                 module.module_name
                 for module in modules
                 if module.corpus_coverage is ModuleCorpusCoverage.NOT_IN_CORPUS
+                and module.requires_processing_contract
             )
         ),
         infrastructure_cppipe_modules=tuple(

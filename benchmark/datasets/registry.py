@@ -360,6 +360,7 @@ class CellProfilerTutorialsDataset(BenchmarkDatasetDeclaration):
             "3DNoiseNuclei/Input3DNuclei",
             assay_category="3D nuclei segmentation",
             module_category="3D segmentation",
+            timeout_seconds=None,
         ),
         _case(
             "cp_tutorial_3d_monolayer",

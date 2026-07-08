@@ -7,7 +7,9 @@ from benchmark.adapters.openhcs import (
     OpenHCSAdapter,
     OpenHCSRunRequest,
     RuntimeExecutionCacheWritePolicy,
+    _ZMQProgressTimingObserver,
     _execute_pipeline_via_zmq_server,
+    _strict_cellprofiler_runtime_equivalence_policy,
 )
 from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
 import openhcs.processing.backends.cellprofiler as cellprofiler_backend
@@ -75,6 +77,13 @@ def test_openhcs_run_request_carries_source_schema_selection() -> None:
     )
 
     assert request.source_schema_image_set_selection is selection
+
+
+def test_strict_cellprofiler_policy_keeps_threshold_entropy_tolerance() -> None:
+    policy = _strict_cellprofiler_runtime_equivalence_policy()
+
+    assert policy.numeric_abs_tolerance == 1e-6
+    assert policy.threshold_entropy_abs_tolerance == 0.04
 
 
 def test_runtime_execution_cache_policy_disables_without_manifest() -> None:
@@ -197,6 +206,22 @@ def test_benchmark_executes_pipeline_via_zmq_client(monkeypatch, tmp_path) -> No
         BenchmarkPhase.COMPILE_OPENHCS.name,
         BenchmarkPhase.EXECUTE_OPENHCS.name,
     }
+
+
+def test_openhcs_progress_timing_uses_completion_bound_without_axis_events() -> None:
+    observer = _ZMQProgressTimingObserver()
+    observer({"phase": "compile", "status": "started", "timestamp": 100.0})
+    observer({"phase": "compile", "status": "success", "timestamp": 102.0})
+    timing = PhaseTimingTrace(run_id="run", pipeline_name="pipe", tool="OpenHCS")
+    timing.record(BenchmarkPhase.WAIT_OPENHCS, seconds=7.0)
+
+    observer.record_phase_timings(timing, completion_observed_at=106.5)
+
+    phase_seconds = {
+        record["phase"]: record["seconds"] for record in timing.payloads()
+    }
+    assert phase_seconds[BenchmarkPhase.COMPILE_OPENHCS.name] == 2.0
+    assert phase_seconds[BenchmarkPhase.EXECUTE_OPENHCS.name] == 4.5
 
 
 def test_benchmark_transport_matches_pyqt_submission_source() -> None:
