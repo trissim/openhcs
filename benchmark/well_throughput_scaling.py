@@ -2134,7 +2134,7 @@ def run_case_well_throughput(
                 set_progress_queue(progress_queue)
                 try:
                     compilation = orchestrator.compile_pipelines(
-                        pipeline_definition=prepared.pipeline.steps,
+                        pipeline_definition=prepared.runtime_pipeline_steps,
                     )
                 finally:
                     set_progress_queue(None)
@@ -2144,7 +2144,7 @@ def run_case_well_throughput(
                 compiled_contexts = execution_bundle.runtime_contexts
                 pipeline_definition = compilation.get(
                     "pipeline_definition",
-                    prepared.pipeline.steps,
+                    prepared.runtime_pipeline_steps,
                 )
 
                 execute_started_at = time.perf_counter()

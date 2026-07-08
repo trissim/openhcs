@@ -199,9 +199,9 @@ cp openhcs/processing/presets/pipelines/10x_mfd_stitch_gpu.py my_custom_pipeline
 # Import the pipeline steps
 from openhcs.processing.presets.pipelines.imx_96_well_neurite_outgrowth_pipeline_gpu import pipeline_steps
 
-# Use in your workflow
-from openhcs.core.pipeline import Pipeline
-pipeline = Pipeline(steps=pipeline_steps, name="My Analysis")
+# Use pipeline_steps with a PipelineConfig in your workflow
+from openhcs.core.config import PipelineConfig
+pipeline_config = PipelineConfig()
 ```
 
 ---
@@ -302,4 +302,3 @@ These pipelines will inform the design of a formal preset system that will:
 5. **Visual preset editor** - GUI for customizing templates
 
 See `docs/pipeline_preset_patterns.md` for detailed design recommendations.
-

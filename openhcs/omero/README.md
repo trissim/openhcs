@@ -142,7 +142,7 @@ pytest tests/integration/test_main.py --it-microscopes=OMERO --it-backends=disk 
 from openhcs.omero import OMEROInstanceManager, OMEROLocalBackend
 from polystore.base import storage_registry
 from openhcs.core.orchestrator import Orchestrator
-from openhcs.core.pipeline import Pipeline
+from openhcs.core.config import PipelineConfig
 
 # Connect to OMERO
 with OMEROInstanceManager() as manager:
@@ -150,13 +150,15 @@ with OMEROInstanceManager() as manager:
     backend = OMEROLocalBackend(omero_conn=manager.conn)
     storage_registry['omero_local'] = backend
     
-    # Create pipeline
-    pipeline = Pipeline(...)
+    # Create pipeline definition
+    pipeline_steps = [...]
+    pipeline_config = PipelineConfig()
     
     # Execute on OMERO plate (use plate_id as path)
     orchestrator = Orchestrator(
         plate_dir=f"/omero/plate_{plate_id}",
-        pipeline=pipeline,
+        pipeline_steps=pipeline_steps,
+        pipeline_config=pipeline_config,
         backend='omero_local'
     )
     orchestrator.run()
@@ -480,4 +482,3 @@ for img, path in zip(images, paths):
 - **Microscope Handler**: `openhcs/microscopes/omero.py`
 - **Instance Manager**: `openhcs/runtime/omero_instance_manager.py`
 - **Integration Tests**: `tests/integration/test_main.py`
-

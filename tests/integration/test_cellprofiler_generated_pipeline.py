@@ -103,7 +103,7 @@ def test_cppipe_generated_pipeline_executes_through_orchestrator(
     orchestrator = PipelineOrchestrator(plate_path, pipeline_config=pipeline_config)
     orchestrator.initialize()
 
-    execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
 
     assert prepared.infrastructure_modules
     assert prepared.registered_functions
@@ -149,7 +149,7 @@ def test_bbbc021_cppipe_generated_pipeline_executes_named_channel_bindings(
     orchestrator = PipelineOrchestrator(plate_path, pipeline_config=pipeline_config)
     orchestrator.initialize()
 
-    execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
 
     assert all(
         result.is_success()
@@ -208,7 +208,7 @@ def test_bbbc021_canonical_illum_cppipe_executes_real_pipeline_shape(
     orchestrator = PipelineOrchestrator(plate_path, pipeline_config=pipeline_config)
     orchestrator.initialize()
 
-    execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
 
     assert all(
         result.is_success()
@@ -272,7 +272,7 @@ def test_loadimages_cppipe_executes_pipeline_start_mat_illumination_binding(
     orchestrator = PipelineOrchestrator(plate_path, pipeline_config=pipeline_config)
     orchestrator.initialize()
 
-    execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
 
     assert all(
         result.is_success()
@@ -335,7 +335,7 @@ def test_examplefly_cppipe_generated_pipeline_executes_real_pipeline_shape(
     orchestrator = PipelineOrchestrator(plate_path, pipeline_config=pipeline_config)
     orchestrator.initialize()
 
-    execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
 
     assert all(
         result.is_success()
@@ -421,7 +421,7 @@ def test_examplehuman_cppipe_executes_via_source_schema_workspace(
     )
     orchestrator.initialize()
 
-    execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
 
     assert all(
         result.is_success()
@@ -506,7 +506,7 @@ def test_official_example_untangleworms_cppipe_executes_via_source_schema_worksp
 
     execution = execute_pipeline_direct(
         orchestrator,
-        prepared.pipeline,
+        prepared.runtime_pipeline_steps,
     )
 
     assert all(
@@ -591,7 +591,7 @@ def test_official_examplefly_cppipe_executes_measurement_math_classification(
 
     execution = execute_pipeline_direct(
         orchestrator,
-        prepared.pipeline,
+        prepared.runtime_pipeline_steps,
     )
 
     assert all(
@@ -677,7 +677,7 @@ def test_official_examplefly_cppipe_executes_through_zmq_server(
             OpenHCSExecutionSubmission(
                 plate_id=str(workspace.source_root),
                 execution_plate_id=str(workspace.execution_plate_path),
-                pipeline_steps=prepared.pipeline.steps,
+                pipeline_steps=prepared.runtime_pipeline_steps,
                 global_config=global_config,
                 pipeline_config=pipeline_config,
                 selected_pipeline_path=cppipe_path,
@@ -744,7 +744,7 @@ def test_official_example_untangleworms_brightfield_cppipe_executes_overlay(
 
     execution = execute_pipeline_direct(
         orchestrator,
-        prepared.pipeline,
+        prepared.runtime_pipeline_steps,
     )
 
     assert all(
@@ -819,7 +819,7 @@ def test_official_example_cometassay_cppipe_executes_mask_geometry(
 
     execution = execute_pipeline_direct(
         orchestrator,
-        prepared.pipeline,
+        prepared.runtime_pipeline_steps,
     )
 
     assert all(
@@ -891,7 +891,7 @@ def test_official_example_colocalization_cppipe_executes_relationship_exports(
 
     execution = execute_pipeline_direct(
         orchestrator,
-        prepared.pipeline,
+        prepared.runtime_pipeline_steps,
     )
 
     assert all(
@@ -1016,7 +1016,7 @@ def test_official_example_neighbors_cppipe_executes_neighbor_exports(
 
     execution = execute_pipeline_direct(
         orchestrator,
-        prepared.pipeline,
+        prepared.runtime_pipeline_steps,
     )
 
     assert all(
@@ -1133,7 +1133,7 @@ def test_official_example_illumination_example1_uses_rule_row_binding(
 
     execution = execute_pipeline_direct(
         orchestrator,
-        prepared.pipeline,
+        prepared.runtime_pipeline_steps,
     )
 
     assert all(
@@ -1203,7 +1203,7 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
     )
     orchestrator.initialize()
 
-    execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
 
     assert all(
         result.is_success()
@@ -1537,7 +1537,7 @@ def test_cppipe_generated_pipeline_materializes_relationship_outputs(
     orchestrator = PipelineOrchestrator(plate_path, pipeline_config=pipeline_config)
     orchestrator.initialize()
 
-    execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
 
     assert all(
         result.is_success()
@@ -1646,7 +1646,7 @@ def test_percent_positive_cppipe_executes_relationship_measurement_consumers(
     )
     orchestrator.initialize()
 
-    execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
 
     assert all(
         result.is_success()
@@ -1935,7 +1935,7 @@ def _execute_official_cellprofiler3_pipeline(
 
     execution = execute_pipeline_direct(
         orchestrator,
-        prepared.pipeline,
+        prepared.runtime_pipeline_steps,
     )
     validate_cppipe_execution(
         prepared,

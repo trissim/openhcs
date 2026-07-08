@@ -73,6 +73,7 @@ def test_cellprofiler_pipeline_import_result_requires_openhcs_contracts() -> Non
     )
 
     assert result.provenance is provenance
+    assert result.pipeline_steps == ()
     assert result.generated_module_path == Path("generated_example.py")
     assert result.artifact_contracts[0].module_name == "IdentifyPrimaryObjects"
     assert result.semantic_contracts[0].module_num == 1

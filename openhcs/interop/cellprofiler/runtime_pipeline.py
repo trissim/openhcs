@@ -184,7 +184,7 @@ class DirectExecutionProgressSink:
 
 def execute_pipeline_direct(
     orchestrator: Any,
-    pipeline: Pipeline,
+    pipeline_steps: Sequence[Any],
     *,
     phase_timing: Any | None = None,
     compile_phase: Any | None = None,
@@ -199,8 +199,8 @@ def execute_pipeline_direct(
         set_progress_queue(progress_bridge.queue)
         with _optional_phase(phase_timing, compile_phase):
             compilation_result = orchestrator.compile_pipelines(
-                pipeline_definition=pipeline,
-        )
+                pipeline_definition=list(pipeline_steps),
+            )
         execution_bundle = compilation_result["execution_bundle"]
         compiled_contexts = execution_bundle.runtime_contexts
         progress_context = {

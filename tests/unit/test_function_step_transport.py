@@ -583,6 +583,10 @@ def codex_lazy_import_probe(image):
 
 
 def test_function_reference_transport_preserves_runtime_callable_contracts():
+    from openhcs.interop.cellprofiler.runtime.module_execution import (
+        CellProfilerRuntimeCallable,
+    )
+
     contract = ModuleArtifactContract(
         module_name="Crop",
         items=(
@@ -612,7 +616,7 @@ def test_function_reference_transport_preserves_runtime_callable_contracts():
     referenced_func = referenced[0].func[0]
     referenced_contract = CallableContract.from_callable(referenced_func)
 
-    assert isinstance(referenced_func, FunctionReference)
+    assert isinstance(referenced_func, CellProfilerRuntimeCallable)
     assert referenced_contract.module_artifact_contract == contract
     pickle.dumps(referenced)
 

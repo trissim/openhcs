@@ -565,11 +565,8 @@ def _export_pipeline_to_file(pipeline: Pipeline, plate_dir: Path) -> None:
     lines.append(f"Generated: {datetime.now()}")
     lines.append('"""')
     lines.append("")
-    lines.append("from openhcs.core.pipeline import Pipeline")
-    lines.append("")
-    lines.append("")
     lines.append("def create_pipeline():")
-    lines.append('    """Create and return the pipeline."""')
+    lines.append('    """Create and return pipeline steps."""')
     lines.append("")
 
     # Indent the generated pipeline steps code
@@ -580,10 +577,7 @@ def _export_pipeline_to_file(pipeline: Pipeline, plate_dir: Path) -> None:
             lines.append(f"    {line}")
 
     lines.append("")
-    lines.append(f"    return Pipeline(")
-    lines.append(f"        steps=pipeline_steps,")
-    lines.append(f"        name={repr(pipeline.name)}")
-    lines.append(f"    )")
+    lines.append("    return pipeline_steps")
     lines.append("")
     lines.append("")
     lines.append("pipeline_steps = create_pipeline()")

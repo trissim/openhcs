@@ -144,12 +144,13 @@ def test_in_tree_cppipe_corpus_prepare_expectations(tmp_path: Path) -> None:
             source_schema_unsupported = PipelineImageSchemaSourceBindingsRepresentability(
                 import_result.source_schema
             ).unsupported_fields()
-            if import_result.source_schema.is_empty:
-                assert import_result.pipeline_config is None
-            else:
-                assert import_result.pipeline_config is not None
+            assert import_result.pipeline_config is not None
+            if not import_result.source_schema.is_empty:
+                source_bindings_config = (
+                    import_result.pipeline_config.source_bindings_config.to_base_config()
+                )
                 assert (
-                    import_result.pipeline_config.source_bindings_config
+                    source_bindings_config
                     == import_result.source_schema.to_runtime_source_bindings_config()
                 )
                 if source_schema_unsupported:

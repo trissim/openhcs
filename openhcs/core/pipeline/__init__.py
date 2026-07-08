@@ -5,6 +5,8 @@ This module provides components for building and executing pipelines,
 including compilation, execution, and result handling.
 """
 
+from collections.abc import MutableSequence
+
 # Import from constants
 from openhcs.constants.constants import (DEFAULT_BACKEND,
                                             FORCE_DISK_WRITE, READ_BACKEND,
@@ -34,19 +36,15 @@ def build_all(bindings: tuple[PipelinePublicBinding, ...]) -> list[str]:
 
 
 # Define Pipeline class
-class Pipeline(list):
+class Pipeline(MutableSequence):
     """
-    A Pipeline that behaves like List[AbstractStep] but carries metadata.
+    UI/editor pipeline declaration carrying step metadata.
 
-    This class inherits from list, making it fully compatible with any code
-    expecting List[AbstractStep], while providing additional pipeline-specific
-    functionality like naming, metadata, and serialization.
-
-    Key Benefits:
-    - Drop-in replacement for List[AbstractStep]
-    - Backward compatible with existing .steps access
-    - Rich metadata support for debugging and UI
-    - Method chaining for fluent pipeline construction
+    Public execution boundaries use ``list[FunctionStep]`` plus
+    ``PipelineConfig``. This class remains as an explicit UI/ObjectState carrier
+    for names, metadata, and step scope ids; it intentionally does not subclass
+    ``list`` so generic list serializers and validators cannot erase the
+    carrier boundary.
     """
 
     def __init__(
@@ -60,7 +58,7 @@ class Pipeline(list):
         pipeline_config=None,
     ):
         """
-        Initialize a pipeline that behaves like a list of steps.
+        Initialize an editor pipeline carrier.
 
         Args:
             steps: Initial list of AbstractStep objects
@@ -68,10 +66,10 @@ class Pipeline(list):
             metadata: Additional metadata dictionary
             description: Optional description of what this pipeline does
             step_scope_ids: List of ObjectState scope IDs for steps (for UI state tracking)
-            pipeline_config: Optional pipeline-level configuration carried with steps
+            pipeline_config: Legacy pipeline-level configuration carrier. Public
+                execution paths should use per-plate PipelineConfig instead.
         """
-        # Initialize the list part with steps
-        super().__init__(steps or [])
+        self._steps = list(steps or [])
 
         # Pipeline metadata
         self.name = name or f"Pipeline_{id(self)}"
@@ -91,10 +89,35 @@ class Pipeline(list):
         """
         Backward compatibility property.
 
-        Returns self since Pipeline IS a list of steps.
+        Returns the explicit mutable step list.
         This ensures existing code using pipeline.steps continues to work.
         """
-        return self
+        return self._steps
+
+    def __getitem__(self, index):
+        return self._steps[index]
+
+    def __setitem__(self, index, value):
+        self._steps[index] = value
+
+    def __delitem__(self, index):
+        del self._steps[index]
+
+    def __len__(self):
+        return len(self._steps)
+
+    def insert(self, index, value) -> None:
+        self._steps.insert(index, value)
+
+    def copy(self):
+        """Return a shallow copy of the executable step list."""
+
+        return self._steps.copy()
+
+    def __eq__(self, other):
+        if isinstance(other, Pipeline):
+            return self.steps == other.steps
+        return self.steps == other
 
     def add_step(self, step):
         """
@@ -106,7 +129,7 @@ class Pipeline(list):
         Returns:
             self for fluent method chaining
         """
-        self.append(step)
+        self._steps.append(step)
         return self
 
     def clone(self, *, name=None, metadata=None):

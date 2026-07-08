@@ -5,6 +5,7 @@ from dataclasses import dataclass, fields
 from enum import Enum
 
 from openhcs.core.callable_contract import CallableContract
+from openhcs.core.function_reference import FunctionReferenceTransportStrategy
 from openhcs.core.steps.function_step import FunctionStep
 from python_introspect import parameter_exclusions
 from pyqt_reactive.pattern_metadata import PatternScopeToken
@@ -219,6 +220,23 @@ def _strip_internal_pattern_metadata(args):
     return PatternScopeToken.without_token(args)
 
 
+def _exported_callable_parameter_exclusions(func) -> set[str]:
+    """Return parameters that must not be emitted for a callable wrapper."""
+
+    excluded = set(parameter_exclusions(func))
+    raw_func = CallableContract.from_callable(func).raw_processing_function
+    if callable(raw_func):
+        excluded.update(parameter_exclusions(raw_func))
+        normalized_raw = (
+            FunctionReferenceTransportStrategy.normalized_registered_callable(
+                raw_func
+            )
+        )
+        if normalized_raw is not None and normalized_raw is not raw_func:
+            excluded.update(parameter_exclusions(normalized_raw))
+    return excluded
+
+
 class FunctionPatternTupleFormatter(SourceFormatter):
     priority = 85
 
@@ -228,7 +246,7 @@ class FunctionPatternTupleFormatter(SourceFormatter):
     def format(self, value, context: FormatContext) -> SourceFragment:
         func, args = value
         args = _strip_internal_pattern_metadata(args)
-        hidden_parameters = parameter_exclusions(func)
+        hidden_parameters = _exported_callable_parameter_exclusions(func)
         if hidden_parameters:
             args = {
                 name: arg_value

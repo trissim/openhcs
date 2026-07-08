@@ -10,7 +10,7 @@ import os
 import signal
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -47,10 +47,10 @@ from openhcs.core.config import (
 from openhcs.core.equivalence import RuntimeEquivalencePolicy
 from openhcs.core.equivalence.outputs import RuntimeOutputSnapshot
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
-from openhcs.core.pipeline import Pipeline
 from openhcs.core.runtime_equivalence import (
     runtime_reference_artifact_equivalence,
 )
+from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.runtime_exports import RuntimeExportObservation
 from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
 from openhcs.interop.cellprofiler.source_schema_ingestion import (
@@ -224,7 +224,7 @@ def _execute_pipeline_via_zmq_server(
     plate_id: str | Path,
     execution_plate_id: str | Path,
     selected_pipeline_path: str | Path,
-    pipeline: Pipeline,
+    pipeline_steps: Sequence[AbstractStep],
     global_config: GlobalPipelineConfig,
     pipeline_config: Any,
     observation_export_path: Path,
@@ -233,7 +233,7 @@ def _execute_pipeline_via_zmq_server(
     """Submit pipeline through the ZMQ compiler/executor and load observation."""
 
     transport_pipeline = FunctionStepTransportAuthority.normalize_pipeline(
-        pipeline.steps
+        pipeline_steps
     )
     submission = OpenHCSExecutionSubmission(
         plate_id=plate_id,
@@ -607,7 +607,7 @@ class OpenHCSAdapter(ToolAdapter):
                             plate_id=request.dataset_path,
                             execution_plate_id=execution_plate_path,
                             selected_pipeline_path=cppipe_path,
-                            pipeline=prepared.pipeline,
+                            pipeline_steps=prepared.runtime_pipeline_steps,
                             global_config=global_config,
                             pipeline_config=pipeline_config,
                             observation_export_path=observation_export_path,

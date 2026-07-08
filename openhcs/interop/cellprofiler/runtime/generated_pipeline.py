@@ -522,6 +522,8 @@ class CellProfilerGeneratedInvocationContractState:
             metadata = _cellprofiler_metadata_for_normalized_item(item)
             if metadata is None:
                 continue
+            if item.contract.module_artifact_contract is not None:
+                continue
             if step.invocation_contracts.contract_for(item.key) is None:
                 return True
         return False

@@ -2096,7 +2096,7 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     ) -> PlateManagerCodeDocumentContext:
         """Render orchestrator code for an explicit plate row collection."""
         plate_paths: list[str] = []
-        pipeline_data: dict[str, Pipeline] = {}
+        pipeline_data: dict[str, list[FunctionStep]] = {}
         per_plate_configs: dict[str, PipelineConfig] = {}
         global_config = self._current_global_config_for_code_document()
 
@@ -2105,14 +2105,15 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
             plate_paths.append(plate_path)
 
             definition_pipeline = self._get_current_pipeline_definition(plate_path)
-            if not definition_pipeline:
+            pipeline_steps = list(definition_pipeline.steps)
+            if not pipeline_steps:
                 logger.warning(
                     "No pipeline defined for %s, using empty pipeline",
                     row.name,
                 )
-                definition_pipeline = Pipeline()
+                pipeline_steps = []
 
-            pipeline_data[plate_path] = definition_pipeline
+            pipeline_data[plate_path] = pipeline_steps
 
             pipeline_config = self._authored_pipeline_config_for_code_document(
                 plate_path

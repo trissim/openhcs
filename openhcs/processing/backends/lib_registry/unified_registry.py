@@ -273,13 +273,17 @@ def _set_registry_runtime_parameter_exclusions(
     target: object,
     signature: inspect.Signature,
     parameter_types: tuple[type, ...],
+    *,
+    source: object | None = None,
 ) -> None:
     """Merge registry-owned injected parameter names into analysis exclusions."""
     from python_introspect import parameter_exclusions, set_parameter_exclusions
 
+    source_exclusions = () if source is None else parameter_exclusions(source)
     set_parameter_exclusions(
         target,
         (
+            *source_exclusions,
             *parameter_exclusions(target),
             *_registry_runtime_parameter_exclusions(signature, parameter_types),
         ),
@@ -1362,6 +1366,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             wrapper,
             wrapper.__signature__,
             runtime_parameter_types,
+            source=func,
         )
 
         # Explicitly copy nominal processing metadata when the wrapped callable owns it.

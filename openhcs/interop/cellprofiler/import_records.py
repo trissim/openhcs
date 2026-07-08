@@ -9,6 +9,7 @@ from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.config import PipelineConfig
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
+from openhcs.core.steps.abstract import AbstractStep
 from openhcs.interop.cellprofiler.module_roles import CellProfilerModuleRole
 from openhcs.interop.cellprofiler.symbol_table import ModuleArtifactContracts
 
@@ -105,6 +106,12 @@ class CellProfilerPipelineImportResult:
     semantic_contracts: tuple[ModuleArtifactContracts, ...] = ()
     pipeline_config: PipelineConfig | None = None
     registered_functions: tuple[str, ...] = ()
+
+    @property
+    def pipeline_steps(self) -> tuple[AbstractStep, ...]:
+        """Return imported executable steps without exposing the UI carrier."""
+
+        return tuple(self.pipeline.steps)
 
     def __post_init__(self) -> None:
         if not isinstance(self.provenance, CellProfilerPipelineProvenance):

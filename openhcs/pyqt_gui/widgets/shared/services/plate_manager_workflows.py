@@ -99,25 +99,31 @@ class PlateManagerCodeNamespace(dict):
             raise TypeError("plate_paths must be a list of strings.")
         return tuple(value)
 
-    def pipeline_data(self) -> dict[str, Pipeline]:
+    def pipeline_data(self) -> dict[str, list[FunctionStep]]:
         field_name = PlateManagerCodeNamespaceField.PIPELINE_DATA.value
         value = self[field_name]
         if not isinstance(value, dict):
             raise TypeError(
-                "pipeline_data must be a dict of plate paths to Pipeline instances."
+                "pipeline_data must be a dict of plate paths to FunctionStep lists."
             )
 
-        pipeline_data: dict[str, Pipeline] = {}
-        for plate_path, pipeline in value.items():
+        pipeline_data: dict[str, list[FunctionStep]] = {}
+        for plate_path, pipeline_value in value.items():
             if not isinstance(plate_path, str):
                 raise TypeError("pipeline_data keys must be plate path strings.")
-            if not isinstance(pipeline, Pipeline):
-                raise TypeError("pipeline_data values must be Pipeline instances.")
-            if not all(isinstance(step, FunctionStep) for step in pipeline.steps):
+            if isinstance(pipeline_value, Pipeline):
+                pipeline_steps = list(pipeline_value.steps)
+            elif isinstance(pipeline_value, list):
+                pipeline_steps = pipeline_value
+            else:
                 raise TypeError(
-                    "pipeline_data Pipeline values must contain FunctionStep instances."
+                    "pipeline_data values must be FunctionStep lists."
                 )
-            pipeline_data[plate_path] = pipeline
+            if not all(isinstance(step, FunctionStep) for step in pipeline_steps):
+                raise TypeError(
+                    "pipeline_data values must contain FunctionStep instances."
+                )
+            pipeline_data[plate_path] = pipeline_steps
         return pipeline_data
 
     def global_config(self) -> GlobalPipelineConfig | None:
@@ -173,7 +179,7 @@ class PlateManagerOrchestratorCodePayload:
     """Authoritative payload for plate-manager orchestrator code documents."""
 
     plate_paths: tuple[str, ...]
-    pipeline_data: dict[str, Pipeline]
+    pipeline_data: dict[str, list[FunctionStep]]
     global_pipeline_config: GlobalPipelineConfig | None = None
     per_plate_configs: dict[str, PipelineConfig] | None = None
 
@@ -402,20 +408,27 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
             pipeline_config
         )
 
-    def apply_pipeline_data(self, pipeline_data: dict[str, Pipeline]) -> None:
-        for plate_path, pipeline in pipeline_data.items():
+    def apply_pipeline_data(self, pipeline_data: dict[str, list[FunctionStep]]) -> None:
+        for plate_path, submitted_steps in pipeline_data.items():
+            if isinstance(submitted_steps, Pipeline):
+                existing_pipeline = submitted_steps
+                submitted_steps = list(submitted_steps.steps)
+            else:
+                existing_pipeline = PipelineObjectStateBinding.pipeline_for_plate(
+                    plate_path
+                )
             pipeline_steps = self.runtime_bound_pipeline_for_plate(
                 plate_path,
-                pipeline.steps,
+                list(submitted_steps),
             )
             PipelineObjectStateBinding.update_plate_pipeline(
                 plate_path,
                 Pipeline(
                     steps=pipeline_steps,
-                    name=pipeline.name,
-                    metadata=dict(pipeline.metadata),
-                    description=pipeline.description,
-                    step_scope_ids=pipeline.step_scope_ids,
+                    name=existing_pipeline.name
+                    or PlateScopeIdentity.from_scope_id(plate_path).display_name,
+                    metadata=dict(existing_pipeline.metadata),
+                    description=existing_pipeline.description,
                 ),
             )
             logger.debug(

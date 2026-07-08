@@ -57,7 +57,6 @@ class OpenHCSCodegenProvider:
         pipeline_config=None,
         clean_mode=True,
     ) -> str:
-        from openhcs.core.config import PipelineConfig
         from pycodify import Assignment, BlankLine, CodeBlock, generate_python_source
 
         code_items = [
@@ -67,15 +66,15 @@ class OpenHCSCodegenProvider:
             BlankLine(),
         ]
 
-        if per_plate_configs:
-            code_items.append(Assignment("per_plate_configs", per_plate_configs))
-            code_items.append(BlankLine())
-        elif pipeline_config is not None:
-            code_items.append(Assignment("pipeline_config", pipeline_config))
-            code_items.append(BlankLine())
-        else:
-            code_items.append(Assignment("pipeline_config", PipelineConfig()))
-            code_items.append(BlankLine())
+        if per_plate_configs is None:
+            per_plate_configs = {}
+            if pipeline_config is not None:
+                per_plate_configs = {
+                    str(plate_path): pipeline_config
+                    for plate_path in plate_paths
+                }
+        code_items.append(Assignment("per_plate_configs", per_plate_configs))
+        code_items.append(BlankLine())
 
         code_items.append(Assignment("pipeline_data", pipeline_data))
 

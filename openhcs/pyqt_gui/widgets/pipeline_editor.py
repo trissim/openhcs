@@ -862,7 +862,7 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
                 generated_pipeline_backend=Backend.DISK,
             )
         )
-        self.pipeline_steps = list(import_result.pipeline.steps)
+        self.pipeline_steps = list(import_result.pipeline_steps)
         if self.current_plate:
             self.cellprofiler_import_results_by_plate[self.current_plate] = import_result
             self.set_source_binding_context_for_plate(

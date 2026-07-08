@@ -187,7 +187,7 @@ def test_benchmark_executes_pipeline_via_zmq_client(monkeypatch, tmp_path) -> No
         plate_id="/tmp/plate",
         execution_plate_id="/tmp/execution_plate",
         selected_pipeline_path="/tmp/pipeline.cppipe",
-        pipeline=pipeline,
+        pipeline_steps=pipeline.steps,
         global_config=GlobalPipelineConfig(),
         pipeline_config=PipelineConfig(),
         observation_export_path=tmp_path / "observation.pkl",

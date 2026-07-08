@@ -240,7 +240,12 @@ class TestPlateManagerWidget:
                 stored_func,
             ).module_artifact_contract
             assert stored_func.__name__ == "crop"
-            assert stored_contract == contract
+            assert stored_contract is None
+            assert stored_step.invocation_contracts.bindings
+            assert (
+                stored_step.invocation_contracts.bindings[0].planning_contract
+                == contract
+            )
             assert stored_kwargs["crop_shape"] == "Rectangle"
             assert stored_kwargs["select_the_input_image"] == "OrigBlue"
             assert stored_kwargs["name_the_output_image"] == "CropBlue"
@@ -507,7 +512,7 @@ class TestPlateManagerWidget:
                     "plate_paths": [plate_scope],
                     "global_config": widget.global_config,
                     "per_plate_configs": {plate_scope: config},
-                    "pipeline_data": {plate_scope: Pipeline()},
+                    "pipeline_data": {plate_scope: []},
                 }
             )
 
@@ -631,6 +636,40 @@ class TestPlateManagerWidget:
             assert "per_plate_configs = {}" in context.source
             assert "per_plate_configs = {}\n\npipeline_data" in context.source
             assert context.payload.per_plate_configs == {}
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
+
+    def test_code_mode_renders_pipeline_data_as_function_step_lists(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        monkeypatch.setattr(PlateManagerWidget, "update_item_list", lambda self: None)
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        plate_root = tmp_path / "plate"
+        plate_root.mkdir()
+        plate_scope = str(plate_root)
+        orchestrator = PipelineOrchestrator(plate_path=plate_root)
+        ObjectStateRegistry.register(
+            ObjectState(orchestrator, scope_id=plate_scope),
+            _skip_snapshot=True,
+        )
+        PipelineObjectStateBinding.update_plate_steps(
+            plate_scope,
+            [FunctionStep(func=cellprofiler_backend.crop, name="Crop")],
+        )
+
+        try:
+            context = widget.orchestrator_code_document_context_for_rows(
+                [PlateManagerRow.from_scope(plate_scope)]
+            )
+
+            assert "from openhcs.core.pipeline import Pipeline" not in context.source
+            assert "Pipeline(" not in context.source
+            assert "FunctionStep(" in context.source
+            assert isinstance(context.payload.pipeline_data[plate_scope], list)
         finally:
             close_widget(widget)
             ObjectStateRegistry.clear()
@@ -844,6 +883,7 @@ class TestPlateManagerWidget:
             ),
             semantic_contracts=(SimpleNamespace(module_num=1),),
             artifact_contracts=(contract,),
+            pipeline_config=None,
         )
         manager = PlateManagerCodeWorkflowHarness(selected_plate_path=plate_scope)
         manager._cellprofiler_import_results_by_plate[plate_scope] = import_result
@@ -853,7 +893,7 @@ class TestPlateManagerWidget:
         )
 
         PlateManagerCodeWorkflow(manager).apply_pipeline_data(
-            {plate_scope: Pipeline(steps=[raw_step])}
+            {plate_scope: [raw_step]}
         )
 
         updated_steps = PipelineObjectStateBinding.steps_for_plate(plate_scope)
@@ -862,7 +902,12 @@ class TestPlateManagerWidget:
             rebound_func,
         ).module_artifact_contract
         assert rebound_func.__name__ == "crop"
-        assert rebound_contract == contract
+        assert rebound_contract is None
+        assert updated_steps[0].invocation_contracts.bindings
+        assert (
+            updated_steps[0].invocation_contracts.bindings[0].planning_contract
+            == contract
+        )
 
     def test_plate_manager_code_mode_keeps_bound_cellprofiler_steps_without_import_context(
         self,
@@ -909,7 +954,7 @@ class TestPlateManagerWidget:
         manager = PlateManagerCodeWorkflowHarness(selected_plate_path=plate_scope)
 
         PlateManagerCodeWorkflow(manager).apply_pipeline_data(
-            {plate_scope: Pipeline(steps=[bound_step])}
+            {plate_scope: [bound_step]}
         )
 
         updated_steps = PipelineObjectStateBinding.steps_for_plate(plate_scope)
@@ -938,14 +983,12 @@ class TestPlateManagerWidget:
         try:
             PlateManagerCodeWorkflow(manager).apply_pipeline_data(
                 {
-                    plate_scope: Pipeline(
-                        steps=[
-                            FunctionStep(
-                                func=lambda image: image,
-                                name="Replacement",
-                            )
-                        ],
-                    )
+                    plate_scope: [
+                        FunctionStep(
+                            func=lambda image: image,
+                            name="Replacement",
+                        )
+                    ]
                 }
             )
 
