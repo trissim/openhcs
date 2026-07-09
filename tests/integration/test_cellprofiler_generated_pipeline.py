@@ -4,6 +4,7 @@ import csv
 from dataclasses import replace
 import os
 from pathlib import Path
+import re
 
 from openhcs.interop.cellprofiler.runtime_pipeline import (
     DirectPipelineExecution,
@@ -931,15 +932,20 @@ def test_official_example_colocalization_cppipe_executes_relationship_exports(
     )
     assert {relationship.source.role for relationship in relationships} == {"parent"}
     assert {relationship.target.role for relationship in relationships} == {"child"}
-    assert runtime_store.find(
-        name="MeasureColocalization_9_measurements",
+    measurement_records = runtime_store.find(
         artifact_type=MeasurementsArtifactType,
         axis_id="A01",
     )
-    assert runtime_store.find(
-        name="CalculateMath_22_measurements",
-        artifact_type=MeasurementsArtifactType,
-        axis_id="A01",
+    measurement_names = {record.key.name for record in measurement_records}
+    assert any(
+        name.startswith("MeasureColocalization_")
+        and name.endswith("_measurements")
+        for name in measurement_names
+    )
+    assert any(
+        name.startswith("CalculateMath_")
+        and name.endswith("_measurements")
+        for name in measurement_names
     )
 
     csv_outputs = sorted(
@@ -1314,7 +1320,6 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
                 ("MeasureObjectIntensity_18_measurements", MeasurementsArtifactType),
             ),
             (
-                "CorrectIlluminationCalculate",
                 "FilterObjects",
                 "Grid",
                 "IdentifyObjectsInGrid",
@@ -1405,7 +1410,12 @@ def test_official_cellprofiler3_additional_representative_pipelines_execute(
     axis_id = _single_execution_axis(execution)
     runtime_store = execution.compiled_contexts[axis_id].runtime_value_store
     for name, kind in expected_records:
-        assert runtime_store.find(name=name, artifact_type=kind, axis_id=axis_id)
+        assert _runtime_store_has_semantic_record(
+            runtime_store,
+            name=name,
+            artifact_type=kind,
+            axis_id=axis_id,
+        )
 
     result_outputs = sorted(
         path
@@ -1425,6 +1435,32 @@ def test_official_cellprofiler3_additional_representative_pipelines_execute(
     image_names = tuple(path.name for path in image_outputs if path.is_file())
     for suffix in image_suffixes:
         assert any(name.endswith(suffix) for name in image_names)
+
+
+def _runtime_store_has_semantic_record(
+    runtime_store,
+    *,
+    name: str,
+    artifact_type: type[ArtifactType],
+    axis_id: str,
+) -> bool:
+    """Return whether the runtime store contains the public semantic artifact."""
+    if runtime_store.find(name=name, artifact_type=artifact_type, axis_id=axis_id):
+        return True
+    if artifact_type is not MeasurementsArtifactType:
+        return False
+    match = re.fullmatch(r"(?P<prefix>.+)_\d+_measurements", name)
+    if match is None:
+        return False
+    prefix = match.group("prefix")
+    return any(
+        record.key.name.startswith(f"{prefix}_")
+        and record.key.name.endswith("_measurements")
+        for record in runtime_store.find(
+            artifact_type=artifact_type,
+            axis_id=axis_id,
+        )
+    )
 
 
 def test_official_cellprofiler3_cppipe_corpus_prepares(

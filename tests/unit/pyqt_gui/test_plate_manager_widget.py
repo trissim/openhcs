@@ -174,7 +174,7 @@ class TestPlateManagerWidget:
         close_widget(widget)
         ObjectStateRegistry.clear()
 
-    def test_cellprofiler_workspace_import_rebinds_runtime_kwargs(
+    def test_cellprofiler_workspace_import_keeps_public_steps_unbound(
         self,
         monkeypatch,
         tmp_path: Path,
@@ -241,11 +241,7 @@ class TestPlateManagerWidget:
             ).module_artifact_contract
             assert stored_func.__name__ == "crop"
             assert stored_contract is None
-            assert stored_step.invocation_contracts.bindings
-            assert (
-                stored_step.invocation_contracts.bindings[0].planning_contract
-                == contract
-            )
+            assert not stored_step.invocation_contracts.bindings
             assert stored_kwargs["crop_shape"] == "Rectangle"
             assert stored_kwargs["select_the_input_image"] == "OrigBlue"
             assert stored_kwargs["name_the_output_image"] == "CropBlue"
@@ -848,7 +844,7 @@ class TestPlateManagerWidget:
             close_widget(widget)
             ObjectStateRegistry.clear()
 
-    def test_plate_manager_code_mode_rebinds_cellprofiler_runtime_callables(
+    def test_plate_manager_code_mode_keeps_public_cellprofiler_steps_unbound(
         self,
         tmp_path: Path,
     ) -> None:
@@ -903,11 +899,7 @@ class TestPlateManagerWidget:
         ).module_artifact_contract
         assert rebound_func.__name__ == "crop"
         assert rebound_contract is None
-        assert updated_steps[0].invocation_contracts.bindings
-        assert (
-            updated_steps[0].invocation_contracts.bindings[0].planning_contract
-            == contract
-        )
+        assert not updated_steps[0].invocation_contracts.bindings
 
     def test_plate_manager_code_mode_keeps_bound_cellprofiler_steps_without_import_context(
         self,

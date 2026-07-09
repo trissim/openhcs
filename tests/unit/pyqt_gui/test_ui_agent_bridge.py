@@ -3141,23 +3141,17 @@ def test_object_state_apply_rejection_reports_dynamic_revision_key() -> None:
     assert result.current_snapshot == snapshot_provider.current_snapshot()
 
 
-def test_source_policy_allows_declared_imported_factories_only() -> None:
+def test_source_policy_allows_public_function_steps_not_runtime_factories() -> None:
     policy = UiCodeDocumentSourcePolicy()
-    cellprofiler_factory_source = (
-        "from openhcs.interop.cellprofiler.runtime.module_execution import "
-        "cellprofiler_module_callable\n"
-        "from openhcs.core.module_artifact_contract import ModuleArtifactContract\n"
-        "from openhcs.processing.backends.lib_registry.unified_registry import "
-        "ProcessingContract\n"
+    cellprofiler_function_step_source = (
+        "from openhcs.core.steps.function_step import FunctionStep\n"
         "from openhcs.processing.backends.cellprofiler import "
         "identify_secondary_objects\n"
         f"plate_paths = ['{PLATE_SCOPE_ID}']\n"
         "global_config = None\n"
         f"per_plate_configs = {{'{PLATE_SCOPE_ID}': None}}\n"
-        f"pipeline_data = {{'{PLATE_SCOPE_ID}': [cellprofiler_module_callable("
-        "identify_secondary_objects, "
-        "ModuleArtifactContract(module_name='IdentifySecondaryObjects'), "
-        "processing_contract=ProcessingContract.PURE_2D)]}\n"
+        f"pipeline_data = {{'{PLATE_SCOPE_ID}': [FunctionStep("
+        "func=identify_secondary_objects, name='IdentifySecondaryObjects')]}\n"
     )
     undeclared_factory_source = (
         "from openhcs.fake import lower_factory\n"
@@ -3165,7 +3159,7 @@ def test_source_policy_allows_declared_imported_factories_only() -> None:
         f"pipeline_data = {{'{PLATE_SCOPE_ID}': [lower_factory()]}}\n"
     )
 
-    assert policy.validate(cellprofiler_factory_source) == ()
+    assert policy.validate(cellprofiler_function_step_source) == ()
     errors = policy.validate(undeclared_factory_source)
     assert any(error.code == "unsafe_call" for error in errors)
 

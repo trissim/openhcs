@@ -38,11 +38,9 @@ from openhcs.interop.cellprofiler.module_roles import (
 )
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock
 from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
-    CellProfilerPipelineRuntimeRebinder,
     GeneratedPipelineFunctionRegistration,
     GeneratedPipelineModuleIdentity,
     GeneratedPipelineRuntimeModule,
-    GeneratedPipelineSemanticContractsFingerprint,
 )
 
 from openhcs.interop.cellprofiler.pipeline_generator import (
@@ -324,12 +322,6 @@ class CPPipePipelinePreparationRequest:
         artifact_contracts_by_module_num = (
             converted.generated_pipeline.runtime_module_contracts_by_module_num
         )
-        semantic_contracts = converted.generated_pipeline.artifact_contracts
-        semantic_fingerprint = GeneratedPipelineSemanticContractsFingerprint.from_generation(
-            source_cppipe=converted.cppipe_path,
-            generated_code=converted.generated_pipeline.code,
-            semantic_contracts=semantic_contracts,
-        ).value
         runtime_module = GeneratedPipelineRuntimeModule(
             GeneratedPipelineModuleIdentity(
                 module_path=self.output_path,
@@ -352,8 +344,7 @@ class CPPipePipelinePreparationRequest:
             artifact_contracts=artifact_contracts_by_module_num,
             source_bindings_config=pipeline_source_bindings_config,
             step_source_bindings_config=pipeline_step_source_bindings_config,
-            semantic_contracts=semantic_contracts,
-            semantic_contract_fingerprint=semantic_fingerprint,
+            semantic_contracts=converted.generated_pipeline.artifact_contracts,
         )
         module = runtime_module.load_from_path(self.output_path)
         pipeline = runtime_module.pipeline_from_module(
@@ -361,12 +352,7 @@ class CPPipePipelinePreparationRequest:
             pipeline_name=converted.generated_pipeline.name,
         )
         pipeline = Pipeline(
-            steps=CellProfilerPipelineRuntimeRebinder(
-                generated_module_name=module_name,
-                contracts_by_module_num=artifact_contracts_by_module_num,
-                source_bindings_config=pipeline_source_bindings_config,
-                step_source_bindings_config=pipeline_step_source_bindings_config,
-            ).rebind(pipeline.steps),
+            steps=pipeline.steps,
             name=pipeline.name,
             description=pipeline.description,
             step_scope_ids=pipeline.step_scope_ids,

@@ -53,9 +53,6 @@ from openhcs.core.steps.function_step import FunctionStep
 from openhcs.interop.cellprofiler.runtime.module_execution import (
     cellprofiler_module_callable,
 )
-from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
-    CellProfilerPipelineRuntimeRebinder,
-)
 from openhcs.processing.materialization.core import MaterializationSpec
 from openhcs.processing.materialization.options import TiffStackOptions
 from openhcs.runtime.zmq_execution_client import (

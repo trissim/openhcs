@@ -252,16 +252,46 @@ def _execute_pipeline_via_zmq_server(
     try:
         with client:
             with phase_timing.phase(BenchmarkPhase.SUBMIT_OPENHCS):
-                submission_response = ExecutionSubmissionResponse.from_wire(
-                    client.submit_pipeline(submission)
+                compile_submission_response = ExecutionSubmissionResponse.from_wire(
+                    client.submit_compile(submission)
                 )
-            if not submission_response.accepted:
+            if not compile_submission_response.accepted:
                 raise ToolExecutionError(
-                    submission_response.require_failure_text(
+                    compile_submission_response.require_failure_text(
+                        "OpenHCS ZMQ compile submission"
+                    )
+                )
+            compile_artifact_id = compile_submission_response.require_execution_id(
+                "OpenHCS ZMQ compile submission"
+            )
+            with phase_timing.phase(BenchmarkPhase.WAIT_OPENHCS):
+                compile_wait_response = client.wait_for_completion(compile_artifact_id)
+            compile_wait_result = ExecutionWaitResult.from_wire(compile_wait_response)
+            compile_wait_result.require_complete("OpenHCS ZMQ compilation failed")
+
+            execution_submission = OpenHCSExecutionSubmission(
+                plate_id=plate_id,
+                execution_plate_id=execution_plate_id,
+                selected_pipeline_path=selected_pipeline_path,
+                pipeline_steps=transport_pipeline,
+                global_config=global_config,
+                pipeline_config=pipeline_config,
+                config_params={
+                    "runtime_observation_export_path": str(observation_export_path),
+                },
+                compile_artifact_id=compile_artifact_id,
+            )
+            with phase_timing.phase(BenchmarkPhase.SUBMIT_OPENHCS):
+                execution_submission_response = ExecutionSubmissionResponse.from_wire(
+                    client.submit_pipeline(execution_submission)
+                )
+            if not execution_submission_response.accepted:
+                raise ToolExecutionError(
+                    execution_submission_response.require_failure_text(
                         "OpenHCS ZMQ execution submission"
                     )
                 )
-            execution_id = submission_response.require_execution_id(
+            execution_id = execution_submission_response.require_execution_id(
                 "OpenHCS ZMQ execution submission"
             )
             with phase_timing.phase(BenchmarkPhase.WAIT_OPENHCS):

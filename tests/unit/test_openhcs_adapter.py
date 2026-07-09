@@ -121,6 +121,7 @@ def test_runtime_execution_cache_policy_writes_single_validation_payload() -> No
 def test_benchmark_executes_pipeline_via_zmq_client(monkeypatch, tmp_path) -> None:
     class FakeZMQExecutionClient:
         submitted = []
+        waits = []
 
         def __init__(self, *, persistent, progress_callback):
             self.progress_callback = progress_callback
@@ -134,17 +135,30 @@ def test_benchmark_executes_pipeline_via_zmq_client(monkeypatch, tmp_path) -> No
         def disconnect(self):
             return None
 
-        def submit_pipeline(self, submission):
-            self.submitted.append(submission)
+        def submit_compile(self, submission):
+            compile_submission = submission.compile_request()
+            self.submitted.append(compile_submission)
             self.progress_callback(
                 {"phase": "compile", "status": "started", "timestamp": 10.0}
             )
             self.progress_callback(
                 {"phase": "compile", "status": "success", "timestamp": 12.0}
             )
+            return {"status": "accepted", "execution_id": "compile-1"}
+
+        def submit_pipeline(self, submission):
+            self.submitted.append(submission)
+            assert submission.compile_artifact_id == "compile-1"
             return {"status": "accepted", "execution_id": "exec-1"}
 
         def wait_for_completion(self, execution_id):
+            self.waits.append(execution_id)
+            if execution_id == "compile-1":
+                return {
+                    "status": "complete",
+                    "execution_id": execution_id,
+                    "results": {"well_count": 1, "wells": ["A01"]},
+                }
             assert execution_id == "exec-1"
             self.progress_callback(
                 {"phase": "axis_started", "status": "started", "timestamp": 13.0}
@@ -197,7 +211,15 @@ def test_benchmark_executes_pipeline_via_zmq_client(monkeypatch, tmp_path) -> No
     assert execution.execution_id == "exec-1"
     assert execution.output_roots == (tmp_path,)
     assert "pipeline_steps" in source
-    assert FakeZMQExecutionClient.submitted
+    assert [submission.compile_only for submission in FakeZMQExecutionClient.submitted] == [
+        True,
+        False,
+    ]
+    assert [
+        submission.compile_artifact_id
+        for submission in FakeZMQExecutionClient.submitted
+    ] == [None, "compile-1"]
+    assert FakeZMQExecutionClient.waits == ["compile-1", "exec-1"]
     assert {
         record["phase"] for record in timing.payloads()
     } >= {

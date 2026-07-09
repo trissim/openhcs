@@ -72,6 +72,7 @@ from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
 from openhcs.processing.backends.cellprofiler.library import canonical_module_name
 from openhcs.interop.cellprofiler.module_declarations import (
     BoundModuleSettings,
+    CellProfilerCompileTimeArtifactFlow,
     CellProfilerModule,
     ModuleSettingCoverageRecord,
 )
@@ -878,14 +879,100 @@ class GeneratedStepEmissionGroup:
         if self.first.module_type.force_grouped_public_function_spec:
             return True
         signatures = {
-            (
-                emission.func_name,
-                emission.translated_kwargs,
-                emission.invocation_options_literal,
-            )
+            self.public_function_spec_signature(emission)
             for emission in self.emissions
         }
         return len(signatures) > 1
+
+    @staticmethod
+    def public_function_spec_signature(emission: GeneratedStepEmission) -> tuple:
+        """Return the public callable signature that generated source emits."""
+        return (
+            emission.func_name,
+            tuple(
+                (
+                    key,
+                    python_literal(value, import_collector=None),
+                )
+                for key, value in GeneratedStepEmissionGroup.runtime_function_settings(
+                    emission
+                ).items()
+            ),
+            tuple(
+                (
+                    key,
+                    python_literal(value, import_collector=None),
+                )
+                for key, value in GeneratedStepEmissionGroup.grouped_public_settings(
+                    emission
+                ).items()
+            ),
+            emission.invocation_options_literal,
+        )
+
+    @staticmethod
+    def runtime_function_settings(
+        emission: GeneratedStepEmission,
+    ) -> GeneratedStepSettings:
+        """Return kwargs that affect runtime callable behavior."""
+        consumed_names = set(emission.module_type.compile_time_consumed_kwarg_names())
+        if not consumed_names:
+            return emission.translated_kwargs
+        return GeneratedStepSettings.from_mapping(
+            {
+                key: value
+                for key, value in emission.translated_kwargs.items()
+                if key not in consumed_names
+            }
+        )
+
+    @staticmethod
+    def grouped_public_settings(
+        emission: GeneratedStepEmission,
+    ) -> GeneratedStepSettings:
+        """Return compile-time public kwargs that distinguish grouped calls."""
+        grouped_names = set(emission.module_type.compile_time_grouped_public_kwarg_names())
+        if not grouped_names:
+            return GeneratedStepSettings()
+        return GeneratedStepSettings.from_mapping(
+            {
+                key: value
+                for key, value in emission.translated_kwargs.items()
+                if key in grouped_names
+            }
+        )
+
+    @staticmethod
+    def coalesced_public_settings(
+        emissions: tuple[GeneratedStepEmission, ...],
+    ) -> GeneratedStepSettings:
+        """Return compile-time public kwargs merged across one coalesced call."""
+        if not emissions:
+            return GeneratedStepSettings()
+        module_type = emissions[0].module_type
+        coalesced_names = module_type.compile_time_coalesced_public_kwarg_names()
+        if not coalesced_names:
+            return GeneratedStepSettings()
+
+        values_by_name: dict[GeneratedStepSettingKey, list[GeneratedLiteralValue]] = {
+            name: [] for name in coalesced_names
+        }
+        for emission in emissions:
+            settings = dict(emission.translated_kwargs.items())
+            for name in coalesced_names:
+                if name in settings:
+                    values_by_name[name].append(settings[name])
+
+        return GeneratedStepSettings.from_mapping(
+            {
+                name: module_type.coalesce_compile_time_public_kwarg_values(
+                    name,
+                    tuple(values),
+                )
+                for name, values in values_by_name.items()
+                if values
+            }
+        )
 
 
 @dataclass(frozen=True)
@@ -899,6 +986,7 @@ class PipelineGeneratorCodeEmitter:
         modules: List[ModuleBlock],
         function_names_by_module: Mapping[int, str],
         artifact_contracts: dict[int, ModuleArtifactContracts],
+        runtime_artifact_contracts: Mapping[int, ModuleArtifactContract],
         source_schema: PipelineImageSchema,
     ) -> tuple[
         str,
@@ -916,6 +1004,7 @@ class PipelineGeneratorCodeEmitter:
         setting_coverage: list[ModuleSettingCoverageRecord] = []
         source_lineage = RuntimeArtifactSourceLineage(artifact_contracts, source_schema)
         emissions: list[GeneratedStepEmission] = []
+        artifact_flow = CellProfilerCompileTimeArtifactFlow.empty()
         for module in modules:
             module_type = self.generator.registry.required_module_class(module.name)
             step_name = module.name
@@ -942,6 +1031,23 @@ class PipelineGeneratorCodeEmitter:
                 translated_kwargs=translated_kwargs,
                 param_mapping=param_mapping,
                 artifact_contract=artifact_contract,
+            )
+            translated_kwargs = translated_kwargs.with_defaults(
+                self._compile_time_public_kwargs(
+                    module_type,
+                    module,
+                    source_schema,
+                    artifact_flow=artifact_flow,
+                    group_key="default",
+                    runtime_artifact_contract=(
+                        runtime_artifact_contracts.get(module.module_num)
+                    ),
+                )
+            )
+            artifact_flow = module_type.compile_time_artifact_flow_after_invocation(
+                artifact_flow,
+                group_key="default",
+                module=module,
             )
             invocation_options_literal = (
                 module_type.generated_invocation_options_literal(
@@ -1005,6 +1111,43 @@ class PipelineGeneratorCodeEmitter:
                 pipeline_defaults,
             )
         return ("\n".join(lines), tuple(setting_coverage), pipeline_defaults)
+
+    def _compile_time_public_kwargs(
+        self,
+        module_type: type[CellProfilerModule],
+        module: ModuleBlock,
+        source_schema: PipelineImageSchema,
+        *,
+        artifact_flow: CellProfilerCompileTimeArtifactFlow,
+        group_key: str,
+        runtime_artifact_contract: ModuleArtifactContract | None,
+    ) -> dict[GeneratedStepSettingKey, GeneratedLiteralValue]:
+        """Return declaration-owned compile-time kwargs for generated source."""
+        grouped_values: dict[GeneratedStepSettingKey, list[GeneratedLiteralValue]] = {}
+        for record in module_type.compile_time_public_setting_records_for_generation(
+            module,
+            source_schema,
+            artifact_flow=artifact_flow,
+            group_key=group_key,
+        ):
+            key = normalize_cellprofiler_setting_name(record.name)
+            value = self.generator.settings_binder.parse_value(record.name, record.value)
+            grouped_values.setdefault(key, []).append(value)
+        public_kwargs = {
+            key: values[0] if len(values) == 1 else tuple(values)
+            for key, values in grouped_values.items()
+        }
+        public_kwargs.update(
+            module_type.compile_time_public_kwargs(module, source_schema)
+        )
+        if runtime_artifact_contract is not None:
+            public_kwargs.update(
+                module_type.compile_time_public_artifact_materialization_kwargs(
+                    module,
+                    runtime_artifact_contract,
+                )
+            )
+        return public_kwargs
 
     def coalesced_emission_groups(
         self,
@@ -1214,6 +1357,19 @@ class PipelineGeneratorCodeEmitter:
             lines,
             emission_group.first,
             import_collector=import_collector,
+            settings=(
+                GeneratedStepEmissionGroup.runtime_function_settings(
+                    emission_group.first
+                ).with_defaults(
+                    dict(
+                        GeneratedStepEmissionGroup.coalesced_public_settings(
+                            emission_group.emissions
+                        ).items()
+                    )
+                )
+                if emission_group.is_grouped
+                else None
+            ),
         )
 
     def emit_single_function_spec(
@@ -1222,11 +1378,13 @@ class PipelineGeneratorCodeEmitter:
         emission: GeneratedStepEmission,
         *,
         import_collector: set[tuple[str, str]],
+        settings: GeneratedStepSettings | None = None,
     ) -> None:
         """Append the legacy single-item ``func=`` source."""
-        if emission.translated_kwargs:
+        emitted_settings = settings if settings is not None else emission.translated_kwargs
+        if emitted_settings:
             kwargs_str = self.multiline_kwargs_literal(
-                emission.translated_kwargs,
+                emitted_settings,
                 import_collector=import_collector,
             )
             if emission.invocation_options_literal is None:
@@ -1464,6 +1622,7 @@ class PipelineGeneratorBuildStage:
             executable_modules,
             function_names_by_module,
             contracts_by_module,
+            runtime_module_contracts_by_module,
             symbol_table.source_schema,
         )
         pipeline_config = self._pipeline_config(
