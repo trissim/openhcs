@@ -28,15 +28,22 @@ from openhcs.interop.cellprofiler.module_declarations import (
     BoundModuleSettings,
     CellProfilerModule,
     ImageArtifactInputCapability,
+    ImageArtifactInputModule,
     ImageArtifactOutputCapability,
+    ImageArtifactOutputModule,
     MeasurementArtifactOutputCapability,
+    MeasurementArtifactOutputModule,
     ModuleSettingsSourceModule,
     ObjectLabelArtifactInputCapability,
     ObjectLabelArtifactOutputCapability,
+    ObjectArtifactInputModule,
+    ObjectArtifactOutputModule,
     PlaneRuntimeArtifactModule,
     ScopedMeasurementModule,
     SpatialGridArtifactInputCapability,
+    SpatialGridArtifactInputModule,
     SpatialGridArtifactOutputCapability,
+    SpatialGridArtifactOutputModule,
     StructuringElementSettingsModule,
 )
 from openhcs.interop.cellprofiler.setting_names import (
@@ -324,12 +331,12 @@ class GridCycleScopeExecutionModePolicy(CellProfilerInvocationExecutionModePolic
 
 class DefineGridManualModule(
     GridCycleScopeExecutionModePolicy,
+    ImageArtifactInputModule,
+    ObjectArtifactInputModule,
+    ImageArtifactOutputModule,
+    SpatialGridArtifactOutputModule,
     BinderSettingsSourceModule,
-    ArtifactContractModule,
-    ImageArtifactInputCapability,
-    ObjectLabelArtifactInputCapability,
-    ImageArtifactOutputCapability,
-    SpatialGridArtifactOutputCapability,
+    CellProfilerModule,
 ):
     module_name = "DefineGridManual"
     function_name = "define_grid_manual"
@@ -341,6 +348,15 @@ class DefineGridManualModule(
     definition_method_setting = SettingNameFamily(
         "Select the method to define the grid"
     )
+    display_grid_image_setting = "Select the image on which to display the grid"
+    drawing_image_setting = "Select the image to display when drawing"
+    previous_objects_setting = "Select the previously identified objects"
+    retain_grid_image_setting = "Retain an image of the grid?"
+    grid_image_output_setting = "Name the output image"
+    grid_output_setting = "Name the grid"
+    object_input_settings = (previous_objects_setting,)
+    image_output_settings = (grid_image_output_setting,)
+    spatial_grid_output_settings = (grid_output_setting,)
     settings_source = staticmethod(define_grid_bound_kwargs)
     invocation_options_source = staticmethod(define_grid_invocation_options)
 
@@ -373,16 +389,42 @@ class DefineGridManualModule(
         return super().resolve_function(module, default_function_name=function_name)
 
     @classmethod
+    def compile_time_public_setting_names(cls):
+        return (
+            *super().compile_time_public_setting_names(),
+            cls.display_grid_image_setting,
+            cls.drawing_image_setting,
+            cls.retain_grid_image_setting,
+        )
+
+    @classmethod
+    def compile_time_public_setting_records(cls, module, source_schema=None):
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        records = list(super().compile_time_public_setting_records(module, source_schema))
+        for setting_name in (
+            cls.display_grid_image_setting,
+            cls.drawing_image_setting,
+        ):
+            value = optional_setting_value(module, setting_name)
+            if value is not None:
+                records.append(ModuleSetting(setting_name, value))
+        retain_value = optional_setting_value(module, cls.retain_grid_image_setting)
+        if retain_value is not None:
+            records.append(ModuleSetting(cls.retain_grid_image_setting, retain_value))
+        return tuple(records)
+
+    @classmethod
     def artifact_contract(cls, assembler, builder, module):
         inputs = []
         for setting_name, capability_type in (
             (
-                "Select the image on which to display the grid",
+                cls.display_grid_image_setting,
                 ImageArtifactInputCapability,
             ),
-            ("Select the image to display when drawing", ImageArtifactInputCapability),
+            (cls.drawing_image_setting, ImageArtifactInputCapability),
             (
-                "Select the previously identified objects",
+                cls.previous_objects_setting,
                 ObjectLabelArtifactInputCapability,
             ),
         ):
@@ -395,17 +437,29 @@ class DefineGridManualModule(
                     capability_type.bind_artifact(cls, builder, module, capability_type.spec(normalized_artifact_name))
                 )
         outputs = []
-        if optional_setting_value(module, "Retain an image of the grid?") in {
+        if optional_setting_value(module, cls.retain_grid_image_setting) in {
             "Yes",
             "yes",
             "True",
             "true",
         }:
             outputs.append(
-                ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(required_setting_value(module, "Name the output image")))
+                cls.image_output_artifact(
+                    builder,
+                    module,
+                    required_setting_value(module, cls.grid_image_output_setting),
+                    setting=cls.grid_image_output_setting,
+                )
             )
         outputs.append(
-            SpatialGridArtifactOutputCapability.bind_artifact(cls, builder, module, SpatialGridArtifactOutputCapability.spec(required_setting_value(module, "Name the grid")))
+            SpatialGridArtifactOutputCapability.bind_artifact(
+                cls,
+                builder,
+                module,
+                SpatialGridArtifactOutputCapability.spec(
+                    required_setting_value(module, cls.grid_output_setting)
+                ),
+            )
         )
         return assembler.assemble_contract(
             module, builder, inputs=inputs, outputs=outputs
@@ -417,12 +471,12 @@ class IdentifyObjectsInGridModule(
     FieldsFromRowsMeasurementRecordMixin,
     NoObjectNameMeasurementRecordMixin,
     ObjectLabelOutputSourceMeasurementRecordMixin,
+    SpatialGridArtifactInputModule,
+    ObjectArtifactInputModule,
+    ObjectArtifactOutputModule,
+    MeasurementArtifactOutputModule,
     BinderSettingsSourceModule,
-    ArtifactContractModule,
-    SpatialGridArtifactInputCapability,
-    ObjectLabelArtifactInputCapability,
-    MeasurementArtifactOutputCapability,
-    ObjectLabelArtifactOutputCapability,
+    CellProfilerModule,
 ):
     module_name = "IdentifyObjectsInGrid"
     function_name = "identify_objects_in_grid"
@@ -434,6 +488,9 @@ class IdentifyObjectsInGridModule(
     output_objects_setting = SettingNameFamily("Name the objects to be identified")
     guiding_objects_setting = SettingNameFamily("Select the guiding objects")
     guiding_objects_default = "None"
+    spatial_grid_input_settings = (grid_setting,)
+    object_input_settings = (guiding_objects_setting,)
+    object_output_settings = (output_objects_setting,)
     settings_source = staticmethod(identify_objects_in_grid_bound_kwargs)
 
     @classmethod

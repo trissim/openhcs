@@ -139,7 +139,7 @@ def _step_config_universe_for_step(step):
         declaration = next(
             declaration
             for declaration in declarations
-            if type(config) is declaration.config_type
+            if isinstance(config, declaration.config_type)
         )
         roots.append(StepConfigRoot(declaration=declaration, value=config))
     return StepConfigUniverse(tuple(roots))
@@ -1294,7 +1294,7 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
     assert "func=identify_secondary_objects_2_runtime" not in generated.code
 
 
-def test_compiler_derives_cellprofiler_contracts_from_step_invocation_contracts():
+def test_compiler_ignores_step_invocation_contracts_for_cellprofiler_modules():
     from openhcs.core.function_patterns import (
         FunctionInvocationKey,
         normalize_function_pattern,
@@ -1325,18 +1325,17 @@ def test_compiler_derives_cellprofiler_contracts_from_step_invocation_contracts(
         identify_secondary_objects,
     )
 
-    primary_module = _identify_primary()
-    secondary_module = _identify_secondary()
-    generated = PipelineGenerator().generate_from_registry(
-        pipeline_name="contract_metadata",
-        source_cppipe=Path("source.cppipe"),
-        modules=[primary_module, secondary_module],
+    hidden_wrong_contract = ModuleArtifactContract(
+        module_name="WrongHiddenContract",
     )
 
     steps = [
         FunctionStep(
-            func=identify_primary_objects,
-            name=primary_module.name,
+            func=(
+                identify_primary_objects,
+                {"name_the_primary_objects_to_be_identified": "Nuclei"},
+            ),
+            name="IdentifyPrimaryObjects",
             invocation_contracts=FunctionStepInvocationContracts(
                 (
                     FunctionStepInvocationContractBinding(
@@ -1345,11 +1344,12 @@ def test_compiler_derives_cellprofiler_contracts_from_step_invocation_contracts(
                             "default",
                             0,
                         ),
-                        generated.runtime_module_contracts_by_module_num[1],
+                        hidden_wrong_contract,
                     ),
                 )
             ),
             source_bindings=StepSourceBindingsConfig(
+                enabled=True,
                 bindings=(
                     NamedSourceBinding(
                         alias="OrigBlue",
@@ -1359,8 +1359,14 @@ def test_compiler_derives_cellprofiler_contracts_from_step_invocation_contracts(
             ),
         ),
         FunctionStep(
-            func=identify_secondary_objects,
-            name=secondary_module.name,
+            func=(
+                identify_secondary_objects,
+                {
+                    "select_the_input_objects": "Nuclei",
+                    "name_the_objects_to_be_identified": "Cells",
+                },
+            ),
+            name="IdentifySecondaryObjects",
             invocation_contracts=FunctionStepInvocationContracts(
                 (
                     FunctionStepInvocationContractBinding(
@@ -1369,11 +1375,12 @@ def test_compiler_derives_cellprofiler_contracts_from_step_invocation_contracts(
                             "default",
                             0,
                         ),
-                        generated.runtime_module_contracts_by_module_num[2],
+                        hidden_wrong_contract,
                     ),
                 )
             ),
             source_bindings=StepSourceBindingsConfig(
+                enabled=True,
                 bindings=(
                     NamedSourceBinding(
                         alias="OrigGreen",
@@ -1422,7 +1429,7 @@ def test_compiler_derives_cellprofiler_contracts_from_step_invocation_contracts(
     )
     secondary_item = next(normalize_function_pattern(steps[1].func).iter_items())
 
-    contract = provider(
+    plan = provider(
         secondary_item,
         ArtifactDeclarationStepContext(
             step_index=1,
@@ -1433,19 +1440,18 @@ def test_compiler_derives_cellprofiler_contracts_from_step_invocation_contracts(
         ),
     )
 
+    assert plan is not None
+    contract = plan.contract.module_artifact_contract
     assert contract is not None
-    assert contract.module_artifact_contract is not None
-    assert contract.module_artifact_contract.module_name == "IdentifySecondaryObjects"
+    assert contract.module_name == "IdentifySecondaryObjects"
+    assert contract.module_name != "WrongHiddenContract"
     assert (
-        contract.module_artifact_contract.runtime_artifact_inputs[0].name
+        contract.runtime_artifact_inputs[0].name
         == "Nuclei"
     )
 
 
-def test_compiler_derives_cellprofiler_contracts_from_selected_cppipe(
-    monkeypatch,
-    tmp_path,
-):
+def test_compiler_ignores_selected_cppipe_for_cellprofiler_contracts(tmp_path):
     from openhcs.core.compiled_step_plan import CompiledStepPlan
     from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
     from openhcs.core.context.processing_context import ProcessingContext
@@ -1462,43 +1468,21 @@ def test_compiler_derives_cellprofiler_contracts_from_selected_cppipe(
         StepSourceBindingsConfig,
     )
     from openhcs.core.steps.function_step import FunctionStep
-    import openhcs.interop.cellprofiler.compile_time_contracts as compile_time_contracts
     from openhcs.processing.backends.cellprofiler import color_to_gray
     from openhcs.processing.backends.cellprofiler.color import ColorToGrayMode
 
-    module = _module_with_records(
-        1,
-        "ColorToGray",
-        [
-            ("Select the input image", "OrigColor"),
-            ("Conversion method", "Combine"),
-            ("Image type", "RGB"),
-            ("Name the output image", "OrigGray"),
-            ("Relative weight of the red channel", "1.0"),
-            ("Relative weight of the green channel", "1.0"),
-            ("Relative weight of the blue channel", "1.0"),
-        ],
-    )
-    generated = PipelineGenerator().generate_from_registry(
-        pipeline_name="selected_cppipe_contracts",
-        source_cppipe=Path("source.cppipe"),
-        modules=[module],
-    )
     cppipe_path = tmp_path / "selected.cppipe"
     cppipe_path.write_text("", encoding="utf-8")
 
-    def contracts_from_selected_cppipe(path: Path):
-        assert path == cppipe_path
-        return generated.runtime_module_contracts_by_module_num
-
-    monkeypatch.setattr(
-        compile_time_contracts,
-        "_runtime_contracts_from_cppipe_path",
-        contracts_from_selected_cppipe,
-    )
-
     step = FunctionStep(
-        func=(color_to_gray, {"mode": ColorToGrayMode.COMBINE}),
+        func=(
+            color_to_gray,
+            {
+                "mode": ColorToGrayMode.COMBINE,
+                "image_type": "rgb",
+                "name_the_output_image": "OrigGray",
+            },
+        ),
         name="ColorToGray",
         source_bindings=StepSourceBindingsConfig(
             enabled=True,
@@ -1552,7 +1536,7 @@ def test_compiler_derives_cellprofiler_contracts_from_selected_cppipe(
     )
     item = next(normalize_function_pattern(step.func).iter_items())
 
-    contract = provider(
+    plan = provider(
         item,
         ArtifactDeclarationStepContext(
             step_index=0,
@@ -1560,50 +1544,29 @@ def test_compiler_derives_cellprofiler_contracts_from_selected_cppipe(
         ),
     )
 
+    assert plan is not None
+    contract = plan.contract.module_artifact_contract
     assert contract is not None
-    assert contract.module_artifact_contract is not None
-    assert contract.module_artifact_contract.module_name == "ColorToGray"
-    assert [spec.name for spec in contract.module_artifact_contract.inputs] == [
+    assert contract.module_name == "ColorToGray"
+    assert [spec.name for spec in contract.inputs] == [
         "OrigColor",
     ]
-    assert [spec.name for spec in contract.module_artifact_contract.outputs] == [
+    assert [spec.name for spec in contract.outputs] == [
         "OrigGray",
     ]
 
 
-def test_raw_public_and_generated_cellprofiler_steps_compile_equivalent_contracts(
-    monkeypatch,
-    tmp_path,
-):
+def test_generated_cellprofiler_public_steps_compile_expected_contracts_without_sidecars():
     from openhcs.core.compiled_step_plan import CompiledStepPlan
     from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
     from openhcs.core.context.processing_context import ProcessingContext
-    from openhcs.core.function_patterns import (
-        FunctionInvocationKey,
-        normalize_function_pattern,
-    )
-    from openhcs.core.function_step_invocation_contracts import (
-        FunctionStepInvocationContractBinding,
-        FunctionStepInvocationContracts,
-    )
+    from openhcs.core.function_patterns import normalize_function_pattern
     from openhcs.core.invocation_artifacts import (
         ArtifactDeclarationStepContext,
         PipelineInvocationContractProviderAuthority,
     )
-    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
     from openhcs.core.pipeline.compilation_session import CompilationSession
     from openhcs.core.pipeline.step_snapshot import StepSnapshot
-    from openhcs.core.source_bindings import (
-        NamedSourceBinding,
-        StepSourceBindingsConfig,
-    )
-    from openhcs.core.steps.function_step import FunctionStep
-    import openhcs.interop.cellprofiler.compile_time_contracts as compile_time_contracts
-    from openhcs.processing.backends.cellprofiler import (
-        identify_primary_objects,
-        identify_secondary_objects,
-    )
-
     modules = (_identify_primary(), _identify_secondary())
     generated = PipelineGenerator().generate_from_registry(
         pipeline_name="raw_generated_contract_parity",
@@ -1611,94 +1574,14 @@ def test_raw_public_and_generated_cellprofiler_steps_compile_equivalent_contract
         modules=list(modules),
     )
     expected_contracts = generated.runtime_module_contracts_by_module_num
-    source_bindings = (
-        StepSourceBindingsConfig(
-            enabled=True,
-            bindings=(
-                NamedSourceBinding(
-                    alias="OrigBlue",
-                    artifact_kind=ImageArtifactType,
-                ),
-            ),
-        ),
-        StepSourceBindingsConfig(
-            enabled=True,
-            bindings=(
-                NamedSourceBinding(
-                    alias="OrigGreen",
-                    artifact_kind=ImageArtifactType,
-                ),
-            ),
-        ),
-    )
 
-    raw_steps = (
-        FunctionStep(
-            func=identify_primary_objects,
-            name="IdentifyPrimaryObjects",
-            source_bindings=source_bindings[0],
-        ),
-        FunctionStep(
-            func=identify_secondary_objects,
-            name="IdentifySecondaryObjects",
-            source_bindings=source_bindings[1],
-        ),
-    )
-    generated_steps = (
-        FunctionStep(
-            func=identify_primary_objects,
-            name="IdentifyPrimaryObjects",
-            source_bindings=source_bindings[0],
-            invocation_contracts=FunctionStepInvocationContracts(
-                (
-                    FunctionStepInvocationContractBinding(
-                        FunctionInvocationKey.from_callable(
-                            identify_primary_objects,
-                            "default",
-                            0,
-                        ),
-                        expected_contracts[1],
-                    ),
-                )
-            ),
-        ),
-        FunctionStep(
-            func=identify_secondary_objects,
-            name="IdentifySecondaryObjects",
-            source_bindings=source_bindings[1],
-            invocation_contracts=FunctionStepInvocationContracts(
-                (
-                    FunctionStepInvocationContractBinding(
-                        FunctionInvocationKey.from_callable(
-                            identify_secondary_objects,
-                            "default",
-                            0,
-                        ),
-                        expected_contracts[2],
-                    ),
-                )
-            ),
-        ),
-    )
+    namespace: dict = {"__name__": "public_generated_contract_parity"}
+    exec(compile(generated.code, "<generated-cellprofiler-pipeline>", "exec"), namespace)
+    generated_steps = tuple(namespace["pipeline_steps"])
+    assert generated_steps
+    assert all(not step.invocation_contracts.bindings for step in generated_steps)
 
-    cppipe_path = tmp_path / "selected.cppipe"
-    cppipe_path.write_text("", encoding="utf-8")
-
-    def contracts_from_selected_cppipe(path: Path):
-        assert path == cppipe_path
-        return expected_contracts
-
-    monkeypatch.setattr(
-        compile_time_contracts,
-        "_runtime_contracts_from_cppipe_path",
-        contracts_from_selected_cppipe,
-    )
-
-    def compile_module_contracts(
-        steps,
-        *,
-        orchestrator,
-    ) -> tuple[ModuleArtifactContract, ...]:
+    def compile_module_contracts(steps) -> tuple[ModuleArtifactContract, ...]:
         snapshots = tuple(
             StepSnapshot(
                 index=index,
@@ -1727,7 +1610,9 @@ def test_raw_public_and_generated_cellprofiler_steps_compile_equivalent_contract
                 axis_id="A01",
             ),
             steps=tuple(steps),
-            orchestrator=orchestrator,
+            orchestrator=SimpleNamespace(
+                pipeline_config=generated.pipeline_config or PipelineConfig(),
+            ),
             global_config=GlobalPipelineConfig(),
             step_state_map={index: object() for index in range(len(steps))},
             snapshots=snapshots,
@@ -1738,41 +1623,27 @@ def test_raw_public_and_generated_cellprofiler_steps_compile_equivalent_contract
         resolved_contracts: list[ModuleArtifactContract] = []
         for index, step in enumerate(steps):
             item = next(normalize_function_pattern(step.func).iter_items())
-            contract = provider(
+            plan = provider(
                 item,
                 ArtifactDeclarationStepContext(
                     step_index=index,
                     source_bindings=step.source_bindings,
                 ),
             )
+            assert plan is not None
+            contract = plan.contract.module_artifact_contract
             assert contract is not None
-            assert contract.module_artifact_contract is not None
-            resolved_contracts.append(contract.module_artifact_contract)
+            resolved_contracts.append(contract)
         return tuple(resolved_contracts)
 
-    plate_path = tmp_path / "plate"
-    plate_path.mkdir()
-    raw_orchestrator = PipelineOrchestrator(
-        plate_path=plate_path,
-        selected_pipeline_path=cppipe_path,
-    )
+    generated_contracts = compile_module_contracts(generated_steps)
 
-    raw_contracts = compile_module_contracts(
-        raw_steps,
-        orchestrator=raw_orchestrator,
-    )
-    generated_contracts = compile_module_contracts(
-        generated_steps,
-        orchestrator=SimpleNamespace(pipeline_config=PipelineConfig()),
-    )
-
-    assert raw_contracts == generated_contracts
-    assert raw_contracts == (expected_contracts[1], expected_contracts[2])
-    assert [contract.module_name for contract in raw_contracts] == [
+    assert generated_contracts == (expected_contracts[1], expected_contracts[2])
+    assert [contract.module_name for contract in generated_contracts] == [
         "IdentifyPrimaryObjects",
         "IdentifySecondaryObjects",
     ]
-    assert [spec.name for spec in raw_contracts[1].runtime_artifact_inputs] == [
+    assert [spec.name for spec in generated_contracts[1].runtime_artifact_inputs] == [
         "Nuclei",
     ]
 
@@ -2358,9 +2229,10 @@ def test_pipeline_generator_coalesces_correct_illumination_apply_repeated_pairs(
     )
 
     assert generated.code.count('name="CorrectIlluminationApply"') == 1
-    assert "func={" in generated.code
-    assert "'1': (correct_illumination_apply" in generated.code
-    assert "'2': (correct_illumination_apply" in generated.code
+    assert "func={" not in generated.code
+    assert "'1': (correct_illumination_apply" not in generated.code
+    assert "'2': (correct_illumination_apply" not in generated.code
+    assert "func=(correct_illumination_apply" in generated.code
     assert "select_the_input_image" not in generated.code
     assert "select_the_illumination_function" not in generated.code
     assert "name_the_output_image" not in generated.code
@@ -2370,6 +2242,89 @@ def test_pipeline_generator_coalesces_correct_illumination_apply_repeated_pairs(
         for contract in generated.artifact_contracts
         if contract.module_name == "CorrectIlluminationApply"
     ] == [["CorrectedStain1"], ["CorrectedStain2"]]
+
+
+def test_pipeline_generator_keeps_grouped_noncanonical_illumination_apply_outputs():
+    setup_modules = [
+        _module_with_records(
+            1,
+            "Metadata",
+            [
+                ("Metadata extraction method", "Extract from file/folder names"),
+                ("Metadata source", "File name"),
+                (
+                    "Regular expression to extract from file name",
+                    r"^(?P<Plate>.*)_ch(?P<ChannelNumber>[0-9])",
+                ),
+            ],
+        ),
+        _module_with_records(
+            2,
+            "NamesAndTypes",
+            [
+                ("Assignments count", "4"),
+                ("Assign a name to", "Images matching rules"),
+                ("Select the image type", "Grayscale image"),
+                ("Name to assign these images", "OrigProtein"),
+                ("Match metadata", "[]"),
+                ("Image set matching method", "Order"),
+                ("Select the rule criteria", 'and (metadata does ChannelNumber "1")'),
+                ("Assign a name to", "Images matching rules"),
+                ("Name to assign these images", "IllumProtein"),
+                ("Select the image type", "Illumination function"),
+                (
+                    "Select the rule criteria",
+                    'and (file does contain "VitraChannel1ILLUM.npy")',
+                ),
+                ("Assign a name to", "Images matching rules"),
+                ("Name to assign these images", "OrigDNA"),
+                ("Select the image type", "Grayscale image"),
+                ("Select the rule criteria", 'and (metadata does ChannelNumber "2")'),
+                ("Assign a name to", "Images matching rules"),
+                ("Name to assign these images", "IllumDNA"),
+                ("Select the image type", "Illumination function"),
+                (
+                    "Select the rule criteria",
+                    'and (file does contain "VitraChannel2ILLUM.npy")',
+                ),
+            ],
+        ),
+    ]
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cp_illumination_apply_noncanonical",
+        source_cppipe=Path("source.cppipe"),
+        modules=[
+            _module_with_records(
+                3,
+                "CorrectIlluminationApply",
+                [
+                    ("Select the input image", "OrigProtein"),
+                    ("Name the output image", "CorrProtein"),
+                    ("Select the illumination function", "IllumProtein"),
+                    ("Select how the illumination function is applied", "Divide"),
+                    ("Select the input image", "OrigDNA"),
+                    ("Name the output image", "CorrDNA"),
+                    ("Select the illumination function", "IllumDNA"),
+                    ("Select how the illumination function is applied", "Divide"),
+                    ("Set output image values less than 0 equal to 0?", "Yes"),
+                    ("Set output image values greater than 1 equal to 1?", "Yes"),
+                ],
+            )
+        ],
+        skipped_modules=setup_modules,
+    )
+
+    assert generated.code.count('name="CorrectIlluminationApply"') == 1
+    assert "func={" in generated.code
+    assert "'1': (correct_illumination_apply" in generated.code
+    assert "'2': (correct_illumination_apply" in generated.code
+    assert "'name_the_output_image': 'CorrProtein'" in generated.code
+    assert "'name_the_output_image': 'CorrDNA'" in generated.code
+    assert [
+        [spec.name for spec in contract.outputs]
+        for contract in generated.artifact_contracts
+        if contract.module_name == "CorrectIlluminationApply"
+    ] == [["CorrProtein"], ["CorrDNA"]]
 
 
 def test_cellprofiler_symbol_table_compiles_singular_aliases_and_image_artifacts():

@@ -13,7 +13,6 @@ from types import MappingProxyType
 from typing import Iterable, Mapping
 from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
 from openhcs.core.artifacts import (
-    CROP_MASK_ARTIFACT_SIDECAR,
     ArtifactSpec,
     ArtifactInputPlan,
     ArtifactOutputPlan,

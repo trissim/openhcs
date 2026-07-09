@@ -1415,13 +1415,23 @@ class MeasureObjectNeighborsModule(
             module, cls.retain_count_image_setting
         ) in {"Yes", "yes", "True", "true"}:
             outputs.append(
-                ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(output_names[0]))
+                cls.image_output_artifact(
+                    builder,
+                    module,
+                    output_names[0],
+                    setting=cls.output_image_setting,
+                )
             )
         if optional_setting_value(
             module, cls.retain_percent_image_setting
         ) in {"Yes", "yes", "True", "true"}:
             outputs.append(
-                ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(output_names[1]))
+                cls.image_output_artifact(
+                    builder,
+                    module,
+                    output_names[1],
+                    setting=cls.output_image_setting,
+                )
             )
         outputs.append(cls.measurement_output_artifact(builder, module))
         return assembler.assemble_contract(

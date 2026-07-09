@@ -22,7 +22,7 @@ from .cellprofiler_literals import decode_cellprofiler_setting_literal
 
 logger = logging.getLogger(__name__)
 
-CellProfilerMetadataValue = str | tuple[dict[str, str | None], ...]
+CellProfilerMetadataValue = str | tuple[str, ...] | tuple[dict[str, str | None], ...]
 
 
 @dataclass(frozen=True, slots=True)

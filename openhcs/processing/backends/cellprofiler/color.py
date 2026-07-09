@@ -33,7 +33,9 @@ from openhcs.interop.cellprofiler.module_declarations import (
     BinderSettingsSourceModule,
     CellProfilerModule,
     ImageArtifactInputCapability,
+    ImageArtifactInputModule,
     ImageArtifactOutputCapability,
+    ImageArtifactOutputModule,
     ModuleSettingsSourceModule,
 )
 from openhcs.interop.cellprofiler.setting_names import (
@@ -48,14 +50,15 @@ from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     cellprofiler_enum_value_setting_parser,
     coerce_cellprofiler_enum,
+    parse_cellprofiler_bool,
 )
 
 
 class ColorToGrayModule(
     BinderSettingsSourceModule,
-    ArtifactContractModule,
-    ImageArtifactInputCapability,
-    ImageArtifactOutputCapability,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    CellProfilerModule,
 ):
     module_name = "ColorToGray"
     function_name = "color_to_gray"
@@ -110,6 +113,13 @@ class ColorToGrayModule(
         ),
     )
 
+    @classmethod
+    def declared_artifact_input_settings(cls):
+        return (
+            *super().declared_artifact_input_settings(),
+            (cls.input_image_setting, ImageArtifactInputCapability),
+        )
+
     @dataclass(frozen=True, slots=True)
     class Plan:
         input_image_name: str
@@ -138,22 +148,54 @@ class ColorToGrayModule(
     def compile_time_public_setting_records(cls, module, source_schema=None):
         del source_schema
         from openhcs.interop.cellprofiler.parser import ModuleSetting
-        from openhcs.interop.cellprofiler.setting_names import setting_name_matches
+        from openhcs.interop.cellprofiler.setting_names import (
+            setting_name_matches,
+            setting_names,
+        )
 
         preserved_settings = (
-            cls.output_image_setting,
-            cls.channel_output_image_setting,
             *cls.rgb_output_flags,
             *cls.hsv_output_flags,
         )
-        return tuple(
+        records = [
             ModuleSetting(setting.name, setting.value)
             for setting in module.iter_settings()
             if any(
                 setting_name_matches(setting.name, preserved)
                 for preserved in preserved_settings
             )
+        ]
+        input_name = optional_setting_value(module, cls.input_image_setting)
+        mode = cls.conversion_method(module)
+        image_type = cls.image_type(module)
+        output_names = cls.output_image_names(
+            module,
+            mode=mode,
+            image_type=image_type,
         )
+        canonical_output_names = (
+            cls.compile_time_canonical_output_names(
+                input_name,
+                mode=mode,
+                image_type=image_type,
+                existing_records=tuple(module.iter_settings()),
+            )
+            if input_name is not None
+            else ()
+        )
+        if output_names != canonical_output_names:
+            output_setting = (
+                cls.channel_output_image_setting
+                if image_type is cls.ImageType.CHANNELS
+                and mode is cls.ConversionMethod.SPLIT
+                else cls.output_image_setting
+            )
+            output_setting_name = setting_names(output_setting)[0]
+            records.extend(
+                ModuleSetting(output_setting_name, output_name)
+                for output_name in output_names
+            )
+        return tuple(records)
 
     @classmethod
     def compile_time_public_setting_names(cls):
@@ -164,6 +206,132 @@ class ColorToGrayModule(
             *cls.rgb_output_flags,
             *cls.hsv_output_flags,
         )
+
+    @classmethod
+    def compile_time_canonical_output_setting_records(
+        cls,
+        request,
+        *,
+        existing_records,
+    ):
+        """Rebuild sparse ColorToGray image-output rows from public settings."""
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        del request
+        if cls.compile_time_setting_values(
+            existing_records, cls.output_image_setting
+        ) or cls.compile_time_setting_values(
+            existing_records, cls.channel_output_image_setting
+        ):
+            return ()
+        input_name = cls.compile_time_single_setting_value(
+            existing_records, cls.input_image_setting
+        )
+        mode_literal = cls.compile_time_single_setting_value(
+            existing_records, cls.conversion_method_setting
+        )
+        image_type_literal = cls.compile_time_single_setting_value(
+            existing_records, cls.image_type_setting
+        )
+        if input_name is None or mode_literal is None or image_type_literal is None:
+            return ()
+
+        mode = coerce_cellprofiler_enum(cls.ConversionMethod, mode_literal)
+        image_type = coerce_cellprofiler_enum(cls.ImageType, image_type_literal)
+        output_names = cls.compile_time_canonical_output_names(
+            input_name,
+            mode=mode,
+            image_type=image_type,
+            existing_records=existing_records,
+        )
+        if image_type is cls.ImageType.CHANNELS and mode is cls.ConversionMethod.SPLIT:
+            setting_name = cls.channel_output_image_setting.canonical
+        else:
+            setting_name = cls.output_image_setting.canonical
+        return tuple(ModuleSetting(setting_name, name) for name in output_names)
+
+    @classmethod
+    def compile_time_canonical_output_names(
+        cls,
+        input_name: str,
+        *,
+        mode: "ColorToGrayModule.ConversionMethod",
+        image_type: "ColorToGrayModule.ImageType",
+        existing_records,
+    ) -> tuple[str, ...]:
+        """Return declaration-owned ColorToGray output names for sparse source."""
+        base_name = cls.compile_time_grayscale_base_name(input_name)
+        if mode is cls.ConversionMethod.COMBINE:
+            return (f"{base_name}Gray",)
+        if image_type is cls.ImageType.CHANNELS:
+            channel_indices = cls.compile_time_channel_indices(existing_records)
+            if not channel_indices:
+                channel_indices = (0,)
+            return tuple(f"{base_name}Channel{index + 1}" for index in channel_indices)
+        _output_offset, output_flags = cls.fixed_channel_output_settings(image_type)
+        output_suffixes = (
+            ("Red", "Green", "Blue")
+            if image_type is cls.ImageType.RGB
+            else ("Hue", "Saturation", "Value")
+        )
+        return tuple(
+            f"{base_name}{suffix}"
+            for suffix, flag in zip(output_suffixes, output_flags, strict=True)
+            if cls.compile_time_flag_enabled(existing_records, flag)
+        )
+
+    @classmethod
+    def compile_time_setting_values(cls, records, setting_name) -> tuple[str, ...]:
+        """Return sparse compile-time setting values owned by this module."""
+        from openhcs.interop.cellprofiler.setting_names import setting_name_matches
+
+        return tuple(
+            record.value
+            for record in records
+            if setting_name_matches(record.name, setting_name)
+        )
+
+    @classmethod
+    def compile_time_single_setting_value(cls, records, setting_name) -> str | None:
+        """Return one sparse compile-time setting value for this module."""
+        values = cls.compile_time_setting_values(records, setting_name)
+        if not values:
+            return None
+        if len(values) != 1:
+            raise ValueError(
+                "Expected one ColorToGray compile-time setting row for "
+                f"{setting_name!r}, got {values!r}."
+            )
+        return values[0]
+
+    @classmethod
+    def compile_time_flag_enabled(cls, records, setting_name: str) -> bool:
+        """Return whether a sparse compile-time output flag is enabled."""
+        value = cls.compile_time_single_setting_value(records, setting_name)
+        if value is None:
+            return False
+        return parse_cellprofiler_bool(value)
+
+    @classmethod
+    def compile_time_channel_indices(cls, records) -> tuple[int, ...]:
+        """Return sparse compile-time channel indices for channel splitting."""
+        values = cls.compile_time_setting_values(records, cls.channel_number_setting)
+        if not values:
+            return ()
+        return tuple(cls.channel_number_index(value) for value in values)
+
+    @staticmethod
+    def compile_time_grayscale_base_name(input_name: str) -> str:
+        """Return the source-name stem used for canonical grayscale outputs."""
+        for suffix in ("Color", "Colour"):
+            if input_name.endswith(suffix) and len(input_name) > len(suffix):
+                return input_name[: -len(suffix)]
+        return input_name
+
+    @classmethod
+    def compile_time_image_output_names(cls, module: "ModuleBlock") -> tuple[str, ...]:
+        """Return image outputs using ColorToGray's mode-dependent declaration."""
+        return cls.output_image_names(module)
 
     @classmethod
     def plan(
@@ -207,18 +375,28 @@ class ColorToGrayModule(
             return setting_values(module, cls.channel_output_image_setting)
         output_offset, output_flags = cls.fixed_channel_output_settings(image_type)
         output_names = setting_values(module, cls.output_image_setting)
-        selected = tuple(
-            (
-                output_names[output_offset + index]
-                for index, flag in enumerate(output_flags)
-                if cls.flag_enabled(module, binder, flag)
-            )
+        enabled_indices = tuple(
+            index
+            for index, flag in enumerate(output_flags)
+            if cls.flag_enabled(module, binder, flag)
         )
-        if not selected:
+        if not enabled_indices:
             raise ValueError(
                 f"ColorToGray({module.module_num}) split mode must declare at least one enabled output channel."
             )
-        return selected
+        full_cellprofiler_row_count = output_offset + len(output_flags)
+        if len(output_names) >= full_cellprofiler_row_count:
+            return tuple(
+                output_names[output_offset + index] for index in enabled_indices
+            )
+        if len(output_names) == len(enabled_indices):
+            return output_names
+        raise ValueError(
+            f"ColorToGray({module.module_num}) split mode expected either "
+            f"{full_cellprofiler_row_count} CellProfiler output rows or "
+            f"{len(enabled_indices)} sparse public output rows, got "
+            f"{len(output_names)}."
+        )
 
     @classmethod
     def conversion_method(
@@ -328,19 +506,18 @@ class ColorToGrayModule(
     def artifact_contract(cls, assembler, builder, module):
         image = ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(cls.input_name(module)))
         outputs = [
-            ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(output_name))
+            cls.image_output_artifact(builder, module, output_name)
             for output_name in cls.output_image_names(module)
         ]
         return assembler.assemble_contract(
             module, builder, inputs=[image], outputs=outputs
         )
 
-
 class GrayToColorModule(
     BinderSettingsSourceModule,
-    ArtifactContractModule,
-    ImageArtifactInputCapability,
-    ImageArtifactOutputCapability,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    CellProfilerModule,
 ):
     module_name = "GrayToColor"
     function_name = "gray_to_color"
@@ -355,6 +532,7 @@ class GrayToColorModule(
     stack_image_setting = "Image name"
     stack_color_setting = "Color"
     stack_weight_setting = "Weight"
+    output_image_setting = "Name the output image"
     stack_default_color = "#ff0000"
     stack_default_weight = "1.0"
 
@@ -408,6 +586,47 @@ class GrayToColorModule(
         image_name: str
         color: str
         weight: str
+
+    @classmethod
+    def compile_time_public_setting_names(cls):
+        return (
+            *super().compile_time_public_setting_names(),
+            *cls.rgb_image_settings,
+            *cls.cmyk_image_settings,
+            cls.stack_image_setting,
+            cls.output_image_setting,
+        )
+
+    @classmethod
+    def compile_time_public_setting_records(cls, module, source_schema=None):
+        del source_schema
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+        from openhcs.interop.cellprofiler.setting_names import (
+            setting_name_matches,
+            setting_names,
+        )
+
+        preserved_settings = (
+            *cls.rgb_image_settings,
+            *cls.cmyk_image_settings,
+            cls.stack_image_setting,
+            cls.output_image_setting,
+        )
+        setting_records = module.iter_settings()
+        if setting_records:
+            return tuple(
+                setting
+                for setting in setting_records
+                if any(
+                    setting_name_matches(setting.name, preserved)
+                    for preserved in preserved_settings
+                )
+            )
+        return tuple(
+            ModuleSetting(setting_names(setting_name)[0], value)
+            for setting_name in preserved_settings
+            for value in setting_values(module, setting_name)
+        )
 
     @classmethod
     def settings_source(
@@ -622,7 +841,12 @@ class GrayToColorModule(
             ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(name))
             for name in cls.image_input_names(module)
         ]
-        output = ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(required_setting_value(module, "Name the output image")))
+        output = cls.image_output_artifact(
+            builder,
+            module,
+            required_setting_value(module, cls.output_image_setting),
+            setting=cls.output_image_setting,
+        )
         return assembler.assemble_contract(
             module, builder, inputs=inputs, outputs=[output]
         )
@@ -630,9 +854,9 @@ class GrayToColorModule(
 
 class UnmixColorsModule(
     ModuleSettingsSourceModule,
-    ArtifactContractModule,
-    ImageArtifactInputCapability,
-    ImageArtifactOutputCapability,
+    ImageArtifactInputModule,
+    ImageArtifactOutputModule,
+    CellProfilerModule,
 ):
     module_name = "UnmixColors"
     function_name = "unmix_colors"
@@ -750,7 +974,7 @@ class UnmixColorsModule(
     def artifact_contract(cls, assembler, builder, module):
         image = ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(cls.input_name(module)))
         outputs = [
-            ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(row.image_name))
+            cls.image_output_artifact(builder, module, row.image_name)
             for row in cls.output_rows(module)
         ]
         return assembler.assemble_contract(

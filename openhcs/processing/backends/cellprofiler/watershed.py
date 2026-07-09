@@ -61,6 +61,8 @@ from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
     optional_setting_value,
     required_setting_value,
+    setting_name_matches,
+    setting_names,
     setting_values,
     split_symbol_names,
 )
@@ -307,8 +309,12 @@ class WatershedModule(
         WatershedBasicSemanticDefaultContract,
         WatershedExecutionDomainContract,
     )
+    watershed_method_setting = "Generate from"
+    declump_method_setting = "Declump method"
+    markers_setting = "Markers"
+    mask_setting = "Mask"
     setting_parameter_aliases = {
-        "Generate from": "watershed_method",
+        watershed_method_setting: "watershed_method",
         "Use advanced settings?": "use_advanced_settings",
         "Minimum absolute internal distance": "min_intensity",
     }
@@ -318,21 +324,167 @@ class WatershedModule(
     )
     image_input_settings = (
         segmentation_image_setting,
-        "Markers",
+        markers_setting,
         intensity_image_setting,
-        "Mask",
+        mask_setting,
     )
     object_output_settings = ("Name the output object",)
     cellprofiler4_revisions = ModuleRevisionRange(maximum=3)
     ignored_settings = (
         "InputImage",
-        "Markers",
-        "Mask",
+        markers_setting,
+        mask_setting,
         "Intensity image",
         "Reference Image",
         "OutputObjects",
         "Display watershed seeds?",
     )
+
+    @classmethod
+    def compile_time_divergent_image_input_setting_records(
+        cls,
+        module,
+        source_schema,
+        *,
+        artifact_flow,
+        group_key: str,
+    ):
+        """Preserve active mask role rows even when the mask is the primary image."""
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        records = list(
+            super().compile_time_divergent_image_input_setting_records(
+                module,
+                source_schema,
+                artifact_flow=artifact_flow,
+                group_key=group_key,
+            )
+        )
+        for concrete_name in setting_names(cls.mask_setting):
+            records.extend(
+                ModuleSetting(concrete_name, value)
+                for value in setting_values(module, concrete_name)
+                if split_symbol_names(value)
+            )
+        return tuple(dict.fromkeys(records))
+
+    @classmethod
+    def compile_time_required_artifact_input_settings_for_records(
+        cls, existing_records
+    ):
+        required_settings: list[str | SettingNameFamily] = [
+            cls.segmentation_image_setting
+        ]
+        watershed_method = coerce_cellprofiler_enum(
+            WatershedMethod,
+            cls._compile_time_record_value(
+                existing_records, cls.watershed_method_setting
+            )
+            or WatershedMethod.DISTANCE,
+        )
+        declump_method = coerce_watershed_declump_method(
+            cls._compile_time_record_value(
+                existing_records, cls.declump_method_setting
+            )
+            or WatershedDeclumpMethod.SHAPE
+        )
+        if watershed_method is WatershedMethod.MARKERS:
+            required_settings.append(cls.markers_setting)
+        if (
+            watershed_method is WatershedMethod.INTENSITY
+            or declump_method is WatershedDeclumpMethod.INTENSITY
+        ):
+            required_settings.append(cls.intensity_image_setting)
+        if cls._compile_time_record_symbol_names(existing_records, cls.mask_setting):
+            required_settings.append(cls.mask_setting)
+
+        return tuple(
+            (setting, capability_type)
+            for setting, capability_type in super().compile_time_required_artifact_input_settings()
+            if any(
+                setting_name_matches(concrete_name, required_setting)
+                for concrete_name in setting_names(setting)
+                for required_setting in required_settings
+            )
+        )
+
+    @classmethod
+    def compile_time_main_flow_input_setting_records(
+        cls,
+        request,
+        *,
+        existing_records,
+    ):
+        """Infer Watershed's primary segmentation image from the first flow image."""
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        flow_image_names = request.artifact_flow.image_names_for_group(
+            request.group_key
+        )
+        if not flow_image_names and request.main_flow_image_name is not None:
+            flow_image_names = (request.main_flow_image_name,)
+        if not flow_image_names:
+            return ()
+
+        missing_image_settings = tuple(
+            setting_name
+            for setting_name, artifact_type in cls._missing_declared_input_settings(
+                existing_records
+            )
+            if artifact_type is ImageArtifactType
+        )
+        if not missing_image_settings:
+            return ()
+
+        segmentation_setting = setting_names(cls.segmentation_image_setting)[0]
+        records: list[ModuleSetting] = []
+        remaining_settings = list(missing_image_settings)
+        if any(
+            setting_name_matches(setting_name, cls.segmentation_image_setting)
+            for setting_name in missing_image_settings
+        ):
+            records.append(ModuleSetting(segmentation_setting, flow_image_names[0]))
+            remaining_settings = [
+                setting_name
+                for setting_name in remaining_settings
+                if not setting_name_matches(
+                    setting_name, cls.segmentation_image_setting
+                )
+            ]
+
+        if not remaining_settings:
+            return tuple(records)
+
+        remaining_flow_images = flow_image_names[len(records) :]
+        if len(remaining_settings) != len(remaining_flow_images):
+            raise ValueError(
+                f"Module {request.module_name}({request.module_num}) has "
+                f"{len(remaining_settings)} Watershed image role settings still "
+                f"missing after primary-image inference, but artifact flow has "
+                f"{len(remaining_flow_images)} remaining image names: "
+                f"{remaining_flow_images!r}."
+            )
+        records.extend(
+            ModuleSetting(setting_name, image_name)
+            for setting_name, image_name in zip(
+                remaining_settings, remaining_flow_images, strict=True
+            )
+        )
+        return tuple(records)
+
+    @classmethod
+    def _compile_time_record_value(cls, existing_records, setting_name):
+        for record in existing_records:
+            if setting_name_matches(record.name, setting_name):
+                return record.value
+        return None
+
+    @classmethod
+    def _compile_time_record_symbol_names(cls, existing_records, setting_name):
+        value = cls._compile_time_record_value(existing_records, setting_name)
+        if value is None:
+            return ()
+        return split_symbol_names(value)
 
     @classmethod
     def preserve_duplicate_artifact_inputs(cls, module: "ModuleBlock") -> bool:

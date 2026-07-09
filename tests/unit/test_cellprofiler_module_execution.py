@@ -1445,6 +1445,63 @@ def test_stack_image_output_with_scalar_metadata_uses_primary_source_payload() -
     assert source_payload is current_payload
 
 
+def test_track_objects_retained_image_uses_tracked_object_source_payload() -> None:
+    current_payload = RuntimeImagePayloadContext(
+        np.zeros((3, 5, 6), dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("color0.tif", "color1.tif", "color2.tif"),
+                component_metadata=(
+                    {"well": "A01", "site": "1", "channel": "1", "timepoint": "0"},
+                    {"well": "A01", "site": "1", "channel": "1", "timepoint": "1"},
+                    {"well": "A01", "site": "1", "channel": "1", "timepoint": "2"},
+                ),
+            ),
+            source_image_names=("OrigColor",),
+        ),
+    ).payload()
+    tracked_objects = ObjectLabelSet(
+        name="Embryos",
+        labels=np.zeros((3, 5, 6), dtype=np.int32),
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=("gray0.tif", "gray1.tif", "gray2.tif"),
+            component_metadata=(
+                {"well": "A01", "site": "1", "channel": "1", "timepoint": "0"},
+                {"well": "A01", "site": "1", "channel": "1", "timepoint": "1"},
+                {"well": "A01", "site": "1", "channel": "1", "timepoint": "2"},
+            ),
+        ),
+    )
+    runtime = _FakeCellProfilerRuntime({}, objects={"Embryos": tracked_objects})
+    request = _cellprofiler_output_record_request(
+        module_name="TrackObjects",
+        inputs=(ArtifactSpec.input("Embryos", ObjectLabelsArtifactType),),
+        runtime_artifact_inputs=(ArtifactSpec.input("Embryos", ObjectLabelsArtifactType),),
+        outputs=(ArtifactSpec.output("TrackedCells", ImageArtifactType),),
+        adapter=runtime,
+        spec=ArtifactSpec.output("TrackedCells", ImageArtifactType),
+        output_value=np.zeros((3, 5, 6), dtype=np.float32),
+        output_values={},
+        source=CellProfilerImageRequest(
+            payload=current_payload,
+            source_image_name=None,
+            image_count=3,
+            execution_mode=ImagePayloadExecutionMode.FULL_STACK,
+        ),
+        current_image=current_payload,
+        func=track_objects,
+        call_kwargs={},
+    )
+
+    source_payload = CellProfilerImageOutputSourcePayloadPolicy.for_module(
+        "TrackObjects"
+    ).source_payload(request)
+
+    assert source_payload is tracked_objects
+
+
 def test_single_image_output_main_flow_uses_recorded_primary_image_source() -> None:
     current_payload = RuntimeImagePayloadContext(
         np.zeros((3, 4), dtype=np.float32),
@@ -10884,6 +10941,71 @@ def test_colocalization_record_builder_preserves_source_pair_table_identity() ->
         }
     ]
     assert record.source_context.source_image_name == "DNA__ER"
+
+
+def test_object_label_source_lookup_preserves_explicit_measurement_image_owner() -> None:
+    object_labels = ObjectLabelSet(
+        name="Cells",
+        labels=ObjectLabelPayload(
+            labels=np.asarray([[1, 0], [0, 2]], dtype=np.int32),
+        ),
+        source_image_name="InvertedRed",
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=("/source/inverted-red.tif",)
+        ),
+    )
+    measurement_image_payload = RuntimeImagePayloadContext(
+        np.ones((2, 2), dtype=np.float32),
+        mask=None,
+        metadata=ImagePayloadMetadata(
+            source_path="/source/orig-red.tif",
+            source_image_names=("OrigRed",),
+        ),
+    ).payload()
+    lookup = AdapterObjectLabelSourceLookup(
+        adapter=SimpleNamespace(
+            get_objects=lambda _name, *, current_image=None: object_labels,
+        )
+    )
+
+    resolved = lookup.source_context_for(
+        CellProfilerMeasurementSourceContext(
+            source_image_name="OrigRed",
+            source_image_payload=measurement_image_payload,
+        ),
+        "Cells",
+    )
+
+    assert resolved.source_image_name == "OrigRed"
+    assert resolved.source_image_payload is measurement_image_payload
+    assert resolved.payload_metadata().source_image_paths == ("/source/orig-red.tif",)
+
+
+def test_object_label_source_lookup_falls_back_to_object_source_without_measurement_image() -> None:
+    object_labels = ObjectLabelSet(
+        name="Cells",
+        labels=ObjectLabelPayload(
+            labels=np.asarray([[1, 0], [0, 2]], dtype=np.int32),
+        ),
+        source_image_name="InvertedRed",
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            paths=("/source/inverted-red.tif",)
+        ),
+    )
+    lookup = AdapterObjectLabelSourceLookup(
+        adapter=SimpleNamespace(
+            get_objects=lambda _name, *, current_image=None: object_labels,
+        )
+    )
+
+    resolved = lookup.source_context_for(
+        CellProfilerMeasurementSourceContext(),
+        "Cells",
+    )
+
+    assert resolved.source_image_name == "InvertedRed"
+    assert resolved.source_image_payload is object_labels
+    assert resolved.payload_metadata().source_image_paths == ("/source/inverted-red.tif",)
 
 
 def test_measure_object_neighbors_records_object_topology_without_image_source() -> (

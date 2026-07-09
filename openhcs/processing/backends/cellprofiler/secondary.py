@@ -1276,13 +1276,16 @@ class IdentifySecondaryObjectsModule(
     validated = True
     contract = ProcessingContract.PURE_2D
     confidence = 1.0
-    image_input_settings = ("Select the input image",)
-    object_input_settings = ("Select the input objects",)
-    object_output_settings = ("Name the objects to be identified",)
+    input_image_setting = "Select the input image"
+    input_objects_setting = "Select the input objects"
+    output_objects_setting = "Name the objects to be identified"
+    image_input_settings = (input_image_setting,)
+    object_input_settings = (input_objects_setting,)
+    object_output_settings = (output_objects_setting,)
     ignored_settings = (
-        "Select the input objects",
-        "Name the objects to be identified",
-        "Select the input image",
+        input_objects_setting,
+        output_objects_setting,
+        input_image_setting,
         "Discard the associated primary objects?",
         "Name the new primary objects",
     )
@@ -1303,9 +1306,22 @@ class IdentifySecondaryObjectsModule(
     )
 
     @classmethod
+    def compile_time_public_setting_records(cls, module, source_schema=None):
+        del source_schema
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        return (
+            *super().compile_time_public_setting_records(module),
+            *(
+                ModuleSetting(cls.input_image_setting, value)
+                for value in setting_values(module, cls.input_image_setting)
+            ),
+        )
+
+    @classmethod
     def measurement_output_relations(cls, builder, module):
         del builder
-        image_name = required_setting_value(module, "Select the input image")
+        image_name = required_setting_value(module, cls.input_image_setting)
         return (
             GroupLineageSourceRelation(
                 source=ArtifactSpecRef.input(image_name, ImageArtifactType)
@@ -1314,10 +1330,10 @@ class IdentifySecondaryObjectsModule(
 
     @classmethod
     def artifact_contract(cls, assembler, builder, module):
-        input_objects = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(required_setting_value(module, "Select the input objects")))
-        image = ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(required_setting_value(module, "Select the input image")))
+        input_objects = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(required_setting_value(module, cls.input_objects_setting)))
+        image = ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(required_setting_value(module, cls.input_image_setting)))
         output_name = required_setting_value(
-            module, "Name the objects to be identified"
+            module, cls.output_objects_setting
         )
         output_objects = ObjectLabelArtifactOutputCapability.bind_artifact(
             cls,

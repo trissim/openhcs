@@ -19,6 +19,9 @@ from openhcs.interop.cellprofiler.runtime.bound_parameters import (
 from openhcs.interop.cellprofiler.runtime.primary_image_input_policies import (
     ObjectLabelDrivenPrimaryImageInputPolicy,
 )
+from openhcs.interop.cellprofiler.runtime.output_contexts import (
+    CellProfilerImageOutputSourcePayloadPolicyMixin,
+)
 from openhcs.interop.cellprofiler.settings_binder import (
     normalize_cellprofiler_setting_name,
     parse_cellprofiler_bool,
@@ -119,12 +122,25 @@ class TrackObjectsPrimaryImageInputPolicy(ObjectLabelDrivenPrimaryImageInputPoli
         }
 
 
+class TrackObjectsRetainedImageSourcePayloadPolicy(
+    CellProfilerImageOutputSourcePayloadPolicyMixin
+):
+    """Source retained tracking images from the tracked object-label input."""
+
+    def source_payload(
+        self,
+        request: "CellProfilerOutputRecordRequest",
+    ) -> "CellProfilerRuntimeValue | None":
+        return request.input_object_label_output_source_payload()
+
+
 class TrackObjectsModule(
     TrackingMeasurementRecordRowsMixin,
     FieldDerivedMeasurementFeatureModule,
     NoObjectNameMeasurementRecordMixin,
     NoSourceMeasurementRecordMixin,
     FieldsFromRowsMeasurementRecordMixin,
+    TrackObjectsRetainedImageSourcePayloadPolicy,
     TrackObjectsPrimaryImageInputPolicy,
     ObjectArtifactInputModule,
     MeasurementArtifactOutputModule,
@@ -169,6 +185,45 @@ class TrackObjectsModule(
     tracked_objects_setting = "Select the objects to track"
     retain_image_setting = "Save color-coded image?"
     output_image_setting = "Name the output image"
+    default_output_image_name = "TrackedCells"
+
+    @classmethod
+    def compile_time_public_setting_names(cls):
+        return (
+            *super().compile_time_public_setting_names(),
+            cls.retain_image_setting,
+            cls.output_image_setting,
+        )
+
+    @classmethod
+    def compile_time_canonical_output_setting_records(
+        cls,
+        request,
+        *,
+        existing_records,
+    ):
+        """Rebuild TrackObjects retained-image rows from public declarations."""
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        del request
+        retain_value = _track_objects_compile_time_single(
+            existing_records,
+            cls.retain_image_setting,
+        )
+        output_name = _track_objects_compile_time_single(
+            existing_records,
+            cls.output_image_setting,
+        )
+        if retain_value is not None and not parse_cellprofiler_bool(retain_value):
+            return ()
+        records: list[ModuleSetting] = []
+        if retain_value is None:
+            records.append(ModuleSetting(cls.retain_image_setting, "Yes"))
+        if output_name is None:
+            records.append(
+                ModuleSetting(cls.output_image_setting, cls.default_output_image_name)
+            )
+        return tuple(records)
 
     @classmethod
     def object_input_setting_names(cls):
@@ -180,13 +235,11 @@ class TrackObjectsModule(
         retain_value = optional_setting_value(module, cls.retain_image_setting)
         if retain_value is not None and parse_cellprofiler_bool(retain_value):
             outputs.append(
-                ImageArtifactOutputCapability.bind_artifact(
-                    cls,
+                cls.image_output_artifact(
                     builder,
                     module,
-                    ImageArtifactOutputCapability.spec(
-                        required_setting_value(module, cls.output_image_setting)
-                    ),
+                    required_setting_value(module, cls.output_image_setting),
+                    setting=cls.output_image_setting,
                 )
             )
         return tuple(outputs)
@@ -232,6 +285,23 @@ class TrackObjectsModule(
             ),
             ignored_unmapped_settings=ignored_unmapped_settings,
         )
+
+
+def _track_objects_compile_time_single(records, setting_name: str) -> str | None:
+    from openhcs.interop.cellprofiler.setting_names import setting_name_matches
+
+    values = tuple(
+        record.value
+        for record in records
+        if setting_name_matches(record.name, setting_name)
+    )
+    if not values:
+        return None
+    if len(values) != 1:
+        raise ValueError(
+            f"Expected one compile-time setting row for {setting_name!r}, got {values!r}."
+        )
+    return values[0]
 
 
 from abc import ABC, abstractmethod

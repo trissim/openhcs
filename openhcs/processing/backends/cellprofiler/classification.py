@@ -640,7 +640,12 @@ class ClassifyObjectsSingleMeasurementModule(
             output_name = optional_setting_value(module, cls.output_image_setting)
             if output_name is not None:
                 outputs.append(
-                    ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(output_name))
+                    cls.image_output_artifact(
+                        builder,
+                        module,
+                        output_name,
+                        setting=cls.output_image_setting,
+                    )
                 )
         return (*outputs, *super().artifact_contract_outputs(builder, module))
 

@@ -724,12 +724,18 @@ def _compile_invocation(
     step_context: ArtifactDeclarationStepContext,
     runtime_parameter_bindings: Sequence[RuntimeParameterBinding],
 ) -> CompiledFunctionInvocation:
-    compile_contract = invocation_contract_provider(item, step_context)
-    if compile_contract is not None:
-        item = replace(item, contract=compile_contract)
+    contract_plan = invocation_contract_provider(item, step_context)
+    consumed_kwarg_names: tuple[str, ...] = ()
+    if contract_plan is not None:
+        item = replace(item, contract=contract_plan.contract)
+        consumed_kwarg_names = contract_plan.consumed_kwarg_names
     declarations = declaration_provider(item, step_context)
-    user_kwargs, compiled_runtime_bindings = _compile_runtime_parameter_bindings(
+    invocation_kwargs = _remove_consumed_compile_time_kwargs(
         item.kwargs,
+        consumed_kwarg_names,
+    )
+    user_kwargs, compiled_runtime_bindings = _compile_runtime_parameter_bindings(
+        invocation_kwargs,
         runtime_parameter_bindings,
         item.contract.runtime_bound_parameter_types,
     )
@@ -748,6 +754,17 @@ def _compile_invocation(
         ),
         runtime_parameter_bindings=compiled_runtime_bindings,
     )
+
+
+def _remove_consumed_compile_time_kwargs(
+    kwargs: RuntimeKwargItems,
+    consumed_kwarg_names: Sequence[str],
+) -> RuntimeKwargItems:
+    """Remove public kwargs consumed by compile-time invocation planning."""
+    if not consumed_kwarg_names:
+        return kwargs
+    consumed = frozenset(consumed_kwarg_names)
+    return tuple((key, value) for key, value in kwargs if key not in consumed)
 
 
 def _compile_runtime_parameter_bindings(

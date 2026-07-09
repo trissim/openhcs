@@ -52,6 +52,7 @@ from openhcs.interop.cellprofiler.module_declarations import (
     ModuleSettingsSourceModule,
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
+    source_schema_declares_image_alias,
 )
 from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.setting_names import (
@@ -197,6 +198,61 @@ class CorrectIlluminationOriginalImageName:
 
 
 @dataclass(frozen=True, slots=True)
+class CorrectIlluminationCanonicalImageNames:
+    """Canonical CP image names derived from an original source image name."""
+
+    source_name: str
+    original_prefix: ClassVar[str] = "Orig"
+    illumination_prefix: ClassVar[str] = "Illum"
+    corrected_prefix: ClassVar[str] = "Corrected"
+
+    def suffix(self) -> str:
+        if self.source_name.startswith(type(self).original_prefix):
+            return self.source_name[len(type(self).original_prefix):]
+        return self.source_name
+
+    def illumination_function_name(self) -> str:
+        return f"{type(self).illumination_prefix}{self.suffix()}"
+
+    def corrected_image_name(self) -> str:
+        return f"{type(self).corrected_prefix}{self.suffix()}"
+
+
+def _single_compile_time_setting_value(
+    records: tuple[ModuleSetting, ...],
+    setting_name: str,
+) -> str | None:
+    values = tuple(record.value for record in records if record.name == setting_name)
+    if not values:
+        return None
+    if len(values) != 1:
+        raise ValueError(
+            f"Expected one compile-time setting row for {setting_name!r}, got {values!r}."
+        )
+    return values[0]
+
+
+def _canonical_compile_time_identity_records(
+    *,
+    source_schema: object,
+    input_setting: str,
+    input_name: str | None,
+    output_setting: str,
+    output_name: str | None,
+    canonical_output_name: str | None,
+) -> tuple[ModuleSetting, ...]:
+    """Keep only identity rows that public OpenHCS flow cannot reconstruct."""
+    records: list[ModuleSetting] = []
+    if input_name and not source_schema_declares_image_alias(
+        source_schema, input_name
+    ):
+        records.append(ModuleSetting(input_setting, input_name))
+    if output_name and output_name != canonical_output_name:
+        records.append(ModuleSetting(output_setting, output_name))
+    return tuple(records)
+
+
+@dataclass(frozen=True, slots=True)
 class CorrectedImageOutputPlaneStack:
     """Detect corrected-image output stacks that represent one source plane."""
 
@@ -260,7 +316,6 @@ class CorrectIlluminationApplyModule(
     module_name = "CorrectIlluminationApply"
     function_name = "correct_illumination_apply"
     validated = True
-    force_grouped_public_function_spec = True
     contract = ProcessingContract.PURE_2D
     confidence = 1.0
     input_image_setting = "Select the input image"
@@ -425,6 +480,122 @@ class CorrectIlluminationApplyModule(
         )
 
     @classmethod
+    def compile_time_public_setting_records(cls, module, source_schema=None):
+        input_name = optional_setting_value(module, cls.input_image_setting)
+        output_name = optional_setting_value(module, cls.output_image_setting)
+        illumination_name = optional_setting_value(
+            module, cls.illumination_function_setting
+        )
+        records = list(
+            _canonical_compile_time_identity_records(
+                source_schema=source_schema,
+                input_setting=cls.input_image_setting,
+                input_name=input_name,
+                output_setting=cls.output_image_setting,
+                output_name=output_name,
+                canonical_output_name=(
+                    CorrectIlluminationCanonicalImageNames(
+                        input_name
+                    ).corrected_image_name()
+                    if input_name
+                    else None
+                ),
+            )
+        )
+        canonical_illumination_name = (
+            CorrectIlluminationCanonicalImageNames(
+                input_name
+            ).illumination_function_name()
+            if input_name
+            else None
+        )
+        if illumination_name and illumination_name != canonical_illumination_name:
+            records.append(
+                ModuleSetting(cls.illumination_function_setting, illumination_name)
+            )
+        return tuple(records)
+
+
+    @classmethod
+    def compile_time_setting_records_for_invocation(cls, request):
+        records = [
+            *cls.compile_time_setting_records_from_kwargs(request.kwargs),
+            *cls.compile_time_public_setting_records_from_kwargs(request.kwargs),
+        ]
+        records.extend(
+            cls.compile_time_source_binding_input_setting_records(
+                request,
+                existing_records=tuple(records),
+            )
+        )
+        records.extend(
+            cls.compile_time_main_flow_input_setting_records(
+                request,
+                existing_records=tuple(records),
+            )
+        )
+        records.extend(
+            cls.compile_time_illumination_function_setting_records(
+                existing_records=tuple(records),
+            )
+        )
+        records.extend(
+            cls.compile_time_canonical_output_setting_records(
+                request,
+                existing_records=tuple(records),
+            )
+        )
+        return tuple(records)
+
+    @classmethod
+    def compile_time_illumination_function_setting_records(
+        cls,
+        *,
+        existing_records: tuple[ModuleSetting, ...],
+    ) -> tuple[ModuleSetting, ...]:
+        if _single_compile_time_setting_value(
+            existing_records, cls.illumination_function_setting
+        ) is not None:
+            return ()
+        input_name = _single_compile_time_setting_value(
+            existing_records, cls.input_image_setting
+        )
+        if input_name is None:
+            return ()
+        return (
+            ModuleSetting(
+                cls.illumination_function_setting,
+                CorrectIlluminationCanonicalImageNames(
+                    input_name
+                ).illumination_function_name(),
+            ),
+        )
+
+    @classmethod
+    def compile_time_canonical_output_setting_records(
+        cls,
+        request,
+        *,
+        existing_records: tuple[ModuleSetting, ...],
+    ) -> tuple[ModuleSetting, ...]:
+        del request
+        if _single_compile_time_setting_value(
+            existing_records, cls.output_image_setting
+        ) is not None:
+            return ()
+        input_name = _single_compile_time_setting_value(
+            existing_records, cls.input_image_setting
+        )
+        if input_name is None:
+            return ()
+        return (
+            ModuleSetting(
+                cls.output_image_setting,
+                CorrectIlluminationCanonicalImageNames(input_name).corrected_image_name(),
+            ),
+        )
+
+    @classmethod
     def artifact_contract(cls, assembler, builder, module):
         image_names = setting_values(module, cls.input_image_setting)
         illumination_names = setting_values(module, cls.illumination_function_setting)
@@ -457,6 +628,13 @@ class CorrectIlluminationApplyModule(
                         output_name,
                         ImageArtifactType,
                         ArtifactSpec.input(image_name, ImageArtifactType),
+                        **cls.declared_output_artifact_spec_kwargs(
+                            builder,
+                            module,
+                            setting=cls.output_image_setting,
+                            capability_type=ImageArtifactOutputCapability,
+                            name=output_name,
+                        ),
                     ),
                 )
             )
@@ -500,14 +678,60 @@ class CorrectIlluminationCalculateModule(
     validated = True
     contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
+    input_image_setting = "Select the input image"
+    output_image_setting = "Name the output image"
     ignored_settings = (
         "Retain the averaged image?",
         "Name the averaged image",
         "Retain the dilated image?",
         "Name the dilated image",
     )
-    image_input_settings = ("Select the input image",)
-    image_output_settings = ("Name the output image",)
+    image_input_settings = (input_image_setting,)
+    image_output_settings = (output_image_setting,)
+
+    @classmethod
+    def compile_time_public_setting_records(cls, module, source_schema=None):
+        input_name = optional_setting_value(module, cls.input_image_setting)
+        return _canonical_compile_time_identity_records(
+            source_schema=source_schema,
+            input_setting=cls.input_image_setting,
+            input_name=input_name,
+            output_setting=cls.output_image_setting,
+            output_name=optional_setting_value(module, cls.output_image_setting),
+            canonical_output_name=(
+                CorrectIlluminationCanonicalImageNames(
+                    input_name
+                ).illumination_function_name()
+                if input_name
+                else None
+            ),
+        )
+
+    @classmethod
+    def compile_time_canonical_output_setting_records(
+        cls,
+        request,
+        *,
+        existing_records: tuple[ModuleSetting, ...],
+    ) -> tuple[ModuleSetting, ...]:
+        del request
+        if _single_compile_time_setting_value(
+            existing_records, cls.output_image_setting
+        ) is not None:
+            return ()
+        input_name = _single_compile_time_setting_value(
+            existing_records, cls.input_image_setting
+        )
+        if input_name is None:
+            return ()
+        return (
+            ModuleSetting(
+                cls.output_image_setting,
+                CorrectIlluminationCanonicalImageNames(
+                    input_name
+                ).illumination_function_name(),
+            ),
+        )
 
     def calculation_scope_literal(value: str) -> str:
         cleaned = (

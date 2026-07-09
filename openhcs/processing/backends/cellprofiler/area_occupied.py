@@ -303,15 +303,54 @@ class MeasureImageAreaOccupiedBinaryModule(
 
     @classmethod
     def compile_time_setting_records_from_kwargs(cls, kwargs):
-        if not {
-            "operand_choices",
+        if "operand_choices" not in kwargs:
+            return ()
+        operand_choices = tuple(kwargs["operand_choices"])
+        if {
             "input_names",
             "retained_image_names",
         }.issubset(kwargs):
-            return ()
-        operand_choices = tuple(kwargs["operand_choices"])
-        input_names = tuple(kwargs["input_names"])
-        retained_image_names = tuple(kwargs["retained_image_names"])
+            return cls._compile_time_setting_records_from_runtime_row_kwargs(
+                operand_choices,
+                tuple(kwargs["input_names"]),
+                tuple(kwargs["retained_image_names"]),
+            )
+
+        binary_key = cls._public_setting_kwarg_name(cls.binary_image_setting)
+        objects_key = cls._public_setting_kwarg_name(cls.objects_setting)
+        retained_key = cls._public_setting_kwarg_name(cls.output_image_setting)
+        binary_names = iter(cls._public_selected_names(kwargs.get(binary_key)))
+        object_names = iter(cls._public_selected_names(kwargs.get(objects_key)))
+        retained_names = iter(cls._public_selected_names(kwargs.get(retained_key)))
+        records: list[ModuleSetting] = []
+        for operand_literal in operand_choices:
+            operand = cls._operand_from_kwarg(operand_literal)
+            input_name = (
+                next(binary_names, None)
+                if operand is OperandChoice.BINARY_IMAGE
+                else next(object_names, None)
+            )
+            if input_name is None:
+                raise ValueError(
+                    "MeasureImageAreaOccupied public selectors do not match "
+                    f"operand choices {operand_choices!r}."
+                )
+            records.extend(
+                cls._compile_time_setting_records_for_row(
+                    operand,
+                    input_name=input_name,
+                    retained_image_name=next(retained_names, None),
+                )
+            )
+        return tuple(records)
+
+    @classmethod
+    def _compile_time_setting_records_from_runtime_row_kwargs(
+        cls,
+        operand_choices: tuple[object, ...],
+        input_names: tuple[object, ...],
+        retained_image_names: tuple[object, ...],
+    ) -> tuple[ModuleSetting, ...]:
         if (
             len(operand_choices) != len(input_names)
             or len(input_names) != len(retained_image_names)
@@ -338,6 +377,73 @@ class MeasureImageAreaOccupiedBinaryModule(
                         else str(retained_image_name)
                     ),
                 )
+            )
+        return tuple(records)
+
+    @classmethod
+    def _public_setting_kwarg_name(cls, setting: str | SettingNameFamily) -> str:
+        from openhcs.interop.cellprofiler_setting_normalization import (
+            normalize_cellprofiler_setting_name,
+        )
+
+        return normalize_cellprofiler_setting_name(setting_names(setting)[0])
+
+    @staticmethod
+    def _public_selected_names(value: object) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, Sequence) and not isinstance(value, str):
+            return tuple(name for item in value for name in split_symbol_names(str(item)))
+        return split_symbol_names(str(value))
+
+    @classmethod
+    def compile_time_public_setting_names(
+        cls,
+    ) -> tuple[str | SettingNameFamily, ...]:
+        return (
+            *super().compile_time_public_setting_names(),
+            cls.binary_image_setting,
+            cls.objects_setting,
+            cls.output_image_setting,
+        )
+
+    @classmethod
+    def compile_time_public_setting_records(cls, module, source_schema=None):
+        del source_schema
+        rows = cls.measurement_rows(module)
+        binary_names = tuple(
+            row.binary_image_name
+            for row in rows
+            if row.binary_image_name is not None
+        )
+        object_names = tuple(
+            row.objects_name
+            for row in rows
+            if row.objects_name is not None
+        )
+        retained_names = tuple(
+            row.retained_image_name
+            for row in rows
+            if row.retained_image_name is not None
+        )
+        records: list[ModuleSetting] = [*super().compile_time_public_setting_records(module)]
+        if binary_names:
+            records.append(
+                ModuleSetting(
+                    setting_names(cls.binary_image_setting)[0],
+                    ", ".join(binary_names),
+                )
+            )
+        if object_names:
+            records.append(
+                ModuleSetting(
+                    setting_names(cls.objects_setting)[0],
+                    ", ".join(object_names),
+                )
+            )
+        if retained_names:
+            records.append(
+                ModuleSetting(cls.output_image_setting, ", ".join(retained_names))
             )
         return tuple(records)
 

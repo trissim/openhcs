@@ -965,7 +965,17 @@ class FilterObjectsModule(
             if relationship is not None:
                 inputs.append(relationship)
         outputs = [
-            builder.declare_artifact(spec, module)
+            (
+                cls.image_output_artifact(
+                    builder,
+                    module,
+                    spec.name,
+                    relations=spec.relations,
+                    sidecar_role=spec.sidecar_role,
+                )
+                if spec.artifact_type is ImageArtifactType
+                else builder.declare_artifact(spec, module)
+            )
             for spec in plan.output_artifact_specs(cls.measurement_artifact_name(module))
         ]
         return assembler.assemble_contract(

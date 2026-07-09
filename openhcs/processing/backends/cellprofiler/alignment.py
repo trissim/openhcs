@@ -32,6 +32,7 @@ from openhcs.interop.cellprofiler.module_declarations import (
     MeasurementArtifactOutputCapability,
     MeasurementArtifactOutputModule,
     ModuleSettingsSourceModule,
+    source_schema_declares_image_alias,
 )
 from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
@@ -281,6 +282,26 @@ class AlignModule(
                 f"Module Align({module.module_num}) has {len(modes)} additional alignment modes for {len(additional_inputs)} additional images."
             )
         return modes
+
+    @classmethod
+    def compile_time_public_setting_records(cls, module, source_schema=None):
+        """Keep derived image role selectors public while source inputs inherit."""
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        records: list[ModuleSetting] = []
+        for setting_name in (cls.first_input_setting, cls.second_input_setting):
+            image_name = optional_setting_value(module, setting_name)
+            if image_name and not source_schema_declares_image_alias(
+                source_schema, image_name
+            ):
+                records.append(ModuleSetting(setting_name, image_name))
+        records.extend(
+            ModuleSetting(cls.additional_input_setting, image_name)
+            for image_name in setting_values(module, cls.additional_input_setting)
+            if not source_schema_declares_image_alias(source_schema, image_name)
+        )
+        records.extend(super().compile_time_public_setting_records(module, source_schema))
+        return tuple(records)
 
     @classmethod
     def artifact_contract(cls, assembler, builder, module):

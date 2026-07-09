@@ -117,7 +117,14 @@ class MeasureImageQualityModule(
                         for alias in loaded_image_aliases
                     ),
                 )
-        return (ModuleSetting(cls.image_selection_setting, selection),)
+        records = [ModuleSetting(cls.image_selection_setting, selection)]
+        if selection == cls.selected_images_selection:
+            records.extend(
+                ModuleSetting(cls.selected_images_setting, image_name)
+                for value in setting_values(module, cls.selected_images_setting)
+                for image_name in split_symbol_names(value)
+            )
+        return tuple(records)
 
     @classmethod
     def compile_time_public_setting_names(cls):

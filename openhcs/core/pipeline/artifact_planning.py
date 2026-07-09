@@ -237,9 +237,9 @@ def extract_artifact_declarations(
     consumer_invocations: defaultdict[str, list[FunctionInvocationKey]] = defaultdict(list)
 
     for invocation in normalize_function_pattern(pattern).iter_items():
-        compile_contract = invocation_contract_provider(invocation, step_context)
-        if compile_contract is not None:
-            invocation = replace(invocation, contract=compile_contract)
+        contract_plan = invocation_contract_provider(invocation, step_context)
+        if contract_plan is not None:
+            invocation = replace(invocation, contract=contract_plan.contract)
         declarations = declaration_provider(invocation, step_context)
         group_key = invocation.key.group_key
         normalized_key = None if group_key == DEFAULT_GROUP_KEY else group_key

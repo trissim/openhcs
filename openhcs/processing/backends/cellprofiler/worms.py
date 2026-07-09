@@ -404,6 +404,86 @@ class StraightenWormsModule(
     longitudinal_stripes_setting = "Number of longitudinal stripes"
     alignment_setting = "Align worms?"
 
+    @classmethod
+    def compile_time_public_setting_names(cls):
+        return (
+            *super().compile_time_public_setting_names(),
+            cls.input_objects_setting,
+            cls.output_objects_setting,
+            cls.input_image_setting,
+            cls.output_image_setting,
+        )
+
+    @classmethod
+    def compile_time_public_setting_records(cls, module, source_schema=None):
+        del source_schema
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        records = [
+            ModuleSetting(setting_name, value)
+            for setting_name in (
+                cls.input_objects_setting,
+                cls.output_objects_setting,
+            )
+            for value in setting_values(module, setting_name)
+        ]
+        for binding in cls.image_bindings(module):
+            records.append(ModuleSetting(cls.input_image_setting, binding.input_image_name))
+            records.append(ModuleSetting(cls.output_image_setting, binding.output_image_name))
+        return tuple(records)
+
+    @classmethod
+    def compile_time_public_setting_records_from_kwargs(cls, kwargs):
+        from openhcs.interop.cellprofiler.cellprofiler_literals import (
+            cellprofiler_setting_literal,
+        )
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+        from openhcs.interop.cellprofiler.settings_binder import (
+            normalize_cellprofiler_setting_name,
+        )
+
+        records = []
+        for setting_name in (
+            cls.input_objects_setting,
+            cls.output_objects_setting,
+        ):
+            key = normalize_cellprofiler_setting_name(setting_name)
+            if key in kwargs:
+                records.append(
+                    ModuleSetting(
+                        setting_name,
+                        cellprofiler_setting_literal(kwargs[key]),
+                    )
+                )
+
+        input_values = _compile_time_tuple_kwarg(
+            kwargs,
+            cls.input_image_setting,
+        )
+        output_values = _compile_time_tuple_kwarg(
+            kwargs,
+            cls.output_image_setting,
+        )
+        if len(input_values) != len(output_values):
+            raise ValueError(
+                "StraightenWorms public image identity kwargs must contain the "
+                "same number of input and output image names."
+            )
+        for input_name, output_name in zip(input_values, output_values, strict=True):
+            records.append(
+                ModuleSetting(
+                    cls.input_image_setting,
+                    cellprofiler_setting_literal(input_name),
+                )
+            )
+            records.append(
+                ModuleSetting(
+                    cls.output_image_setting,
+                    cellprofiler_setting_literal(output_name),
+                )
+            )
+        return tuple(records)
+
     class FlipMode(Enum):
         NONE = "do_not_align"
         TOP = "top_brightest"
@@ -498,7 +578,11 @@ class StraightenWormsModule(
             for binding in image_bindings
         ]
         image_outputs = [
-            ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(binding.output_image_name))
+            cls.image_output_artifact(
+                builder,
+                module,
+                binding.output_image_name,
+            )
             for binding in image_bindings
         ]
         output_objects = ObjectLabelArtifactOutputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactOutputCapability.spec(cls.output_objects_name(module)))
@@ -515,6 +599,22 @@ class StraightenWormsModule(
             inputs=[*side_inputs, *image_inputs],
             outputs=[*image_outputs, output_objects, measurements],
         )
+
+
+def _compile_time_tuple_kwarg(kwargs: dict[str, Any], setting_name: str) -> tuple[Any, ...]:
+    from openhcs.interop.cellprofiler.settings_binder import (
+        normalize_cellprofiler_setting_name,
+    )
+
+    key = normalize_cellprofiler_setting_name(setting_name)
+    if key not in kwargs:
+        return ()
+    value = kwargs[key]
+    if isinstance(value, tuple):
+        return value
+    if isinstance(value, list):
+        return tuple(value)
+    return (value,)
 
 
 class OverlapStyle(str, Enum):

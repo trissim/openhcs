@@ -33,7 +33,12 @@ from openhcs.interop.cellprofiler.module_declarations import (
     ScopedMeasurementModule,
     StructuringElementSettingsModule,
 )
-from openhcs.interop.cellprofiler.setting_names import optional_setting_value
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    setting_names,
+    setting_values,
+    split_symbol_names,
+)
 from openhcs.interop.cellprofiler.cellprofiler_literals import (
     cellprofiler_enum_from_literal,
 )
@@ -172,6 +177,105 @@ class ImageMathModule(
             "Ignore the image masks?", "ignore_masks", parse_cellprofiler_bool
         ),
     )
+
+    @classmethod
+    def compile_time_public_setting_records(cls, module, source_schema=None):
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        records = list(super().compile_time_public_setting_records(module, source_schema))
+        for setting in cls._active_image_operand_settings(module):
+            setting_name = setting_names(setting)[0]
+            records.extend(
+                ModuleSetting(setting_name, image_name)
+                for value in setting_values(module, setting)
+                for image_name in split_symbol_names(value)
+            )
+        return tuple(records)
+
+    @classmethod
+    def _active_image_operand_settings(cls, module) -> tuple[str, ...]:
+        operation_value = optional_setting_value(module, "Operation")
+        if operation_value is not None:
+            operation_strategy = ImageMathOperationStrategy.coerce(operation_value)
+            if operation_strategy.single_image:
+                return cls.image_operand_settings[:1]
+        return tuple(
+            setting
+            for setting in cls.image_operand_settings
+            if any(
+                split_symbol_names(value)
+                for value in setting_values(module, setting)
+            )
+        )
+
+    @classmethod
+    def compile_time_main_flow_input_setting_records(
+        cls,
+        request,
+        *,
+        existing_records,
+    ):
+        """Infer only ImageMath operands active for the declared operation."""
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        flow_image_names = request.artifact_flow.image_names_for_group(
+            request.group_key
+        )
+        if not flow_image_names and request.main_flow_image_name is not None:
+            flow_image_names = (request.main_flow_image_name,)
+        if not flow_image_names:
+            return ()
+
+        expected_settings = cls._compile_time_image_operand_settings(
+            existing_records,
+            available_image_count=len(flow_image_names),
+        )
+        existing_setting_names = {record.name for record in existing_records}
+        missing_settings = tuple(
+            setting
+            for setting in expected_settings
+            if setting not in existing_setting_names
+        )
+        if not missing_settings:
+            return ()
+        if len(missing_settings) != len(flow_image_names):
+            raise ValueError(
+                f"Module {request.module_name}({request.module_num}) has "
+                f"{len(missing_settings)} missing active image operand settings, "
+                f"but the OpenHCS artifact flow for group {request.group_key!r} "
+                f"has {len(flow_image_names)} image names: {flow_image_names!r}."
+            )
+        return tuple(
+            ModuleSetting(setting_name, image_name)
+            for setting_name, image_name in zip(
+                missing_settings, flow_image_names, strict=True
+            )
+        )
+
+    @classmethod
+    def _compile_time_image_operand_settings(
+        cls,
+        existing_records,
+        *,
+        available_image_count: int,
+    ) -> tuple[str, ...]:
+        operation_strategy = cls._compile_time_operation_strategy(existing_records)
+        if operation_strategy is not None and operation_strategy.single_image:
+            count = 1
+        else:
+            count = max(1, min(available_image_count, len(cls.image_operand_settings)))
+        return cls.image_operand_settings[:count]
+
+    @classmethod
+    def _compile_time_operation_strategy(cls, existing_records):
+        from openhcs.interop.cellprofiler.setting_names import setting_name_matches
+
+        for record in existing_records:
+            if setting_name_matches(record.name, "Operation"):
+                return ImageMathOperationStrategy.coerce(
+                    ImageMathOperation.from_cellprofiler_literal(str(record.value))
+                )
+        return None
 
     @classmethod
     def declared_output_artifact_relations(

@@ -49,6 +49,8 @@ from openhcs.interop.cellprofiler.module_declarations import (
 from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
     required_setting_value,
+    setting_name_matches,
+    setting_names,
     setting_values,
     split_symbol_names,
 )
@@ -170,6 +172,62 @@ class MaskImageModule(
             "Invert the mask?", "invert_mask", parse_cellprofiler_bool
         ),
     )
+
+    @classmethod
+    def compile_time_public_setting_records(cls, module, source_schema=None):
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        records = [*super().compile_time_public_setting_records(module, source_schema)]
+        mask_source = coerce_cellprofiler_enum(
+            MaskImageSource,
+            optional_setting_value(module, "Use objects or an image as a mask?")
+            or MaskImageSource.IMAGE.value,
+        )
+        if mask_source is not MaskImageSource.IMAGE:
+            return tuple(records)
+        records.extend(
+            ModuleSetting(setting_names(setting)[0], value)
+            for setting in cls.image_input_settings
+            for value in setting_values(module, setting)
+        )
+        return tuple(records)
+
+    @classmethod
+    def compile_time_main_flow_input_setting_records(cls, request, *, existing_records):
+        """Infer only the primary image from main flow for object-mask mode."""
+        if cls._compile_time_mask_source(existing_records) is not MaskImageSource.OBJECTS:
+            return super().compile_time_main_flow_input_setting_records(
+                request,
+                existing_records=existing_records,
+            )
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        primary_setting = cls.image_input_setting_names()[0]
+        primary_setting_name = setting_names(primary_setting)[0]
+        if any(setting_name_matches(record.name, primary_setting) for record in existing_records):
+            return ()
+
+        flow_image_names = request.artifact_flow.image_names_for_group(
+            request.group_key
+        )
+        if not flow_image_names and request.main_flow_image_name is not None:
+            flow_image_names = (request.main_flow_image_name,)
+        if len(flow_image_names) != 1:
+            raise ValueError(
+                f"Module {request.module_name}({request.module_num}) object-mask "
+                "mode requires exactly one OpenHCS main-flow image input; "
+                f"group {request.group_key!r} has {flow_image_names!r}."
+            )
+        return (ModuleSetting(primary_setting_name, flow_image_names[0]),)
+
+    @classmethod
+    def _compile_time_mask_source(
+        cls, existing_records: tuple["ModuleSetting", ...]
+    ) -> MaskImageSource:
+        for record in existing_records:
+            if setting_name_matches(record.name, "Use objects or an image as a mask?"):
+                return coerce_cellprofiler_enum(MaskImageSource, record.value)
+        return MaskImageSource.IMAGE
 
     @classmethod
     def artifact_contract_outputs(cls, builder, module):
@@ -305,6 +363,19 @@ class ResizeModule(
         )
         return super().resolve_function(module, default_function_name=function_name)
 
+    @classmethod
+    def compile_time_required_artifact_input_settings_for_records(
+        cls, existing_records
+    ):
+        del existing_records
+        primary_setting = cls.image_input_settings[0]
+        primary_names = set(setting_names(primary_setting))
+        return tuple(
+            (setting, capability_type)
+            for setting, capability_type in super().compile_time_required_artifact_input_settings()
+            if any(name in primary_names for name in setting_names(setting))
+        )
+
 
 class TileModule(
     ImageArtifactInputModule,
@@ -321,6 +392,53 @@ class TileModule(
         "Select an additional image to tile",
     )
     image_output_settings = ("Name the output image",)
+
+    @classmethod
+    def compile_time_main_flow_input_setting_records(
+        cls,
+        request,
+        *,
+        existing_records,
+    ):
+        """Infer repeated tile image inputs from available compiler artifacts."""
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        primary_setting, additional_setting = cls.image_input_settings
+        primary_names = setting_names(primary_setting)
+        additional_names = setting_names(additional_setting)
+
+        existing_primary = tuple(
+            record.value
+            for record in existing_records
+            if any(setting_name_matches(record.name, name) for name in primary_names)
+        )
+        existing_additional = tuple(
+            record.value
+            for record in existing_records
+            if any(setting_name_matches(record.name, name) for name in additional_names)
+        )
+        available_images = request.artifact_flow.available_image_names_for_group(
+            request.group_key
+        )
+        consumed_images = {*existing_primary, *existing_additional}
+        remaining_images = tuple(
+            image_name for image_name in available_images if image_name not in consumed_images
+        )
+
+        records: list[ModuleSetting] = []
+        if not existing_primary and remaining_images:
+            records.append(ModuleSetting(primary_setting, remaining_images[0]))
+            consumed_images.add(remaining_images[0])
+            remaining_images = remaining_images[1:]
+
+        if existing_additional:
+            return tuple(records)
+        records.extend(
+            ModuleSetting(additional_setting, image_name)
+            for image_name in remaining_images
+            if image_name not in consumed_images
+        )
+        return tuple(records)
 
     @staticmethod
     def settings_source(module: "ModuleBlock") -> "CellProfilerKwargs":

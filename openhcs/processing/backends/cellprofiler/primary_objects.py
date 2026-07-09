@@ -722,6 +722,24 @@ class IdentifyPrimaryObjectsModule(
     )
 
     @classmethod
+    def compile_time_public_setting_records(cls, module, source_schema=None):
+        del source_schema
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+        from openhcs.interop.cellprofiler.setting_names import (
+            setting_names,
+            setting_values,
+        )
+
+        setting_name = setting_names(cls.input_image_setting)[0]
+        return (
+            *super().compile_time_public_setting_records(module),
+            *(
+                ModuleSetting(setting_name, value)
+                for value in setting_values(module, cls.input_image_setting)
+            ),
+        )
+
+    @classmethod
     def postprocess_bound_settings(
         cls, module: "ModuleBlock", bound: BoundModuleSettings
     ) -> BoundModuleSettings:

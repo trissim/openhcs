@@ -6,11 +6,13 @@ Compatibility registry payloads are derived from these classes.
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
 from functools import lru_cache
-from types import UnionType
+import inspect
+from types import MappingProxyType, UnionType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -187,6 +189,158 @@ class BoundModuleSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class CellProfilerCompileTimeArtifactFlow:
+    """Compiler-visible artifact names reconstructed from public declarations."""
+
+    image_names_by_group: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    available_image_names_by_group: Mapping[str, tuple[str, ...]] = field(
+        default_factory=dict
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "image_names_by_group",
+            MappingProxyType(
+                _normalized_compile_time_image_groups(
+                    self.image_names_by_group,
+                    field_name="image_names_by_group",
+                )
+            ),
+        )
+        object.__setattr__(
+            self,
+            "available_image_names_by_group",
+            MappingProxyType(
+                _normalized_compile_time_image_groups(
+                    self.available_image_names_by_group,
+                    field_name="available_image_names_by_group",
+                )
+            ),
+        )
+
+    @classmethod
+    def empty(cls) -> "CellProfilerCompileTimeArtifactFlow":
+        return cls()
+
+    def image_names_for_group(self, group_key: str) -> tuple[str, ...]:
+        """Return image names for a function-pattern group or the default group."""
+        return _compile_time_group_names(self.image_names_by_group, group_key)
+
+    def available_image_names_for_group(self, group_key: str) -> tuple[str, ...]:
+        """Return all image artifacts available to one function-pattern group."""
+        available_names = _compile_time_group_names(
+            self.available_image_names_by_group,
+            group_key,
+        )
+        if available_names:
+            return available_names
+        return self.image_names_for_group(group_key)
+
+    def with_image_names(
+        self, group_key: str, image_names: tuple[str, ...]
+    ) -> "CellProfilerCompileTimeArtifactFlow":
+        updated_main = _updated_compile_time_image_groups(
+            self.image_names_by_group,
+            group_key,
+            image_names,
+            replace=True,
+        )
+        updated_available = _updated_compile_time_image_groups(
+            self.available_image_names_by_group,
+            group_key,
+            image_names,
+            replace=False,
+        )
+        return type(self)(updated_main, updated_available)
+
+    def with_available_image_names(
+        self, group_key: str, image_names: tuple[str, ...]
+    ) -> "CellProfilerCompileTimeArtifactFlow":
+        updated_available = _updated_compile_time_image_groups(
+            self.available_image_names_by_group,
+            group_key,
+            image_names,
+            replace=False,
+        )
+        return type(self)(self.image_names_by_group, updated_available)
+
+
+def _normalized_compile_time_image_groups(
+    groups: Mapping[str, tuple[str, ...]],
+    *,
+    field_name: str,
+) -> dict[str, tuple[str, ...]]:
+    normalized: dict[str, tuple[str, ...]] = {}
+    for group_key, image_names in groups.items():
+        if not isinstance(group_key, str):
+            raise TypeError(
+                "CellProfilerCompileTimeArtifactFlow "
+                f"{field_name} group keys must be str, "
+                f"got {type(group_key).__name__}."
+            )
+        normalized[group_key] = _unique_compile_time_names(
+            tuple(str(name) for name in image_names)
+        )
+    return normalized
+
+
+def _compile_time_group_names(
+    groups: Mapping[str, tuple[str, ...]],
+    group_key: str,
+) -> tuple[str, ...]:
+    if group_key in groups:
+        return groups[group_key]
+    if "default" in groups:
+        return groups["default"]
+    return ()
+
+
+def _updated_compile_time_image_groups(
+    groups: Mapping[str, tuple[str, ...]],
+    group_key: str,
+    image_names: tuple[str, ...],
+    *,
+    replace: bool,
+) -> dict[str, tuple[str, ...]]:
+    updated = dict(groups)
+    normalized_names = _unique_compile_time_names(tuple(str(name) for name in image_names))
+    if replace:
+        updated[group_key] = normalized_names
+    else:
+        existing = updated[group_key] if group_key in updated else ()
+        updated[group_key] = _unique_compile_time_names((*existing, *normalized_names))
+    if group_key != "default":
+        updated["default"] = _unique_compile_time_names(
+            tuple(
+                name
+                for key, names in updated.items()
+                if key != "default"
+                for name in names
+            )
+        )
+    return updated
+
+
+def _unique_compile_time_names(names: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(name for name in names if name))
+
+
+def _unique_module_setting_records(
+    records: tuple["ModuleSetting", ...],
+) -> tuple["ModuleSetting", ...]:
+    unique: list["ModuleSetting"] = []
+    seen: set[tuple[str, Any]] = set()
+    for record in records:
+        key = (record.name, record.value)
+        if key in seen:
+            continue
+        unique.append(record)
+        seen.add(key)
+    return tuple(unique)
+
+
+@dataclass(frozen=True, slots=True)
 class CellProfilerCompileTimeSettingsRequest:
     """Compiler request for module-owned CellProfiler setting reconstruction."""
 
@@ -196,9 +350,26 @@ class CellProfilerCompileTimeSettingsRequest:
     invocation_options: RuntimeInvocationOptions | None = None
     source_bindings: Any = None
     group_key: str = "default"
+    main_flow_image_name: str | None = None
+    artifact_flow: CellProfilerCompileTimeArtifactFlow = field(
+        default_factory=CellProfilerCompileTimeArtifactFlow.empty
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "kwargs", dict(self.kwargs))
+        if not isinstance(self.artifact_flow, CellProfilerCompileTimeArtifactFlow):
+            raise TypeError(
+                "CellProfilerCompileTimeSettingsRequest.artifact_flow must be "
+                "CellProfilerCompileTimeArtifactFlow, got "
+                f"{type(self.artifact_flow).__name__}."
+            )
+        if self.main_flow_image_name is not None and not isinstance(
+            self.main_flow_image_name, str
+        ):
+            raise TypeError(
+                "CellProfilerCompileTimeSettingsRequest.main_flow_image_name "
+                f"must be str or None, got {type(self.main_flow_image_name).__name__}."
+            )
         if self.invocation_options is not None and not isinstance(
             self.invocation_options, RuntimeInvocationOptions
         ):
@@ -206,6 +377,21 @@ class CellProfilerCompileTimeSettingsRequest:
                 "CellProfilerCompileTimeSettingsRequest.invocation_options must "
                 "inherit RuntimeInvocationOptions."
             )
+
+
+def source_schema_declares_image_alias(source_schema: object, image_name: str) -> bool:
+    """Return whether a pipeline source schema directly declares an image alias."""
+    from openhcs.core.pipeline_image_schema import PipelineImageSchema
+
+    if not isinstance(source_schema, PipelineImageSchema):
+        return False
+    if image_name in source_schema.assignments_by_alias:
+        return True
+    source_artifact = source_schema.source_artifacts_by_alias.get(image_name)
+    return (
+        source_artifact is not None
+        and source_artifact.artifact_kind is ImageArtifactType
+    )
 
 
 def _enum_type_from_annotation(annotation: Any) -> type[Enum] | None:
@@ -1520,14 +1706,57 @@ class CellProfilerModule(
         )
         from openhcs.interop.cellprofiler.parser import ModuleSetting
 
+        values = cls.compile_time_setting_binding_values(kwargs)
         return tuple(
             ModuleSetting(
                 setting_names(binding.setting_name)[0],
-                cellprofiler_setting_literal(kwargs[binding.parameter_name]),
+                cellprofiler_setting_literal(values[binding.parameter_name]),
             )
+            for binding in cls.setting_bindings
+            if binding.parameter_name in values
+        )
+
+    @classmethod
+    def compile_time_setting_binding_values(
+        cls,
+        kwargs: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """Return explicit kwargs plus signature defaults for declared CP settings."""
+        values = dict(cls.compile_time_setting_binding_default_values())
+        values.update(
+            (binding.parameter_name, kwargs[binding.parameter_name])
             for binding in cls.setting_bindings
             if binding.parameter_name in kwargs
         )
+        return values
+
+    @classmethod
+    @lru_cache(maxsize=None)
+    def compile_time_setting_binding_default_values(cls) -> Mapping[str, Any]:
+        """Return callable defaults addressable by this module's setting bindings."""
+        if not cls.setting_bindings:
+            return MappingProxyType({})
+        function = cls.compile_time_settings_function()
+        if function is None:
+            return MappingProxyType({})
+        signature = inspect.signature(function)
+        defaults = {
+            binding.parameter_name: signature.parameters[binding.parameter_name].default
+            for binding in cls.setting_bindings
+            if binding.parameter_name in signature.parameters
+            and signature.parameters[binding.parameter_name].default
+            is not inspect.Parameter.empty
+        }
+        return MappingProxyType(defaults)
+
+    @classmethod
+    def compile_time_settings_function(cls) -> Callable[..., Any] | None:
+        """Return the public callable whose signature owns compile-time defaults."""
+        from openhcs.processing.backends.cellprofiler import CellProfilerFunctionCatalog
+
+        if cls.function_name is None:
+            return None
+        return CellProfilerFunctionCatalog.get_function(cls.function_name)
 
     @classmethod
     def compile_time_setting_records_for_invocation(
@@ -1541,6 +1770,18 @@ class CellProfilerModule(
         ]
         records.extend(
             cls.compile_time_source_binding_input_setting_records(
+                request,
+                existing_records=tuple(records),
+            )
+        )
+        records.extend(
+            cls.compile_time_main_flow_input_setting_records(
+                request,
+                existing_records=tuple(records),
+            )
+        )
+        records.extend(
+            cls.compile_time_canonical_output_setting_records(
                 request,
                 existing_records=tuple(records),
             )
@@ -1571,6 +1812,8 @@ class CellProfilerModule(
         binding_declarations = cls._source_binding_declarations_for_group(request)
         bindings_by_artifact_type: dict[type[ArtifactType], list[Any]] = {}
         for binding in binding_declarations:
+            if not cls._source_binding_can_infer_input_setting(binding):
+                continue
             bindings_by_artifact_type.setdefault(binding.artifact_kind, []).append(
                 binding
             )
@@ -1581,12 +1824,7 @@ class CellProfilerModule(
             candidates = bindings_by_artifact_type.get(artifact_type, [])
             consumed = consumed_by_artifact_type.get(artifact_type, 0)
             if consumed >= len(candidates):
-                raise ValueError(
-                    f"Module {request.module_name}({request.module_num}) is missing "
-                    f"CellProfiler input setting {setting_name!r}; source bindings "
-                    f"declare only {[binding.alias for binding in candidates]!r} "
-                    f"for {artifact_type.require_value()} artifacts."
-                )
+                continue
             inferred_records.append(ModuleSetting(setting_name, candidates[consumed].alias))
             consumed_by_artifact_type[artifact_type] = consumed + 1
 
@@ -1610,12 +1848,83 @@ class CellProfilerModule(
         return request.source_bindings.bindings_for_group_key(request.group_key)
 
     @classmethod
+    def _source_binding_can_infer_input_setting(cls, binding: Any) -> bool:
+        """Return whether a binding can fill a missing CP input setting."""
+        if binding.artifact_kind is ImageArtifactType:
+            return binding.participates_in_execution_anchoring
+        return True
+
+    @classmethod
+    def compile_time_source_binding_group_keys_for_invocation(
+        cls,
+        request: CellProfilerCompileTimeSettingsRequest,
+    ) -> tuple[str, ...]:
+        """Return source-binding groups represented by one default invocation.
+
+        A plain OpenHCS callable applies to every assembled array in the step. For
+        CellProfiler modules with one source-bound input setting and multiple
+        source-bound groups, the compiler must reconstruct one transient CP module
+        per source group without forcing generated source to use a dict pattern.
+        """
+        from openhcs.core.source_bindings import StepSourceBindingsConfig
+
+        if request.group_key != "default":
+            return ()
+        source_bindings = request.source_bindings
+        if not isinstance(source_bindings, StepSourceBindingsConfig):
+            return ()
+        if not source_bindings.enabled:
+            return ()
+
+        existing_records = (
+            *cls.compile_time_setting_records_from_kwargs(request.kwargs),
+            *cls.compile_time_public_setting_records_from_kwargs(request.kwargs),
+        )
+        missing_counts: defaultdict[type[ArtifactType], int] = defaultdict(int)
+        for _setting_name, artifact_type in cls._missing_declared_input_settings(
+            tuple(existing_records)
+        ):
+            missing_counts[artifact_type] += 1
+        if not missing_counts:
+            return ()
+
+        group_counts: dict[str, defaultdict[type[ArtifactType], int]] = {}
+        group_order: list[str] = []
+        for binding in source_bindings.binding_declarations:
+            if not cls._source_binding_can_infer_input_setting(binding):
+                continue
+            artifact_type = binding.artifact_kind
+            if artifact_type not in missing_counts:
+                continue
+            for selector in binding.component_identity:
+                group_key = str(selector.value)
+                if group_key not in group_counts:
+                    group_counts[group_key] = defaultdict(int)
+                    group_order.append(group_key)
+                counts = group_counts[group_key]
+                counts[artifact_type] += 1
+
+        if len(group_order) <= 1:
+            return ()
+        expected_counts = dict(missing_counts)
+        if any(
+            dict(group_counts[group_key]) != expected_counts
+            for group_key in group_order
+        ):
+            return ()
+        return tuple(group_order)
+
+    @classmethod
     def _missing_declared_input_settings(
         cls, existing_records: tuple["ModuleSetting", ...]
     ) -> tuple[tuple[str, type[ArtifactType]], ...]:
         existing_setting_names = {record.name for record in existing_records}
         missing_settings: list[tuple[str, type[ArtifactType]]] = []
-        for setting, capability_type in cls.compile_time_required_artifact_input_settings():
+        for setting, capability_type in (
+            cls.compile_time_required_artifact_input_settings_for_records(
+                existing_records
+            )
+        ):
             concrete_names = setting_names(setting)
             if any(name in existing_setting_names for name in concrete_names):
                 continue
@@ -1625,11 +1934,78 @@ class CellProfilerModule(
         return tuple(missing_settings)
 
     @classmethod
+    def compile_time_main_flow_input_setting_records(
+        cls,
+        request: CellProfilerCompileTimeSettingsRequest,
+        *,
+        existing_records: tuple["ModuleSetting", ...],
+    ) -> tuple["ModuleSetting", ...]:
+        """Infer a simple missing image input from the OpenHCS main-flow image."""
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        flow_image_names = request.artifact_flow.image_names_for_group(
+            request.group_key
+        )
+        if not flow_image_names and request.main_flow_image_name is not None:
+            flow_image_names = (request.main_flow_image_name,)
+        if not flow_image_names:
+            return ()
+        missing_image_settings = tuple(
+            setting_name
+            for setting_name, artifact_type in cls._missing_declared_input_settings(
+                existing_records
+            )
+            if artifact_type is ImageArtifactType
+        )
+        if not missing_image_settings:
+            return ()
+        if len(missing_image_settings) == 1:
+            return (
+                ModuleSetting(
+                    missing_image_settings[0],
+                    ", ".join(flow_image_names),
+                ),
+            )
+        if len(missing_image_settings) != len(flow_image_names):
+            raise ValueError(
+                f"Module {request.module_name}({request.module_num}) has "
+                f"{len(missing_image_settings)} missing image input settings, but "
+                f"the OpenHCS artifact flow for group {request.group_key!r} has "
+                f"{len(flow_image_names)} image names: {flow_image_names!r}."
+            )
+        return tuple(
+            ModuleSetting(setting_name, image_name)
+            for setting_name, image_name in zip(
+                missing_image_settings, flow_image_names, strict=True
+            )
+        )
+
+    @classmethod
+    def compile_time_canonical_output_setting_records(
+        cls,
+        request: CellProfilerCompileTimeSettingsRequest,
+        *,
+        existing_records: tuple["ModuleSetting", ...],
+    ) -> tuple["ModuleSetting", ...]:
+        """Return declaration-owned canonical output rows for public OpenHCS flow."""
+        del request, existing_records
+        return ()
+
+    @classmethod
     def compile_time_required_artifact_input_settings(
         cls,
     ) -> tuple[ArtifactSettingCapability, ...]:
         """Return artifact input settings that must be reconstructable from steps."""
         return cls.declared_artifact_input_settings()
+
+    @classmethod
+    def compile_time_required_artifact_input_settings_for_records(
+        cls,
+        existing_records: tuple["ModuleSetting", ...],
+    ) -> tuple[ArtifactSettingCapability, ...]:
+        """Return active input settings for partially reconstructed CP rows."""
+        del existing_records
+        return cls.compile_time_required_artifact_input_settings()
 
     @classmethod
     def compile_time_public_setting_names(
@@ -1656,6 +2032,40 @@ class CellProfilerModule(
         )
 
     @classmethod
+    def compile_time_consumed_kwarg_names(cls) -> tuple[str, ...]:
+        """Return public kwargs consumed by compile-time contract reconstruction."""
+        return cls.compile_time_public_kwarg_names()
+
+    @classmethod
+    def compile_time_grouped_public_kwarg_names(cls) -> tuple[str, ...]:
+        """Return compile-time kwargs that make grouped public calls distinct.
+
+        These are kwargs whose per-group values cannot be erased when adjacent
+        CellProfiler modules are represented as one OpenHCS FunctionStep. Runtime
+        materialization bookkeeping is consumed by the compiler but is not part
+        of the public callable identity for grouping.
+        """
+        return cls.compile_time_public_kwarg_names()
+
+    @classmethod
+    def compile_time_coalesced_public_kwarg_names(cls) -> tuple[str, ...]:
+        """Return compile-time kwargs mergeable into a coalesced public call."""
+        return ()
+
+    @classmethod
+    def coalesce_compile_time_public_kwarg_values(
+        cls,
+        kwarg_name: str,
+        values: tuple[Any, ...],
+    ) -> Any:
+        """Return one public compile-time kwarg value for coalesced emissions."""
+        del kwarg_name
+        unique_values = tuple(dict.fromkeys(values))
+        if len(unique_values) == 1:
+            return unique_values[0]
+        return unique_values
+
+    @classmethod
     def compile_time_public_setting_records_from_kwargs(
         cls, kwargs: Mapping[str, Any]
     ) -> tuple["ModuleSetting", ...]:
@@ -1672,7 +2082,7 @@ class CellProfilerModule(
                 if key not in kwargs:
                     continue
                 value = kwargs[key]
-                if isinstance(value, tuple):
+                if isinstance(value, (tuple, list)):
                     records.extend(
                         ModuleSetting(concrete_name, cellprofiler_setting_literal(item))
                         for item in value
@@ -1688,8 +2098,197 @@ class CellProfilerModule(
         cls, module: "ModuleBlock", source_schema: "PipelineImageSchema | None" = None
     ) -> tuple["ModuleSetting", ...]:
         """Return CP setting rows needed by contracts but not runtime kwargs."""
+        del source_schema
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+        from openhcs.interop.cellprofiler.setting_names import setting_values
+
+        setting_capabilities = (
+            *(
+                (setting, capability_type)
+                for setting, capability_type in cls.declared_artifact_input_settings()
+                if capability_type is not ImageArtifactInputCapability
+            ),
+            *cls.declared_artifact_output_settings(),
+        )
+        records: list[ModuleSetting] = []
+        for setting, _capability_type in setting_capabilities:
+            setting_family = cls.declared_setting_name(cls.declared_setting_value(setting))
+            concrete_name = setting_names(setting_family)[0]
+            records.extend(
+                ModuleSetting(concrete_name, value)
+                for value in setting_values(module, setting_family)
+            )
+        return tuple(records)
+
+    @classmethod
+    def compile_time_public_setting_records_for_generation(
+        cls,
+        module: "ModuleBlock",
+        source_schema: "PipelineImageSchema | None" = None,
+        *,
+        artifact_flow: CellProfilerCompileTimeArtifactFlow | None = None,
+        group_key: str = "default",
+    ) -> tuple["ModuleSetting", ...]:
+        """Return public setting rows needed to recompile generated source."""
+        records = [
+            *cls.compile_time_public_setting_records(module, source_schema),
+            *cls.compile_time_divergent_image_input_setting_records(
+                module,
+                source_schema,
+                artifact_flow=artifact_flow or CellProfilerCompileTimeArtifactFlow.empty(),
+                group_key=group_key,
+            ),
+        ]
+        return _unique_module_setting_records(tuple(records))
+
+    @classmethod
+    def compile_time_divergent_image_input_setting_records(
+        cls,
+        module: "ModuleBlock",
+        source_schema: "PipelineImageSchema | None",
+        *,
+        artifact_flow: CellProfilerCompileTimeArtifactFlow,
+        group_key: str,
+    ) -> tuple["ModuleSetting", ...]:
+        """Preserve image selectors that cannot be inferred from source/flow."""
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+        from openhcs.interop.cellprofiler.setting_names import (
+            setting_values,
+            split_symbol_names,
+        )
+
+        flow_image_names = set(artifact_flow.image_names_for_group(group_key))
+        records: list[ModuleSetting] = []
+        for setting, capability_type in cls.declared_artifact_input_settings():
+            if capability_type is not ImageArtifactInputCapability:
+                continue
+            setting_family = cls.declared_setting_name(cls.declared_setting_value(setting))
+            for concrete_name in setting_names(setting_family):
+                for value in setting_values(module, concrete_name):
+                    image_names = split_symbol_names(value)
+                    if not image_names:
+                        continue
+                    if all(
+                        (
+                            image_name in flow_image_names
+                            or source_schema_declares_image_alias(
+                                source_schema, image_name
+                            )
+                        )
+                        for image_name in image_names
+                    ):
+                        continue
+                    records.append(ModuleSetting(concrete_name, value))
+        return tuple(records)
+
+    @classmethod
+    def compile_time_public_kwargs(
+        cls,
+        module: "ModuleBlock",
+        source_schema: "PipelineImageSchema | None" = None,
+    ) -> Mapping[str, Any]:
+        """Return declaration-owned public kwargs consumed only by compilation."""
         del module, source_schema
-        return ()
+        return {}
+
+    @classmethod
+    def compile_time_public_artifact_materialization_kwargs(
+        cls,
+        module: "ModuleBlock",
+        runtime_contract: "ModuleArtifactContract",
+    ) -> Mapping[str, Any]:
+        """Return public kwargs for explicit runtime artifact materialization."""
+        del module, runtime_contract
+        return {}
+
+    @classmethod
+    def compile_time_module_metadata_for_invocation(
+        cls,
+        request: CellProfilerCompileTimeSettingsRequest,
+    ) -> Mapping[str, Any]:
+        """Return transient ModuleBlock metadata reconstructed from public kwargs."""
+        del request
+        return {}
+
+    @classmethod
+    def compile_time_main_flow_image_output_name(
+        cls, module: "ModuleBlock"
+    ) -> str | None:
+        """Return the single image output that advances OpenHCS main-flow data."""
+        from openhcs.interop.cellprofiler.setting_names import (
+            setting_values,
+            split_symbol_names,
+        )
+
+        output_names = tuple(
+            name
+            for setting, capability_type in cls.declared_artifact_output_settings()
+            if capability_type is ImageArtifactOutputCapability
+            for value in setting_values(
+                module,
+                cls.declared_setting_name(cls.declared_setting_value(setting)),
+            )
+            for name in split_symbol_names(value)
+        )
+        if len(output_names) != 1:
+            return None
+        return output_names[0]
+
+    @classmethod
+    def compile_time_image_output_names(
+        cls, module: "ModuleBlock"
+    ) -> tuple[str, ...]:
+        """Return image output names reconstructed for this transient module."""
+        from openhcs.interop.cellprofiler.setting_names import (
+            setting_values,
+            split_symbol_names,
+        )
+
+        return tuple(
+            name
+            for setting, capability_type in cls.declared_artifact_output_settings()
+            if capability_type is ImageArtifactOutputCapability
+            for value in setting_values(
+                module,
+                cls.declared_setting_name(cls.declared_setting_value(setting)),
+            )
+            for name in split_symbol_names(value)
+        )
+
+    @classmethod
+    def compile_time_replaces_artifact_flow(cls, module: "ModuleBlock") -> bool:
+        """Return whether image outputs become the downstream OpenHCS flow."""
+        image_names = cls.compile_time_image_output_names(module)
+        if not image_names:
+            return False
+        from openhcs.interop.cellprofiler.runtime.main_flow import (
+            CellProfilerMainFlowReplacementPolicy,
+        )
+
+        return CellProfilerMainFlowReplacementPolicy.for_module(
+            str(cls.module_name or cls.__name__)
+        ).replaces_main_flow(
+            tuple(
+                ArtifactSpec.output(image_name, ImageArtifactType)
+                for image_name in image_names
+            )
+        )
+
+    @classmethod
+    def compile_time_artifact_flow_after_invocation(
+        cls,
+        flow: CellProfilerCompileTimeArtifactFlow,
+        *,
+        group_key: str,
+        module: "ModuleBlock",
+    ) -> CellProfilerCompileTimeArtifactFlow:
+        """Return artifact flow after this declaration-owned module invocation."""
+        if not cls.compile_time_replaces_artifact_flow(module):
+            return flow
+        image_names = cls.compile_time_image_output_names(module)
+        if not image_names:
+            return flow
+        return flow.with_image_names(group_key, image_names)
 
     @classmethod
     def generated_invocation_options_literal(
@@ -2034,6 +2633,13 @@ class CellProfilerModule(
                             capability_type=capability_type,
                             name=name,
                         ),
+                        **cls.declared_output_artifact_spec_kwargs(
+                            builder,
+                            module,
+                            setting=setting,
+                            capability_type=capability_type,
+                            name=name,
+                        ),
                     ),
                 )
                 for setting, capability_type in cls.declared_artifact_output_settings()
@@ -2044,6 +2650,20 @@ class CellProfilerModule(
                 for name in split_symbol_names(value)
             )
         )
+
+    @classmethod
+    def declared_output_artifact_spec_kwargs(
+        cls,
+        builder: "_SymbolTableBuilder",
+        module: "ModuleBlock",
+        *,
+        setting: str | "SettingNameFamily",
+        capability_type: type[CellProfilerArtifactCapability],
+        name: str,
+    ) -> Mapping[str, Any]:
+        """Return additional ArtifactSpec fields for one declared output."""
+        del builder, module, setting, capability_type, name
+        return {}
 
     @classmethod
     def declared_output_artifact_relations(
@@ -2687,6 +3307,18 @@ class ImageArtifactOutputModule(
     """Parent for modules that emit image artifacts through declared settings."""
 
     image_output_settings: ClassVar[tuple[str | "SettingNameFamily", ...]] = ()
+    compile_time_materialized_image_names_kwarg: ClassVar[str] = (
+        "materialized_image_artifact_names"
+    )
+    compile_time_artifact_name_materialized_image_names_kwarg: ClassVar[str] = (
+        "artifact_name_materialized_image_artifact_names"
+    )
+    compile_time_materialized_image_names_metadata_key: ClassVar[str] = (
+        "openhcs_materialized_image_artifact_names"
+    )
+    compile_time_artifact_name_materialized_image_names_metadata_key: ClassVar[str] = (
+        "openhcs_artifact_name_materialized_image_artifact_names"
+    )
 
     @classmethod
     def image_output_setting_names(cls) -> tuple[str | "SettingNameFamily", ...]:
@@ -2700,6 +3332,229 @@ class ImageArtifactOutputModule(
             *(
                 (setting, ImageArtifactOutputCapability)
                 for setting in cls.image_output_setting_names()
+            ),
+        )
+
+    @classmethod
+    def compile_time_public_artifact_materialization_kwargs(
+        cls,
+        module: "ModuleBlock",
+        runtime_contract: "ModuleArtifactContract",
+    ) -> Mapping[str, Any]:
+        """Expose runtime image materialization as public compile-time kwargs."""
+        from openhcs.core.artifact_materialization_policy import (
+            NO_ARTIFACT_MATERIALIZATION,
+        )
+        from openhcs.core.module_artifact_contract import RecordedArtifactOutputPartition
+
+        public_kwargs = dict(
+            super().compile_time_public_artifact_materialization_kwargs(
+                module,
+                runtime_contract,
+            )
+        )
+        materialized_names: list[str] = []
+        artifact_name_materialized_names: list[str] = []
+        for item in runtime_contract.items:
+            spec = item.spec
+            if item.partition_type is not RecordedArtifactOutputPartition:
+                continue
+            if spec.artifact_type is not ImageArtifactType:
+                continue
+            if spec.materialization in (None, NO_ARTIFACT_MATERIALIZATION):
+                continue
+            materialized_names.append(spec.name)
+            if not spec.materialization_uses_source_identity_filename():
+                artifact_name_materialized_names.append(spec.name)
+        if materialized_names:
+            public_kwargs[cls.compile_time_materialized_image_names_kwarg] = tuple(
+                dict.fromkeys(materialized_names)
+            )
+        if artifact_name_materialized_names:
+            public_kwargs[
+                cls.compile_time_artifact_name_materialized_image_names_kwarg
+            ] = tuple(dict.fromkeys(artifact_name_materialized_names))
+        return public_kwargs
+
+    @classmethod
+    def compile_time_consumed_kwarg_names(cls) -> tuple[str, ...]:
+        """Return public kwargs consumed by compile-time contract reconstruction."""
+        return (
+            *super().compile_time_consumed_kwarg_names(),
+            cls.compile_time_materialized_image_names_kwarg,
+            cls.compile_time_artifact_name_materialized_image_names_kwarg,
+        )
+
+    @classmethod
+    def compile_time_coalesced_public_kwarg_names(cls) -> tuple[str, ...]:
+        """Return materialization kwargs mergeable across source-axis groups."""
+        return (
+            *super().compile_time_coalesced_public_kwarg_names(),
+            cls.compile_time_materialized_image_names_kwarg,
+            cls.compile_time_artifact_name_materialized_image_names_kwarg,
+        )
+
+    @classmethod
+    def coalesce_compile_time_public_kwarg_values(
+        cls,
+        kwarg_name: str,
+        values: tuple[Any, ...],
+    ) -> Any:
+        """Merge image materialization names for one coalesced OpenHCS call."""
+        if kwarg_name not in {
+            cls.compile_time_materialized_image_names_kwarg,
+            cls.compile_time_artifact_name_materialized_image_names_kwarg,
+        }:
+            return super().coalesce_compile_time_public_kwarg_values(
+                kwarg_name,
+                values,
+            )
+        names: list[str] = []
+        for value in values:
+            names.extend(cls._coerce_public_name_tuple(value, kwarg_name=kwarg_name))
+        return tuple(dict.fromkeys(names))
+
+    @classmethod
+    def compile_time_module_metadata_for_invocation(
+        cls,
+        request: CellProfilerCompileTimeSettingsRequest,
+    ) -> Mapping[str, Any]:
+        """Map public image materialization declarations to ModuleBlock metadata."""
+        metadata = dict(super().compile_time_module_metadata_for_invocation(request))
+        cls._store_public_name_tuple(
+            request.kwargs,
+            metadata,
+            kwarg_name=cls.compile_time_materialized_image_names_kwarg,
+            metadata_key=cls.compile_time_materialized_image_names_metadata_key,
+        )
+        cls._store_public_name_tuple(
+            request.kwargs,
+            metadata,
+            kwarg_name=cls.compile_time_artifact_name_materialized_image_names_kwarg,
+            metadata_key=(
+                cls.compile_time_artifact_name_materialized_image_names_metadata_key
+            ),
+        )
+        return metadata
+
+    @staticmethod
+    def _coerce_public_name_tuple(value: Any, *, kwarg_name: str) -> tuple[str, ...]:
+        """Return public compile-time artifact names from a kwarg value."""
+        if isinstance(value, str):
+            names = (value,)
+        elif isinstance(value, (tuple, list)):
+            names = tuple(value)
+        else:
+            raise TypeError(
+                f"{kwarg_name} must be a string or sequence of strings, got "
+                f"{type(value).__name__}."
+            )
+        if not all(isinstance(name, str) and name for name in names):
+            raise TypeError(f"{kwarg_name} must contain only non-empty strings.")
+        return tuple(dict.fromkeys(names))
+
+    @classmethod
+    def _store_public_name_tuple(
+        cls,
+        kwargs: Mapping[str, Any],
+        metadata: dict[str, Any],
+        *,
+        kwarg_name: str,
+        metadata_key: str,
+    ) -> None:
+        """Store a public artifact-name sequence in transient module metadata."""
+        if kwarg_name not in kwargs:
+            return
+        metadata[metadata_key] = cls._coerce_public_name_tuple(
+            kwargs[kwarg_name],
+            kwarg_name=kwarg_name,
+        )
+
+    @classmethod
+    def _metadata_name_set(cls, module: "ModuleBlock", metadata_key: str) -> frozenset[str]:
+        """Return a class-owned set of transient metadata artifact names."""
+        value = module.metadata.get(metadata_key)
+        if value is None:
+            return frozenset()
+        return frozenset(
+            cls._coerce_public_name_tuple(value, kwarg_name=metadata_key)
+        )
+
+    @classmethod
+    def declared_output_artifact_spec_kwargs(
+        cls,
+        builder: "_SymbolTableBuilder",
+        module: "ModuleBlock",
+        *,
+        setting: str | "SettingNameFamily",
+        capability_type: type[CellProfilerArtifactCapability],
+        name: str,
+    ) -> Mapping[str, Any]:
+        """Apply public image-output materialization declarations to specs."""
+        kwargs = dict(
+            super().declared_output_artifact_spec_kwargs(
+                builder,
+                module,
+                setting=setting,
+                capability_type=capability_type,
+                name=name,
+            )
+        )
+        if capability_type is not ImageArtifactOutputCapability:
+            return kwargs
+        materialized_names = cls._metadata_name_set(
+            module,
+            cls.compile_time_materialized_image_names_metadata_key,
+        )
+        if name not in materialized_names:
+            return kwargs
+        artifact_name_materialized_names = cls._metadata_name_set(
+            module,
+            cls.compile_time_artifact_name_materialized_image_names_metadata_key,
+        )
+        from openhcs.processing.materialization import (
+            MaterializedFilenameIdentity,
+            tiff_stack,
+        )
+
+        filename_identity = (
+            MaterializedFilenameIdentity.ARTIFACT_NAME
+            if name in artifact_name_materialized_names
+            else MaterializedFilenameIdentity.SOURCE_IDENTITY
+        )
+        kwargs["materialization"] = tiff_stack(
+            normalize_uint8=True,
+            filename_identity=filename_identity,
+        )
+        return kwargs
+
+    @classmethod
+    def image_output_artifact(
+        cls,
+        builder: "_SymbolTableBuilder",
+        module: "ModuleBlock",
+        name: str,
+        *,
+        setting: str | "SettingNameFamily" = "",
+        relations: tuple[ArtifactSpecRelation, ...] = (),
+        **spec_kwargs: Any,
+    ) -> object:
+        """Bind one image output through the declaration-owned spec hook."""
+        return ImageArtifactOutputCapability.bind_artifact(
+            cls,
+            builder,
+            module,
+            ImageArtifactOutputCapability.spec(
+                name,
+                relations=relations,
+                **spec_kwargs,
+                **cls.declared_output_artifact_spec_kwargs(
+                    builder,
+                    module,
+                    setting=setting,
+                    capability_type=ImageArtifactOutputCapability,
+                    name=name,
+                ),
             ),
         )
 
@@ -2830,6 +3685,64 @@ class MeasurementArtifactOutputModule(
 ):
     """Parent for modules that emit the standard measurement artifact."""
 
+    compile_time_measurement_artifact_name_kwarg: ClassVar[str] = (
+        "measurement_artifact_name"
+    )
+    compile_time_measurement_artifact_name_metadata_key: ClassVar[str] = (
+        "openhcs_measurement_artifact_name"
+    )
+
+    @classmethod
+    def measurement_artifact_name(cls, module: "ModuleBlock") -> str:
+        """Return the standard measurement artifact name for this module family."""
+        public_name = module.metadata.get(
+            cls.compile_time_measurement_artifact_name_metadata_key
+        )
+        if isinstance(public_name, str) and public_name:
+            return public_name
+        return super().measurement_artifact_name(module)
+
+    @classmethod
+    def compile_time_public_kwargs(
+        cls,
+        module: "ModuleBlock",
+        source_schema: "PipelineImageSchema | None" = None,
+    ) -> Mapping[str, Any]:
+        """Expose non-inferable measurement identity as public compile data."""
+        return {
+            **super().compile_time_public_kwargs(module, source_schema),
+            cls.compile_time_measurement_artifact_name_kwarg: (
+                cls.measurement_artifact_name(module)
+            ),
+        }
+
+    @classmethod
+    def compile_time_consumed_kwarg_names(cls) -> tuple[str, ...]:
+        """Return public kwargs consumed by compile-time contract reconstruction."""
+        return (
+            *super().compile_time_consumed_kwarg_names(),
+            cls.compile_time_measurement_artifact_name_kwarg,
+        )
+
+    @classmethod
+    def compile_time_module_metadata_for_invocation(
+        cls,
+        request: CellProfilerCompileTimeSettingsRequest,
+    ) -> Mapping[str, Any]:
+        """Map public measurement identity into transient ModuleBlock metadata."""
+        metadata = dict(super().compile_time_module_metadata_for_invocation(request))
+        kwarg_name = cls.compile_time_measurement_artifact_name_kwarg
+        if kwarg_name not in request.kwargs:
+            return metadata
+        value = request.kwargs[kwarg_name]
+        if not isinstance(value, str) or not value:
+            raise TypeError(
+                "measurement_artifact_name must be a non-empty string when "
+                f"declared for {request.module_name}({request.module_num})."
+            )
+        metadata[cls.compile_time_measurement_artifact_name_metadata_key] = value
+        return metadata
+
     @classmethod
     def measurement_output_relations(
         cls, builder: "_SymbolTableBuilder", module: "ModuleBlock"
@@ -2927,6 +3840,23 @@ class SpatialGridArtifactInputModule(
 ):
     """Parent for modules that consume spatial-grid artifacts."""
 
+    spatial_grid_input_settings: ClassVar[tuple[str | "SettingNameFamily", ...]] = ()
+
+    @classmethod
+    def spatial_grid_input_setting_names(cls) -> tuple[str | "SettingNameFamily", ...]:
+        """Return spatial-grid input setting families declared by this module."""
+        return cls.spatial_grid_input_settings
+
+    @classmethod
+    def declared_artifact_input_settings(cls) -> tuple[ArtifactSettingCapability, ...]:
+        return (
+            *super().declared_artifact_input_settings(),
+            *(
+                (setting, SpatialGridArtifactInputCapability)
+                for setting in cls.spatial_grid_input_setting_names()
+            ),
+        )
+
 
 class SpatialGridArtifactOutputModule(
     CellProfilerModule,
@@ -2934,6 +3864,23 @@ class SpatialGridArtifactOutputModule(
     SpatialGridArtifactOutputCapability,
 ):
     """Parent for modules that emit spatial-grid artifacts."""
+
+    spatial_grid_output_settings: ClassVar[tuple[str | "SettingNameFamily", ...]] = ()
+
+    @classmethod
+    def spatial_grid_output_setting_names(cls) -> tuple[str | "SettingNameFamily", ...]:
+        """Return spatial-grid output setting families declared by this module."""
+        return cls.spatial_grid_output_settings
+
+    @classmethod
+    def declared_artifact_output_settings(cls) -> tuple[ArtifactSettingCapability, ...]:
+        return (
+            *super().declared_artifact_output_settings(),
+            *(
+                (setting, SpatialGridArtifactOutputCapability)
+                for setting in cls.spatial_grid_output_setting_names()
+            ),
+        )
 
 
 class ObjectLineageTransformContractModule(
@@ -2990,6 +3937,49 @@ class ImageMeasurementInputModule(
         )
 
     @classmethod
+    def declared_artifact_input_settings(cls) -> tuple[ArtifactSettingCapability, ...]:
+        return (
+            *super().declared_artifact_input_settings(),
+            (
+                cls.declared_setting_value(cls.image_measurement_setting),
+                ImageArtifactInputCapability,
+            ),
+        )
+
+    @classmethod
+    def compile_time_public_setting_names(
+        cls,
+    ) -> tuple[str | "SettingNameFamily", ...]:
+        return (
+            *super().compile_time_public_setting_names(),
+            cls.declared_setting_value(cls.image_measurement_setting),
+        )
+
+    @classmethod
+    def compile_time_public_setting_records(
+        cls, module: "ModuleBlock", source_schema: "PipelineImageSchema | None" = None
+    ) -> tuple["ModuleSetting", ...]:
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+        from openhcs.interop.cellprofiler.setting_names import setting_values
+
+        setting_family = cls.declared_setting_value(cls.image_measurement_setting)
+        setting_name = setting_names(setting_family)[0]
+        return (
+            *super().compile_time_public_setting_records(module, source_schema),
+            *(
+                ModuleSetting(setting_name, value)
+                for value in setting_values(module, setting_family)
+            ),
+        )
+
+    @classmethod
+    def _source_binding_can_infer_input_setting(cls, binding: Any) -> bool:
+        """Image measurement modules consume source images as a set."""
+        if binding.artifact_kind is ImageArtifactType:
+            return False
+        return super()._source_binding_can_infer_input_setting(binding)
+
+    @classmethod
     def measurement_artifact_inputs(
         cls, builder: "_SymbolTableBuilder", module: "ModuleBlock"
     ) -> tuple[object, ...]:
@@ -3033,6 +4023,32 @@ class ObjectMeasurementInputModule(
         return SettingNameFamily(
             "Select object sets to measure",
             aliases=("Select objects to measure", "Select an object to measure"),
+        )
+
+    @classmethod
+    def compile_time_public_setting_names(
+        cls,
+    ) -> tuple[str | "SettingNameFamily", ...]:
+        return (
+            *super().compile_time_public_setting_names(),
+            cls.declared_setting_value(cls.object_measurement_setting),
+        )
+
+    @classmethod
+    def compile_time_public_setting_records(
+        cls, module: "ModuleBlock", source_schema: "PipelineImageSchema | None" = None
+    ) -> tuple["ModuleSetting", ...]:
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+        from openhcs.interop.cellprofiler.setting_names import setting_values
+
+        setting_family = cls.declared_setting_value(cls.object_measurement_setting)
+        setting_name = setting_names(setting_family)[0]
+        return (
+            *super().compile_time_public_setting_records(module, source_schema),
+            *(
+                ModuleSetting(setting_name, value)
+                for value in setting_values(module, setting_family)
+            ),
         )
 
     @classmethod

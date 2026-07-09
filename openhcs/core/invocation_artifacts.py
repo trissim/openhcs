@@ -175,14 +175,29 @@ class InvocationContractProvider(ABC):
         self,
         invocation: Any,
         step_context: ArtifactDeclarationStepContext,
-    ) -> "CallableContract | None":
-        """Return a compile-only callable contract for this invocation."""
+    ) -> "InvocationContractPlan | None":
+        """Return a compile-only callable contract plan for this invocation."""
+
+
+@dataclass(frozen=True, slots=True)
+class InvocationContractPlan:
+    """Compile-time replacement contract plus kwargs consumed by planning."""
+
+    contract: "CallableContract"
+    consumed_kwarg_names: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "consumed_kwarg_names",
+            tuple(dict.fromkeys(str(name) for name in self.consumed_kwarg_names)),
+        )
 
 
 def public_callable_invocation_contract(
     invocation: Any,
     step_context: ArtifactDeclarationStepContext,
-) -> "CallableContract | None":
+) -> InvocationContractPlan | None:
     """Default provider: public callable metadata is already the contract."""
     del invocation, step_context
     return None
@@ -190,7 +205,7 @@ def public_callable_invocation_contract(
 
 InvocationContractProviderLike = Callable[
     [Any, ArtifactDeclarationStepContext],
-    "CallableContract | None",
+    InvocationContractPlan | None,
 ]
 
 
@@ -218,11 +233,11 @@ class CompositeInvocationContractProvider:
         self,
         invocation: Any,
         step_context: ArtifactDeclarationStepContext,
-    ) -> "CallableContract | None":
+    ) -> InvocationContractPlan | None:
         for provider in self.providers:
-            contract = provider(invocation, step_context)
-            if contract is not None:
-                return contract
+            plan = provider(invocation, step_context)
+            if plan is not None:
+                return plan
         return None
 
 

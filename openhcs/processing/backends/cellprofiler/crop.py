@@ -205,9 +205,9 @@ class CropModule(
 
     @classmethod
     def compile_time_public_setting_records(cls, module, source_schema=None):
-        del source_schema
         from openhcs.interop.cellprofiler.parser import ModuleSetting
 
+        records = list(super().compile_time_public_setting_records(module, source_schema))
         shape = cls.shape(module)
         if shape is cls.Shape.CROPPING:
             setting_name = cls.previous_image_setting
@@ -216,20 +216,25 @@ class CropModule(
         elif shape is cls.Shape.OBJECTS:
             setting_name = cls.objects_setting
         else:
-            return ()
+            return tuple(records)
+        input_value = optional_setting_value(module, cls.input_image_setting)
+        if input_value is not None:
+            records.append(ModuleSetting(cls.input_image_setting, input_value))
         value = optional_setting_value(module, setting_name)
         if value is None:
-            return ()
-        return (ModuleSetting(setting_name, value),)
+            return tuple(records)
+        records.append(ModuleSetting(setting_name, value))
+        return tuple(records)
 
     @classmethod
     def compile_time_public_setting_names(cls):
-        return (
+        return tuple(dict.fromkeys((
             *super().compile_time_public_setting_names(),
+            cls.input_image_setting,
             cls.previous_image_setting,
             cls.mask_image_setting,
             cls.objects_setting,
-        )
+        )))
 
     @classmethod
     def shape(cls, module: "ModuleBlock") -> "CropModule.Shape":
@@ -270,7 +275,7 @@ class CropModule(
 
     @classmethod
     def previous_mask_artifact_name(cls, module: "ModuleBlock") -> str | None:
-        from openhcs.core.artifacts import CROP_MASK_ARTIFACT_SIDECAR
+        from openhcs.core.artifacts import ArtifactSidecarRole
         from openhcs.interop.cellprofiler.setting_names import OptionalSettingSymbol
 
         previous_image_name = OptionalSettingSymbol(
@@ -278,7 +283,7 @@ class CropModule(
         ).value
         if previous_image_name is None:
             return None
-        return CROP_MASK_ARTIFACT_SIDECAR.name_for(previous_image_name)
+        return ArtifactSidecarRole.CROP_MASK.name_for(previous_image_name)
 
     @classmethod
     def mask_image_name(cls, module: "ModuleBlock") -> str | None:
@@ -333,7 +338,7 @@ class CropModule(
 
     @classmethod
     def artifact_contract(cls, assembler, builder, module):
-        from openhcs.core.artifacts import CROP_MASK_ARTIFACT_SIDECAR
+        from openhcs.core.artifacts import ArtifactSidecarRole
 
         output_name = cls.output_image_name(module)
         inputs = [
@@ -344,35 +349,31 @@ class CropModule(
             ),
         ]
         outputs = [
-            ImageArtifactOutputCapability.bind_artifact(
-                cls,
+            cls.image_output_artifact(
                 builder,
                 module,
-                ImageArtifactOutputCapability.spec(
-                    output_name,
-                    relations=cls.declared_output_artifact_relations(
-                        builder,
-                        module,
-                        setting=cls.output_image_setting,
-                        capability_type=ImageArtifactOutputCapability,
-                        name=output_name,
-                    ),
+                output_name,
+                setting=cls.output_image_setting,
+                relations=cls.declared_output_artifact_relations(
+                    builder,
+                    module,
+                    setting=cls.output_image_setting,
+                    capability_type=ImageArtifactOutputCapability,
+                    name=output_name,
                 ),
             ),
-            ImageArtifactOutputCapability.bind_artifact(
-                cls,
+            cls.image_output_artifact(
                 builder,
                 module,
-                ImageArtifactOutputCapability.spec(
-                    CROP_MASK_ARTIFACT_SIDECAR.name_for(output_name),
-                    sidecar_role=CROP_MASK_ARTIFACT_SIDECAR.role,
-                    relations=cls.declared_output_artifact_relations(
-                        builder,
-                        module,
-                        setting=cls.output_image_setting,
-                        capability_type=ImageArtifactOutputCapability,
-                        name=output_name,
-                    ),
+                ArtifactSidecarRole.CROP_MASK.name_for(output_name),
+                setting=cls.output_image_setting,
+                sidecar_role=ArtifactSidecarRole.CROP_MASK,
+                relations=cls.declared_output_artifact_relations(
+                    builder,
+                    module,
+                    setting=cls.output_image_setting,
+                    capability_type=ImageArtifactOutputCapability,
+                    name=output_name,
                 ),
             ),
             cls.measurement_output_artifact(builder, module),

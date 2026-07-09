@@ -652,6 +652,14 @@ class AdapterObjectLabelSourceLookup(ObjectLabelSourceLookup):
         source_context: CellProfilerMeasurementSourceContext,
         object_name: MeasurementObjectName,
     ) -> CellProfilerMeasurementSourceContext:
+        if (
+            source_context.source_image_name is not None
+            and (
+                source_context.source_image_payload is not None
+                or source_context.source_metadata is not None
+            )
+        ):
+            return source_context
         object_labels = self.object_labels(object_name)
         if not image_payload_metadata(object_labels).source_image_paths:
             return source_context

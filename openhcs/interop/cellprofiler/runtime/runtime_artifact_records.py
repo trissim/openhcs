@@ -466,7 +466,7 @@ class RuntimeArtifactDeclaredInputResolution:
         if ambiguous_records:
             return ambiguous_records
         if not records:
-            query_miss_records = self.query_miss_records()
+            query_miss_records = self.query_miss_records(input_plan)
             if query_miss_records is not None:
                 return query_miss_records
         scoped_resolution = self.request.source_scope_policy.matching_records(
@@ -548,7 +548,10 @@ class RuntimeArtifactDeclaredInputResolution:
             "match the current source image scope."
         )
 
-    def query_miss_records(self) -> RuntimeArtifactRecordResolution:
+    def query_miss_records(
+        self,
+        input_plan: ArtifactInputPlan,
+    ) -> RuntimeArtifactRecordResolution:
         candidate_records = RuntimeGroupMatchScope(
             group_key=None,
             match_group=False,
@@ -561,10 +564,18 @@ class RuntimeArtifactDeclaredInputResolution:
         )
         if len(candidate_records) == 1:
             return (candidate_records[0],)
-        return self.request.source_scope_policy.query_miss_records(
+        scoped_records = self.request.source_scope_policy.query_miss_records(
             self.request,
             candidate_records,
         )
+        if scoped_records is not None:
+            return scoped_records
+        if input_plan.has_dynamic_group_scope and candidate_records:
+            return self.request.source_scope_policy.axis_records_after_query_miss(
+                self.request,
+                candidate_records,
+            )
+        return None
 
 @dataclass(frozen=True, slots=True)
 class RuntimeArtifactUndeclaredInputResolution:

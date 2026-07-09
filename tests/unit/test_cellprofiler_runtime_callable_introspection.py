@@ -4,7 +4,7 @@ import copy
 from inspect import signature
 import subprocess
 import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from typing import get_args
 
 import pytest
@@ -26,7 +26,11 @@ from openhcs.core.artifacts import (
     ImageArtifactType,
     ObjectLabelsArtifactType,
 )
-from openhcs.core.function_patterns import FunctionInvocationKey, compile_function_pattern
+from openhcs.core.function_patterns import (
+    FunctionInvocationKey,
+    compile_function_pattern,
+    normalize_function_pattern,
+)
 from openhcs.core.function_step_invocation_contracts import (
     FunctionStepInvocationContractBinding,
     FunctionStepInvocationContracts,
@@ -55,13 +59,6 @@ from openhcs.core.source_bindings import (
 )
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.config_framework.object_state import ObjectState
-from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
-    CellProfilerGeneratedInvocationContractProvider,
-    CellProfilerGeneratedInvocationContractState,
-    CellProfilerGeneratedPipelineInvocationContracts,
-    GeneratedFunctionSpec,
-    bind_generated_pipeline_runtime,
-)
 from openhcs.pyqt_gui.widgets.shared.services.cellprofiler_pipeline_rebinding import (
     CellProfilerPipelineRuntimeBindingService,
 )
@@ -423,67 +420,8 @@ def test_imported_function_step_values_remain_signature_diffs_in_object_state():
     assert state.parameters["processing_config.input_source"] is None
 
 
-def test_generated_runtime_binding_rejects_source_binding_contract_drift():
-    """Source binding edits must not silently drift from CP artifact inputs."""
-    module = ModuleType("test_generated_cp_pipeline")
-    module.pipeline_steps = [
-        FunctionStep(
-            func=crop,
-            source_bindings=StepSourceBindingsConfig(
-                bindings=(
-                    NamedSourceBinding(
-                        alias="WrongBlue",
-                        artifact_kind=ImageArtifactType,
-                    ),
-                ),
-            ),
-        )
-    ]
-
-    with pytest.raises(ValueError, match="source bindings drifted"):
-        bind_generated_pipeline_runtime(
-            module,
-            {
-                1: crop_contract(
-                    inputs=(ArtifactSpec.input("OrigBlue", ImageArtifactType),)
-                )
-            },
-        )
-
-
-def test_generated_runtime_binding_accepts_matching_source_binding_contract():
-    """Matching source bindings can bind to artifact-managed runtime callables."""
-    module = ModuleType("test_generated_cp_pipeline")
-    module.pipeline_steps = [
-        FunctionStep(
-            func=crop,
-            source_bindings=StepSourceBindingsConfig(
-                bindings=(
-                    NamedSourceBinding(
-                        alias="OrigBlue",
-                        artifact_kind=ImageArtifactType,
-                    ),
-                ),
-            ),
-        )
-    ]
-
-    bind_generated_pipeline_runtime(
-        module,
-        {1: crop_contract(inputs=(ArtifactSpec.input("OrigBlue", ImageArtifactType),))},
-    )
-
-    assert module.pipeline_steps[0].func is crop
-    assert module.pipeline_steps[0].invocation_contracts.contract_for(
-        FunctionInvocationKey("crop", "default", 0)
-    ) == crop_contract(inputs=(ArtifactSpec.input("OrigBlue", ImageArtifactType),))
-    assert not CellProfilerGeneratedInvocationContractState.pipeline_requires_rebinding(
-        module.pipeline_steps
-    )
-
-
-def test_step_invocation_contract_provider_binds_raw_cellprofiler_callable():
-    """Step-owned contracts compile raw CP callables without pipeline metadata."""
+def test_step_invocation_contract_provider_does_not_use_step_owned_cellprofiler_contracts():
+    """CP contracts must be derived from public declarations, not hidden step state."""
     output = ArtifactSpec.output("ColocalizedRegion", ObjectLabelsArtifactType)
     contract = ModuleArtifactContract(
         module_name="MaskObjects",
@@ -525,45 +463,39 @@ def test_step_invocation_contract_provider_binds_raw_cellprofiler_callable():
     )
     session = _compilation_session_for_steps([step])
 
-    provider = cellprofiler_module_settings_invocation_contract_provider_for_session(
-        session
-    )
-    compiled = compile_function_pattern(
-        step.func,
-        {},
-        {},
-        invocation_contract_provider=provider,
-        step_context=ArtifactDeclarationStepContext(
-            step_index=0,
-            source_bindings=step.source_bindings,
-        ),
-    )
-    invocation = next(compiled.iter_invocations())
-
-    assert invocation.contract.module_artifact_contract == contract
-    assert isinstance(invocation.contract.func, CellProfilerRuntimeCallable)
+    with pytest.raises(ValueError, match="Select the input objects"):
+        cellprofiler_module_settings_invocation_contract_provider_for_session(
+            session
+        )
 
 
-def test_generated_contract_provider_binds_cellprofiler_runtime_at_compile_time():
-    """Generated CP contracts stay out of FunctionStep source but compile to runtime callables."""
-    contract = crop_contract(
-        inputs=(ArtifactSpec.input("OrigBlue", ImageArtifactType),),
-        outputs=(ArtifactSpec.output("CropBlue", ImageArtifactType),),
-    )
+def test_public_compile_time_provider_binds_cellprofiler_runtime_from_step_declarations():
+    """Public CP FunctionStep declarations must compile to artifact-aware callables."""
     source_bindings = StepSourceBindingsConfig(
+        enabled=True,
         bindings=(
             NamedSourceBinding(
-                alias="OrigBlue",
+                alias="OrigStain1",
                 artifact_kind=ImageArtifactType,
             ),
         ),
     )
-    provider = CellProfilerGeneratedPipelineInvocationContracts.from_mapping(
-        {1: contract}
-    ).invocation_contract_provider
+    step = FunctionStep(
+        func=(
+            correct_illumination_calculate,
+            {"name_the_output_image": "IllumStain1"},
+        ),
+        name="CorrectIlluminationCalculate",
+        source_bindings=source_bindings,
+    )
+    session = _compilation_session_for_steps([step])
+    provider = cellprofiler_module_settings_invocation_contract_provider_for_session(
+        session
+    )
+    assert provider is not None
 
     compiled = compile_function_pattern(
-        crop,
+        step.func,
         {},
         {},
         invocation_contract_provider=provider,
@@ -574,41 +506,58 @@ def test_generated_contract_provider_binds_cellprofiler_runtime_at_compile_time(
     )
     invocation = next(compiled.iter_invocations())
 
-    assert invocation.contract.module_artifact_contract == contract
+    assert invocation.contract.module_artifact_contract is not None
+    assert invocation.contract.module_artifact_contract.module_name == (
+        "CorrectIlluminationCalculate"
+    )
+    assert [spec.name for spec in invocation.contract.module_artifact_contract.inputs] == [
+        "OrigStain1"
+    ]
+    assert [spec.name for spec in invocation.contract.module_artifact_contract.outputs] == [
+        "IllumStain1"
+    ]
     assert isinstance(invocation.contract.func, CellProfilerRuntimeCallable)
     assert runtime_adapter_spec_from_callable(invocation.contract.func) is not None
 
 
-def test_generated_contract_provider_uses_generated_step_order_for_repeated_modules():
-    """Repeated generated modules can share source bindings without contract ambiguity."""
+def test_public_compile_time_provider_uses_step_order_for_repeated_modules():
+    """Repeated public CP modules derive identity from each step's public kwargs."""
     source_bindings = StepSourceBindingsConfig(
+        enabled=True,
         bindings=(
             NamedSourceBinding(
-                alias="OrigBlue",
+                alias="OrigStain1",
                 artifact_kind=ImageArtifactType,
             ),
         ),
     )
-    first_contract = crop_contract(
-        inputs=(ArtifactSpec.input("OrigBlue", ImageArtifactType),),
-        outputs=(ArtifactSpec.output("FirstCrop", ImageArtifactType),),
-    )
-    second_contract = crop_contract(
-        inputs=(ArtifactSpec.input("OrigBlue", ImageArtifactType),),
-        outputs=(ArtifactSpec.output("SecondCrop", ImageArtifactType),),
-    )
     steps = [
-        FunctionStep(func=crop, name="Crop", source_bindings=source_bindings),
-        FunctionStep(func=crop, name="Crop", source_bindings=source_bindings),
+        FunctionStep(
+            func=(
+                correct_illumination_calculate,
+                {"name_the_output_image": "FirstIllum"},
+            ),
+            name="CorrectIlluminationCalculate",
+            source_bindings=source_bindings,
+        ),
+        FunctionStep(
+            func=(
+                correct_illumination_calculate,
+                {"name_the_output_image": "SecondIllum"},
+            ),
+            name="CorrectIlluminationCalculate",
+            source_bindings=source_bindings,
+        ),
     ]
     FunctionReferenceTransportAuthority.reference_pipeline_in_place(steps)
-    provider = CellProfilerGeneratedInvocationContractProvider.for_steps(
-        {1: first_contract, 2: second_contract},
-        steps,
+    session = _compilation_session_for_steps(steps)
+    provider = cellprofiler_module_settings_invocation_contract_provider_for_session(
+        session
     )
+    assert provider is not None
 
     compiled = compile_function_pattern(
-        crop,
+        steps[1].func,
         {},
         {},
         invocation_contract_provider=provider,
@@ -619,7 +568,10 @@ def test_generated_contract_provider_uses_generated_step_order_for_repeated_modu
     )
     invocation = next(compiled.iter_invocations())
 
-    assert invocation.contract.module_artifact_contract == second_contract
+    assert invocation.contract.module_artifact_contract is not None
+    assert [spec.name for spec in invocation.contract.module_artifact_contract.outputs] == [
+        "SecondIllum"
+    ]
 
 
 def test_cellprofiler_compile_time_contract_provider_derives_single_source_input():
@@ -703,46 +655,8 @@ def test_cellprofiler_compile_time_contract_provider_scopes_grouped_source_bindi
     assert [spec.name for spec in second_contract.outputs] == ["IllumStain2"]
 
 
-def test_compile_time_provider_prefers_generated_group_contracts_after_transport(
-    monkeypatch,
-):
-    """Selected/generated CP contracts must not collapse to hidden aggregate contracts."""
-    first_output = ArtifactSpec.output("IllumStain1", ImageArtifactType)
-    second_output = ArtifactSpec.output("IllumStain2", ImageArtifactType)
-    first_contract = ModuleArtifactContract(
-        module_name="CorrectIlluminationCalculate",
-        items=(
-            *ModuleArtifactContract.items_for_partition(
-                SourceArtifactInputPartition,
-                (ArtifactSpec.input("OrigStain1", ImageArtifactType),),
-            ),
-            *ModuleArtifactContract.items_for_partition(
-                RecordedArtifactOutputPartition,
-                (first_output,),
-            ),
-            *ModuleArtifactContract.items_for_partition(
-                DeclaredArtifactOutputPartition,
-                (first_output,),
-            ),
-        ),
-    )
-    second_contract = ModuleArtifactContract(
-        module_name="CorrectIlluminationCalculate",
-        items=(
-            *ModuleArtifactContract.items_for_partition(
-                SourceArtifactInputPartition,
-                (ArtifactSpec.input("OrigStain2", ImageArtifactType),),
-            ),
-            *ModuleArtifactContract.items_for_partition(
-                RecordedArtifactOutputPartition,
-                (second_output,),
-            ),
-            *ModuleArtifactContract.items_for_partition(
-                DeclaredArtifactOutputPartition,
-                (second_output,),
-            ),
-        ),
-    )
+def test_compile_time_provider_derives_group_contracts_from_public_pattern_after_transport():
+    """Grouped CP contracts must come from public kwargs plus source bindings."""
     source_bindings = StepSourceBindingsConfig(
         enabled=True,
         bindings=(
@@ -765,26 +679,26 @@ def test_compile_time_provider_prefers_generated_group_contracts_after_transport
     module = SimpleNamespace(
         pipeline_steps=[
             FunctionStep(
-                func=correct_illumination_calculate,
+                func={
+                    "1": (
+                        correct_illumination_calculate,
+                        {"name_the_output_image": "IllumStain1"},
+                    ),
+                    "2": (
+                        correct_illumination_calculate,
+                        {"name_the_output_image": "IllumStain2"},
+                    ),
+                },
                 name="CorrectIlluminationCalculate",
                 source_bindings=source_bindings,
             )
         ]
     )
-    contracts_by_module_num = {5: first_contract, 6: second_contract}
-    bind_generated_pipeline_runtime(module, contracts_by_module_num)
     FunctionReferenceTransportAuthority.reference_pipeline_in_place(
         module.pipeline_steps
     )
     assert not isinstance(module.pipeline_steps[0].func, CellProfilerGroupedRuntimeCallable)
 
-    import openhcs.interop.cellprofiler.compile_time_contracts as compile_time_contracts
-
-    monkeypatch.setattr(
-        compile_time_contracts,
-        "_runtime_contracts_from_selected_cppipe",
-        lambda _session: contracts_by_module_num,
-    )
     session = _compilation_session_for_steps(module.pipeline_steps)
     provider = cellprofiler_module_settings_invocation_contract_provider_for_session(
         session
@@ -801,12 +715,12 @@ def test_compile_time_provider_prefers_generated_group_contracts_after_transport
             source_bindings=source_bindings,
         ),
     )
-    invocation = next(compiled.iter_invocations())
-    rebound = invocation.contract.resolve_runtime_callable()
-    assert isinstance(rebound, CellProfilerGroupedRuntimeCallable)
     assert {
-        key: [spec.name for spec in contract.outputs]
-        for key, contract in rebound.grouped_contracts.contracts_by_group_key.items()
+        invocation.key.group_key: [
+            spec.name
+            for spec in invocation.contract.module_artifact_contract.outputs
+        ]
+        for invocation in compiled.iter_invocations()
     } == {
         "1": ["IllumStain1"],
         "2": ["IllumStain2"],
@@ -862,57 +776,9 @@ def test_compile_time_contract_provider_skips_runtime_bound_cellprofiler_callabl
     assert provider is None
 
 
-def test_generated_invocation_contract_state_accepts_nested_function_patterns():
-    """Generated CP contract checks must traverse list-shaped FunctionStep specs."""
-    contract = crop_contract(
-        outputs=(ArtifactSpec.output("CropBlue", ImageArtifactType),)
-    )
-    key = FunctionInvocationKey("crop", "default", 0)
-    state = CellProfilerGeneratedInvocationContractState(
-        pipeline_steps=[
-            FunctionStep(
-                func=[(crop, {})],
-                invocation_contracts=FunctionStepInvocationContracts(
-                    (FunctionStepInvocationContractBinding(key, contract),)
-                ),
-            )
-        ],
-        contracts_by_module_num={1: contract},
-    )
-
-    assert state.matches_expected_contracts()
-
-
-def test_generated_invocation_contract_state_accepts_raw_callable_with_step_contract():
-    """Step-owned invocation contracts remove the need for import-context rebinding."""
-    contract = crop_contract(
-        outputs=(ArtifactSpec.output("CropBlue", ImageArtifactType),)
-    )
-    key = FunctionInvocationKey("crop", "default", 0)
-    step = FunctionStep(
-        func=crop,
-        invocation_contracts=FunctionStepInvocationContracts(
-            (FunctionStepInvocationContractBinding(key, contract),)
-        ),
-    )
-
-    assert not CellProfilerGeneratedInvocationContractState.pipeline_requires_rebinding(
-        [step]
-    )
-
-
-def test_runtime_binding_service_uses_step_contracts_without_import_context():
-    """Code-mode CP steps with typed contracts do not depend on plate import state."""
-    contract = crop_contract(
-        outputs=(ArtifactSpec.output("CropBlue", ImageArtifactType),)
-    )
-    key = FunctionInvocationKey("crop", "default", 0)
-    step = FunctionStep(
-        func=crop,
-        invocation_contracts=FunctionStepInvocationContracts(
-            (FunctionStepInvocationContractBinding(key, contract),)
-        ),
-    )
+def test_runtime_binding_service_does_not_require_import_context_for_public_steps():
+    """Code-mode CP steps compile from public declarations, not loaded .cppipe context."""
+    step = FunctionStep(func=crop)
 
     rebound = CellProfilerPipelineRuntimeBindingService.runtime_bound_pipeline_for_plate(
         import_result_provider=None,
@@ -923,25 +789,12 @@ def test_runtime_binding_service_uses_step_contracts_without_import_context():
     assert rebound == [step]
 
 
-def test_generated_function_spec_accepts_dict_patterns():
-    """Generated module registration must traverse grouped FunctionStep specs."""
-    assert GeneratedFunctionSpec({"1": (crop, {}), "2": crop}).callables == (
+def test_function_pattern_normalization_accepts_dict_patterns():
+    """Function-pattern traversal must be generic, not generated-binding specific."""
+    assert tuple(
+        item.contract.resolve_runtime_callable()
+        for item in normalize_function_pattern({"1": (crop, {}), "2": crop}).iter_items()
+    ) == (
         crop,
         crop,
     )
-
-
-def test_generated_runtime_binding_rejects_callable_contract_order_mismatch():
-    """Step-order binding must fail loudly when callable and contract diverge."""
-    module = ModuleType("test_generated_cp_pipeline_order")
-    module.pipeline_steps = [FunctionStep(func=crop)]
-
-    with pytest.raises(ValueError, match="callable does not match"):
-        bind_generated_pipeline_runtime(
-            module,
-            {
-                1: ModuleArtifactContract(
-                    module_name="IdentifyPrimaryObjects",
-                )
-            },
-        )

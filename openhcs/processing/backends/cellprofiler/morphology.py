@@ -83,6 +83,7 @@ from openhcs.interop.cellprofiler.module_declarations import (
 from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
     required_setting_value,
+    setting_names,
     setting_values,
     split_symbol_names,
 )
@@ -515,6 +516,19 @@ class MaskObjectsModule(
             *super().compile_time_public_setting_names(),
             cls.masking_objects_setting,
         )
+
+    @classmethod
+    def compile_time_public_setting_records(cls, module, source_schema=None):
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        records = list(super().compile_time_public_setting_records(module, source_schema))
+        setting_name = setting_names(cls.masking_objects_setting)[0]
+        records.extend(
+            ModuleSetting(setting_name, object_name)
+            for value in setting_values(module, cls.masking_objects_setting)
+            for object_name in split_symbol_names(value)
+        )
+        return tuple(records)
 
     @classmethod
     def artifact_contract(cls, assembler, builder, module):

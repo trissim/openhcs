@@ -202,6 +202,47 @@ class OverlayOutlinesModule(
         }
 
     @classmethod
+    def compile_time_public_setting_names(cls):
+        return (
+            *super().compile_time_public_setting_names(),
+            cls.base_image_setting,
+            cls.outline_image_setting,
+            cls.objects_setting,
+            cls.output_image_setting,
+        )
+
+    @classmethod
+    def compile_time_public_setting_records(cls, module, source_schema=None):
+        del source_schema
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+        from openhcs.interop.cellprofiler.setting_names import (
+            setting_name_matches,
+            setting_names,
+        )
+
+        preserved_settings = (
+            cls.base_image_setting,
+            cls.outline_image_setting,
+            cls.objects_setting,
+            cls.output_image_setting,
+        )
+        setting_records = module.iter_settings()
+        if setting_records:
+            return tuple(
+                setting
+                for setting in setting_records
+                if any(
+                    setting_name_matches(setting.name, preserved)
+                    for preserved in preserved_settings
+                )
+            )
+        return tuple(
+            ModuleSetting(setting_names(setting_name)[0], value)
+            for setting_name in preserved_settings
+            for value in setting_values(module, setting_name)
+        )
+
+    @classmethod
     def uses_blank_image(cls, module: "ModuleBlock") -> bool:
         value = optional_setting_value(module, cls.blank_image_setting)
         return value is not None and value.strip().lower() == "yes"
@@ -359,7 +400,12 @@ class OverlayOutlinesModule(
             inputs.append(
                 row.input_capability.bind_artifact(cls, builder, module, row.input_capability.spec(row.input_name))
             )
-        output = ImageArtifactOutputCapability.bind_artifact(cls, builder, module, ImageArtifactOutputCapability.spec(cls.output_image_name(module)))
+        output = cls.image_output_artifact(
+            builder,
+            module,
+            cls.output_image_name(module),
+            setting=cls.output_image_setting,
+        )
         return assembler.assemble_contract(
             module, builder, inputs=inputs, outputs=[output]
         )

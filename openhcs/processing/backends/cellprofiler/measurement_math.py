@@ -664,6 +664,40 @@ class CalculateMathModule(
     invocation_options_source = staticmethod(calculate_math_invocation_options)
 
     @classmethod
+    def compile_time_setting_records_for_invocation(cls, request):
+        """Reconstruct contract-bearing CalculateMath rows from public inputs."""
+        from openhcs.interop.cellprofiler.cellprofiler_literals import (
+            cellprofiler_setting_literal,
+        )
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        records = list(super().compile_time_setting_records_for_invocation(request))
+        existing_names = {record.name for record in records}
+
+        def append(setting_name: SettingNameFamily, value: Any) -> None:
+            concrete_name = setting_name.names[0]
+            if concrete_name in existing_names or value is None:
+                return
+            records.append(ModuleSetting(concrete_name, cellprofiler_setting_literal(value)))
+            existing_names.add(concrete_name)
+
+        options = request.invocation_options
+        if options is not None and not isinstance(options, CalculateMathInvocationOptions):
+            raise TypeError(
+                "CalculateMath compile-time invocation options must be "
+                "CalculateMathInvocationOptions."
+            )
+        if isinstance(options, CalculateMathInvocationOptions):
+            append(cls.output_measurement_setting, options.output_name)
+            append(cls.numerator_objects_setting, options.operand1_object_name)
+            append(cls.denominator_objects_setting, options.operand2_object_name)
+
+        append(cls.numerator_measurement_setting, request.kwargs.get("operand1_feature"))
+        append(cls.denominator_measurement_setting, request.kwargs.get("operand2_feature"))
+        append(cls.operation_setting, request.kwargs.get("operation"))
+        return tuple(records)
+
+    @classmethod
     def artifact_contract_inputs(cls, builder, module):
         return (
             *super().artifact_contract_inputs(builder, module),
