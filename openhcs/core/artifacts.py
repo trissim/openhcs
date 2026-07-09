@@ -295,32 +295,19 @@ class ArtifactSidecarRole(str, Enum):
 
     CROP_MASK = "crop_mask"
 
-
-@dataclass(frozen=True, slots=True)
-class ArtifactSidecarSpec:
-    """Typed naming rule for a sidecar artifact derived from another artifact."""
-
-    role: ArtifactSidecarRole
-    separator: str = "__"
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.role, ArtifactSidecarRole):
-            raise TypeError(
-                "ArtifactSidecarSpec.role must be an ArtifactSidecarRole, "
-                f"got {type(self.role).__name__}."
-            )
-        if not self.separator:
-            raise ValueError("ArtifactSidecarSpec.separator cannot be empty.")
-
-    def name_for(self, primary_artifact_name: str) -> str:
+    def name_for(
+        self,
+        primary_artifact_name: str,
+        *,
+        separator: str = "__",
+    ) -> str:
         """Return the sidecar artifact name for one primary artifact."""
+        if not separator:
+            raise ValueError("ArtifactSidecarRole sidecar separator cannot be empty.")
         normalized = primary_artifact_name.strip()
         if not normalized:
             raise ValueError("primary_artifact_name cannot be empty.")
-        return f"{normalized}{self.separator}{self.role.value}"
-
-
-CROP_MASK_ARTIFACT_SIDECAR = ArtifactSidecarSpec(ArtifactSidecarRole.CROP_MASK)
+        return f"{normalized}{separator}{self.value}"
 
 
 class ArtifactMaterializationPayload(ABC):
@@ -962,6 +949,12 @@ class ArtifactPlan(ABC, metaclass=AutoRegisterMeta):
         if len(group_keys) == 1:
             return group_keys[0]
         return None
+
+    @property
+    def has_dynamic_group_scope(self) -> bool:
+        """Return whether concrete runtime groups are discovered during execution."""
+        group_keys = self.group_keys or (None,)
+        return self.group_component is not None and group_keys == (None,)
 
     def require_single_group_key(self) -> str | None:
         """Return the only artifact group key, failing for ambiguous groups."""

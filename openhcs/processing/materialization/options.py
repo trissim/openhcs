@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 
@@ -38,6 +39,11 @@ class FileOutputOptions:
             if isinstance(self.filename_identity, MaterializedFilenameIdentity)
             else MaterializedFilenameIdentity(self.filename_identity),
         )
+
+    @property
+    def primary_output_suffix(self) -> str:
+        """Suffix for this writer's primary materialized output."""
+        return self.filename_suffix
 
 
 @dataclass(frozen=True)
@@ -86,6 +92,10 @@ class ROIOptions(FileOutputOptions, SourceOptions):
     roi_suffix: str = "_rois.roi.zip"
     summary_suffix: str = "_segmentation_summary.txt"
 
+    @property
+    def primary_output_suffix(self) -> str:
+        return self.roi_suffix
+
 
 @dataclass(frozen=True)
 class TiffStackOptions(FileOutputOptions, SourceOptions):
@@ -96,6 +106,10 @@ class TiffStackOptions(FileOutputOptions, SourceOptions):
     slice_pattern: str = "_slice_{index:03d}.tif"
     summary_suffix: str = "_summary.txt"
     empty_summary: str = "No images generated (empty data)\n"
+
+    @property
+    def primary_output_suffix(self) -> str:
+        return Path(self.slice_pattern.format(index=0)).suffix
 
 
 @dataclass(frozen=True)

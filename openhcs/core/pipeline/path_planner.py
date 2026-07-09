@@ -378,6 +378,12 @@ class PathPlannerExecutionGroups:
         )
         if group_by_component is None:
             return PathPlannerGroupScope.ungrouped()
+        source_keys = tuple(self.planner.orchestrator.get_component_keys(group_by_component))
+        if source_keys:
+            return PathPlannerGroupScope.from_raw(
+                source_keys,
+                component=ComponentSet.coerce_component(group_by_component),
+            )
         return PathPlannerGroupScope.from_raw(
             (None,),
             component=ComponentSet.coerce_component(group_by_component),

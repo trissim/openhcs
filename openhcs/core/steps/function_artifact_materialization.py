@@ -17,6 +17,7 @@ from openhcs.core.artifacts import (
     ArtifactOutputPlan,
     ArtifactType,
     ArtifactTypeStrategyMatchMixin,
+    ImageArtifactType,
     MeasurementsArtifactType,
     SpecialArtifactType,
 )
@@ -338,6 +339,7 @@ class ArtifactAnalysisOutputDescriptor:
 
     filename: str
     source_identity: SourceImageIdentity | None
+    source_filename: str | None = None
 
 @dataclass(frozen=True, slots=True)
 class PlannedArtifactMaterializationPath:
@@ -359,8 +361,12 @@ class PlannedArtifactMaterializationPreview:
 class ArtifactRecordSourceDescriptor:
     """Resolved source stem and stream identity for one artifact record."""
 
-    filename_stem: str
+    filename: str
     source_identity: SourceImageIdentity | None
+
+    @property
+    def filename_stem(self) -> str:
+        return Path(self.filename).stem
 
 class AnalysisOutputDescriptorAuthority:
     """Own analysis artifact filenames and their source component metadata."""
@@ -398,6 +404,7 @@ class AnalysisOutputDescriptorAuthority:
                     f"_step{plan.pipeline_position}.roi.zip"
                 ),
                 source_identity=record_source.source_identity,
+                source_filename=record_source.filename,
             )
 
         if artifact_path is not None:
@@ -644,12 +651,12 @@ class AnalysisOutputDescriptorAuthority:
             identity = None
         if identity is not None:
             try:
-                filename_stem = Path(
+                filename = Path(
                     FunctionOutputPathAuthority.filename_for_identity(
                         parser_context.parser,
                         identity,
                     )
-                ).stem
+                ).name
             except ValueError:
                 logger.debug(
                     "Artifact record metadata identity is not filename-complete; "
@@ -658,7 +665,7 @@ class AnalysisOutputDescriptorAuthority:
                 )
             else:
                 return ArtifactRecordSourceDescriptor(
-                    filename_stem=filename_stem,
+                    filename=filename,
                     source_identity=cls.record_source_identity_from_metadata(
                         metadata,
                         identity,
@@ -669,7 +676,7 @@ class AnalysisOutputDescriptorAuthority:
         if source_path is None:
             return None
         return ArtifactRecordSourceDescriptor(
-            filename_stem=Path(source_path).stem,
+            filename=Path(source_path).name,
             source_identity=cls.record_source_identity_from_metadata(
                 metadata,
                 identity,
@@ -724,6 +731,23 @@ class AnalysisOutputDescriptorAuthority:
                 for item in step_output_manifest(context).produced_paths_for(plan)
             )
         ]
+
+    @classmethod
+    def materialization_base_path(
+        cls,
+        *,
+        plan: FunctionStepExecutionPlan,
+        output_descriptor: ArtifactAnalysisOutputDescriptor,
+        output_plan: ArtifactOutputPlan,
+    ) -> Path:
+        """Return the declared base path for one materialized artifact record."""
+        if (
+            issubclass(output_plan.artifact_type, ImageArtifactType)
+            and output_plan.materialization_uses_source_identity_filename()
+            and output_descriptor.source_filename is not None
+        ):
+            return Path(plan.artifact_images_dir) / output_descriptor.source_filename
+        return plan.artifact_analysis_output_dir / output_descriptor.filename
 
     @staticmethod
     def source_identity_for_path(
@@ -935,7 +959,6 @@ def materialize_artifact_outputs(
     from openhcs.processing.materialization import materialize
 
     backend_plan = target_plan.backend_plan(plan, context)
-    analysis_output_dir = plan.artifact_analysis_output_dir
     images_dir = plan.artifact_images_dir
     store = context.runtime_value_store
 
@@ -975,8 +998,16 @@ def materialize_artifact_outputs(
                 materialization_spec=mat_spec,
                 output_plan=output_plan,
             )
-            analysis_path = analysis_output_dir / output_descriptor.filename
-            stream_output_paths = mat_spec.candidate_paths(str(analysis_path))
+            materialization_base_path = (
+                AnalysisOutputDescriptorAuthority.materialization_base_path(
+                    plan=plan,
+                    output_descriptor=output_descriptor,
+                    output_plan=output_plan,
+                )
+            )
+            stream_output_paths = mat_spec.candidate_paths(
+                str(materialization_base_path)
+            )
             backends = backend_plan.backends_for(
                 filemanager=filemanager,
                 stream_output_paths=stream_output_paths,
@@ -986,7 +1017,7 @@ def materialize_artifact_outputs(
             materialize(
                 mat_spec,
                 data,
-                str(analysis_path),
+                str(materialization_base_path),
                 filemanager,
                 backends,
                 backend_plan.backend_kwargs(

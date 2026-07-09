@@ -1079,6 +1079,59 @@ class PathHelper:
     def with_suffix(self, suffix: str) -> str:
         return str(self.parent / f"{self.name}{suffix}")
 
+    def source_identity_base_path(self, options: FileOutputOptions) -> Path | None:
+        """Return the source-identity base path when it already names this output."""
+        suffix = options.primary_output_suffix
+        if (
+            options.filename_identity is MaterializedFilenameIdentity.SOURCE_IDENTITY
+            and suffix
+            and self.base_path.name.endswith(suffix)
+        ):
+            return self.base_path
+        return None
+
+    def primary_output_path(self, options: FileOutputOptions) -> str:
+        """Return a writer output path, preserving matching source-identity paths."""
+        source_path = self.source_identity_base_path(options)
+        if source_path is not None:
+            return str(source_path)
+        return self.with_suffix(options.primary_output_suffix)
+
+    def primary_output_basename(self, options: FileOutputOptions) -> str:
+        """Return basename for derived outputs from the same writer."""
+        source_path = self.source_identity_base_path(options)
+        if source_path is None:
+            return self.name
+        return source_path.name[: -len(options.primary_output_suffix)]
+
+    def related_output_path(
+        self,
+        options: FileOutputOptions,
+        related_suffix: str,
+    ) -> str:
+        """Return a side output path sharing the primary output basename."""
+        return str(
+            self.parent
+            / f"{self.primary_output_basename(options)}{related_suffix}"
+        )
+
+    def patterned_output_path(
+        self,
+        options: FileOutputOptions,
+        pattern: str,
+        *,
+        index: int,
+        preserve_single_source_output: bool = False,
+    ) -> str:
+        """Return an indexed output path using this writer's primary basename."""
+        source_path = self.source_identity_base_path(options)
+        if preserve_single_source_output and source_path is not None:
+            return str(source_path)
+        return str(
+            self.parent
+            / f"{self.primary_output_basename(options)}{pattern.format(index=index)}"
+        )
+
 
 @lru_cache(maxsize=65536)
 def _cached_path_stem(path: str) -> str:
@@ -1125,7 +1178,8 @@ class MaterializationCandidatePathAuthority:
 
     @staticmethod
     def single_output(options: FileOutputOptions, base_path: str) -> tuple[str, ...]:
-        return (PathHelper(base_path, options).with_suffix(options.filename_suffix),)
+        paths = PathHelper(base_path, options)
+        return (paths.primary_output_path(options),)
 
 class ROICandidatePathAuthority:
     """Candidate paths emitted by ROI materialization."""
@@ -1139,8 +1193,8 @@ class ROICandidatePathAuthority:
             )
         paths = PathHelper(base_path, options)
         return (
-            paths.with_suffix(options.roi_suffix),
-            paths.with_suffix(options.summary_suffix),
+            paths.primary_output_path(options),
+            paths.related_output_path(options, options.summary_suffix),
         )
 
 class TiffStackCandidatePathAuthority:
@@ -1155,12 +1209,34 @@ class TiffStackCandidatePathAuthority:
             )
         paths = PathHelper(base_path, options)
         return (
-            str(
-                paths.parent
-                / f"{paths.name}{options.slice_pattern.format(index=0)}"
+            paths.patterned_output_path(
+                options,
+                options.slice_pattern,
+                index=0,
+                preserve_single_source_output=True,
             ),
-            paths.with_suffix(options.summary_suffix),
+            paths.related_output_path(options, options.summary_suffix),
         )
+
+
+def _tiff_stack_slice_path(
+    paths: PathHelper,
+    options: TiffStackOptions,
+    *,
+    index: int,
+    slice_count: int,
+) -> str:
+    return paths.patterned_output_path(
+        options,
+        options.slice_pattern,
+        index=index,
+        preserve_single_source_output=slice_count == 1,
+    )
+
+
+def _tiff_stack_summary_path(paths: PathHelper, options: TiffStackOptions) -> str:
+    return paths.related_output_path(options, options.summary_suffix)
+
 
 class WriteModePathPolicy(ABC, metaclass=AutoRegisterMeta):
     """Apply existing-path policy for one write mode."""
@@ -1754,7 +1830,7 @@ class SingleFileWriterAuthority:
                 validate_payload(payload, options)
             return [
                 Output(
-                    path=ctx.paths(options).with_suffix(options.filename_suffix),
+                    path=ctx.paths(options).primary_output_path(options),
                     content=render(payload, options),
                 )
             ]
@@ -1907,7 +1983,7 @@ class CombinedROIMaterializationTargetPolicy(
         return (
             ROIMaterializationTarget(
                 archive=ROIMaterializationArchiveIdentity(
-                    request.paths.with_suffix(request.options.roi_suffix)
+                    request.paths.primary_output_path(request.options)
                 ),
                 items=request.materialization_input.unprojected_items,
             ),
@@ -1931,7 +2007,7 @@ class ComponentAddressedCombinedROIMaterializationTargetPolicy(
         return (
             ROIMaterializationTarget(
                 archive=ROIMaterializationArchiveIdentity.from_metadata(
-                    path=request.paths.with_suffix(request.options.roi_suffix),
+                    path=request.paths.primary_output_path(request.options),
                     metadata=item.metadata,
                 ),
                 items=(item,),
@@ -2096,7 +2172,7 @@ def _write_roi_zip(
     )
     payload = materialization_input.data
     paths = ctx.paths(options)
-    summary_path = paths.with_suffix(options.summary_suffix)
+    summary_path = paths.related_output_path(options, options.summary_suffix)
 
     if materialization_is_empty(payload):
         return [Output(path=summary_path, content="No segmentation masks generated (empty data)\n")]
@@ -2287,10 +2363,9 @@ def _write_tiff_stack(
     )
     data = materialization_input.data
     paths = ctx.paths(options)
-    base_name = paths.name
 
     if materialization_is_empty(data):
-        summary_path = paths.with_suffix(options.summary_suffix)
+        summary_path = _tiff_stack_summary_path(paths, options)
         return [Output(path=summary_path, content=options.empty_summary)]
 
     slices = TiffStackSlicePayloadAuthority.slices(data, options)
@@ -2304,8 +2379,11 @@ def _write_tiff_stack(
 
     outs: list[Output] = []
     for i, arr in enumerate(slices):
-        filename = str(
-            paths.parent / f"{base_name}{options.slice_pattern.format(index=i)}"
+        filename = _tiff_stack_slice_path(
+            paths,
+            options,
+            index=i,
+            slice_count=len(slices),
         )
         out_arr = TiffArrayAuthority.output_array(arr, options)
         outs.append(
@@ -2316,13 +2394,23 @@ def _write_tiff_stack(
             )
         )
 
-    summary_path = paths.with_suffix(options.summary_suffix)
+    summary_path = _tiff_stack_summary_path(paths, options)
     first = None
     if slices:
         first = slices[0]
+    source_path = paths.source_identity_base_path(options)
+    if source_path is not None:
+        base_filename_pattern = (
+            source_path.name
+            if len(slices) == 1
+            else f"{paths.primary_output_basename(options)}"
+            f"{options.slice_pattern}"
+        )
+    else:
+        base_filename_pattern = f"{paths.name}{options.slice_pattern}"
     summary_content = (
         f"Images saved: {len(slices)} files\n"
-        f"Base filename pattern: {base_name}{options.slice_pattern}\n"
+        f"Base filename pattern: {base_filename_pattern}\n"
         f"Image dtype: {TiffArrayAuthority.dtype_name(first)}\n"
         f"Image shape: {TiffArrayAuthority.shape_text(first)}\n"
     )

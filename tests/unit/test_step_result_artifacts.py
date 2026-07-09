@@ -7,9 +7,9 @@ import numpy as np
 
 from openhcs.constants.constants import AllComponents, MEMORY_TYPE_NUMPY
 from openhcs.core.artifacts import (
-    CROP_MASK_ARTIFACT_SIDECAR,
     ArtifactInputPlan,
     ArtifactOutputPlan,
+    ArtifactSidecarRole,
     ArtifactSpec,
     StepResult,
     ImageArtifactType,
@@ -223,7 +223,7 @@ def test_function_core_passes_payload_data_to_array_callable_and_restores_contex
 
 
 def test_crop_mask_sidecar_names_derive_from_core_artifact_role():
-    assert CROP_MASK_ARTIFACT_SIDECAR.name_for("CroppedImage") == (
+    assert ArtifactSidecarRole.CROP_MASK.name_for("CroppedImage") == (
         "CroppedImage__crop_mask"
     )
 

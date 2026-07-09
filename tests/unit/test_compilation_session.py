@@ -11,6 +11,7 @@ from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.config import (
     GlobalPipelineConfig,
+    LazyNapariStreamingConfig,
     LazyStepSourceBindingsConfig,
     PipelineConfig,
     ProcessingConfig,
@@ -294,6 +295,62 @@ def test_compiler_enabled_source_binding_plan_comes_from_objectstate_snapshot():
     assert session.plan(0).source_binding_plan.bindings == (binding,)
     assert session.plan(0).source_binding_plan.metadata_rules == (metadata_rule,)
     assert session.plan(0).source_binding_plan.match_plan == match_plan
+
+
+def test_compiler_streaming_config_snapshot_preserves_inherited_port():
+    ObjectStateRegistry.clear()
+    global_config = GlobalPipelineConfig(
+        napari_streaming_config=LazyNapariStreamingConfig(
+            enabled=True,
+            persistent=False,
+        ),
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    global_state = ObjectState(global_config, scope_id="")
+    pipeline_state = ObjectState(
+        PipelineConfig(),
+        scope_id="plate",
+        parent_state=global_state,
+    )
+
+    try:
+        ObjectStateRegistry.register(global_state, _skip_snapshot=True)
+        ObjectStateRegistry.register(pipeline_state, _skip_snapshot=True)
+        step = FunctionStep(func=_identity, name="streamed")
+        step_state = ObjectState(
+            step,
+            scope_id="plate::functionstep_0",
+            parent_state=pipeline_state,
+            exclude_params=["func"],
+        )
+        ObjectStateRegistry.register(step_state, _skip_snapshot=True)
+        resolved_step = step_state.to_object()
+        snapshot = StepSnapshot.from_resolved_step(
+            index=0,
+            step=resolved_step,
+            step_state=step_state,
+        )
+        context = _context()
+        context.required_visualizers = []
+        session = CompilationSession.from_context(
+            context=context,
+            steps=[resolved_step],
+            orchestrator=_orchestrator(pipeline_state.to_object()),
+            global_config=global_config,
+            step_state_map={0: step_state},
+            snapshots=(snapshot,),
+        )
+
+        PipelineCompiler._collect_streaming_configs(session)
+    finally:
+        ObjectStateRegistry.clear()
+
+    assert context.required_visualizers
+    required = context.required_visualizers[0]
+    assert required.config.enabled is True
+    assert required.config.persistent is False
+    assert required.config.port == 5555
+    assert session.plan(0).streaming_configs["napari_streaming_config"].port == 5555
 
 
 def test_compiler_disabled_source_bindings_stay_inert_without_contract_requirement():

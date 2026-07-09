@@ -42,6 +42,7 @@ from openhcs.processing.materialization import (
     json_only,
     materialize,
     tabular_field_names_from_materialization,
+    text_only,
     tiff_stack,
 )
 from openhcs.processing.materialization.core import (
@@ -205,6 +206,12 @@ def test_materialization_spec_candidate_paths_follow_registered_writers() -> Non
     assert csv_only(suffix=".csv").candidate_paths("/tmp/A01_measurements.pkl") == (
         "/tmp/A01_measurements.csv",
     )
+    assert json_only().candidate_paths("/tmp/metadata.json") == (
+        "/tmp/metadata.json",
+    )
+    assert text_only().candidate_paths("/tmp/report.txt") == (
+        "/tmp/report.txt",
+    )
     assert MaterializationSpec(ROIOptions()).candidate_paths(
         "/tmp/A01_s001_w1_z001_t001_Nuclei_step3.roi.zip"
     ) == (
@@ -214,6 +221,10 @@ def test_materialization_spec_candidate_paths_follow_registered_writers() -> Non
     assert tiff_stack().candidate_paths("/tmp/Overlay.pkl") == (
         "/tmp/Overlay_slice_000.tif",
         "/tmp/Overlay_summary.txt",
+    )
+    assert tiff_stack().candidate_paths("/tmp/A01_s001_w1_z001_t001.tif") == (
+        "/tmp/A01_s001_w1_z001_t001.tif",
+        "/tmp/A01_s001_w1_z001_t001_summary.txt",
     )
 
 

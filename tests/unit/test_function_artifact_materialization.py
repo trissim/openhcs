@@ -552,7 +552,7 @@ def test_materialize_artifact_outputs_attaches_image_schema_provenance(monkeypat
 
     assert len(materialized) == 1
     data, path = materialized[0]
-    assert path == "/analysis/A01_s001_w3_z001_t001_converted_image_step7.roi.zip"
+    assert path == "/images/A01_s001_w3_z001_t001.tif"
     assert isinstance(data, ImageMetadataPayload)
     assert dict(image_payload_metadata(data).source_component_metadata) == {
         "well": "A01",
@@ -1247,11 +1247,10 @@ def test_materialize_artifact_outputs_streams_aggregate_artifact_with_incomplete
     _spec, _data, path, _backends, backend_kwargs = materialized[0]
     assert path == "/analysis/A01_Nuclei_step7.roi.zip"
     stream_request = stream_request_from_backend_kwargs(backend_kwargs)
-    assert stream_request.display_config.COMPONENT_ORDER == (
-        "z_index",
-        "timepoint",
-        "well",
-        "site",
+    assert stream_request.display_config.COMPONENT_ORDER == tuple(
+        component
+        for component in streaming_config.COMPONENT_ORDER
+        if component != "channel"
     )
     assert NapariDisplayPayload.from_display_config(stream_request.display_config) == {
         "colormap": "gray",
@@ -1700,7 +1699,7 @@ def test_materialize_artifact_outputs_uses_runtime_plane_group_identity(
     assert materialized == [
         (
             payload,
-            "/analysis/A01_s001_w1_z001_t011_AdjacentImage_step7.roi.zip",
+            "/images/A01_s001_w1_z001_t011.tif",
         )
     ]
 
@@ -2043,7 +2042,7 @@ def test_materialize_rgb_artifact_streams_filename_channel_identity(
     )
 
     _spec, _data, path, _backends, backend_kwargs = materialized[0]
-    assert path == "/analysis/A01_s001_w3_z001_t001_RGBImage_step7.roi.zip"
+    assert path == "/images/A01_s001_w3_z001_t001.TIF"
     stream_request = stream_request_from_backend_kwargs(backend_kwargs)
     assert stream_request.source.metadata.metadata_by_index == (
         {
@@ -2139,7 +2138,7 @@ def test_materialize_rgb_artifact_keeps_scalar_filename_identity_for_mixed_prove
     )
 
     _spec, _data, path, _backends, backend_kwargs = materialized[0]
-    assert path == "/analysis/A01_s001_w2_z001_t001_OrigOverlay_step7.roi.zip"
+    assert path == "/images/A01_s001_w2_z001_t001.TIF"
     stream_request = stream_request_from_backend_kwargs(backend_kwargs)
     assert stream_request.source.metadata.metadata_by_index == (
         {
