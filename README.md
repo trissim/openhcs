@@ -274,7 +274,7 @@ pip install openhcs[gui,viz]     # GUI + Napari + Fiji
 pip install openhcs[gui,viz,gpu] # Full installation
 pip install openhcs[gpu]         # Headless + GPU
 pip install openhcs[omero]       # OMERO integration
-pip install -e ".[all,dev]"      # Development (all features)
+python scripts/dev_install.py --extras all,dev  # Development from pinned submodules
 ```
 
 GPU requires CUDA 12.x. For CPU-only: `OPENHCS_CPU_ONLY=true pip install openhcs[gui]`
@@ -378,8 +378,8 @@ A class-level registry tracks all active form managers. When a value changes in 
 ## 🤝 Contributing
 
 ```bash
-git clone https://github.com/OpenHCSDev/OpenHCS.git && cd OpenHCS
-pip install -e ".[all,dev]"
+git clone --recurse-submodules https://github.com/OpenHCSDev/OpenHCS.git && cd OpenHCS
+python scripts/dev_install.py --extras all,dev
 pytest tests/
 ```
 

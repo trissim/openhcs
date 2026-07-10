@@ -1,175 +1,86 @@
 # Development Setup
 
-This document explains how to set up development and production environments for openhcs.
+OpenHCS uses two deliberately separate dependency modes:
 
-## Overview
+- **Published installs** use the exact dependency versions declared in
+  [`pyproject.toml`](../pyproject.toml). On `main`, those versions correspond to
+  the submodule commits pinned by `main`.
+- **Development installs** use editable installations of those pinned
+  submodules from [`external/`](../external/).
 
-The openhcs project uses a **dynamic [`setup.py`](../setup.py) that automatically detects whether you're installing for development or production, and selects appropriate dependency sources:
+The separation matters because feature branches can advance and publish newer
+dependency versions that are not compatible with the current `main` release.
 
-- **Development mode**: Uses local external modules from [`external/`](../external/) directory (git submodules)
-- **Production/PyPI mode**: Uses pip versions of external modules from PyPI
+## Development Installation
 
-This approach avoids the need for a separate `requirements-dev.txt` file and keeps all configuration in [`pyproject.toml`](../pyproject.toml) and [`setup.py`](../setup.py).
-
-## How It Works
-
-The [`setup.py`](../setup.py) file defines dependencies dynamically based on environment:
-
-1. **Detects development mode** by checking:
-   - Whether `PIP_EDITABLE_INSTALL=1` environment variable is set (set by `pip install -e`)
-   - Whether `external/` directory exists
-   - Whether `OPENHCS_DEV_MODE` environment variable is set to `1`, `true`, or `yes`
-
-2. **Selects dependency source**:
-   - In development mode: Uses local paths like `file:///${PROJECT_ROOT}/external/ObjectState`
-   - In production mode: Uses pip versions like `objectstate>=0.1.0`
-
-3. **Merges with pyproject.toml**: The `setup()` function merges external module dependencies with other dependencies from `pyproject.toml`
-
-## Installation
-
-### Development Installation
-
-To install openhcs in development mode with local external modules:
+Use a dedicated virtual environment for each OpenHCS worktree. Editable
+installations belong to the Python environment, not to a Git branch, so sharing
+one environment between `main` and `benchmark-platform` can make one worktree
+import code from the other.
 
 ```bash
-# Simple development install
-pip install -e ".[dev,gui]"
-```
-
-The [`setup.py`](../setup.py) will automatically detect development mode and use local external modules from `external/` directory.
-
-### Production Installation
-
-To install openhcs from PyPI:
-
-```bash
-pip install openhcs
-```
-
-Or to install with extras:
-
-```bash
-pip install "openhcs[gui,gpu]"
-```
-
-### Force Production Mode in Development
-
-If you want to test production mode while still doing an editable install:
-
-```bash
-OPENHCS_DEV_MODE=0 pip install -e ".[dev,gui]"
-```
-
-## External Modules
-
-The following external modules are managed by the dynamic setup.py:
-
-| Module | PyPI Version | Dev Path |
-|--------|--------------|----------|
-| zmqruntime | zmqruntime>=0.1.0 | external/zmqruntime |
-| pycodify | pycodify>=0.1.0 | external/pycodify |
-| objectstate | objectstate>=0.1.0 | external/ObjectState |
-| python-introspect | python-introspect>=0.1.0 | external/python-introspect |
-| metaclass-registry | metaclass-registry>=0.1.0 | external/metaclass-registry |
-| arraybridge | arraybridge>=0.1.0 | external/arraybridge |
-| polystore | polystore>=0.1.0 | external/PolyStore |
-| pyqt-reactive | pyqt-reactive>=0.1.0 | external/pyqt-reactive |
-
-## Git Submodules
-
-The external modules are git submodules. To initialize them:
-
-```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 git submodule update --init --recursive
+python scripts/dev_install.py --extras dev,gui
 ```
 
-To update them to the latest versions:
+The installer validates that every root dependency pin matches the version
+declared by its checked-out submodule. It then submits OpenHCS and all eight
+submodules to pip in one resolver transaction as editable projects and verifies
+their installed source paths.
+
+To register only the editable projects without resolving third-party packages:
 
 ```bash
-git submodule update --remote
+python scripts/dev_install.py --extras "" --no-deps
 ```
 
-## Building for PyPI
+A bare `pip install -e .` does **not** automatically install the submodules.
+It uses the production dependency metadata. If matching editable dependencies
+are already installed in the environment, pip may retain them, which can hide
+this distinction; use the development installer for deterministic behavior.
 
-To build openhcs for PyPI (which will use pip versions of external modules):
+## Main Dependency Set
+
+| Distribution | Main version | Editable source |
+|---|---:|---|
+| `objectstate` | `1.0.17` | `external/ObjectState` |
+| `polystore` | `0.1.9` | `external/PolyStore` |
+| `arraybridge` | `0.2.10` | `external/arraybridge` |
+| `metaclass-registry` | `0.1.4` | `external/metaclass-registry` |
+| `pycodify` | `0.1.2` | `external/pycodify` |
+| `pyqt-reactive` | `0.1.21` | `external/pyqt-reactive` |
+| `python-introspect` | `0.1.4` | `external/python-introspect` |
+| `zmqruntime` | `0.1.8` | `external/zmqruntime` |
+
+Do not run `git submodule update --remote` on `main` as routine setup. That
+command advances checkouts to branch tips instead of restoring the commits
+pinned by the OpenHCS commit. Use `git submodule update --init --recursive`.
+
+## Production-Metadata Testing
+
+Use a clean environment where the submodules have not been installed editable:
+
+```bash
+python -m venv /tmp/openhcs-production-test
+source /tmp/openhcs-production-test/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev,gui]"
+```
+
+To build the same package metadata used by the PyPI workflow:
 
 ```bash
 python -m build
 ```
 
-The build process will automatically use production mode dependencies.
+Before a release, run:
 
-## Troubleshooting
-
-### External modules not found in development
-
-If you see errors about missing external modules during development:
-
-1. Ensure git submodules are initialized:
-   ```bash
-   git submodule update --init --recursive
-   ```
-
-2. Verify that the `external/` directory exists and contains submodules:
-   ```bash
-   ls -la external/
-   ```
-
-### Wrong dependency source being used
-
-If the wrong dependency source is being used:
-
-1. Check if you're using the `-e` flag for editable install
-2. Verify that the `external/` directory exists
-3. Set `OPENHCS_DEV_MODE=1` to force development mode or `OPENHCS_DEV_MODE=0` to force production mode
-
-### Why not use requirements-dev.txt?
-
-You might wonder why we don't use a `requirements-dev.txt` file. The reasons are:
-
-1. **Single source of truth**: All configuration is in `pyproject.toml` and `setup.py`
-2. **Automatic detection**: Developers don't need to remember to install external modules separately
-3. **PyPI compatible**: Production builds work out-of-the-box with pip versions
-4. **Modern packaging**: Uses PEP621 with pyproject.toml for most configuration
-5. **Flexible**: Can force either mode using environment variables
-
-### Why use setup.py instead of a custom build backend?
-
-A custom build backend would be more elegant but has a critical issue: it cannot be imported during installation because it's part of the package being installed. The `setup.py` approach is:
-
-- **Simple**: Well-established pattern that's easy to understand
-- **Reliable**: Works with all versions of pip and setuptools
-- **Maintainable**: Easy to debug and modify
-- **Compatible**: Works with PEP621 and modern packaging tools
-
-## Architecture
-
-The dynamic setup.py follows this flow:
-
-```
-pip install -e .
-    ↓
-pip reads pyproject.toml
-    ↓
-pip runs setup.py
-    ↓
-setup.py detects development mode
-    ↓
-setup.py selects dependency source
-    ↓
-setuptools merges with pyproject.toml dependencies
-    ↓
-setuptools proceeds with installation
+```bash
+python scripts/verify_release_ready.py
 ```
 
-## Benefits
-
-This approach provides several benefits:
-
-1. **Single source of truth**: All configuration is in `pyproject.toml` and `setup.py`
-2. **No requirements.txt**: Avoids the "smell" of having a separate requirements file
-3. **Automatic detection**: Developers don't need to remember to install external modules separately
-4. **PyPI compatible**: Production builds work out-of-the-box with pip versions
-5. **Flexible**: Can force either mode using environment variables
-6. **Simple**: Uses well-established patterns that are easy to understand and maintain
+The release checks reject mismatches between root pins and submodule versions,
+and reject exact dependency versions that are unavailable from PyPI.

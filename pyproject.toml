@@ -77,15 +77,17 @@ dependencies = [
     # System monitoring (required by ui/shared/system_monitor_core.py)
     "psutil>=5.9.0",
 
-    # External dependencies (PyPI versions for production builds)
-    "zmqruntime>=0.1.8",
-    "pycodify>=0.1.0",
-    "objectstate>=1.0.17",
-    "python-introspect>=0.1.1",
-    "metaclass-registry>=0.1.4",
-    "arraybridge>=0.2.10",
-    "polystore>=0.1.9",
-    "pyqt-reactive>=0.1.21",
+    # External dependencies. These exact versions correspond to the submodule
+    # commits pinned by OpenHCS main. Do not widen them on main: development
+    # branches may publish newer, branch-specific dependency releases.
+    "zmqruntime==0.1.8",
+    "pycodify==0.1.2",
+    "objectstate==1.0.17",
+    "python-introspect==0.1.4",
+    "metaclass-registry==0.1.4",
+    "arraybridge==0.2.10",
+    "polystore==0.1.9",
+    "pyqt-reactive==0.1.21",
 ]
 
 [project.optional-dependencies]
@@ -290,12 +292,11 @@ openhcs = ["**/*.css", "**/*.yaml", "**/*.yml", "**/*.json"]
 # - With GPU support: pip install "openhcs[gpu]"
 # - Full installation: pip install "openhcs[all]"
 #
-# Development Installation:
-#   pip install -e ".[dev,gui]"
-#   (The custom build backend automatically uses local external modules)
+# Development installation with the submodules pinned by this checkout:
+#   python scripts/dev_install.py --extras dev,gui
 #
-# Force production mode in development:
-#   OPENHCS_DEV_MODE=0 pip install -e ".[dev,gui]"
+# Production-metadata test in a clean environment:
+#   pip install -e ".[dev,gui]"
 #
 # See docs/development_setup.md for more details
 
