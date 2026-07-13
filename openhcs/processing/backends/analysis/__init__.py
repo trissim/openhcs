@@ -33,6 +33,13 @@ try:
 except ImportError:
     pass
 
+# Import skeleton analysis
+try:
+    from openhcs.processing.backends.analysis.skeletonize_and_save import \
+        SkeletonizationResult, skeletonize_and_save
+except ImportError:
+    pass
+
 __all__ = [
     # DXF mask pipeline
     "dxf_mask_pipeline",
@@ -46,4 +53,8 @@ __all__ = [
     "ThresholdMethod",
     "Foreground",
     "SimpleColocalizationMethod",
+
+    # Skeleton analysis
+    "SkeletonizationResult",
+    "skeletonize_and_save",
 ]
