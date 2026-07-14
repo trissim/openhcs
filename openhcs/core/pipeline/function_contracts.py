@@ -50,12 +50,12 @@ def special_outputs(*output_specs) -> Callable[[F], F]:
     """
     def decorator(func: F) -> F:
         materialization_specs = {}
-        output_keys = set()
+        output_keys = []
 
         for spec in output_specs:
             if isinstance(spec, str):
                 # String only - no materialization function
-                output_keys.add(spec)
+                output_keys.append(spec)
             elif isinstance(spec, tuple) and len(spec) == 2:
                 # (key, MaterializationSpec) tuple or registered materializer callable
                 key, mat_spec = spec
@@ -66,7 +66,7 @@ def special_outputs(*output_specs) -> Callable[[F], F]:
                         "Materialization spec must be a MaterializationSpec. "
                         f"Got {type(mat_spec)} for key '{key}'."
                     )
-                output_keys.add(key)
+                output_keys.append(key)
                 materialization_specs[key] = mat_spec
             else:
                 raise ValueError(
@@ -75,7 +75,9 @@ def special_outputs(*output_specs) -> Callable[[F], F]:
                 )
 
         # Set both attributes for backward compatibility and new functionality
-        func.__special_outputs__ = output_keys  # For path planner (backward compatibility)
+        # Return values are matched to these keys positionally, so declaration
+        # order is part of the function contract and must not be discarded.
+        func.__special_outputs__ = tuple(output_keys)
         func.__materialization_specs__ = materialization_specs  # For materialization system
         return func
     return decorator

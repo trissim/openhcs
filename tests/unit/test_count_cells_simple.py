@@ -1,10 +1,13 @@
 import importlib
-from inspect import unwrap
+from dataclasses import replace
+from inspect import signature, unwrap
 
 import numpy as np
 from skimage.draw import disk
 
 from openhcs.processing.backends.analysis.count_cells_simple import (
+    Foreground,
+    SimpleCellSegmentationConfig,
     SimpleColocalizationMethod,
     ThresholdMethod,
     count_cells_simple,
@@ -24,6 +27,32 @@ def _count_cells_simple_dual_channel_impl():
     return unwrap(count_cells_simple_dual_channel)
 
 
+def _settings(**overrides):
+    return replace(SimpleCellSegmentationConfig(), **overrides)
+
+
+def test_dual_channel_signature_exposes_two_ordered_segmentation_configs():
+    parameter_names = list(
+        signature(_count_cells_simple_dual_channel_impl()).parameters
+    )
+
+    assert parameter_names == [
+        "image",
+        "channel_1_index",
+        "channel_1_settings",
+        "channel_2_index",
+        "channel_2_settings",
+        "colocalization_method",
+        "min_overlap_fraction",
+        "max_colocalization_distance",
+        "return_channel_masks",
+    ]
+    assert count_cells_simple_dual_channel.__special_outputs__ == (
+        "dual_channel_counts",
+        "colocalization_masks",
+    )
+
+
 def test_count_cells_simple_area_filter_fast_path_does_not_use_regionprops(monkeypatch):
     image = np.zeros((1, 32, 32), dtype=float)
     rr, cc = disk((10, 10), 4, shape=image.shape[1:])
@@ -39,11 +68,13 @@ def test_count_cells_simple_area_filter_fast_path_does_not_use_regionprops(monke
 
     _, results, masks = _count_cells_simple_impl()(
         image,
-        threshold_method=ThresholdMethod.MANUAL,
-        threshold=0.5,
-        min_size=20,
-        max_size=200,
-        max_eccentricity=1.0,
+        segmentation_settings=_settings(
+            threshold_method=ThresholdMethod.MANUAL,
+            threshold=0.5,
+            min_size=20,
+            max_size=200,
+            max_eccentricity=1.0,
+        ),
     )
 
     assert results == [{"slice_index": 0, "cell_count": 2}]
@@ -58,19 +89,23 @@ def test_count_cells_simple_filters_eccentricity_after_size_filter():
 
     _, unfiltered_results, unfiltered_masks = _count_cells_simple_impl()(
         image,
-        threshold_method=ThresholdMethod.MANUAL,
-        threshold=0.5,
-        min_size=20,
-        max_size=200,
-        max_eccentricity=1.0,
+        segmentation_settings=_settings(
+            threshold_method=ThresholdMethod.MANUAL,
+            threshold=0.5,
+            min_size=20,
+            max_size=200,
+            max_eccentricity=1.0,
+        ),
     )
     _, filtered_results, filtered_masks = _count_cells_simple_impl()(
         image,
-        threshold_method=ThresholdMethod.MANUAL,
-        threshold=0.5,
-        min_size=20,
-        max_size=200,
-        max_eccentricity=0.9,
+        segmentation_settings=_settings(
+            threshold_method=ThresholdMethod.MANUAL,
+            threshold=0.5,
+            min_size=20,
+            max_size=200,
+            max_eccentricity=0.9,
+        ),
     )
 
     assert unfiltered_results == [{"slice_index": 0, "cell_count": 2}]
@@ -88,30 +123,36 @@ def test_count_cells_simple_watersheds_large_objects_before_size_filter():
 
     _, unsplit_results, unsplit_masks = _count_cells_simple_impl()(
         image,
-        threshold_method=ThresholdMethod.MANUAL,
-        threshold=0.5,
-        min_size=50,
-        max_size=220,
-        watershed_large_objects=False,
+        segmentation_settings=_settings(
+            threshold_method=ThresholdMethod.MANUAL,
+            threshold=0.5,
+            min_size=50,
+            max_size=220,
+            watershed_large_objects=False,
+        ),
     )
     _, split_results, split_masks = _count_cells_simple_impl()(
         image,
-        threshold_method=ThresholdMethod.MANUAL,
-        threshold=0.5,
-        min_size=50,
-        max_size=220,
-        watershed_large_objects=True,
-        watershed_min_distance=5,
+        segmentation_settings=_settings(
+            threshold_method=ThresholdMethod.MANUAL,
+            threshold=0.5,
+            min_size=50,
+            max_size=220,
+            watershed_large_objects=True,
+            watershed_min_distance=5,
+        ),
     )
     _, capped_results, capped_masks = _count_cells_simple_impl()(
         image,
-        threshold_method=ThresholdMethod.MANUAL,
-        threshold=0.5,
-        min_size=50,
-        max_size=220,
-        watershed_large_objects=True,
-        watershed_max_size=300,
-        watershed_min_distance=5,
+        segmentation_settings=_settings(
+            threshold_method=ThresholdMethod.MANUAL,
+            threshold=0.5,
+            min_size=50,
+            max_size=220,
+            watershed_large_objects=True,
+            watershed_max_size=300,
+            watershed_min_distance=5,
+        ),
     )
 
     assert unsplit_results == [{"slice_index": 0, "cell_count": 0}]
@@ -131,24 +172,28 @@ def test_count_cells_simple_watershed_min_size_separates_split_trigger_from_filt
 
     _, unsplit_results, unsplit_masks = _count_cells_simple_impl()(
         image,
-        threshold_method=ThresholdMethod.MANUAL,
-        threshold=0.5,
-        min_size=20,
-        max_size=900,
-        watershed_large_objects=True,
-        watershed_min_distance=1,
-        watershed_footprint_size=5,
+        segmentation_settings=_settings(
+            threshold_method=ThresholdMethod.MANUAL,
+            threshold=0.5,
+            min_size=20,
+            max_size=900,
+            watershed_large_objects=True,
+            watershed_min_distance=1,
+            watershed_footprint_size=5,
+        ),
     )
     _, split_results, split_masks = _count_cells_simple_impl()(
         image,
-        threshold_method=ThresholdMethod.MANUAL,
-        threshold=0.5,
-        min_size=20,
-        max_size=900,
-        watershed_large_objects=True,
-        watershed_min_size=100,
-        watershed_min_distance=1,
-        watershed_footprint_size=5,
+        segmentation_settings=_settings(
+            threshold_method=ThresholdMethod.MANUAL,
+            threshold=0.5,
+            min_size=20,
+            max_size=900,
+            watershed_large_objects=True,
+            watershed_min_size=100,
+            watershed_min_distance=1,
+            watershed_footprint_size=5,
+        ),
     )
 
     assert unsplit_results == [{"slice_index": 0, "cell_count": 1}]
@@ -170,10 +215,18 @@ def test_count_cells_simple_dual_channel_reports_overlap_colocalization():
 
     output, results, masks = _count_cells_simple_dual_channel_impl()(
         image,
-        threshold_method=ThresholdMethod.MANUAL,
-        threshold=0.5,
-        min_size=20,
-        max_size=200,
+        channel_1_settings=_settings(
+            threshold_method=ThresholdMethod.MANUAL,
+            threshold=0.5,
+            min_size=20,
+            max_size=200,
+        ),
+        channel_2_settings=_settings(
+            threshold_method=ThresholdMethod.MANUAL,
+            threshold=0.5,
+            min_size=20,
+            max_size=200,
+        ),
         colocalization_method=SimpleColocalizationMethod.OVERLAP,
         min_overlap_fraction=0.5,
         return_channel_masks=True,
@@ -200,3 +253,48 @@ def test_count_cells_simple_dual_channel_reports_overlap_colocalization():
     assert set(np.unique(masks[0])) == {0, 1, 2}
     assert set(np.unique(masks[1])) == {0, 1, 2}
     assert set(np.unique(masks[2])) == {0, 1}
+
+
+def test_count_cells_simple_dual_channel_uses_independent_channel_settings():
+    image = np.empty((2, 64, 64), dtype=float)
+    image[0] = 0.0
+    image[1] = 1.0
+
+    shared_rr, shared_cc = disk((20, 20), 5, shape=image.shape[1:])
+    image[0, shared_rr, shared_cc] = 1.0
+    image[1, shared_rr, shared_cc] = 0.0
+
+    channel_1_rr, channel_1_cc = disk((45, 45), 5, shape=image.shape[1:])
+    image[0, channel_1_rr, channel_1_cc] = 1.0
+    channel_2_rr, channel_2_cc = disk((20, 45), 5, shape=image.shape[1:])
+    image[1, channel_2_rr, channel_2_cc] = 0.0
+
+    _, results, masks = _count_cells_simple_dual_channel_impl()(
+        image,
+        channel_1_settings=_settings(
+            threshold_method=ThresholdMethod.MANUAL,
+            threshold=0.5,
+            foreground=Foreground.BRIGHT,
+            min_size=20,
+            max_size=200,
+        ),
+        channel_2_settings=_settings(
+            threshold_method=ThresholdMethod.MANUAL,
+            threshold=0.5,
+            foreground=Foreground.DARK,
+            min_size=20,
+            max_size=200,
+        ),
+        colocalization_method=SimpleColocalizationMethod.OVERLAP,
+        min_overlap_fraction=0.5,
+        return_channel_masks=True,
+    )
+
+    assert results[0]["channel_1_count"] == 2
+    assert results[0]["channel_2_count"] == 2
+    assert results[0]["colocalized_count"] == 1
+    assert [set(np.unique(mask)) for mask in masks] == [
+        {0, 1, 2},
+        {0, 1, 2},
+        {0, 1},
+    ]

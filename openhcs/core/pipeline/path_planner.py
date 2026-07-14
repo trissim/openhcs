@@ -51,7 +51,8 @@ def normalize_pattern(pattern: Any) -> Iterator[Tuple[Callable, str, int]]:
 
 def extract_attributes(pattern: Any) -> Dict[str, Any]:
     """Extract special I/O metadata and track per-group ownership."""
-    output_names: Set[str] = set()
+    output_names: List[str] = []
+    seen_output_names: Set[str] = set()
     output_groups: Dict[str, Set[Optional[str]]] = defaultdict(set)
     inputs, mat_specs = {}, {}
 
@@ -59,8 +60,10 @@ def extract_attributes(pattern: Any) -> Dict[str, Any]:
         normalized_key = None if group_key == "default" else group_key
 
         func_outputs = getattr(func, '__special_outputs__', set())
-        output_names.update(func_outputs)
         for output in func_outputs:
+            if output not in seen_output_names:
+                output_names.append(output)
+                seen_output_names.add(output)
             output_groups[output].add(normalized_key)
 
         inputs.update(getattr(func, '__special_inputs__', {}))
@@ -526,7 +529,9 @@ class PathPlanner:
 
         if io_type == 'output' and items:  # Special outputs
             results_path = self._get_results_path()
-            for key in sorted(items):
+            # Special output values are returned positionally. Preserve the
+            # decorator declaration order through the compiled output plan.
+            for key in items:
                 # Include step index in filename to prevent collisions when multiple steps
                 # produce the same special output (e.g., two crop_device steps both producing match_results)
                 filename = PipelinePathPlanner._build_axis_filename(self.ctx.axis_id, key, step_index=sid)

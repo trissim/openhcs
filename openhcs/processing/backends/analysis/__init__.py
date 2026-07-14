@@ -29,7 +29,8 @@ except ImportError:
 try:
     from openhcs.processing.backends.analysis.count_cells_simple import \
         count_cells_simple, count_cells_simple_dual_channel, \
-        ThresholdMethod, Foreground, SimpleColocalizationMethod
+        ThresholdMethod, Foreground, SimpleCellSegmentationConfig, \
+        SimpleColocalizationMethod
 except ImportError:
     pass
 
@@ -52,6 +53,7 @@ __all__ = [
     "count_cells_simple_dual_channel",
     "ThresholdMethod",
     "Foreground",
+    "SimpleCellSegmentationConfig",
     "SimpleColocalizationMethod",
 
     # Skeleton analysis

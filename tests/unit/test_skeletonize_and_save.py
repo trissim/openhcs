@@ -59,10 +59,10 @@ def test_skeletonize_and_save_emits_measurements_and_labeled_masks():
 def test_skeletonize_and_save_declares_csv_and_roi_materialization():
     assert skeletonize_and_save.input_memory_type == "numpy"
     assert skeletonize_and_save.output_memory_type == "numpy"
-    assert skeletonize_and_save.__special_outputs__ == {
+    assert skeletonize_and_save.__special_outputs__ == (
         "skeleton_measurements",
         "skeleton_rois",
-    }
+    )
 
     specs = skeletonize_and_save.__materialization_specs__
     csv_options = specs["skeleton_measurements"].outputs[0]

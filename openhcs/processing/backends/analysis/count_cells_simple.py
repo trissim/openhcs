@@ -10,7 +10,11 @@ to the final candidate objects.
 
 from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
-from openhcs.processing.materialization import MaterializationSpec, CsvOptions, ROIOptions
+from openhcs.processing.materialization import (
+    CsvOptions,
+    MaterializationSpec,
+    ROIOptions,
+)
 
 from dataclasses import asdict, dataclass, fields
 from enum import Enum
@@ -37,6 +41,79 @@ class Foreground(str, Enum):
     """Foreground type for thresholding."""
     BRIGHT = "bright"
     DARK = "dark"
+
+
+@dataclass(frozen=True)
+class SimpleCellSegmentationConfig:
+    """Canonical settings for one channel of simple cell segmentation."""
+
+    threshold_method: ThresholdMethod = ThresholdMethod.OTSU
+    """Thresholding strategy used to create the foreground mask."""
+
+    threshold: float = 0.5
+    """Manual threshold used when ``threshold_method`` is ``MANUAL``."""
+
+    threshold_percentile: float = 99.0
+    """Percentile used when ``threshold_method`` is ``PERCENTILE``."""
+
+    foreground: Foreground = Foreground.BRIGHT
+    """Whether objects are brighter or darker than the background."""
+
+    min_size: int = 20
+    """Minimum accepted object area in pixels."""
+
+    max_size: int = 100000
+    """Maximum accepted object area in pixels."""
+
+    max_eccentricity: float = 1.0
+    """Maximum accepted object eccentricity; ``1.0`` disables this filter."""
+
+    watershed_large_objects: bool = False
+    """Whether to split oversized connected components before filtering."""
+
+    watershed_min_size: Optional[int] = None
+    """Optional lower area threshold for watershed attempts."""
+
+    watershed_max_size: Optional[int] = None
+    """Optional upper area threshold for watershed attempts."""
+
+    watershed_min_distance: int = 5
+    """Minimum spacing between watershed seed points."""
+
+    watershed_footprint_size: int = 3
+    """Square footprint side length used to find watershed seeds."""
+
+    def validate(self) -> None:
+        """Validate the complete settings block for one channel."""
+
+        if self.min_size < 0:
+            raise ValueError("min_size must be >= 0")
+        if self.max_size < self.min_size:
+            raise ValueError("max_size must be >= min_size")
+        if not 0.0 <= self.max_eccentricity <= 1.0:
+            raise ValueError("max_eccentricity must be in [0.0, 1.0]")
+        if not 0.0 <= self.threshold_percentile <= 100.0:
+            raise ValueError("threshold_percentile must be in [0.0, 100.0]")
+        if self.watershed_min_size is not None and self.watershed_min_size < 1:
+            raise ValueError("watershed_min_size must be >= 1 when set")
+
+        split_size = (
+            self.max_size
+            if self.watershed_min_size is None
+            else self.watershed_min_size
+        )
+        if (
+            self.watershed_max_size is not None
+            and self.watershed_max_size <= split_size
+        ):
+            raise ValueError(
+                "watershed_max_size must be greater than the watershed split "
+                "threshold when set"
+            )
+        if self.watershed_min_distance < 1:
+            raise ValueError("watershed_min_distance must be >= 1")
+        if self.watershed_footprint_size < 1:
+            raise ValueError("watershed_footprint_size must be >= 1")
 
 
 class SimpleColocalizationMethod(str, Enum):
@@ -98,6 +175,13 @@ setattr(_count_cells_simple, "ThresholdMethod", ThresholdMethod)
 Foreground.__module__ = _count_cells_simple.__name__
 setattr(_count_cells_simple, "Foreground", Foreground)
 
+SimpleCellSegmentationConfig.__module__ = _count_cells_simple.__name__
+setattr(
+    _count_cells_simple,
+    "SimpleCellSegmentationConfig",
+    SimpleCellSegmentationConfig,
+)
+
 SimpleColocalizationMethod.__module__ = _count_cells_simple.__name__
 setattr(_count_cells_simple, "SimpleColocalizationMethod", SimpleColocalizationMethod)
 
@@ -115,24 +199,15 @@ setattr(_count_cells_simple, "ColocalizationCandidate", ColocalizationCandidate)
 @special_outputs(
     (
         "cell_counts",
-        MaterializationSpec(CsvOptions(fields=SimpleCellCountResult.csv_fields()))
+        MaterializationSpec(CsvOptions(fields=SimpleCellCountResult.csv_fields())),
     ),
-    ("segmentation_masks", MaterializationSpec(ROIOptions()))
+    ("segmentation_masks", MaterializationSpec(ROIOptions())),
 )
 def count_cells_simple(
     image,
-    threshold_method: ThresholdMethod = ThresholdMethod.OTSU,
-    threshold: float = 0.5,
-    threshold_percentile: float = 99.0,
-    foreground: Foreground = Foreground.BRIGHT,
-    min_size: int = 20,
-    max_size: int = 100000,
-    max_eccentricity: float = 1.0,
-    watershed_large_objects: bool = False,
-    watershed_min_size: Optional[int] = None,
-    watershed_max_size: Optional[int] = None,
-    watershed_min_distance: int = 5,
-    watershed_footprint_size: int = 3
+    segmentation_settings: SimpleCellSegmentationConfig = (
+        SimpleCellSegmentationConfig()
+    ),
 ) -> Tuple[np.ndarray, List[dict], List[np.ndarray]]:
     """
     Count thresholded objects in a 3D image stack with optional shape cleanup.
@@ -166,69 +241,10 @@ def count_cells_simple(
             this shape for logical single-plane data, so a single 2D image
             should be supplied as ``image[None, :, :]``. The input image is
             returned unchanged as the primary output.
-        threshold_method: Thresholding strategy used to create the foreground
-            mask for each slice. ``OTSU``, ``LI``, and ``YEN`` compute an
-            automatic threshold from the slice. ``PERCENTILE`` uses
-            ``threshold_percentile``. ``MANUAL`` uses ``threshold`` directly,
-            with fractional values in ``[0, 1]`` interpreted as a fraction of
-            the slice maximum when the image intensity range is larger than
-            ``[0, 1]``.
-        threshold: Manual threshold value used only when
-            ``threshold_method=ThresholdMethod.MANUAL``. Values greater than
-            ``1`` are treated as native image-intensity values. Values in
-            ``[0, 1]`` are treated as normalized fractions for scaled integer or
-            high-dynamic-range arrays.
-        threshold_percentile: Percentile in ``[0, 100]`` used only when
-            ``threshold_method=ThresholdMethod.PERCENTILE``. For bright
-            foregrounds, pixels above this percentile become foreground; for
-            dark foregrounds, pixels below it become foreground.
-        foreground: Polarity of the objects to count. ``BRIGHT`` counts pixels
-            above the computed threshold. ``DARK`` counts pixels below the
-            computed threshold.
-        min_size: Minimum accepted object area in pixels after optional
-            watershed splitting. Objects smaller than this are removed from the
-            output mask and not counted.
-        max_size: Maximum accepted object area in pixels after optional
-            watershed splitting. Objects larger than this are treated as
-            artifacts or unresolved merged objects and are removed from the
-            output mask.
-        max_eccentricity: Maximum accepted object eccentricity after optional
-            watershed splitting and size filtering. Eccentricity is the
-            scikit-image region shape measure where ``0.0`` is circular and
-            ``1.0`` is nearly line-like. The default ``1.0`` preserves the
-            previous behavior and effectively disables shape filtering. Lower
-            values reject elongated debris, scratches, neurites, or merged
-            streak-like objects that otherwise satisfy the size filter.
-        watershed_large_objects: If ``True``, apply distance-transform watershed
-            to oversized connected components. This is useful when touching
-            cells merge into one component that would otherwise be rejected by
-            the size filter. It is disabled by default to preserve the original
-            simple connected-component behavior.
-        watershed_min_size: Optional lower area threshold for watershed
-            attempts. If ``None``, the function uses ``max_size`` as the split
-            trigger, matching the original behavior. Set this lower than
-            ``max_size`` to force more aggressive declumping without also
-            lowering the final accepted object size. For example,
-            ``watershed_min_size=100`` and ``max_size=300`` means "try to split
-            raw components above 100 px, then keep final fragments up to
-            300 px."
-        watershed_max_size: Optional upper area limit for watershed attempts.
-            If ``None``, every component larger than the split trigger is
-            eligible for watershed. If set, only components with area greater
-            than the split trigger and less than or equal to
-            ``watershed_max_size`` are split. Components above this cap are
-            left unsplit and then rejected by the final ``max_size`` filter,
-            which is useful for preventing huge debris, plate edges, bubbles,
-            or illumination artifacts from being over-segmented into plausible
-            cell-sized fragments.
-        watershed_min_distance: Minimum pixel spacing between local maxima used
-            as watershed seeds for oversized objects. Larger values produce
-            fewer, more conservative splits; smaller values can split dense or
-            noisy objects more aggressively.
-        watershed_footprint_size: Side length, in pixels, of the square
-            footprint used when finding local maxima for watershed seeds.
-            Larger footprints suppress nearby competing maxima and reduce
-            over-splitting; smaller footprints allow more seed points.
+        segmentation_settings: Complete threshold, foreground, size, shape, and
+            watershed settings for every independently processed image plane.
+            The same settings type is used for each channel of
+            ``count_cells_simple_dual_channel``.
 
     Returns:
         Tuple:
@@ -244,15 +260,7 @@ def count_cells_simple(
         ValueError: If size limits, eccentricity limits, or watershed seed
             parameters are outside their supported ranges.
     """
-    _validate_simple_segmentation_params(
-        min_size=min_size,
-        max_size=max_size,
-        max_eccentricity=max_eccentricity,
-        watershed_min_size=watershed_min_size,
-        watershed_max_size=watershed_max_size,
-        watershed_min_distance=watershed_min_distance,
-        watershed_footprint_size=watershed_footprint_size,
-    )
+    segmentation_settings.validate()
 
     results = []
     masks = []
@@ -260,18 +268,7 @@ def count_cells_simple(
     for i, slice_data in enumerate(image):
         labeled_filtered = _segment_simple_slice(
             slice_data,
-            threshold_method=threshold_method,
-            threshold=threshold,
-            threshold_percentile=threshold_percentile,
-            foreground=foreground,
-            min_size=min_size,
-            max_size=max_size,
-            max_eccentricity=max_eccentricity,
-            watershed_large_objects=watershed_large_objects,
-            watershed_min_size=watershed_min_size,
-            watershed_max_size=watershed_max_size,
-            watershed_min_distance=watershed_min_distance,
-            watershed_footprint_size=watershed_footprint_size,
+            segmentation_settings,
         )
         final_count = int(labeled_filtered.max())
 
@@ -290,32 +287,26 @@ def count_cells_simple(
         "dual_channel_counts",
         MaterializationSpec(
             CsvOptions(fields=DualChannelCountResult.csv_fields())
-        )
+        ),
     ),
-    ("colocalization_masks", MaterializationSpec(ROIOptions()))
+    ("colocalization_masks", MaterializationSpec(ROIOptions())),
 )
 def count_cells_simple_dual_channel(
     image,
     channel_1_index: int = 0,
+    channel_1_settings: SimpleCellSegmentationConfig = (
+        SimpleCellSegmentationConfig()
+    ),
     channel_2_index: int = 1,
-    threshold_method: ThresholdMethod = ThresholdMethod.OTSU,
-    threshold: float = 0.5,
-    threshold_percentile: float = 99.0,
-    foreground: Foreground = Foreground.BRIGHT,
-    min_size: int = 20,
-    max_size: int = 100000,
-    max_eccentricity: float = 1.0,
-    watershed_large_objects: bool = False,
-    watershed_min_size: Optional[int] = None,
-    watershed_max_size: Optional[int] = None,
-    watershed_min_distance: int = 5,
-    watershed_footprint_size: int = 3,
+    channel_2_settings: SimpleCellSegmentationConfig = (
+        SimpleCellSegmentationConfig()
+    ),
     colocalization_method: SimpleColocalizationMethod = (
         SimpleColocalizationMethod.OVERLAP
     ),
     min_overlap_fraction: float = 0.25,
     max_colocalization_distance: float = 5.0,
-    return_channel_masks: bool = False
+    return_channel_masks: bool = False,
 ) -> Tuple[np.ndarray, List[dict], List[np.ndarray]]:
     """
     Count two channels with the simple segmenter and summarize colocalization.
@@ -327,12 +318,11 @@ def count_cells_simple_dual_channel(
     the input image unchanged; quantitative coloc data and ROI masks are
     emitted through special outputs.
 
-    Segmentation behavior is intentionally identical to ``count_cells_simple``:
-    each selected channel is thresholded, connected components are labeled,
-    optional watershed is applied only to oversized components, and
-    ``min_size``, ``max_size``, and ``max_eccentricity`` are applied to the
-    final candidate regions. Use the single-channel function first when tuning
-    these segmentation parameters, then reuse them here for coloc.
+    Segmentation behavior is identical to ``count_cells_simple`` because all
+    three paths use ``SimpleCellSegmentationConfig`` and the same canonical
+    segmenter. Channel 1 and channel 2 receive independent settings blocks, so
+    their thresholds, foreground polarities, size filters, shape filters, and
+    watershed behavior are explicit and can differ.
 
     Colocalization is one-to-one. A detected object in channel 1 can match at
     most one detected object in channel 2, and vice versa. When multiple
@@ -347,40 +337,12 @@ def count_cells_simple_dual_channel(
             compare. The input image is returned unchanged as the primary
             output.
         channel_1_index: First channel plane to segment and compare.
+        channel_1_settings: Complete single-channel segmentation settings for
+            ``channel_1_index``.
         channel_2_index: Second channel plane to segment and compare. It must
             differ from ``channel_1_index``.
-        threshold_method: Thresholding strategy used independently on each
-            selected channel. Automatic methods compute one threshold per
-            channel plane; ``MANUAL`` uses the same ``threshold`` value for both
-            planes.
-        threshold: Manual threshold value used only for ``MANUAL`` thresholding.
-            Fractional values in ``[0, 1]`` are interpreted as a fraction of
-            each selected channel's maximum when that channel has a larger
-            native intensity range.
-        threshold_percentile: Percentile used only for ``PERCENTILE``
-            thresholding, computed independently per selected channel.
-        foreground: Whether objects are brighter or darker than the background.
-            The same foreground polarity is used for both channels.
-        min_size: Minimum accepted object area in pixels after optional
-            watershed splitting.
-        max_size: Maximum accepted object area in pixels after optional
-            watershed splitting. If ``watershed_large_objects=True``, raw
-            components larger than this value are candidates for splitting.
-        max_eccentricity: Maximum accepted object eccentricity after watershed
-            and size filtering. ``1.0`` disables shape filtering.
-        watershed_large_objects: Whether to split oversized raw connected
-            components before final filtering.
-        watershed_min_size: Optional lower area threshold for watershed
-            attempts. If ``None``, ``max_size`` is used as the split trigger.
-            Set this lower than ``max_size`` to split more aggressively while
-            still accepting larger final fragments.
-        watershed_max_size: Optional upper area cap for watershed attempts.
-            Components above this cap are not split and are rejected by the
-            final ``max_size`` filter.
-        watershed_min_distance: Minimum seed spacing for watershed of oversized
-            objects.
-        watershed_footprint_size: Square footprint side length for watershed
-            seed detection.
+        channel_2_settings: Complete single-channel segmentation settings for
+            ``channel_2_index``.
         colocalization_method: ``OVERLAP`` matches objects whose masks overlap
             enough. ``CENTROID_DISTANCE`` matches objects whose centroids are
             within ``max_colocalization_distance`` pixels.
@@ -420,45 +382,16 @@ def count_cells_simple_dual_channel(
     if max_colocalization_distance < 0:
         raise ValueError("max_colocalization_distance must be >= 0")
 
-    _validate_simple_segmentation_params(
-        min_size=min_size,
-        max_size=max_size,
-        max_eccentricity=max_eccentricity,
-        watershed_min_size=watershed_min_size,
-        watershed_max_size=watershed_max_size,
-        watershed_min_distance=watershed_min_distance,
-        watershed_footprint_size=watershed_footprint_size,
-    )
+    channel_1_settings.validate()
+    channel_2_settings.validate()
 
     channel_1_labels = _segment_simple_slice(
         image[channel_1_index],
-        threshold_method=threshold_method,
-        threshold=threshold,
-        threshold_percentile=threshold_percentile,
-        foreground=foreground,
-        min_size=min_size,
-        max_size=max_size,
-        max_eccentricity=max_eccentricity,
-        watershed_large_objects=watershed_large_objects,
-        watershed_min_size=watershed_min_size,
-        watershed_max_size=watershed_max_size,
-        watershed_min_distance=watershed_min_distance,
-        watershed_footprint_size=watershed_footprint_size,
+        channel_1_settings,
     )
     channel_2_labels = _segment_simple_slice(
         image[channel_2_index],
-        threshold_method=threshold_method,
-        threshold=threshold,
-        threshold_percentile=threshold_percentile,
-        foreground=foreground,
-        min_size=min_size,
-        max_size=max_size,
-        max_eccentricity=max_eccentricity,
-        watershed_large_objects=watershed_large_objects,
-        watershed_min_size=watershed_min_size,
-        watershed_max_size=watershed_max_size,
-        watershed_min_distance=watershed_min_distance,
-        watershed_footprint_size=watershed_footprint_size,
+        channel_2_settings,
     )
 
     pairs = _match_colocalized_labels(
@@ -520,60 +453,16 @@ def count_cells_simple_dual_channel(
     return image, [asdict(result)], masks
 
 
-def _validate_simple_segmentation_params(
-    *,
-    min_size: int,
-    max_size: int,
-    max_eccentricity: float,
-    watershed_min_size: Optional[int],
-    watershed_max_size: Optional[int],
-    watershed_min_distance: int,
-    watershed_footprint_size: int,
-) -> None:
-    """Validate shared simple segmentation parameters."""
-    if min_size < 0:
-        raise ValueError("min_size must be >= 0")
-    if max_size < min_size:
-        raise ValueError("max_size must be >= min_size")
-    if not 0.0 <= max_eccentricity <= 1.0:
-        raise ValueError("max_eccentricity must be in [0.0, 1.0]")
-    if watershed_min_size is not None and watershed_min_size < 1:
-        raise ValueError("watershed_min_size must be >= 1 when set")
-    split_size = max_size if watershed_min_size is None else watershed_min_size
-    if watershed_max_size is not None and watershed_max_size <= split_size:
-        raise ValueError(
-            "watershed_max_size must be greater than the watershed split threshold when set"
-        )
-    if watershed_min_distance < 1:
-        raise ValueError("watershed_min_distance must be >= 1")
-    if watershed_footprint_size < 1:
-        raise ValueError("watershed_footprint_size must be >= 1")
-
-
 def _segment_simple_slice(
     slice_data: np.ndarray,
-    *,
-    threshold_method: ThresholdMethod,
-    threshold: float,
-    threshold_percentile: float,
-    foreground: Foreground,
-    min_size: int,
-    max_size: int,
-    max_eccentricity: float,
-    watershed_large_objects: bool,
-    watershed_min_size: Optional[int],
-    watershed_max_size: Optional[int],
-    watershed_min_distance: int,
-    watershed_footprint_size: int,
+    settings: SimpleCellSegmentationConfig,
 ) -> np.ndarray:
     """Segment one 2D plane with the simple counter's canonical logic."""
-    threshold_method = ThresholdMethod(threshold_method)
-    foreground = Foreground(foreground)
+    threshold_method = ThresholdMethod(settings.threshold_method)
+    foreground = Foreground(settings.foreground)
     threshold_value = _compute_threshold(
         slice_data,
-        threshold_method=threshold_method,
-        threshold=threshold,
-        threshold_percentile=threshold_percentile,
+        settings,
     )
 
     if foreground == Foreground.BRIGHT:
@@ -587,26 +476,34 @@ def _segment_simple_slice(
 
     labeled, num_objects = ndi.label(binary)
 
-    if watershed_large_objects and num_objects > 0:
+    if settings.watershed_large_objects and num_objects > 0:
         labeled = _watershed_large_objects(
             labeled,
-            split_size=max_size if watershed_min_size is None else watershed_min_size,
-            watershed_max_size=watershed_max_size,
-            min_distance=watershed_min_distance,
-            footprint_size=watershed_footprint_size,
+            split_size=(
+                settings.max_size
+                if settings.watershed_min_size is None
+                else settings.watershed_min_size
+            ),
+            watershed_max_size=settings.watershed_max_size,
+            min_distance=settings.watershed_min_distance,
+            footprint_size=settings.watershed_footprint_size,
         )
 
     if labeled.max() == 0:
         return np.zeros_like(labeled, dtype=np.int32)
 
-    if max_eccentricity == 1.0:
-        return _filter_labels_by_area(labeled, min_size=min_size, max_size=max_size)
+    if settings.max_eccentricity == 1.0:
+        return _filter_labels_by_area(
+            labeled,
+            min_size=settings.min_size,
+            max_size=settings.max_size,
+        )
 
     keep_mask = np.zeros(int(labeled.max()) + 1, dtype=bool)
     for region in regionprops(labeled):
         if (
-            min_size <= region.area <= max_size
-            and region.eccentricity <= max_eccentricity
+            settings.min_size <= region.area <= settings.max_size
+            and region.eccentricity <= settings.max_eccentricity
         ):
             keep_mask[region.label] = True
 
@@ -641,12 +538,10 @@ def _relabel_by_keep_mask(labeled: np.ndarray, keep_mask: np.ndarray) -> np.ndar
 
 def _compute_threshold(
     slice_data: np.ndarray,
-    *,
-    threshold_method: ThresholdMethod,
-    threshold: float,
-    threshold_percentile: float,
+    settings: SimpleCellSegmentationConfig,
 ) -> float:
     """Compute one threshold in the native intensity scale of a 2D plane."""
+    threshold_method = ThresholdMethod(settings.threshold_method)
     if threshold_method == ThresholdMethod.OTSU:
         return float(threshold_otsu(slice_data))
     if threshold_method == ThresholdMethod.LI:
@@ -654,9 +549,9 @@ def _compute_threshold(
     if threshold_method == ThresholdMethod.YEN:
         return float(threshold_yen(slice_data))
     if threshold_method == ThresholdMethod.PERCENTILE:
-        return float(np.percentile(slice_data, threshold_percentile))
+        return float(np.percentile(slice_data, settings.threshold_percentile))
     if threshold_method == ThresholdMethod.MANUAL:
-        threshold_value = float(threshold)
+        threshold_value = float(settings.threshold)
         if 0.0 <= threshold_value <= 1.0:
             max_val = float(np.max(slice_data))
             if max_val > 1.0:
