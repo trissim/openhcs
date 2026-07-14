@@ -2,14 +2,13 @@
 Simple cell counting using thresholding and connected component labeling.
 
 This module provides a compact NumPy/scikit-image cell counter intended for
-basic bright- or dark-object workflows. The implementation deliberately keeps
-the segmentation model simple: threshold each 2D slice, label connected
-components, optionally split oversized components, then apply geometric filters
-to the final candidate objects.
+basic bright- or dark-object workflows, plus MetaXpress-style W1 cell counting
+and W2 stained-area scoring. The implementations share connected-component and
+watershed infrastructure while exposing controls appropriate to each workflow.
 """
 
 from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import (
     CsvOptions,
     MaterializationSpec,
@@ -25,11 +24,12 @@ from scipy import ndimage as ndi
 from skimage.feature import peak_local_max
 from skimage.filters import threshold_otsu, threshold_li, threshold_yen
 from skimage.measure import regionprops
-from skimage.segmentation import watershed
+from skimage.segmentation import expand_labels, watershed
 
 
 class ThresholdMethod(str, Enum):
     """Thresholding methods for cell detection."""
+
     OTSU = "otsu"
     LI = "li"
     YEN = "yen"
@@ -39,6 +39,7 @@ class ThresholdMethod(str, Enum):
 
 class Foreground(str, Enum):
     """Foreground type for thresholding."""
+
     BRIGHT = "bright"
     DARK = "dark"
 
@@ -116,15 +117,73 @@ class SimpleCellSegmentationConfig:
             raise ValueError("watershed_footprint_size must be >= 1")
 
 
-class SimpleColocalizationMethod(str, Enum):
-    """Colocalization matching methods for simple dual-channel counting."""
-    OVERLAP = "overlap"
-    CENTROID_DISTANCE = "centroid_distance"
+class StainedArea(str, Enum):
+    """MetaXpress-style cellular compartment used to score W2 staining."""
+
+    NUCLEUS = "nucleus"
+    NUCLEUS_AND_CYTOPLASM = "nucleus and cytoplasm"
+
+
+@dataclass(frozen=True)
+class MetaXpressWavelengthSettings:
+    """User-facing MetaXpress-style detection settings for one wavelength."""
+
+    channel_index: int = 0
+    """Zero-based index of this wavelength in the channel stack."""
+
+    approx_min_width: float = 5.0
+    """Approximate minimum short-axis width in micrometers."""
+
+    approx_max_width: float = 30.0
+    """Approximate maximum short-axis width in micrometers."""
+
+    intensity_above_local_background: float = 100.0
+    """Minimum raw-intensity difference above adaptive local background."""
+
+    def validate(self, name: str) -> None:
+        """Validate one wavelength's complete public settings block."""
+
+        if self.channel_index < 0:
+            raise ValueError(f"{name}.channel_index must be >= 0")
+        if not np.isfinite(self.approx_min_width) or self.approx_min_width <= 0:
+            raise ValueError(f"{name}.approx_min_width must be > 0")
+        if (
+            not np.isfinite(self.approx_max_width)
+            or self.approx_max_width < self.approx_min_width
+        ):
+            raise ValueError(
+                f"{name}.approx_max_width must be >= {name}.approx_min_width"
+            )
+        if (
+            not np.isfinite(self.intensity_above_local_background)
+            or self.intensity_above_local_background < 0
+        ):
+            raise ValueError(f"{name}.intensity_above_local_background must be >= 0")
+
+
+@dataclass(frozen=True)
+class MetaXpressW2Settings(MetaXpressWavelengthSettings):
+    """MetaXpress-style W2 settings, including the scored cellular area."""
+
+    channel_index: int = 1
+    stained_area: StainedArea = StainedArea.NUCLEUS
+    """Score W2 staining in nuclei or in expanded nucleus-plus-cytoplasm areas."""
+
+    def validate(self, name: str = "w2") -> None:
+        super().validate(name)
+        StainedArea(self.stained_area)
+
+
+class _HiddenPixelSize(float):
+    """Pipeline-injected pixel size that is intentionally absent from the UI."""
+
+    _ui_hidden = True
 
 
 @dataclass(frozen=True)
 class SimpleCellCountResult:
     """Canonical result schema for simple single-channel counting."""
+
     slice_index: int
     cell_count: int
 
@@ -136,34 +195,23 @@ class SimpleCellCountResult:
 
 @dataclass(frozen=True)
 class DualChannelCountResult:
-    """Canonical result schema for simple dual-channel colocalization."""
-    channel_1_index: int
-    channel_2_index: int
-    channel_1_count: int
-    channel_2_count: int
-    colocalized_count: int
-    channel_1_only_count: int
-    channel_2_only_count: int
-    channel_1_colocalized_percent: float
-    channel_2_colocalized_percent: float
-    colocalization_method: str
-    mean_colocalization_distance: float
-    mean_overlap_fraction: float
+    """MetaXpress-style W1 cell count and W2 positive/negative scoring summary."""
+
+    w1_channel_index: int
+    w2_channel_index: int
+    total_cell_count: int
+    w2_positive_cell_count: int
+    w2_negative_cell_count: int
+    w2_positive_percent: float
+    w2_stained_area: str
+    minimum_stained_area: float
+    all_w2_mean_stained_area: float
+    positive_w2_mean_stained_area: float
 
     @classmethod
     def csv_fields(cls) -> List[str]:
         """Return CSV field order from the dataclass declaration."""
         return [field.name for field in fields(cls)]
-
-
-@dataclass(frozen=True)
-class ColocalizationCandidate:
-    """Internal one-to-one colocalization match candidate."""
-    channel_1_label: int
-    channel_2_label: int
-    distance: float
-    overlap_pixels: int
-    overlap_fraction: float
 
 
 # Make the Enums importable/stable for multiprocessing/ZMQ pickling
@@ -182,17 +230,24 @@ setattr(
     SimpleCellSegmentationConfig,
 )
 
-SimpleColocalizationMethod.__module__ = _count_cells_simple.__name__
-setattr(_count_cells_simple, "SimpleColocalizationMethod", SimpleColocalizationMethod)
+StainedArea.__module__ = _count_cells_simple.__name__
+setattr(_count_cells_simple, "StainedArea", StainedArea)
+
+MetaXpressWavelengthSettings.__module__ = _count_cells_simple.__name__
+setattr(
+    _count_cells_simple,
+    "MetaXpressWavelengthSettings",
+    MetaXpressWavelengthSettings,
+)
+
+MetaXpressW2Settings.__module__ = _count_cells_simple.__name__
+setattr(_count_cells_simple, "MetaXpressW2Settings", MetaXpressW2Settings)
 
 SimpleCellCountResult.__module__ = _count_cells_simple.__name__
 setattr(_count_cells_simple, "SimpleCellCountResult", SimpleCellCountResult)
 
 DualChannelCountResult.__module__ = _count_cells_simple.__name__
 setattr(_count_cells_simple, "DualChannelCountResult", DualChannelCountResult)
-
-ColocalizationCandidate.__module__ = _count_cells_simple.__name__
-setattr(_count_cells_simple, "ColocalizationCandidate", ColocalizationCandidate)
 
 
 @numpy
@@ -243,8 +298,6 @@ def count_cells_simple(
             returned unchanged as the primary output.
         segmentation_settings: Complete threshold, foreground, size, shape, and
             watershed settings for every independently processed image plane.
-            The same settings type is used for each channel of
-            ``count_cells_simple_dual_channel``.
 
     Returns:
         Tuple:
@@ -285,172 +338,237 @@ def count_cells_simple(
 @special_outputs(
     (
         "dual_channel_counts",
-        MaterializationSpec(
-            CsvOptions(fields=DualChannelCountResult.csv_fields())
-        ),
+        MaterializationSpec(CsvOptions(fields=DualChannelCountResult.csv_fields())),
     ),
     ("colocalization_masks", MaterializationSpec(ROIOptions())),
 )
+@special_inputs("pixel_size")
 def count_cells_simple_dual_channel(
     image,
-    channel_1_index: int = 0,
-    channel_1_settings: SimpleCellSegmentationConfig = (
-        SimpleCellSegmentationConfig()
+    w1: MetaXpressWavelengthSettings = MetaXpressWavelengthSettings(
+        channel_index=0,
     ),
-    channel_2_index: int = 1,
-    channel_2_settings: SimpleCellSegmentationConfig = (
-        SimpleCellSegmentationConfig()
+    w2: MetaXpressW2Settings = MetaXpressW2Settings(
+        channel_index=1,
     ),
-    colocalization_method: SimpleColocalizationMethod = (
-        SimpleColocalizationMethod.OVERLAP
-    ),
-    min_overlap_fraction: float = 0.25,
-    max_colocalization_distance: float = 5.0,
-    return_channel_masks: bool = False,
+    minimum_stained_area: float = 10.0,
+    pixel_size: _HiddenPixelSize = _HiddenPixelSize(1.0),
 ) -> Tuple[np.ndarray, List[dict], List[np.ndarray]]:
-    """
-    Count two channels with the simple segmenter and summarize colocalization.
+    """Count W1 nuclei and score W2-positive cells like MetaXpress MWCS.
 
-    This is the dual-channel companion to ``count_cells_simple``. It expects a
-    3D stack whose first axis contains channels, segments exactly two selected
-    planes with the same simple threshold/watershed/filter pipeline, and then
-    matches objects across the two resulting label masks. The primary output is
-    the input image unchanged; quantitative coloc data and ROI masks are
-    emitted through special outputs.
+    W1 is the required all-nuclei wavelength and therefore defines total cell
+    count. W2 is an additional stain scored within each W1 cell's selected
+    compartment. A cell is W2-positive when its detected stained area is at
+    least ``minimum_stained_area``.
 
-    Segmentation behavior is identical to ``count_cells_simple`` because all
-    three paths use ``SimpleCellSegmentationConfig`` and the same canonical
-    segmenter. Channel 1 and channel 2 receive independent settings blocks, so
-    their thresholds, foreground polarities, size filters, shape filters, and
-    watershed behavior are explicit and can differ.
-
-    Colocalization is one-to-one. A detected object in channel 1 can match at
-    most one detected object in channel 2, and vice versa. When multiple
-    candidate matches are possible, the function greedily keeps the strongest
-    non-conflicting pairs: largest overlap for ``OVERLAP`` mode, shortest
-    centroid distance for ``CENTROID_DISTANCE`` mode.
+    Widths and stained areas are expressed in micrometers and square
+    micrometers. OpenHCS injects the plate pixel size at compilation; direct
+    calls use the 1.0 micrometer-per-pixel default. Detection uses adaptive
+    local-background subtraction. Object-size filters, background window,
+    watershed trigger, seed spacing, and seed footprint are all derived from
+    the W1/W2 width settings rather than exposed as separate controls.
 
     Args:
-        image: Input 3D stack with shape ``(C, Y, X)``. The function treats the
-            first axis as channel-like planes and does not infer channel names.
-            ``channel_1_index`` and ``channel_2_index`` select the two planes to
-            compare. The input image is returned unchanged as the primary
-            output.
-        channel_1_index: First channel plane to segment and compare.
-        channel_1_settings: Complete single-channel segmentation settings for
-            ``channel_1_index``.
-        channel_2_index: Second channel plane to segment and compare. It must
-            differ from ``channel_1_index``.
-        channel_2_settings: Complete single-channel segmentation settings for
-            ``channel_2_index``.
-        colocalization_method: ``OVERLAP`` matches objects whose masks overlap
-            enough. ``CENTROID_DISTANCE`` matches objects whose centroids are
-            within ``max_colocalization_distance`` pixels.
-        min_overlap_fraction: Minimum overlap required in ``OVERLAP`` mode.
-            The overlap fraction is ``overlap_pixels / min(area_1, area_2)`` so
-            a smaller object mostly contained in a larger object can count as
-            colocalized.
-        max_colocalization_distance: Maximum centroid distance, in pixels, used
-            in ``CENTROID_DISTANCE`` mode.
-        return_channel_masks: If ``False``, the ROI special output contains
-            only a label mask for colocalized pairs. If ``True``, it contains
-            channel 1 labels, channel 2 labels, and the colocalization labels in
-            that order.
+        image: Input stack with shape ``(C, Y, X)``. The input is returned
+            unchanged as the primary output.
+        w1: W1 nucleus channel, approximate short-axis width range, and minimum
+            intensity above local background.
+        w2: W2 stain channel with the same detection controls plus the cellular
+            compartment to score: nucleus or nucleus and cytoplasm.
+        minimum_stained_area: Minimum W2 stained area in square micrometers for
+            a W1 cell to be scored W2-positive.
+        pixel_size: Plate pixel size in micrometers per pixel. This is injected
+            from microscope metadata and hidden from the function editor.
 
     Returns:
         Tuple:
           - ``image`` unchanged.
-          - A one-element list containing a CSV-friendly summary dictionary.
-          - A list of ``int32`` label masks. The colocalization mask labels each
-            matched pair with a unique integer and leaves background/unmatched
-            objects as ``0``.
+          - A one-element list containing MetaXpress-style positive/negative W2
+            scoring and stained-area summary fields.
+          - W1 nucleus labels, W2 stain-object labels, and W2-positive stained
+            cell labels as ``int32`` ROI masks.
 
     Raises:
-        ValueError: If the input is not 3D, channel indices are invalid, or
-            segmentation/colocalization parameters are outside supported ranges.
+        ValueError: If the stack, wavelength settings, pixel size, or minimum
+            stained area is invalid.
     """
     if image.ndim != 3:
         raise ValueError(f"Expected 3D channel stack, got {image.ndim}D")
-    if channel_1_index == channel_2_index:
-        raise ValueError("channel_1_index and channel_2_index must be different")
-    if not 0 <= channel_1_index < image.shape[0]:
-        raise ValueError("channel_1_index is outside the input stack")
-    if not 0 <= channel_2_index < image.shape[0]:
-        raise ValueError("channel_2_index is outside the input stack")
-    if not 0.0 <= min_overlap_fraction <= 1.0:
-        raise ValueError("min_overlap_fraction must be in [0.0, 1.0]")
-    if max_colocalization_distance < 0:
-        raise ValueError("max_colocalization_distance must be >= 0")
+    w1.validate("w1")
+    w2.validate("w2")
+    if w1.channel_index == w2.channel_index:
+        raise ValueError("w1.channel_index and w2.channel_index must be different")
+    if not 0 <= w1.channel_index < image.shape[0]:
+        raise ValueError("w1.channel_index is outside the input stack")
+    if not 0 <= w2.channel_index < image.shape[0]:
+        raise ValueError("w2.channel_index is outside the input stack")
+    if minimum_stained_area < 0:
+        raise ValueError("minimum_stained_area must be >= 0")
 
-    channel_1_settings.validate()
-    channel_2_settings.validate()
+    pixel_size_um = float(pixel_size)
+    if not np.isfinite(pixel_size_um) or pixel_size_um <= 0:
+        raise ValueError("pixel_size must be a finite value > 0")
 
-    channel_1_labels = _segment_simple_slice(
-        image[channel_1_index],
-        channel_1_settings,
+    w1_labels = _segment_metaxpress_wavelength(
+        image[w1.channel_index],
+        w1,
+        pixel_size_um,
     )
-    channel_2_labels = _segment_simple_slice(
-        image[channel_2_index],
-        channel_2_settings,
+    w2_labels = _segment_metaxpress_wavelength(
+        image[w2.channel_index],
+        w2,
+        pixel_size_um,
     )
+    compartments = _build_w2_compartments(
+        w1_labels,
+        w1,
+        w2,
+        pixel_size_um,
+    )
+    stained_areas = _measure_stained_area_by_cell(
+        compartments,
+        w2_labels > 0,
+        int(w1_labels.max()),
+        pixel_size_um,
+    )
+    positive_cells = stained_areas >= float(minimum_stained_area)
+    if positive_cells.size:
+        positive_cells[0] = False
 
-    pairs = _match_colocalized_labels(
-        channel_1_labels,
-        channel_2_labels,
-        colocalization_method=colocalization_method,
-        min_overlap_fraction=min_overlap_fraction,
-        max_colocalization_distance=max_colocalization_distance,
-    )
-    colocalization_mask = _create_colocalization_label_mask(
-        channel_1_labels,
-        channel_2_labels,
-        pairs,
-    )
-
-    channel_1_count = int(channel_1_labels.max())
-    channel_2_count = int(channel_2_labels.max())
-    colocalized_count = len(pairs)
-    mean_distance = (
-        float(np.mean([pair.distance for pair in pairs])) if pairs else 0.0
-    )
-    mean_overlap = (
-        float(np.mean([pair.overlap_fraction for pair in pairs]))
-        if pairs
-        else 0.0
-    )
+    total_cell_count = int(w1_labels.max())
+    positive_count = int(np.count_nonzero(positive_cells))
+    negative_count = total_cell_count - positive_count
+    cell_areas = stained_areas[1:]
+    positive_areas = stained_areas[positive_cells]
 
     result = DualChannelCountResult(
-        channel_1_index=int(channel_1_index),
-        channel_2_index=int(channel_2_index),
-        channel_1_count=channel_1_count,
-        channel_2_count=channel_2_count,
-        colocalized_count=colocalized_count,
-        channel_1_only_count=channel_1_count - colocalized_count,
-        channel_2_only_count=channel_2_count - colocalized_count,
-        channel_1_colocalized_percent=(
-            100.0 * colocalized_count / channel_1_count
-            if channel_1_count
-            else 0.0
+        w1_channel_index=int(w1.channel_index),
+        w2_channel_index=int(w2.channel_index),
+        total_cell_count=total_cell_count,
+        w2_positive_cell_count=positive_count,
+        w2_negative_cell_count=negative_count,
+        w2_positive_percent=(
+            100.0 * positive_count / total_cell_count if total_cell_count else 0.0
         ),
-        channel_2_colocalized_percent=(
-            100.0 * colocalized_count / channel_2_count
-            if channel_2_count
-            else 0.0
+        w2_stained_area=StainedArea(w2.stained_area).value,
+        minimum_stained_area=float(minimum_stained_area),
+        all_w2_mean_stained_area=(
+            float(np.mean(cell_areas)) if cell_areas.size else 0.0
         ),
-        colocalization_method=SimpleColocalizationMethod(colocalization_method).value,
-        mean_colocalization_distance=mean_distance,
-        mean_overlap_fraction=mean_overlap,
+        positive_w2_mean_stained_area=(
+            float(np.mean(positive_areas)) if positive_areas.size else 0.0
+        ),
     )
 
-    masks = [colocalization_mask.astype(np.int32, copy=False)]
-    if return_channel_masks:
-        masks = [
-            channel_1_labels.astype(np.int32, copy=False),
-            channel_2_labels.astype(np.int32, copy=False),
-            *masks,
-        ]
+    positive_stain_labels = _positive_stain_labels(
+        compartments,
+        w2_labels > 0,
+        positive_cells,
+    )
+    masks = [
+        w1_labels.astype(np.int32, copy=False),
+        w2_labels.astype(np.int32, copy=False),
+        positive_stain_labels,
+    ]
 
     return image, [asdict(result)], masks
+
+
+def _segment_metaxpress_wavelength(
+    slice_data: np.ndarray,
+    settings: MetaXpressWavelengthSettings,
+    pixel_size_um: float,
+) -> np.ndarray:
+    """Segment one bright-stain wavelength with derived MetaXpress controls."""
+
+    min_width_px = settings.approx_min_width / pixel_size_um
+    max_width_px = settings.approx_max_width / pixel_size_um
+    background_window = _odd_size(2.0 * max_width_px + 1.0)
+    local_background = ndi.grey_opening(
+        np.asarray(slice_data, dtype=np.float64),
+        size=(background_window, background_window),
+        mode="nearest",
+    )
+    intensity_above_background = (
+        np.asarray(slice_data, dtype=np.float64) - local_background
+    )
+    binary = intensity_above_background >= settings.intensity_above_local_background
+
+    max_object_area = max(1, int(np.ceil(np.pi * (max_width_px / 2.0) ** 2)))
+    seed_spacing = max(1, int(round(min_width_px / 2.0)))
+    seed_footprint = _odd_size(max(1.0, min_width_px / 2.0))
+    labeled = _label_binary_components(
+        binary,
+        watershed_large_objects=True,
+        watershed_split_size=max_object_area,
+        watershed_max_size=None,
+        watershed_min_distance=seed_spacing,
+        watershed_footprint_size=seed_footprint,
+    )
+
+    keep_mask = np.zeros(int(labeled.max()) + 1, dtype=bool)
+    for region in regionprops(labeled):
+        if min_width_px <= region.axis_minor_length <= max_width_px:
+            keep_mask[region.label] = True
+    return _relabel_by_keep_mask(labeled, keep_mask)
+
+
+def _odd_size(value: float) -> int:
+    """Round a derived spatial scale up to a positive odd integer."""
+
+    size = max(1, int(np.ceil(value)))
+    return size if size % 2 else size + 1
+
+
+def _build_w2_compartments(
+    w1_labels: np.ndarray,
+    w1: MetaXpressWavelengthSettings,
+    w2: MetaXpressW2Settings,
+    pixel_size_um: float,
+) -> np.ndarray:
+    """Build non-overlapping W1-cell compartments used for W2 scoring."""
+
+    stained_area = StainedArea(w2.stained_area)
+    if stained_area == StainedArea.NUCLEUS:
+        return w1_labels.astype(np.int32, copy=False)
+
+    expansion_um = max(
+        0.0,
+        (w2.approx_max_width - w1.approx_max_width) / 2.0,
+    )
+    expansion_px = expansion_um / pixel_size_um
+    return expand_labels(w1_labels, distance=expansion_px).astype(
+        np.int32,
+        copy=False,
+    )
+
+
+def _measure_stained_area_by_cell(
+    compartments: np.ndarray,
+    stained_mask: np.ndarray,
+    cell_count: int,
+    pixel_size_um: float,
+) -> np.ndarray:
+    """Measure W2 stained area in square micrometers for every W1 cell."""
+
+    stained_cell_labels = compartments[stained_mask & (compartments > 0)]
+    stained_pixels = np.bincount(
+        stained_cell_labels,
+        minlength=cell_count + 1,
+    ).astype(float, copy=False)
+    return stained_pixels * pixel_size_um**2
+
+
+def _positive_stain_labels(
+    compartments: np.ndarray,
+    stained_mask: np.ndarray,
+    positive_cells: np.ndarray,
+) -> np.ndarray:
+    """Label only W2-stained pixels belonging to W2-positive W1 cells."""
+
+    positive_pixels = stained_mask & (compartments > 0) & positive_cells[compartments]
+    positive_labels = np.where(positive_pixels, compartments, 0)
+    return _relabel_by_keep_mask(positive_labels, positive_cells.copy())
 
 
 def _segment_simple_slice(
@@ -474,20 +592,18 @@ def _segment_simple_slice(
             f"Unknown foreground: {foreground!r} (expected 'bright' or 'dark')"
         )
 
-    labeled, num_objects = ndi.label(binary)
-
-    if settings.watershed_large_objects and num_objects > 0:
-        labeled = _watershed_large_objects(
-            labeled,
-            split_size=(
-                settings.max_size
-                if settings.watershed_min_size is None
-                else settings.watershed_min_size
-            ),
-            watershed_max_size=settings.watershed_max_size,
-            min_distance=settings.watershed_min_distance,
-            footprint_size=settings.watershed_footprint_size,
-        )
+    labeled = _label_binary_components(
+        binary,
+        watershed_large_objects=settings.watershed_large_objects,
+        watershed_split_size=(
+            settings.max_size
+            if settings.watershed_min_size is None
+            else settings.watershed_min_size
+        ),
+        watershed_max_size=settings.watershed_max_size,
+        watershed_min_distance=settings.watershed_min_distance,
+        watershed_footprint_size=settings.watershed_footprint_size,
+    )
 
     if labeled.max() == 0:
         return np.zeros_like(labeled, dtype=np.int32)
@@ -508,6 +624,29 @@ def _segment_simple_slice(
             keep_mask[region.label] = True
 
     return _relabel_by_keep_mask(labeled, keep_mask)
+
+
+def _label_binary_components(
+    binary: np.ndarray,
+    *,
+    watershed_large_objects: bool,
+    watershed_split_size: int,
+    watershed_max_size: Optional[int],
+    watershed_min_distance: int,
+    watershed_footprint_size: int,
+) -> np.ndarray:
+    """Label a binary mask and optionally split large connected components."""
+
+    labeled, num_objects = ndi.label(binary)
+    if watershed_large_objects and num_objects > 0:
+        labeled = _watershed_large_objects(
+            labeled,
+            split_size=watershed_split_size,
+            watershed_max_size=watershed_max_size,
+            min_distance=watershed_min_distance,
+            footprint_size=watershed_footprint_size,
+        )
+    return labeled.astype(np.int32, copy=False)
 
 
 def _filter_labels_by_area(
@@ -612,154 +751,3 @@ def _watershed_large_objects(
             next_label += 1
 
     return output
-
-
-def _match_colocalized_labels(
-    channel_1_labels: np.ndarray,
-    channel_2_labels: np.ndarray,
-    *,
-    colocalization_method: SimpleColocalizationMethod,
-    min_overlap_fraction: float,
-    max_colocalization_distance: float,
-) -> List[ColocalizationCandidate]:
-    """Return greedy one-to-one colocalized label pairs."""
-    colocalization_method = SimpleColocalizationMethod(colocalization_method)
-    regions_1 = {region.label: region for region in regionprops(channel_1_labels)}
-    regions_2 = {region.label: region for region in regionprops(channel_2_labels)}
-    if not regions_1 or not regions_2:
-        return []
-
-    if colocalization_method == SimpleColocalizationMethod.OVERLAP:
-        candidates = _overlap_colocalization_candidates(
-            channel_1_labels,
-            channel_2_labels,
-            regions_1,
-            regions_2,
-            min_overlap_fraction,
-        )
-        candidates.sort(key=lambda item: item.overlap_fraction, reverse=True)
-    elif colocalization_method == SimpleColocalizationMethod.CENTROID_DISTANCE:
-        candidates = _distance_colocalization_candidates(
-            regions_1,
-            regions_2,
-            max_colocalization_distance,
-        )
-        candidates.sort(key=lambda item: item.distance)
-    else:
-        raise ValueError(f"Unknown colocalization_method: {colocalization_method!r}")
-
-    used_1 = set()
-    used_2 = set()
-    pairs = []
-    for candidate in candidates:
-        label_1 = candidate.channel_1_label
-        label_2 = candidate.channel_2_label
-        if label_1 in used_1 or label_2 in used_2:
-            continue
-        pairs.append(candidate)
-        used_1.add(label_1)
-        used_2.add(label_2)
-
-    return pairs
-
-
-def _overlap_colocalization_candidates(
-    channel_1_labels: np.ndarray,
-    channel_2_labels: np.ndarray,
-    regions_1: dict,
-    regions_2: dict,
-    min_overlap_fraction: float,
-) -> List[ColocalizationCandidate]:
-    """Build label-pair candidates from actual mask intersections."""
-    overlap_mask = (channel_1_labels > 0) & (channel_2_labels > 0)
-    if not np.any(overlap_mask):
-        return []
-
-    label_pairs, overlap_pixels = np.unique(
-        np.stack(
-            [
-                channel_1_labels[overlap_mask],
-                channel_2_labels[overlap_mask],
-            ],
-            axis=1,
-        ),
-        axis=0,
-        return_counts=True,
-    )
-
-    candidates = []
-    for (label_1, label_2), overlap in zip(label_pairs, overlap_pixels):
-        region_1 = regions_1[int(label_1)]
-        region_2 = regions_2[int(label_2)]
-        overlap_fraction = float(overlap / min(region_1.area, region_2.area))
-        if overlap_fraction < min_overlap_fraction:
-            continue
-        candidates.append(
-            _colocalization_candidate(
-                int(label_1),
-                int(label_2),
-                region_1,
-                region_2,
-                overlap_pixels=int(overlap),
-                overlap_fraction=overlap_fraction,
-            )
-        )
-    return candidates
-
-
-def _distance_colocalization_candidates(
-    regions_1: dict,
-    regions_2: dict,
-    max_colocalization_distance: float,
-) -> List[ColocalizationCandidate]:
-    """Build label-pair candidates from centroid distances."""
-    candidates = []
-    for label_1, region_1 in regions_1.items():
-        for label_2, region_2 in regions_2.items():
-            candidate = _colocalization_candidate(
-                int(label_1),
-                int(label_2),
-                region_1,
-                region_2,
-                overlap_pixels=0,
-                overlap_fraction=0.0,
-            )
-            if candidate.distance <= max_colocalization_distance:
-                candidates.append(candidate)
-    return candidates
-
-
-def _colocalization_candidate(
-    label_1: int,
-    label_2: int,
-    region_1,
-    region_2,
-    *,
-    overlap_pixels: int,
-    overlap_fraction: float,
-) -> ColocalizationCandidate:
-    """Create one colocalization candidate."""
-    centroid_1 = np.array(region_1.centroid, dtype=float)
-    centroid_2 = np.array(region_2.centroid, dtype=float)
-    return ColocalizationCandidate(
-        channel_1_label=label_1,
-        channel_2_label=label_2,
-        distance=float(np.linalg.norm(centroid_1 - centroid_2)),
-        overlap_pixels=overlap_pixels,
-        overlap_fraction=float(overlap_fraction),
-    )
-
-
-def _create_colocalization_label_mask(
-    channel_1_labels: np.ndarray,
-    channel_2_labels: np.ndarray,
-    pairs: List[ColocalizationCandidate],
-) -> np.ndarray:
-    """Create a label mask where each colocalized pair gets one label."""
-    coloc_mask = np.zeros_like(channel_1_labels, dtype=np.int32)
-    for coloc_label, pair in enumerate(pairs, start=1):
-        label_1 = pair.channel_1_label
-        label_2 = pair.channel_2_label
-        coloc_mask[channel_1_labels == label_1] = coloc_label
-        coloc_mask[channel_2_labels == label_2] = coloc_label
-    return coloc_mask

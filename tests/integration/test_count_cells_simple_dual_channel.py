@@ -27,9 +27,9 @@ from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.progress import set_progress_queue
 from openhcs.core.steps import FunctionStep
 from openhcs.processing.backends.analysis.count_cells_simple import (
-    SimpleCellSegmentationConfig,
-    SimpleColocalizationMethod,
-    ThresholdMethod,
+    MetaXpressW2Settings,
+    MetaXpressWavelengthSettings,
+    StainedArea,
     count_cells_simple_dual_channel,
 )
 from openhcs.tests.generators.generate_synthetic_data import (
@@ -94,29 +94,27 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
         vfs_config=vfs_config,
     )
 
-    channel_1_settings = SimpleCellSegmentationConfig(
-        threshold_method=ThresholdMethod.MANUAL,
-        threshold=10000,
-        min_size=20,
-        max_size=200,
+    w1 = MetaXpressWavelengthSettings(
+        channel_index=0,
+        approx_min_width=6.0,
+        approx_max_width=14.0,
+        intensity_above_local_background=5000.0,
     )
-    channel_2_settings = SimpleCellSegmentationConfig(
-        threshold_method=ThresholdMethod.MANUAL,
-        threshold=3000,
-        min_size=20,
-        max_size=200,
+    w2 = MetaXpressW2Settings(
+        channel_index=1,
+        approx_min_width=6.0,
+        approx_max_width=14.0,
+        intensity_above_local_background=2000.0,
+        stained_area=StainedArea.NUCLEUS,
     )
     step = FunctionStep(
         name="Dual channel simple count",
         func=(
             count_cells_simple_dual_channel,
             {
-                "channel_1_index": 0,
-                "channel_1_settings": channel_1_settings,
-                "channel_2_index": 1,
-                "channel_2_settings": channel_2_settings,
-                "colocalization_method": SimpleColocalizationMethod.OVERLAP,
-                "min_overlap_fraction": 0.5,
+                "w1": w1,
+                "w2": w2,
+                "minimum_stained_area": 20.0,
             },
         ),
         processing_config=LazyProcessingConfig(
@@ -146,6 +144,8 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
         assert compiled_context.step_plans[0]["variable_components"] == [
             VariableComponents.CHANNEL
         ]
+        _, compiled_kwargs = compiled_context.step_plans[0]["func"]
+        assert compiled_kwargs["pixel_size"] == 1.0
 
         results = orchestrator.execute_compiled_plate(
             pipeline_definition=[step],
@@ -165,9 +165,10 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             rows = list(csv.DictReader(csv_file))
 
         assert len(rows) == 1
-        assert int(rows[0]["channel_1_count"]) == 2
-        assert int(rows[0]["channel_2_count"]) == 2
-        assert int(rows[0]["colocalized_count"]) == 1
+        assert int(rows[0]["total_cell_count"]) == 2
+        assert int(rows[0]["w2_positive_cell_count"]) == 1
+        assert int(rows[0]["w2_negative_cell_count"]) == 1
+        assert rows[0]["w2_stained_area"] == "nucleus"
     finally:
         set_progress_queue(None)
         ObjectStateRegistry.clear()

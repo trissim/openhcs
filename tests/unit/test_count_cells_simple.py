@@ -1,5 +1,5 @@
 import importlib
-from dataclasses import replace
+from dataclasses import fields, replace
 from inspect import signature, unwrap
 
 import numpy as np
@@ -7,8 +7,10 @@ from skimage.draw import disk
 
 from openhcs.processing.backends.analysis.count_cells_simple import (
     Foreground,
+    MetaXpressW2Settings,
+    MetaXpressWavelengthSettings,
     SimpleCellSegmentationConfig,
-    SimpleColocalizationMethod,
+    StainedArea,
     ThresholdMethod,
     count_cells_simple,
     count_cells_simple_dual_channel,
@@ -31,21 +33,35 @@ def _settings(**overrides):
     return replace(SimpleCellSegmentationConfig(), **overrides)
 
 
-def test_dual_channel_signature_exposes_two_ordered_segmentation_configs():
-    parameter_names = list(
-        signature(_count_cells_simple_dual_channel_impl()).parameters
-    )
+def test_dual_channel_signature_exposes_only_metaxpress_scoring_controls():
+    parameters = signature(_count_cells_simple_dual_channel_impl()).parameters
+    special_inputs = count_cells_simple_dual_channel.__special_inputs__
+    exposed_names = [name for name in parameters if name not in special_inputs]
 
-    assert parameter_names == [
+    assert exposed_names == [
         "image",
-        "channel_1_index",
-        "channel_1_settings",
-        "channel_2_index",
-        "channel_2_settings",
-        "colocalization_method",
-        "min_overlap_fraction",
-        "max_colocalization_distance",
-        "return_channel_masks",
+        "w1",
+        "w2",
+        "minimum_stained_area",
+    ]
+    assert special_inputs == {"pixel_size": True}
+    assert parameters["pixel_size"].annotation._ui_hidden is True
+    assert [field.name for field in fields(MetaXpressWavelengthSettings)] == [
+        "channel_index",
+        "approx_min_width",
+        "approx_max_width",
+        "intensity_above_local_background",
+    ]
+    assert [field.name for field in fields(MetaXpressW2Settings)] == [
+        "channel_index",
+        "approx_min_width",
+        "approx_max_width",
+        "intensity_above_local_background",
+        "stained_area",
+    ]
+    assert [choice.value for choice in StainedArea] == [
+        "nucleus",
+        "nucleus and cytoplasm",
     ]
     assert count_cells_simple_dual_channel.__special_outputs__ == (
         "dual_channel_counts",
@@ -202,99 +218,152 @@ def test_count_cells_simple_watershed_min_size_separates_split_trigger_from_filt
     assert set(np.unique(split_masks[0])) == {0, 1, 2}
 
 
-def test_count_cells_simple_dual_channel_reports_overlap_colocalization():
-    image = np.zeros((2, 64, 64), dtype=float)
-    rr, cc = disk((20, 20), 5, shape=image.shape[1:])
-    image[0, rr, cc] = 1.0
-    image[1, rr, cc] = 1.0
+def _metaxpress_settings(**overrides):
+    return replace(MetaXpressWavelengthSettings(), **overrides)
 
-    rr, cc = disk((45, 45), 5, shape=image.shape[1:])
-    image[0, rr, cc] = 1.0
-    rr, cc = disk((20, 45), 5, shape=image.shape[1:])
-    image[1, rr, cc] = 1.0
+
+def _metaxpress_w2_settings(**overrides):
+    return replace(MetaXpressW2Settings(), **overrides)
+
+
+def test_dual_channel_scores_w2_positive_cells_by_minimum_stained_area():
+    image = np.full((2, 64, 64), 100.0)
+    for center in ((20, 20), (45, 45)):
+        rr, cc = disk(center, 5, shape=image.shape[1:])
+        image[0, rr, cc] = 1000.0
+
+    rr, cc = disk((20, 20), 4, shape=image.shape[1:])
+    image[1, rr, cc] = 700.0
 
     output, results, masks = _count_cells_simple_dual_channel_impl()(
         image,
-        channel_1_settings=_settings(
-            threshold_method=ThresholdMethod.MANUAL,
-            threshold=0.5,
-            min_size=20,
-            max_size=200,
+        w1=_metaxpress_settings(
+            channel_index=0,
+            approx_min_width=6.0,
+            approx_max_width=14.0,
+            intensity_above_local_background=300.0,
         ),
-        channel_2_settings=_settings(
-            threshold_method=ThresholdMethod.MANUAL,
-            threshold=0.5,
-            min_size=20,
-            max_size=200,
+        w2=_metaxpress_w2_settings(
+            channel_index=1,
+            approx_min_width=4.0,
+            approx_max_width=14.0,
+            intensity_above_local_background=200.0,
+            stained_area=StainedArea.NUCLEUS,
         ),
-        colocalization_method=SimpleColocalizationMethod.OVERLAP,
-        min_overlap_fraction=0.5,
-        return_channel_masks=True,
+        minimum_stained_area=20.0,
+        pixel_size=1.0,
     )
 
     assert output is image
     assert results == [
         {
-            "channel_1_index": 0,
-            "channel_2_index": 1,
-            "channel_1_count": 2,
-            "channel_2_count": 2,
-            "colocalized_count": 1,
-            "channel_1_only_count": 1,
-            "channel_2_only_count": 1,
-            "channel_1_colocalized_percent": 50.0,
-            "channel_2_colocalized_percent": 50.0,
-            "colocalization_method": "overlap",
-            "mean_colocalization_distance": 0.0,
-            "mean_overlap_fraction": 1.0,
+            "w1_channel_index": 0,
+            "w2_channel_index": 1,
+            "total_cell_count": 2,
+            "w2_positive_cell_count": 1,
+            "w2_negative_cell_count": 1,
+            "w2_positive_percent": 50.0,
+            "w2_stained_area": "nucleus",
+            "minimum_stained_area": 20.0,
+            "all_w2_mean_stained_area": 22.5,
+            "positive_w2_mean_stained_area": 45.0,
         }
     ]
-    assert len(masks) == 3
-    assert set(np.unique(masks[0])) == {0, 1, 2}
-    assert set(np.unique(masks[1])) == {0, 1, 2}
+    assert [set(np.unique(mask)) for mask in masks] == [
+        {0, 1, 2},
+        {0, 1},
+        {0, 1},
+    ]
+
+    _, stricter_results, _ = _count_cells_simple_dual_channel_impl()(
+        image,
+        w1=_metaxpress_settings(
+            channel_index=0,
+            approx_min_width=6.0,
+            approx_max_width=14.0,
+            intensity_above_local_background=300.0,
+        ),
+        w2=_metaxpress_w2_settings(
+            channel_index=1,
+            approx_min_width=4.0,
+            approx_max_width=14.0,
+            intensity_above_local_background=200.0,
+            stained_area=StainedArea.NUCLEUS,
+        ),
+        minimum_stained_area=46.0,
+        pixel_size=1.0,
+    )
+    assert stricter_results[0]["w2_positive_cell_count"] == 0
+
+
+def test_w2_nucleus_and_cytoplasm_scores_stain_outside_the_nucleus():
+    image = np.full((2, 64, 64), 100.0)
+    rr, cc = disk((32, 32), 4, shape=image.shape[1:])
+    image[0, rr, cc] = 1000.0
+
+    outer_rr, outer_cc = disk((32, 32), 8, shape=image.shape[1:])
+    image[1, outer_rr, outer_cc] = 700.0
+    image[1, rr, cc] = 100.0
+
+    w1 = _metaxpress_settings(
+        channel_index=0,
+        approx_min_width=5.0,
+        approx_max_width=10.0,
+        intensity_above_local_background=300.0,
+    )
+    w2 = _metaxpress_w2_settings(
+        channel_index=1,
+        approx_min_width=6.0,
+        approx_max_width=24.0,
+        intensity_above_local_background=200.0,
+        stained_area=StainedArea.NUCLEUS,
+    )
+
+    _, nucleus_results, _ = _count_cells_simple_dual_channel_impl()(
+        image,
+        w1=w1,
+        w2=w2,
+        minimum_stained_area=20.0,
+        pixel_size=1.0,
+    )
+    _, whole_cell_results, masks = _count_cells_simple_dual_channel_impl()(
+        image,
+        w1=w1,
+        w2=replace(w2, stained_area=StainedArea.NUCLEUS_AND_CYTOPLASM),
+        minimum_stained_area=20.0,
+        pixel_size=1.0,
+    )
+
+    assert nucleus_results[0]["w2_positive_cell_count"] == 0
+    assert whole_cell_results[0]["w2_positive_cell_count"] == 1
+    assert whole_cell_results[0]["w2_stained_area"] == "nucleus and cytoplasm"
     assert set(np.unique(masks[2])) == {0, 1}
 
 
-def test_count_cells_simple_dual_channel_uses_independent_channel_settings():
-    image = np.empty((2, 64, 64), dtype=float)
-    image[0] = 0.0
-    image[1] = 1.0
-
-    shared_rr, shared_cc = disk((20, 20), 5, shape=image.shape[1:])
-    image[0, shared_rr, shared_cc] = 1.0
-    image[1, shared_rr, shared_cc] = 0.0
-
-    channel_1_rr, channel_1_cc = disk((45, 45), 5, shape=image.shape[1:])
-    image[0, channel_1_rr, channel_1_cc] = 1.0
-    channel_2_rr, channel_2_cc = disk((20, 45), 5, shape=image.shape[1:])
-    image[1, channel_2_rr, channel_2_cc] = 0.0
+def test_width_settings_derive_watershed_for_touching_w1_nuclei():
+    image = np.full((2, 64, 64), 100.0)
+    for center in ((32, 27), (32, 37)):
+        rr, cc = disk(center, 6, shape=image.shape[1:])
+        image[0, rr, cc] = 1000.0
 
     _, results, masks = _count_cells_simple_dual_channel_impl()(
         image,
-        channel_1_settings=_settings(
-            threshold_method=ThresholdMethod.MANUAL,
-            threshold=0.5,
-            foreground=Foreground.BRIGHT,
-            min_size=20,
-            max_size=200,
+        w1=_metaxpress_settings(
+            channel_index=0,
+            approx_min_width=6.0,
+            approx_max_width=12.0,
+            intensity_above_local_background=300.0,
         ),
-        channel_2_settings=_settings(
-            threshold_method=ThresholdMethod.MANUAL,
-            threshold=0.5,
-            foreground=Foreground.DARK,
-            min_size=20,
-            max_size=200,
+        w2=_metaxpress_w2_settings(
+            channel_index=1,
+            approx_min_width=4.0,
+            approx_max_width=12.0,
+            intensity_above_local_background=2000.0,
         ),
-        colocalization_method=SimpleColocalizationMethod.OVERLAP,
-        min_overlap_fraction=0.5,
-        return_channel_masks=True,
+        minimum_stained_area=10.0,
+        pixel_size=1.0,
     )
 
-    assert results[0]["channel_1_count"] == 2
-    assert results[0]["channel_2_count"] == 2
-    assert results[0]["colocalized_count"] == 1
-    assert [set(np.unique(mask)) for mask in masks] == [
-        {0, 1, 2},
-        {0, 1, 2},
-        {0, 1},
-    ]
+    assert results[0]["total_cell_count"] == 2
+    assert results[0]["w2_positive_cell_count"] == 0
+    assert set(np.unique(masks[0])) == {0, 1, 2}

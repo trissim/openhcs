@@ -30,7 +30,7 @@ try:
     from openhcs.processing.backends.analysis.count_cells_simple import \
         count_cells_simple, count_cells_simple_dual_channel, \
         ThresholdMethod, Foreground, SimpleCellSegmentationConfig, \
-        SimpleColocalizationMethod
+        MetaXpressWavelengthSettings, MetaXpressW2Settings, StainedArea
 except ImportError:
     pass
 
@@ -54,7 +54,9 @@ __all__ = [
     "ThresholdMethod",
     "Foreground",
     "SimpleCellSegmentationConfig",
-    "SimpleColocalizationMethod",
+    "MetaXpressWavelengthSettings",
+    "MetaXpressW2Settings",
+    "StainedArea",
 
     # Skeleton analysis
     "SkeletonizationResult",

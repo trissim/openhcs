@@ -940,6 +940,12 @@ METADATA_RESOLVERS = {
         "resolver": lambda context: context.microscope_handler.get_grid_dimensions(context.plate_path),
         "description": "Grid dimensions (num_rows, num_cols) for position generation functions"
     },
+    "pixel_size": {
+        "resolver": lambda context: context.microscope_handler.metadata_handler._get_with_fallback(
+            "get_pixel_size", context.plate_path
+        ),
+        "description": "Pixel size in micrometers per pixel for physical-unit analysis",
+    },
 }
 
 def resolve_metadata(key: str, context) -> Any:
