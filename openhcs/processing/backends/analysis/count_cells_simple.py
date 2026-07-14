@@ -10,6 +10,8 @@ watershed infrastructure while exposing controls appropriate to each workflow.
 from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import (
+    AlignedROIMask,
+    AlignedROIMasks,
     CsvOptions,
     MaterializationSpec,
     ROIOptions,
@@ -25,6 +27,8 @@ from skimage.feature import peak_local_max
 from skimage.filters import threshold_otsu, threshold_li, threshold_yen
 from skimage.measure import regionprops
 from skimage.segmentation import expand_labels, watershed
+
+from .metaxpress_utils import HiddenPixelSize, local_background_response, odd_size
 
 
 class ThresholdMethod(str, Enum):
@@ -172,12 +176,6 @@ class MetaXpressW2Settings(MetaXpressWavelengthSettings):
     def validate(self, name: str = "w2") -> None:
         super().validate(name)
         StainedArea(self.stained_area)
-
-
-class _HiddenPixelSize(float):
-    """Pipeline-injected pixel size that is intentionally absent from the UI."""
-
-    _ui_hidden = True
 
 
 @dataclass(frozen=True)
@@ -352,8 +350,8 @@ def count_cells_simple_dual_channel(
         channel_index=1,
     ),
     minimum_stained_area: float = 10.0,
-    pixel_size: _HiddenPixelSize = _HiddenPixelSize(1.0),
-) -> Tuple[np.ndarray, List[dict], List[np.ndarray]]:
+    pixel_size: HiddenPixelSize = HiddenPixelSize(1.0),
+) -> Tuple[np.ndarray, List[dict], AlignedROIMasks]:
     """Count W1 nuclei and score W2-positive cells like MetaXpress MWCS.
 
     W1 is the required all-nuclei wavelength and therefore defines total cell
@@ -385,8 +383,9 @@ def count_cells_simple_dual_channel(
           - ``image`` unchanged.
           - A one-element list containing MetaXpress-style positive/negative W2
             scoring and stained-area summary fields.
-          - W1 nucleus labels, W2 stain-object labels, and W2-positive stained
-            cell labels as ``int32`` ROI masks.
+          - Independently aligned W1 nucleus and W2 stain-object ROI masks. W1
+            ROI metadata includes each cell's W2-positive classification and
+            stained area.
 
     Raises:
         ValueError: If the stack, wavelength settings, pixel size, or minimum
@@ -409,12 +408,12 @@ def count_cells_simple_dual_channel(
     if not np.isfinite(pixel_size_um) or pixel_size_um <= 0:
         raise ValueError("pixel_size must be a finite value > 0")
 
-    w1_labels = _segment_metaxpress_wavelength(
+    w1_labels = segment_metaxpress_round_objects(
         image[w1.channel_index],
         w1,
         pixel_size_um,
     )
-    w2_labels = _segment_metaxpress_wavelength(
+    w2_labels = segment_metaxpress_round_objects(
         image[w2.channel_index],
         w2,
         pixel_size_um,
@@ -460,43 +459,51 @@ def count_cells_simple_dual_channel(
         ),
     )
 
-    positive_stain_labels = _positive_stain_labels(
-        compartments,
-        w2_labels > 0,
-        positive_cells,
+    w1_label_metadata = {
+        label: {
+            "w2_positive": bool(positive_cells[label]),
+            "w2_stained_area_um2": float(stained_areas[label]),
+        }
+        for label in range(1, total_cell_count + 1)
+    }
+    masks = AlignedROIMasks(
+        (
+            AlignedROIMask(
+                mask=w1_labels.astype(np.int32, copy=False),
+                source_index=int(w1.channel_index),
+                role="w1_nuclei",
+                label_metadata=w1_label_metadata,
+            ),
+            AlignedROIMask(
+                mask=w2_labels.astype(np.int32, copy=False),
+                source_index=int(w2.channel_index),
+                role="w2_stain",
+            ),
+        )
     )
-    masks = [
-        w1_labels.astype(np.int32, copy=False),
-        w2_labels.astype(np.int32, copy=False),
-        positive_stain_labels,
-    ]
 
     return image, [asdict(result)], masks
 
 
-def _segment_metaxpress_wavelength(
+def segment_metaxpress_round_objects(
     slice_data: np.ndarray,
     settings: MetaXpressWavelengthSettings,
     pixel_size_um: float,
 ) -> np.ndarray:
-    """Segment one bright-stain wavelength with derived MetaXpress controls."""
+    """Segment bright round objects using shared MetaXpress-style controls."""
 
     min_width_px = settings.approx_min_width / pixel_size_um
     max_width_px = settings.approx_max_width / pixel_size_um
-    background_window = _odd_size(2.0 * max_width_px + 1.0)
-    local_background = ndi.grey_opening(
-        np.asarray(slice_data, dtype=np.float64),
-        size=(background_window, background_window),
-        mode="nearest",
-    )
-    intensity_above_background = (
-        np.asarray(slice_data, dtype=np.float64) - local_background
+    intensity_above_background = local_background_response(
+        slice_data,
+        object_width_px=max_width_px,
+        bright_objects=True,
     )
     binary = intensity_above_background >= settings.intensity_above_local_background
 
     max_object_area = max(1, int(np.ceil(np.pi * (max_width_px / 2.0) ** 2)))
     seed_spacing = max(1, int(round(min_width_px / 2.0)))
-    seed_footprint = _odd_size(max(1.0, min_width_px / 2.0))
+    seed_footprint = odd_size(max(1.0, min_width_px / 2.0))
     labeled = _label_binary_components(
         binary,
         watershed_large_objects=True,
@@ -511,13 +518,6 @@ def _segment_metaxpress_wavelength(
         if min_width_px <= region.axis_minor_length <= max_width_px:
             keep_mask[region.label] = True
     return _relabel_by_keep_mask(labeled, keep_mask)
-
-
-def _odd_size(value: float) -> int:
-    """Round a derived spatial scale up to a positive odd integer."""
-
-    size = max(1, int(np.ceil(value)))
-    return size if size % 2 else size + 1
 
 
 def _build_w2_compartments(
@@ -557,18 +557,6 @@ def _measure_stained_area_by_cell(
         minlength=cell_count + 1,
     ).astype(float, copy=False)
     return stained_pixels * pixel_size_um**2
-
-
-def _positive_stain_labels(
-    compartments: np.ndarray,
-    stained_mask: np.ndarray,
-    positive_cells: np.ndarray,
-) -> np.ndarray:
-    """Label only W2-stained pixels belonging to W2-positive W1 cells."""
-
-    positive_pixels = stained_mask & (compartments > 0) & positive_cells[compartments]
-    positive_labels = np.where(positive_pixels, compartments, 0)
-    return _relabel_by_keep_mask(positive_labels, positive_cells.copy())
 
 
 def _segment_simple_slice(

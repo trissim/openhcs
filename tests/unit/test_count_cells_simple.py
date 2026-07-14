@@ -269,11 +269,18 @@ def test_dual_channel_scores_w2_positive_cells_by_minimum_stained_area():
             "positive_w2_mean_stained_area": 45.0,
         }
     ]
-    assert [set(np.unique(mask)) for mask in masks] == [
+    assert [(mask.source_index, mask.role) for mask in masks.masks] == [
+        (0, "w1_nuclei"),
+        (1, "w2_stain"),
+    ]
+    assert [set(np.unique(mask.mask)) for mask in masks.masks] == [
         {0, 1, 2},
         {0, 1},
-        {0, 1},
     ]
+    assert masks.masks[0].label_metadata == {
+        1: {"w2_positive": True, "w2_stained_area_um2": 45.0},
+        2: {"w2_positive": False, "w2_stained_area_um2": 0.0},
+    }
 
     _, stricter_results, _ = _count_cells_simple_dual_channel_impl()(
         image,
@@ -337,7 +344,7 @@ def test_w2_nucleus_and_cytoplasm_scores_stain_outside_the_nucleus():
     assert nucleus_results[0]["w2_positive_cell_count"] == 0
     assert whole_cell_results[0]["w2_positive_cell_count"] == 1
     assert whole_cell_results[0]["w2_stained_area"] == "nucleus and cytoplasm"
-    assert set(np.unique(masks[2])) == {0, 1}
+    assert set(np.unique(masks.masks[1].mask)) == {0, 1}
 
 
 def test_width_settings_derive_watershed_for_touching_w1_nuclei():
@@ -366,4 +373,4 @@ def test_width_settings_derive_watershed_for_touching_w1_nuclei():
 
     assert results[0]["total_cell_count"] == 2
     assert results[0]["w2_positive_cell_count"] == 0
-    assert set(np.unique(masks[0])) == {0, 1, 2}
+    assert set(np.unique(masks.masks[0].mask)) == {0, 1, 2}

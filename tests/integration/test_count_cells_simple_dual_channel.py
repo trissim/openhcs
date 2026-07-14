@@ -9,6 +9,7 @@ import openhcs  # noqa: F401 - prefer repository submodules before direct import
 import numpy as np
 import tifffile
 from objectstate import ObjectStateRegistry
+from polystore.roi import load_rois_from_zip
 from skimage.draw import disk
 
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
@@ -54,6 +55,8 @@ def _write_known_dual_channel_images(plate_dir):
     image_dir = plate_dir / "TimePoint_1"
     tifffile.imwrite(image_dir / "A01_s001_w1_z001_t001.tif", channel_1)
     tifffile.imwrite(image_dir / "A01_s001_w2_z001_t001.tif", channel_2)
+    tifffile.imwrite(image_dir / "A01_s002_w1_z001_t001.tif", channel_1)
+    tifffile.imwrite(image_dir / "A01_s002_w2_z001_t001.tif", channel_2)
 
 
 def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
@@ -164,11 +167,34 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
         with csv_paths[0].open(newline="") as csv_file:
             rows = list(csv.DictReader(csv_file))
 
-        assert len(rows) == 1
-        assert int(rows[0]["total_cell_count"]) == 2
-        assert int(rows[0]["w2_positive_cell_count"]) == 1
-        assert int(rows[0]["w2_negative_cell_count"]) == 1
-        assert rows[0]["w2_stained_area"] == "nucleus"
+        assert len(rows) == 2
+        for row in rows:
+            assert int(row["total_cell_count"]) == 2
+            assert int(row["w2_positive_cell_count"]) == 1
+            assert int(row["w2_negative_cell_count"]) == 1
+            assert row["w2_stained_area"] == "nucleus"
+
+        roi_paths = sorted(tmp_path.rglob("*colocalization_masks*rois.roi.zip"))
+        assert len(roi_paths) == 4
+        w1_roi_paths = [path for path in roi_paths if "w1_nuclei" in path.name]
+        w2_roi_paths = [path for path in roi_paths if "w2_stain" in path.name]
+        assert len(w1_roi_paths) == 2
+        assert len(w2_roi_paths) == 2
+        assert {"s001", "s002"} == {
+            "s001" if "_s001_" in path.name else "s002" for path in w1_roi_paths
+        }
+        assert all("_w1_" in path.name for path in w1_roi_paths)
+        assert all("_w2_" in path.name for path in w2_roi_paths)
+        assert all(len(load_rois_from_zip(path)) == 2 for path in roi_paths)
+
+        roi_summaries = sorted(
+            tmp_path.rglob("*colocalization_masks*segmentation_summary.txt")
+        )
+        assert len(roi_summaries) == 4
+        for summary_path in roi_summaries:
+            summary = summary_path.read_text()
+            assert "Spatial dimensions: 2D" in summary
+            assert "Z-planes" not in summary
     finally:
         set_progress_queue(None)
         ObjectStateRegistry.clear()

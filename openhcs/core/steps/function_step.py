@@ -17,6 +17,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Sequence,
     Tuple,
     Union,
     OrderedDict as TypingOrderedDict,
@@ -37,6 +38,7 @@ from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.progress import emit, ProgressPhase, ProgressStatus
 from openhcs.formats.func_arg_prep import prepare_patterns_and_functions
 from openhcs.core.memory import stack_slices, unstack_slices
+
 # OpenHCS imports moved to local imports to avoid circular dependencies
 
 
@@ -472,6 +474,7 @@ def _execute_function_core(
     axis_id: str,  # Add axis_id parameter
     input_memory_type: str,
     device_id: int,
+    source_paths: Sequence[str] = (),
 ) -> Any:  # Returns the main processed data stack
     """
     Executes a single callable, handling its special I/O.
@@ -550,6 +553,12 @@ def _execute_function_core(
                 )
                 if i < len(returned_special_values_tuple):
                     value_to_save = returned_special_values_tuple[i]
+                    from openhcs.processing.materialization.payloads import (
+                        MaterializationPayload,
+                    )
+
+                    if isinstance(value_to_save, MaterializationPayload):
+                        value_to_save = value_to_save.bind_source_paths(source_paths)
                     # Extract path string from the path info dictionary
                     # Current format: {"path": "/path/to/file.pkl"}
                     if isinstance(vfs_path_info, dict) and "path" in vfs_path_info:
@@ -581,6 +590,22 @@ def _execute_function_core(
                         logger.warning(
                             f"🔍 VFS_DEBUG: WARNING - '{vfs_path}' ALREADY EXISTS in FILEMANAGER memory backend!"
                         )
+                        existing_value = context.filemanager.load(
+                            vfs_path, Backend.MEMORY.value
+                        )
+                        if isinstance(existing_value, MaterializationPayload):
+                            value_to_save = existing_value.merge(value_to_save)
+                        elif isinstance(existing_value, list) and isinstance(
+                            value_to_save, list
+                        ):
+                            value_to_save = existing_value + value_to_save
+                        else:
+                            raise TypeError(
+                                f"Special output '{output_key}' was emitted more than once "
+                                f"with non-mergeable values {type(existing_value).__name__} "
+                                f"and {type(value_to_save).__name__}"
+                            )
+                        context.filemanager.delete(vfs_path, Backend.MEMORY.value)
 
                     # Ensure directory exists for memory backend
                     parent_dir = str(Path(vfs_path).parent)
@@ -615,6 +640,7 @@ def _execute_chain_core(
     device_id: int,
     input_memory_type: str,
     step_index: int,  # Add step_index for funcplan lookup
+    source_paths: Sequence[str],
     dict_key: str = "default",  # Add dict_key for funcplan lookup
 ) -> Any:
     current_stack = initial_data_stack
@@ -690,6 +716,7 @@ def _execute_chain_core(
             axis_id=axis_id,
             device_id=device_id,
             input_memory_type=input_memory_type,
+            source_paths=source_paths,
         )
 
         # Update current memory type from frozen context
@@ -754,6 +781,7 @@ def _process_single_pattern_group(
         )
 
         full_file_paths = [str(step_input_dir / f) for f in matching_files]
+        aligned_source_paths = [str(step_output_dir / f) for f in matching_files]
         raw_slices = context.filemanager.load_batch(
             full_file_paths, Backend.MEMORY.value
         )
@@ -787,8 +815,12 @@ def _process_single_pattern_group(
         step_func = context.step_plans[step_index]["func"]
 
         # DEBUG: Log component_key and available groups
-        logger.info(f"🔍 COMPONENT_KEY: component_value={component_value}, component_key={component_key}")
-        special_outputs_by_group = context.step_plans[step_index].get("special_outputs_by_group")
+        logger.info(
+            f"🔍 COMPONENT_KEY: component_value={component_value}, component_key={component_key}"
+        )
+        special_outputs_by_group = context.step_plans[step_index].get(
+            "special_outputs_by_group"
+        )
         if special_outputs_by_group:
             logger.info(f"🔍 AVAILABLE_GROUPS: {list(special_outputs_by_group.keys())}")
         else:
@@ -838,6 +870,7 @@ def _process_single_pattern_group(
                 device_id,
                 input_memory_type_from_plan,
                 step_index,
+                aligned_source_paths,
                 dict_key_for_funcplan,
             )
         elif callable(executable_func_or_chain) or (
@@ -874,6 +907,7 @@ def _process_single_pattern_group(
                 axis_id,
                 input_memory_type_from_plan,
                 device_id,
+                aligned_source_paths,
             )
         else:
             raise TypeError(
@@ -1087,9 +1121,11 @@ class FunctionStep(AbstractStep):
                 read_backend,  # backend
                 extensions=DEFAULT_IMAGE_EXTENSIONS,  # extensions
                 group_by=group_by,  # Pass GroupBy enum directly
-                variable_components=[vc.value for vc in variable_components]
-                if variable_components
-                else [],  # variable_components for placeholder logic
+                variable_components=(
+                    [vc.value for vc in variable_components]
+                    if variable_components
+                    else []
+                ),  # variable_components for placeholder logic
                 **filter_kwargs,  # Dynamic filter parameter
             )
 
@@ -1301,9 +1337,11 @@ class FunctionStep(AbstractStep):
                         microscope_handler,
                         step_plan["zarr_config"],
                         patterns_to_preload=patterns_to_preload,
-                        variable_components=[vc.value for vc in variable_components]
-                        if variable_components
-                        else [],
+                        variable_components=(
+                            [vc.value for vc in variable_components]
+                            if variable_components
+                            else []
+                        ),
                     )
                 else:
                     # Non-sequential: preload all patterns
@@ -1690,9 +1728,11 @@ class FunctionStep(AbstractStep):
             metadata = {
                 "microscope_handler_name": context.microscope_handler.microscope_type,
                 "source_filename_parser_name": source_parser_name,
-                "grid_dimensions": list(grid_dimensions)
-                if hasattr(grid_dimensions, "__iter__")
-                else [1, 1],
+                "grid_dimensions": (
+                    list(grid_dimensions)
+                    if hasattr(grid_dimensions, "__iter__")
+                    else [1, 1]
+                ),
                 "pixel_size": float(pixel_size) if pixel_size is not None else 1.0,
                 "image_files": image_files,
                 "channels": self._extract_component_metadata(
@@ -1828,9 +1868,11 @@ class FunctionStep(AbstractStep):
         has_step_mat = "materialized_output_dir" in step_plan
         analysis_output_dir = Path(
             step_plan[
-                "materialized_analysis_results_dir"
-                if has_step_mat
-                else "analysis_results_dir"
+                (
+                    "materialized_analysis_results_dir"
+                    if has_step_mat
+                    else "analysis_results_dir"
+                )
             ]
         )
         images_dir = str(
@@ -1990,6 +2032,11 @@ class FunctionStep(AbstractStep):
                 from openhcs.processing.materialization import materialize
 
                 extra_inputs = _resolve_materializer_inputs(mat_spec, dict_key=dict_key)
+                source_paths = sorted(
+                    step_plan["get_paths_for_axis"](
+                        step_plan["output_dir"], Backend.MEMORY.value
+                    )
+                )
                 materialize(
                     mat_spec,
                     data,
@@ -1999,6 +2046,9 @@ class FunctionStep(AbstractStep):
                     backend_kwargs,
                     context=context,
                     extra_inputs=extra_inputs,
+                    source_paths=source_paths,
+                    output_key=output_key,
+                    step_index=step_index,
                 )
 
 

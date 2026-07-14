@@ -7,11 +7,15 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-from openhcs.processing.materialization.constants import MaterializationFormat, WriteMode
+from openhcs.processing.materialization.constants import (
+    MaterializationFormat,
+    WriteMode,
+)
 from openhcs.processing.materialization.options import (
     CsvOptions,
     FileOutputOptions,
@@ -19,6 +23,10 @@ from openhcs.processing.materialization.options import (
     ROIOptions,
     TextOptions,
     TiffStackOptions,
+)
+from openhcs.processing.materialization.payloads import (
+    AlignedROIMask,
+    AlignedROIMasks,
 )
 from openhcs.processing.materialization.utils import (
     discover_array_fields,
@@ -140,7 +148,9 @@ class BackendSaver:
             return
 
         if self.write_mode == WriteMode.ERROR:
-            raise FileExistsError(f"Refusing to overwrite existing path: {path} ({backend})")
+            raise FileExistsError(
+                f"Refusing to overwrite existing path: {path} ({backend})"
+            )
 
         raise ValueError(f"Unknown WriteMode: {self.write_mode!r}")
 
@@ -153,6 +163,9 @@ class MaterializationContext:
     filemanager: Any
     extra_inputs: dict[str, Any]
     context: Any = None
+    source_paths: tuple[str, ...] = ()
+    output_key: Optional[str] = None
+    step_index: Optional[int] = None
     write_mode: WriteMode = WriteMode.OVERWRITE
 
     def paths(self, options: FileOutputOptions) -> PathHelper:
@@ -193,7 +206,9 @@ def writer_for(
 
     def decorator(fn: Callable[[Any, Any, MaterializationContext], list[Output]]):
         if options_type in _WRITERS_BY_OPTIONS:
-            raise ValueError(f"Writer already registered for options type {options_type.__name__}")
+            raise ValueError(
+                f"Writer already registered for options type {options_type.__name__}"
+            )
         _WRITERS_BY_OPTIONS[options_type] = WriterSpec(
             format=fmt,
             options_type=options_type,
@@ -243,7 +258,11 @@ def _build_tabular_rows(data: Any, options: Any) -> list[dict[str, Any]]:
         row_field = getattr(options, "row_field", None)
         if row_field:
             array_data = getattr(item, row_field)
-            rows.extend(expand_array_field(array_data, base_row, getattr(options, "row_columns", {}) or {}))
+            rows.extend(
+                expand_array_field(
+                    array_data, base_row, getattr(options, "row_columns", {}) or {}
+                )
+            )
             continue
 
         if array_fields := discover_array_fields(item):
@@ -285,7 +304,9 @@ def _render_json(data: Any, options: JsonOptions) -> str:
             # single element (non-list input)
             payload = extract_fields(data, getattr(options, "fields", None))
         else:
-            payload = [extract_fields(item, getattr(options, "fields", None)) for item in seq]
+            payload = [
+                extract_fields(item, getattr(options, "fields", None)) for item in seq
+            ]
 
     if options.wrap_list and isinstance(payload, list):
         payload = {"total_items": len(payload), "results": payload}
@@ -302,7 +323,9 @@ def _single_file_writer(
         payload = _select_payload(data, options)
         if validate_payload is not None:
             validate_payload(payload, options)
-        return [Output(path=_output_path(ctx, options), content=render(payload, options))]
+        return [
+            Output(path=_output_path(ctx, options), content=render(payload, options))
+        ]
 
     return write
 
@@ -321,12 +344,16 @@ def register_single_file_writer(
 
 
 register_single_file_writer(CsvOptions, MaterializationFormat.CSV, render=_render_csv)
-register_single_file_writer(JsonOptions, MaterializationFormat.JSON, render=_render_json)
+register_single_file_writer(
+    JsonOptions, MaterializationFormat.JSON, render=_render_json
+)
 
 
 def _validate_text(payload: Any, options: TextOptions) -> None:
     if not isinstance(payload, str):
-        raise TypeError(f"TextOptions expects a str payload, got {type(payload).__name__}")
+        raise TypeError(
+            f"TextOptions expects a str payload, got {type(payload).__name__}"
+        )
 
 
 register_single_file_writer(
@@ -344,8 +371,91 @@ def _roi_primary_path(outs: list[Output]) -> str:
     return outs[0].path if outs else ""
 
 
+def _roi_role_slug(role: str) -> str:
+    """Convert an artifact role to a stable filename component."""
+
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", role).strip("_").lower()
+    if not slug:
+        raise ValueError(
+            f"ROI role does not contain a usable filename component: {role!r}"
+        )
+    return slug
+
+
+def _write_aligned_roi_masks(
+    masks: list[AlignedROIMask],
+    options: ROIOptions,
+    ctx: MaterializationContext,
+) -> list[Output]:
+    """Write independently aligned 2D masks without inventing a stack axis."""
+
+    from polystore.roi import extract_rois_from_labeled_mask
+
+    outs: list[Output] = []
+    parent = ctx.paths(options).parent
+
+    for aligned_mask in masks:
+        if aligned_mask.source_path is not None:
+            source_path = aligned_mask.source_path
+        else:
+            if not ctx.source_paths:
+                raise ValueError("Aligned ROI materialization requires source_paths")
+            if aligned_mask.source_index >= len(ctx.source_paths):
+                raise IndexError(
+                    f"Aligned ROI source_index {aligned_mask.source_index} is outside "
+                    f"the {len(ctx.source_paths)} source images"
+                )
+            source_path = ctx.source_paths[aligned_mask.source_index]
+        source_stem = Path(source_path).stem
+        role_slug = _roi_role_slug(aligned_mask.role)
+        name_parts = [source_stem]
+        if ctx.output_key:
+            name_parts.append(ctx.output_key)
+        name_parts.append(role_slug)
+        if ctx.step_index is not None:
+            name_parts.append(f"step{ctx.step_index}")
+        base_path = parent / "_".join(name_parts)
+        roi_path = f"{base_path}{options.roi_suffix}"
+        summary_path = f"{base_path}{options.summary_suffix}"
+
+        rois = extract_rois_from_labeled_mask(
+            aligned_mask.mask,
+            min_area=options.min_area,
+            extract_contours=options.extract_contours,
+        )
+        for roi in rois:
+            label = int(roi.metadata["label"])
+            roi.metadata.update(
+                {
+                    "roi_role": aligned_mask.role,
+                    "source_index": aligned_mask.source_index,
+                    "source_path": str(source_path),
+                    **dict(aligned_mask.label_metadata.get(label, {})),
+                }
+            )
+
+        if rois:
+            outs.append(Output(path=roi_path, content=rois))
+
+        summary = (
+            f"Segmentation ROIs: {len(rois)} cells\n"
+            f"ROI role: {aligned_mask.role}\n"
+            f"Source image: {source_path}\n"
+            "Spatial dimensions: 2D\n"
+        )
+        if rois:
+            summary += f"ROI file: {roi_path}\n"
+        else:
+            summary += "No ROIs extracted (all regions below min_area threshold)\n"
+        outs.append(Output(path=summary_path, content=summary))
+
+    return outs
+
+
 @writer_for(ROIOptions, MaterializationFormat.ROI_ZIP, primary_path=_roi_primary_path)
-def _write_roi_zip(data: Any, options: ROIOptions, ctx: MaterializationContext) -> list[Output]:
+def _write_roi_zip(
+    data: Any, options: ROIOptions, ctx: MaterializationContext
+) -> list[Output]:
     from polystore.roi import extract_rois_from_labeled_mask
 
     data = _select_payload(data, options)
@@ -354,9 +464,22 @@ def _write_roi_zip(data: Any, options: ROIOptions, ctx: MaterializationContext) 
     summary_path = paths.with_suffix(options.summary_suffix)
 
     if _is_empty(data):
-        return [Output(path=summary_path, content="No segmentation masks generated (empty data)\n")]
+        return [
+            Output(
+                path=summary_path,
+                content="No segmentation masks generated (empty data)\n",
+            )
+        ]
 
-    masks = _as_sequence(data)
+    if isinstance(data, AlignedROIMasks):
+        masks = list(data.masks)
+    else:
+        masks = _as_sequence(data)
+    aligned_flags = [isinstance(mask, AlignedROIMask) for mask in masks]
+    if any(aligned_flags):
+        if not all(aligned_flags):
+            raise TypeError("ROI payload cannot mix aligned and unaligned masks")
+        return _write_aligned_roi_masks(masks, options, ctx)
 
     all_rois: list[Any] = []
     for mask in masks:
@@ -381,7 +504,9 @@ def _write_roi_zip(data: Any, options: ROIOptions, ctx: MaterializationContext) 
 
 
 @writer_for(TiffStackOptions, MaterializationFormat.TIFF_STACK)
-def _write_tiff_stack(data: Any, options: TiffStackOptions, ctx: MaterializationContext) -> list[Output]:
+def _write_tiff_stack(
+    data: Any, options: TiffStackOptions, ctx: MaterializationContext
+) -> list[Output]:
     data = _select_payload(data, options)
     paths = ctx.paths(options)
     base_name = paths.name
@@ -401,11 +526,17 @@ def _write_tiff_stack(data: Any, options: TiffStackOptions, ctx: Materialization
 
     outs: list[Output] = []
     for i, arr in enumerate(slices):
-        filename = str(paths.parent / f"{base_name}{options.slice_pattern.format(index=i)}")
+        filename = str(
+            paths.parent / f"{base_name}{options.slice_pattern.format(index=i)}"
+        )
         out_arr = arr
         if options.normalize_uint8 and getattr(out_arr, "dtype", None) != "uint8":
             max_val = getattr(out_arr, "max", lambda: 0)()
-            out_arr = (out_arr * 255).astype("uint8") if max_val <= 1.0 else out_arr.astype("uint8")
+            out_arr = (
+                (out_arr * 255).astype("uint8")
+                if max_val <= 1.0
+                else out_arr.astype("uint8")
+            )
         outs.append(Output(path=filename, content=out_arr))
 
     summary_path = paths.with_suffix(options.summary_suffix)
@@ -432,12 +563,19 @@ class MaterializationSpec:
     allowed_backends: Optional[List[str]]
     primary: int
 
-    def __init__(self, *outputs: Any, allowed_backends: Optional[List[str]] = None, primary: int = 0):
+    def __init__(
+        self,
+        *outputs: Any,
+        allowed_backends: Optional[List[str]] = None,
+        primary: int = 0,
+    ):
         if len(outputs) == 1 and isinstance(outputs[0], (list, tuple)):
             outputs = tuple(outputs[0])
 
         if not outputs:
-            raise ValueError("MaterializationSpec requires at least one output options object")
+            raise ValueError(
+                "MaterializationSpec requires at least one output options object"
+            )
 
         for opt in outputs:
             if isinstance(opt, dict):
@@ -478,7 +616,9 @@ def _validate_allowed_backends(spec: MaterializationSpec, backends: list[str]) -
         return
     invalid = [b for b in backends if b not in spec.allowed_backends]
     if invalid:
-        raise ValueError(f"Backend(s) {invalid} not in allowed backends for this spec: {spec.allowed_backends}")
+        raise ValueError(
+            f"Backend(s) {invalid} not in allowed backends for this spec: {spec.allowed_backends}"
+        )
 
 
 def materialize(
@@ -491,6 +631,9 @@ def materialize(
     context: Any = None,
     extra_inputs: Optional[Dict[str, Any]] = None,
     *,
+    source_paths: Sequence[str] = (),
+    output_key: Optional[str] = None,
+    step_index: Optional[int] = None,
     write_mode: WriteMode = WriteMode.OVERWRITE,
 ) -> str:
     """Materialize data to one or more backends."""
@@ -505,6 +648,9 @@ def materialize(
         filemanager=filemanager,
         extra_inputs=extra_inputs or {},
         context=context,
+        source_paths=tuple(str(path) for path in source_paths),
+        output_key=output_key,
+        step_index=step_index,
         write_mode=write_mode,
     )
 

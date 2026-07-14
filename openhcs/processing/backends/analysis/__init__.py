@@ -41,6 +41,20 @@ try:
 except ImportError:
     pass
 
+# Import MetaXpress-style neurite outgrowth analysis
+try:
+    from openhcs.processing.backends.analysis.neurite_outgrowth import (
+        MetaXpressCellBodySettings,
+        MetaXpressNuclearSettings,
+        MetaXpressOutgrowthSettings,
+        NeuriteIllumination,
+        NeuriteOutgrowthCellResult,
+        NeuriteOutgrowthSummary,
+        neurite_outgrowth_metaxpress,
+    )
+except ImportError:
+    pass
+
 __all__ = [
     # DXF mask pipeline
     "dxf_mask_pipeline",
@@ -61,4 +75,13 @@ __all__ = [
     # Skeleton analysis
     "SkeletonizationResult",
     "skeletonize_and_save",
+
+    # MetaXpress-style neurite outgrowth
+    "neurite_outgrowth_metaxpress",
+    "NeuriteIllumination",
+    "MetaXpressCellBodySettings",
+    "MetaXpressOutgrowthSettings",
+    "MetaXpressNuclearSettings",
+    "NeuriteOutgrowthSummary",
+    "NeuriteOutgrowthCellResult",
 ]

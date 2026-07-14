@@ -6,8 +6,10 @@ explicit contract declarations, allowing them to skip runtime testing
 while producing the same FunctionMetadata format as external libraries.
 """
 
+import hashlib
 import logging
 import numpy as np
+from pathlib import Path
 from typing import Dict, List, Tuple, Any
 import importlib
 
@@ -88,12 +90,29 @@ class OpenHCSRegistry(LibraryRegistryBase):
 
     # ===== ESSENTIAL ABC METHODS =====
     def get_library_version(self) -> str:
-        """Get OpenHCS version."""
+        """Get OpenHCS version plus a native-backend source fingerprint.
+
+        OpenHCS is commonly run as an editable install. Package version alone
+        therefore cannot invalidate registry metadata when a backend is added,
+        removed, or edited between releases.
+        """
         try:
             import openhcs
-            return getattr(openhcs, '__version__', 'unknown')
+            package_version = getattr(openhcs, '__version__', 'unknown')
         except:
-            return 'unknown'
+            package_version = 'unknown'
+
+        backend_root = Path(__file__).resolve().parents[1]
+        source_state = hashlib.sha256()
+        for source_path in sorted(backend_root.rglob("*.py")):
+            try:
+                stat = source_path.stat()
+            except OSError:
+                continue
+            source_state.update(str(source_path.relative_to(backend_root)).encode())
+            source_state.update(str(stat.st_mtime_ns).encode())
+            source_state.update(str(stat.st_size).encode())
+        return f"{package_version}+src.{source_state.hexdigest()[:12]}"
 
     def is_library_available(self) -> bool:
         """OpenHCS is always available."""

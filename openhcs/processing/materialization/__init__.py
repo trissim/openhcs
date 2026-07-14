@@ -1,6 +1,9 @@
 """Materialization public API (writer-based)."""
 
-from openhcs.processing.materialization.constants import MaterializationFormat, WriteMode
+from openhcs.processing.materialization.constants import (
+    MaterializationFormat,
+    WriteMode,
+)
 from openhcs.processing.materialization.core import (
     BackendSaver,
     MaterializationContext,
@@ -16,6 +19,11 @@ from openhcs.processing.materialization.options import (
     ROIOptions,
     TextOptions,
     TiffStackOptions,
+)
+from openhcs.processing.materialization.payloads import (
+    AlignedROIMask,
+    AlignedROIMasks,
+    MaterializationPayload,
 )
 from openhcs.processing.materialization.presets import (
     csv_only,
@@ -41,6 +49,9 @@ __all__ = [
     "ROIOptions",
     "TiffStackOptions",
     "TextOptions",
+    "AlignedROIMask",
+    "AlignedROIMasks",
+    "MaterializationPayload",
     "json_only",
     "csv_only",
     "json_and_csv",
