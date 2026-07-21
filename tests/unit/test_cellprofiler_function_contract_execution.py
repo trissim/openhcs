@@ -32,6 +32,7 @@ from openhcs.interop.cellprofiler.runtime.function_contract_execution import (
     CellProfilerFunctionContractExecutor,
 )
 from openhcs.processing.backends.cellprofiler.alignment import AlignShiftMeasurement
+from openhcs.processing.backends.cellprofiler.morphology import morphologicalskeleton
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
@@ -52,6 +53,24 @@ def _compiled_contract(
             artifact_outputs=artifact_outputs,
         ),
     )
+
+
+def test_morphological_skeleton_executes_one_planar_runtime_image() -> None:
+    callable_contract = CallableContract.from_callable(morphologicalskeleton)
+    raw_callable = callable_contract.resolve_canonical_raw_callable()
+    image = np.zeros((7, 7), dtype=np.float32)
+    image[2:5, 3] = 1.0
+
+    result = CellProfilerFunctionContractExecutor().execute(
+        callable_contract,
+        raw_callable,
+        image,
+        {},
+        execution_mode=ImagePayloadExecutionMode.NATURAL,
+    )
+
+    assert callable_contract.processing_contract is ProcessingContract.PURE_2D
+    assert image_payload_data(result).shape == image.shape
 
 
 @pytest.mark.parametrize("processing_contract", tuple(ProcessingContract))

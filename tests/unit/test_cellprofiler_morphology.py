@@ -31,6 +31,7 @@ from openhcs.processing.backends.cellprofiler.morphology import (
 from openhcs.processing.backends.cellprofiler.relationships import (
     ObjectRelationshipBackendStrategy,
 )
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 MORPHOLOGY = MorphologyBackendStrategy.for_memory_type(MemoryType.NUMPY)
 
@@ -738,9 +739,9 @@ def test_fill_objects_empty_input_preserves_nominal_object_label_output() -> Non
     np.testing.assert_array_equal(object_label_dense_array(result), labels)
 
 
-def test_morphological_skeleton_preserves_declared_stack_shape() -> None:
-    image = np.zeros((2, 7, 7), dtype=np.float32)
-    image[:, 2:5, 3] = 1.0
+def test_morphological_skeleton_uses_planar_processing_contract() -> None:
+    image = np.zeros((7, 7), dtype=np.float32)
+    image[2:5, 3] = 1.0
 
     result = morphology_module.morphologicalskeleton(
         image,
@@ -748,7 +749,14 @@ def test_morphological_skeleton_preserves_declared_stack_shape() -> None:
     )
 
     assert result.shape == image.shape
-    np.testing.assert_array_equal(result > 0, image > 0)
+    from skimage.morphology import skeletonize
+
+    expected = skeletonize(image > 0)
+    np.testing.assert_array_equal(result > 0, expected)
+    assert (
+        morphology_module.morphologicalskeleton.__processing_contract__
+        is ProcessingContract.PURE_2D
+    )
 
 
 def test_shrink_to_object_centers_emits_typed_rows_and_labels() -> None:

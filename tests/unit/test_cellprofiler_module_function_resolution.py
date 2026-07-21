@@ -23,6 +23,7 @@ from openhcs.processing.backends.cellprofiler.crop import CropModule
 from openhcs.processing.backends.cellprofiler.image_geometry import MaskImageModule
 from openhcs.processing.backends.cellprofiler.morphology import (
     DilateObjectsModule,
+    MorphologicalskeletonModule,
     RemoveHolesModule,
     ShrinkToObjectCentersModule,
 )
@@ -171,6 +172,7 @@ def test_resize_variants_resolve_to_declared_callable_objects() -> None:
     ("module_type", "object_input"),
     (
         (DilateObjectsModule, True),
+        (MorphologicalskeletonModule, False),
         (RemoveHolesModule, False),
         (ShrinkToObjectCentersModule, True),
     ),

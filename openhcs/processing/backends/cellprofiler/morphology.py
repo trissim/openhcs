@@ -1609,23 +1609,12 @@ def morphological_skeleton_3d(image: np.ndarray) -> np.ndarray:
     return skeletonize_3d(image > 0).astype(np.float32)
 
 
-@numpy_decorator(contract=ProcessingContract.PURE_3D)
-def morphologicalskeleton(image: np.ndarray, volumetric: bool = False) -> np.ndarray:
-    """Compute CellProfiler MorphologicalSkeleton on a stack or volume.
-
-    Args:
-        volumetric: Skeletonize the full 3-D volume when true; otherwise
-            skeletonize each Z plane independently.
-    """
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+def morphologicalskeleton(image: np.ndarray) -> np.ndarray:
+    """Compute CellProfiler MorphologicalSkeleton on one image plane."""
     from skimage.morphology import skeletonize
 
-    if volumetric:
-        return morphological_skeleton_3d(image)
-    binary = image > 0
-    result = np.zeros_like(image, dtype=np.float32)
-    for slice_index in range(image.shape[0]):
-        result[slice_index] = skeletonize(binary[slice_index]).astype(np.float32)
-    return result
+    return skeletonize(image > 0).astype(np.float32)
 
 
 @dataclass(frozen=True, slots=True)
@@ -6858,10 +6847,12 @@ class MorphModule(
 
 
 class MorphologicalskeletonModule(
+    ZStackFunctionVariantModule,
     CellProfilerModule,
 ):
     module_name = "Morphologicalskeleton"
     function_name = "morphologicalskeleton"
+    function_variants = ("morphological_skeleton_3d",)
     validated = True
     confidence = 0.95
     input_image_setting = SettingNameFamily("Select the input image")
