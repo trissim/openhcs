@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+import openhcs.pyqt_gui.main as main_module
 from openhcs.core.config import GlobalPipelineConfig
-from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, get_default_ui_config
-from openhcs.pyqt_gui.main import OpenHCSMainWindow
+from openhcs.pyqt_gui.config import (
+    PyQtGuiRuntimeContext,
+    get_default_ui_config,
+)
+from openhcs.pyqt_gui.main import MainWindowUiServices, OpenHCSMainWindow
 from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 from openhcs.pyqt_gui.services.main_window_workflows import (
@@ -91,6 +95,21 @@ def test_service_adapter_uses_runtime_context_as_global_config_owner() -> None:
     assert not hasattr(main_window, "global_config")
 
 
+def test_system_monitor_construction_receives_current_ui_config(monkeypatch) -> None:
+    current = get_default_ui_config()
+
+    class SystemMonitorProbe:
+        def __init__(self, *, config) -> None:
+            self.config = config
+
+    monkeypatch.setattr(main_module, "SystemMonitorWidget", SystemMonitorProbe)
+    services = type("Services", (), {"widget_gui_config": current})()
+
+    monitor = MainWindowUiServices.create_system_monitor_widget(services)
+
+    assert monitor.config is current.performance_monitor
+
+
 def test_set_ui_config_propagates_one_exact_object_to_live_consumers() -> None:
     class ConfigConsumer:
         def __init__(self) -> None:
@@ -108,6 +127,13 @@ def test_set_ui_config_propagates_one_exact_object_to_live_consumers() -> None:
             self.config = config
             self.ports = ports
 
+    class MonitorConsumer:
+        def __init__(self) -> None:
+            self.config = None
+
+        def update_config(self, config) -> None:
+            self.config = config
+
     class Signal:
         def __init__(self) -> None:
             self.value = None
@@ -118,12 +144,14 @@ def test_set_ui_config_propagates_one_exact_object_to_live_consumers() -> None:
     current = get_default_ui_config()
     updated = replace(
         current,
+        performance_monitor=replace(current.performance_monitor, update_fps=2.0),
         zmq=OpenHCSZMQConfig(default_port=8123),
     )
     main_like = type("MainLike", (), {})()
     main_like.runtime_context = PyQtGuiRuntimeContext(current)
     main_like.window_services = type("Services", (), {})()
     main_like.window_services.widget_gui_config = current
+    main_like.system_monitor = MonitorConsumer()
     main_like.plate_manager_widget = ConfigConsumer()
     main_like.pipeline_editor_widget = type("PipelineEditor", (), {})()
     main_like.pipeline_editor_widget.gui_config = current
@@ -135,6 +163,7 @@ def test_set_ui_config_propagates_one_exact_object_to_live_consumers() -> None:
 
     assert main_like.runtime_context.ui_config is updated
     assert main_like.window_services.widget_gui_config is updated
+    assert main_like.system_monitor.config is updated.performance_monitor
     assert main_like.plate_manager_widget.config is updated
     assert main_like.pipeline_editor_widget.gui_config is updated
     assert main_like.zmq_manager_widget.config is updated.zmq

@@ -71,6 +71,9 @@ class MainWindowUiServices(PyQtServiceAdapter):
     def create_window(self, spec) -> QDialog:
         return spec.window_class(self.main_window, self)
 
+    def create_system_monitor_widget(self):
+        return SystemMonitorWidget(config=self.widget_gui_config.performance_monitor)
+
     def create_plate_manager_widget(self):
         from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 
@@ -184,6 +187,7 @@ class OpenHCSMainWindow(QMainWindow):
     def set_ui_config(self, new_config: UIConfig) -> None:
         self.runtime_context = self.runtime_context.with_ui_config(new_config)
         self.window_services.widget_gui_config = new_config
+        self.system_monitor.update_config(new_config.performance_monitor)
         self.plate_manager_widget.set_ui_config(new_config)
         self.pipeline_editor_widget.gui_config = new_config
         self.zmq_manager_widget.set_zmq_config(
@@ -299,7 +303,7 @@ class OpenHCSMainWindow(QMainWindow):
         top_splitter = QSplitter(Qt.Orientation.Vertical)
 
         # Top section: System Monitor
-        self.system_monitor = SystemMonitorWidget()
+        self.system_monitor = self.widget_services.create_system_monitor_widget()
         self.embedded_widgets.system_monitor = self.system_monitor
         top_splitter.addWidget(self.system_monitor)
 

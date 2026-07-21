@@ -135,8 +135,17 @@ def test_ui_config_object_state_reconstructs_nested_zmq_owner() -> None:
 
 
 def test_ui_config_pycodify_round_trip_preserves_exact_zmq_type() -> None:
+    default_config = get_default_ui_config()
     config = replace(
-        get_default_ui_config(),
+        default_config,
+        performance_monitor=replace(
+            default_config.performance_monitor,
+            update_fps=2.0,
+            sampler_config=replace(
+                default_config.performance_monitor.sampler_config,
+                enable_gpu_monitoring=False,
+            ),
+        ),
         zmq=OpenHCSZMQConfig(
             default_port=8123,
             ports_per_server_type=4,
@@ -152,6 +161,10 @@ def test_ui_config_pycodify_round_trip_preserves_exact_zmq_type() -> None:
     )
 
     assert restored == config
+    assert type(restored.performance_monitor) is type(config.performance_monitor)
+    assert type(restored.performance_monitor.sampler_config) is type(
+        config.performance_monitor.sampler_config
+    )
     assert type(restored.zmq) is OpenHCSZMQConfig
 
 
@@ -426,6 +439,13 @@ def test_ui_config_save_commits_state_before_live_notifications(qapp) -> None:
         def set_zmq_config(self, config, _ports) -> None:
             self.config = config
 
+    class MonitorConsumer:
+        def __init__(self) -> None:
+            self.config = None
+
+        def update_config(self, config) -> None:
+            self.config = config
+
     class Signal:
         def __init__(self) -> None:
             self.callbacks = []
@@ -447,6 +467,7 @@ def test_ui_config_save_commits_state_before_live_notifications(qapp) -> None:
     main_window = SimpleNamespace(
         runtime_context=PyQtGuiRuntimeContext(initial),
         window_services=SimpleNamespace(widget_gui_config=initial),
+        system_monitor=MonitorConsumer(),
         plate_manager_widget=ConfigConsumer(),
         pipeline_editor_widget=SimpleNamespace(gui_config=initial),
         zmq_manager_widget=ZMQConsumer(),
@@ -473,15 +494,18 @@ def test_ui_config_save_commits_state_before_live_notifications(qapp) -> None:
     )
 
     try:
+        state.update_parameter("performance_monitor.update_fps", 2.0)
         state.update_parameter("zmq.default_port", 8124)
         registry_observations.clear()
         window.save_config()
         qapp.processEvents()
 
         committed = state.saved_object
+        assert committed.performance_monitor.update_fps == 2.0
         assert committed.zmq.default_port == 8124
         assert main_window.runtime_context.ui_config is committed
         assert main_window.window_services.widget_gui_config is committed
+        assert main_window.system_monitor.config is committed.performance_monitor
         assert main_window.plate_manager_widget.config is committed
         assert main_window.pipeline_editor_widget.gui_config is committed
         assert main_window.zmq_manager_widget.config is committed.zmq

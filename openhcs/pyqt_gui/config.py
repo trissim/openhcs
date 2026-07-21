@@ -12,10 +12,12 @@ import secrets
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Dict, Callable
+from typing import Dict
 from enum import Enum
 
 from zmqruntime.transport import get_default_transport_mode
+from pyqt_reactive.services.system_metrics_sampler import SystemMetricsSamplerConfig
+from pyqt_reactive.services.system_monitor_config import PerformanceMonitorConfig
 
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.services.ui_bridge_service import (
@@ -134,114 +136,6 @@ class PlotTheme(Enum):
     DARK = "dark"
     LIGHT = "light"
     AUTO = "auto"  # Follow system theme
-
-
-class UpdateStrategy(Enum):
-    """Update strategies for real-time monitoring components."""
-
-    FIXED_RATE = "fixed_rate"  # Fixed FPS regardless of data availability
-    ADAPTIVE = "adaptive"  # Adapt rate based on data changes
-    ON_DEMAND = "on_demand"  # Update only when explicitly requested
-
-
-@dataclass(frozen=True)
-class PerformanceMonitorConfig:
-    """Configuration for the system performance monitor widget."""
-
-    # Update frequency settings
-    update_fps: float = 10.0
-    """Update frequency in frames per second (FPS). Default: 10 FPS for responsive plots."""
-
-    render_fps: float = 30.0
-    """Legacy render-timer cap; fixed-axis plots refresh when samples arrive."""
-
-    history_duration_seconds: float = 60.0
-    """Duration of historical data to display in seconds. Default: 60 seconds."""
-
-    # Display settings
-    plot_theme: PlotTheme = PlotTheme.DARK
-    """Theme for plots and charts."""
-
-    show_grid: bool = True
-    """Whether to show grid lines on plots."""
-
-    antialiasing: bool = True
-    """Enable antialiasing for smoother plot rendering."""
-
-    use_opengl: bool = True
-    """Use OpenGL-backed pyqtgraph curve rendering when available."""
-
-    # Performance settings
-    update_strategy: UpdateStrategy = UpdateStrategy.FIXED_RATE
-    """Strategy for updating the display."""
-
-    max_data_points: int | None = None
-    """Maximum number of data points to keep. If None, calculated from update_fps and history_duration."""
-
-    # GPU monitoring settings
-    enable_gpu_monitoring: bool = True
-    """Enable GPU usage monitoring if available."""
-
-    gpu_refresh_seconds: float = 1.0
-    """Refresh interval for slow GPU provider polling; per-tick samples reuse cached values."""
-
-    gpu_temperature_monitoring: bool = True
-    """Enable GPU temperature monitoring if available."""
-
-    # CPU monitoring settings
-    cpu_frequency_monitoring: bool = True
-    """Enable CPU frequency monitoring."""
-
-    cpu_frequency_refresh_seconds: float = 5.0
-    """Refresh interval for slow CPU frequency polling; per-tick samples reuse cached values."""
-
-    per_core_cpu_monitoring: bool = False
-    """Monitor individual CPU cores (more detailed but higher overhead)."""
-
-    # Memory monitoring settings
-    detailed_memory_info: bool = True
-    """Include detailed memory information (available, cached, etc.)."""
-
-    # Chart appearance
-    line_width: float = 2.0
-    """Width of plot lines in pixels."""
-
-    chart_colors: Dict[str, str] = field(
-        default_factory=lambda: {
-            "cpu": "cyan",
-            "ram": "lime",
-            "gpu": "orange",
-            "vram": "magenta",
-        }
-    )
-    """Color scheme for different metrics."""
-
-    def __post_init__(self):
-        """Validate configuration after initialization."""
-        if self.update_fps <= 0:
-            raise ValueError("update_fps must be positive")
-        if self.render_fps <= 0:
-            raise ValueError("render_fps must be positive")
-        if self.history_duration_seconds <= 0:
-            raise ValueError("history_duration_seconds must be positive")
-        if self.line_width <= 0:
-            raise ValueError("line_width must be positive")
-        if self.gpu_refresh_seconds <= 0:
-            raise ValueError("gpu_refresh_seconds must be positive")
-        if self.cpu_frequency_refresh_seconds <= 0:
-            raise ValueError("cpu_frequency_refresh_seconds must be positive")
-
-    @property
-    def update_interval_seconds(self) -> float:
-        """Calculate update interval in seconds from FPS."""
-        return 1.0 / self.update_fps
-
-    @property
-    def calculated_max_data_points(self) -> int:
-        """Calculate maximum data points based on FPS and history duration."""
-        if self.max_data_points is not None:
-            return self.max_data_points
-        return int(self.history_duration_seconds / self.update_interval_seconds)
 
 
 @dataclass(frozen=True)
@@ -535,15 +429,7 @@ class PyQtGuiRuntimeContext:
 
 # --- Default Configuration Providers ---
 
-_DEFAULT_PERFORMANCE_MONITOR_CONFIG = PerformanceMonitorConfig(
-    update_fps=10.0,  # Responsive default; fixed-axis plots keep this inexpensive
-    render_fps=30.0,
-    history_duration_seconds=60.0,
-    plot_theme=PlotTheme.DARK,
-    antialiasing=True,
-    use_opengl=True,
-    enable_gpu_monitoring=True,
-)
+_DEFAULT_PERFORMANCE_MONITOR_CONFIG = PerformanceMonitorConfig()
 
 _DEFAULT_WINDOW_CONFIG = WindowConfig(
     default_width=1200,
@@ -633,11 +519,8 @@ def create_high_performance_config() -> UIConfig:
     return UIConfig(
         performance_monitor=PerformanceMonitorConfig(
             update_fps=30.0,  # High refresh rate
-            render_fps=30.0,
             history_duration_seconds=30.0,  # Shorter history for performance
             antialiasing=False,  # Disable for performance
-            per_core_cpu_monitoring=True,  # More detailed monitoring
-            detailed_memory_info=True,
         ),
         style=StyleConfig(
             enable_animations=False  # Disable animations for performance
@@ -655,13 +538,13 @@ def create_low_resource_config() -> UIConfig:
     return UIConfig(
         performance_monitor=PerformanceMonitorConfig(
             update_fps=1.0,  # Very low refresh rate
-            render_fps=1.0,
             history_duration_seconds=120.0,  # Longer history with fewer points
             antialiasing=False,
-            enable_gpu_monitoring=False,  # Disable GPU monitoring
-            gpu_temperature_monitoring=False,
-            cpu_frequency_monitoring=False,
-            detailed_memory_info=False,
+            sampler_config=SystemMetricsSamplerConfig(
+                enable_gpu_monitoring=False,
+                gpu_temperature_monitoring=False,
+                cpu_frequency_monitoring=False,
+            ),
         ),
         progress=ProgressUIConfig(
             update_fps=10.0,  # Lower progress update rate to save CPU
