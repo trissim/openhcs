@@ -1,4 +1,4 @@
-name: Combined Coverage Report
+name: Combined Coverage Artifact
 
 on:
   workflow_run:
@@ -8,22 +8,18 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  # Needed for badge commit
-  pages: write
-  id-token: write
+  contents: read
+  actions: read
 
 concurrency:
-  group: "pages"
+  group: "coverage-report"
   cancel-in-progress: true
 
 jobs:
-  combine-and-deploy:
+  combine:
     runs-on: ubuntu-latest
     # Only run if integration tests completed (even if some failed)
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure' || github.event_name == 'workflow_dispatch' }}
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -241,22 +237,13 @@ jobs:
       #     git commit -m "chore: update coverage badge" || exit 0
       #     git push
 
-      - name: Check GitHub Pages status
-        run: |
-          echo "⚠️ IMPORTANT: Make sure GitHub Pages is enabled in your repository settings!"
-          echo "Go to https://github.com/trissim/openhcs/settings/pages"
-          echo "Set 'Source' to 'GitHub Actions' to enable GitHub Pages deployment."
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Upload combined coverage report
+        uses: actions/upload-artifact@v4
         with:
-          path: 'site'
-          retention-days: 1
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-        timeout-minutes: 10
+          name: combined-coverage-report
+          path: |
+            site
+            coverage.xml
+            .github/badges/coverage.svg
+          if-no-files-found: warn
+          retention-days: 14
