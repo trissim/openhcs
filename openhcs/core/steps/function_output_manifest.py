@@ -138,6 +138,11 @@ class ProducedOutputSemantics(FunctionOutputIdentity):
             self.component_metadata(metadata.source_component_metadata)
         ).attach_to(payload)
 
+    def path_under(self, output_dir: str | Path) -> str:
+        """Project this output's manifest-owned relative path under a new root."""
+
+        return str(Path(output_dir) / self.relative_output_path)
+
     @property
     def output_context(self) -> AlignedImageSliceContext:
         """Return the declared main-flow context for this produced output."""

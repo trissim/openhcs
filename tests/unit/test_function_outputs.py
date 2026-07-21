@@ -13,7 +13,7 @@ from zmqruntime.viewer_protocol import ViewerTransportEndpoint
 from openhcs.constants.constants import Backend, VariableComponents
 from openhcs.core.axis_filter import StepAxisFilterResolution, StepAxisFilterSet
 from openhcs.core.aligned_image_payload import AlignedImageSliceContext
-from openhcs.core.compiled_step_plan import CompiledStepPlan
+from openhcs.core.compiled_step_plan import CompiledStepPlan, MaterializedOutputPlan
 from openhcs.core.config import WellFilterMode
 from openhcs.core.function_patterns import compile_function_pattern
 from openhcs.core.artifacts import (
@@ -35,6 +35,7 @@ from openhcs.core.source_metadata import (
     SOURCE_PLANE_INDEX_FIELD,
 )
 from openhcs.core.steps.function_outputs import (
+    MaterializedImageOutputWriter,
     OpenHCSMetadataWriter,
     ProducedMemoryPathsAuthority,
     StreamOutputsAuthority,
@@ -83,6 +84,9 @@ class FileManagerStub:
 
     def save_batch(self, data, paths, backend, **kwargs):
         self.saved_batches.append((data, paths, backend, kwargs))
+
+    def ensure_directory(self, path, backend):
+        return None
 
 
 class StreamingConfigStub(ViewerDisplayConfigObject):
@@ -362,6 +366,50 @@ def test_stream_outputs_unwraps_runtime_image_payloads_before_viewer_backend():
     assert streamed_data == [pixels]
 
 
+def test_source_preserving_output_uses_manifest_path_for_materialization_and_streaming():
+    source_path = "/tmp/source/A01_s1_w1.tif"
+    materialized_path = "/tmp/materialized/A01_s1_w1.tif"
+    pixels = np.ones((2, 3), dtype=np.uint16)
+    payload = image_payload_with_source_metadata(
+        pixels,
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "1",
+            "extension": ".tif",
+        },
+    )
+    filemanager = FileManagerStub({source_path: payload})
+    context = context_stub(filemanager)
+    plan = function_step_plan("MeasureImageIntensity")
+    plan.materialized_output = MaterializedOutputPlan(
+        output_dir=Path("/tmp/materialized"),
+        backend=Backend.MEMORY.value,
+        plate_root="/tmp/materialized",
+        sub_dir=".",
+        analysis_results_dir=None,
+    )
+    step_output_manifest(context).record_outputs(
+        plan,
+        [
+            ProducedOutputSemantics.from_existing_main_flow_path(
+                plan,
+                source_path,
+                context.microscope_handler.parser,
+            )
+        ],
+    )
+
+    MaterializedImageOutputWriter.write_if_needed(context, plan)
+    StreamOutputsAuthority.stream_outputs(context, plan)
+
+    materialized_batch, streamed_batch = filemanager.saved_batches
+    assert materialized_batch[1] == [materialized_path]
+    assert materialized_batch[2] == Backend.MEMORY.value
+    assert streamed_batch[1] == [materialized_path]
+    assert streamed_batch[2] == "napari_stream"
+
+
 def test_stream_outputs_respects_compiled_filter_for_streaming_config():
     path = "/tmp/output/A01_s1_w1.tif"
     pixels = np.ones((2, 3), dtype=np.uint16)
@@ -402,6 +450,11 @@ def test_stream_outputs_respects_compiled_filter_for_streaming_config():
     StreamOutputsAuthority.stream_outputs(context, plan)
 
     assert len(filemanager.saved_batches) == 1
+
+    context.axis_id = "b03"
+    StreamOutputsAuthority.stream_outputs(context, plan)
+
+    assert len(filemanager.saved_batches) == 2
 
 
 def test_stream_outputs_scope_viewer_layout_to_collapsed_source_components():

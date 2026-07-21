@@ -1587,6 +1587,107 @@ def test_napari_display_pipeline_uses_updated_route_when_selected_route_ndim_mis
     assert server.viewer.text_overlay.text == "Site 2 | Ch5"
 
 
+def test_napari_display_pipeline_applies_updated_derived_route_overlay():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    selected_layer = object()
+    derived_layer = object()
+
+    class FakeSelection:
+        active = selected_layer
+
+    class FakeLayers:
+        selection = FakeSelection()
+
+    class FakeDims:
+        axis_labels = None
+        current_step = (0, 0, 0)
+        ndim = 3
+
+    class FakeTextOverlay:
+        text = ""
+
+    class FakeViewer:
+        layers = FakeLayers()
+        dims = FakeDims()
+        text_overlay = FakeTextOverlay()
+
+    server = _FakeNapariServer()
+    server.layer_route_state = NapariLayerRouteStateStore.empty()
+    server.viewer = FakeViewer()
+    server.layer_route_state.set_layer("source-map2", selected_layer)
+    server.layer_route_state.set_dimension_state(
+        "source-map2",
+        NapariDimensionLayerState(
+            labels={"channel": ["Ch2: MAP2"]},
+            presentation=_axis_presentation(
+                layer_key="source-map2",
+                projected_axis_components=("channel",),
+                component_values={"channel": [2]},
+            ),
+        ),
+    )
+    server.layer_route_state.set_layer("derived-neurite-skeleton", derived_layer)
+    server.layer_route_state.set_dimension_state(
+        "derived-neurite-skeleton",
+        NapariDimensionLayerState(
+            labels={"channel": ["Ch4: SMI312"]},
+            presentation=_axis_presentation(
+                layer_key="derived-neurite-skeleton",
+                projected_axis_components=("channel",),
+                component_values={"channel": [4]},
+            ),
+        ),
+    )
+    pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
+
+    pipeline.dimension_label_overlay.setup_for_layer("derived-neurite-skeleton")
+
+    assert server.layer_route_state.active_dimension_label_route == (
+        "derived-neurite-skeleton"
+    )
+    assert server.viewer.dims.axis_labels == ("channel", "y", "x")
+    assert server.viewer.text_overlay.text == "Ch4: SMI312"
+    assert server.viewer.layers.selection.active is selected_layer
+
+    pipeline.dimension_label_overlay._update_overlay()
+
+    assert server.layer_route_state.active_dimension_label_route == "source-map2"
+    assert server.viewer.text_overlay.text == "Ch2: MAP2"
+
+
+def test_napari_display_pipeline_preserves_active_non_openhcs_layer_during_update():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    server = _FakeNapariServer()
+    server.layer_route_state = NapariLayerRouteStateStore.empty()
+    server.viewer = _FakeViewer()
+    server.viewer.dims.ndim = 3
+    server.viewer.dims.current_step = (0, 0, 0)
+    server.viewer.text_overlay.text = "stale OpenHCS overlay"
+    server.viewer.layers.selection.active = object()
+    derived_layer = object()
+    server.layer_route_state.set_layer("derived", derived_layer)
+    server.layer_route_state.set_dimension_state(
+        "derived",
+        NapariDimensionLayerState(
+            labels={"channel": ["Ch4: SMI312"]},
+            presentation=_axis_presentation(
+                layer_key="derived",
+                projected_axis_components=("channel",),
+                component_values={"channel": [4]},
+            ),
+        ),
+    )
+    pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
+
+    pipeline.dimension_label_overlay.setup_for_layer("derived")
+
+    assert server.layer_route_state.active_dimension_label_route is None
+    assert server.viewer.dims.axis_labels is None
+    assert server.viewer.text_overlay.text == ""
+
+
 def test_napari_display_pipeline_falls_back_when_selected_route_lacks_current_step_labels():
     napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
 
@@ -2976,6 +3077,52 @@ def test_napari_shape_label_rasterizer_projects_polygon_and_path_by_component():
     assert labels[1, 0, 1] == 2
     assert labels[1, 1, 1] == 2
     assert labels[1, 2, 1] == 2
+
+
+def test_napari_shape_label_rasterizer_preserves_multi_member_object_identity():
+    rasterizer = NapariShapeLabelRasterizer()
+
+    labels = rasterizer.rasterize(
+        layer_items=[
+            _layer_item(
+                {"channel": 4},
+                [
+                    {
+                        "type": "polygon",
+                        "coordinates": [[0, 0], [0, 1], [1, 1], [1, 0]],
+                        "metadata": {
+                            "label": 7,
+                            "source_spatial_shape_yx": (6, 6),
+                        },
+                    },
+                    {
+                        "type": "path",
+                        "coordinates": [[1, 1], [2, 2], [3, 3]],
+                        "metadata": {
+                            "label": 7,
+                            "source_spatial_shape_yx": (6, 6),
+                        },
+                    },
+                    {
+                        "type": "polygon",
+                        "coordinates": [[4, 4], [4, 5], [5, 5], [5, 4]],
+                        "metadata": {
+                            "label": 70_000,
+                            "source_spatial_shape_yx": (6, 6),
+                        },
+                    },
+                ],
+                stream_layer_data_type=StreamingDataType.SHAPES,
+            )
+        ],
+        axis_projection=_axis_projection(["channel"], {"channel": [4]}),
+    )
+
+    assert labels.dtype == np.uint32
+    assert labels[0, 0, 0] == 7
+    assert labels[0, 2, 2] == 7
+    assert labels[0, 4, 4] == 70_000
+    assert set(np.unique(labels)) == {0, 7, 70_000}
 
 
 def test_napari_shape_label_rasterizer_consumes_plane_metadata_as_stack_component():

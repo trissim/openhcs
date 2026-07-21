@@ -48,7 +48,6 @@ from openhcs.core.steps.function_output_manifest import (
 )
 from openhcs.core.steps.function_io import (
     calculate_zarr_dimensions,
-    generate_materialized_paths,
     save_materialized_data,
 )
 from openhcs.core.steps.stream_component_semantics import (
@@ -228,18 +227,25 @@ class MaterializedImageOutputWriter:
         if materialized_output is None:
             return
 
-        memory_paths = ProducedMemoryPathsAuthority.paths(context, plan)
-        if not memory_paths:
+        produced_outputs = tuple(
+            record
+            for record in step_output_manifest(context).produced_records_for(plan)
+            if record.is_image_payload
+        )
+        memory_paths = [
+            ProducedMemoryPathsAuthority.memory_path(record, plan)
+            for record in produced_outputs
+        ]
+        if not produced_outputs:
             return
         memory_data = context.filemanager.load_batch(
             memory_paths,
             Backend.MEMORY.value,
         )
-        materialized_paths = generate_materialized_paths(
-            memory_paths,
-            plan.output_dir,
-            materialized_output.output_dir,
-        )
+        materialized_paths = [
+            record.path_under(materialized_output.output_dir)
+            for record in produced_outputs
+        ]
 
         context.filemanager.ensure_directory(
             materialized_output.output_dir,
@@ -579,11 +585,10 @@ class StreamOutputsAuthority:
                 )
                 continue
             if plan.materialized_output is not None:
-                streaming_paths = generate_materialized_paths(
-                    memory_paths,
-                    plan.output_dir,
-                    plan.materialized_output.output_dir,
-                )
+                streaming_paths = [
+                    record.path_under(plan.materialized_output.output_dir)
+                    for record in produced_outputs
+                ]
             else:
                 streaming_paths = memory_paths
 

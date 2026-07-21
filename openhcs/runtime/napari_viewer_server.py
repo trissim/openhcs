@@ -85,6 +85,7 @@ from openhcs.runtime.napari_streaming_handlers import (
     NapariStreamLayerItem,
     NapariShapeLabelRasterizer,
     NapariViewerLayerCreator,
+    VisualMetadataField,
 )
 from openhcs.runtime.viewer_component_system import (
     ComponentMap,
@@ -148,15 +149,6 @@ class NapariWireField(str, Enum):
     METADATA = "metadata"
     RADII = "radii"
     SNAPSHOT = "snapshot"
-
-
-class VisualMetadataField(str, Enum):
-    """Optional visual metadata fields attached to ROI payloads."""
-
-    CENTROID = "centroid"
-    LABEL = "label"
-    AREA = "area"
-    COMPONENT = "component"
 
 
 @dataclass(frozen=True)
@@ -1149,18 +1141,14 @@ class NapariDimensionLabelRouteResolver:
     ) -> NapariDimensionLabelRouteResolution:
         viewer_ndim = self._viewer_ndim()
         current_step = self._viewer_current_step()
+        selected_route_key = None
         active_layer = self.server.viewer.layers.selection.active
         if active_layer is not None:
-            route_key = self._route_key_for_layer(active_layer)
-            if route_key is None:
+            selected_route_key = self._route_key_for_layer(active_layer)
+            if selected_route_key is None:
                 return NapariDimensionLabelRouteResolution(
                     route_key=None,
                     source=NapariDimensionLabelRouteSource.ACTIVE_NON_OPENHCS_LAYER,
-                )
-            if self._route_matches_viewer_context(route_key, viewer_ndim, current_step):
-                return NapariDimensionLabelRouteResolution(
-                    route_key=route_key,
-                    source=NapariDimensionLabelRouteSource.SELECTED_OPENHCS_LAYER,
                 )
 
         if self._route_matches_viewer_context(
@@ -1172,6 +1160,17 @@ class NapariDimensionLabelRouteResolver:
                 route_key=updated_route_key,
                 source=NapariDimensionLabelRouteSource.UPDATED_OPENHCS_LAYER,
             )
+
+        if selected_route_key is not None:
+            if self._route_matches_viewer_context(
+                selected_route_key,
+                viewer_ndim,
+                current_step,
+            ):
+                return NapariDimensionLabelRouteResolution(
+                    route_key=selected_route_key,
+                    source=NapariDimensionLabelRouteSource.SELECTED_OPENHCS_LAYER,
+                )
 
         route_key = self.server.layer_route_state.active_dimension_label_route
         if self._route_matches_viewer_context(route_key, viewer_ndim, current_step):
@@ -1277,11 +1276,7 @@ class NapariDimensionLabelOverlayController:
                     layer_key,
                 )
             return
-        if resolution.route_key is not None:
-            self.server.layer_route_state.set_active_dimension_label_route(
-                resolution.route_key
-            )
-        self._update_overlay()
+        self._apply_resolution(resolution)
         logger.info(
             "🔬 NAPARI PROCESS: Active dimension label route resolved to %s (%s)",
             resolution.route_key,
@@ -1319,18 +1314,24 @@ class NapariDimensionLabelOverlayController:
             )
 
     def _update_overlay(self, event=None) -> None:
+        del event
         try:
-            resolution = self.route_resolver.resolve()
-            route_key = resolution.route_key
-            overlay_text = ""
-            if route_key is not None:
-                self.server.layer_route_state.set_active_dimension_label_route(route_key)
-                state = self.server.layer_route_state.dimension_state_for(route_key)
-                self._apply_axis_labels(route_key, state)
-                overlay_text = self._dimension_label_text(state)
-            self.server.viewer.text_overlay.text = overlay_text
+            self._apply_resolution(self.route_resolver.resolve())
         except Exception as e:
             logger.debug(f"🔬 NAPARI PROCESS: Error updating dimension label: {e}")
+
+    def _apply_resolution(
+        self,
+        resolution: NapariDimensionLabelRouteResolution,
+    ) -> None:
+        route_key = resolution.route_key
+        overlay_text = ""
+        if route_key is not None:
+            self.server.layer_route_state.set_active_dimension_label_route(route_key)
+            state = self.server.layer_route_state.dimension_state_for(route_key)
+            self._apply_axis_labels(route_key, state)
+            overlay_text = self._dimension_label_text(state)
+        self.server.viewer.text_overlay.text = overlay_text
 
     def _apply_axis_labels(
         self,

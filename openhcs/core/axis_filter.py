@@ -41,7 +41,13 @@ class StepAxisFilterSet:
         resolution = self.resolution_for(config)
         if resolution is None:
             return True
-        return axis_id in resolution.resolved_axis_values
+        if axis_id is None:
+            return False
+        axis_key = axis_id.casefold()
+        return any(
+            resolved_axis.casefold() == axis_key
+            for resolved_axis in resolution.resolved_axis_values
+        )
 
     def resolution_for(
         self,

@@ -8,13 +8,13 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import ClassVar, TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
 import numpy as np
 
 from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.identity import StreamProducerIdentity
-from zmqruntime.viewer_protocol import ViewerComponentMode
+from zmqruntime.viewer_protocol import ViewerComponentMode, ViewerWireField
 
 from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
@@ -35,6 +35,11 @@ from openhcs.runtime.viewer_component_system import (
     ViewerLayerAxisProjection,
 )
 
+if TYPE_CHECKING:
+    from polystore.streaming.receivers.napari import NapariBatchProcessor
+
+    from openhcs.runtime.napari_viewer_server import NapariViewerServer
+
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +49,15 @@ LayerData: TypeAlias = np.ndarray | list | tuple | str | int | float | bool | No
 DimensionLabelMap: TypeAlias = dict[str, list[str]]
 ShapePayloadValue: TypeAlias = LayerData | dict
 ShapePayloadMap: TypeAlias = Mapping[str, ShapePayloadValue]
+
+
+class VisualMetadataField(str, Enum):
+    """Optional visual metadata fields attached to Napari shape payloads."""
+
+    CENTROID = "centroid"
+    LABEL = "label"
+    AREA = "area"
+    COMPONENT = "component"
 
 
 class NapariLayerHandle(ABC):
@@ -1176,7 +1190,7 @@ class NapariLayerBatchDebouncePolicy:
     def create_processor(
         self,
         *,
-        napari_server: "NapariServerDisplayProtocol",
+        napari_server: "NapariViewerServer",
         batch_size: int | None,
     ) -> "NapariBatchProcessor":
         from polystore.streaming.receivers.napari import NapariBatchProcessor
@@ -1203,7 +1217,7 @@ class NapariBatchProcessorStore:
         self,
         *,
         layer_key: str,
-        napari_server: "NapariServerDisplayProtocol",
+        napari_server: "NapariViewerServer",
         batch_size: int | None = None,
     ) -> "NapariBatchProcessor":
         with self.lock:
@@ -1285,9 +1299,11 @@ class NapariShapeLabelRasterizer:
             *(len(component_values[component]) for component in projected_axis_components),
             *image_shape,
         ]
-        label_volume = np.zeros(nd_shape, dtype=np.uint16)
+        declared_label_ids = self._declared_label_ids(layer_items)
+        label_volume = np.zeros(nd_shape, dtype=np.uint32)
 
-        label_id = 1
+        next_fallback_label_id = 1
+        painted_label_ids: set[int] = set()
         for item in layer_items:
             for shape_dict in item.data:
                 components = aggregate_axis_bindings.shape_component_values(
@@ -1299,17 +1315,59 @@ class NapariShapeLabelRasterizer:
                     context="Napari shape item",
                 )
                 shape_kind = NapariShapeKind(str(shape_dict["type"]))
-                label_id = self._paint_routes[shape_kind](
+                label_id = self._declared_label_id(shape_dict)
+                if label_id is None:
+                    while next_fallback_label_id in declared_label_ids:
+                        next_fallback_label_id += 1
+                    label_id = next_fallback_label_id
+                    next_fallback_label_id += 1
+                next_label_id = self._paint_routes[shape_kind](
                     shape_dict,
                     NapariShapePaintContext(label_volume, indices, label_id),
                 )
+                if next_label_id != label_id:
+                    painted_label_ids.add(label_id)
 
         logger.info(
             "🔬 NAPARI PROCESS: Created labels array with shape %s and %d labels",
             label_volume.shape,
-            label_id - 1,
+            len(painted_label_ids),
         )
         return label_volume
+
+    @classmethod
+    def _declared_label_ids(
+        cls,
+        layer_items: Sequence[NapariStreamLayerItem],
+    ) -> set[int]:
+        return {
+            label_id
+            for item in layer_items
+            for shape_dict in item.data
+            if (label_id := cls._declared_label_id(shape_dict)) is not None
+        }
+
+    @staticmethod
+    def _declared_label_id(shape_dict: ShapePayloadMap) -> int | None:
+        metadata = shape_dict.get(ViewerWireField.METADATA.value)
+        if not isinstance(metadata, Mapping):
+            return None
+        label = metadata.get(VisualMetadataField.LABEL.value)
+        if isinstance(label, np.integer):
+            label = int(label)
+        if isinstance(label, bool) or not isinstance(label, int):
+            return None
+        if label <= 0:
+            raise ValueError(
+                "Napari ROI shape metadata label must be a positive integer, "
+                f"got {label!r}."
+            )
+        if label > np.iinfo(np.uint32).max:
+            raise ValueError(
+                "Napari ROI shape metadata label exceeds the uint32 labels-layer "
+                f"domain: {label!r}."
+            )
+        return label
 
     def _source_spatial_shape(
         self,
@@ -1372,7 +1430,10 @@ class NapariShapeLabelRasterizer:
                 f"got shape {coords.shape!r}."
             )
         xy = np.rint(coords[:, ::-1]).astype(np.int32).reshape((-1, 1, 2))
-        cv2.fillPoly(context.target_plane, [xy], int(context.label_id))
+        paint_mask = np.zeros(context.spatial_shape, dtype=np.uint8)
+        cv2.fillPoly(paint_mask, [xy], 1)
+        rows, columns = np.nonzero(paint_mask)
+        context.paint_pixels(rows, columns)
         return context.label_id + 1
 
     def _paint_path(
