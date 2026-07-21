@@ -93,7 +93,7 @@ from openhcs.core.runtime_artifact_queries import (
     runtime_relationship,
     runtime_spatial_grid,
 )
-from openhcs.core.runtime_adapters import RuntimeExecutionAxisScope
+from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
 from openhcs.core.measurement_feature_queries import (
     MeasurementTableObjectFeatureSemantics,
 )

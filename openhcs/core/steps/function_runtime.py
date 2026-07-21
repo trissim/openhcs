@@ -68,10 +68,8 @@ from openhcs.core.runtime_stores import (
     RuntimeArtifactQuery,
     replace_runtime_artifact_payload,
 )
-from openhcs.core.runtime_adapters import (
-    RuntimeAdapterRequest,
-    RuntimeExecutionAxisScope,
-)
+from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
+from openhcs.core.runtime_adapters import RuntimeAdapterRequest
 from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from openhcs.core.runtime_slice_alignment import (
     RuntimeSliceAlignedValueSet,

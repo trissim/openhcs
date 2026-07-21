@@ -5,14 +5,13 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from python_introspect import set_parameter_exclusions
 
-from openhcs.constants.constants import AllComponents, VariableComponents
+from openhcs.constants.constants import VariableComponents
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
-from openhcs.core.component_set import ComponentSet
+from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
@@ -20,8 +19,6 @@ from openhcs.core.source_bindings import (
 )
 from openhcs.core.source_load_plan import SourceLoadPlan
 from openhcs.core.runtime_semantics import RuntimePlaneProjection
-
-RuntimeComponentValue = str | int | float | bool | None
 
 if TYPE_CHECKING:
     from openhcs.core.context.processing_context import ProcessingContext
@@ -33,134 +30,6 @@ class RuntimeAdapterValue(Protocol):
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeExecutionAxisScope:
-    """Typed runtime axis coordinate for source-axis projection."""
-
-    axis_id: str
-    component: AllComponents | None = None
-    value: RuntimeComponentValue | None = None
-
-    @classmethod
-    def from_context(
-        cls,
-        context: "ProcessingContext",
-        *,
-        component: AllComponents | str | None = None,
-        value: RuntimeComponentValue | None = None,
-    ) -> "RuntimeExecutionAxisScope":
-        axis_id = context.axis_id
-        if not axis_id:
-            raise RuntimeError(
-                "ProcessingContext.axis_id is required for runtime execution."
-            )
-        return cls.from_raw(
-            str(axis_id),
-            component=component,
-            value=value,
-        )
-
-    @classmethod
-    def from_raw(
-        cls,
-        axis_id: str,
-        *,
-        component: AllComponents | Enum | str | None,
-        value: RuntimeComponentValue | None,
-    ) -> "RuntimeExecutionAxisScope":
-        if not axis_id:
-            raise ValueError("RuntimeExecutionAxisScope.axis_id cannot be empty.")
-        if component is None and value is not None:
-            raise ValueError(
-                "RuntimeExecutionAxisScope component value requires a component."
-            )
-        if component is not None and value is None:
-            raise ValueError(
-                "RuntimeExecutionAxisScope component requires a component value."
-            )
-        return cls(
-            axis_id=str(axis_id),
-            component=ComponentSet.coerce_component(component),
-            value=value,
-        ) if component is not None else cls(axis_id=str(axis_id))
-
-    def __post_init__(self) -> None:
-        if not self.axis_id:
-            raise ValueError("RuntimeExecutionAxisScope.axis_id cannot be empty.")
-        if self.component is None and self.value is not None:
-            raise ValueError(
-                "RuntimeExecutionAxisScope component value requires a component."
-            )
-        if self.component is not None and self.value is None:
-            raise ValueError(
-                "RuntimeExecutionAxisScope component requires a component value."
-            )
-
-    @property
-    def component_name(self) -> str | None:
-        if self.component is None:
-            return None
-        return str(self.component.value)
-
-    def require_component_name(self) -> str:
-        component_name = self.component_name
-        if component_name is None:
-            raise ValueError("Runtime component-axis scope has no component.")
-        return component_name
-
-    @property
-    def value_text(self) -> str | None:
-        if self.value is None:
-            return None
-        return str(self.value)
-
-    def require_value_text(self) -> str:
-        value_text = self.value_text
-        if value_text is None:
-            raise ValueError("Runtime component-axis scope has no value.")
-        return value_text
-
-    def value_text_for_component(
-        self,
-        component: AllComponents | Enum | str | None,
-    ) -> str | None:
-        """Return this runtime scope's value for one component axis."""
-        if component is None:
-            return None
-        resolved_component = ComponentSet.coerce_component(component)
-        if resolved_component.is_multiprocessing_axis():
-            return self.axis_id
-        if self.component is not None and self.component == resolved_component:
-            return self.value_text
-        return None
-
-    @property
-    def has_value(self) -> bool:
-        return self.component is not None and self.value is not None
-
-    @property
-    def cache_key(self) -> tuple[str | None, str | None]:
-        return (self.component_name, self.value_text)
-
-    def source_axis_metadata_scope(self) -> "SourceAxisMetadataScope":
-        """Return metadata constraints for this runtime axis."""
-        from openhcs.constants.constants import get_multiprocessing_axis
-        from openhcs.core.source_matching import SourceAxisMetadataScope
-
-        component_values: list[tuple[str | None, str]] = [
-            (str(get_multiprocessing_axis().value), self.axis_id),
-        ]
-        component_name = self.component_name
-        if component_name is not None:
-            component_values.append(
-                (
-                    component_name,
-                    self.require_value_text(),
-                )
-            )
-        return SourceAxisMetadataScope.from_component_values(tuple(component_values))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

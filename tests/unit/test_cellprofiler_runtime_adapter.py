@@ -57,7 +57,7 @@ from openhcs.core.runtime_artifact_queries import (
     MeasurementLabelSliceFeatureQuery,
     MeasurementTableAxisProjection,
 )
-from openhcs.core.runtime_adapters import RuntimeExecutionAxisScope
+from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
 from openhcs.core.measurement_feature_queries import measurement_values_for_feature
 from openhcs.core.measurement_row_materialization import measurement_rows
 from benchmark.cellprofiler_library import get_function

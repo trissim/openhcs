@@ -30,7 +30,7 @@ from openhcs.core.function_patterns import (
     CompiledFunctionInvocation,
     FunctionInvocationKey,
 )
-from openhcs.core.runtime_adapters import RuntimeExecutionAxisScope
+from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
 from openhcs.core.runtime_slice_projection import (
     RuntimeSliceProjection,
     RuntimeProjectionAxis,
