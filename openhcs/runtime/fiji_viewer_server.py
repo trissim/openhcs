@@ -41,6 +41,7 @@ from openhcs.runtime.viewer_protocol import (
     ViewerControlReplyPayload,
     ViewerComponentValueOrdering,
     ViewerProtocolStatus,
+    ViewerSettleProgress,
     ViewerServerLaunchRequest,
 )
 from openhcs.runtime.viewer_component_system import (
@@ -1038,12 +1039,14 @@ class FijiSettleControlPlan(FijiControlMessagePlan):
         payload: object | None,
     ) -> FijiControlMessageResponse:
         del context, payload
+        progress = ViewerSettleProgress.complete()
         return FijiControlMessageResponse(
             ViewerControlReplyHeader(
                 ViewerProtocolStatus.SUCCESS,
                 response_type="settle_ack",
                 message="Fiji viewer has no queued debounced layer updates.",
             ),
+            fields=progress.to_wire_mapping(),
         )
 
 

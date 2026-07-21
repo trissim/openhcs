@@ -20,12 +20,17 @@ from openhcs.runtime.fiji_viewer_server import (
     FijiWindowItemProjection,
     FijiWindowRegistry,
     FijiWireItem,
+    FijiSettleControlPlan,
 )
 from openhcs.runtime.fiji_macro_runtime import (
     FijiMacroExecutionRequest,
     FijiMacroExecutionResponse,
 )
-from openhcs.runtime.viewer_protocol import ViewerControlMessageType
+from openhcs.runtime.viewer_protocol import (
+    ViewerControlMessageType,
+    ViewerControlResponse,
+    ViewerSettleProgress,
+)
 from openhcs.runtime.viewer_component_system import (
     ViewerComponentAxisSemanticsAuthority,
     ViewerComponentValueDomainPayload,
@@ -103,6 +108,19 @@ def test_fiji_control_dispatch_registry_is_module_local_and_eager() -> None:
 
     assert type(registry) is dict
     assert registry[ViewerControlMessageType.CLEAR_STATE.value] is FijiClearStateControlPlan
+    assert registry[ViewerControlMessageType.SETTLE.value] is FijiSettleControlPlan
+
+
+def test_fiji_settlement_reports_typed_terminal_progress() -> None:
+    response = FijiControlMessageAuthority(
+        FijiControlRequestContext(FijiWindowRegistry(), object())
+    ).response_for({"type": ViewerControlMessageType.SETTLE.value})
+    wire_response = ViewerControlResponse(response.to_wire_mapping())
+
+    assert wire_response.succeeded()
+    assert ViewerSettleProgress.from_response(wire_response) == (
+        ViewerSettleProgress.complete()
+    )
 
 
 def test_fiji_window_registry_owns_window_state_and_group_identity() -> None:

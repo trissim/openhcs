@@ -25,8 +25,11 @@ from openhcs.runtime.viewer_protocol import (
     ViewerQtEnvironmentPolicy,
     ViewerProcessHandle,
     ViewerRuntimeEndpoint,
+    ViewerSettlePhase,
+    ViewerSettleProgress,
     ViewerType,
 )
+import openhcs.runtime.viewer_protocol as viewer_protocol
 from openhcs.runtime.viewer_controls import ViewerStateControlOptions
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
@@ -250,6 +253,118 @@ def test_managed_viewer_lifecycle_reads_state_through_typed_control_request(
     )
     with pytest.raises(RuntimeError, match="state request failed"):
         viewer.read_viewer_state()
+
+
+def test_managed_viewer_settlement_tracks_progress_without_total_timeout(
+    monkeypatch,
+):
+    class ProgressViewer(ManagedViewerLifecycleMixin):
+        viewer_process_label = "Progress"
+        detached_server_entrypoint = DetachedViewerServerEntrypointSpec(
+            viewer_type=ViewerType.NAPARI,
+            module_name="tests.fake_viewer",
+            function_name="run",
+        )
+
+        def __init__(self):
+            super().__init__(
+                runtime_config=StreamingViewerRuntimeConfig(
+                    transport_endpoint=ViewerTransportEndpoint(
+                        port=42,
+                        host="localhost",
+                        transport_mode=TransportMode.IPC,
+                    ),
+                    persistent=False,
+                    presentation=StreamingViewerPresentation("Progress"),
+                )
+            )
+
+        def start_viewer(self, async_mode: bool = False) -> None:
+            raise AssertionError("test does not launch a process")
+
+        def detached_server_arguments(
+            self,
+            *,
+            log_file,
+        ) -> DetachedViewerPythonArguments:
+            return DetachedViewerPythonArguments.from_literals(str(log_file))
+
+    progress_rows = (
+        ViewerSettleProgress(ViewerSettlePhase.RUNNING, 0, 3, "first"),
+        ViewerSettleProgress(ViewerSettlePhase.RUNNING, 1, 3, "second"),
+        ViewerSettleProgress(ViewerSettlePhase.RUNNING, 2, 3, "third"),
+        ViewerSettleProgress.complete(3),
+    )
+    responses = [
+        ViewerControlResponse(
+            payload={"status": "success", **progress.to_wire_mapping()}
+        )
+        for progress in progress_rows
+    ]
+    requests = []
+
+    def send(request):
+        requests.append(request)
+        return responses.pop(0)
+
+    monotonic_values = iter((0.0, 0.9, 1.8, 2.7))
+    monkeypatch.setattr(ViewerControlMessageRequest, "send", send)
+    monkeypatch.setattr(viewer_protocol.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(viewer_protocol.time, "sleep", lambda _seconds: None)
+    viewer = ProgressViewer()
+    viewer.lifecycle_state.mark_connected_external()
+
+    assert viewer.settle_viewer_state(timeout=1.0)
+    assert len(requests) == 4
+    assert all(
+        request.message_type == ViewerControlMessageType.SETTLE.value
+        for request in requests
+    )
+
+
+def test_managed_viewer_settlement_rejects_no_progress(monkeypatch):
+    progress = ViewerSettleProgress(
+        ViewerSettlePhase.RUNNING,
+        0,
+        1,
+        "stalled",
+    )
+    response = ViewerControlResponse(
+        payload={"status": "success", **progress.to_wire_mapping()}
+    )
+    viewer = type(
+        "StalledViewer",
+        (ManagedViewerLifecycleMixin,),
+        {
+            "viewer_process_label": "Stalled",
+            "detached_server_entrypoint": DetachedViewerServerEntrypointSpec(
+                viewer_type=ViewerType.NAPARI,
+                module_name="tests.fake_viewer",
+                function_name="run",
+            ),
+            "start_viewer": lambda self, async_mode=False: None,
+            "detached_server_arguments": lambda self, *, log_file: (
+                DetachedViewerPythonArguments.from_literals(str(log_file))
+            ),
+        },
+    )(
+        runtime_config=StreamingViewerRuntimeConfig(
+            transport_endpoint=ViewerTransportEndpoint(
+                port=42,
+                host="localhost",
+                transport_mode=TransportMode.IPC,
+            ),
+            persistent=False,
+            presentation=StreamingViewerPresentation("Stalled"),
+        )
+    )
+    viewer.lifecycle_state.mark_connected_external()
+    monotonic_values = iter((0.0, 0.0, 1.1))
+    monkeypatch.setattr(ViewerControlMessageRequest, "send", lambda _request: response)
+    monkeypatch.setattr(viewer_protocol.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(viewer_protocol.time, "sleep", lambda _seconds: None)
+
+    assert not viewer.settle_viewer_state(timeout=1.0)
 
 
 def test_viewer_qt_environment_policy_applies_platform_rows():

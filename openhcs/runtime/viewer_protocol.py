@@ -72,6 +72,23 @@ class ViewerControlMessageType(Enum):
     NAVIGATE = "navigate"
 
 
+class ViewerSettlePhase(str, Enum):
+    """Lifecycle phase for incremental viewer settlement."""
+
+    RUNNING = "running"
+    COMPLETE = "complete"
+    FAILED = "failed"
+
+
+class ViewerSettleField(str, Enum):
+    """Wire fields owned by viewer-settlement progress replies."""
+
+    PHASE = "settle_phase"
+    COMPLETED_UPDATE_COUNT = "completed_update_count"
+    TOTAL_UPDATE_COUNT = "total_update_count"
+    ACTIVE_ROUTE = "active_route"
+
+
 class ViewerPayloadSummaryField(str, Enum):
     """Viewer payload-summary response fields."""
 
@@ -185,6 +202,85 @@ class ViewerControlResponse:
 
     def succeeded(self) -> bool:
         return self.status is ViewerProtocolStatus.SUCCESS
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerSettleProgress:
+    """Typed progress for one viewer's incremental settlement cycle."""
+
+    phase: ViewerSettlePhase
+    completed_update_count: int
+    total_update_count: int
+    active_route: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.completed_update_count) is not int
+            or type(self.total_update_count) is not int
+            or self.completed_update_count < 0
+            or self.total_update_count < 0
+            or self.completed_update_count > self.total_update_count
+        ):
+            raise ValueError(
+                "Viewer settle progress counts must satisfy "
+                "0 <= completed <= total."
+            )
+        if self.phase is ViewerSettlePhase.COMPLETE and (
+            self.completed_update_count != self.total_update_count
+            or self.active_route is not None
+        ):
+            raise ValueError(
+                "Completed viewer settlement must have no active route and all "
+                "updates completed."
+            )
+        if self.active_route is not None and not isinstance(self.active_route, str):
+            raise TypeError("Viewer settle active_route must be a string or None.")
+
+    @classmethod
+    def complete(cls, total_update_count: int = 0) -> "ViewerSettleProgress":
+        """Return terminal successful settlement progress."""
+
+        return cls(
+            phase=ViewerSettlePhase.COMPLETE,
+            completed_update_count=total_update_count,
+            total_update_count=total_update_count,
+        )
+
+    @classmethod
+    def from_response(
+        cls,
+        response: ViewerControlResponse,
+    ) -> "ViewerSettleProgress":
+        """Parse exact settlement progress from a control response."""
+
+        payload = response.payload
+        active_route_value = payload[ViewerSettleField.ACTIVE_ROUTE.value]
+        return cls(
+            phase=ViewerSettlePhase(
+                str(payload[ViewerSettleField.PHASE.value])
+            ),
+            completed_update_count=int(
+                payload[ViewerSettleField.COMPLETED_UPDATE_COUNT.value]
+            ),
+            total_update_count=int(
+                payload[ViewerSettleField.TOTAL_UPDATE_COUNT.value]
+            ),
+            active_route=(
+                None if active_route_value is None else str(active_route_value)
+            ),
+        )
+
+    def to_wire_mapping(self) -> dict[str, object]:
+        """Return exact fields for a viewer control reply."""
+
+        return {
+            ViewerSettleField.PHASE.value: self.phase.value,
+            ViewerSettleField.COMPLETED_UPDATE_COUNT.value: (
+                self.completed_update_count
+            ),
+            ViewerSettleField.TOTAL_UPDATE_COUNT.value: self.total_update_count,
+            ViewerSettleField.ACTIVE_ROUTE.value: self.active_route,
+        }
 
 
 class ViewerComponentValueOrdering:
@@ -1179,12 +1275,67 @@ class ManagedViewerLifecycleMixin(
         return self.send_control_message(ViewerControlMessageType.CLEAR_STATE.value)
 
     def settle_viewer_state(self, timeout: float = 30.0) -> bool:
-        """Wait for queued viewer layer updates before state/screenshot reads."""
+        """Wait while the viewer reports forward settlement progress."""
 
-        return self.send_control_message(
-            ViewerControlMessageType.SETTLE.value,
-            timeout=timeout,
-        )
+        if timeout <= 0:
+            raise ValueError("Viewer settlement no-progress timeout must be positive.")
+
+        logger = logging.getLogger(type(self).__module__)
+        last_completed_count = -1
+        no_progress_deadline = time.monotonic() + timeout
+        while True:
+            try:
+                response = ViewerControlMessageRequest(
+                    endpoint=self.runtime_endpoint,
+                    message_type=ViewerControlMessageType.SETTLE.value,
+                    timeout=timeout,
+                ).send()
+                progress = ViewerSettleProgress.from_response(response)
+            except Exception as error:
+                logger.warning(
+                    "%s viewer settlement progress request failed: %s",
+                    self.viewer_process_label,
+                    error,
+                )
+                return False
+
+            if not response.succeeded() or progress.phase is ViewerSettlePhase.FAILED:
+                logger.warning(
+                    "%s viewer settlement failed: %s",
+                    self.viewer_process_label,
+                    response.payload,
+                )
+                return False
+            if progress.phase is ViewerSettlePhase.COMPLETE:
+                logger.info(
+                    "%s viewer settled %d/%d layer updates",
+                    self.viewer_process_label,
+                    progress.completed_update_count,
+                    progress.total_update_count,
+                )
+                return True
+
+            now = time.monotonic()
+            if progress.completed_update_count > last_completed_count:
+                last_completed_count = progress.completed_update_count
+                no_progress_deadline = now + timeout
+                logger.info(
+                    "%s viewer settling layer updates: %d/%d",
+                    self.viewer_process_label,
+                    progress.completed_update_count,
+                    progress.total_update_count,
+                )
+            elif now >= no_progress_deadline:
+                logger.warning(
+                    "%s viewer settlement made no progress for %.1f seconds "
+                    "at %d/%d updates",
+                    self.viewer_process_label,
+                    timeout,
+                    progress.completed_update_count,
+                    progress.total_update_count,
+                )
+                return False
+            time.sleep(min(0.05, max(0.0, no_progress_deadline - now)))
 
     def read_viewer_state(self, timeout: float = 30.0) -> ViewerControlResponse:
         """Return typed state from the settled viewer control endpoint."""

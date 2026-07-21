@@ -59,6 +59,8 @@ from openhcs.runtime.viewer_protocol import (
     ViewerPayloadSummaryField,
     ViewerComponentValueOrdering,
     ViewerProtocolStatus,
+    ViewerSettlePhase,
+    ViewerSettleProgress,
     ViewerType,
 )
 from openhcs.runtime.napari_streaming_handlers import (
@@ -76,6 +78,7 @@ from openhcs.runtime.napari_streaming_handlers import (
     NapariImagePayloadAxisLabelPolicy,
     NapariImageLayerPresentationPolicy,
     NapariLayerUpdateAuthority,
+    NapariLayerSettlementState,
     NapariPendingLayerUpdate,
     NapariLayerRouteStateStore,
     NapariStreamLayerAddress,
@@ -511,6 +514,7 @@ _NAPARI_SHAPE_RASTERIZER = NapariShapeLabelRasterizer()
 _COMPONENT_METADATA_NORMALIZER = ViewerComponentMetadataNormalizer()
 _ACK_ERROR = ViewerProtocolStatus.ERROR.value
 _ACK_SUCCESS = ViewerProtocolStatus.SUCCESS.value
+NAPARI_SETTLEMENT_UPDATE_YIELD_MS = 10
 
 
 class NapariImagePayloadLayoutRole(str, Enum):
@@ -1748,7 +1752,7 @@ class NapariLayerDisplayPipeline:
         except Exception:
             # execute_layer_update already records and logs the exact route error.
             # Let the ZMQ/Qt event loop continue so the public state request can
-            # surface it through settle_pending_updates instead of timing out.
+            # surface it through typed settlement progress instead of timing out.
             return
 
     def execute_layer_update(
@@ -1808,18 +1812,59 @@ class NapariLayerDisplayPipeline:
             )
             raise
 
-    def settle_pending_updates(self) -> int:
-        """Synchronously execute queued debounced layer updates."""
+    def settlement_progress(self) -> ViewerSettleProgress:
+        """Begin or observe an incremental Qt-driven settlement cycle."""
 
-        pending_updates = self.server.layer_route_state.drain_pending_updates()
-        for layer_key, update in pending_updates:
+        settlement = self.server.layer_route_state.begin_settlement()
+        if settlement.active_route is None:
+            self._schedule_next_settlement_update(settlement)
+        return settlement.progress()
+
+    def _schedule_next_settlement_update(
+        self,
+        settlement: NapariLayerSettlementState,
+    ) -> None:
+        if settlement.failed or settlement.active_route is not None:
+            return
+        if settlement.completed_update_count == len(settlement.updates):
+            try:
+                self.server.layer_route_state.require_updates_succeeded()
+            except Exception:
+                settlement.fail()
+            return
+
+        claimed_update = settlement.begin_next()
+        if claimed_update is None:
+            return
+        route_key, update = claimed_update
+        QTimer.singleShot(
+            NAPARI_SETTLEMENT_UPDATE_YIELD_MS,
+            lambda: self._execute_settlement_update(
+                settlement,
+                route_key,
+                update,
+            ),
+        )
+
+    def _execute_settlement_update(
+        self,
+        settlement: NapariLayerSettlementState,
+        route_key: str,
+        update: NapariPendingLayerUpdate,
+    ) -> None:
+        """Execute one queued route and publish progress before the next."""
+
+        try:
             self.execute_layer_update(
-                layer_key,
+                route_key,
                 update.data_type,
                 update,
             )
-        self.server.layer_route_state.require_updates_succeeded()
-        return len(pending_updates)
+        except Exception:
+            settlement.fail_active(route_key)
+            return
+        settlement.complete_active(route_key)
+        self._schedule_next_settlement_update(settlement)
 
     def display_layer_batch(
         self,
@@ -1987,13 +2032,28 @@ class NapariSettleControlMessageAction(NapariControlMessageAction):
                 )
             ).to_wire_mapping()
 
-        flushed_count = server.display_pipeline.settle_pending_updates()
+        progress = server.display_pipeline.settlement_progress()
+        failed = progress.phase is ViewerSettlePhase.FAILED
+        failure = server.layer_route_state.update_failure_message()
         return ViewerControlReplyPayload(
             ViewerControlReplyHeader(
-                ViewerProtocolStatus.SUCCESS,
+                (
+                    ViewerProtocolStatus.ERROR
+                    if failed
+                    else ViewerProtocolStatus.SUCCESS
+                ),
                 response_type="settle_ack",
-                message=f"Flushed {flushed_count} pending layer update(s).",
-            )
+                message=(
+                    f"Viewer settlement failed: {failure}"
+                    if failed
+                    else (
+                        "Viewer settlement progress: "
+                        f"{progress.completed_update_count}/"
+                        f"{progress.total_update_count}."
+                    )
+                ),
+            ),
+            fields=progress.to_wire_mapping(),
         ).to_wire_mapping()
 
 
@@ -3214,6 +3274,7 @@ class NapariViewerServer(StreamingVisualizerServer):
 
     def clear_accumulated_stream_state(self) -> None:
         """Reset stream domains that must not leak across pipeline executions."""
+        self.layer_route_state.reset_settlement()
         pending_updates = self.layer_route_state.drain_pending_updates()
         if pending_updates:
             logger.info(

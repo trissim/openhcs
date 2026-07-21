@@ -18,6 +18,9 @@ from openhcs.runtime.viewer_protocol import (
     ViewerNavigationControlOptions,
     ViewerPayloadControlOptions,
     ViewerProtocolStatus,
+    ViewerSettlePhase,
+    ViewerSettleProgress,
+    ViewerControlResponse,
     ViewerStateControlOptions,
     ViewerComponentValueOrdering,
 )
@@ -2497,11 +2500,12 @@ def test_napari_settle_rejects_recorded_layer_update_failure():
             StreamingDataType.IMAGE,
             ViewerComponentAxisSemanticsAuthority.empty(),
         )
-    with pytest.raises(
-        RuntimeError,
-        match="failed-route: invalid payload axis",
-    ):
-        pipeline.settle_pending_updates()
+    failed_progress = pipeline.settlement_progress()
+    assert failed_progress.phase is ViewerSettlePhase.FAILED
+    assert (
+        server.layer_route_state.update_failure_message()
+        == "failed-route: invalid payload axis"
+    )
 
     server.batch_processors = BatchProcessors(SuccessfulProcessor())
     pipeline.execute_layer_update(
@@ -2510,7 +2514,73 @@ def test_napari_settle_rejects_recorded_layer_update_failure():
         ViewerComponentAxisSemanticsAuthority.empty(),
     )
 
-    assert pipeline.settle_pending_updates() == 0
+    server.layer_route_state.reset_settlement()
+    assert pipeline.settlement_progress() == ViewerSettleProgress.complete()
+
+
+def test_napari_settlement_reports_incremental_qt_progress(monkeypatch):
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    callbacks = []
+
+    class DeferredQtTimer:
+        @staticmethod
+        def singleShot(_delay_ms, callback):
+            callbacks.append(callback)
+
+    class SuccessfulProcessor:
+        def add_items(self, **_kwargs):
+            pass
+
+    class BatchProcessors:
+        def get_or_create(self, **_kwargs):
+            return SuccessfulProcessor()
+
+    server = _FakeNapariServer()
+    server.viewer = object()
+    server.layer_route_state = NapariLayerRouteStateStore.empty()
+    server.component_groups = NapariComponentGroupStore()
+    server.batch_processors = BatchProcessors()
+    pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
+    server.display_pipeline = pipeline
+    for route_key in ("first-route", "second-route"):
+        server.component_groups.items_for(route_key).append(
+            _layer_item({"site": 1}, data=np.ones((4, 4), dtype=np.uint8))
+        )
+        server.layer_route_state.set_pending_update(
+            route_key,
+            NapariPendingLayerUpdate.from_semantics(
+                timer=_FakeTimer(),
+                data_type=StreamingDataType.IMAGE,
+                semantics=ViewerComponentAxisSemanticsAuthority.empty(),
+            ),
+        )
+
+    monkeypatch.setattr(napari_viewer_server, "QTimer", DeferredQtTimer)
+    action = napari_viewer_server.NapariSettleControlMessageAction()
+
+    first_response = ViewerControlResponse(action.handle(server, {}))
+    first_progress = ViewerSettleProgress.from_response(first_response)
+    assert first_progress.phase is ViewerSettlePhase.RUNNING
+    assert first_progress.completed_update_count == 0
+    assert first_progress.total_update_count == 2
+    assert first_progress.active_route == "first-route"
+    assert len(callbacks) == 1
+
+    callbacks.pop(0)()
+    middle_progress = ViewerSettleProgress.from_response(
+        ViewerControlResponse(action.handle(server, {}))
+    )
+    assert middle_progress.phase is ViewerSettlePhase.RUNNING
+    assert middle_progress.completed_update_count == 1
+    assert middle_progress.active_route == "second-route"
+    assert len(callbacks) == 1
+
+    callbacks.pop(0)()
+    final_response = ViewerControlResponse(action.handle(server, {}))
+    final_progress = ViewerSettleProgress.from_response(final_response)
+    assert final_response.succeeded()
+    assert final_progress == ViewerSettleProgress.complete(2)
+    assert callbacks == []
 
 
 def test_napari_scheduled_update_retains_failure_without_escaping_qt_callback():
@@ -2536,11 +2606,12 @@ def test_napari_scheduled_update_retains_failure_without_escaping_qt_callback():
         ViewerComponentAxisSemanticsAuthority.empty(),
     )
 
-    with pytest.raises(
-        RuntimeError,
-        match="failed-scheduled-route: invalid scheduled processor route",
-    ):
-        pipeline.settle_pending_updates()
+    failed_progress = pipeline.settlement_progress()
+    assert failed_progress.phase is ViewerSettlePhase.FAILED
+    assert (
+        server.layer_route_state.update_failure_message()
+        == "failed-scheduled-route: invalid scheduled processor route"
+    )
 
 
 def test_napari_batch_processor_store_creates_one_processor_per_layer(monkeypatch):

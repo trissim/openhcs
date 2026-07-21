@@ -23,6 +23,8 @@ from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from openhcs.runtime.viewer_protocol import (
     NapariLayerKind,
     ViewerComponentValueOrdering,
+    ViewerSettlePhase,
+    ViewerSettleProgress,
 )
 from openhcs.runtime.viewer_component_system import (
     ComponentMap,
@@ -164,6 +166,83 @@ class NapariPendingLayerUpdate(ViewerComponentAxisSemantics):
         """Stop the Qt timer that would otherwise execute this update later."""
 
         self.timer.stop()
+
+
+@dataclass(slots=True)
+class NapariLayerSettlementState:
+    """Own one incremental drain of queued Napari layer updates."""
+
+    updates: tuple[tuple[str, NapariPendingLayerUpdate], ...]
+    completed_update_count: int = 0
+    active_route: str | None = None
+    failed: bool = False
+
+    @property
+    def phase(self) -> ViewerSettlePhase:
+        if self.failed:
+            return ViewerSettlePhase.FAILED
+        if (
+            self.completed_update_count == len(self.updates)
+            and self.active_route is None
+        ):
+            return ViewerSettlePhase.COMPLETE
+        return ViewerSettlePhase.RUNNING
+
+    def begin_next(
+        self,
+    ) -> tuple[str, NapariPendingLayerUpdate] | None:
+        """Claim the next exact update for one Qt callback."""
+
+        if self.phase is not ViewerSettlePhase.RUNNING:
+            return None
+        if self.active_route is not None:
+            raise RuntimeError(
+                f"Napari settlement route {self.active_route!r} is already active."
+            )
+        route_key, update = self.updates[self.completed_update_count]
+        self.active_route = route_key
+        return route_key, update
+
+    def complete_active(self, route_key: str) -> None:
+        """Record successful completion of the claimed update."""
+
+        if self.active_route != route_key:
+            raise RuntimeError(
+                f"Cannot complete Napari settlement route {route_key!r}; active "
+                f"route is {self.active_route!r}."
+            )
+        self.completed_update_count += 1
+        self.active_route = None
+
+    def fail_active(self, route_key: str) -> None:
+        """Record terminal failure of the claimed update."""
+
+        if self.active_route != route_key:
+            raise RuntimeError(
+                f"Cannot fail Napari settlement route {route_key!r}; active route "
+                f"is {self.active_route!r}."
+            )
+        self.failed = True
+        self.active_route = None
+
+    def fail(self) -> None:
+        """Record a terminal settlement failure without an active route."""
+
+        if self.active_route is not None:
+            raise RuntimeError(
+                "Napari settlement has an active route; use fail_active()."
+            )
+        self.failed = True
+
+    def progress(self) -> ViewerSettleProgress:
+        """Project current settlement state onto the shared wire contract."""
+
+        return ViewerSettleProgress(
+            phase=self.phase,
+            completed_update_count=self.completed_update_count,
+            total_update_count=len(self.updates),
+            active_route=self.active_route,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -909,6 +988,7 @@ class NapariLayerRouteStateStore:
     layer_pending_updates: dict[str, NapariPendingLayerUpdate]
     layer_update_errors: dict[str, str]
     active_dimension_label_route: str | None
+    layer_settlement: NapariLayerSettlementState | None
 
     @classmethod
     def empty(cls) -> "NapariLayerRouteStateStore":
@@ -919,6 +999,7 @@ class NapariLayerRouteStateStore:
             layer_pending_updates={},
             layer_update_errors={},
             active_dimension_label_route=None,
+            layer_settlement=None,
         )
 
     def set_title(self, layer_key: str, title: str) -> None:
@@ -969,6 +1050,12 @@ class NapariLayerRouteStateStore:
         layer_key: str,
         update: NapariPendingLayerUpdate,
     ) -> None:
+        if self.layer_settlement is not None:
+            if self.layer_settlement.phase is ViewerSettlePhase.RUNNING:
+                raise RuntimeError(
+                    "Cannot queue a Napari layer update while settlement is active."
+                )
+            self.layer_settlement = None
         self.layer_pending_updates[layer_key] = update
 
     def pop_pending_update(self, layer_key: str) -> NapariPendingLayerUpdate | None:
@@ -983,6 +1070,25 @@ class NapariLayerRouteStateStore:
             update.stop_timer()
         return updates
 
+    def begin_settlement(self) -> NapariLayerSettlementState:
+        """Return the active settlement or begin one from queued updates."""
+
+        if self.layer_settlement is None:
+            self.layer_settlement = NapariLayerSettlementState(
+                self.drain_pending_updates()
+            )
+        return self.layer_settlement
+
+    def reset_settlement(self) -> None:
+        """Discard terminal settlement state before a new stream cycle."""
+
+        if (
+            self.layer_settlement is not None
+            and self.layer_settlement.phase is ViewerSettlePhase.RUNNING
+        ):
+            raise RuntimeError("Cannot reset an active Napari layer settlement.")
+        self.layer_settlement = None
+
     def record_update_error(self, layer_key: str, error: Exception) -> None:
         self.layer_update_errors[layer_key] = str(error)
 
@@ -993,13 +1099,21 @@ class NapariLayerRouteStateStore:
         self.layer_update_errors.clear()
 
     def require_updates_succeeded(self) -> None:
-        if not self.layer_update_errors:
+        failure_message = self.update_failure_message()
+        if failure_message is None:
             return
-        failures = "; ".join(
+
+        raise RuntimeError(f"Napari layer updates failed: {failure_message}")
+
+    def update_failure_message(self) -> str | None:
+        """Return the exact recorded route failures, if any."""
+
+        if not self.layer_update_errors:
+            return None
+        return "; ".join(
             f"{layer_key}: {message}"
             for layer_key, message in self.layer_update_errors.items()
         )
-        raise RuntimeError(f"Napari layer updates failed: {failures}")
 
     def has_layer(self, layer_key: str) -> bool:
         return layer_key in self.layers
