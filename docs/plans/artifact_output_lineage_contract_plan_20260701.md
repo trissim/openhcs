@@ -1294,7 +1294,6 @@ class Plan(ObjectPair):
 class FilterObjectsModule(
     PlaneRuntimeArtifactModule,
     FilterObjectsInputPolicy,
-    ModuleSettingsSourceModule,
     ObjectArtifactInputModule,
     ObjectArtifactOutputModule,
     ImageArtifactOutputModule,

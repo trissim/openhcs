@@ -495,4 +495,3 @@ The pipeline editor must match step editors by scope_id to collect the correct l
     )
 
 This prevents collecting live values from other step editors in the same plate, ensuring each step's preview labels only reflect its own editor's state.
-

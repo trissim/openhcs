@@ -1,136 +1,70 @@
-Data Dimensions
-===============
+Data dimensions and execution axes
+==================================
 
-High-content microscopy data varies over semantic dimensions such as wells,
-sites, channels, Z planes, and timepoints. OpenHCS keeps these dimensions as
-typed workflow semantics instead of leaving each pipeline to parse filenames
-manually.
+High-content microscopy data varies over semantic components such as well,
+site, channel, Z plane, and timepoint. OpenHCS keeps those identities separate
+from raw ndarray dimensions.
 
-Microscopy Data Dimensions
---------------------------
+Plate and execution axis
+------------------------
 
-Typical plate data may look like this:
+The orchestrator discovers component keys through the microscope/source model.
+One configured component—normally well—is the multiprocessing execution axis.
+Compilation creates one context and typed plan set for each selected axis value.
 
-.. code-block:: text
-
-   Plate/
-   ├── A01_s1_w1.tif    # Well A01, Site 1, Channel 1
-   ├── A01_s1_w2.tif    # Well A01, Site 1, Channel 2
-   ├── A01_s2_w1.tif    # Well A01, Site 2, Channel 1
-   ├── A01_s2_w2.tif    # Well A01, Site 2, Channel 2
-   └── A02_s1_w1.tif    # Well A02, Site 1, Channel 1
-
-Core dimensions:
-
-* **Well**: sample position or experimental condition, such as ``A01``.
-* **Site**: field of view within a well.
-* **Channel**: fluorescence or imaging channel.
-* **Z index**: optical plane in a stack.
-* **Timepoint**: acquisition time in a live or longitudinal experiment.
-
-Microscope handlers and metadata handlers expose these facts through typed
-inventory and source-binding records. Agents should inspect those records before
-authoring a workflow.
-
-Variable Components
--------------------
-
-``variable_components`` declares which semantic axes are stacked into each
-callable input array.
-
-Use it through ``LazyProcessingConfig`` on a ``FunctionStep``:
-
-.. code-block:: python
-
-   from openhcs.constants.constants import VariableComponents
-   from openhcs.core.config import LazyProcessingConfig
-   from openhcs.core.steps.function_step import FunctionStep
-
-   step = FunctionStep(
-       func=(normalize_images, {}),
-       name="normalize",
-       processing_config=LazyProcessingConfig(
-           variable_components=[VariableComponents.SITE],
-       ),
-   )
-
-In this example, site is the varying axis inside the callable's input stack.
-The compiler uses the source inventory and processing config to build the work
-units.
-
-Common choices:
-
-* ``VariableComponents.SITE``: process site stacks; this is the default mental
-  model for many plate workflows.
-* ``VariableComponents.CHANNEL``: stack or operate across channel variation.
-* ``VariableComponents.Z_INDEX``: stack Z planes for volumetric or projection
-  operations.
-* ``VariableComponents.TIMEPOINT``: stack timepoints for temporal analysis.
-* multiple components: stack a combination, such as site plus channel, when the
-  callable's declared semantics require it.
-
-If ``variable_components`` is empty, a callable cannot receive a meaningful
-third-axis stack from source variation. In practice, use an explicit processing
-config for functions that require channel, site, Z, or time semantics.
-
-Group By
---------
-
-``group_by`` is the routing or fanout axis for dictionary function patterns. It
-does not mean "stack this axis". Stacking is owned by ``variable_components``.
-
-Example: route different channels to different functions while each callable
-still receives site-variable input:
-
-.. code-block:: python
-
-   from openhcs.constants.constants import GroupBy, VariableComponents
-   from openhcs.core.config import LazyProcessingConfig
-   from openhcs.core.steps.function_step import FunctionStep
-
-   step = FunctionStep(
-       func={
-           "1": (analyze_nuclei, {}),
-           "2": (analyze_neurites, {}),
-       },
-       name="channel_analysis",
-       processing_config=LazyProcessingConfig(
-           variable_components=[VariableComponents.SITE],
-           group_by=GroupBy.CHANNEL,
-       ),
-   )
-
-The dictionary keys are matched against the group-by component values. The
-compiler prepares the grouped execution plan; runtime execution should consume
-that plan rather than rediscovering routing rules.
-
-Source Bindings And Virtual Workspaces
---------------------------------------
-
-Real microscopes encode dimensions differently. ImageXpress, Opera Phenix,
-OMERO, Bio-Formats, and OpenHCS-native layouts may use different filenames,
-folders, or metadata.
-
-OpenHCS normalizes those sources through microscope handlers, metadata
-extraction rules, source bindings, and virtual workspace paths. That is why
-agents should use plate inspection and source-binding tools instead of local
-filename parsing.
-
-Operational Rule
+Image stack axis
 ----------------
 
-When setting up a workflow:
+Image callables receive 3D image data, including logical single-plane inputs.
+``variable_components`` declares which semantic components vary along the stack
+axis. The axis might represent sites, channels, Z planes, or another declared
+component; it must not be called Z merely because it occupies array axis 0.
 
-1. Inspect the plate or selected UI plate.
-2. Confirm wells, sites, channels, Z planes, and timepoints.
-3. Choose ``variable_components`` based on what the callable must receive.
-4. Choose ``group_by`` only when routing a function dictionary.
-5. Compile or inspect the artifact plan before running the full dataset.
+Grouping
+--------
 
-Related knowledge-base documents:
+``group_by`` partitions assembled arrays after stack construction. Dictionary
+function patterns route groups to different callable patterns. A non-dictionary
+pattern does not gain different callable semantics from grouping.
 
-* ``openhcs_core_model``
-* ``openhcs_pipelines_and_steps``
-* ``openhcs_function_patterns``
-* ``openhcs_pipeline_compilation_system``
-* ``openhcs_runtime_system_assembly_rules``
+Processing locality
+-------------------
+
+``ProcessingContract`` is independent of the component axes:
+
+- ``PURE_2D``: each plane is semantically independent;
+- ``PURE_3D``: the callable depends on the full stack;
+- ``FLEXIBLE``: an explicit control selects either semantic mode;
+- ``VOLUMETRIC_TO_SLICE``: a stack is consumed into a collapsed plane domain.
+
+Runtime identity
+----------------
+
+Runtime payloads carry a declared plane axis, component/source metadata, and
+source-plane provenance. Artifact keys additionally carry execution-axis and
+optional component-group scope. Projection validates those declarations; it
+does not infer identity from shape or a filename suffix.
+
+Example
+-------
+
+.. code-block:: python
+
+   from openhcs.constants import GroupBy, VariableComponents
+   from openhcs.core.config import LazyProcessingConfig, ProcessingConfig
+
+   processing = ProcessingConfig(
+       variable_components=(VariableComponents.SITE,),
+       group_by=GroupBy.CHANNEL,
+   )
+   step = FunctionStep(
+       func={"1": nuclei, "2": neurites},
+       processing_config=LazyProcessingConfig.from_config(processing),
+   )
+
+Here, site defines the stack axis and channel partitions those site stacks for
+dictionary routing. Neither setting alone declares whether ``nuclei`` or
+``neurites`` has per-plane or whole-stack semantics; their callable contracts
+do that.
+
+See :doc:`../architecture/processing_semantics` for the compiler/runtime model.

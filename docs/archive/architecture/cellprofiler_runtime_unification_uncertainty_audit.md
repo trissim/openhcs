@@ -1,4 +1,4 @@
-# CellProfiler Runtime Unification Implementation Dry Run
+# Superseded: CellProfiler Runtime Unification Implementation Dry Run
 
 ## Audit Verdict
 

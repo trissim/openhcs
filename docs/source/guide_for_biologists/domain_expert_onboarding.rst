@@ -68,13 +68,13 @@ The pipeline concepts to read next are:
   production example docs;
 * :doc:`../concepts/data_dimensions` for plate, well, site, channel, Z, and
   timepoint grouping;
-* :doc:`../concepts/pipelines_and_steps` for ``Pipeline`` and
-  ``FunctionStep``;
+* :doc:`../concepts/pipelines_and_steps` for ``PipelineConfig``, ordered
+  ``FunctionStep`` declarations, and compilation;
 * :doc:`../concepts/function_patterns` for channel-specific routing;
 * :doc:`../concepts/function_library` for segmentation, preprocessing, and
   measurement functions;
 * :doc:`../user_guide/real_time_visualization` for Napari and Fiji streaming;
-* :doc:`experimental_layouts` for well-to-condition mapping.
+* :doc:`../user_guide/experimental_layouts` for well-to-condition mapping.
 
 Agent And MCP Path
 ------------------
@@ -108,19 +108,19 @@ materialization, and measurements.
 
 The translation is:
 
-* CellProfiler modules map to OpenHCS ``FunctionStep`` declarations and
-  generated backend functions.
+* Executable CellProfiler modules lower to ordinary OpenHCS ``FunctionStep``
+  declarations whose public callables remain visible to the GUI and code
+  transport.
 * CellProfiler ``Images``, ``Metadata``, and ``NamesAndTypes`` setup maps to
-  OpenHCS source bindings, source schemas, and virtual workspace names.
+  OpenHCS source bindings, metadata rules, and virtual workspace projections.
 * CellProfiler image names map to semantic source bindings or runtime image
   inputs.
 * CellProfiler object names map to object-label runtime values or artifact
   contracts.
-* CellProfiler measurement modules map to backend functions plus runtime
-  artifact materialization.
-* CellProfiler ``SaveImages`` and ``ExportToDatabase`` modules are
-  infrastructure unless the workflow requires an externally materialized
-  image/table result.
+* CellProfiler measurement modules declare measurement artifacts and typed
+  runtime values through their callable/module contracts.
+* CellProfiler ``SaveImages`` and export modules become explicit steps; plate-wide
+  exporters declare plate execution scope and materialized outputs directly.
 
 Use CellProfiler examples to understand biological intent, module order, named
 images/objects, measurements, and expected artifacts. Then compile and validate
@@ -136,13 +136,13 @@ semantic evidence. OpenHCS preserves CellProfiler-style image, object,
 measurement, and export semantics by projecting them into OpenHCS compiler and
 runtime authorities.
 
-Do not start from a blank slate. The repository includes example CellProfiler
-pipelines in ``benchmark/cellprofiler_pipelines/``, thirty scoped native
-CellProfiler references in ``benchmark/native_refs/official30_scoped_rows/``,
-native OpenHCS benchmark pipelines in ``benchmark/pipelines/``, and production
-presets in ``openhcs/processing/presets/pipelines/``. Use
-:doc:`../guides/example_corpus_map` to choose the closest existing workflow
-before authoring a new one.
+Do not start from a blank slate. The source-backed Official30 knowledge document
+maps thirty CellProfiler recipes to lazily generated public OpenHCS declarations.
+Search by biological task plus ``OpenHCS Python`` and retrieve the exact source
+section with a 50,000-character bound. The typed MFD preset authority provides
+the smaller current native preset family. Use
+:doc:`../guides/example_corpus_map` to choose the closest verified workflow and
+to distinguish current examples from older migration/reference scripts.
 
 Practical Search Terms
 ----------------------
@@ -154,4 +154,5 @@ These terms should lead an agent to the right knowledge-base area:
 ``timepoint``, ``segmentation``, ``cell counting``, ``measurement``,
 ``getting started``, ``FunctionStep``, ``variable components``, ``group_by``,
 ``Napari``, ``Fiji``, ``zarr``, ``CellProfiler``, ``CellProfiler examples``,
-``cppipe``, ``native OpenHCS examples``, ``production examples``.
+``cppipe``, ``official30``, ``OpenHCS Python``, ``native OpenHCS examples``,
+``MFD preset``.

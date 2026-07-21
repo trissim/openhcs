@@ -1,243 +1,105 @@
-Viewer Management Guide
-=======================
-
-Overview
---------
-
-OpenHCS supports streaming images to external viewers for interactive visualization:
-
-- **Napari**: Python-based viewer with layer management and advanced visualization
-- **Fiji/ImageJ**: Java-based viewer with hyperstack support and extensive plugin ecosystem
-
-Both viewers can be used simultaneously, and viewers are automatically reused across different parts of OpenHCS (pipelines, image browser, manual streaming).
-
-This guide covers how to use viewers effectively from a user perspective.
-
-.. note::
-
-Using the Image Browser
------------------------
-
-The image browser is the main interface for viewing images interactively.
-
-Opening the Image Browser
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-1. Load a plate in the PyQt GUI
-2. Click the "Image Browser" tab
-3. The browser shows a folder tree and image table
-
-Enabling Viewers
-~~~~~~~~~~~~~~~~
-
-**Napari** (enabled by default):
-
-- Check "Enable Napari Streaming" to activate
-- Configure display settings (LUT, contrast, etc.)
-- Images will stream to Napari viewer
-
-**Fiji** (disabled by default):
-
-- Check "Enable Fiji Streaming" to activate
-- Configure dimension mapping and display settings
-- Images will stream to Fiji/ImageJ viewer
-
-**Both viewers**:
-
-- Enable both checkboxes to stream to both viewers simultaneously
-- Useful for comparing visualization approaches
-
-Viewing Images
-~~~~~~~~~~~~~~
-
-**Single image**:
-
-1. Click an image in the table
-2. Click "View in Napari" or "View in Fiji" button
-3. Viewer opens (if not already open) and displays image
-
-**Multiple images** (recommended for hyperstacks):
-
-1. Select multiple images (Ctrl+Click or Shift+Click)
-2. Click "View in Napari" or "View in Fiji"
-3. All images stream as a batch and build a hyperstack
-
-**Double-click**:
-
-- Double-click any image to stream to enabled viewer(s)
-- If both enabled, streams to both
-- If neither enabled, shows a message
-
-Progressive Hyperstack Building
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-You can build hyperstacks incrementally by sending images one at a time:
-
-1. Select and view first z-slice → Creates hyperstack with 1 Z
-2. Select and view second z-slice → Adds to hyperstack → Now has 2 Z
-3. Select and view different channel → Adds to hyperstack → Now has 2 Z × 2 channels
-
-This works for both Napari and Fiji viewers.
-
-Managing Viewer Instances
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The "Napari Instances" panel shows all detected viewers:
-
-**Status indicators**:
-
-- ✅ Ready - Viewer is running and ready to receive images
-- 🚀 Starting... - Viewer is launching (wait a few seconds)
-
-**Viewer types**:
-
-- "Napari Port 5555" - Napari viewer on port 5555
-- "Fiji Port 5556" - Fiji viewer on port 5556
-- "Port 5557" - External viewer (type unknown)
-
-**Killing viewers**:
-
-1. Select viewer in the list
-2. Click "Kill Selected Instances"
-3. Viewer process is terminated and port is freed
-
-.. warning::
-   Only kill viewers when you're done with them. Killing a viewer that's being used by a running pipeline may cause errors.
-
-Viewer Comparison
------------------
-
-Napari vs Fiji
-~~~~~~~~~~~~~~
-
-**Napari**:
-
-- ✅ Modern Python-based interface
-- ✅ Layer-based visualization (easy to toggle layers)
-- ✅ Advanced rendering (GPU-accelerated)
-- ✅ Plugin ecosystem for analysis
-- ❌ Slower startup time
-- ❌ Higher memory usage
-
-**Fiji/ImageJ**:
-
-- ✅ Fast startup
-- ✅ Extensive plugin ecosystem (decades of development)
-- ✅ Hyperstack-based (traditional microscopy workflow)
-- ✅ Lower memory usage
-- ❌ Java-based (separate process)
-- ❌ Less modern interface
-
-**When to use which**:
-
-- **Napari**: Interactive exploration, modern workflows, GPU rendering
-- **Fiji**: Quick checks, traditional ImageJ workflows, plugin compatibility
-- **Both**: Compare visualizations, leverage strengths of each
-
-Common Issues
--------------
-
-Viewer Won't Start
-~~~~~~~~~~~~~~~~~~
-
-**Symptoms**: Clicking "View" does nothing, or shows "Starting..." forever
-
-**Solutions**:
-
-1. Check if port is already in use: ``lsof -i :5555``
-2. Kill any stuck processes on the port
-3. Try a different port in the config
-4. Check logs in ``~/.local/share/openhcs/logs/``
-
-Images Not Appearing
-~~~~~~~~~~~~~~~~~~~~
-
-**Symptoms**: Viewer opens but images don't show
-
-**Solutions**:
-
-1. Wait for "✅ Ready" status in instance list
-2. Check if viewer window is hidden behind other windows
-3. For Fiji: Ensure PyImageJ is installed correctly
-4. Check that images are actually loading (check file paths)
-
-Hyperstack Has Wrong Dimensions
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Symptoms**: Fiji hyperstack shows wrong number of channels/slices/frames
-
-**Solutions**:
-
-1. Select all images before clicking "View" (batch streaming)
-2. Check that filenames have correct metadata (channel, z-index, etc.)
-3. Verify dimension mapping in Fiji config
-4. Close and reopen hyperstack to rebuild
-
-Memory Issues
-~~~~~~~~~~~~~
-
-**Symptoms**: System runs out of memory when viewing many images
-
-**Solutions**:
-
-1. View fewer images at once
-2. Use Napari instead of Fiji (more efficient memory management)
-3. Close unused viewer windows
-4. Reduce image resolution if possible
-
-Tips and Best Practices
------------------------
-
-Efficient Workflow
-~~~~~~~~~~~~~~~~~~
-
-1. **Enable only what you need**: Disable unused viewers to save resources
-2. **Batch selection**: Select all images you want to view before clicking "View"
-3. **Reuse viewers**: OpenHCS automatically reuses viewers - no need to close and reopen
-4. **Progressive building**: Build hyperstacks incrementally by sending images one at a time
-5. **Check status first**: Wait for "✅ Ready" before expecting images to appear
-
-Performance
-~~~~~~~~~~~
-
-1. **Use Fiji for quick checks**: Faster startup and lower memory usage
-2. **Use Napari for exploration**: Better for interactive analysis and modern workflows
-3. **Close unused windows**: Free up memory by closing viewer windows you're done with
-4. **Limit batch size**: Don't try to view hundreds of images at once
-
-Troubleshooting
-~~~~~~~~~~~~~~~
-
-1. **Check logs**: ``~/.local/share/openhcs/logs/`` contains detailed error messages
-2. **Kill and restart**: If viewer is unresponsive, kill it and let OpenHCS create a new one
-3. **Try different port**: If port conflicts occur, change the port in config
-4. **Verify installation**: Ensure Napari and PyImageJ are installed correctly
-
-Performance Characteristics
----------------------------
-
-Startup Times
-~~~~~~~~~~~~~
-
-- **Single viewer**: ~2-5 seconds (depends on Napari import time)
-- **Multiple viewers (sequential)**: N × 2-5 seconds
-- **Multiple viewers (parallel)**: ~2-5 seconds (same as single!)
-
-Memory Usage
-~~~~~~~~~~~~
-
-- **Per viewer process**: ~200-500 MB (Napari + Qt + NumPy)
-- **ZMQ overhead**: Negligible (~1 MB per connection)
-
-Throughput
-~~~~~~~~~~
-
-- **Image streaming**: Limited by ZMQ (typically >100 MB/s on localhost)
-- **Bottleneck**: Usually Napari rendering, not network
-
-See Also
---------
-
-For more detailed information:
-
-- :doc:`../api/index` - API reference (autogenerated from source code)
+Viewer streaming
+================
+
+OpenHCS declares viewer streaming on a step independently of artifact
+materialization. Compilation lowers enabled streaming configuration into typed
+transport and viewer plans. PolyStore owns the
+streaming backend primitives, while ZMQRuntime owns generic process, socket,
+acknowledgment, and viewer-lifecycle machinery.
+
+OpenHCS keeps only application semantics: supported viewer identities, step
+configuration, metadata projection, display policy, and Napari/Fiji adapters.
+Those declarations are rooted in ``StreamingConfig`` and the registered
+streaming configuration types; generic code should iterate that registry rather
+than maintain a viewer-name table.
+
+Desktop workflow
+----------------
+
+1. Install ``openhcs[gui,napari]`` or ``openhcs[gui,viz]``.
+2. Open a step in the Pipeline Editor.
+3. Enable the Napari streaming configuration and choose its display options.
+4. Compile the plate. Port, backend, and source-metadata requirements are
+   validated before execution.
+5. Run the compiled selection. The viewer process is managed outside the worker
+   that emits image batches.
+
+Persistence and reuse are configuration policies, not guarantees that an
+arbitrary process on the same port is compatible. Readiness uses the typed
+control protocol before image data is sent.
+
+Choosing one step to inspect
+----------------------------
+
+Viewer settings are inherited, but efficient inspection starts by constraining
+the execution domain rather than only the viewer:
+
+1. set ``pipeline_config.well_filter_config.well_filter`` to the diagnostic
+   wells (for example, ``"B03"``), so other wells are not loaded or processed;
+2. keep the global and pipeline viewer ``enabled`` defaults false;
+3. set ``napari_streaming_config.enabled=True`` or
+   ``fiji_streaming_config.enabled=True`` only on the target ``FunctionStep``;
+4. leave the viewer ``well_filter`` inherited unless it must narrow the pipeline
+   domain further;
+5. use ``persistent=True`` when the viewer must remain available for structured
+   inspection after the pipeline finishes; and
+6. compile again, because viewer intent is lowered into the immutable step plan.
+
+If the viewer is the only desired image destination, set
+``pipeline_config.path_planning_config.well_filter=0``. This suppresses the
+automatic final main-flow output plate while leaving the in-memory value
+available for streaming. Explicit step checkpoints and typed named-artifact
+materializations remain independent and must be disabled separately when they
+are not wanted.
+
+For example, a reviewed pipeline document can place the override directly on
+the step being inspected:
+
+.. code-block:: python
+
+   FunctionStep(
+       name="Inspect segmented cells",
+       func=segment_cells,
+       napari_streaming_config=LazyNapariStreamingConfig(
+           enabled=True,
+           persistent=True,
+       ),
+   )
+
+Use the current reflected step schema rather than treating that example as a
+field inventory. Through MCP, request ``openhcs_describe_config_schema`` with
+``config_type="step"`` and one returned nested path:
+``napari_streaming_config``, ``fiji_streaming_config``, or
+``step_materialization_config``.
+
+Streaming, checkpointing, and named artifacts
+----------------------------------------------
+
+These mechanisms answer different questions:
+
+``NapariStreamingConfig`` / ``FijiStreamingConfig``
+  Show eligible outputs while the selected step executes. Display axes,
+  batching, transport, viewer persistence, and well selection belong here.
+
+``StepMaterializationConfig``
+  Save the step's ordinary main-flow result as a persistent checkpoint. Set it
+  on the exact step whose main-flow output is needed. It does not persist every
+  named artifact produced by the callable.
+
+Typed artifact materialization
+  Persists named image, label, measurement, relationship, table, grid, or
+  external-resource outputs according to the callable-owned artifact contract
+  and compiled runtime-artifact materialization plan.
+
+Paused runtime inspection
+  Shows invocation parameters, runtime-value records, and artifact references
+  from an active debug worker. It is runtime evidence, not a persistence policy
+  and not a replacement for visual validation.
+
+Inspect the compiled artifact plan before execution to see which outputs are
+runtime-only and which have persistent targets. After execution, use viewer
+state, payload, image-sample, and ROI-summary tools for concrete visual
+evidence; a successfully launched viewer alone is not result validation.
+
+See :doc:`../architecture/streaming_boundary_and_wrappers` for ownership and
+:doc:`fiji_viewer_management` for Fiji-specific requirements.

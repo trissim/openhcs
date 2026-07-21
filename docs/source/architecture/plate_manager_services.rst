@@ -1,63 +1,53 @@
-PlateManager Services Architecture
-==================================
+Plate Manager services
+======================
 
-The Problem: Parallel Service Paths Drifted
--------------------------------------------
+The Plate Manager widget delegates workflow policy to
+``PlateManagerBatchWorkflow``. The facade owns shared context and lifecycle;
+``BatchWorkflowComponents`` owns lazy construction of focused services.
 
-The previous PlateManager architecture split orchestration across independent
-``CompilationService`` and ``ZMQExecutionService`` modules. That split caused
-state duplication and stale UI projections because compile and execute flows
-could diverge in how they updated plate state, progress, and status strings.
+Ownership map
+-------------
 
-Current Service Model
----------------------
+``openhcs/pyqt_gui/services/plate_manager_batch_workflow.py``
+  Workflow facade and compile-all-then-execute-all sequence.
 
-PlateManager now uses a unified service boundary:
+``openhcs/pyqt_gui/widgets/shared/services/batch_workflow_components.py``
+  Lazy component owner for compile, submit, control, progress, debug, and live
+  measurement services.
 
-- ``BatchWorkflowService`` for compile + execute orchestration
-- ``ExecutionServerStatusPresenter`` for consistent status-line rendering
-- ``progress_batch_reset`` for deterministic batch boundary resets
-- ``plate_config_resolver`` for canonical per-plate pipeline config lookup
+``openhcs/pyqt_gui/widgets/shared/services/compile_batch_workflow_service.py``
+  Batch compile policy and exact compile-artifact collection.
 
-This service layer keeps the widget focused on UI state and delegates workflow
-policy to reusable service classes.
+``openhcs/pyqt_gui/widgets/shared/services/compile_workflow_service.py``
+  One compile request, its nominal identity, submission, and wait behavior.
 
-Canonical Workflow
-------------------
+``openhcs/pyqt_gui/widgets/shared/services/plate_pipeline_request_builder.py``
+  Projection of one selected plate into ``CompileJob`` or ``RunSpec``.
 
-Compile-only flow:
+``openhcs/pyqt_gui/widgets/shared/services/execution_submission_service.py``
+  Execution submission, completion polling, and terminal callbacks.
 
-1. Build ``CompileJob`` objects from selected plates.
-2. Submit all compile jobs through the workflow service compile backend.
-3. Wait all compile jobs.
-4. Store compiled artifacts and mark orchestrator states.
+``openhcs/pyqt_gui/widgets/shared/services/execution_control_service.py``
+  Stop, cancel, disconnect, and failure convergence.
 
-Run flow:
+``openhcs/pyqt_gui/widgets/shared/services/progress_workflow_service.py``
+  Coalesced progress projection and server-information refresh.
 
-1. Reset progress for a new batch.
-2. Compile all selected plates first.
-3. Submit all execution jobs with compile artifact IDs.
-4. Poll completion per execution and converge states in one place.
+Supporting presentation owners include
+``execution_server_status_presenter.py``, ``progress_batch_reset.py``, and
+``plate_config_resolver.py`` in the same services package.
 
-Key Invariants
---------------
+Invariants
+----------
 
-- One service owns compile + run orchestration.
-- Batch reset always clears old progress before new work starts.
-- Plate list state is updated from a single source (workflow service callbacks).
-- Progress projection and server status text are derived data, not mutable cache.
+- Every selected run compiles before the first execution submission.
+- Execution requests carry the exact compiled artifact ID returned for their
+  plate.
+- Plate, progress, and terminal state have host-owned stores; services project
+  updates rather than maintain parallel semantic caches.
+- Generic submit/wait/status-polling mechanics belong to ZMQRuntime. OpenHCS
+  owns how those mechanics map to plate compilation and UI state.
+- Cleanup removes listeners and timers owned by the workflow facade.
 
-Primary Modules
----------------
-
-- ``openhcs/pyqt_gui/widgets/shared/services/batch_workflow_service.py``
-- ``openhcs/pyqt_gui/widgets/shared/services/execution_server_status_presenter.py``
-- ``openhcs/pyqt_gui/widgets/shared/services/progress_batch_reset.py``
-- ``openhcs/pyqt_gui/widgets/shared/services/plate_config_resolver.py``
-
-Related Architecture Pages
---------------------------
-
-- :doc:`batch_workflow_service`
-- :doc:`progress_runtime_projection_system`
-- :doc:`zmq_server_browser_system`
+See :doc:`batch_workflow_service`, :doc:`progress_runtime_projection_system`,
+and :doc:`zmq_server_browser_system`.

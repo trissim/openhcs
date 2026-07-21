@@ -1,8 +1,8 @@
-OpenHCS for Biologists
-============================
+OpenHCS for biologists
+======================
 
-User Guides
-----------
+User guides
+-----------
 
 This page is for non-technical users of OpenHCS, who want to get started with using the software without needing to write any code.
 
@@ -18,11 +18,13 @@ To get started, check out the following resources:
 
 5. **Introductory workflow**: :doc:`intro_stitching` - Learn how to stitch images together using OpenHCS.
 
-6. **Configuration reference**: :doc:`configuration_reference` - A reference of the configuration options available in OpenHCS.
+6. **Image sources**: :doc:`image_sources` - Name TIFF, PNG, CZI, OME-TIFF, OME-Zarr, and mixed image inputs.
 
-7. **Glossary**: :doc:`glossary` - Definitions of common terms used in OpenHCS and image analysis.
+7. **Configuration reference**: :doc:`configuration_reference` - A reference of the configuration options available in OpenHCS.
 
-8. **Troubleshooting and FAQ**: :doc:`troubleshooting_FAQ` - Common issues and solutions to help you troubleshoot problems.
+8. **Glossary**: :doc:`glossary` - Definitions of common terms used in OpenHCS and image analysis.
+
+9. **Troubleshooting and FAQ**: :doc:`troubleshooting_FAQ` - Common issues and solutions to help you troubleshoot problems.
 
 
 .. toctree::
@@ -34,6 +36,7 @@ To get started, check out the following resources:
    installation_and_setup
    basic_interface
    intro_stitching
+   image_sources
    configuration_reference
    glossary
    troubleshooting_FAQ

@@ -1,4 +1,4 @@
-# CellProfiler Semantic Refactor Audit
+# Superseded: CellProfiler Semantic Refactor Audit
 
 Date: 2026-05-07
 

@@ -1,86 +1,75 @@
-Installation & Setup
-====================
+Installation and first launch
+=============================
 
-This guide will walk you through installing OpenHCS on your computer and launching the application for the first time.
+OpenHCS requires Python 3.11 or newer. The supported interactive application is
+the desktop GUI.
 
-.. contents::
-   :local:
-   :depth: 2
+Install
+-------
 
-----------------------------
-
-System Requirements
--------------------
-
-**Operating Systems:**
-- Linux 
-- Windows 10/11 (via WSL2 - Windows Subsystem for Linux)
-- macOS 
-
-**Minimum Requirements:**
-- Python 3.11 or newer
-
-
-----------------------------
-Installation Instructions
-------------------------
-
-Install OpenHCS with required GUI dependencies:
+Create a Python virtual environment if possible, then install the GUI extra:
 
 .. code-block:: bash
 
-   pip install openhcs[gui]
+   python -m pip install --upgrade pip
+   python -m pip install "openhcs[gui]"
 
-This will install openhcs along with the GUI dependencies for full functionality. 
-
-If you want a minimal installation, you can choose to do a CPU-only install: (for CI/testing environments)
-
-.. code-block:: bash
-
-   # Install with minimal dependencies
-    pip install openhcs --no-deps
-    pip install numpy scipy scikit-image pandas
-
-    # Enable CPU-only mode
-    export OPENHCS_CPU_ONLY=1
-
-The installation may take several minutes as it downloads and installs all dependencies.
-
-----------------------------
-
-Launching OpenHCS
------------------
-
-Once installed, you can launch the OpenHCS graphical interface with a command:
+Launch the application with:
 
 .. code-block:: bash
 
    openhcs
-   #or
-   python -m openhcs.pyqt_gui
 
-----------------------------
+``openhcs-gui`` launches the same application. The old terminal interface is
+deprecated and is not part of the published package.
 
-First Launch
-------------
+Optional viewers
+----------------
 
-When you first launch OpenHCS, you'll see:
-
-1. **Main Window:** The central control panel
-2. **Plate Manager:** For organizing your microscopy experiments
-3. **Pipeline Editor:** For creating and editing image processing pipelines
-
-You're now ready to start using OpenHCS! Proceed to the next section to learn about the basic interface.
-
-----------------------------
-
-Updating OpenHCS
----------------
-
-To update to the latest version of OpenHCS:
+Napari and Fiji/ImageJ are optional and can be installed separately:
 
 .. code-block:: bash
 
-   pip install --upgrade openhcs[all]
+   python -m pip install "openhcs[gui,napari]"
+   python -m pip install "openhcs[gui,fiji]"
+   python -m pip install "openhcs[gui,viz]"  # both viewers
 
-It's recommended to check for updates periodically to get the latest features and bug fixes.
+GPU support
+-----------
+
+Only install the GPU extra on a system with a compatible CUDA 12 environment:
+
+.. code-block:: bash
+
+   python -m pip install "openhcs[gui,gpu]"
+
+A CPU-only installation is the normal ``openhcs[gui]`` installation without
+the ``gpu`` extra. Do not use ``--no-deps``: OpenHCS requires its declared core
+dependencies even when CUDA libraries are absent.
+
+First launch
+------------
+
+The main window provides:
+
+1. the Plate Manager for microscopy datasets;
+2. the Pipeline Editor for processing steps;
+3. compilation and execution controls;
+4. progress, logs, and optional viewer integration.
+
+Start with a representative one- or two-well subset. Add the plate, construct
+or import a pipeline, compile it, and inspect any reported source or artifact
+errors before executing the full screen.
+
+Updating
+--------
+
+Update the installed capabilities you use rather than installing every optional
+backend:
+
+.. code-block:: bash
+
+   python -m pip install --upgrade "openhcs[gui]"
+
+See :doc:`../getting_started/getting_started` for CellProfiler import and the
+current programmatic declaration boundary.

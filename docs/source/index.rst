@@ -1,115 +1,100 @@
-Welcome to OpenHCS Documentation
-=================================
+OpenHCS documentation
+=====================
 
-OpenHCS is a bioimage analysis platform for high-content screening datasets. It provides unified access to Python image processing libraries with automatic GPU acceleration and memory management for large-scale microscopy data analysis.
+OpenHCS is a bioimage-analysis platform for high-content screening. It turns
+pipeline declarations into validated, per-plate execution plans and runs them
+across microscopy datasets using CPU or GPU processing libraries.
 
-For Biologists
---------
-Want to get started with using OpenHCS without dealing with technical details? Check out :doc:`guide_for_biologists/index`.
+Choose a path
+-------------
 
-Overview
---------
+**Using OpenHCS**
+  Start with :doc:`getting_started/getting_started`, then use the
+  :doc:`user_guide/index` for task-oriented workflows.
 
-OpenHCS addresses the computational challenges of high-content screening by providing:
+**Understanding the model**
+  Start with the :doc:`architecture/quick_start`, then use
+  :doc:`concepts/index` for pipelines, steps, dimensions, sources, and
+  processing semantics.
 
-- **Unified interface** to major Python image processing libraries (scikit-image, CuCIM, pyclesperanto)
-- **Automatic GPU acceleration** with seamless memory type conversion
-- **Scalable processing** for datasets ranging from single images to 100GB+ experiments
-- **Microscope format compatibility** supporting multiple vendor platforms
+**Extending or maintaining OpenHCS**
+  Use :doc:`development/index` for contribution workflows and
+  :doc:`architecture/index` for system boundaries and invariants.
 
-Quick Start
+Quick start
 -----------
+
+OpenHCS requires Python 3.11 or newer. Install and launch the desktop GUI with:
 
 .. code-block:: bash
 
-    # Install OpenHCS with desktop GUI
-    pip install "openhcs[gui]"
-    openhcs-gui
+   python -m pip install "openhcs[gui]"
+   openhcs
 
-    # Or install with terminal interface (for remote/SSH use)
-    pip install "openhcs[tui]"
-    openhcs-tui
+Viewer integrations are optional:
 
-For complete installation and basic examples, see :doc:`getting_started/getting_started`.
+.. code-block:: bash
 
-Core Capabilities
------------------
+   python -m pip install "openhcs[gui,napari]"  # Napari
+   python -m pip install "openhcs[gui,fiji]"    # Fiji/ImageJ
+   python -m pip install "openhcs[gui,viz]"     # Both
 
-**Library Integration**
-  Seamless access to scikit-image, CuCIM, and pyclesperanto through unified 3D array interface
+The Textual terminal interface is deprecated and is not part of the published
+package.
 
-**GPU Acceleration**
-  Automatic memory type conversion between NumPy, CuPy, PyTorch, and pyclesperanto arrays
+System at a glance
+------------------
 
-**Scalable Processing**
-  Parallel execution across wells and sites with intelligent memory management
+OpenHCS uses ordinary Python declarations at its public boundary:
 
-**Format Compatibility**
-  Support for multiple microscope platforms including ImageXpress and Opera Phenix
+.. code-block:: text
 
-**Storage Flexibility**
-  Virtual file system with memory, disk, and compressed Zarr backends
+   PipelineConfig + list[FunctionStep]
+       -> ObjectState resolution
+       -> StepSnapshot + CompilationSession
+       -> typed CompiledStepPlan objects
+       -> CompiledExecutionBundle
+       -> runtime values, artifacts, and materialized outputs
 
-**Real-Time Visualization**
-  Automatic napari streaming with materialization-aware filtering for monitoring pipeline progress
+CellProfiler ``.cppipe`` files lower directly into the same
+``PipelineConfig`` and ``FunctionStep`` declarations. The compiler resolves
+configuration once and derives source, artifact, memory, and execution plans
+from the authoritative declarations.
 
-**Analysis Functions**
-  Specialized tools for cell counting, neurite tracing, and morphological analysis
-
-Documentation Structure
-======================
-
-**New to OpenHCS?** Follow this learning path:
-
-1. **Getting Started**: :doc:`getting_started/getting_started` - Installation and basic examples
-2. **Core Concepts**: :doc:`concepts/index` - Understanding pipelines, steps, and data organization
-3. **Function Library**: :doc:`concepts/function_library` - Available processing functions and backends
-4. **User Guide**: :doc:`user_guide/index` - Detailed usage patterns and workflows
-5. **Integration Guides**: :doc:`guides/index` - System integration and advanced topics
-
-**API Reference**: :doc:`api/index` - Class documentation and technical reference
-
+Documentation
+-------------
 
 .. toctree::
    :maxdepth: 2
-   :caption: Guide for Biologists
+   :caption: Getting started
 
+   getting_started/getting_started
    guide_for_biologists/index
 
 .. toctree::
    :maxdepth: 2
-   :caption: Getting Started
-
-   getting_started/getting_started
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Core Concepts
+   :caption: Concepts
 
    concepts/index
 
 .. toctree::
    :maxdepth: 2
-   :caption: User Guide
+   :caption: User guide
 
    user_guide/index
 
 .. toctree::
    :maxdepth: 2
-   :caption: Integration Guides
+   :caption: Integration guides
 
    guides/index
 
 .. toctree::
    :maxdepth: 2
-   :caption: API Reference
+   :caption: API and architecture
 
    api/index
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Architecture Reference
-
+   architecture/quick_start
    architecture/index
 
 .. toctree::
@@ -117,21 +102,16 @@ Documentation Structure
    :caption: Development
 
    development/index
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Reference
-
    reference/index
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Appendices
-
    appendices/index
 
-Indices and tables
-==================
+.. toctree::
+   :hidden:
+
+   installation
+
+Indices
+-------
 
 * :ref:`genindex`
 * :ref:`modindex`

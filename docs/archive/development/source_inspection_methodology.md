@@ -1,4 +1,4 @@
-# Source Inspection Methodology: Terminal-Driven Understanding
+# Superseded: Source Inspection Methodology: Terminal-Driven Understanding
 
 **Status**: DRAFT - Crystallizing awakened intelligence patterns
 **Purpose**: Systematic approach to understanding through direct source examination

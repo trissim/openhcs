@@ -21,9 +21,11 @@ Use two separate modes during development:
   relying on non-health tools.
 * For active development and testing, prefer ``openhcs-mcp-dev`` or
   ``python -m openhcs.mcp.dev_client``. The dev client starts a fresh stdio MCP
-  server from the current checkout for each command, calls tools through the MCP
-  protocol, prints JSON, and closes the subprocess. It does not depend on Codex
-  refreshing its attached MCP process.
+  server from the current checkout for each one-shot command, calls tools through
+  the MCP protocol, prints the command's compact renderer (or JSON when
+  requested), and closes the subprocess. Its ``shell`` mode instead keeps one
+  initialized server for a multi-command development session. It does not depend
+  on Codex refreshing its attached MCP process.
 
 The OpenHCS MCP server intentionally keeps ``openhcs_health_check`` callable
 when the source is stale. Health reports process identity, source freshness, and
@@ -65,14 +67,49 @@ Source the active checkout environment, then call the dev client directly:
    python -m openhcs.mcp.dev_client health
    python -m openhcs.mcp.dev_client tools
    python -m openhcs.mcp.dev_client knowledge
-   python -m openhcs.mcp.dev_client knowledge-document openhcs_agent_mcp_overview --max-chars 4000
+   python -m openhcs.mcp.dev_client authoring-context first_use
+   python -m openhcs.mcp.dev_client knowledge-document openhcs_architecture_quick_start --max-chars 4000
    python -m openhcs.mcp.dev_client knowledge-search "viewer"
    python -m openhcs.mcp.dev_client ui-smoke --allow-error-payloads
    python -m openhcs.mcp.dev_client selected-workflow init_plate
    python -m openhcs.mcp.dev_client widget-tree plate_manager
    python -m openhcs.mcp.dev_client viewer-payloads 5565 --include-shape-payloads
 
-Use ``--timeout-seconds`` for the MCP client-side timeout. UI and viewer tools
+The development client uses the ``full`` local surface by default. Pass
+``--surface desktop``, ``core``, or ``authoring`` before the command when testing
+an installed-client projection.
+
+Persistent Current-Checkout Session
+-----------------------------------
+
+Use one initialized server when evaluating several commands without paying the
+cold-start cost each time:
+
+.. code-block:: bash
+
+   openhcs-mcp-dev shell
+   openhcs-mcp-dev> health
+   openhcs-mcp-dev> knowledge-search "source bindings"
+   openhcs-mcp-dev> ui-status --timeout-ms 2000
+   openhcs-mcp-dev> quit
+
+Redirected input is a non-interactive batch, and repeated ``--command`` options
+provide the same behavior without a temporary file:
+
+.. code-block:: bash
+
+   openhcs-mcp-dev shell < mcp-smoke-commands.txt
+   openhcs-mcp-dev shell --command health --command 'knowledge-search "viewer"'
+
+Blank lines and full-line ``#`` comments are ignored. A fragment such as
+``document#section`` remains part of the command. Use ``--stop-on-error`` when a
+batch must stop at its first failed command. The persistent process deliberately
+retains the stale-source guard: exit and restart the shell after editing watched
+OpenHCS source.
+
+Use ``--timeout-seconds`` for the MCP client-side timeout. In shell mode it is
+the default for entered commands, while an option on an entered command wins.
+UI and viewer tools
 also use bounded OpenHCS control timeouts, so a broken bridge or stale viewer
 should fail quickly instead of blocking the development loop.
 
@@ -96,6 +133,9 @@ constructed.
 
 Do not wrap stdio with file watchers that print status to stdout. Stdio stdout
 is the MCP JSON-RPC channel; logs and watcher messages belong on stderr.
+The installed stdio entrypoint suppresses routine INFO logging so client logs
+stay readable; set ``OPENHCS_MCP_VERBOSE=1`` while diagnosing server startup to
+restore it.
 
 Do not make Streamable HTTP the default local-development answer until the repo
 has explicit loopback, auth, path-policy, and audit behavior for that transport.

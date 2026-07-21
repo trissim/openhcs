@@ -26,8 +26,8 @@ File Format Specifications
 - ThermoFisher CX5 format (EDDU_CX5)
 - MetaXpress format (EDDU_metaxpress)
 
-Example Files
-------------
+Example files
+-------------
 
 Download complete example configuration files:
 

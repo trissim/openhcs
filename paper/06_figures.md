@@ -20,24 +20,30 @@ Suggested panels:
 - B. Typical analysis fragments across tools and files.
 - C. OpenHCS keeps sources, workflows, viewers, functions, outputs, and workers attached to one analysis.
 
-## Figure 2. CellProfiler Preservation, Parity, And Speed
+## Figure 2. CellProfiler Biological-Workflow Preservation And Speed
 
-This should combine the old validation and performance figures into one main quantitative figure. The reader should see that performance is reported only after preservation/parity is established.
+This should combine biological examples, validation, and performance in one main quantitative figure. The reader should see representative official CellProfiler images and outputs before the aggregate metrics, and should see that performance is reported only after preservation is established.
 
 The figure starts with `.cppipe` import: loading and metadata modules become source mappings, processing modules become CellProfiler-compatible workflow steps, and images, objects, measurements, relationships, grids, and saved files become named outputs. Native CellProfiler provides the reference run. OpenHCS produces the comparison run.
 
 The quantitative panels should use the current `official30_well_throughput` benchmark figures as provisional data sources.
 
+The current presentation CSVs include a wound-healing native duration equal to the configured 900-s timeout ceiling without an explicit completion flag. Regenerate aggregate timing and projected-throughput panels from the 29 completed native timings until that case is rerun with explicit status metadata. The 30-workflow output-equivalence panel remains unchanged.
+
 Suggested panels:
 
-- A. `.cppipe` import and native CellProfiler parity comparison pipeline.
-- B. Output parity across the 30-workflow benchmark corpus.
-- C. Module coverage: explicitly tested modules, shared-abstraction coverage, and not-covered modules.
-- D. Single-sample, one-thread/core, CPU-only speedup distribution showing every tested workflow at least 4x faster.
-- E. Persistent-worker throughput across wells/workers.
-- F. RAM or worker-scaling tradeoff, likely supplementary if space is tight.
+- A. Representative official CellProfiler biological source images spanning at least one cellular assay and one morphologically distinct assay such as wound healing, yeast, or worm phenotyping.
+- B. Native CellProfiler outputs, OpenHCS outputs, and difference views for the representative images. Rerun these selected workflows with image-output comparison enabled; do not infer image equivalence from the value-output corpus result.
+- C. `.cppipe` import and native CellProfiler equivalence comparison pipeline.
+- D. Output equivalence across the 30-workflow corpus.
+- E. Single-sample, one-thread/core, CPU-only speedup distribution showing every tested workflow at least 4x faster; timeout-censored cases must be marked rather than plotted as completed native runtimes.
+- F. Module coverage: explicitly tested modules, shared-abstraction coverage, and not-covered modules.
+- G. Persistent-worker throughput, labeled as measured OpenHCS throughput with projected comparison to serial native CellProfiler execution.
+- H. RAM or worker-scaling tradeoff, likely supplementary if space is tight.
 
-**Main message:** OpenHCS preserves trusted CellProfiler workflows, proves output parity across the benchmark corpus, and then shows a conservative speed floor plus throughput scaling.
+Every biological image and workflow panel must credit the official CellProfiler source collection and the original dataset citation where available. The corpus comprises 22 official CellProfiler 3 examples, seven official CellProfiler tutorial workflows, and one CellProfiler 4 benchmark-supplement workflow.
+
+**Main message:** OpenHCS preserves established CellProfiler analyses on biological image data and reduces their execution time under declared benchmark conditions.
 
 ## Figure 3. One Editable Workflow Across GUI, Code, Viewers, Functions, And Workers
 
@@ -68,7 +74,7 @@ Use supplement for details that are real but too narrow for main figures.
 
 ## Supplementary Table 1. Benchmark Corpus
 
-Each row should list one `.cppipe` workflow, source category, source URL or citation, dataset source, assay family, semantic pressure, output pressure, CellProfiler modules used, native CellProfiler runtime, OpenHCS execution runtime, total OpenHCS runtime, speedup, parity status, and notes. Parity status and speedup should remain separate so performance is not reported without correctness context.
+Each row should list one `.cppipe` workflow, official CellProfiler source collection, immutable source revision, source URL, original dataset citation where available, assay family, semantic pressure, output pressure, CellProfiler modules used, native CellProfiler runtime or timeout status, OpenHCS execution runtime, total OpenHCS runtime, speedup, equivalence status, and notes. Equivalence, timing, and timeout status should remain separate.
 
 ## Supplementary Table 2. CellProfiler Module Coverage
 

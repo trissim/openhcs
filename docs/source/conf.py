@@ -13,8 +13,12 @@
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
 import os
+from pathlib import Path
 import sys
-sys.path.insert(0, os.path.abspath('../..'))
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from openhcs import __version__ as release
 
 # Mock imports for Read the Docs
 import sphinx.ext.autodoc
@@ -55,11 +59,8 @@ project = 'OpenHCS'
 copyright = '2025, trissim'
 author = 'trissim'
 
-# The full version, including alpha/beta/rc tags
-release = '0.1.0'
-
 # The short X.Y version
-version = '0.1'
+version = ".".join(release.split(".")[:2])
 
 # -- General configuration ---------------------------------------------------
 
@@ -71,7 +72,6 @@ extensions = [
     'sphinx.ext.viewcode',
     'sphinx.ext.napoleon',
     'sphinx.ext.intersphinx',
-    'sphinx.ext.autosummary',
     'sphinx.ext.mathjax',
     'sphinx.ext.doctest',
     'sphinx_rtd_theme',
@@ -123,6 +123,17 @@ napoleon_type_aliases = None
 napoleon_attr_annotations = True
 
 # Intersphinx settings
+local_intersphinx_root = os.environ.get('OPENHCS_LOCAL_INTERSPHINX_ROOT')
+
+
+def first_party_inventory(owner: str):
+    """Use the current CI-built inventory when available, else fetch remotely."""
+    if not local_intersphinx_root:
+        return None
+    inventory = Path(local_intersphinx_root) / f'owner-docs-{owner}' / 'objects.inv'
+    return str(inventory) if inventory.is_file() else None
+
+
 intersphinx_mapping = {
     'python': ('https://docs.python.org/3', None),
     'numpy': ('https://numpy.org/doc/stable/', None),
@@ -130,6 +141,26 @@ intersphinx_mapping = {
     'matplotlib': ('https://matplotlib.org/stable/', None),
     'pandas': ('https://pandas.pydata.org/pandas-docs/stable/', None),
     'scikit-image': ('https://scikit-image.org/docs/stable/', None),
+    'objectstate': (
+        'https://objectstate.readthedocs.io/en/latest/',
+        first_party_inventory('objectstate'),
+    ),
+    'arraybridge': (
+        'https://arraybridge.readthedocs.io/en/latest/',
+        first_party_inventory('arraybridge'),
+    ),
+    'metaclass-registry': (
+        'https://metaclass-registry.readthedocs.io/en/latest/',
+        first_party_inventory('metaclass-registry'),
+    ),
+    'polystore': (
+        'https://polystore.readthedocs.io/en/latest/',
+        first_party_inventory('polystore'),
+    ),
+    'pyqt-reactive': (
+        'https://pyqt-reactive.readthedocs.io/en/latest/',
+        first_party_inventory('pyqt-reactive'),
+    ),
 }
 
 # Autodoc settings

@@ -870,4 +870,3 @@ When implementing code editing for new UI components, use the **CodeEditorFormUp
 
 - :doc:`../architecture/code_ui_interconversion` - System architecture and design
 - :doc:`../user_guide/code_ui_editing` - User guide for bidirectional editing
-

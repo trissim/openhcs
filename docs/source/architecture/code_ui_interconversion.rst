@@ -14,7 +14,10 @@ The practical model is a reflected object system. Objects that are reflected in
 the UI are backed by typed ObjectState scopes, fields, or code-document
 projections. A user or agent can edit those objects through form controls,
 field-level ObjectState tools, or code mode, and the accepted edit applies back
-to the running UI state with revision and snapshot protection.
+to the running UI state. Code-document apply has revision, confirmation, and
+snapshot protection. Field-level mutation is a narrower operation with a
+request token but no base-revision guard, so it requires a fresh read and
+immediate post-mutation verification.
 
 This lets a user or agent:
 
@@ -55,6 +58,19 @@ A code document is a named projection of an ObjectState-backed UI surface. The
 Plate Manager orchestrator document, for example, projects selected plate paths,
 pipeline data, and relevant configs into pycodified Python.
 
+Every actual Code action has a nominal semantic document owned by the edited
+surface. Pipeline code uses ``PipelineDocument``; configuration and individual
+step editors use their config/step document authorities; Plate Manager owns a
+multi-plate aggregate that composes per-plate pipeline values. Generic window
+drivers, bridge DTOs, and editor widgets only project those documents.
+
+Coverage is declaration-driven. Adding a Code action must add or inherit its
+document contract at the same owning declaration boundary; generic catalogs
+discover registered providers. Do not add a second button-to-document table,
+copied export-name list, type switch, or fallback chain. A document's field
+names, rendering, parsing, validation, and apply semantics come from that one
+nominal owner.
+
 Code mode is therefore a live editing surface over the same UI object graph. It
 is useful when structured Python is clearer than clicking through nested forms,
 but it still participates in ObjectState revision checks, validation,
@@ -86,6 +102,15 @@ ObjectState stores UI-editable values in typed scopes. Field projections expose:
 Use ObjectState field mutation for precise field-level edits. Use code
 documents when pipeline/config changes are easier to review as Python.
 
+These two write paths do not have identical concurrency contracts. A code
+document apply requires its observed base revision, has an explicit confirmation
+policy, rejects time-travel edits unless opted in, and returns pre/post/undo
+snapshot facts. A field mutation has an idempotency request token but does not
+carry a base revision. Before a field mutation, confirm the UI is at branch head,
+re-read the exact field and scope, apply one small approved change, then re-read
+the field and related state surface. Prefer a code document when several fields
+must remain atomic or concurrent UI edits are plausible.
+
 UI-Owned Workflow
 -----------------
 
@@ -93,13 +118,18 @@ When the running UI should visibly own the workflow, agents should keep all
 state changes inside the UI bridge path:
 
 1. Discover the bridge and list state surfaces.
-2. Read the Plate Manager state surface.
-3. Read the relevant code document.
-4. Validate edited code.
-5. Apply with the current revision token.
-6. Dispatch init, compile, or run through the selected-plate workflow action.
-7. Poll state surfaces and operation status.
-8. Inspect selected/source/output plate files and viewer payloads.
+2. Read ``ui_live_overview.state`` for the current ObjectState token, revision,
+   snapshot, windows, statuses, and operations contributed by registered
+   providers.
+3. Read the Plate Manager state surface.
+4. Read the relevant code document.
+5. Validate edited code.
+6. Show the intended change and obtain approval.
+7. Re-read the target, then apply with the fresh revision token and the approved
+   confirmation policy.
+8. Dispatch init, compile, or run with the current selection revision token.
+9. Poll state surfaces and operation status.
+10. Inspect selected/source/output plate files and viewer payloads.
 
 This preserves Plate Manager rows, ObjectState snapshots, selected state,
 status projection, and output auto-add behavior.
@@ -138,6 +168,8 @@ When editing UI-owned OpenHCS workflows:
 * Poll state surfaces after applying or dispatching workflow actions.
 * Use snapshots, branches, and time-travel-head tools to understand provenance
   before mutating state.
+* Do not treat a field-mutation request token as a revision token; re-read before
+  and after that narrower mutation path.
 * Prefer semantic UI actions and code documents over generic widget actions.
 
 Related Knowledge
@@ -146,7 +178,7 @@ Related Knowledge
 Read these documents for the adjacent models:
 
 * ``openhcs_core_model``
-* ``openhcs_configuration_framework``
+* ``openhcs_system_overview``
 * ``openhcs_pipeline_compilation_system``
 * ``openhcs_runtime_system_assembly_rules``
 * ``openhcs_domain_expert_onboarding``

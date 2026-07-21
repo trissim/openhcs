@@ -4,77 +4,118 @@ Glossary
 .. glossary::
    :sorted:
 
-   Ashlar
-      A Python library for stitching microscopy images with subpixel precision.
+   Artifact
+      A typed non-main-flow result or dependency, such as measurements, object
+      labels, relationships, tables, positions, or files.
 
-   Best Focus
-      The plane in a Z-stack that has the highest focus quality according to a focus metric.
+   Artifact contract
+      A callable or module declaration describing named artifact inputs and
+      outputs. The compiler uses it to build producer/consumer dependencies.
+
+   Callable contract
+      The compiler-visible metadata for a processing callable: memory types,
+      locality, required components, runtime-bound parameters, artifacts,
+      adapters, and execution scope.
 
    Channel
-      A specific wavelength or color channel in a microscopy image, often corresponding to a specific fluorophore or stain.
+      A wavelength or contrast channel, often associated with a fluorophore,
+      stain, or transmitted-light acquisition.
 
-   Composite Image
-      An image created by combining multiple channels, often with different weights.
+   Compiled execution bundle
+      The validated worker-safe steps, frozen processing contexts, and
+      environment decisions consumed by plate execution.
 
-   Focus Metric
-      A mathematical measure of image focus quality, such as normalized variance, Laplacian energy, or Tenengrad variance.
+   Compiled step plan
+      The typed compiler-owned plan for one step on one execution axis. Runtime
+      code reads it but does not repeat its inference.
 
-   Grid Size
-      The number of tiles in the x and y directions in a microscopy acquisition.
+   Compilation session
+      The cross-step authority for source, artifact, and plan state while a
+      pipeline is compiled.
 
-   ImageXpress
-      A high-content screening platform from Molecular Devices that generates microscopy images with a specific file naming convention.
+   Execution axis
+      The component that partitions independent processing contexts, normally
+      well.
 
-   Max Projection
-      A method of combining a Z-stack by taking the maximum intensity value at each pixel position across all planes.
+   Function pattern
+      A callable, a callable plus keyword arguments, a chain, or a dictionary
+      that routes compiled group keys to callables.
 
-   Mean Projection
-      A method of combining a Z-stack by taking the average intensity value at each pixel position across all planes.
+   Group by
+      A processing declaration that partitions already assembled arrays. It
+      controls fan-out only when a dictionary function pattern is used.
 
-   Metadata
-      Information about the microscopy acquisition, such as pixel size, grid dimensions, and acquisition settings.
+   Main flow
+      The primary image/result stream passed from one pipeline step to the next.
+      Named artifacts are a separate dependency mechanism.
 
-   Microscope Handler
-      A component in EZStitcher that handles microscope-specific functionality, such as filename parsing and metadata extraction.
+   Materialization
+      Persisting a declared result to a storage backend or streaming backend.
+      Intermediate runtime flow does not imply persistent materialization.
 
-   Opera Phenix
-      A high-content screening platform from PerkinElmer that generates microscopy images with a specific file naming convention.
+   Measurement
+      A typed quantitative result associated with images, objects, relationships,
+      wells, or a plate.
 
-   Pixel Size
-      The physical size of a pixel in the microscopy image, typically measured in micrometers.
+   Microscope handler
+      A registered source-format declaration that owns detection, parsing,
+      metadata projection, virtual-workspace behavior, and compatible backends.
 
-   Plate
-      A container for samples in high-content screening, typically with multiple wells arranged in a grid.
+   Module artifact contract
+      The artifact semantics declared by a module family, including a lowered
+      CellProfiler module.
 
-   Position Generation
-      The process of determining the relative positions of tiles for stitching.
+   Nominal registry
+      A registry rooted at an owning base declaration. Generic consumers query
+      the root registry instead of maintaining copied name tables.
 
-   Preprocessing
-      Image processing operations applied to individual tiles before stitching, such as background subtraction or histogram equalization.
+   ObjectState
+      The first-party system that owns editable object state, scope-aware lazy
+      configuration resolution, snapshots, provenance, and time travel.
 
-   Reference Channel
-      The channel used for position generation in stitching.
+   PipelineConfig
+      The inheritable configuration declaration paired with an ordered list of
+      ``FunctionStep`` objects.
+
+   Processing contract
+      The semantic locality of a callable, such as plane-local ``PURE_2D`` or
+      whole-stack ``PURE_3D``. It is independent of array memory type.
+
+   Runtime adapter
+      A declared boundary that converts typed compiler/runtime values into the
+      invocation shape expected by a callable.
+
+   Runtime value
+      A typed value used during execution, including images, labels,
+      measurements, relationships, and other artifact payloads.
 
    Site
-      A specific field of view or tile in a microscopy acquisition.
+      A field of view or tile acquired within a well.
 
-   Stitching
-      The process of combining multiple overlapping images into a single larger image.
+   Source binding
+      A declaration that connects a callable's semantic input to a source or
+      artifact plan.
 
-   Subpixel Precision
-      Alignment of images with precision finer than a single pixel, achieved through interpolation.
+   Source universe
+      The compiler's typed set of source identities and coordinates available
+      to satisfy a step.
 
-   Tile
-      A single image in a grid of images that will be stitched together.
+   Source workspace projection
+      The virtual source view exposed by a microscope handler and PolyStore to
+      initialization and compilation.
 
-   Tile Overlap
-      The percentage of overlap between adjacent tiles in a microscopy acquisition.
+   Variable components
+      The declaration that says what each position on the transported third
+      array axis means, such as site, channel, or Z.
+
+   Virtual workspace
+      A source/reference projection that gives disparate storage backends a
+      common path-like organization without requiring local copies.
 
    Well
-      A specific location in a plate where a sample is placed, typically identified by a letter-number combination (e.g., A01).
+      A sample location on a plate, normally identified by a row and column such
+      as ``A01``.
 
-   Z-Stack
-      A series of images taken at different focal planes along the z-axis, capturing 3D information about a sample.
-
-   Z-Index
-      The index or position of a plane in a Z-stack.
+   Z-stack
+      Images acquired at multiple focal depths for the same otherwise fixed
+      coordinate.

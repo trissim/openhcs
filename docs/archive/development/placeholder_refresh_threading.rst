@@ -261,4 +261,3 @@ Common Gotchas
 - **Don't update UI from worker threads**: Use signals to marshal results back to main thread
 - **Don't assume GlobalPipelineConfig exists**: Check for None before restoring
 - **Generation numbers prevent stale updates**: Worker threads may complete out of order; generation numbers ensure only latest results are applied
-

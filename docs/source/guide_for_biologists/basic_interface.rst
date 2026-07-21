@@ -1,95 +1,101 @@
-Basic Interface
-===========================
+Desktop interface
+=================
 
-This page is a visual and practical guide to the OpenHCS user interface. It is designed for biologists and other non-technical users who want to quickly understand how to navigate and use the main features of OpenHCS. Use this guide as both a quick reference and a step-by-step introduction.
+The OpenHCS main window organizes plate, pipeline, configuration, diagnostics,
+and analysis workflows. A ``?`` control beside a field opens help derived from
+the current declaration when available.
 
+Interface map
+-------------
 
-.. contents::
-   :local:
-   :depth: 2
+The desktop is a set of ObjectState-backed workflow windows, not one giant form:
 
+.. code-block:: text
 
-Note: Clicking the “?” icon next to most OpenHCS features will provide a description of that feature
+   Main window
+       |- Plate Manager          datasets, selection, init/compile/run
+       |- Pipeline Editor        PipelineConfig + ordered FunctionStep list
+       |    `- Step editors      callable pattern + step-local config
+       |- Global Configuration   application/session defaults
+       |- Image/metadata tools   source and output inspection
+       |- Log/progress/debug     operation status and diagnostics
+       `- Analysis/tools         consolidation, layouts, custom functions
 
-----------------------------
-
-Main Window Overview
---------------------
-
-The main window that opens when you launch OpenHCS.
-
-*Main Window Overview.*
- 
-.. figure:: ../_static/Main_menu.png
-   :alt: Main Window Overview
-
-   *Tip: OpenHCS is designed to be efficient in performance and memory usage. If your computer is struggling and these graphs showcase high usage, something might be wrong.*
-
-
-----------------------------
+The Plate Manager is the operational hub. Other windows edit or inspect the
+selected plate, pipeline, step, source projection, or application config. A
+Napari or Fiji viewer is a separate runtime window launched only when requested.
+In the supported PyQt desktop shell, Plate Manager and the ZMQ process manager
+occupy the left workspace, Pipeline Editor occupies the right workspace, and
+the system monitor sits below them in the outer splitter. Managed editors,
+configuration windows, logs, and tools open or focus around that embedded
+workspace. The retained Textual source is not a second supported MCP-attached UI.
 
 Plate Manager
 -------------
 
-The Plate Manager helps you organize and view your experimental plates and wells.
-
-.. figure:: ../_static/plate_viewer.png
-   :alt: Plate Manager
-
-   *Note: Options that can't be used at that moment are greyed out. For example, you can't compile a pipeline if you don't have any steps in it yet.*
-
-
-----------------------------
+Plate Manager is the starting point for a dataset. Add a local or configured
+remote plate, initialize it, and select the plate before editing or running its
+pipeline. Initialization discovers the microscope/source format and component
+metadata. Compile and run actions are disabled until their prerequisites are
+met.
 
 Pipeline Editor
 ---------------
 
-The Pipeline Editor is where you build and customize your analysis workflows. It shows the pipeline for the currently selected plate.
+The editor shows the ordered steps for the selected plate. Add, remove, reorder,
+or edit a step; open the function-pattern editor to choose callables and
+parameters. The code projection contains the same ``PipelineConfig`` and
+``FunctionStep`` declarations and can be used to inspect or share the workflow.
 
-.. figure:: ../_static/pipeline_editor.png
-   :alt: Pipeline Editor
+The Pipeline Editor code document is the complete ``PipelineDocument``:
+``pipeline_config`` plus ``pipeline_steps``. An individual step or config editor
+has its own smaller nominal code document. Code mode is not a parallel script
+format; applying it updates the same live ObjectState-backed object shown by the
+forms.
 
-*Tip: You can share workflows by clicking the "Code" button and copying the generated code. Anyone else can paste it into their own code viewer and load your pipeline.*
+Image and metadata browsing
+---------------------------
 
-Each step can be edited in the steps setting editor. Learn more about this in the :doc:`intro_stitching`.
+The Image Browser filters source and output references by discovered plate
+components. Viewer actions require the corresponding Napari or Fiji optional
+dependency. Metadata views show the source projection used by compilation; fix
+incorrect source metadata before running a pipeline.
 
-----------------------------
+Configuration and diagnostics
+-----------------------------
 
-Metadata menu
----------------------
+Global Configuration sets application defaults. Plate/pipeline and step forms
+can override inheritable fields. The Log Viewer, progress surfaces, debug
+inspector, and optional system monitor help distinguish initialization,
+compilation, and execution failures.
 
-The Metadata menu has 2 tabs: "Image Browser" and "Metadata"
+Tools
+-----
 
-`````````````
-Image Browser
-`````````````
-The Image Browser lets you look at your raw and processed images.
+The Tools menu includes custom-function management and analysis consolidation.
+Viewer and LLM features appear only when their dependencies/services are
+configured.
 
-.. figure:: ../_static/image_browser.png
-   :alt: Image Browser
+Agent navigation
+----------------
 
-*Here, you can explore your images prior to processing, using either Napari or Fiji. Simply double-click on an image to open it in the viewer.*
+An attached MCP agent should navigate semantically:
 
-`````````````
-Metadata
-`````````````
-The Metadata tab shows information about your images and experiments.
+1. list running windows and ObjectState scopes;
+2. read the Plate Manager state surface to identify selected/source/output rows;
+3. open or focus the relevant window/scope;
+4. list its code documents or fields rather than guessing widget labels;
+5. validate code, then apply with the current revision token;
+6. dispatch semantic init/compile/run actions and poll operation/state surfaces.
 
-.. figure:: ../_static/metadata_viewer.png
-   :alt: Metadata Viewer
+Window snapshots and the widget tree are useful for orientation or diagnosing a
+missing semantic surface. They are not configuration authorities. The live
+ObjectState field help, code documents, state surfaces, and declared UI actions
+own meaning.
 
-*In this tab, you can view and edit metadata associated with your images, such as acquisition settings, experimental conditions, and annotations.*
+Do not confuse the **desktop window layout** with an **experimental plate
+layout**. The latter maps wells to treatments, controls, concentrations, and
+replicates after measurements have been produced.
 
------------------------
-Global Configuration
------------------------
-The Global Configuration menu allows you to set application-wide settings.
-:doc:`configuration_reference` explains this in detail.
-
-
--------------------------
-
-Conclusion
-------------------------
-
-This guide has provided an overview of the OpenHCS user interface, including the Main Window, Plate Manager, Pipeline Editor, and Metadata menu. With this knowledge, you should be able to navigate OpenHCS effectively and utilize its features for your bioimage analysis needs. For more detailed instructions on specific workflows, refer to the other guides in this series.
+Continue with :doc:`intro_stitching` and
+:doc:`configuration_reference`.

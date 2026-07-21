@@ -1,6 +1,18 @@
-# CellProfiler / OpenHCS Runtime Unification Plan
+# Superseded: CellProfiler / OpenHCS Runtime Unification Plan
 
 ## Status And Scope
+
+### Sequencing Override For Pending Phase 3 (2026-07-13)
+
+Do not implement further Phase 3 parity fixes against the current runtime
+callable, execution-strategy, adapter-cache, or CellProfiler projection layers.
+Before continuing the pending official30 ZMQ, export, UI, and Napari work, read
+and implement
+[the runtime/import/dispatch consolidation plan](cellprofiler_runtime_execution_import_dispatch_consolidation_plan.md)
+Phases 0 through 5. Then run that plan's Phase 6 once against the surviving
+architecture; its result also discharges this plan's Phase 3 acceptance gate.
+This ordering prevents repairing parity on layers that the consolidation
+deletes and then repairing it a second time after cutover.
 
 This plan is the implementation contract for removing the parallel CellProfiler
 pipeline runtime. It is based on a dry run through the current compiler,
@@ -156,29 +168,29 @@ does not rebuild or match contracts independently in each planner pass.
 
 The existing hierarchy is authoritative:
 
-- `openhcs/core/pipeline/step_config_universe.py::StepConfigUniverse` resolves
-  registered step configuration types.
-- ObjectState's existing lazy MRO resolver resolves pipeline source defaults,
-  pipeline step defaults, and sparse step overrides into the
-  `StepSourceBindingsConfig` captured by that universe.
-- `CallableRuntimeConfig` and
-  `StepConfigUniverse.runtime_parameter_bindings` already implement callable
-  configuration injection. This plan adds no CellProfiler mirror of that
-  mechanism.
+- ObjectState's existing lazy MRO resolver resolves pipeline defaults and sparse
+  step overrides into a complete resolved `FunctionStep` before compilation.
+- `StepSnapshot` stores compiler identity plus that resolved step. The compiler
+  and path planner read `snapshot.step.processing_config`,
+  `snapshot.step.source_bindings`, and every other resolved config directly.
+- `CallableRuntimeConfig` remains the registered callable-configuration
+  injection authority. Compilation adds no CellProfiler mirror of config
+  inheritance or runtime parameter binding.
 
-The compiler consumes the resolved `StepSnapshot`. `StepSourceBindingsConfig`
-inherits every source declaration field from `SourceBindingsConfig`; the
-existing `global_pipeline_config` / lazy-dataclass factory projects every
-inherited dataclass field to the lower scope. Do not redeclare a manually
-selected subset of source fields on `StepSourceBindingsConfig`.
+`StepSourceBindingsConfig` inherits every source declaration field from
+`SourceBindingsConfig`; the existing `global_pipeline_config` / lazy-dataclass
+factory projects every inherited dataclass field to the lower scope. Do not
+redeclare a manually selected subset of source fields on
+`StepSourceBindingsConfig`, and do not copy resolved configs into a second
+snapshot carrier.
 
 Delete `StepSourceBindingsConfig.inherits_*`, `resolved_against`,
 `can_inherit_from`, `resolve_step_source_bindings`,
 `resolve_effective_step_source_bindings`,
 `_resolve_step_source_binding_defaults`, and their per-field comparison
-helpers. `StepConfigUniverse` already captures the ObjectState-resolved
-`StepSourceBindingsConfig` for each snapshot. The compiler and path planner use
-that exact resolved object. Change
+helpers. The ObjectState-resolved `FunctionStep` already owns the effective
+`StepSourceBindingsConfig`; the compiler and path planner use that exact object.
+Change
 `CompiledSourceBindingPlan.from_config(config, *, input_source)` to derive
 activation from `config.enabled` or
 `input_source is InputSource.PIPELINE_START`; the provider, compiler, and path
@@ -208,15 +220,24 @@ scoped operation only for keys returned by
 source component split remains explicitly unscoped rather than entering a
 fallback branch.
 
-The pipeline generator emits lazy configuration overrides only where the
+The importer emits lazy configuration overrides only where the
 source `.cppipe` differs from the inherited pipeline value.
 
-Delete the unused `ArtifactDeclarationStepContext.source_provenance: Any`
-field and its single copy in `CompileFunctionGroupAuthority.from_step_context`.
-Path planning never populates it, and no declaration consumer reads it. Replace
-the remaining `processing_config: Any | None` annotation with
-`ProcessingConfig | None` and validate the concrete type in `__post_init__`;
-the exact module/compiler boundary does not accept an untyped config payload.
+Pipeline-level ObjectState resolution runs exactly once before axis planning.
+`PipelineCompiler.initialize_step_plans_for_context` requires the resolved
+steps, their ObjectState map, and their `StepSnapshot` tuple. Delete the
+context-local step resolver and the `steps_already_resolved` switch; tests that
+exercise a lower compiler layer construct their `CompilationSession` from the
+same pipeline-resolved values rather than registering a second scope tree.
+
+`ArtifactDeclarationStepContext` owns only facts required to project artifact
+declarations: resolved `source_bindings`, exact `group_by`, exact
+`input_source`, available artifacts, available producers, and current main
+flow. It does not own `ProcessingConfig`. Delete the unused
+`source_provenance` and `processing_config` fields and their propagation.
+`CompileFunctionGroupAuthority.from_step_context` copies the exact
+`group_by`/`input_source` values needed by the provider rather than a broad
+config object.
 
 `PipelineImageSchema` is not retained. It currently exists because
 `SourceBindingsConfig` omits source-plane, stack, grouping, voxel-spacing,
@@ -589,9 +610,11 @@ projection, and deterministic ordinal/singleton default in its two methods:
   to `1`.
 
 The root knows none of those leaf facts. Import-time registry validation
-requires the strategy keys to equal `set(AllComponents)` exactly, so a new
-configured component requires one nominal projection leaf rather than entering
-a generic fallback. Delete direct-metadata probing on the root, two-pass
+requires the `strategy_key` enum members declared by the registered strategy
+types to equal `set(AllComponents)` exactly. The existing
+`EnumKeyedStrategyMixin` retains its JSON-safe enum-value registry keys, so a
+new configured component requires one nominal projection leaf rather than
+entering a generic fallback. Delete direct-metadata probing on the root, two-pass
 metadata/default traversal, MRO priority ordering, and the separate channel
 projection wrapper.
 
@@ -841,11 +864,13 @@ always measures the current ZMQ submission.
 | Pipeline and global options | Config inheritance | `GlobalPipelineConfig`, `PipelineConfig`, lazy registered configs |
 | Pattern grouping | Generic pattern normalization | `normalize_function_pattern`, `FunctionInvocationKey` |
 | Source universe and alias selection | Source-binding hierarchy | `SourceBindingsConfig`, `NamedSourceBinding`, resolved `StepSourceBindingsConfig` |
+| Resolved step configuration | ObjectState-resolved public step | `FunctionStep`, stored directly as `StepSnapshot.step` |
 | Execution sample selection | Config inheritance | `WellFilterConfig` |
 | Source file loading and leading-axis projection | Generic VFS reference and backend registry | `FileManagerLike`, `SourcePixelRef`, `VirtualWorkspaceBackend` |
 | Artifact identity and kind | Generic artifact model | `ArtifactSpec`, `ArtifactType`, `ArtifactSpecRef` |
 | Invocation artifact ABI | Existing module contract | `ModuleArtifactContractItem`, `ModuleArtifactContract` |
-| Cross-step availability | Generic declarations and graph | `InvocationArtifactDeclarations`, `ArtifactGraph` |
+| Required stack axes and allowed grouping | Generic callable contract | `CallableContract.required_variable_components`, `CallableContract.allowed_group_by` |
+| Cross-step availability | Nominal artifact-plan owners and graph | `ArtifactPlanKeySelector`, `CallableContract`, `ModuleArtifactContract`, `ArtifactGraph` |
 | CP setting interpretation | Nominal module declaration | `CellProfilerModule` leaf class and MRO |
 | CP setup/source lowering | Nominal setup module declaration | `SourceSetupCellProfilerModule.contribute_source_bindings` and `SourceBindingsConfig` |
 | CP callable ownership | Nominal module declaration | `CellProfilerModule.for_function_name`, `CellProfilerModule.require_callable` |
@@ -863,12 +888,12 @@ always measures the current ZMQ submission.
 
 ### Keep As Authorities
 
-- `ArtifactType`, `ArtifactSpec`, `ArtifactSpecRef`,
+- `ArtifactType`, `ArtifactSpec`, `ArtifactSpecRef`, `ArtifactPlanKeySelector`,
   `ArtifactSpecCollection`, and existing artifact relations.
 - `ModuleArtifactContractItem`, `ModuleArtifactContract`, and all existing
   contract partitions.
-- `ArtifactDeclarationStepContext`, `InvocationArtifactDeclarations`,
-  `InvocationContractPlan`, `InvocationContractProviderFactory`, and
+- `ArtifactDeclarationStepContext`, `InvocationContractPlan`,
+  `InvocationContractProviderFactory`, and
   `PipelineInvocationContractProviderAuthority`.
 - `ArtifactGraph`, `ArtifactSpecAccumulator`, and
   `extract_artifact_declarations`.
@@ -876,8 +901,8 @@ always measures the current ZMQ submission.
   `NormalizedFunctionPattern`, and `CompiledFunctionInvocation`.
 - `FunctionStep`, after removal of its hidden invocation-contract field.
 - `StepSnapshot`, after removal of its hidden invocation-contract field.
-- `StepConfigUniverse`, config inheritance, and the complete
-  `SourceBindingsConfig` source declaration.
+- ObjectState config inheritance, the resolved `FunctionStep` stored by
+  `StepSnapshot`, and the complete `SourceBindingsConfig` source declaration.
 - `ImagePayloadMetadata` as the runtime owner of resolved pixel layout,
   provenance, spatial, voxel, dtype, and mask facts.
 - `special_inputs` and `special_outputs` as callable ABI declarations.
@@ -951,10 +976,11 @@ always measures the current ZMQ submission.
   generated-module import/registration helpers disappear. Conversion already
   has the real FunctionSteps; fresh-source reconstruction belongs to the
   generic ZMQ acceptance path.
-- `GeneratedCPPipePipeline`, `GeneratedPipeline`, and `PipelineGenerator`
-  collapse into the direct import operation and its one final
-  `CellProfilerPipelineImportResult`. The abstract `CPPipePipelineArtifact`
-  field mirror and duplicate steps/config result disappear.
+- `GeneratedCPPipePipeline`, `GeneratedPipeline`, `PipelineGenerator`, and the
+  import request/result carrier hierarchy collapse into one pure translation
+  function returning the ordinary public declaration pair
+  `tuple[list[FunctionStep], PipelineConfig]`. No CP-specific result object
+  survives after translation.
 - `SetupModuleCompiler` and `SourceImageStackPlanDeclaration` collapse into
   `SourceSetupCellProfilerModule` declarations on the one existing module
   registry.
@@ -972,6 +998,52 @@ always measures the current ZMQ submission.
   specs already present on the compiled `ModuleArtifactContract`.
 - `RuntimeArtifactRecordDeduplication` collapses into a classmethod on the
   existing `RuntimeArtifactRecordLocationIdentity` owner.
+- `CellProfilerOptionalCurrentImageContext` and
+  `CellProfilerRequiredCurrentImageContext` collapse into ordinary typed
+  `current_image` fields on the concrete requests that own them; the one
+  optional-value requirement is checked at its consumption edge.
+- `CurrentSourceIdentityCacheScope`, `RuntimeGroupMatchScope`, and
+  `CellProfilerRuntimeScope` collapse into the exact generic query records and
+  runtime cache keys that consume their fields.
+- `CellProfilerImageMeasurementSource`, its produced-artifact base/carrier,
+  and its unqualified leaf collapse into
+  `ProducedImageMeasurementRecordMixin`: the module MRO selects the behavior,
+  and the mixin resolves the existing output `ArtifactSpec` and payload
+  directly.
+- `CellProfilerMeasurementFeatureParseCandidate` collapses into
+  `CellProfilerMeasurementFeature.parse`; normalization, registered parser
+  traversal, and the `OTHER` result now have one owner and no optional-value
+  shell.
+- `CurrentStepPayloadSelection` collapses into the selector's existing
+  `ImagePayloadValue | None` result; callers branch on the value directly
+  instead of querying and unwrapping a one-field result object.
+- runtime-plane projection collapses its unused registry, marker-only base,
+  nested current-image carrier, field-only request bases, and one-call
+  plane-index/slice/metadata request objects into
+  `RuntimePlaneImagePayloadProjection`. Generic planar shape meaning lives on
+  the existing `ImageArrayShapeSemantics`; exact selected planes and their
+  source-context result remain first-class values.
+- `CurrentRuntimePlaneKwargValue` collapses into classification methods on the
+  projector that consumes the result, and `DenseLabelSequenceMemoryBudget`
+  collapses into the existing dense-stack byte guard. Neither scalar predicate
+  retains a one-field object shell.
+- `CellProfilerRadialCVExportValue` collapses into the existing radial-CV
+  missing-value authority, and `FirstMeasurementField` collapses into direct
+  tuple selection at its sole consumer.
+- `PerImageMeasurementProfile` collapses into its sole executor's existing
+  `CellProfilerRuntimeProfiler`, while `FilterObjectsKwargSettings` and
+  `FilterObjectsBoundMeasurementInputs` collapse into the concrete runtime
+  input plan and the one logging edge that consume their values.
+- `ModuleRevisionRange` collapses into Watershed's owning module declaration;
+  its sole CellProfiler-4 cutoff is now a typed class constant evaluated where
+  the runtime family is selected.
+- `GranularityImageSeriesCacheEntry` collapses into the cached
+  `GranularityImageSeries`, `SourceImagePairCollection` collapses into direct
+  exact-cardinality matching, and `FilterObjectsRelationshipEndpointIds`
+  collapses into one endpoint projection function shared by its consumers.
+- `CellProfilerModuleRuntimePlan.func` is deleted as an exact alias of the
+  plan's declared `raw_func` field; runtime consumers now use the sole callable
+  identity member directly.
 - `RuntimeShapeInspection` collapses into the existing generic
   `ImageArrayShapeSemantics.shape` projection.
 - `ObjectLabelFinalLabels` and `ObjectLabelSmallRemovedLabels` collapse into
@@ -996,15 +1068,12 @@ always measures the current ZMQ submission.
 - the core `Pipeline` execution/editor wrapper is replaced at the GUI boundary
   by `PipelineEditorStateRoot`; every execution/import/transport API returns a
   plain step list.
-- `CellProfilerPipelineImportResult.pipeline` is replaced with a validated
-  `pipeline_steps: list[FunctionStep]`; `pipeline_config` becomes required.
-  The source path and module-reference tuple remain direct import diagnostics,
-  not a nested provenance object or execution authority; generated source is
-  derived from the step list.
-- the compiler ABC, importer forwarding ABC, mutable singleton, and proposed
-  one-leaf compiler registry are replaced by the direct
-  `import_cellprofiler_pipeline(CellProfilerPipelineImportRequest)` operation
-  in `import_service.py`.
+- the CP import result, request DTO, compiler ABC, importer forwarding ABC,
+  mutable singleton, and one-leaf compiler registry are replaced by
+  `pipeline_import.import_cellprofiler_pipeline(cppipe_path, *, filemanager,
+  backend, source_root) -> tuple[list[FunctionStep], PipelineConfig]`.
+  Path/backend values and the optional CellProfiler default-input-folder root
+  are direct import inputs, not fields copied into another carrier.
 - skipped export-module behavior is replaced by explicit generated
   FunctionSteps for `SaveImages`, `ExportToSpreadsheet`, and
   `ExportToDatabase`. SaveImages uses axis-scoped image materialization;
@@ -1056,8 +1125,9 @@ replacement above:
 - `openhcs/interop/cellprofiler/module_roles.py` in full, including
   `CellProfilerModuleRole`, `CellProfilerModuleRoleSpec`, and role lookup;
   import behavior calls module declarations directly;
-- `CellProfilerPipelineProvenance`; the final import result stores its source
-  path and module-reference tuple directly;
+- `CellProfilerPipelineProvenance`, `CellProfilerPipelineImportRequest`,
+  `CellProfilerPipelineImportResult`, and `CellProfilerModuleReference`; no
+  import carrier survives the translation boundary;
 - `SetupModuleCompiler`, its five compiler leaves, and
   `SourceImageStackPlanDeclaration`;
 - `SOURCE_IMAGE_TYPE_METADATA_FIELD`, `OpenHCSImageType`,
@@ -1118,8 +1188,8 @@ replacement above:
   `materialize_skipped_save_images`, and `materialize_terminal_images`;
 - `PipelineGeneratorBuildStage` and `PipelineGeneratorCodeEmitter` objects that
   store only a backreference to `PipelineGenerator`;
-- `PipelineGenerator` and `GeneratedPipeline`; the direct import operation owns
-  the one lowering pass and final import result;
+- `PipelineGenerator` and `GeneratedPipeline`; the pure import function owns
+  the one lowering pass and returns the public steps/config pair directly;
 - `GeneratedPipelineRequest`, `SkippedModuleSelection`,
   `GeneratedStepEmission`, `GeneratedStepEmissionGroup`, generated import
   collectors, `python_literal`, and `ArtifactContractCommentSection`; the
@@ -1142,6 +1212,10 @@ replacement above:
   that wrapper is never serialized;
 - `openhcs/interop/cellprofiler/runtime/policy_registry.py` and dynamic policy
   view classes that copy module declaration attributes;
+- `openhcs/interop/cellprofiler/runtime/current_image_context.py` and its two
+  one-field inheritance carriers;
+- `openhcs/interop/cellprofiler/runtime/measurement_image_sources.py` and its
+  unused registry-shaped source hierarchy;
 - `SpecialOutputKindClassifier` and name/materializer-based semantic inference;
 - `RuntimeInvocationOptions`, its FunctionStep third-tuple shape, normalization,
   hidden runtime parameter, UI extraction branch, agent guidance, and both
@@ -1187,13 +1261,14 @@ replacement above:
   string-literal projection helpers; processing-axis lowering returns the
   existing concrete `ProcessingConfig`, and source emission writes sparse
   `LazyProcessingConfig` values;
-- `SourceProcessingAxisRole`, `SourceProcessingAxisRolePolicy`, and its three
-  one-method leaf classes; named methods on `SourceProcessingAxisPlan` expose
-  sample-group, image-set, and source-stack components directly;
-- `ModuleProcessingScopePolicy` and its four precedence leaves; one
-  deterministic processing-config lowering function branches only on existing
-  contract partitions and resolved source bindings, while module-specific
-  deviations remain MRO overrides on `CellProfilerModule`;
+- `SourceProcessingAxisRole`, `SourceProcessingAxisRolePolicy`, their leaf
+  classes, the source-axis summary, and `module_processing_config.py` are
+  deleted. Source selection reads the resolved source-binding declaration;
+  processing lowering reads the artifact-only module contract, callable-owned
+  axis constraints, and inherited `ProcessingConfig` directly.
+- `ModuleProcessingScopePolicy` and its precedence leaves are deleted;
+  `CellProfilerModule.processing_config` performs the one deterministic lowering
+  at the nominal module owner.
 - unused `SettingNameFamilySpec`;
 - `CELLPROFILER_MODULE_ATTR`, `CellProfilerFunctionRuntimeMetadata`,
   `CellProfilerFunctionCatalog`, `_make_processing_wrapper`, and derived
@@ -1203,6 +1278,9 @@ replacement above:
   normalization or compiled-wrapper preservation branches;
 - `openhcs/processing/backends/cellprofiler/library.py` after its implementation
   lookup moves onto `CellProfilerModule`;
+- `openhcs/processing/backends/cellprofiler/function_documentation.py` and its
+  callable-docstring mutation path after the backend package exposes raw
+  declaration-owned callables directly;
 - the 97 import-only files under `benchmark/cellprofiler_library`, the
   import-only `benchmark/cellprofiler_compat` package, and
   `benchmark/converter/cppipe_module_roles.py`;
@@ -1543,9 +1621,11 @@ one provider with the following deterministic prepass:
    queried.
 9. Query available declared artifacts from the prepass's
    `ArtifactSpecCollection`. Effective source bindings contribute existing
-   source `ArtifactSpec` values. Non-CellProfiler invocations contribute
-   `InvocationArtifactDeclarations.from_contract(item.contract)` so the prepass
-   sees artifacts declared by native OpenHCS callables as well.
+   source `ArtifactSpec` values. Non-CellProfiler invocations contribute outputs
+   from `artifact_plan_key_selector_for_contract(item.contract)`: the compiled
+   `ModuleArtifactContract` when present, otherwise the `CallableContract`
+   itself. The prepass therefore sees native OpenHCS callable declarations
+   without copying them into an invocation wrapper.
 10. Invoke the resolved `CellProfilerModule.artifact_contract` method. The
    module class directly produces existing `ModuleArtifactContractItem` values.
 11. For axis scope, validate callable special-input parameter slots and
@@ -1748,8 +1828,9 @@ def combine(
 
 It validates one module name, preserves first declaration order, de-duplicates
 identical `ModuleArtifactContractItem` values, rejects conflicting
-`ArtifactSpecRef` declarations, and unions required variable components. It
-contains no group-key field.
+`ArtifactSpecRef` declarations, and returns the ordered artifact-only contract.
+It contains no group-key, axis, or grouping field; callable constraints remain
+on `CallableContract`.
 
 Implement the provider in
 `openhcs/interop/cellprofiler/compile_time_contracts.py` with this exact shape:
@@ -1842,9 +1923,11 @@ callables and have no image `ProcessingContract`.
 starts from `CallableContract.from_callable(raw_func)` and constructs one new
 immutable compiled contract with `dataclasses.replace`. Its metadata replaces
 only compiler-derived fields: the exact invocation's
-`ModuleArtifactContract`, the declaration's `allowed_group_by`, and the CP
-`RuntimeAdapterSpec`. It validates every replaced value against the raw
-callable and owning declaration before publishing the contract. It never
+`ModuleArtifactContract` and the CP `RuntimeAdapterSpec`. Required variable
+components and allowed groupings remain the values declared by the raw callable
+and read through `CallableContract`; neither the module class nor the artifact
+contract copies them. The provider validates every replaced value against the
+raw callable and owning declaration before publishing the contract. It never
 projects the compiled metadata back onto the function object. The lazy backend
 module `__getattr__` and `__dir__` derive their inventory from
 `CellProfilerModule.__registry__` and call `require_callable`; they own no
@@ -1876,12 +1959,12 @@ references return their resolved importable callable directly. No ownership
 attribute, copied processing-contract argument, rehydrator request, or
 rehydrator registry participates.
 
-`CellProfilerModule.resolve_function(module, contract=..., axis_plan=...)`
+`CellProfilerModule.resolve_function(module, contract=..., source_bindings=...)`
 returns the actual declaration-loaded callable during parsed `.cppipe` import.
 Variant-owning declarations choose one of their own
 `declared_function_names()` from parsed settings, the already-derived artifact
-contract, and the already-derived source-axis plan, then delegate that exact
-name to `require_callable`. The base method selects `function_name`.
+contract, and the resolved source bindings, then delegate that exact name to
+`require_callable`. The base method selects `function_name`.
 `resolve_function` is the sole polymorphic import selector. Delete
 `resolve_semantic_function` and migrate its two source-axis overrides and every
 settings-only `resolve_function` override into this method; no
@@ -1891,62 +1974,52 @@ does not call this selector: a public `FunctionStep` already declares the exact
 raw callable, and the compiler validates that callable against
 `CellProfilerModule.require_callable` without substituting a variant.
 
-There is one `.cppipe` import operation:
+There is one `.cppipe` translation operation:
 
 ```python
-@dataclass(frozen=True, slots=True)
-class CellProfilerPipelineImportRequest:
-    cppipe_path: Path
-    generated_source_path: Path
-    filemanager: FileManagerLike | None = None
-    cppipe_backend: Backend = Backend.DISK
-    generated_source_backend: Backend = Backend.DISK
-
 def import_cellprofiler_pipeline(
-    request: CellProfilerPipelineImportRequest,
-) -> CellProfilerPipelineImportResult:
+    cppipe_path: str | Path,
+    *,
+    filemanager: FileManagerLike | None = None,
+    backend: Backend = Backend.DISK,
+    source_root: str | Path | None = None,
+) -> tuple[list[FunctionStep], PipelineConfig]:
     ...
 ```
 
-It lives in `openhcs/interop/cellprofiler/import_service.py`. The UI, workspace
-preparer, benchmark, and tests call it directly. Delete the compiler ABC,
-importer ABC, mutable singleton, aliases, and the one-leaf registry proposed by
-the earlier draft.
+It lives in `openhcs/interop/cellprofiler/pipeline_import.py`. The UI, workspace
+preparer, benchmark, and tests call it directly. Delete `import_service.py`,
+`import_records.py`, `pipeline_compiler.py`, `compiler_registry.py`, their
+ABCs, DTOs, mutable singleton, aliases, and re-exports.
 
-`CellProfilerPipelineImportRequest.__post_init__` normalizes both paths,
-requires `.cppipe` input and `.py` output suffixes, and validates both backend
-enum values. It contains no pruning, materialization, module-selection,
-runtime-contract, source-cap, or execution option. The record remains because
-one import operation must validate and carry two independently routed VFS
-addresses; it is not a pipeline or execution carrier. Rename current
-`generated_pipeline_path` / `generated_pipeline_backend` fields and every
-caller to the source names above without retaining aliases.
+The parser validates the `.cppipe` address and backend through its existing
+typed API. `source_root` is the explicit CellProfiler default input folder used
+only to resolve import-time external resources; the workspace/UI/benchmark
+caller passes its selected plate root and standalone imports default to the
+parent of `cppipe_path`. Translation does not search ancestors or descendants.
+Conversion embeds external-resource values into public callable kwargs and
+writes resolved `ImagePlaneSource` values and source-binding declarations into
+`PipelineConfig`. The `.cppipe` path and import root are never consulted after
+the public steps/config pair is returned; execution receives its ordinary plate
+path separately through the existing orchestrator request.
 
-The import-only base for relative CellProfiler file URIs is exactly the parent
-of `cppipe_path` in `cppipe_backend`; the request validates that directory and
-does not search ancestors or descendants. Conversion writes resolved
-`ImagePlaneSource` values and source-binding declarations into
-`PipelineConfig`. The `.cppipe` path and its parent are never consulted after
-the final public steps/config are returned; execution receives its ordinary
-plate path separately through the existing orchestrator request.
-
-`import_cellprofiler_pipeline` owns conversion as one cohesive operation. A
-private loop in `import_service.py` accepts the complete ordered parsed module
-sequence, resolves every enabled module through
-`CellProfilerModule.require_module`, lets setup modules contribute the existing
-source-binding config, constructs the actual public `list[FunctionStep]`, and
-collects `ModuleSettingCoverageRecord` diagnostics. It does not call or return
-a generator object, accept a separate skipped-module list, or retain a copied
-registry, pruner, runtime-contract-projector, emitter, build stage, or
+`import_cellprofiler_pipeline` owns conversion as one cohesive pure operation.
+Its private loop accepts the complete ordered parsed module sequence, resolves
+every enabled module through `CellProfilerModule.require_module`, lets setup
+modules contribute the existing source-binding config, constructs the actual
+public `list[FunctionStep]`, and raises setting-coverage errors at the owning
+binding boundary. It does not call or return a generator object, accept a
+separate skipped-module list, or retain a copied registry, pruner,
+runtime-contract projector, emitter, build stage, diagnostics carrier, or
 intermediate pipeline result.
 
-The operation constructs `CellProfilerPipelineImportResult` once, derives
-source with `FunctionStepTransportAuthority.source_from_pipeline`, and writes
-that source to the requested path. Generic pycodify uses the existing
-`FunctionStepFormatter`. No source string, import collector, literal renderer,
-emission DTO, generated-module loader, or second syntax parser exists. The
-result returns the same real steps whose pycodified projection was written;
-ZMQ reconstruction is the acceptance proof that the projection is sufficient.
+Translation performs no source rendering or filesystem write. A caller that
+explicitly requests Python source invokes
+`FunctionStepTransportAuthority.source_from_pipeline(steps)` and routes that
+string through its existing generic file/VFS boundary. No CP import DTO stores
+the source address, source text, module references, or setting coverage. ZMQ
+reconstruction of the returned public declarations is the acceptance proof
+that the projection is sufficient.
 
 Generator-time artifact pruning and terminal-output materialization disappear.
 Dead output selection and runtime artifact materialization remain the generic
@@ -1957,8 +2030,8 @@ removes user-declared processing steps.
 ### Sparse Identity Override Algorithm
 
 After setup modules have contributed the pipeline source config, each ordered
-executable source module first follows the non-circular contract, axis-plan,
-callable, callable-contract, behavior-binding, and processing-config order
+executable source module first follows the non-circular contract, callable,
+callable-contract, behavior-binding, and processing-config order
 specified below. The private import pass then performs this exact sparse
 identity sequence with that selected raw callable:
 
@@ -1999,112 +2072,60 @@ switch is added.
 
 ### Processing Config Lowering
 
-Rename `module_processing_components.py` to
-`module_processing_config.py`. Retain only the source-binding calculations that
-derive real axis values. Delete `ModuleProcessingComponentRequest`; it carries
-values already available as method arguments. The exact module boundary is:
+Delete the source-axis summary and `module_processing_config.py`; neither owns a
+fact absent from the public step, callable contract, module artifact contract,
+or inherited config. The exact module boundary is:
 
 ```python
 @classmethod
 def processing_config(
     cls,
     *,
-    module: ModuleBlock,
     contract: ModuleArtifactContract,
     callable_contract: CallableContract,
-    axis_plan: SourceProcessingAxisPlan,
-    behavior_kwargs: Mapping[str, object],
+    inherited: ProcessingConfig,
 ) -> ProcessingConfig:
     ...
 ```
 
-The class receiver is the module type, so no request repeats `module_type`; the
-arguments contain no function-name string, source schema, symbol-table
-contract, `RuntimeArtifactLineageScope`, or `GeneratedStepSettings`.
-`callable_contract.require_processing_contract()` is the sole processing
-locality query. `behavior_kwargs` exists because real declaration-owned
-behavior such as `CorrectIlluminationCalculate` all-images scope changes the
-OpenHCS stack axes; it is not an identity or artifact-name carrier. Required
-variable components are validated against the returned value with the existing
-`FuncStepContractValidator`; no custom component result type or unresolved-group
-enum remains.
+The three arguments are existing nominal authorities. `ModuleArtifactContract`
+owns ordered artifact inputs and outputs only. `CallableContract` is the sole
+owner of `required_variable_components`, `allowed_group_by`, processing
+locality, and execution scope. `inherited` is the concrete `ProcessingConfig`
+already resolved by ObjectState or by the importer's pipeline-config context.
 
-`SourceProcessingAxisPlan` keeps the source-binding projection because it owns a
-real conversion calculation. Replace `from_schema` with this exact constructor:
+The root implementation performs one lowering:
 
-```python
-@classmethod
-def from_bindings(
-    cls,
-    *,
-    source_bindings: StepSourceBindingsConfig,
-    contract: ModuleArtifactContract,
-) -> SourceProcessingAxisPlan:
-    ...
-```
+1. choose `InputSource.PIPELINE_START` when the artifact contract declares
+   inputs, otherwise choose `InputSource.PREVIOUS_STEP`;
+2. for plate scope, set variable components to empty and grouping to
+   `GroupBy.NONE`;
+3. for axis scope, use callable-required variable components when declared,
+   otherwise inherit `inherited.variable_components`;
+4. use the module's import `group_by` declaration when present, otherwise
+   inherit `inherited.group_by`;
+5. validate the resulting axis/group relation through
+   `FuncStepContractValidator` and return `dataclasses.replace(inherited, ...)`.
 
-The argument is one complete lazy-MRO-resolved step config. Compiler snapshots
-receive it from `StepConfigUniverse`; parsed import obtains the same concrete
-value by resolving its candidate lazy config inside
-`objectstate.config_context(pipeline_config)`. Pipeline defaults have already
-entered before the constructor runs. The constructor reads component selectors,
-metadata rules, match/group plans, source-bound contract items, and artifact
-relations directly. It does not receive both pipeline and step configs, a
-`PipelineImageSchema`, or a copied lineage DTO. Its direct projection methods
-are:
-
-```python
-sample_group_components() -> tuple[AllComponents, ...]
-image_set_components_or_default() -> tuple[AllComponents, ...]
-source_stack_components_or_default() -> tuple[AllComponents, ...]
-source_identity_group_by_component(
-    variable_components: tuple[AllComponents, ...],
-) -> AllComponents | None
-```
-
-Delete the role enum and policy registry. Collapse the fixed
-runtime-artifact/source-binding/inputless/default precedence registry into
-this exact function:
-
-```python
-def default_module_processing_config(
-    *,
-    contract: ModuleArtifactContract,
-    callable_contract: CallableContract,
-    axis_plan: SourceProcessingAxisPlan,
-) -> ProcessingConfig:
-    ...
-```
-
-Its conditions query only
-`ModuleArtifactContract` partitions, artifact relations, and resolved source
-bindings. A leaf module with different behavior overrides
-`CellProfilerModule.processing_config` through its current MRO owner.
-The root method applies its existing `default_variable_components`,
-`required_variable_components`, and `group_by` declaration facts to this
-concrete result through `FuncStepContractValidator`; delete
-`with_generated_group_by` and `generated_group_by`. The renamed module's only
-behavior-bearing top-level owners are `SourceProcessingAxisPlan` and
-`default_module_processing_config`. Delete every generated literal alias and
-formatter, component/lineage/scope request or result class, role/scope policy,
-and one-use predicate from the old file rather than copying it into the renamed
-module.
+The module import `group_by` value selects the ordinary OpenHCS grouping emitted
+for a converted module. It is not an allowed-grouping constraint. Allowed
+groupings remain callable metadata. Artifact contracts contain no axis or
+grouping fields, and no declaration provider reconstructs them from artifacts.
 
 The parsed-module import order is fixed and non-circular:
 
 1. derive the original `ModuleArtifactContract` from the parsed `ModuleBlock`
    and the current artifact cursors;
-2. resolve the candidate `LazyStepSourceBindingsConfig` under the completed
-   pipeline config and construct `SourceProcessingAxisPlan.from_bindings` from
-   the resulting concrete `StepSourceBindingsConfig`;
-3. call `module_type.resolve_function` with `module`, `contract`, and
-   `axis_plan`, then require that the result is the exact object returned by
-   `module_type.require_callable(result.__name__)`;
+2. resolve the candidate `LazyStepSourceBindingsConfig` and inherited
+   `ProcessingConfig` under the completed pipeline config;
+3. call `module_type.resolve_function` with `module`, `contract`, and the
+   resolved source bindings, then require that the result is the exact object
+   returned by `module_type.require_callable(result.__name__)`;
 4. read `CallableContract.from_callable(raw_func)` and require its declared
    processing contract;
 5. bind typed behavior kwargs against that raw callable's public signature;
-6. call `module_type.processing_config` with the module, contract, callable
-   contract, axis plan, and behavior kwargs;
+6. call `module_type.processing_config` with the contract, callable contract,
+   and inherited processing config;
 7. construct the public `FunctionStep` and perform sparse identity minimization.
 
 No operation in this order reads `ProcessingConfig` to choose the callable,
@@ -2122,40 +2143,25 @@ Python source string.
 
 ### Import And Workspace Boundary
 
-`CellProfilerPipelineImportResult` contains the source `.cppipe` path, ordered
-raw module-reference records, public `pipeline_steps`, required
-`PipelineConfig`, generated source path, and setting-coverage diagnostics. It
-contains no nested provenance record, stored generated-source
-text, generated module identity, core
-`Pipeline`, compiled artifact contract, semantic contract, registered-function
-list, runtime wrapper, or intermediate generated-pipeline object.
-`import_cellprofiler_pipeline` writes the generic pycodify projection of its
-final steps to the requested path and returns those steps directly; it does not
-import its own output.
-
-Its complete stored fields are exact:
+The import boundary has no CP-specific request, result, provenance, module
+reference, or diagnostics carrier. `import_cellprofiler_pipeline` returns
+exactly the two public values required by ordinary OpenHCS execution:
 
 ```python
-cppipe_path: Path
-modules: tuple[CellProfilerModuleReference, ...]
 pipeline_steps: list[FunctionStep]
 pipeline_config: PipelineConfig
-setting_coverage: tuple[ModuleSettingCoverageRecord, ...]
-generated_source_path: Path
 ```
 
-`__post_init__` copies the submitted list, validates every member as a
-`FunctionStep`, requires the concrete `PipelineConfig`, validates each module
-reference and coverage member, and requires at least one module. The `.cppipe`
-path, module references, coverage, and generated source path are
-diagnostic/import values and do not participate in
-compilation after the result is returned. A `generated_source`
-property delegates to `FunctionStepTransportAuthority.source_from_pipeline`;
-no source string is stored.
+The function validates that it produced at least one executable step and a
+concrete `PipelineConfig` before returning. Setting coverage is enforced while
+binding each parsed module and is not copied into a post-import record. Source
+rendering remains the generic caller-owned projection of `pipeline_steps`; the
+import function neither stores nor writes it.
 
-Delete `CellProfilerPipelineProvenance`; after generated/runtime wrappers are
-removed, no production consumer uses it independently of the final import
-result. Do not retain a `provenance` property or alias.
+Delete `CellProfilerPipelineProvenance`, `CellProfilerPipelineImportRequest`,
+`CellProfilerPipelineImportResult`, `CellProfilerModuleReference`, and every
+property, alias, registry entry, test fixture, or UI cache keyed to those
+types.
 
 Change `InputWorkspacePreparationResult` in
 `openhcs/core/input_workspace.py` to carry typed
@@ -2210,8 +2216,8 @@ Delete `pipeline_compiler.py`, `compiler_registry.py`, and
 `runtime_pipeline.py` after their one real operation moves to
 `import_cellprofiler_pipeline`. Delete `partition_cppipe_modules`; the direct
 operation contains one local ordered loop in which each enabled module declaration decides
-whether it contributes an executable step; disabled modules remain direct raw
-module-reference diagnostics on the final result.
+whether it contributes an executable step; disabled modules are ignored and no
+module-reference or diagnostics result carrier survives translation.
 There is no partition DTO, generation/preparation request wrapper, compiler
 class, registration function, or benchmark alias.
 
@@ -2341,13 +2347,13 @@ def resolve_function(
     module: ModuleBlock,
     *,
     contract: ModuleArtifactContract,
-    axis_plan: SourceProcessingAxisPlan,
+    source_bindings: StepSourceBindingsConfig,
 ) -> Callable[..., object]:
     ...
 ```
 
 The base source contribution is a no-op and the base emission result is true.
-The base function selector ignores `contract` and `axis_plan`, loads
+The base function selector ignores `contract` and `source_bindings`, loads
 `function_name` through `require_callable`, and verifies that the result belongs
 to `declared_function_names()`. `ResizeModule`, `ResizeObjectsModule`,
 `DefineGridManualModule`, `WatershedModule`, and
@@ -2356,7 +2362,7 @@ settings. `MeasureTextureModule`, `MeasureColocalizationModule`,
 `MeasureGranularityModule`, and `IdentifyObjectsInGridModule` select from the
 typed artifact input presence already present in `contract`, rather than
 reparsing artifact name strings. `DilateObjectsModule` and `RemoveHolesModule` inspect
-`axis_plan.source_stack_components_or_default()`.
+the resolved `source_bindings.source_stack_components` declaration directly.
 No leaf accepts `ProcessingConfig`, a function-name default, or a resolution
 request. This method is called only by parsed-module import, never by public
 FunctionStep compilation.
@@ -2679,11 +2685,11 @@ between the compiled module contract and:
 - source bindings selected for the request's exact typed component group.
 
 `ModuleArtifactContract.require_items_for_specs(partition_type, specs)` accepts
-the selected artifact specs, joins each `spec.ref` through
-`ArtifactSpecCollection.by_ref`, and requires equality of the complete
-`ArtifactSpec`, including plan role, artifact type, name, relations, and
-materialization. Missing refs, duplicate refs, partition drift, and spec drift
-fail before runtime input loading. `CompiledFunctionInvocation` therefore
+the selected artifact specs, joins each ordered occurrence by `spec.ref`, and
+requires equality of the complete `ArtifactSpec`, including plan role, artifact
+type, name, relations, and materialization. Missing refs, conflicting specs,
+insufficient occurrence cardinality, partition drift, and spec drift fail
+before runtime input loading. `CompiledFunctionInvocation` therefore
 replaces `artifact_input_keys` / `artifact_output_keys` with exact
 `artifact_input_refs: tuple[ArtifactSpecRef, ...]` and
 `artifact_output_refs: tuple[ArtifactSpecRef, ...]`; no runtime component uses
@@ -2840,8 +2846,9 @@ Add boundary tests before production edits:
     lists with no pipeline carrier/boundary object.
 - rewrite `tests/unit/test_cellprofiler_interop_namespace.py` so it rejects
   compatibility aliases, provenance/role exports, `SetupModuleCompiler`,
-  compiler ABCs, and forwarding imports; retain only direct import operation,
-  nominal module declaration, and public result assertions.
+  compiler ABCs, import DTOs, and forwarding imports; retain only the pure
+  import function, nominal module declaration, and public steps/config tuple
+  assertions.
 - rewrite `external/PolyStore/tests/test_filemanager_extended.py` so it rejects
   string workspace mappings and global-registry reconstruction, then validates
   structured refs and execution-local registry pickle round-trip.
@@ -2940,6 +2947,337 @@ depends on the new runtime-adapter reconstruction, direct import depends on the
 new declarations/provider, and transport collapse depends on direct public
 import output.
 
+**Live implementation status (2026-07-10)**
+
+- [x] Phase 0 boundary tests are present.
+- [x] Workstream 1A source-binding setup declarations and processing-config
+  lowering use nominal module owners.
+- [x] Workstream 1A module-function ownership and raw-callable selection use
+  the `CellProfilerModule` registry.
+- [x] Workstream 1A display declarations and implementations are co-located in
+  `processing/backends/cellprofiler/display_modules.py`; the five superseded
+  interop display implementation files and all imports of them are deleted.
+  Every display declaration resolves a raw callable whose `__module__` equals
+  the declaration module, and CP `special_outputs` retain slot-name-only ABI
+  declarations. Focused evidence: `77 passed`; the AST deletion, ownership,
+  and slot-only decorator gates pass.
+- [x] Workstream 1A compile-time capability products,
+  `artifact_semantics.py`, `module_artifact_inputs.py`, and declaration
+  `compile_time_*` hooks are removed.
+- [x] Workstream 1A artifact-role bridge collapse is complete:
+  `CellProfilerModule` terminates cooperative artifact declaration methods,
+  existing image, object, measurement, relationship, and spatial-grid MRO
+  owners contribute directly through `super()`, and the superseded artifact
+  role root, MRO role scanner, and setting-name projection are deleted. The
+  old symbol-table test path is replaced by declaration-owned artifact tests.
+  Fresh-process registry discovery succeeds, and focused evidence is
+  `73 passed` across contract, topology, cardinality, compiler reconstruction,
+  module-role, callable-ownership, and public-API suites.
+- [x] Workstream 1A runtime module-name policy registries and the external
+  `CellProfilerPerObjectMeasurementPolicy` predicate were migrated to
+  classmethod MRO owners; focused nominal-policy tests pass.
+- [x] Workstream 1A supported source setup and exporter declarations, generic
+  execution scope/artifact batch/file materialization values, and direct byte
+  persistence are implemented with focused tests.
+- [x] Workstream 1A `ExportToSpreadsheet` ownership slice is complete: the real
+  renderer, raw callable, and nominal declaration are co-located in
+  `processing/backends/cellprofiler/spreadsheet_export.py`; the superseded
+  interop implementation and every direct import of it are deleted. The
+  callable retains generic `RuntimeArtifactBatch` input and `FileBundleOptions`
+  materialization with no processing contract. Focused evidence: `7 passed`;
+  `py_compile`, exact-definition AST, stale-import `rg`, and diff checks pass.
+- [x] Workstream 1A settings-source wrapper deletion is complete:
+  `ModuleSettingsSourceModule` and `BinderSettingsSourceModule` are deleted;
+  compound setting interpretation now lives on the nominal module leaf, while
+  ordinary rows use `CellProfilerModule.bind_settings` and declared
+  `SettingToKeywordBinding` values directly. The official30 public-import gate
+  remains 30/30 after the cutover.
+  - **Status, parser-metadata mirror deletion (2026-07-12): complete.**
+    `SettingsBinder.SKIP_SETTINGS` is deleted; bind operations require the
+    nominal `ModuleBlock` and consume only `ModuleBlock.settings`, while parser
+    header metadata remains in `ModuleBlock.metadata`. Declaration coverage
+    recognizes only bound rows and declaration-owned ignored rows. Focused
+    binder/parser/compatibility/export evidence: `109 passed`.
+- [x] Workstream 1A benchmark compatibility-facade deletion slice is complete:
+  `benchmark/cellprofiler_library` and `benchmark/cellprofiler_compat` are
+  deleted, genuine behavior tests import authoritative backend modules or query
+  `CellProfilerModule`, and catalog/facade-only tests are removed. Focused
+  evidence: `264 passed` across migrated direct-backend behavior tests,
+  `73 passed` across deletion/public-API boundary tests, `7 passed` across nominal
+  runtime lookup cases, and the AST import/symbol deletion gates pass.
+- [x] Workstream 1A CP debug-view registry deletion slice is complete:
+  `CellProfilerDebugView`, `DefaultCellProfilerDebugView`, and
+  `openhcs/interop/cellprofiler/debug_views.py` are deleted; the inspector calls
+  `DebugViewModel.from_debug_snapshot` directly, and retained generic behavior
+  lives in `test_debug_views.py`. Focused evidence: `2 passed` core view tests,
+  `4 passed` inspector tests, and zero forbidden symbols/imports in the AST gate.
+- [x] Workstream 1A is complete: the old generator, symbol-table,
+  runtime-policy, callable-catalog, settings-source wrappers, source-schema
+  consumers, compatibility facades, and debug-view registry are deleted. The
+  canonical AST/filesystem deletion gate passes.
+- [x] Workstream 1B exact provider map, unique-claim provider ABI, generic
+  source-group helper, and contract-owned source-binding alignment are
+  implemented with focused tests.
+- [x] Workstream 1B generic `CallableContract` processing/module-contract
+  requirements and runtime-adapter callable factory boundary are implemented;
+  generic function-reference rehydration is deleted.
+  - **Status, runtime-callable metadata mirror deletion (2026-07-12):
+    complete.** `CellProfilerRuntimeCallable` retains only its executor and
+    call operation; callable identity, signature, annotations, memory types,
+    processing contract, and exclusions remain owned by the canonical raw
+    callable and compiled `CallableContract`. Generic invocation preparation
+    targets that raw callable directly. Non-adapter inputs and outputs now
+    occupy only their generic runtime/declared partitions, composed CP image
+    inputs remain ordinary source inputs, and fixed return ordering follows the
+    owning module MRO. The collapse removed 205 dead/redefined imports. Focused
+    evidence: `50 passed` compiler/callable tests, `56 passed` special-I/O and
+    SaveImages tests, and `424 passed` module-execution tests; the touched slice
+    is Ruff-clean.
+  - **Status, adapter-free SaveImages materialization boundary (2026-07-12):
+    complete.** `MaterializationSourceIdentityRelation` declares the exact
+    source artifact whose identity names an image export independently from the
+    selected image's `GroupLineageSourceRelation`. The former remains a
+    `SourceArtifactInputPartition`, the latter is the sole raw-callable
+    `RuntimeArtifactInputPartition`, and `save_images` receives only its one
+    declared `image_to_save` special input. Generic image contextualization
+    projects the declared filename identity before `ImageFileOptions` writes
+    variable-component planes; no CP writer branch or hidden callable metadata
+    exists. The public compiler derives the selected image from current runtime
+    image flow, so generated source retains only a genuinely non-default
+    filename-source override. Focused evidence: `206 passed` compiler/import
+    tests and `150 passed` planner/runtime/materialization tests. ExampleFly ZMQ
+    evidence is parity `1.0`, `3.72x` execution speedup, three exact native
+    filenames, and byte-identical decoded TIFF arrays.
+- [x] Workstream 1B runtime adapter state now has the exact three-field plan,
+  one-field executor, and four-field request; repository AST gates report zero
+  old plan-projection consumers.
+  - **Status, runtime request/context mirror deletion (2026-07-12): complete.**
+    `CellProfilerRuntimeAdapter`, `RuntimeAdapterRequest`,
+    `FunctionRuntimeScope`, and `PatternGroupData` compose their authoritative
+    request/source context instead of inheriting or copying its fields. Exact
+    scoped artifact reads are centralized, component selection uses nominal
+    `SourceAxisMetadataScope`, and the hardcoded path-component regex is
+    deleted. Focused adapter/source/static evidence: `244 passed`.
+- [x] Workstream 1B runtime artifact input requests use spec/contract
+  composition with no binding-scope carrier, and returned output matching uses
+  exact declared order and identity with no callable or semantic fallback.
+  - **Status, output resolution/main-flow partition slice (2026-07-12):
+    complete.** Returned values are resolved once; recorded partitions consume
+    adapter-enriched artifacts and declared-only image outputs consume the same
+    resolved value directly. Canonical single image outputs are unwrapped,
+    multi-image outputs retain exact slice contexts, and resolved object outputs
+    remain load-bearing for measurement materialization. Full module-execution
+    evidence: `424 passed`.
+- [x] Workstream 1B compiled invocations carry exact input/output
+  `ArtifactSpecRef` tuples, runtime request groups resolve active source,
+  runtime-input, declared-output, and recorded-output collections through exact
+  contract joins, and string artifact-key selection is deleted.
+- [x] Workstream 1B artifact identity mirroring is deleted. The module contract
+  canonicalizes ordered inputs before declaring outputs; output and measurement
+  relation hooks receive those exact `ArtifactSpec` values instead of rereading
+  settings and reconstructing `(plan role, artifact type, name)`. Source
+  bindings own their `ArtifactSpec` and source-input-plan projections, and
+  `ArtifactSpecRef` construction is statically restricted to `ArtifactSpec.ref`
+  and `ArtifactPlan.ref`. Focused artifact/import/deletion evidence is `123
+  passed`.
+- [x] Workstream 1B `InvocationArtifactDeclarations` is deleted. Artifact
+  declaration providers return the existing `ArtifactPlanKeySelector` owner
+  directly: `ModuleArtifactContract` for a compiled module contract and
+  `CallableContract` otherwise. Generic graph, function-pattern, and prepass
+  consumers query that nominal owner without a replacement payload or backend
+  branch.
+- [x] Workstream 1B processing-contract and runtime-shape authorities,
+  callable-output projection, binding-scope carrier, and runtime-record
+  deduplication wrapper are deleted; their existing nominal owners now carry
+  the behavior and focused deletion gates pass.
+- [x] Workstream 1B stale-test migration removes the deleted
+  `CellProfilerProcessingContractAuthority`, `RuntimeArtifactBindingScope`,
+  and `CallableInvocationKwargSpec` from the focused formatter, callable
+  introspection, and module-execution tests; those tests now use compiled
+  `CallableContract` requirements, exact contracts/specs, and public-kwarg
+  validation.
+  - **Status, runtime-adapter executor API stale-test slice only
+    (2026-07-10): complete.** The scoped tests now build
+    `CellProfilerModuleRuntimePlan` from the exact raw callable and compiled
+    `CallableContract`, separate request input/output plans, and call
+    `CellProfilerModuleExecutor.run` with only the image payload. AST evidence
+    finds zero bare-contract executor constructions and zero deleted
+    `run(func, image, ...)` calls. Focused evidence: `15 passed, 6 failed`;
+    the retained failures expose production behavior (`5` missing
+    `SpecialInputBindingRequest.module_name`, `1` undiscoverable recorded
+    CalculateMath table). Full scoped-file evidence: `174 passed, 10 failed`,
+    including `4` unrelated source-loader/metadata failures.
+- [x] Workstream 1B stale source editor/preview test migration removes the
+  deleted `PipelineImageSchema`, `ImageAssignment`, schema providers, and
+  schema-assignment constructors from the two focused test files. The retained
+  tests construct `SourceBindingsConfig`, `NamedSourceBinding`, and resolved
+  `StepSourceBindingsConfig` values and call only the config-based inventory,
+  view, preview, and editor APIs; obsolete schema-provider cases are deleted.
+  Scoped AST and stale-import scans pass. Focused core evidence:
+  `5 passed, 4 failed`; all four failures expose the current production
+  `SourceBindingsPreview.image_set_rows` field/method collision. The focused
+  editor cases are statically valid, while collection is blocked by the local
+  environment's missing `magicgui` dependency.
+- [x] Workstream 1B stale symbol-table test migration retains only
+  declaration-owned ordered artifact/partition flow, cross-step lineage,
+  fail-loud artifact-input validation, and pure-import-to-compiler
+  reconstruction through ordinary `FunctionStep` and `PipelineConfig` values.
+  The retained tests live in `test_cellprofiler_artifact_declarations.py`; the
+  old symbol-table test path is absent, and the focused file imports no symbol
+  table, generator, role mirror, or compatibility helper. Focused evidence:
+  `3 passed`.
+- [x] Workstream 1B is complete: symbol-table and generated-matcher lookup are
+  deleted, exact session-scoped invocation contracts compile from public
+  declarations, and generic exact artifact/runtime matching is the only active
+  path.
+- [x] Workstream 1C agent architecture-projection slice exposes the
+  `CellProfilerModule` nominal registry, pure
+  `import_cellprofiler_pipeline` boundary, and ordinary `FunctionStep` plus
+  `PipelineConfig` output. It no longer projects or describes the superseded
+  symbol table, `PipelineGenerator`, runtime-preparation boundary, or callable
+  catalog. Focused evidence: `5 passed`; `py_compile` and `git diff --check`
+  pass.
+- [x] Workstream 1C public import-boundary test slice now requires the exact
+  pure `(list[FunctionStep], PipelineConfig)` signature, caller-owned generic
+  source rendering and reconstruction, and AST/filesystem absence of the
+  deleted import carriers, services, compilers, role layer, symbol table, and
+  generator/runtime-preparation layer. Focused evidence: `43 passed`; scoped
+  `py_compile`, stale-import/name scans, and `git diff --check` pass.
+- [x] Workstream 1C integration-test migration slice now imports public
+  `(list[FunctionStep], PipelineConfig)` declarations, materializes inputs only
+  through generic source-binding machinery, submits compile then execute through
+  `ZMQExecutionClient`, and validates the server observation export. The scoped
+  file contains no generated/prepared pipeline or direct-orchestrator imports;
+  its socket-free boundary/type checks pass (`2 passed`) and all `28` tests
+  collect. Live ZMQ completion remains gated by local IPC permission, while the
+  retained `LoadData` case exposes the independent missing-declaration failure.
+- [x] Workstreams 1C and 1D are complete: the pure importer returns only public
+  `list[FunctionStep]` plus `PipelineConfig`, generic transport is the sole
+  source renderer, generated state is sparse and typed, and all 30 official
+  pipelines import successfully. Current combined evidence is `70 passed` for
+  focused import/transport/pycodify boundaries, `1170 passed` for the complete
+  CellProfiler/`.cppipe` unit gate, `3 passed` for static deletions, and
+  official30 public import `30/30`.
+- [x] Phase 2 compile-time failure gates are complete: invalid callable/module
+  ownership, exact-key duplication, artifact availability/type/identity,
+  special-input/output ABI, canonical output shape, required stack axes,
+  grouped module/processing semantics, compile-only/public kwarg ownership,
+  artifact relations, and static source cardinality fail at their nominal
+  compiler owners. Redundant object/special-input cardinality and measurement
+  sink checks are removed from runtime binders. The canonical ZMQ negative
+  submits public source and fails during compilation without creating an
+  execution observation. Current evidence is `1162 passed` for the complete CP
+  unit corpus, `96 passed` for CPPipe/compiler/ZMQ failure gates, `453 passed`
+  for the focused nominal runtime-policy slice, and official30 public import
+  `30/30`.
+- [x] Phase 1B current-image carrier cleanup is complete: the two one-field
+  context dataclasses and their module are deleted, concrete request records own
+  their typed fields directly, and optional source-bound object resolution
+  validates the value only where it is consumed. Focused runtime,
+  source-binding, and static evidence: `471 passed`.
+- [x] Phase 1B post-cutover shell audit is complete for the current runtime and
+  backend surface: AST/call-site analysis removed redundant current-image,
+  source-identity, optional-selection, projection-request, parser, profiler,
+  cache-entry, revision, and scalar-predicate carriers while retaining
+  behavior-bearing views and nominal strategy leaves. The complete
+  CellProfiler/CPPipe corpus passes after the collapse: `1232 passed`, with
+  only the four pre-existing third-party/parser warnings.
+  - **Status, mapping lookup wrapper deletion (2026-07-12): complete.**
+    `MappingValueLookup` and its module are deleted. Ordinary mapping defaults
+    now remain explicit at the calculation that owns each default instead of
+    passing through a CP-specific two-field wrapper.
+  - **Status, resolved runtime-input request shell deletion (2026-07-12):
+    complete.** `ResolvedRuntimeInputRequest` is deleted; the two concrete
+    runtime request records own their `image_count` field directly while the
+    shared image execution context retains only genuinely shared provenance
+    and execution-mode semantics.
+  - **Status, relationship endpoint fallback deletion (2026-07-12): complete.**
+    Relationship outputs carry exact nominal parent and child artifact
+    relations. Runtime name parsing, two-input fallback, endpoint-match
+    carriers, and module-index endpoint reconstruction are deleted; malformed
+    relationship topology fails when `ModuleArtifactContract` is constructed.
+  - **Status, dead measurement-table axis cache key deletion (2026-07-12):
+    complete.** `MeasurementTableAxisProjectionCacheKey` is deleted after AST
+    and call-site analysis found no constructor, match, or load; active table
+    cache keys retain their source, group, and object semantics.
+  - **Status, source-candidate request shell deletion (2026-07-12): complete.**
+    `SourceAliasOrderIndexRequest` is collapsed into the existing shared match
+    request plus the one candidate argument consumed by order matching, and
+    `SourceCandidateMetadataRequest` is collapsed into its sole concrete
+    resolver. Neither field-only base retained an invariant or dispatch role.
+  - **Status, Align and illumination backend leaf wrapper deletion
+    (2026-07-12): complete.** Naming, output-plane collapse, input payload
+    validation, additional-mode normalization, crop geometry, and output
+    alignment now live on their existing module, execution, strategy, and
+    output-request owners. Forwarding request/result shells and single-consumer
+    helpers are deleted while retained strategy invariants have direct behavior
+    tests.
+  - **Status, execution-validation result shell deletion (2026-07-12):
+    complete.** `validate_cppipe_runtime_observation` returns the existing
+    `RuntimeArtifactExecutionObservation` directly; the two-field
+    `CPPipeExecutionValidation` copy is deleted and benchmark consumers retain
+    the submitted expectation on the existing ZMQ export owner.
+  - **Status, unused intensity result declaration deletion (2026-07-12):
+    complete.** `ObjectIntensityResults` is deleted after repository AST
+    analysis found no construction or consumption; the existing
+    `ObjectIntensityMeasurementRows` remains the runtime result owner.
+  - **Status, measurement row wrapper deletion (2026-07-12): complete.**
+    Projected rows use standard immutable mappings, projected columnar rows use
+    the existing core columnar owners, and concatenation uses
+    `ConcatenatedColumnarRows` directly. Descriptor, mapping, columns, and empty
+    subtype wrappers are deleted; sparse-cell and declared-domain invariants
+    remain on the existing projection/materialization owners.
+  - **Status, projection and source-candidate carrier deletion (2026-07-12):
+    complete.** Runtime plane projection now retains only the selector,
+    projection, stack, source-context, and image/object-label projection
+    authorities that enforce independent invariants. Fourteen field-shuttle
+    request/result records are deleted. Source-candidate collection,
+    image-number shadow resolution, request forwarding, and unused metadata
+    helpers are deleted; the existing candidate cache, selector inheritance,
+    match-plan context, and registered plane strategies remain authoritative.
+  - **Status, CalculateMath field-shuttle deletion (2026-07-12): complete.**
+    Indexed operand binding lives on `CalculateMathModule`, repeated settings
+    bind through existing `SettingToKeywordBinding`, immutable request changes
+    use `dataclasses.replace`, and transform/bounds records own their behavior.
+    The three one-use setting carriers are deleted.
+  - **Status, duplicate inherited declarations and zero-caller forwards
+    (2026-07-12): complete.** CellProfiler measurement markers inherit their
+    family qualifier from the generic semantic marker owner, object vector
+    bindings inherit the existing feature query, and the unused runtime-scope
+    input-plan and source-pair forwarding methods are deleted.
+  - **Status, parallel SaveImages interop implementation deletion
+    (2026-07-12): complete.** The unused interop implementation and its
+    self-referential test are deleted. `SaveImagesModule`, the canonical
+    backend callable, generic materialization options, and the existing
+    executable SaveImages tests remain the sole public path.
+  - **Status, FlagImage forwarding layer deletion (2026-07-12): complete.**
+    Flag enums, result construction, and both decorated callables live on the
+    backend module beside `FlagImageModule`; the duplicate interop module is
+    deleted and no compatibility forwarding surface remains.
+  - **Status, imported relationship provenance validation (2026-07-12):
+    complete.** Contracts validate relation sources introduced by their own
+    outputs. Consumed relationship inputs retain exact upstream endpoint
+    provenance without falsely requiring exporters to consume the endpoint
+    label payloads; every relationship output still requires exact parent and
+    child relations at contract construction.
+  - **Status, duplicate-input side predicate deletion (2026-07-12): complete.**
+    Cooperative artifact input declarations preserve ordered occurrences
+    directly. The root preservation predicate, identical module overrides, and
+    deduplication branch are deleted; repeated-role behavior is covered by the
+    CorrectIlluminationApply contract itself.
+  - **Status, object-domain coverage override deletion (2026-07-12):
+    complete.** Shape, intensity, colocalization, and granularity row types
+    inherit complete declared-domain coverage from
+    `ObjectMeasurementColumnarRows`; their identical literal overrides are
+    deleted while custom columns and iteration remain on each leaf.
+  - **Status, nominal object-label output cutover (2026-07-13): complete.**
+    Object-label-producing callables return `ObjectLabelValue`; the compiler
+    rejects raw-array object-label return slots before worker execution. The
+    generic raw-output fallback, CellProfiler NumPy and opaque output-context
+    strategies, raw adapter entry point, and tests expecting pixel-derived
+    output domains are deleted.
+- [ ] Phase 3 official30 ZMQ parity, export, UI, and Napari gates are pending.
+
 **Phase prerequisites**
 
 - Phase 0 boundary tests are present and red only for the documented current
@@ -3021,8 +3359,8 @@ import output.
   the declaration for every enabled block, and call its
   `emits_function_step()` method. No derived import role is stored.
 - Add `contribute_source_bindings`, `emits_function_step`, and the exact
-  parsed-module `resolve_function(module, contract, axis_plan)` method to the
-  existing module MRO. Merge settings-only selectors and the two
+  parsed-module `resolve_function(module, contract, source_bindings)` method to
+  the existing module MRO. Merge settings-only selectors and the two
   source-axis-aware selectors into that one method, return the canonical raw
   callable through `require_callable`, and delete `resolve_semantic_function`,
   `ResolvedModuleFunction`, and every default-function-name carrier.
@@ -3116,24 +3454,24 @@ import output.
   contracts, runtime execution, ObjectState extraction, and agent authoring.
   All behavior uses typed public callable kwargs, and compiler-only identity is
   consumed from sparse ordinary kwargs before runtime.
-- Rename `module_processing_components.py` to
-  `module_processing_config.py`, make module declarations return concrete
-  `ProcessingConfig` from the already-selected source callable's
-  `CallableContract.require_processing_contract()`, the exact module artifact
-  contract, typed behavior kwargs, and one `SourceProcessingAxisPlan` built
-  from the complete lazy-MRO-resolved step source config. Import obtains that
-  value directly under `objectstate.config_context(pipeline_config)`; compilation
-  obtains it from `StepConfigUniverse`. Enforce the
-  contract -> axis plan -> raw callable -> callable contract -> behavior kwargs
-  -> processing config order during import. Public compilation starts with the
-  declared raw callable and never invokes the import selector. Perform lowering
-  through the named `SourceProcessingAxisPlan` methods specified above. No
-  module class field carries processing locality and no selector receives a
-  `ProcessingConfig`.
+- Delete `module_processing_components.py`, `module_processing_config.py`, and
+  every source-axis summary or processing-scope policy. Make module declarations
+  return concrete `ProcessingConfig` from the exact artifact-only
+  `ModuleArtifactContract`, the already-selected callable's `CallableContract`,
+  and the inherited concrete `ProcessingConfig`. Import obtains the inherited
+  value under `objectstate.config_context(pipeline_config)`; compilation reads
+  the resolved `FunctionStep` stored in `StepSnapshot.step`. Enforce the
+  artifact contract -> raw callable -> callable contract -> inherited config ->
+  processing config order during import. Public compilation starts with the
+  declared raw callable and never invokes the import selector. No artifact
+  contract or module class mirrors callable axis constraints.
 
 **Required deletions**
 
 - `openhcs/interop/cellprofiler/runtime/policy_registry.py`;
+- `ModuleSettingsSourceModule` and `BinderSettingsSourceModule`; module leaves
+  use `CellProfilerModule.bind_settings` and its existing
+  `postprocess_bound_settings` hook directly;
 - `openhcs/core/runtime_invocation.py`, `RuntimeInvocationOptions`, the
   FunctionStep third-tuple union, every invocation-options field/parameter, and
   its function-pattern, callable-contract, runtime, UI, and agent branches;
@@ -3247,8 +3585,8 @@ import output.
 - every materialization-bearing `special_outputs` tuple on a registered
   CellProfiler callable; CP decorators retain slot names only;
 - CP `CalculateMathInvocationOptions` and `DefineGridInvocationOptions`;
-- `openhcs/interop/cellprofiler/module_processing_components.py` after its
-  retained axis calculations move to `module_processing_config.py`;
+- `openhcs/interop/cellprofiler/module_processing_components.py` and
+  `openhcs/interop/cellprofiler/module_processing_config.py` in full;
 - `GeneratedLiteralScalar`, `GeneratedLiteralValue`,
   `GeneratedStepSettingKey`, `GeneratedParameterName`,
   `GeneratedGroupByComponent`, `group_by_is_unresolved`,
@@ -3257,20 +3595,17 @@ import output.
   `group_by_component_axis`, `source_identity_group_by_component`,
   `source_binding_variable_component_literals`, `variable_component_literals`,
   and `generated_function_step_semantic_argument_lines`;
-- `SourceProcessingAxisPlan.without_source_set_components`,
-  `.scalar_source_group_component`, `.optional_single_image_set_component`,
-  `.single_component_for_role`, and `.from_schema`; the exact retained method
-  set is specified under Processing Config Lowering;
+- the source-axis summary and all of its constructors and projection methods;
 - `SourceProcessingComponentSemantics`, `RuntimeArtifactProcessingScope`,
   `SourceBindingProcessingScope`, `default_module_processing_components`,
   `default_module_requires_pairwise_object_domain_scope`, and
-  `_is_inputless_artifact_only_contract`; retained calculations live directly
-  on `SourceProcessingAxisPlan` or in `default_module_processing_config`;
+  `_is_inputless_artifact_only_contract`, and
+  `default_module_processing_config`;
 - `tests/unit/test_cellprofiler_module_processing_components.py` after its
   retained cases move to `test_cellprofiler_module_processing_config.py`;
 - `GeneratedGroupByComponentState`, `ModuleProcessingComponents`,
   `ModuleProcessingComponentRequest`, `GeneratedStepSettings`,
-  `SourceProcessingAxisPlan.from_schema`, `SourceProcessingAxisRole`,
+  `SourceProcessingAxisRole`,
   `SourceProcessingAxisRolePolicy`, and `ModuleProcessingScopePolicy` families;
 - `CellProfilerModule.processing_components` and every override after their
   behavior moves to the exact `processing_config` method;
@@ -3386,9 +3721,9 @@ import output.
   import and compilation;
 - callable-selection order tests cover every settings-selected variant plus
   Z-index and non-Z-index `DilateObjectsModule` / `RemoveHolesModule` imports,
-  assert `resolve_function` accepts artifact contract and axis plan but no
-  `ProcessingConfig`, assert processing lowering requires the selected
-  `CallableContract`, and assert public compilation preserves the exact
+  assert `resolve_function` accepts artifact contract and resolved source
+  bindings but no `ProcessingConfig`, assert processing lowering requires the
+  selected `CallableContract`, and assert public compilation preserves the exact
   FunctionStep callable without invoking the parsed-module selector; parsed
   import source-config resolution constructs no placeholder FunctionStep;
 - exporter tests assert `SaveImages`, `ExportToSpreadsheet`, and
@@ -3469,9 +3804,12 @@ import output.
 - Move `SourceBindingContractAlignment` from
   `openhcs/core/artifact_contract_preview.py` to
   `openhcs/core/module_artifact_contract.py`. Add
-  `source_binding_alignment`, `required_source_binding_alignment`, and
-  `projected_source_bindings` methods to `ModuleArtifactContract`; update the
-  preview widget and compiler validation to call the contract directly.
+  `source_binding_alignment` and `projected_source_bindings` methods to
+  `ModuleArtifactContract`. Alignment validates that configured bindings select
+  declared inputs; it never infers that every non-special input requires a
+  source binding because generic main flow owns that distinction. Update the
+  preview widget to call the contract directly and remove compiler-side
+  contract pruning by scoped source bindings.
 - Collapse `CellProfilerRuntimeCallable` and
   `CellProfilerGroupedRuntimeCallable` in
   `openhcs/interop/cellprofiler/runtime/module_execution.py` into one runtime
@@ -3497,6 +3835,19 @@ import output.
   facts only. Derive active input/output spec collections per
   `CellProfilerModuleRunRequest` from the generic adapter's already-grouped
   artifact plans and source bindings.
+  - **Status, declaration-policy consumer slice only (2026-07-10): complete.**
+    `CellProfilerModule` runtime-policy classmethods now use only the authorized
+    `raw_func`/`contract`/`callable_contract` plan surface, deriving special-input
+    parameters through the callable ABI, object inputs through
+    `ArtifactSpecCollection`, and bound names through nominal MRO declarations.
+    Focused evidence: the policy-boundary plus runtime-plan-shape suites pass
+    (`4 passed`), and the declaration/MRO subset passes (`4 passed`).
+  - **Status, output/measurement consumer slice only (2026-07-10): complete.**
+    `measurement_recording.py`, `output_recording.py`,
+    `output_record_request.py`, and `measurement_image_resolver.py` now query the
+    three-field plan owners and active adapter artifact plans directly. Focused
+    evidence: the runtime-plan shape and consumer suites pass (`7 passed`), with
+    zero forbidden plan-projection accesses in the consumer AST gate.
 - Refactor `CellProfilerModuleExecutor` to retain one runtime plan; delete its
   derived contract/name/policy fields and per-callable plan dictionary.
 - Remove `CellProfilerModuleRunRequest.func`, `plan`, `input_image`, and
@@ -3518,12 +3869,21 @@ import output.
 - Add `CellProfilerRuntimeAdapter.require_processing_context()` and replace
   every `RequireProcessingContextBoundaryPolicy(adapter).context` call with
   that fail-loud method.
+  - **Status, `RequireProcessingContextBoundaryPolicy` deletion slice only
+    (2026-07-10): complete.** The boundary policy is deleted; owned
+    source-candidate and source-binding consumers call the adapter authority
+    directly.
 - Replace one-field runtime projections with their existing owners:
   `ImageArrayShapeSemantics(value).shape` supplies diagnostic shape;
   `RuntimeArtifactRecordLocationIdentity.unique_records(records)` performs
   location de-duplication; `ObjectLabelVariantData` supplies final and
   small-removed variants; and `sparse_ijv_rows_from_label_slice` performs
   sparse-row coercion.
+  - **Status, object-label measurement-row wrapper deletion slice only
+    (2026-07-10): complete.** `measurement_rows.py` now uses those owners;
+    `ObjectLabelFinalLabels`, `ObjectLabelSmallRemovedLabels`, and
+    `SparseLabelRowsCoercion` are deleted. Focused evidence:
+    `test_cellprofiler_measurement_rows.py` (`3 passed`) and the AST gate.
 - Inline closed scalar predicates in the methods that own their decisions:
   optional string normalization in `CellProfilerStringKwargAuthority`, source
   axis cardinality in `SourceBindingMatchedPlaneResolution`, source identity
@@ -3531,8 +3891,12 @@ import output.
   in `VolumetricInputExecutionModePolicy`, dense-label memory/repeat checks in
   their current consumers, MATLAB private-name filtering in
   `_matlab_numeric_arrays`, grid slice count in `SpatialGridValueAuthority`,
-  selected plane index in `RuntimePlaneImagePayloadPlaneSelectionResult`, and
-  image-number absence in `CellProfilerImageNumberMap` and resolver methods.
+  and selected plane index in
+  `RuntimePlaneImagePayloadPlaneSelectionResult`. Delete the CP image-number
+  resolver, reverse map, source-order warmup cache, adapter forwarding methods,
+  and TrackObjects start-number injection; runtime rows use canonical local
+  `slice_index`, while external CP export/equivalence owns `ImageNumber`
+  translation.
 - Fold payload alias and component-metadata extraction into
   `SourceBindingPayloadPlaneResolution`, their only consumer.
 
@@ -3592,6 +3956,11 @@ import output.
   `RuntimeArtifactRecordDeduplication`, `ObjectLabelFinalLabels`,
   `ObjectLabelSmallRemovedLabels`, `SparseLabelRowsCoercion`,
   `Pure2DSliceCountCandidate`, and `Pure2DTraceLabelStats`;
+  - **Status, `Pure2DSliceCountCandidate` and `Pure2DTraceLabelStats`
+    deletion slice only (2026-07-10): complete.** Slice-count diagnostics now
+    use their existing runtime value and `RuntimeSliceProjection` owners, and
+    PURE_2D trace recording computes label maxima at its consuming record
+    sites. Focused evidence: `6 passed, 419 deselected`.
 - `SourceIdentitySetCardinality`, `DeclaredOutputResolution`,
   `CellProfilerOptionalNonemptyString`, `SourceBindingAxisCardinality`,
   `SourceImageSetIdentityQuality`, `InvocationSpatialRankCandidates`,
@@ -3599,8 +3968,24 @@ import output.
   `MatlabPayloadEntryName`, `SpatialGridSliceCount`,
   `RuntimePlaneSelectedPlaneIndex`, and
   `CellProfilerImageNumberResolution`;
+  - **Status, scalar projection wrapper deletion slice (2026-07-10):
+    complete.** `DenseLabelShapeSet`, `DenseLabelStackRepeatPattern`,
+    `MatlabPayloadEntryName`, and `SpatialGridSliceCount` are deleted; their
+    predicates execute at the existing dense-label budget,
+    measurement-table broadcast, source-payload filtering, and spatial-grid
+    alignment owners. Focused behavioral and AST evidence: `5 passed`.
 - `SourceBindingPayloadAliasSet` and
   `SourceBindingPayloadComponentMetadata`;
+  - **Status, remaining one-field runtime wrapper deletion slice
+    (2026-07-10): complete.** `SourceImageSetIdentityQuality`,
+    `RuntimePlaneSelectedPlaneIndex`, `CellProfilerImageNumberResolution`,
+    `SourceBindingPayloadAliasSet`, and
+    `SourceBindingPayloadComponentMetadata` are deleted. Their behavior now
+    resides on `SourceImageSetIdentity` or directly in the existing
+    plane-selection and source-binding consumers. The subsequently verified
+    image-number consumer path was also deleted: TrackObjects uses local
+    runtime-slice numbering and external equivalence performs the sole CP
+    numbering translation. Focused behavioral and AST evidence: `825 passed`.
 
 **Forbidden additions**
 
@@ -3676,20 +4061,50 @@ import output.
 **Changes**
 
 - First move the complete ordered module-to-public-declaration loop from
-  `runtime_pipeline.py` / `pipeline_generator.py` into the private
+  `runtime_pipeline.py` / `pipeline_generator.py` into the pure
   `import_cellprofiler_pipeline` operation in
-  `openhcs/interop/cellprofiler/import_service.py`. That operation parses the
-  request, folds setup modules into `PipelineConfig`, lowers every enabled
-  processing/export module to real FunctionSteps through
-  `CellProfilerModule`, constructs the final import result, and writes only the
-  generic pycodify projection. Migrate every importer, UI, workspace,
+  `openhcs/interop/cellprofiler/pipeline_import.py`. That operation parses the
+  supplied `.cppipe` address, folds setup modules into `PipelineConfig`, lowers
+  every enabled processing/export module to real FunctionSteps through
+  `CellProfilerModule`, and returns `(steps, pipeline_config)` without source
+  rendering or I/O. Migrate every importer, UI, workspace,
   benchmark, agent, and test caller to this operation. Delete
-  `PipelineGenerator`, `GeneratedPipeline`, `pipeline_generator.py`,
-  `runtime_pipeline.py`, `pipeline_compiler.py`, `compiler_registry.py`, and all
-  forwarding aliases only after those callers compile against the direct
-  operation. This ordered move is the first change in Workstream 1C and leaves
-  no interval where forwarding files are deleted before their implementation
-  owner exists.
+  `import_service.py`, `import_records.py`, `PipelineGenerator`,
+  `GeneratedPipeline`, `pipeline_generator.py`, `runtime_pipeline.py`,
+  `pipeline_compiler.py`, `compiler_registry.py`, and all forwarding aliases
+  only after those callers compile against the pure operation. This ordered
+  move is the first change in Workstream 1C and leaves no interval where
+  forwarding files are deleted before their implementation owner exists.
+  - [x] Direct-import operation implementation: `import_cellprofiler_pipeline`
+    now parses once, folds setup declarations, lowers enabled executable
+    declarations to public `FunctionStep` values, and returns the public
+    steps/config pair. Focused direct importer coverage passes. Caller
+    migration and superseded-file deletion remain pending; Workstream 1C is
+    not complete.
+  - [x] Benchmark converter caller slice: the CLI now renders the steps returned
+    by `import_cellprofiler_pipeline` exclusively through
+    `FunctionStepTransportAuthority`; the converter package no longer exports
+    production compatibility facades; and setting coverage reads
+    `CellProfilerModule.__registry__` plus each declaration's `bind_settings`
+    result directly. The focused converter suite passes. Benchmark coverage
+    artifact-writer migration remains part of the broader caller cutover.
+  - [x] In-tree `.cppipe` corpus-test caller slice: supported cases now consume
+    only the public steps/config pair, derive expected executable modules from
+    `CellProfilerModule` declarations, and validate canonical generic source
+    reconstruction. Unknown-module and empty-pipeline failures plus the AST
+    boundary gate pass. Focused evidence is `7 passed, 4 failed`; the four
+    retained failures expose production declaration gaps: an unbound
+    `ArtifactSpec` reference in `IdentifySecondaryObjects`, undeclared
+    `LoadData`, and an undiscoverable retained illumination artifact.
+  - [x] Generated-execution test migration slice:
+    `test_cellprofiler_generated_pipeline_execution.py` now covers the pure
+    importer, ordinary `FunctionStep`/`PipelineConfig` declarations, generic
+    FunctionStep transport, compiler-derived invocation contracts, the nominal
+    `CellProfilerModuleRuntimePlan`, and declaration-owned module artifact
+    contracts. Generated-module loading, registration, pruning options,
+    carrier types, and the synthetic direct-runtime harness are removed from
+    the file. Focused evidence: `16 passed`; its AST gate rejects imports from
+    every deleted generated-pipeline boundary.
 - Remove `invocation_contracts` from
   `openhcs/core/steps/function_step.py::FunctionStep` and from
   `StepSnapshot`.
@@ -3703,13 +4118,13 @@ import output.
   protocols. `_compiler_pipeline_scope_id` uses the existing submitted-list
   branch for its process-local ObjectState namespace; that namespace is not
   artifact or execution identity.
-- Change the CP import result to carry only public steps, `PipelineConfig`,
-  direct source path/module references, setting coverage, and generated source
-  path. Delete the nested provenance record. Derive source text from steps and
-  every source/workspace fact from the config.
+- Delete the CP import request/result/provenance records. Return public steps
+  and `PipelineConfig` directly. Derive source text from steps only at a generic
+  caller that explicitly requests source, and derive every source/workspace
+  fact from the config.
 - Remove CP generated-module import entirely. The direct import operation returns
-  the exact `list[FunctionStep]`; it saves the generic pycodify projection and the
-  ZMQ server performs the only required fresh-source reconstruction.
+  the exact `list[FunctionStep]`; the ZMQ server performs the only required
+  fresh-source reconstruction from generic transport source.
 - Replace `PipelineStepsBoundary` and `PipelineStepsCarrier` fields throughout
   client, agent, and server records with direct mutable step lists. Route all
   source rendering and namespace validation through
@@ -3769,8 +4184,10 @@ import output.
   `PIPELINE_SOURCE_SCHEMA_METADATA_KEY`, and
   `CompilationSession.pipeline_metadata`;
 - generated/import/runtime artifact-contract sidecar fields;
-- `CellProfilerPipelineProvenance` and every nested/import-result provenance
-  accessor;
+- `CellProfilerPipelineProvenance`, `CellProfilerPipelineImportRequest`,
+  `CellProfilerPipelineImportResult`, `CellProfilerModuleReference`, every
+  nested/import-result provenance accessor, `import_service.py`, and
+  `import_records.py`;
 - core `Pipeline` class and public export after GUI and textual consumers are
   migrated.
 - `openhcs/interop/cellprofiler/runtime/generated_pipeline.py`;
@@ -3865,15 +4282,14 @@ import output.
   checkboxes, and numeric controls from callable signatures.
 - Construct existing `ProcessingConfig`, `PipelineConfig`, and lazy step
   overrides directly; no generated literal/config-shape carrier remains.
-- Derive `CellProfilerPipelineImportResult.generated_source` exclusively through
-  `FunctionStepTransportAuthority.source_from_pipeline`; remove every manual
-  import, indentation, literal, and FunctionStep source renderer from import.
-- Rewrite `benchmark/converter/convert.py` as a thin CLI: construct the
-  validated `CellProfilerPipelineImportRequest`, call
-  `import_cellprofiler_pipeline`, write the returned generated source to the
-  requested output path, and report direct module references plus step count. It does
-  not import a benchmark-local runtime pipeline or inspect skipped/converted
-  module carrier fields.
+- Keep source generation exclusively on
+  `FunctionStepTransportAuthority.source_from_pipeline`; the pure import
+  operation contains no source renderer or output address.
+- Rewrite `benchmark/converter/convert.py` as a thin CLI: call
+  `import_cellprofiler_pipeline` with the `.cppipe` address/backend, render the
+  returned steps through the generic transport authority, write that source to
+  the CLI output path, and report step count. It does not construct a CP import
+  request/result or inspect skipped/converted module carrier fields.
 - Rewrite `benchmark/converter/compatibility_matrix.py` to iterate
   `CellProfilerModule.__registry__.values()`, obtain callables from each
   declaration's callable-loading method, and invoke the same direct import operation
@@ -3894,9 +4310,9 @@ import output.
   placeholders;
 - generated runtime wrapper imports and artifact-contract comments.
 - explicit absorbed-library root support and copied module registry;
-- derived source text, converted-module, and failed-module fields on the final
-  import result; it retains only the independently routed
-  `generated_source_path` diagnostic field;
+- CP import request/result types and all derived source text,
+  generated-source-path, converted-module, failed-module, module-reference,
+  and setting-coverage result fields;
 - `benchmark/cellprofiler_library`, `benchmark/cellprofiler_compat`, obsolete
   absorption tools, converter role aliases, and the CP threshold forwarding
   module after tests import authoritative production modules.
@@ -3918,10 +4334,10 @@ import output.
   multi-channel illumination, object pipelines, measurements, grids, and
   SaveImages;
 - object assertions over the pre-pycodify generated FunctionSteps and config;
-- exact source equality between
-  `CellProfilerPipelineImportResult.generated_source` and the generic
-  FunctionStep transport authority;
-- converter CLI output equals the import result's canonical generated source;
+- exact source equality between converter/UI projections and the generic
+  FunctionStep transport authority applied to the returned steps;
+- converter CLI output equals the canonical generic source for the returned
+  steps;
 - compatibility reports discover modules exclusively from
   `CellProfilerModule.__registry__` and fail on unsupported enabled modules;
 - pycodify round-trip preserves enum, bool, numeric, tuple, list, and dataclass
@@ -4151,6 +4567,9 @@ ArtifactSpecKey
 CellProfilerModuleRole
 CellProfilerModuleRoleSpec
 cellprofiler_module_role
+ModuleSettingsSourceModule
+BinderSettingsSourceModule
+CellProfilerObjectInputCountAuthority
 CellProfilerPipelineProvenance
 PipelineImageSchema
 PipelineImageSchemaBuilder
@@ -4196,6 +4615,17 @@ TiffSourcePlaneInventory
 SinglePlaneSourcePlaneInventory
 SourcePixelRef.to_legacy_workspace_mapping
 SourcePixelRef.source_metadata
+SourcePixelRef.reader
+SourcePixelRef.source_path
+SourcePixelRef.series_index
+SourcePixelRef.plane_index
+SourcePixelRef.source_channel
+SourcePixelRef.source_z_index
+SourcePixelRef.source_timepoint
+BioFormatsPlaneRef.reader
+BioFormatsPlaneRef.c
+BioFormatsPlaneRef.z
+BioFormatsPlaneRef.t
 workspace_mapping_source_ref
 workspace_mapping_source_path
 VirtualWorkspaceSourceRefResolver
@@ -4239,6 +4669,9 @@ SourceSchemaSingletonZIndexProjection
 OrdinalSiteProjection
 SourceBindingView.from_schema_assignment
 SourceBindingView.payload_type_for_assignment
+SourceBindingView.payload_type
+StepSourceBindingsConfig.inherits_*
+_resolve_step_source_binding_defaults
 SourceBindingsViewModel.from_schema_and_bindings
 SourceBindingsPreview.from_schema_and_bindings
 SourceInventoryBuildRequest
@@ -4249,6 +4682,11 @@ FileManagerSourceInventoryProvider
 OpenHCSWorkspaceSourceInventoryProvider
 SchemaContextSourceInventoryProvider
 SourceSchemaWorkspaceMaterialization
+CellProfilerSourceSchemaProjection
+CellProfilerSourceSchemaWorkspace
+CellProfilerSourceSchemaPreparation
+CellProfilerSourceSchemaMaterializer
+CellProfilerSourceSchemaMaterializationScope
 source_schema
 _AUXILIARY_PAYLOAD_CACHE
 source_schema_auxiliary_payload
@@ -4282,7 +4720,14 @@ FunctionStepTransportAuthority.approved_code_document_factory_names
 CellProfilerModuleExecutor._runtime_plans
 CellProfilerModuleExecutor._canonical_module_name
 CellProfilerModuleExecutor._primary_image_input_policy
+CellProfilerPerObjectMeasurementPolicy
+CurrentObjectFeatureVectorAuthority
 CellProfilerRuntimeStepBinding
+CellProfilerModuleRunRequest.func
+CellProfilerModuleRunRequest.plan
+CellProfilerModuleRunRequest.input_image
+CellProfilerModuleRunRequest.current_image
+CellProfilerOutputValueResolutionRequest.func
 SourceBindingRuntimeContractGuard
 CellProfilerRuntimeCallableFormatter
 SpecialOutputKindClassifier
@@ -4295,6 +4740,105 @@ RuntimeReturnedOutputMatcher.same_artifact_semantics
 CellProfilerCompileTimeArtifactFlow
 CellProfilerCompileTimeSettingsRequest
 CellProfilerModule.*compile_time_*
+CellProfilerModule.image_input_setting_names
+CellProfilerModule.object_input_setting_names
+CellProfilerModule.image_output_setting_names
+CellProfilerModule.object_output_setting_names
+CellProfilerModule.spatial_grid_input_setting_names
+CellProfilerModule.spatial_grid_output_setting_names
+CellProfilerModule.artifact_input_setting_is_repeated
+CellProfilerModule.preserve_duplicate_artifact_inputs
+CellProfilerModule._active_artifact_context
+ModuleArtifactContractItemCollection
+ArtifactBindingKeys
+InvocationArtifactDeclarationProvider
+ObjectMeasurementRowsModule
+_partition_public_kwargs
+CellProfilerOptionalCurrentImageContext
+CellProfilerRequiredCurrentImageContext
+CurrentSourceIdentityCacheScope
+MappingValueLookup
+MeasurementTableAxisProjectionCacheKey
+SourceAliasOrderIndexRequest
+SourceCandidateMetadataRequest
+SourceCandidateRuntimeUniverse
+CollectionAttributeProjection
+ContextSourceMetadataAuthority.has_metadata_for_any
+ParsedSourceCandidateIdentity.from_candidate
+CPPipeExecutionValidation
+ObjectIntensityResults
+ProjectedMeasurementFieldDescriptor
+CellProfilerProjectedMeasurementRow
+CellProfilerProjectedColumnarRowColumns
+ConcatenatedMeasurementColumnarRows
+CorrectIlluminationOriginalImageName
+CorrectIlluminationCanonicalImageNames
+CorrectedImageOutputPlaneStack
+AlignCropRequest
+AlignGeometryProjection
+AlignInputPayloads
+AlignAdditionalModePlan
+align_offsets
+align_offsets_for_cropping
+align_offsets_for_padding
+alignment_mask
+alignment_pixels
+crop_mode_outputs
+RelationshipEndpointContract
+RelationshipEndpointMatches
+TwoInputRelationshipEndpointFallback
+RelationshipEndpointResolver
+RelationshipEndpointResolver.for_request
+RelationshipEndpointResolver.endpoint_contract
+RelationshipEndpointResolver.artifact_name_matches
+RelationshipEndpointResolver.module_relationship_endpoint_contract
+RelationshipEndpointResolver.indexed_object_input_contract
+RelationshipEndpointResolver.object_input_at
+CellProfilerModule.relationship_endpoint_contract
+PrimaryObjectInputRelationshipModule
+PrimaryObjectInputRelationshipDistanceModule
+parent_child_relationship_artifact_endpoints
+CellProfilerImageMeasurementSource
+ProducedArtifactImageMeasurementSourceBase
+ProducedArtifactImageMeasurementSource
+UnqualifiedRuntimeImageMeasurementSource
+CellProfilerMeasurementFeatureParseCandidate
+CurrentStepPayloadSelection
+CurrentSourcePlaneProjectionBase
+RuntimePlaneCurrentImageContext
+RuntimePlaneProjectionContext
+RuntimePlaneProjectionRequest
+RuntimePlanePayloadProjectionRequest
+RuntimePlaneImagePayloadPlaneSelection
+RuntimePlaneSelectedImagePayloadPlane
+RuntimePlaneSelectedImagePayloadPlanes
+RuntimePlaneImagePayloadPlaneSelectionResult
+RuntimePlaneImagePayloadSourceContextRequest
+RuntimePlaneCurrentImagePayloadPlaneIndex
+RuntimePlaneImagePayloadSliceContext
+RuntimePlaneImagePayloadProjectedMetadata
+RuntimePlaneImagePayloadPlaneIndex
+CurrentRuntimePlaneKwargValue
+IndexedCalculateMathSettingValue
+TypedCalculateMathSettingValue
+CalculateMathRepeatedOperandSettings
+CellProfilerObjectMeasurementVectorBinding.feature_query
+CellProfilerSourceIdentityMixin.primary_source_image_pair
+ShapeObjectMeasurementRows.covers_declared_object_measurement_domain
+ObjectIntensityMeasurementRows.covers_declared_object_measurement_domain
+ObjectColocalizationColumnarMeasurements.covers_declared_object_measurement_domain
+ObjectGranularityMeasurementRows.covers_declared_object_measurement_domain
+DenseLabelSequenceMemoryBudget
+CellProfilerRadialCVExportValue
+FirstMeasurementField
+PerImageMeasurementProfile
+FilterObjectsKwargSettings
+FilterObjectsBoundMeasurementInputs
+ModuleRevisionRange
+GranularityImageSeriesCacheEntry
+SourceImagePairCollection
+FilterObjectsRelationshipEndpointIds
+CellProfilerModuleRuntimePlan.func
 RuntimeInvocationOptions
 CalculateMathInvocationOptions
 DefineGridInvocationOptions
@@ -4306,9 +4850,38 @@ RuntimeCallableArgumentPlan.invocation_options_parameter_name
 _runtime_invocation_options_parameter
 CallableInvocationKwargSpec
 CellProfilerModule.contract
+CellProfilerModule.image_export_specs
 CompiledFunctionInvocation.artifact_input_keys
 CompiledFunctionInvocation.artifact_output_keys
 cellprofiler_source_setting_parameter_mapping
+CellProfilerImageNumberCandidateContext
+CellProfilerImageNumberMatchedContext
+CellProfilerImageNumberMap
+CellProfilerImageNumberResolver
+CELLPROFILER_IMAGE_NUMBER_MAP_PROCESS_CACHE
+cellprofiler_current_step_source_paths
+cellprofiler_axis_image_number_start
+_cellprofiler_axis_image_number_start
+cellprofiler_image_number_start_for_source_paths
+cellprofiler_image_number_for_source_paths
+cellprofiler_image_number_for_payload
+cellprofiler_source_path_for_image_number
+cellprofiler_source_paths_for_image_name
+cellprofiler_source_order_identity
+image_number_start
+_source_paths_by_image_name_cache
+RuntimeAdapterPrepare
+ResolvedRuntimeInputRequest
+RuntimeAdapterSpec.prepare
+RuntimeAdapterSpec.prepare_request
+prepare_compiled_runtime_adapters
+compiled_source_binding_context
+compile_runtime_adapter_request
+prepare_cellprofiler_runtime_adapter
+prepare_source_resolution
+cellprofiler_ordered_pipeline_image_paths
+CELLPROFILER_SOURCE_ORDER_PROCESS_CACHE
+SourceOrderCacheValue
 setting_parameter_aliases
 ModuleSettingCoverageStatus.ARTIFACT_CONTRACT
 ModuleSettingCoverageStatus.TYPED_IGNORE
@@ -4368,6 +4941,7 @@ GeneratedPipelineRequest
 SkippedModuleSelection
 GeneratedStepEmission
 GeneratedStepEmissionGroup
+generated_module_blocks
 python_literal
 ArtifactContractCommentSection
 GeneratedPipelineConfigDefaults
@@ -4400,6 +4974,12 @@ SourceProcessingAxisPlan.without_source_set_components
 SourceProcessingAxisPlan.scalar_source_group_component
 SourceProcessingAxisPlan.optional_single_image_set_component
 SourceProcessingAxisPlan.single_component_for_role
+source_identity_group_by_component
+_cellprofiler_measurement_target_scope
+CellProfilerInvocationOverrideKwarg.measurement_target_scope
+runtime_measurement_target_scope
+pop_measurement_target_scope
+cellprofiler_measurement_scope_selection
 SourceProcessingComponentSemantics
 RuntimeArtifactProcessingScope
 SourceBindingProcessingScope
@@ -4439,6 +5019,8 @@ SettingNameFamilySpec
 ResolvedModuleFunction
 resolve_semantic_function
 CellProfilerDebugView
+DefaultCellProfilerDebugView
+CellProfilerSemanticDefaultContract.__registry__
 InfrastructureCellProfilerModule
 CellProfilerModuleSemantics
 CellProfilerModuleSemanticTraits
@@ -4501,6 +5083,12 @@ Pure2DTraceLabelStats
 PipelineStepsBoundary
 PipelineStepsCarrier
 PipelineStepsNamespaceProjection
+PipelineObjectStateBinding.pipeline
+PipelineObjectStateBinding.pipeline_for_plate
+PipelineObjectStateBinding.pipeline_declaration
+PipelineObjectStateBinding.update_plate_pipeline
+PipelineObjectStateBinding.replace_pipeline
+PipelineObjectStateBinding.registered_plate_pipelines
 ZMQPipelineSourcePayload
 ZMQPipelineCodeTransport
 PycodifiedPipelineStepSource
@@ -4547,6 +5135,47 @@ resolve_effective_step_source_bindings
 bindings_for_group_key
 for_group_key
 SourceBindingCandidateSourceRef
+ObjectMeasurementVectorDomain
+dense_object_label_declared_or_extent_id_domain
+dense_object_label_extent_id_domain
+collapse_singleton_image_stack
+ObjectLabelDataRuntimeSliceStackContract
+SparseIJVLabelRowsRuntimeSliceStackContract
+DenseArrayLabelRuntimeSliceStackContract
+ObjectLabelRuntimeSliceStackContract
+ObjectLabelContainerRuntimeSliceStackContract
+ObjectLabelPayloadRuntimeSliceStackContract
+ObjectLabelSetRuntimeSliceStackContract
+ColocalizationMaskRequest
+ColocalizationMaskStrategy
+SpatialColocalizationMaskStrategy
+ImageStackColocalizationMaskStrategy
+ChannelLeadingColocalizationMaskStrategy
+ReplicatedChannelMonochromeProjection
+CurrentPlaneObjectLabelProjection
+CurrentImageObjectLabelPlaneAlignment.aligned_dense_value
+SpecialInputBindingRequest.object_label_runtime_value
+SpecialInputBindingRequest.current_plane_object_label_runtime_value
+SpecialInputBindingRequest.object_label_payload
+SpecialInputBindingRequest.current_image_aligned_object_label_runtime_value
+SourceSpatialAlignedKwargResolutionStrategy
+ImageMetadataPayloadAlignedKwargResolutionStrategy
+MaskedImagePayloadAlignedKwargResolutionStrategy
+ObjectLabelPayloadAlignedKwargResolutionStrategy
+ObjectLabelSetAlignedKwargResolutionStrategy
+AlwaysMatchingAlignedKwargResolutionMixin
+AlignedImageStackKwargResolutionStrategy.for_value
+AlignedImageStackKwargResolver.domain_adapter
+AlignedImageStackKwargResolver.reference_domain
+SpecialInputBindingRequest.parameter_spec_groups
+CurrentRuntimePlaneKwargProjectionContract.requires_projection_capability
+CurrentRuntimePlaneKwargProjection.required_runtime_slice_projection
+RawObjectLabelOutputValueContextStrategy
+CellProfilerObjectLabelOutputContextStrategy
+ContextualCellProfilerObjectLabelOutputStrategy
+NumpyCellProfilerObjectLabelOutputStrategy
+OpaqueCellProfilerObjectLabelOutputStrategy
+CellProfilerRuntimeAdapter.add_source_image_objects
 ```
 
 Static import tests also enforce:
@@ -4572,27 +5201,32 @@ Static import tests also enforce:
   function-to-module dictionary;
 - AST inspection requires parsed-module `CellProfilerModule.resolve_function`
   to accept `ModuleBlock`, `ModuleArtifactContract`, and
-  `SourceProcessingAxisPlan` and forbids a `ProcessingConfig` parameter;
+  `StepSourceBindingsConfig` and forbids a `ProcessingConfig` parameter;
   `CellProfilerModule.processing_config` requires `CallableContract` and the
-  same axis plan, and the public compiler contains no call to
-  `resolve_function`; parsed import resolves candidate
+  inherited concrete `ProcessingConfig`, and the public compiler contains no
+  call to `resolve_function`; parsed import resolves candidate
   `LazyStepSourceBindingsConfig` directly under the pipeline config and creates
   no FunctionStep before canonical callable selection;
-- AST inspection requires `module_processing_config.py` to expose
-  `SourceProcessingAxisPlan` and `default_module_processing_config` as its only
-  behavior-bearing top-level owners; source identity group selection is a
-  method on the axis plan, not a module-level function, and no generated
-  literal, component request/result, lineage/scope wrapper, or policy class
-  remains;
+- AST inspection requires both module-processing helper files and every
+  source-axis summary, generated literal, component request/result,
+  lineage/scope wrapper, or processing policy class to be absent;
+- `ModuleArtifactContract` contains artifact items only and contains no required
+  variable components or allowed-grouping fields;
+- `CallableContract` is the sole owner queried for required variable components
+  and allowed groupings;
+- `ArtifactDeclarationStepContext` contains exact `source_bindings`, `group_by`,
+  `input_source`, available artifact/producers, and main-flow fields and contains
+  no `ProcessingConfig` field;
+- `StepSnapshot` contains only compiler identity and the resolved `step`; the
+  compiler and path planner consume `snapshot.step` configs directly;
 - generated pipeline source is produced only by the generic FunctionStep
   pycodify authority;
-- import results store no source text derivable from their step list;
-- import results store direct source path/module references and contain no
-  nested provenance wrapper;
-- AST inspection requires `CellProfilerPipelineImportResult` to declare exactly
-  `cppipe_path`, `modules`, `pipeline_steps`, `pipeline_config`,
-  `setting_coverage`, and `generated_source_path`; `generated_source` is a
-  derived property and never a stored field;
+- AST inspection requires `import_cellprofiler_pipeline` to return exactly
+  `tuple[list[FunctionStep], PipelineConfig]` and forbids
+  `CellProfilerPipelineImportRequest`, `CellProfilerPipelineImportResult`,
+  `CellProfilerModuleReference`, `CellProfilerPipelineProvenance`,
+  `import_service.py`, `import_records.py`, source rendering, and source writes
+  anywhere in the import module;
 - every workspace mapping value round-trips through `SourcePixelRef`; virtual
   workspace resolution uses one exact existing-backend lookup and contains no
   string-path branch, resolver family, shape predicate, priority traversal,
@@ -4765,9 +5399,10 @@ Implementation review is complete only when every item is true:
         |
         +-> setup declarations -> SourceBindingsConfig
         +-> executable declaration -> ModuleArtifactContract
-        +-> resolved step source config -> SourceProcessingAxisPlan
-        +-> resolve_function -> canonical raw callable -> CallableContract
-        +-> typed behavior kwargs -> ProcessingConfig
+        +-> resolved source bindings -> resolve_function -> canonical raw callable
+        +-> raw callable -> CallableContract axis/group constraints
+        +-> artifact contract + callable contract + inherited config
+            -> ProcessingConfig
         |
         v
 PipelineConfig + list[FunctionStep]
@@ -4776,7 +5411,7 @@ PipelineConfig + list[FunctionStep]
         +-> WellFilterConfig -> compiled execution-axis selection
         |
         v
-ObjectState/config inheritance -> StepSnapshot
+ObjectState/config inheritance -> resolved FunctionStep -> StepSnapshot.step
         |
         v
 normalize_function_pattern -> FunctionInvocationKey
@@ -4785,12 +5420,12 @@ normalize_function_pattern -> FunctionInvocationKey
 CellProfilerInvocationContractProviderFactory
         |
         +-> CellProfilerModule.__registry__ -> declaration-loaded callable
-        +-> effective source bindings
-        +-> existing ArtifactSpecCollection
+        +-> ArtifactDeclarationStepContext
+            (source bindings, group_by, input_source, artifacts/producers/main flow)
         +-> transient ModuleBlock setting rows
         |
         v
-ModuleArtifactContract
+CallableContract + artifact-only ModuleArtifactContract
         |
         v
 generic ArtifactGraph / PipelinePathPlanner

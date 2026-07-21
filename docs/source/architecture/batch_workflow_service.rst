@@ -1,84 +1,64 @@
-Batch Workflow Service
-======================
+Plate Manager batch workflow
+============================
 
-Module
-------
+``PlateManagerBatchWorkflow`` is the OpenHCS-owned facade for Plate Manager
+compilation, execution, debug runs, progress projection, and cleanup. It lives
+in ``openhcs/pyqt_gui/services/plate_manager_batch_workflow.py``.
 
-``openhcs.pyqt_gui.widgets.shared.services.batch_workflow_service``
+Composition
+-----------
 
-Purpose
--------
+The facade creates a ``BatchWorkflowContext`` and a lazy
+``BatchWorkflowComponents`` registry. The component owner constructs focused
+services only when the workflow needs them:
 
-``BatchWorkflowService`` is the single orchestration boundary for:
+- ``CompileBatchWorkflowService`` owns compile-only batches and the
+  compile-before-execution policy;
+- ``CompileWorkflowService`` submits and waits for one compile request;
+- ``PlatePipelineRequestBuilder`` projects current plate/UI state into
+  ``CompileJob`` and ``RunSpec`` declarations;
+- ``ExecutionSubmissionService`` submits compiled runs and owns terminal
+  polling callbacks;
+- ``ExecutionControlService`` owns cancellation, disconnection, and failure
+  convergence;
+- ``ProgressWorkflowService`` projects the shared progress registry and server
+  status into UI updates;
+- debug and live-measurement notification services project their corresponding
+  progress events.
 
-- compile-only batches
-- execute batches (compile-all first, execute-all after)
-- execution completion polling
-- progress projection refresh + server-status emission
+This is composition of nominal services, not one monolithic
+``BatchWorkflowService`` class.
 
-Core Types
-----------
+Compile-only flow
+-----------------
 
-- ``CompileJob``: immutable compile unit
-- ``BatchWorkflowService``: end-to-end compile/execute owner
+1. ``PlateManagerBatchWorkflow.compile_plates`` resets the progress projection.
+2. ``CompileBatchWorkflowService`` builds ``CompileJob`` values through the
+   request builder.
+3. ZMQRuntime's ``BatchSubmitWaitEngine`` submits all compile jobs and waits for
+   their results.
+4. Successful compile artifacts are stored by plate and the host projection is
+   updated.
 
-Dependency Boundary
--------------------
-
-OpenHCS workflow policy is implemented in ``BatchWorkflowService``. Runtime and
-UI polling primitives are consumed as dependencies:
-
-- ``BatchSubmitWaitEngine`` (from ``zmqruntime.execution``)
-- ``ExecutionStatusPoller`` (from ``zmqruntime.execution``)
-- ``IntervalSnapshotPoller`` (from ``pyqt_reactive.services``)
-
-OpenHCS docs define orchestration policy and host contracts only; generic
-engine internals are documented in their owning repositories.
-
-Flow: Compile Only
-------------------
-
-1. Reset progress views for new batch.
-2. Build ``CompileJob`` entries from selected plates.
-3. Submit all jobs then wait all jobs via ``BatchSubmitWaitEngine``.
-4. Write compiled data into ``host.plate_compiled_data``.
-5. Emit orchestrator state transitions and progress updates.
-
-Flow: Run Batch
----------------
-
-1. Reset progress and execution state.
-2. Mark all selected plates queued immediately.
-3. Compile all selected plates before any execution submission.
-4. Submit execution for each plate using ``compile_artifact_id``.
-5. Start per-execution completion pollers.
-6. Converge to completed/failed/cancelled through one callback path.
-
-Host Contract (Expected Attributes/Callbacks)
----------------------------------------------
-
-``BatchWorkflowService`` expects host-owned UI/state callbacks including:
-
-- ``emit_status``, ``emit_error``, ``emit_progress_*``
-- ``update_item_list``, ``update_button_states``
-- ``emit_orchestrator_state``, ``emit_execution_complete``
-- ``on_plate_completed``, ``on_all_plates_completed``
-- data stores like ``plate_compiled_data``, ``plate_execution_states``,
-  ``plate_execution_ids``, and ``_progress_tracker``
-
-This is an explicit nominal integration in OpenHCS (not runtime duck-typing).
-
-Related Modules
----------------
-
-- ``openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter``
-- ``openhcs.pyqt_gui.widgets.shared.services.progress_batch_reset``
-- ``openhcs.pyqt_gui.widgets.shared.services.plate_config_resolver``
-- ``openhcs.pyqt_gui.widgets.shared.services.zmq_client_service``
-
-See Also
+Run flow
 --------
 
-- :doc:`plate_manager_services`
-- :doc:`progress_runtime_projection_system`
-- :doc:`zmq_server_browser_system`
+1. Reset progress, terminal activity, execution IDs, and live measurements.
+2. Build a ``RunSpec`` for every selected plate.
+3. Compile every run spec before submitting any execution.
+4. Submit each execution with its exact ``compile_artifact_id``.
+5. Start completion polling and converge completed, failed, or cancelled state
+   through the submission/control services.
+
+The compile-all-before-execute invariant prevents a partially started batch
+when a later plate cannot compile.
+
+Lifecycle
+---------
+
+The facade registers one progress listener. ``cleanup()`` must remove that
+listener and stop the progress workflow's timers. The Plate Manager host owns
+UI state; component services derive and update it through explicit callbacks.
+
+See :doc:`plate_manager_services`, :doc:`progress_runtime_projection_system`,
+and :doc:`zmq_server_browser_system`.

@@ -1,4 +1,4 @@
-# CellProfiler Boundary Audit
+# Superseded: CellProfiler Boundary Audit
 
 Date: 2026-07-08
 

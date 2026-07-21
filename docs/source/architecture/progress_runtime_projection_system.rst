@@ -34,6 +34,22 @@ OpenHCS Invariants
 - ``PATTERN_GROUP`` is step-detail only and does not set well pipeline percent.
 - Plate/server status is derived from projection snapshots, not mutable cache.
 
+Axis completion is not plate completion
+---------------------------------------
+
+Workers execute only axis-scoped steps. ``AXIS_COMPLETED`` reports the number
+of completed axis positions and deliberately stops at the first terminal
+plate-scoped step. It is a successful terminal event for that worker/axis
+channel, but it does not assert that the plate execution has finished.
+
+After every worker result succeeds, the parent merges runtime records and calls
+``execute_plate_scoped_steps()`` once for each terminal plate step. The parent
+then materializes those outputs, runs analysis consolidation, settles viewer
+state, and projects the orchestrator result. Only after those stages succeed
+does it emit the pipeline ``SUCCESS`` event at 100 percent. Failure,
+cancellation, viewer settlement, or terminal-step errors therefore cannot be
+hidden behind an earlier worker ``AXIS_COMPLETED`` event.
+
 Canonical Abstraction Docs
 --------------------------
 
@@ -47,3 +63,4 @@ Related OpenHCS Pages
 
 - :doc:`batch_workflow_service`
 - :doc:`zmq_server_browser_system`
+- :doc:`concurrency_model`

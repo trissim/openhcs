@@ -12,9 +12,9 @@ CellProfiler Pipeline Corpus
 The repository includes several CellProfiler-oriented sources that can anchor a
 conversation with a domain expert:
 
-* ``benchmark/cellprofiler_pipelines/`` contains in-tree ``.cppipe`` examples
-  and converted OpenHCS Python examples, including ``ExampleHuman``,
-  ``ExampleFly``, and ``BBBC021`` analysis/illumination pipelines.
+* ``benchmark/cellprofiler_pipelines/`` contains the in-tree ``.cppipe``
+  fixtures used by the current benchmark adapter. It does not contain a
+  parallel checked-in set of converted OpenHCS Python scripts.
 * ``benchmark/native_refs/official30_scoped_rows/`` contains thirty scoped
   native CellProfiler reference runs. These include CellProfiler tutorials,
   example pipelines, sample image subsets, native outputs, and
@@ -46,12 +46,12 @@ Use this translation map while reading examples:
 * CellProfiler modules become OpenHCS ``FunctionStep`` declarations backed by
   absorbed or native functions and runtime adapters.
 * CellProfiler setup modules such as ``Images``, ``Metadata``, and
-  ``NamesAndTypes`` become OpenHCS source schemas, source bindings, and virtual
-  workspace names.
+  ``NamesAndTypes`` become typed source bindings and virtual-workspace names.
 * CellProfiler image/object/measurement names become OpenHCS semantic artifact
   contracts and runtime values.
-* CellProfiler ``SaveImages`` and table-export modules become materialization
-  requirements when the result is externally required.
+* CellProfiler ``SaveImages``, ``ExportToSpreadsheet``, and
+  ``ExportToDatabase`` become explicit executable steps. Plate-wide exporters
+  consume merged typed runtime observations and emit declared file bundles.
 
 For the implementation boundary, use MCP architecture topic
 ``cellprofiler_translation``. For current authoring, use
@@ -61,25 +61,33 @@ inventory, and viewer inspection tools.
 Native OpenHCS Examples
 -----------------------
 
-Native examples show current OpenHCS concepts and code shapes:
+The current checked-in native preset authority is
+``openhcs/processing/presets/mfd_specs.py``. It owns the typed preset keys,
+variant declarations, shared step templates, materializers, and
+``build_mfd_preset``. These four small modules are current materialization
+wrappers over that authority:
 
-* ``benchmark/pipelines/`` contains small benchmark pipelines such as BBBC021,
-  BBBC022, CellProfiler-style nuclei segmentation, GPU variants, and
-  preprocessing examples.
-* ``openhcs/processing/presets/pipelines/`` contains production-style preset
-  pipelines for ImageXpress 96-well neurite outgrowth, MFD crop/analyze, GPU
-  stitching, and cell-count workflows.
-* ``openhcs/debug/example_export.py`` and
-  ``openhcs/debug/example_export_clean.py`` are complete exported scripts useful
-  for checking imports and generated-code shape.
-* ``docs/source/guides/complete_examples.rst`` and
-  ``docs/source/user_guide/production_examples.rst`` document complete workflow
-  patterns, including configuration, dictionary routing, GPU processing, zarr,
-  and execution.
+* ``openhcs/processing/presets/pipelines/10x_mfd_crop_analyze.py``
+* ``openhcs/processing/presets/pipelines/10x_mfd_crop_analyze_dapi-fitc-cy5.py``
+* ``openhcs/processing/presets/pipelines/10x_mfd_stitch_ashlar_cpu.py``
+* ``openhcs/processing/presets/pipelines/10x_mfd_stitch_gpu.py``
 
-The MCP knowledge renderer appends a generated ``Native Example Source Index``
-from the Python paths above, so agents can inspect actual source without
-copying examples into this document.
+The MCP knowledge renderer derives a ``Native Example Source Index`` from
+exactly those declared Python paths, so agents can inspect the owning source and
+thin wrappers without copying preset names or implementation into this page.
+
+The larger, source-backed current corpus is
+``openhcs_official30_benchmark_recipes``. Its thirty
+``<case>-openhcs-python`` sections are converted lazily through the public
+CellProfiler importer. Request source sections with ``max_chars=50000``; many
+complete recipes are larger than the default bounded response.
+
+Other scripts under the benchmark, preset-pipeline, and debug-export trees can
+still be useful migration or backend evidence. They are not current API
+examples unless a current test explicitly validates their imports and public
+declaration shape. See :doc:`../getting_started/getting_started` and
+:doc:`../concepts/function_patterns` for the supported declaration and callable
+patterns.
 
 Operator Workflow
 -----------------
@@ -94,8 +102,9 @@ examples as a retrieval and validation ladder:
    quality control, neurite outgrowth, worm analysis, wound healing, or
    CellProfiler-style measurement export.
 3. Use CellProfiler examples to understand task semantics and expected outputs.
-4. Use native OpenHCS examples to choose current imports, ``FunctionStep``
-   structure, configuration, materialization, and viewer settings.
+4. Retrieve the closest Official30 ``OpenHCS Python`` section to inspect the
+   current imported declarations; use the typed MFD authority when that preset
+   family is the match.
 5. Build the smallest useful subset pipeline and inspect the artifact plan
    before running the full plate.
 6. Validate outputs through structured status and viewer tools before relying on
@@ -108,9 +117,10 @@ These searches should lead an agent to examples before it concludes that the
 workflow needs to be invented from scratch:
 
 ``CellProfiler examples``, ``CellProfiler cppipe``, ``ExampleHuman``,
-``ExampleFly``, ``BBBC021``, ``official30``, ``native CellProfiler reference``,
-``native OpenHCS examples``, ``benchmark pipelines``, ``preset pipelines``,
-``production examples``, ``complete examples``, ``nuclei segmentation``,
+``ExampleFly``, ``official30``, ``OpenHCS Python``,
+``native CellProfiler reference``, ``native OpenHCS examples``,
+``benchmark recipes``, ``MFD preset``,
+``current examples``, ``complete examples``, ``nuclei segmentation``,
 ``illumination correction``, ``colocalization``, ``translocation``,
 ``quality control``, ``neurite outgrowth``.
 
