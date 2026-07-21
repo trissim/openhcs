@@ -1,17 +1,12 @@
-from openhcs.constants.constants import AllComponents
+from polystore.virtual_workspace import SourcePixelRef
+
+from openhcs.constants.constants import AllComponents, Backend
 from openhcs.core.artifacts import ObjectLabelsArtifactType
-from openhcs.core.pipeline_image_schema import (
-    GroupingPlan,
-    ImageAssignment,
-    ImportedMetadataJoin,
-    ImportedMetadataTable,
-    ImagePlaneSource,
-    ImagesRule,
-    PipelineImageSchema,
-    SourceArtifactAssignment,
-)
 from openhcs.core.source_bindings import (
     ComponentSelector,
+    ImagePlaneSource,
+    ImportedMetadataJoin,
+    ImportedMetadataTable,
     MetadataExtractionRule,
     MetadataSource,
     MetadataSelector,
@@ -21,6 +16,8 @@ from openhcs.core.source_bindings import (
     SourceBindingMatchMethod,
     SourceBindingMatchPlan,
     SourceBindingOrigin,
+    SourceProjectionRole,
+    SourceBindingsConfig,
     SourceFilterClause,
     SourceFilterMatchType,
     SourceFilterSubject,
@@ -28,40 +25,11 @@ from openhcs.core.source_bindings import (
     StepSourceBindingsConfig,
 )
 from openhcs.core.source_bindings_view import (
-    OpenHCSWorkspaceSourceInventoryProvider,
-    SchemaContextSourceInventoryProvider,
     SourceBindingDiagnosticSeverity,
     SourceBindingsPreview,
     SourceBindingsViewModel,
     SourceInventory,
 )
-
-
-class PipelineImageAssignmentFactory:
-    """Test factory for canonical pipeline-start image assignments."""
-
-    @staticmethod
-    def build(alias: str, selector: SourceSelector) -> ImageAssignment:
-        return ImageAssignment(
-            alias=alias,
-            image_type="Grayscale image",
-            selector=selector,
-            origin=SourceBindingOrigin.PIPELINE_START,
-        )
-
-
-def source_preview(
-    schema: PipelineImageSchema,
-    inventory: SourceInventory,
-    *,
-    sample_limit: int = 3,
-) -> SourceBindingsPreview:
-    return SourceBindingsPreview.from_schema_and_bindings(
-        schema=schema,
-        bindings=StepSourceBindingsConfig(),
-        inventory=inventory,
-        sample_limit=sample_limit,
-    )
 
 
 class FileManagerInventoryStub:
@@ -71,20 +39,24 @@ class FileManagerInventoryStub:
         self.files = files
         self.calls: list[tuple[str, str, bool]] = []
 
-    def list_files(self, directory, backend, **kwargs):
-        self.calls.append((str(directory), str(backend), bool(kwargs.get("recursive"))))
+    def list_files(
+        self,
+        directory: str,
+        backend: str,
+        *,
+        recursive: bool = False,
+    ) -> list[str]:
+        self.calls.append((str(directory), backend, recursive))
         return list(self.files)
 
 
 def test_source_bindings_view_model_projects_pipeline_and_step_bindings():
-    schema = PipelineImageSchema(
-        images_rule=ImagesRule(
-            filters=(
-                SourceFilterClause(
-                    SourceFilterSubject.EXTENSION,
-                    SourceFilterMatchType.IS_TIF,
-                ),
-            )
+    source_bindings = SourceBindingsConfig(
+        source_filters=(
+            SourceFilterClause(
+                SourceFilterSubject.EXTENSION,
+                SourceFilterMatchType.IS_TIF,
+            ),
         ),
         image_plane_sources=(ImagePlaneSource(uri="file:///tmp/A01_w1.tif"),),
         imported_metadata_tables=(
@@ -93,25 +65,24 @@ def test_source_bindings_view_model_projects_pipeline_and_step_bindings():
                 joins=(ImportedMetadataJoin("Well", "well_id"),),
             ),
         ),
-        assignments_by_alias={
-            "DNA": PipelineImageAssignmentFactory.build(
-                "DNA",
-                SourceSelector(
+        bindings=(
+            NamedSourceBinding(
+                alias="DNA",
+                selector=SourceSelector(
                     components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
                 ),
+                origin=SourceBindingOrigin.PIPELINE_START,
             ),
-        },
-        source_artifacts_by_alias={
-            "Nuclei": SourceArtifactAssignment(
+            NamedSourceBinding(
                 alias="Nuclei",
                 artifact_kind=ObjectLabelsArtifactType,
-                payload_type="Objects",
+                projection_role=SourceProjectionRole.SOURCE_ARTIFACT,
                 selector=SourceSelector(
                     metadata=(MetadataSelector("object_type", "nuclei"),),
                 ),
                 origin=SourceBindingOrigin.PIPELINE_START,
             ),
-        },
+        ),
         metadata_rules=(
             MetadataExtractionRule(
                 source=MetadataSource.FILE_NAME,
@@ -119,9 +90,10 @@ def test_source_bindings_view_model_projects_pipeline_and_step_bindings():
             ),
         ),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
-        grouping=GroupingPlan(metadata_fields=("Well",)),
+        grouping_metadata_fields=("Well",),
     )
-    bindings = StepSourceBindingsConfig(
+    step_bindings = StepSourceBindingsConfig(
+        enabled=True,
         bindings=(
             NamedSourceBinding(
                 alias="LocalDNA",
@@ -144,9 +116,9 @@ def test_source_bindings_view_model_projects_pipeline_and_step_bindings():
         ),
     )
 
-    view = SourceBindingsViewModel.from_schema_and_bindings(
-        schema=schema,
-        bindings=bindings,
+    view = SourceBindingsViewModel.from_config_and_step_bindings(
+        source_bindings=source_bindings,
+        step_bindings=step_bindings,
     )
 
     assert view.pipeline_sources.image_plane_source_count == 1
@@ -159,7 +131,7 @@ def test_source_bindings_view_model_projects_pipeline_and_step_bindings():
         ("Nuclei", "object_labels"),
     ]
     assert view.pipeline_bindings[0].selector.components == (("channel", "1"),)
-    assert view.pipeline_bindings[1].payload_type == "Objects"
+    assert view.pipeline_bindings[1].projection_role == "source_artifact"
     assert view.step_bindings[0].selector.filters[0].value == "DNA"
     assert view.metadata_rules[0].extracted_fields == ("well", "site")
     assert view.metadata_rules[1].declaration_scope == "step"
@@ -170,8 +142,8 @@ def test_source_bindings_view_model_projects_pipeline_and_step_bindings():
 
 
 def test_source_bindings_view_model_exposes_metadata_match_dimensions():
-    schema = PipelineImageSchema.empty()
-    bindings = StepSourceBindingsConfig(
+    step_bindings = StepSourceBindingsConfig(
+        enabled=True,
         match_plan=SourceBindingMatchPlan(
             method=SourceBindingMatchMethod.METADATA,
             dimensions=(
@@ -185,9 +157,9 @@ def test_source_bindings_view_model_exposes_metadata_match_dimensions():
         ),
     )
 
-    view = SourceBindingsViewModel.from_schema_and_bindings(
-        schema=schema,
-        bindings=bindings,
+    view = SourceBindingsViewModel.from_config_and_step_bindings(
+        source_bindings=SourceBindingsConfig(),
+        step_bindings=step_bindings,
     )
 
     assert view.pipeline_bindings == ()
@@ -198,10 +170,10 @@ def test_source_bindings_view_model_exposes_metadata_match_dimensions():
     )
 
 
-def test_source_bindings_view_model_accepts_unresolved_lazy_step_bindings():
-    view = SourceBindingsViewModel.from_schema_and_bindings(
-        schema=PipelineImageSchema.empty(),
-        bindings=StepSourceBindingsConfig(),
+def test_source_bindings_view_model_accepts_empty_resolved_step_override():
+    view = SourceBindingsViewModel.from_config_and_step_bindings(
+        source_bindings=SourceBindingsConfig(),
+        step_bindings=StepSourceBindingsConfig(enabled=True),
     )
 
     assert view.step_bindings == ()
@@ -220,11 +192,17 @@ def test_source_bindings_preview_reuses_typed_filter_and_order_matching(tmp_path
         "notes.txt",
     ):
         (source_root / name).write_text("placeholder", encoding="utf-8")
-    schema = PipelineImageSchema(
-        assignments_by_alias={
-            "DNA": PipelineImageAssignmentFactory.build(
-                "DNA",
-                SourceSelector(
+    source_bindings = SourceBindingsConfig(
+        source_filters=(
+            SourceFilterClause(
+                SourceFilterSubject.EXTENSION,
+                SourceFilterMatchType.IS_TIF,
+            ),
+        ),
+        bindings=(
+            NamedSourceBinding(
+                alias="DNA",
+                selector=SourceSelector(
                     filters=(
                         SourceFilterClause(
                             SourceFilterSubject.FILE,
@@ -233,10 +211,11 @@ def test_source_bindings_preview_reuses_typed_filter_and_order_matching(tmp_path
                         ),
                     ),
                 ),
+                origin=SourceBindingOrigin.PIPELINE_START,
             ),
-            "GFP": PipelineImageAssignmentFactory.build(
-                "GFP",
-                SourceSelector(
+            NamedSourceBinding(
+                alias="GFP",
+                selector=SourceSelector(
                     filters=(
                         SourceFilterClause(
                             SourceFilterSubject.FILE,
@@ -245,17 +224,24 @@ def test_source_bindings_preview_reuses_typed_filter_and_order_matching(tmp_path
                         ),
                     ),
                 ),
+                origin=SourceBindingOrigin.PIPELINE_START,
             ),
-        },
+        ),
         match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
     )
     inventory = SourceInventory.from_paths(
         tuple(sorted(source_root.iterdir())),
-        schema=schema,
         source_root=source_root,
+        source_backend=Backend.DISK,
+        source_bindings=source_bindings,
     )
 
-    preview = source_preview(schema, inventory, sample_limit=1)
+    preview = SourceBindingsPreview.from_config_and_step_bindings(
+        source_bindings=source_bindings,
+        step_bindings=StepSourceBindingsConfig(),
+        inventory=inventory,
+        sample_limit=1,
+    )
 
     counts_by_alias = {
         row.alias: (row.matched_source_count, row.sample_paths)
@@ -263,159 +249,147 @@ def test_source_bindings_preview_reuses_typed_filter_and_order_matching(tmp_path
     }
     assert counts_by_alias["DNA"] == (2, ("A01_s1_DNA.tif",))
     assert counts_by_alias["GFP"] == (2, ("A01_s1_GFP.tif",))
-    assert len(preview.image_set_rows) == 2
-    assert preview.image_set_rows[0].paths_by_alias == (
+    assert len(preview.source_set_rows) == 2
+    assert preview.source_set_rows[0].paths_by_alias == (
         ("DNA", "A01_s1_DNA.tif"),
         ("GFP", "A01_s1_GFP.tif"),
     )
 
 
-def test_source_inventory_from_schema_sources_decodes_file_uri_and_metadata(tmp_path):
+def test_source_inventory_uses_declared_image_plane_sources(tmp_path):
     source_root = tmp_path / "sources"
     source_root.mkdir()
     source_path = source_root / "A01_s1_DNA.tif"
     source_path.write_text("placeholder", encoding="utf-8")
-    schema = PipelineImageSchema(
-        image_plane_sources=(ImagePlaneSource(uri=source_path.as_uri()),),
+    source_bindings = SourceBindingsConfig(
+        image_plane_sources=(ImagePlaneSource(uri=str(source_path)),),
         metadata_rules=(
             MetadataExtractionRule(
                 source=MetadataSource.FILE_NAME,
                 pattern=r"(?P<well>A\d{2})_(?P<site>s\d+)_(?P<channel>DNA)\.tif",
             ),
         ),
-        assignments_by_alias={
-            "DNA": PipelineImageAssignmentFactory.build(
-                "DNA",
-                SourceSelector(
+        bindings=(
+            NamedSourceBinding(
+                alias="DNA",
+                selector=SourceSelector(
                     metadata=(MetadataSelector("channel", "DNA"),),
                 ),
+                origin=SourceBindingOrigin.PIPELINE_START,
             ),
-        },
+        ),
     )
 
-    inventory = SourceInventory.from_schema_sources(
-        schema,
+    inventory = SourceInventory.from_paths(
+        (),
         source_root=source_root,
+        source_backend=Backend.DISK,
+        source_bindings=source_bindings,
     )
-    preview = source_preview(schema, inventory)
+    preview = SourceBindingsPreview.from_config_and_step_bindings(
+        source_bindings=source_bindings,
+        step_bindings=StepSourceBindingsConfig(),
+        inventory=inventory,
+    )
 
-    assert inventory.candidates[0].path == source_path
+    assert inventory.candidates[0].source_ref == SourcePixelRef(
+        backend=Backend.DISK.value,
+        backend_address=source_path.name,
+    )
     assert inventory.candidates[0].relative_path == "A01_s1_DNA.tif"
     assert inventory.candidates[0].metadata["channel"] == "DNA"
     assert preview.binding_rows[0].matched_source_count == 1
 
 
-def test_source_inventory_from_directory_applies_images_rule(tmp_path):
+def test_source_inventory_from_paths_applies_source_filters(tmp_path):
     source_root = tmp_path / "sources"
     source_root.mkdir()
     for name in ("A01_DNA.tif", "A01_GFP.tif", "notes.txt"):
         (source_root / name).write_text("placeholder", encoding="utf-8")
-    schema = PipelineImageSchema(
-        images_rule=ImagesRule(
-            filters=(
-                SourceFilterClause(
-                    SourceFilterSubject.EXTENSION,
-                    SourceFilterMatchType.IS_TIF,
-                ),
-                SourceFilterClause(
-                    SourceFilterSubject.FILE,
-                    SourceFilterMatchType.CONTAINS,
-                    "DNA",
-                ),
+    source_bindings = SourceBindingsConfig(
+        source_filters=(
+            SourceFilterClause(
+                SourceFilterSubject.EXTENSION,
+                SourceFilterMatchType.IS_TIF,
+            ),
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "DNA",
             ),
         ),
     )
 
-    inventory = SourceInventory.from_directory(source_root, schema=schema)
+    inventory = SourceInventory.from_paths(
+        tuple(sorted(source_root.iterdir())),
+        source_root=source_root,
+        source_backend=Backend.DISK,
+        source_bindings=source_bindings,
+    )
 
     assert tuple(candidate.relative_path for candidate in inventory.candidates) == (
         "A01_DNA.tif",
     )
 
 
-def test_source_inventory_from_schema_context_uses_directory_without_embedded_sources(
-    tmp_path,
-):
+def test_source_inventory_and_preview_use_resolved_step_override(tmp_path):
     source_root = tmp_path / "sources"
     source_root.mkdir()
-    source_path = source_root / "A01_DNA.tif"
-    source_path.write_text("placeholder", encoding="utf-8")
-    schema = PipelineImageSchema(
-        assignments_by_alias={
-            "DNA": PipelineImageAssignmentFactory.build(
-                "DNA",
-                SourceSelector(
-                    filters=(
-                        SourceFilterClause(
-                            SourceFilterSubject.FILE,
-                            SourceFilterMatchType.CONTAINS,
-                            "DNA",
-                        ),
-                    ),
-                ),
+    for name in ("A01_DNA.tif", "A01_GFP.tif"):
+        (source_root / name).write_text("placeholder", encoding="utf-8")
+    source_bindings = SourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="DNA",
+                origin=SourceBindingOrigin.PIPELINE_START,
             ),
-        },
+        ),
     )
-
-    inventory = SchemaContextSourceInventoryProvider(source_root).inventory(
-        schema=schema,
-    )
-    preview = source_preview(schema, inventory)
-
-    assert inventory.candidates[0].path == source_path
-    assert preview.binding_rows[0].matched_source_count == 1
-
-
-def test_openhcs_workspace_inventory_uses_virtual_workspace_metadata(tmp_path):
-    metadata_path = tmp_path / "openhcs_metadata.json"
-    virtual_path = "A01_s001_w1_z001_t001.tif"
-    metadata_path.write_text(
-        """
-{
-  "subdirectories": {
-    "default": {
-      "workspace_mapping": {
-        "A01_s001_w1_z001_t001.tif": "raw/source.ome.tiff"
-      },
-      "source_metadata": {
-        "A01_s001_w1_z001_t001.tif": {}
-      },
-      "channels": {
-        "1": "DAPI"
-      }
-    }
-  }
-}
-""".strip(),
-        encoding="utf-8",
-    )
-    schema = PipelineImageSchema(
-        assignments_by_alias={
-            "DNA": PipelineImageAssignmentFactory.build(
-                "DNA",
-                SourceSelector(
-                    components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
-                ),
+    step_bindings = StepSourceBindingsConfig(
+        enabled=True,
+        source_filters=(
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "GFP",
             ),
-        },
+        ),
+        bindings=(
+            NamedSourceBinding(
+                alias="GFP",
+                origin=SourceBindingOrigin.PIPELINE_START,
+            ),
+        ),
     )
 
-    inventory = OpenHCSWorkspaceSourceInventoryProvider(tmp_path).inventory(
-        schema=schema,
+    inventory = SourceInventory.from_paths(
+        tuple(sorted(source_root.iterdir())),
+        source_root=source_root,
+        source_backend=Backend.DISK,
+        source_bindings=source_bindings,
+        step_bindings=step_bindings,
     )
-    preview = source_preview(schema, inventory)
+    preview = SourceBindingsPreview.from_config_and_step_bindings(
+        source_bindings=source_bindings,
+        step_bindings=step_bindings,
+        inventory=inventory,
+    )
 
-    assert inventory.candidates[0].relative_path == virtual_path
-    assert inventory.candidates[0].metadata["channel_name"] == "DAPI"
+    assert tuple(candidate.relative_path for candidate in inventory.candidates) == (
+        "A01_GFP.tif",
+    )
+    assert [(row.alias, row.declaration_scope) for row in preview.binding_rows] == [
+        ("GFP", "step"),
+    ]
     assert preview.binding_rows[0].matched_source_count == 1
 
 
 def test_source_binding_preview_reports_required_alias_without_matches():
-    schema = PipelineImageSchema(
-        assignments_by_alias={
-            "DNA": PipelineImageAssignmentFactory.build(
-                "DNA",
-                SourceSelector(
+    source_bindings = SourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
+                alias="DNA",
+                selector=SourceSelector(
                     filters=(
                         SourceFilterClause(
                             SourceFilterSubject.FILE,
@@ -424,11 +398,16 @@ def test_source_binding_preview_reports_required_alias_without_matches():
                         ),
                     ),
                 ),
+                origin=SourceBindingOrigin.PIPELINE_START,
             ),
-        },
+        ),
     )
 
-    preview = source_preview(schema, SourceInventory(candidates=()))
+    preview = SourceBindingsPreview.from_config_and_step_bindings(
+        source_bindings=source_bindings,
+        step_bindings=StepSourceBindingsConfig(),
+        inventory=SourceInventory(candidates=()),
+    )
 
     assert preview.diagnostics[0].severity is SourceBindingDiagnosticSeverity.ERROR
     assert preview.diagnostics[0].code == "source_binding.no_match"
@@ -443,14 +422,12 @@ def test_source_inventory_from_filemanager_uses_vfs_file_listing():
             "/vfs/plate/notes.txt",
         )
     )
-    schema = PipelineImageSchema(
-        images_rule=ImagesRule(
-            filters=(
-                SourceFilterClause(
-                    SourceFilterSubject.FILE,
-                    SourceFilterMatchType.CONTAINS,
-                    "DNA",
-                ),
+    source_bindings = SourceBindingsConfig(
+        source_filters=(
+            SourceFilterClause(
+                SourceFilterSubject.FILE,
+                SourceFilterMatchType.CONTAINS,
+                "DNA",
             ),
         ),
     )
@@ -458,8 +435,8 @@ def test_source_inventory_from_filemanager_uses_vfs_file_listing():
     inventory = SourceInventory.from_filemanager(
         filemanager=filemanager,
         source_root="/vfs/plate",
-        backend="zarr",
-        schema=schema,
+        backend=Backend.ZARR.value,
+        source_bindings=source_bindings,
     )
 
     assert filemanager.calls == [("/vfs/plate", "zarr", True)]

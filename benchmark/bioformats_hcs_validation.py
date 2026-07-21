@@ -17,7 +17,6 @@ from benchmark.contracts.dataset import (
 )
 from benchmark.datasets.acquire import acquire_dataset
 from benchmark.datasets.registry import DATASET_REGISTRY
-from openhcs.constants.constants import Backend
 from openhcs.microscopes import create_microscope_handler
 from openhcs.microscopes.bioformats import BioFormatsHandler
 
@@ -141,15 +140,17 @@ def validate_acquired_bioformats_hcs_dataset(
     handler.initialize_workspace(acquired.path, filemanager)
     initialize_seconds = time.perf_counter() - initialize_start
 
-    backend = filemanager.registry[Backend.BIOFORMATS.value]
-    virtual_files = tuple(backend.list_files(acquired.path, extensions={".tif"}))
+    backend = handler.get_primary_backend(acquired.path, filemanager)
+    virtual_files = tuple(
+        filemanager.list_files(acquired.path, backend, extensions={".tif"})
+    )
     sample_paths = virtual_files[: max(load_sample_count, 0)]
 
     load_shapes: list[str] = []
     load_dtypes: list[str] = []
     load_start = time.perf_counter()
     for virtual_path in sample_paths:
-        plane = backend.load(virtual_path)
+        plane = filemanager.load(virtual_path, backend)
         load_shapes.append(_shape_label(plane.shape))
         load_dtypes.append(str(plane.dtype))
     load_seconds = time.perf_counter() - load_start

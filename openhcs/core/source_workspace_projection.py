@@ -10,30 +10,33 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, TypeVar
 
 from openhcs.constants import Backend
+from openhcs.core.runtime_image_values import ImagePayloadMetadataCompositionMode, image_payload_data, image_payload_mask, image_payload_metadata
+from openhcs.core.runtime_array_values import RuntimeArrayData
+from openhcs.core.source_bindings import (
+    SOURCE_BINDING_ALIAS_METADATA_FIELD,
+    SourceProjectionRole,
+)
 from openhcs.core.source_metadata import SourceMetadataMapping
 from openhcs.core.source_matching import (
     source_component_metadata_values,
     source_metadata_values_equal,
 )
-from openhcs.core.source_schema_workspace import (
-    source_schema_metadata_with_virtual_components,
-)
 from openhcs.core.source_path_identity import source_path_identity_key
+from openhcs.core.source_projection import SourceProjection
 from openhcs.core.virtual_workspace_metadata import (
     OpenHCSMetadataPayload,
     OpenHCSMetadataSubdirectories,
     OpenHCSSubdirectoryPayload,
     VirtualWorkspaceMapping,
+    VirtualWorkspaceSourceProjectionEntries,
     VirtualWorkspaceSourceMetadataEntries,
-    WorkspaceSourceRef,
 )
-from openhcs.microscopes.openhcs import (
-    workspace_mapping_source_path,
-)
+from polystore.virtual_workspace import SourcePixelRef
 
 if TYPE_CHECKING:
     from openhcs.core.context.processing_context import ProcessingContext
     from openhcs.microscopes.microscope_interfaces import MetadataHandler
+    from openhcs.core.vfs_protocol import FileManagerLike
     from polystore.filemanager import FileManager
 
 
@@ -63,9 +66,12 @@ class VirtualWorkspacePathLookup:
 class VirtualWorkspaceSourceProjection:
     """Source-binding projection derived from OpenHCS virtual-workspace metadata."""
 
-    source_paths_by_virtual_path: Mapping[str, str]
+    source_refs_by_virtual_path: Mapping[str, SourcePixelRef]
     source_metadata_by_path: Mapping[str, SourceMetadataMapping]
     workspace_root: str | None = None
+    source_projections_by_virtual_path: Mapping[str, SourceProjection] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     _pipeline_start_files_by_axis: dict[str | None, tuple[str, ...]] = field(
         default_factory=dict,
         init=False,
@@ -79,8 +85,9 @@ class VirtualWorkspaceSourceProjection:
         if plate_path is not None:
             workspace_root = str(plate_path)
         return cls(
-            source_paths_by_virtual_path=MappingProxyType({}),
+            source_refs_by_virtual_path=MappingProxyType({}),
             source_metadata_by_path=MappingProxyType({}),
+            source_projections_by_virtual_path=MappingProxyType({}),
             workspace_root=workspace_root,
         )
 
@@ -132,14 +139,118 @@ class VirtualWorkspaceSourceProjection:
         self,
         lookup: VirtualWorkspacePathLookup,
     ) -> str:
-        """Return the physical source path represented by a virtual workspace path."""
-        source_path = self.first_virtual_path_value(
-            self.source_paths_by_virtual_path,
+        """Return the opaque backend address represented by a virtual path."""
+        source_ref = self.source_ref_for(lookup)
+        if source_ref is None:
+            return lookup.full_virtual_path
+        return source_ref.backend_address
+
+    def source_ref_for(
+        self,
+        lookup: VirtualWorkspacePathLookup,
+    ) -> SourcePixelRef | None:
+        """Return the complete backend-owned source reference for a virtual path."""
+
+        return self.first_virtual_path_value(
+            self.source_refs_by_virtual_path,
             lookup,
         )
-        if source_path is None:
+
+    def resolved_source_path_for(
+        self,
+        lookup: VirtualWorkspacePathLookup,
+        filemanager: "FileManagerLike",
+    ) -> str:
+        """Resolve one mapped source through its declared storage backend."""
+
+        source_ref = self.source_ref_for(lookup)
+        if source_ref is None:
             return lookup.full_virtual_path
-        return str(source_path)
+        if self.workspace_root is None:
+            raise ValueError(
+                "Virtual workspace source resolution requires a workspace root."
+            )
+        return str(
+            filemanager.source_path(
+                source_ref.backend_address,
+                source_ref.backend,
+                base_path=self.workspace_root,
+            )
+        )
+
+    def source_projection_for(
+        self,
+        lookup: VirtualWorkspacePathLookup,
+    ) -> SourceProjection | None:
+        """Return the nominal source projection represented by a virtual path."""
+        return self.first_virtual_path_value(
+            self.source_projections_by_virtual_path,
+            lookup,
+        )
+
+    def require_source_projection_for(
+        self,
+        lookup: VirtualWorkspacePathLookup,
+    ) -> SourceProjection:
+        """Return the nominal projection or fail at the workspace boundary."""
+        projection = self.source_projection_for(lookup)
+        if projection is None:
+            raise ValueError(
+                "Virtual workspace source path has no declared source_projection: "
+                f"{lookup.virtual_path!r}."
+            )
+        return projection
+
+    def payload_composition_mode(
+        self,
+        lookups: tuple[VirtualWorkspacePathLookup, ...],
+    ) -> ImagePayloadMetadataCompositionMode:
+        """Return the leading-axis topology declared by workspace projections."""
+        projections = tuple(
+            self.require_source_projection_for(lookup) for lookup in lookups
+        )
+        source_aliases = tuple(
+            projection.payload_composition_alias
+            for projection in projections
+            if projection.payload_composition_alias is not None
+        )
+        if (
+            len(source_aliases) == len(projections)
+            and len(source_aliases) > 1
+            and len(set(source_aliases)) == len(source_aliases)
+        ):
+            return ImagePayloadMetadataCompositionMode.BUNDLE
+        return ImagePayloadMetadataCompositionMode.STACK
+
+    def project_payload(
+        self,
+        lookup: VirtualWorkspacePathLookup,
+        payload: RuntimeArrayData,
+    ) -> RuntimeArrayData:
+        """Carry one nominal source projection into runtime payload provenance."""
+        projection = self.require_source_projection_for(lookup)
+        source_metadata = self.source_metadata_for(lookup)
+        if source_metadata is not None:
+            source_metadata = MappingProxyType(
+                {
+                    field: value
+                    for field, value in source_metadata.items()
+                    if field != SOURCE_BINDING_ALIAS_METADATA_FIELD
+                }
+            )
+        metadata = image_payload_metadata(payload)
+        if source_metadata is not None:
+            metadata = metadata.with_source_component_metadata(source_metadata)
+        if projection.source_alias is not None:
+            metadata = metadata.with_source_provenance(
+                metadata.source_provenance.with_source_image_names(
+                    (projection.source_alias,)
+                )
+            )
+        return metadata.payload_with(
+            image_payload_data(payload),
+            image_payload_mask(payload),
+        )
 
     def source_metadata_for(
         self,
@@ -186,9 +297,10 @@ class VirtualWorkspaceSourceProjection:
         )
         return tuple(
             virtual_path
-            for virtual_path, source_path in self.source_paths_by_virtual_path.items()
+            for virtual_path, source_ref in self.source_refs_by_virtual_path.items()
             if not _cached_path_is_absolute(virtual_path)
-            and source_path_identity_key(source_path) in source_path_identities
+            and source_path_identity_key(source_ref.backend_address)
+            in source_path_identities
         )
 
     def pipeline_start_files(self, *, axis_id: str | None = None) -> tuple[str, ...]:
@@ -212,19 +324,30 @@ class VirtualWorkspaceSourceProjection:
         self._pipeline_start_files_by_axis[axis_id] = result
         return result
 
-    def pipeline_start_candidate_files(
+    def files_for_projection_role(
         self,
+        projection_role: SourceProjectionRole,
         *,
         axis_id: str | None = None,
     ) -> tuple[str, ...]:
-        """Return physical source paths for pipeline-start selector matching."""
+        """Return source files belonging to one exact declared projection role."""
 
+        role = (
+            projection_role
+            if isinstance(projection_role, SourceProjectionRole)
+            else SourceProjectionRole(projection_role)
+        )
         return tuple(
-            dict.fromkeys(
-                str(self.source_paths_by_virtual_path[virtual_path])
-                for virtual_path in self.relative_virtual_paths()
-                if self._path_belongs_to_axis(virtual_path, axis_id)
-            )
+            self._loadable_virtual_path(virtual_path)
+            for virtual_path in self.relative_virtual_paths()
+            if self._path_belongs_to_axis(virtual_path, axis_id)
+            and self.require_source_projection_for(
+                VirtualWorkspacePathLookup.from_paths(
+                    virtual_path,
+                    self._loadable_virtual_path(virtual_path),
+                )
+            ).projection_role
+            is role
         )
 
     def validate_runtime_metadata_projection(
@@ -290,12 +413,12 @@ class VirtualWorkspaceSourceProjection:
 
         relative_virtual_paths = tuple(
             virtual_path
-            for virtual_path in self.source_paths_by_virtual_path
+            for virtual_path in self.source_refs_by_virtual_path
             if not _cached_path_is_absolute(virtual_path)
         )
         if relative_virtual_paths:
             return relative_virtual_paths
-        return tuple(self.source_paths_by_virtual_path)
+        return tuple(self.source_refs_by_virtual_path)
 
     def filtered_by_axis(
         self,
@@ -306,24 +429,31 @@ class VirtualWorkspaceSourceProjection:
         if axis_id is None:
             return self
 
-        source_paths_by_virtual_path: dict[str, str] = {}
+        source_refs_by_virtual_path: dict[str, SourcePixelRef] = {}
         source_metadata_by_path: dict[str, SourceMetadataMapping] = {}
-        for virtual_path, source_path in self.source_paths_by_virtual_path.items():
+        source_projections_by_virtual_path: dict[str, SourceProjection] = {}
+        for virtual_path, source_ref in self.source_refs_by_virtual_path.items():
             if not self._path_belongs_to_axis(virtual_path, axis_id):
                 continue
-            source_paths_by_virtual_path[virtual_path] = source_path
+            source_refs_by_virtual_path[virtual_path] = source_ref
+            projection = self.source_projections_by_virtual_path.get(virtual_path)
+            if projection is not None:
+                source_projections_by_virtual_path[virtual_path] = projection
             for metadata_path in (
                 virtual_path,
                 self._loadable_virtual_path(virtual_path),
-                source_path,
+                source_ref.backend_address,
             ):
                 metadata = self.source_metadata_by_path.get(metadata_path)
                 if metadata is not None:
                     source_metadata_by_path[metadata_path] = metadata
 
         return VirtualWorkspaceSourceProjection(
-            source_paths_by_virtual_path=MappingProxyType(source_paths_by_virtual_path),
+            source_refs_by_virtual_path=MappingProxyType(source_refs_by_virtual_path),
             source_metadata_by_path=MappingProxyType(source_metadata_by_path),
+            source_projections_by_virtual_path=MappingProxyType(
+                source_projections_by_virtual_path
+            ),
             workspace_root=self.workspace_root,
         )
 
@@ -533,41 +663,24 @@ class VirtualWorkspaceSourceProjectionAuthority:
 
 
 @dataclass(slots=True)
-class RealPathSourceMetadataIndex:
-    """Track real-path source metadata while discarding ambiguous conflicts."""
-
-    metadata_by_real_path: dict[str, SourceMetadataMapping] = field(default_factory=dict)
-    conflicted_real_paths: set[str] = field(default_factory=set)
-
-    def record(self, real_path: str, metadata_fields: SourceMetadataMapping) -> None:
-        if real_path in self.conflicted_real_paths:
-            return
-        existing_metadata = self.metadata_by_real_path.get(real_path)
-        if existing_metadata is None:
-            self.metadata_by_real_path[real_path] = metadata_fields
-            return
-        if dict(existing_metadata) != dict(metadata_fields):
-            del self.metadata_by_real_path[real_path]
-            self.conflicted_real_paths.add(real_path)
-
-
-@dataclass(slots=True)
 class VirtualWorkspaceSourceProjectionBuilder:
     """Build source-binding projection data from OpenHCS virtual-workspace metadata."""
 
     plate_path: Path
-    workspace_source_paths: dict[str, str] = field(default_factory=dict)
+    workspace_source_refs: dict[str, SourcePixelRef] = field(default_factory=dict)
     source_metadata_by_path: dict[str, SourceMetadataMapping] = field(default_factory=dict)
-    real_path_metadata: RealPathSourceMetadataIndex = field(
-        default_factory=RealPathSourceMetadataIndex
+    source_projections_by_virtual_path: dict[str, SourceProjection] = field(
+        default_factory=dict
     )
 
     def ingest_subdirectory(self, subdirectory: OpenHCSSubdirectoryPayload) -> None:
         workspace_mapping = VirtualWorkspaceMapping.from_subdirectory(subdirectory)
         self.ingest_workspace_mapping(workspace_mapping)
+        self.ingest_source_projections(
+            VirtualWorkspaceSourceProjectionEntries.from_subdirectory(subdirectory)
+        )
         self.ingest_source_metadata(
             VirtualWorkspaceSourceMetadataEntries.from_subdirectory(subdirectory),
-            workspace_mapping,
         )
 
     def ingest_workspace_mapping(self, workspace_mapping: VirtualWorkspaceMapping) -> None:
@@ -577,54 +690,64 @@ class VirtualWorkspaceSourceProjectionBuilder:
     def record_workspace_source_path(
         self,
         virtual_path: str,
-        source_ref: WorkspaceSourceRef,
+        source_ref: SourcePixelRef,
     ) -> None:
-        real_path = self.source_path(source_ref)
-        self.workspace_source_paths[virtual_path] = real_path
-        self.workspace_source_paths[str(self.plate_path / virtual_path)] = real_path
+        if not isinstance(source_ref, SourcePixelRef):
+            raise TypeError("Workspace source references must be SourcePixelRef values.")
+        loadable_path = str(self.plate_path / virtual_path)
+        self.workspace_source_refs[virtual_path] = source_ref
+        self.workspace_source_refs[loadable_path] = source_ref
+
+    def ingest_source_projections(
+        self,
+        source_projections: VirtualWorkspaceSourceProjectionEntries,
+    ) -> None:
+        for virtual_path, projection in source_projections.entries.items():
+            mapped_ref = self.workspace_source_refs.get(virtual_path)
+            if mapped_ref is None:
+                raise RuntimeError(
+                    "source_projection has no workspace_mapping entry for "
+                    f"{virtual_path!r}."
+                )
+            if projection.ref != mapped_ref:
+                raise RuntimeError(
+                    "source_projection ref conflicts with workspace_mapping for "
+                    f"{virtual_path!r}."
+                )
+            self.source_projections_by_virtual_path[virtual_path] = projection
+            self.source_projections_by_virtual_path[
+                str(self.plate_path / virtual_path)
+            ] = projection
 
     def ingest_source_metadata(
         self,
         source_metadata: VirtualWorkspaceSourceMetadataEntries,
-        workspace_mapping: VirtualWorkspaceMapping,
     ) -> None:
         for virtual_path, metadata_fields in source_metadata.entries.items():
-            self.record_source_metadata(virtual_path, metadata_fields, workspace_mapping)
+            self.record_source_metadata(virtual_path, metadata_fields)
 
     def record_source_metadata(
         self,
         virtual_path: str,
         metadata_fields: SourceMetadataMapping,
-        workspace_mapping: VirtualWorkspaceMapping,
     ) -> None:
-        normalized_metadata = source_schema_metadata_with_virtual_components(
-            virtual_path,
-            metadata_fields,
-        )
+        normalized_metadata = MappingProxyType(dict(metadata_fields))
         self.source_metadata_by_path[virtual_path] = normalized_metadata
         self.source_metadata_by_path[str(self.plate_path / virtual_path)] = (
             normalized_metadata
         )
-        source_ref = workspace_mapping.source_ref_for(virtual_path)
-        if source_ref is not None:
-            self.real_path_metadata.record(
-                self.source_path(source_ref),
-                normalized_metadata,
-            )
 
     def projection(self) -> VirtualWorkspaceSourceProjection:
-        for real_path, metadata_fields in self.real_path_metadata.metadata_by_real_path.items():
-            self.source_metadata_by_path[real_path] = metadata_fields
-        if not self.workspace_source_paths:
+        if not self.workspace_source_refs:
             raise RuntimeError(
                 "virtual_workspace source binding resolution requires "
                 "workspace_mapping entries in OpenHCS metadata."
             )
         return VirtualWorkspaceSourceProjection(
-            source_paths_by_virtual_path=MappingProxyType(self.workspace_source_paths),
+            source_refs_by_virtual_path=MappingProxyType(self.workspace_source_refs),
             source_metadata_by_path=MappingProxyType(self.source_metadata_by_path),
+            source_projections_by_virtual_path=MappingProxyType(
+                self.source_projections_by_virtual_path
+            ),
             workspace_root=str(self.plate_path),
         )
-
-    def source_path(self, source_ref: WorkspaceSourceRef) -> str:
-        return str(workspace_mapping_source_path(self.plate_path, source_ref))

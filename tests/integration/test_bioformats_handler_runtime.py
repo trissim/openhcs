@@ -20,7 +20,7 @@ def test_bioformats_handler_preloads_planes_through_runtime_path(tmp_path: Path)
     bulk_preload_step_images(
         step_input_dir=tmp_path,
         axis_id="A01",
-        read_backend=Backend.BIOFORMATS.value,
+        read_backend=Backend.VIRTUAL_WORKSPACE.value,
         filemanager=filemanager,
         microscope_handler=handler,
         patterns_to_preload=("A01_s001_w1_z001_t001.tif",),

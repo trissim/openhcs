@@ -1,28 +1,29 @@
-"""Generic Bio-Formats microscope handler using OME-SPW projection."""
+"""Microscope handler for stores that emit exact source-plane declarations."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Dict, List, Mapping, Optional, Type, Union
 
-from openhcs.constants.constants import Backend
-from openhcs.core.source_projection import (
-    OpenHCSPlaneAddress,
-    SourcePixelRef,
-    SourcePlaneProjection,
-    SourceProjectionSet,
+from polystore.bioformats_storage import BioFormatsStorageBackend
+from polystore.filemanager import FileManager
+from polystore.ome_zarr_storage import OmeZarrStorageBackend
+
+from openhcs.constants.constants import AllComponents, Backend, Microscope
+from openhcs.core.source_binding_workspace import SourceBindingWorkspaceProjector
+from openhcs.core.source_bindings import (
+    SourceBindingsConfig,
+    source_bindings_defaults_to_base,
+)
+from openhcs.core.source_projection import SourcePlaneDataset
+from openhcs.core.virtual_workspace_metadata import (
+    AtomicMetadataWriter,
+    FIELDS,
+    get_metadata_path,
 )
 from openhcs.microscopes.bioformats_adapter import (
     BioFormatsAdapterUnavailableError,
-    BioFormatsCompositeAdapter,
-    BioFormatsMetadataAdapter,
-)
-from openhcs.microscopes.bioformats_spw_projector import (
-    BioFormatsDataset,
-    BioFormatsImageEntry,
-    BioFormatsLayoutProjector,
-    BioFormatsProjectionError,
-    BioFormatsSPWProjector,
+    SourcePlaneStoreAdapter,
 )
 from openhcs.microscopes.microscope_base import (
     BroadMicroscopeDetector,
@@ -30,288 +31,177 @@ from openhcs.microscopes.microscope_base import (
     register_metadata_handler,
 )
 from openhcs.microscopes.microscope_interfaces import MetadataHandler
-from openhcs.microscopes.openhcs import (
-    AtomicMetadataWriter,
-    FIELDS,
-    get_metadata_path,
-)
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
-from polystore.filemanager import FileManager
 
 
 class BioFormatsFilenameParser(SourceSchemaFilenameParser):
-    """Parser for normalized Bio-Formats virtual workspace keys."""
+    """Parser for canonical virtual paths backed by addressable stores."""
+
+    def extract_component_coordinates(self, component_value: str) -> tuple[str, str]:
+        """Project exact sample identity into an injective NGFF well coordinate."""
+
+        return "S", "".join(
+            f"{byte:03d}" for byte in str(component_value).encode("utf-8")
+        )
 
 
 class BioFormatsMetadataHandler(MetadataHandler):
-    """Metadata handler backed by generic OME-SPW projection."""
+    """Metadata view over exact store-emitted source planes."""
 
     def __init__(self, filemanager: FileManager | None = None):
         super().__init__()
         self.filemanager = filemanager
 
-    def find_metadata_file(self, plate_path: Union[str, Path]) -> Path:
-        try:
-            BioFormatsDatasetAuthority().project(plate_path)
-            return Path(plate_path)
-        except BioFormatsAdapterUnavailableError as exc:
-            raise FileNotFoundError(
-                f"No Bio-Formats-readable OME-SPW metadata found for {plate_path}."
-            ) from exc
+    def source_dataset(self, plate_path: Union[str, Path]) -> SourcePlaneDataset:
+        return SourcePlaneStoreAdapter.discover_dataset(plate_path)
 
-    def projected_entries(
+    def source_diagnostics(
         self,
         plate_path: Union[str, Path],
-    ) -> tuple[BioFormatsImageEntry, ...]:
-        return BioFormatsDatasetAuthority().project(plate_path).entries
+    ) -> tuple[Mapping[str, object], ...]:
+        """Project decoder-owned dataset diagnostics for metadata consumers."""
+
+        return tuple(
+            dict(diagnostic.metadata_payload())
+            for diagnostic in self.source_dataset(plate_path).diagnostics
+        )
+
+    def physical_source_paths(
+        self,
+        plate_path: Union[str, Path],
+    ) -> tuple[Path, ...]:
+        """Return store-declared physical containers, not projected plane names."""
+
+        dataset = self.source_dataset(plate_path)
+        return tuple(
+            dict.fromkeys(
+                dataset.root / candidate.relative_path
+                for candidate in dataset.candidates
+            )
+        )
+
+    def _component_values(
+        self,
+        plate_path: Union[str, Path],
+        component: AllComponents,
+    ) -> Optional[Dict[str, Optional[str]]]:
+        values: dict[str, str | None] = {}
+        for candidate in self.source_dataset(plate_path).candidates:
+            address = candidate.declared_address
+            if address is None:
+                raise ValueError("Store candidate lacks an exact plane address.")
+            coordinate = address.component_values()[component]
+            label = candidate.component_labels.get(component.value)
+            previous = values.get(coordinate)
+            if previous is not None and label is not None and previous != label:
+                raise ValueError(
+                    f"Conflicting {component.value} label for {coordinate!r}."
+                )
+            values[coordinate] = label if label is not None else previous
+        return dict(sorted(values.items())) or None
+
+    def find_metadata_file(self, plate_path: Union[str, Path]) -> Path:
+        try:
+            self.source_dataset(plate_path)
+        except BioFormatsAdapterUnavailableError as exc:
+            raise FileNotFoundError(
+                f"No addressable Bio-Formats source dataset found for {plate_path}."
+            ) from exc
+        return Path(plate_path)
 
     def get_grid_dimensions(self, plate_path: Union[str, Path]) -> tuple[int, int]:
+        del plate_path
         return (1, 1)
 
     def get_pixel_size(self, plate_path: Union[str, Path]) -> float:
-        return _metadata_pixel_size(self.projected_entries(plate_path))
+        return self.source_dataset(plate_path).pixel_size
 
     def get_channel_values(
         self,
         plate_path: Union[str, Path],
     ) -> Optional[Dict[str, Optional[str]]]:
-        channel_values: dict[str, Optional[str]] = {}
-        for entry in self.projected_entries(plate_path):
-            key = str(entry.channel)
-            value = entry.channel_name or f"Channel {entry.channel}"
-            previous = channel_values.get(key)
-            if previous is not None and previous != value:
-                raise ValueError(
-                    f"Conflicting Bio-Formats channel name for channel {key}: "
-                    f"{previous!r} vs {value!r}"
-                )
-            channel_values[key] = value
-        return channel_values or None
+        return self._component_values(plate_path, AllComponents.CHANNEL)
 
     def get_well_values(
         self,
         plate_path: Union[str, Path],
     ) -> Optional[Dict[str, Optional[str]]]:
-        wells = {entry.well: entry.well for entry in self.projected_entries(plate_path)}
-        return dict(sorted(wells.items())) or None
+        return self._component_values(plate_path, AllComponents.WELL)
 
     def get_site_values(
         self,
         plate_path: Union[str, Path],
     ) -> Optional[Dict[str, Optional[str]]]:
-        sites = {
-            str(entry.site): f"Site {entry.site}"
-            for entry in self.projected_entries(plate_path)
-        }
-        return dict(sorted(sites.items(), key=lambda item: int(item[0]))) or None
+        return self._component_values(plate_path, AllComponents.SITE)
 
     def get_z_index_values(
         self,
         plate_path: Union[str, Path],
     ) -> Optional[Dict[str, Optional[str]]]:
-        z_indexes = {
-            str(entry.z_index): f"Z{entry.z_index}"
-            for entry in self.projected_entries(plate_path)
-        }
-        return dict(sorted(z_indexes.items(), key=lambda item: int(item[0]))) or None
+        return self._component_values(plate_path, AllComponents.Z_INDEX)
 
     def get_timepoint_values(
         self,
         plate_path: Union[str, Path],
     ) -> Optional[Dict[str, Optional[str]]]:
-        timepoints = {
-            str(entry.timepoint): f"T{entry.timepoint}"
-            for entry in self.projected_entries(plate_path)
-        }
-        return dict(sorted(timepoints.items(), key=lambda item: int(item[0]))) or None
+        return self._component_values(plate_path, AllComponents.TIMEPOINT)
 
-    def get_image_files(self, plate_path: Union[str, Path], all_subdirs: bool = False) -> list[str]:
-        """Return normalized virtual filenames for projected Bio-Formats planes."""
+    def get_image_files(
+        self,
+        plate_path: Union[str, Path],
+        all_subdirs: bool = False,
+    ) -> list[str]:
+        del all_subdirs
         parser = BioFormatsFilenameParser()
         return [
             parser.construct_filename(
-                well=entry.well,
-                site=entry.site,
-                channel=entry.channel,
-                z_index=entry.z_index,
-                timepoint=entry.timepoint,
+                **candidate.declared_address.as_component_metadata(),
             )
-            for entry in sorted(self.projected_entries(plate_path), key=_entry_sort_key)
+            for candidate in self.source_dataset(plate_path).candidates
+            if candidate.declared_address is not None
         ]
 
 
-class BioFormatsDatasetAuthority:
-    """Nominal authority for reading and projecting Bio-Formats metadata."""
+class BioFormatsHandler(BroadMicroscopeDetector, MicroscopeHandler):
+    """Project addressable store planes into one generic virtual workspace."""
+
+    _microscope_type = Microscope.BIOFORMATS.value
+    _metadata_handler_class = BioFormatsMetadataHandler
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        filemanager: FileManager,
+        pattern_format: str | None = None,
+        source_bindings_config: SourceBindingsConfig | None = None,
+    ) -> "BioFormatsHandler":
+        return cls(
+            filemanager,
+            pattern_format=pattern_format,
+            source_bindings_config=source_bindings_config,
+        )
+
+    @classmethod
+    def projects_declared_source_bindings(cls) -> bool:
+        return True
 
     def __init__(
         self,
-        adapter: BioFormatsMetadataAdapter | None = None,
-        projector: BioFormatsSPWProjector | None = None,
-        layout_projector: BioFormatsLayoutProjector | None = None,
-        completeness_validator: "BioFormatsDatasetCompletenessValidator | None" = None,
+        filemanager: FileManager,
+        pattern_format: str | None = None,
+        source_bindings_config: SourceBindingsConfig | None = None,
     ):
-        self.adapter = adapter or BioFormatsCompositeAdapter()
-        self.projector = projector or BioFormatsSPWProjector()
-        self.layout_projector = layout_projector or BioFormatsLayoutProjector()
-        self.completeness_validator = (
-            completeness_validator or BioFormatsDatasetCompletenessValidator()
-        )
-
-    def project(self, plate_path: Union[str, Path]) -> BioFormatsDataset:
-        try:
-            metadata = self.adapter.discover(plate_path)
-        except BioFormatsAdapterUnavailableError:
-            raise
-        try:
-            dataset = self._project_metadata(metadata)
-            self.completeness_validator.validate(dataset)
-            return dataset
-        except BioFormatsProjectionError as exc:
-            raise BioFormatsProjectionError(
-                f"Bio-Formats dataset at {plate_path} is readable but cannot be "
-                "projected into OpenHCS HCS axes. Provide an explicit source schema. "
-                f"{exc}"
-            ) from exc
-
-    def _project_metadata(self, metadata) -> BioFormatsDataset:
-        if metadata.plates:
-            return self.projector.project(metadata)
-        return self.layout_projector.project(metadata)
-
-
-class BioFormatsDatasetCompletenessValidator:
-    """Validate that projected Bio-Formats planes have source-file provenance."""
-
-    def validate(self, dataset: BioFormatsDataset) -> None:
-        missing_files = sorted(
-            {
-                path
-                for entry in dataset.entries
-                for path in _entry_source_files(entry)
-                if not path.exists()
-            }
-        )
-        unresolved_entries = tuple(
-            entry
-            for entry in dataset.entries
-            if not _entry_has_pixel_source_provenance(entry)
-        )
-        if not missing_files and not unresolved_entries:
-            return
-        details = []
-        if missing_files:
-            details.append(
-                "missing source files: "
-                + ", ".join(str(path) for path in missing_files[:5])
-                + ("" if len(missing_files) <= 5 else f", ... +{len(missing_files) - 5}")
-            )
-        if unresolved_entries:
-            details.append(
-                "metadata-only series without pixel source files: "
-                + ", ".join(_entry_label(entry) for entry in unresolved_entries[:5])
-                + (
-                    ""
-                    if len(unresolved_entries) <= 5
-                    else f", ... +{len(unresolved_entries) - 5}"
-                )
-            )
-        raise BioFormatsProjectionError(
-            "Bio-Formats OME-SPW metadata describes planes that are not backed by "
-            "concrete source image files; refusing to create a partial virtual "
-            "workspace. "
-            + "; ".join(details)
-        )
-
-
-class BioFormatsWorkspaceMetadataWriter:
-    """Emit OpenHCS metadata for a projected Bio-Formats dataset."""
-
-    def __init__(self, parser: BioFormatsFilenameParser | None = None):
-        self.parser = parser or BioFormatsFilenameParser()
-
-    def write(self, plate_root: Path, dataset: BioFormatsDataset) -> None:
-        entries = tuple(sorted(dataset.entries, key=_entry_sort_key))
-        projection_set = SourceProjectionSet(
-            tuple(self.projection(plate_root, entry) for entry in entries)
-        )
-        metadata = projection_set.metadata_dict(
-            parser=self.parser,
-            microscope_handler_name=BioFormatsHandler._microscope_type,
-            source_filename_parser_name="BioFormatsFilenameParser",
-            grid_dimensions=[1, 1],
-            pixel_size=_metadata_pixel_size(entries),
-            available_backends={
-                Backend.BIOFORMATS.value: True,
-            },
-            main=True,
-        )
-        AtomicMetadataWriter().merge_subdirectory_metadata(
-            get_metadata_path(plate_root),
-            {FIELDS.DEFAULT_SUBDIRECTORY: metadata},
-        )
-
-    def projection(
-        self,
-        plate_root: Path,
-        entry: BioFormatsImageEntry,
-    ) -> SourcePlaneProjection:
-        try:
-            source_path = entry.source_path.relative_to(plate_root).as_posix()
-        except ValueError:
-            source_path = str(entry.source_path)
-        return SourcePlaneProjection(
-            address=OpenHCSPlaneAddress(
-                well=str(entry.well),
-                site=str(entry.site),
-                channel=str(entry.channel),
-                z_index=str(entry.z_index),
-                timepoint=str(entry.timepoint),
-            ),
-            ref=SourcePixelRef(
-                backend=Backend.BIOFORMATS.value,
-                reader=entry.reader,
-                source_path=source_path,
-                series_index=entry.series_index,
-                plane_index=entry.plane_index,
-                source_channel=entry.source_channel,
-                source_z_index=entry.source_z_index,
-                source_timepoint=entry.source_timepoint,
-            ),
-            component_labels={
-                "channel": entry.channel_name or f"Channel {entry.channel}",
-                "well": entry.well,
-                "site": f"Site {entry.site}",
-                "z_index": f"Z{entry.z_index}",
-                "timepoint": f"T{entry.timepoint}",
-            },
-        )
-
-    def virtual_path(self, entry: BioFormatsImageEntry) -> str:
-        return self.parser.construct_filename(
-            well=entry.well,
-            site=entry.site,
-            channel=entry.channel,
-            z_index=entry.z_index,
-            timepoint=entry.timepoint,
-            extension=".tif",
-        )
-
-class BioFormatsHandler(BroadMicroscopeDetector, MicroscopeHandler):
-    """Brand-agnostic Bio-Formats handler for OME-SPW HCS datasets."""
-
-    _microscope_type = "bioformats"
-    _metadata_handler_class = BioFormatsMetadataHandler
-
-    def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
         self.parser = BioFormatsFilenameParser(filemanager, pattern_format)
         self.metadata_handler = BioFormatsMetadataHandler(filemanager)
-        self.dataset_authority = BioFormatsDatasetAuthority()
-        self.metadata_writer = BioFormatsWorkspaceMetadataWriter(self.parser)
+        self.source_bindings = source_bindings_defaults_to_base(
+            source_bindings_config or SourceBindingsConfig()
+        )
         super().__init__(parser=self.parser, metadata_handler=self.metadata_handler)
 
     @property
     def root_dir(self) -> str:
-        return "."
+        return FIELDS.DEFAULT_SUBDIRECTORY
 
     @property
     def microscope_type(self) -> str:
@@ -325,25 +215,27 @@ class BioFormatsHandler(BroadMicroscopeDetector, MicroscopeHandler):
     def compatible_backends(self) -> List[Backend]:
         return [Backend.BIOFORMATS]
 
-    def initialize_workspace(self, plate_path: Path, filemanager: FileManager) -> Path:
+    def initialize_workspace(
+        self,
+        plate_path: Path,
+        filemanager: FileManager,
+    ) -> Path:
         plate_root = Path(plate_path)
-        dataset = self.dataset_authority.project(plate_root)
-        self.metadata_writer.write(plate_root, dataset)
-        self._register_bioformats_backend(plate_root, filemanager)
+        self._write_dataset(
+            plate_root,
+            self.metadata_handler.source_dataset(plate_root),
+            filemanager,
+        )
+        self.register_workspace_backends(plate_root, filemanager)
         self.plate_folder = plate_root
         return plate_root
 
-    def get_available_backends(self, plate_path: Union[str, Path]) -> List[Backend]:
-        return [Backend.BIOFORMATS]
-
-    def get_primary_backend(
+    def get_available_backends(
         self,
         plate_path: Union[str, Path],
-        filemanager: FileManager,
-    ) -> str:
-        if Backend.BIOFORMATS.value not in filemanager.registry:
-            self._register_bioformats_backend(Path(plate_path), filemanager)
-        return Backend.BIOFORMATS.value
+    ) -> List[Backend]:
+        del plate_path
+        return [Backend.BIOFORMATS]
 
     def post_workspace(
         self,
@@ -353,107 +245,55 @@ class BioFormatsHandler(BroadMicroscopeDetector, MicroscopeHandler):
     ) -> Path:
         plate_root = Path(plate_path)
         if not skip_preparation:
-            self.metadata_writer.write(
+            self._write_dataset(
                 plate_root,
-                self.dataset_authority.project(plate_root),
+                self.metadata_handler.source_dataset(plate_root),
+                filemanager,
             )
-        self._register_bioformats_backend(plate_root, filemanager)
+        self.register_workspace_backends(plate_root, filemanager)
         return plate_root
 
-    def _register_bioformats_backend(
+    def _write_dataset(
         self,
-        plate_path: Path,
+        plate_root: Path,
+        dataset: SourcePlaneDataset,
         filemanager: FileManager,
     ) -> None:
-        from polystore.bioformats_storage import BioFormatsStorageBackend
-
-        filemanager.registry[Backend.BIOFORMATS.value] = BioFormatsStorageBackend(
-            plate_root=plate_path,
+        projection_set = SourceBindingWorkspaceProjector(
+            source_bindings=self.source_bindings,
+            parser=self.parser,
+        ).projection_set_for_candidates(
+            plate_root,
+            dataset.candidates,
+            filemanager=filemanager,
+            diagnostics=dataset.diagnostics,
+        )
+        metadata = projection_set.metadata_dict(
+            parser=self.parser,
+            microscope_handler_name=self._microscope_type,
+            source_filename_parser_name=type(self.parser).__name__,
+            grid_dimensions=[1, 1],
+            pixel_size=dataset.pixel_size,
+            main=True,
+        )
+        AtomicMetadataWriter().merge_subdirectory_metadata(
+            get_metadata_path(plate_root),
+            {FIELDS.DEFAULT_SUBDIRECTORY: metadata},
         )
 
+    def register_workspace_backends(
+        self,
+        plate_root: Path,
+        filemanager: FileManager,
+    ) -> None:
+        filemanager.register_backend(
+            Backend.BIOFORMATS.value,
+            BioFormatsStorageBackend(),
+        )
+        filemanager.register_backend(
+            Backend.OME_ZARR,
+            OmeZarrStorageBackend(),
+        )
+        self._register_virtual_workspace_backend(plate_root, filemanager)
 
-
-def _metadata_pixel_size(entries: tuple[BioFormatsImageEntry, ...]) -> float:
-    values = {entry.pixel_size for entry in entries if entry.pixel_size is not None}
-    if not values:
-        raise ValueError("Bio-Formats metadata does not declare pixel size.")
-    if len(values) > 1:
-        raise ValueError(f"Multiple Bio-Formats pixel sizes found: {sorted(values)}")
-    return next(iter(values))
-
-
-def _component_values(
-    pairs,
-) -> Optional[Dict[str, Optional[str]]]:
-    values: dict[str, Optional[str]] = {}
-    for key, value in pairs:
-        values[str(key)] = value
-    return dict(sorted(values.items())) or None
-
-
-def _entry_sort_key(entry: BioFormatsImageEntry) -> tuple[str, int, int, int, int]:
-    return (
-        entry.well,
-        entry.site,
-        entry.channel,
-        entry.z_index,
-        entry.timepoint,
-    )
-
-
-def _entry_source_files(entry: BioFormatsImageEntry) -> tuple[Path, ...]:
-    return entry.source_files or (entry.source_path,)
-
-
-def _entry_has_pixel_source_provenance(entry: BioFormatsImageEntry) -> bool:
-    source_files = _entry_source_files(entry)
-    if any(not path.exists() for path in source_files):
-        return False
-    if not _metadata_only_source(entry.source_path):
-        return True
-    source_path = _normalized_path(entry.source_path)
-    return any(
-        _normalized_path(path) != source_path and _pixel_source_file(path)
-        for path in source_files
-    )
-
-
-def _metadata_only_source(path: Path) -> bool:
-    name = path.name.lower()
-    if name.endswith((".ome.tif", ".ome.tiff")):
-        return False
-    return path.suffix.lower() in {
-        ".htd",
-        ".ome",
-        ".xml",
-        ".wpi",
-        ".xdce",
-    }
-
-
-def _pixel_source_file(path: Path) -> bool:
-    name = path.name.lower()
-    return path.suffix.lower() in {
-        ".c01",
-        ".dib",
-        ".flex",
-        ".jp2",
-        ".png",
-        ".tif",
-        ".tiff",
-    } or name.endswith((".tif.gz", ".tiff.gz", ".ome.tif", ".ome.tiff"))
-
-
-def _normalized_path(path: Path) -> Path:
-    return path.resolve(strict=False)
-
-
-def _entry_label(entry: BioFormatsImageEntry) -> str:
-    return (
-        f"{entry.well}/s{entry.site}/c{entry.channel}/z{entry.z_index}/"
-        f"t{entry.timepoint} series={entry.series_index}"
-    )
-
-
-BioFormatsHandler._metadata_handler_class = BioFormatsMetadataHandler
 register_metadata_handler(BioFormatsHandler, BioFormatsMetadataHandler)

@@ -25,11 +25,16 @@ from openhcs.core.source_bindings import (
     NamedSourceBinding,
     SourceBindingMatchMethod,
     SourceBindingMatchPlan,
-    SourceBindingOrigin,
     SourceBindingRuntimeContext,
+    SourceSetRole,
+)
+from openhcs.core.source_image_provenance import (
+    SourceImageIdentity,
+    SourceImageProvenance,
 )
 from openhcs.core.source_metadata import (
     SourceMetadataMapping,
+    SourceMetadataRoleView,
     SourceMetadataValue,
 )
 from openhcs.core.source_matching import (
@@ -38,16 +43,22 @@ from openhcs.core.source_matching import (
     SourceImageSetIdentityPolicy,
     merge_source_metadata,
     metadata_from_rules,
+    semantic_source_metadata_value,
+    source_component_metadata_items,
+    source_component_metadata_value,
     source_component_metadata_values,
     source_filters_match,
     source_metadata_value,
     source_metadata_values_equal,
 )
+from openhcs.core.source_path_identity import source_paths_equal
+from openhcs.core.source_projection import SourceProjection
 from openhcs.core.source_workspace_projection import VirtualWorkspaceSourceProjection
+from openhcs.core.steps.function_io import get_all_image_paths
+from openhcs.core.compiled_step_plan import CompiledStepPlan
 
 if TYPE_CHECKING:
     from openhcs.core.context.processing_context import ProcessingContext
-    from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
     from openhcs.microscopes.microscope_interfaces import FilenameParser
 
 
@@ -155,6 +166,9 @@ class SourcePatternResolutionContext:
         default_factory=dict
     )
     metadata_rules: tuple[MetadataExtractionRule, ...] = ()
+    source_projections_by_virtual_path: Mapping[str, SourceProjection] = field(
+        default_factory=dict
+    )
 
     @classmethod
     def from_sources(
@@ -184,6 +198,23 @@ class SourcePatternResolutionContext:
         )
 
     @classmethod
+    def from_runtime_context(
+        cls,
+        *,
+        parser: "FilenameParser",
+        runtime_context: SourceBindingRuntimeContext,
+        metadata_rules: tuple[MetadataExtractionRule, ...] = (),
+    ) -> "SourcePatternResolutionContext":
+        """Build the generic selector context from compiled runtime source state."""
+
+        return cls.from_sources(
+            parser=parser,
+            source_paths_by_virtual_path=runtime_context.step_input_source_paths,
+            source_metadata_by_path=runtime_context.source_metadata_by_path,
+            metadata_rules=metadata_rules,
+        )
+
+    @classmethod
     def from_projection(
         cls,
         *,
@@ -191,11 +222,23 @@ class SourcePatternResolutionContext:
         projection: VirtualWorkspaceSourceProjection,
         metadata_rules: tuple[MetadataExtractionRule, ...] = (),
     ) -> "SourcePatternResolutionContext":
-        return cls.from_sources(
-            parser=parser,
-            source_paths_by_virtual_path=projection.source_paths_by_virtual_path,
-            source_metadata_by_path=projection.source_metadata_by_path,
-            metadata_rules=metadata_rules,
+        return replace(
+            cls.from_sources(
+                parser=parser,
+                source_paths_by_virtual_path=MappingProxyType(
+                    {
+                        virtual_path: source_ref.backend_address
+                        for virtual_path, source_ref in (
+                            projection.source_refs_by_virtual_path.items()
+                        )
+                    }
+                ),
+                source_metadata_by_path=projection.source_metadata_by_path,
+                metadata_rules=metadata_rules,
+            ),
+            source_projections_by_virtual_path=(
+                projection.source_projections_by_virtual_path
+            ),
         )
 
     @property
@@ -206,17 +249,39 @@ class SourcePatternResolutionContext:
         return self._candidate_path_resolution(pattern).metadata_paths()
 
     def candidate_filter_paths(self, pattern: SourceCandidatePath) -> tuple[str, ...]:
-        return self._candidate_path_resolution(pattern).filter_paths()
+        resolution = self._candidate_path_resolution(pattern)
+        source_filter_paths = tuple(
+            dict.fromkeys(
+                source_filter_path
+                for metadata in self.metadata_for_paths(resolution.metadata_paths())
+                for source_filter_path in SourceMetadataRoleView(
+                    metadata
+                ).source_filter_paths()
+            )
+        )
+        if source_filter_paths:
+            return source_filter_paths
+        return resolution.filter_paths()
 
     def _candidate_path_resolution(
         self,
         pattern: SourceCandidatePath,
     ) -> SourceCandidatePathResolution:
         keys = _cached_source_candidate_pattern_keys(pattern)
-        virtual_matches = tuple(
-            virtual_path
-            for key in keys
-            for virtual_path in self._matching_virtual_paths(key)
+        exact_virtual_path = next(
+            (key for key in keys if key in self.source_paths_by_virtual_path),
+            None,
+        )
+        virtual_matches = (
+            (exact_virtual_path,)
+            if exact_virtual_path is not None
+            else tuple(
+                dict.fromkeys(
+                    virtual_path
+                    for key in keys
+                    for virtual_path in self._matching_virtual_paths(key)
+                )
+            )
         )
         mapped = tuple(
             self.source_paths_by_virtual_path[key]
@@ -255,6 +320,56 @@ class SourcePatternResolutionContext:
             return str(resolved_paths[0])
         return str(path)
 
+    def virtual_paths_for_source(self, source_path: str) -> tuple[str, ...]:
+        """Return exact virtual-workspace paths declared for one source path."""
+
+        return tuple(
+            virtual_path
+            for virtual_path, declared_source_path in (
+                self.source_paths_by_virtual_path.items()
+            )
+            if source_paths_equal(declared_source_path, source_path)
+        )
+
+    def runtime_paths_for_candidate(
+        self,
+        candidate_path: str,
+    ) -> tuple[str, ...]:
+        """Project one source candidate through exact workspace provenance."""
+
+        declared_virtual_paths = self._candidate_path_resolution(
+            candidate_path
+        ).virtual_paths
+        if declared_virtual_paths:
+            return declared_virtual_paths
+        virtual_paths = self.virtual_paths_for_source(candidate_path)
+        if virtual_paths:
+            return virtual_paths
+        return (candidate_path,)
+
+    def candidate_matches_source_binding_projection(
+        self,
+        candidate_path: str,
+        binding: NamedSourceBinding,
+    ) -> bool:
+        """Match a virtual candidate through its nominal source projection."""
+
+        if not self.source_projections_by_virtual_path:
+            return True
+        resolution = self._candidate_path_resolution(candidate_path)
+        virtual_paths = resolution.virtual_paths
+        if not virtual_paths:
+            virtual_paths = self.virtual_paths_for_source(candidate_path)
+        if not virtual_paths:
+            return True
+        projections = tuple(
+            self.source_projections_by_virtual_path.get(path) for path in virtual_paths
+        )
+        return any(
+            projection is not None and projection.matches_binding(binding)
+            for projection in projections
+        )
+
     def metadata_for_paths(
         self,
         paths: tuple[str, ...],
@@ -275,10 +390,26 @@ class SourcePatternResolutionContext:
             merge_source_metadata(metadata, declared_metadata, path=path)
         parsed_metadata = self.parser.parse_filename(path)
         if parsed_metadata is not None:
-            merge_source_metadata(metadata, parsed_metadata, path=path)
+            merge_source_metadata(
+                metadata,
+                {
+                    key: value
+                    for key, value in parsed_metadata.items()
+                    if key not in metadata
+                },
+                path=path,
+            )
         rule_metadata = metadata_from_rules(path, self.metadata_rules)
         if rule_metadata:
-            merge_missing_source_metadata(metadata, rule_metadata)
+            merge_source_metadata(
+                metadata,
+                {
+                    key: value
+                    for key, value in rule_metadata.items()
+                    if key not in metadata
+                },
+                path=path,
+            )
         if metadata:
             return SourceMetadataRecord.from_mapping(metadata)
         return None
@@ -321,16 +452,6 @@ class SourcePatternResolutionContext:
         )
 
 
-def merge_missing_source_metadata(
-    target: dict[str, SourceMetadataValue],
-    additions: Mapping[str, str],
-) -> None:
-    """Fill metadata fields not already provided by the source workspace."""
-    for key, value in additions.items():
-        if key not in target:
-            target[key] = str(value)
-
-
 class SourceBindingCandidateMatcher:
     """Match source-binding selectors against candidate source paths."""
 
@@ -353,7 +474,7 @@ class SourceBindingCandidateMatcher:
         return tuple(
             binding
             for binding in cls.selector_bindings(bindings)
-            if binding.participates_in_execution_anchoring
+            if binding.source_set_role is SourceSetRole.MATCHED
         )
 
     @staticmethod
@@ -363,6 +484,11 @@ class SourceBindingCandidateMatcher:
         binding: NamedSourceBinding,
         source_context: SourcePatternResolutionContext,
     ) -> bool:
+        if not source_context.candidate_matches_source_binding_projection(
+            candidate,
+            binding,
+        ):
+            return False
         selector = binding.selector
         if not any(
             source_filters_match(path, selector.filters)
@@ -391,7 +517,7 @@ class SourceBindingCandidateMatcher:
                 and source_metadata_values_equal(value, metadata_selector.value)
                 for metadata in metadata_candidates
                 for value in (
-                    source_metadata_value(
+                    semantic_source_metadata_value(
                         metadata,
                         metadata_selector.field,
                     ),
@@ -409,12 +535,24 @@ class SourceBindingCandidateMatcher:
         bindings: Sequence[NamedSourceBinding],
         source_context: SourcePatternResolutionContext,
     ) -> tuple[SourceCandidatePath, ...]:
-        selector_bindings = cls.selector_bindings(bindings)
-        if not selector_bindings:
-            return tuple(candidates)
-        return tuple(
+        projection_candidates = tuple(
             candidate
             for candidate in candidates
+            if not bindings
+            or any(
+                source_context.candidate_matches_source_binding_projection(
+                    candidate,
+                    binding,
+                )
+                for binding in bindings
+            )
+        )
+        selector_bindings = cls.selector_bindings(bindings)
+        if not selector_bindings:
+            return projection_candidates
+        return tuple(
+            candidate
+            for candidate in projection_candidates
             if any(
                 cls.matches(
                     candidate,
@@ -528,8 +666,7 @@ class SourceBindingMatchResolution:
     def require_binding(self) -> NamedSourceBinding:
         if self.binding is None:
             raise RuntimeError(
-                "Source binding resolution was deferred to runtime: "
-                f"{self.reason}."
+                f"Source binding resolution was deferred to runtime: {self.reason}."
             )
         return self.binding
 
@@ -650,9 +787,8 @@ class SourceBoundAnchorPatternPolicy(ABC, metaclass=AutoRegisterMeta):
         bindings: Sequence[NamedSourceBinding],
         source_context: SourcePatternResolutionContext,
     ) -> bool:
-        return (
-            not source_context.has_virtual_source_workspace
-            and any(binding.selector.filters for binding in bindings)
+        return not source_context.has_virtual_source_workspace and any(
+            binding.selector.filters for binding in bindings
         )
 
     @staticmethod
@@ -861,7 +997,7 @@ class MetadataMatchedImageSetAnchorPatternPolicy(MatchedImageSetAnchorPatternPol
                 raise ValueError(
                     "METADATA source binding dimension is missing alias "
                     f"{binding.alias!r}."
-            )
+                )
             value = source_metadata_value(metadata, field)
             if value is None:
                 if allow_missing:
@@ -880,9 +1016,17 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
 
     bindings: tuple[NamedSourceBinding, ...]
     match_plan: SourceBindingMatchPlan | None
-    identity_policy: SourceImageSetIdentityPolicy = field(
-        default_factory=SourceImageSetIdentityPolicy
-    )
+    identity_policy: SourceImageSetIdentityPolicy
+
+    @property
+    def matched_bindings(self) -> tuple[NamedSourceBinding, ...]:
+        """Return declarations that determine source-set cardinality."""
+
+        return tuple(
+            binding
+            for binding in self.bindings
+            if binding.source_set_role is SourceSetRole.MATCHED
+        )
 
     @classmethod
     def from_plan(
@@ -891,18 +1035,19 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
         bindings: Sequence[NamedSourceBinding],
         match_plan: SourceBindingMatchPlan | None,
         source_context: SourcePatternResolutionContext,
-        plane_member_fields: frozenset[str] = frozenset(),
+        identity_policy: SourceImageSetIdentityPolicy,
     ) -> "SourceBindingMatchedImageSet":
         return cls(
             parser=source_context.parser,
             source_paths_by_virtual_path=source_context.source_paths_by_virtual_path,
             source_metadata_by_path=source_context.source_metadata_by_path,
             metadata_rules=source_context.metadata_rules,
+            source_projections_by_virtual_path=(
+                source_context.source_projections_by_virtual_path
+            ),
             bindings=tuple(bindings),
             match_plan=match_plan,
-            identity_policy=SourceImageSetIdentityPolicy.from_plane_member_fields(
-                plane_member_fields
-            ),
+            identity_policy=identity_policy,
         )
 
     def expand(
@@ -912,16 +1057,10 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
         source_universe: Sequence[SourceCandidatePath],
     ) -> tuple[SourceCandidatePath, ...]:
         """Return source files for every alias in each selected image-set anchor."""
-        selector_bindings = tuple(
-            binding
-            for binding in SourceBindingCandidateMatcher.selector_bindings(
-                self.bindings
-            )
-            if binding.participates_in_execution_anchoring
+        selector_bindings = SourceBindingCandidateMatcher.selector_bindings(
+            self.matched_bindings
         )
-        if (
-            len(selector_bindings) == 1
-        ):
+        if len(selector_bindings) == 1:
             return self._expand_single_alias(
                 anchors,
                 binding=selector_bindings[0],
@@ -938,7 +1077,9 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
                 source_context=self,
             )
 
-        selected_anchor_candidates = self._complete_alias_set(anchors, selector_bindings)
+        selected_anchor_candidates = self._complete_alias_set(
+            anchors, selector_bindings
+        )
         if selected_anchor_candidates is not None:
             return selected_anchor_candidates
 
@@ -966,6 +1107,96 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
             )
         return tuple(dict.fromkeys(expanded))
 
+    def members_for_binding(
+        self,
+        binding: NamedSourceBinding,
+        *,
+        anchor_provenance: SourceImageProvenance,
+        source_universe: Sequence[SourceCandidatePath],
+    ) -> tuple[SourceCandidatePath, ...]:
+        """Resolve one binding's exact members in the current source image sets."""
+
+        if binding not in self.bindings:
+            raise ValueError(
+                f"Source binding {binding.alias!r} is not declared by this image set."
+            )
+        anchor_identities = anchor_provenance.represented_source_identities
+        if not anchor_identities:
+            raise ValueError(
+                "Exact source-binding membership requires addressable runtime "
+                "provenance."
+            )
+        candidates = SourceBindingCandidateMatcher.compatible_candidates(
+            source_universe,
+            bindings=(binding,),
+            source_context=self,
+        )
+        if not candidates:
+            return ()
+        declared_candidates = tuple(
+            dict.fromkeys((*self.source_paths_by_virtual_path, *source_universe))
+        )
+        anchors: list[SourceCandidatePath] = []
+        for anchor_identity in anchor_identities:
+            matches = tuple(
+                candidate
+                for candidate in declared_candidates
+                if self._candidate_matches_source_identity(
+                    candidate,
+                    anchor_identity,
+                )
+            )
+            if len(matches) != 1:
+                raise ValueError(
+                    "Source binding requires one exact declared source-set position "
+                    f"for runtime provenance {anchor_identity.identity!r}, got "
+                    f"{matches!r}."
+                )
+            anchors.append(matches[0])
+        return self._expand_single_alias(
+            tuple(dict.fromkeys(anchors)),
+            binding=binding,
+            source_universe=source_universe,
+        )
+
+    def _candidate_matches_source_identity(
+        self,
+        candidate: SourceCandidatePath,
+        source_identity: SourceImageIdentity,
+    ) -> bool:
+        """Return whether one candidate has the exact declared source identity."""
+
+        if not source_identity.addressable:
+            return False
+        if source_identity.path is not None:
+            declared_paths = (
+                self.source_path_for(candidate),
+                *self.runtime_paths_for_candidate(candidate),
+            )
+            if not any(
+                source_paths_equal(declared_path, source_identity.path)
+                for declared_path in declared_paths
+            ):
+                return False
+        component_items = source_component_metadata_items(
+            source_identity.component_metadata or {}
+        )
+        if not component_items:
+            return source_identity.path is not None
+        return any(
+            all(
+                (
+                    candidate_value := source_component_metadata_value(
+                        metadata, component
+                    )
+                )
+                is not None
+                and source_metadata_values_equal(candidate_value, expected_value)
+                for component, expected_value in component_items
+            )
+            for metadata in self.candidate_metadata(candidate)
+        )
+
     def _expand_single_alias(
         self,
         anchors: Sequence[SourceCandidatePath],
@@ -984,8 +1215,7 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
             return ()
 
         anchor_identities = frozenset(
-            self._source_image_set_identity(anchor)
-            for anchor in anchors
+            self._source_image_set_identity(anchor) for anchor in anchors
         )
         return tuple(
             candidate
@@ -1004,7 +1234,12 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
         self,
         candidate: SourceCandidatePath,
     ) -> SourceImageSetIdentity:
-        metadata = self.candidate_metadata(candidate).first_required(candidate)
+        metadata_candidates = self.candidate_metadata(candidate)
+        metadata = (
+            metadata_candidates.values[0]
+            if metadata_candidates.values
+            else SourceMetadataRecord(())
+        )
         return SourceImageSetIdentity.from_metadata(
             metadata,
             fallback_source_path=candidate,
@@ -1094,10 +1329,10 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
             binding
             for binding in selector_bindings
             if SourceBindingCandidateMatcher.matches(
-                    candidate,
-                    binding=binding,
-                    source_context=self,
-                )
+                candidate,
+                binding=binding,
+                source_context=self,
+            )
         )
         if not matches:
             return None
@@ -1150,7 +1385,7 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
             field = dimension.field_for_alias(binding.alias)
             if field is None:
                 continue
-            value = source_metadata_value(metadata, field)
+            value = semantic_source_metadata_value(metadata, field)
             if value is None:
                 if allow_missing:
                     return None
@@ -1204,7 +1439,9 @@ class SourceUniverseRuntimeState:
 
     def require_step_input_universe(self) -> SourceFileUniverse:
         if self.step_input_universe is None:
-            raise RuntimeError("Source universe runtime state has no step-input universe.")
+            raise RuntimeError(
+                "Source universe runtime state has no step-input universe."
+            )
         return self.step_input_universe
 
     def require_pipeline_start_universe(self) -> SourceFileUniverse:
@@ -1254,7 +1491,7 @@ class SourceUniverseRequest(metaclass=AutoRegisterMeta):
 
     universe_request_kind: ClassVar[str | None] = None
     context: "ProcessingContext"
-    plan: "FunctionStepExecutionPlan"
+    plan: "CompiledStepPlan"
     matching_files: tuple[str, ...]
     source_backend: Backend
     source_projection: VirtualWorkspaceSourceProjection | None
@@ -1264,10 +1501,7 @@ class SourceUniverseRequest(metaclass=AutoRegisterMeta):
         """Return registered concrete runtime plan request classes."""
         request_types: list[type[SourceUniverseRequest]] = []
         for request_type in cls.__registry__.values():
-            if (
-                issubclass(request_type, cls)
-                and request_type not in request_types
-            ):
+            if issubclass(request_type, cls) and request_type not in request_types:
                 request_types.append(request_type)
         return tuple(request_types)
 
@@ -1327,10 +1561,9 @@ class SourceUniverseRequest(metaclass=AutoRegisterMeta):
 
     @property
     def step_input_source_paths(self) -> Mapping[str, str]:
-        projection = self.source_projection
-        if projection is None:
+        if self.source_projection is None:
             return MappingProxyType({})
-        return projection.source_paths_by_virtual_path
+        return self.source_context().source_paths_by_virtual_path
 
     @property
     def source_metadata_by_path(self) -> Mapping[str, SourceMetadataMapping]:
@@ -1371,9 +1604,12 @@ class SourceUniverseRequest(metaclass=AutoRegisterMeta):
 
     def axis_files(self) -> tuple[str, ...]:
         return tuple(
-            self.plan.get_paths_for_axis(
-                self.context.input_dir,
-                self.source_backend.value,
+            get_all_image_paths(
+                input_dir=self.context.input_dir,
+                axis_id=self.plan.axis_id,
+                backend=self.source_backend.value,
+                filemanager=self.context.filemanager,
+                microscope_handler=self.context.microscope_handler,
             )
         )
 
@@ -1416,38 +1652,12 @@ class PipelineStartSourceUniverseRequest(SourceUniverseRequest):
         state = replace(
             state,
             pipeline_start_universe=universe,
-            pipeline_source_candidate_files=self.pipeline_source_candidate_files(universe),
-            load_universe=state.load_universe if load_universe is None else load_universe,
+            pipeline_source_candidate_files=universe.files,
+            load_universe=state.load_universe
+            if load_universe is None
+            else load_universe,
         )
         return SourceUniverseRequest.contribute_runtime_state(self, state, universe)
-
-    def pipeline_source_candidate_files(
-        self,
-        universe: SourceFileUniverse,
-    ) -> tuple[str, ...]:
-        projection = self.source_projection
-        if projection is None:
-            return universe.files
-        axis_id = None if self.requires_full_pipeline_source_universe else self.plan.axis_id
-        return tuple(
-            dict.fromkeys(
-                (
-                    *projection.pipeline_start_candidate_files(axis_id=axis_id),
-                    *self.physical_pipeline_source_candidate_files(),
-                )
-            )
-        )
-
-    def physical_pipeline_source_candidate_files(self) -> tuple[str, ...]:
-        universe_backend = self.physical_full_universe_backend()
-        return tuple(
-            str(path)
-            for path in self.context.filemanager.list_files(
-                str(self.context.input_dir),
-                universe_backend.value,
-                recursive=True,
-            )
-        )
 
     def load_universe(self) -> SourceFileUniverse | None:
         projection = self.source_projection
@@ -1687,13 +1897,8 @@ class VirtualWorkspacePipelineStartSourceUniverseStrategy(
     def source_universe(self, request: SourceUniverseRequest) -> SourceFileUniverse:
         projection = request.require_source_projection()
         return SourceFileUniverse(
-            files=tuple(
-                dict.fromkeys(
-                    str(path)
-                    for path in projection.source_paths_by_virtual_path.values()
-                )
-            ),
-            backend=Backend.DISK,
+            files=projection.pipeline_start_files(),
+            backend=request.source_backend,
         )
 
 
@@ -1731,17 +1936,25 @@ class SourceBindingRuntimeContextRequest:
     """Build the source-binding runtime context from one resolved source universe."""
 
     context: "ProcessingContext"
-    plan: "FunctionStepExecutionPlan"
+    plan: "CompiledStepPlan"
     matching_files: tuple[str, ...]
     source_backend: Backend
     source_projection: VirtualWorkspaceSourceProjection | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.plan, CompiledStepPlan):
+            raise TypeError(
+                "SourceBindingRuntimeContextRequest requires CompiledStepPlan, got "
+                f"{type(self.plan).__name__}."
+            )
+        self.plan.require_function_execution_ready()
 
     @classmethod
     def from_context(
         cls,
         *,
         context: "ProcessingContext",
-        plan: "FunctionStepExecutionPlan",
+        plan: "CompiledStepPlan",
         matching_files: Sequence[str],
         source_projection: VirtualWorkspaceSourceProjection | None,
     ) -> "SourceBindingRuntimeContextRequest":
@@ -1770,10 +1983,8 @@ class SourceBindingRuntimeContextRequest:
         if cached is not None:
             return cached
         universe_state = self.runtime_universe_state()
-        source_metadata_by_path = (
-            cache.normalized_source_metadata(
-                universe_state.source_metadata_by_path
-            )
+        source_metadata_by_path = cache.normalized_source_metadata(
+            universe_state.source_metadata_by_path
         )
         return cache.store_runtime_context(
             universe_state.runtime_context(

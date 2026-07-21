@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union, Type
 
-from openhcs.constants.constants import Backend
+from openhcs.constants.constants import Backend, Microscope
 from openhcs.core.components.parser_metaprogramming import (
     format_filename_component,
     require_filename_component,
@@ -29,6 +29,7 @@ from openhcs.microscopes.microscope_interfaces import (
 from openhcs.microscopes.tiff_metadata_mixin import TiffPixelSizeMixin
 from polystore.exceptions import MetadataNotFoundError
 from polystore.filemanager import FileManager
+from polystore.virtual_workspace import SourcePixelRef
 
 logger = logging.getLogger(__name__)
 
@@ -277,7 +278,7 @@ class BBBC021Handler(BBBCHandlerBase):
     Files are in Week#/Week#_#####/ subdirectories.
     """
 
-    _microscope_type = 'bbbc021'
+    _microscope_type = Microscope.BBBC021.value
     _parser_class = BBBC021FilenameParser
     _metadata_handler_class = BBBC021MetadataHandler
 
@@ -364,7 +365,10 @@ class BBBC021Handler(BBBCHandlerBase):
             real_relative = Path(file_path).relative_to(plate_path).as_posix()
 
             # Add to mapping
-            workspace_mapping[virtual_relative] = real_relative
+            workspace_mapping[virtual_relative] = SourcePixelRef(
+                backend=Backend.DISK.value,
+                backend_address=real_relative,
+            )
             logger.debug(f"  Mapped: {virtual_relative} → {real_relative}")
 
         logger.info(f"Built {len(workspace_mapping)} virtual path mappings for BBBC021")
@@ -515,7 +519,7 @@ class BBBC038Handler(BBBCHandlerBase):
     Format: {HexID}.png in stage1_train/{ImageId}/images/ subdirectories.
     """
 
-    _microscope_type = 'bbbc038'
+    _microscope_type = Microscope.BBBC038.value
     _parser_class = BBBC038FilenameParser
     _metadata_handler_class = BBBC038MetadataHandler
 
@@ -600,7 +604,10 @@ class BBBC038Handler(BBBCHandlerBase):
             real_relative = Path(file_path).relative_to(plate_path).as_posix()
 
             # Add to mapping
-            workspace_mapping[virtual_relative] = real_relative
+            workspace_mapping[virtual_relative] = SourcePixelRef(
+                backend=Backend.DISK.value,
+                backend_address=real_relative,
+            )
             logger.debug(f"  Mapped: {virtual_relative} → {real_relative}")
 
         logger.info(f"Built {len(workspace_mapping)} virtual path mappings for BBBC038")

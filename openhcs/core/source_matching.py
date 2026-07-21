@@ -9,15 +9,18 @@ from dataclasses import dataclass, field
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable, ClassVar, Mapping, TypeAlias
+from typing import Callable, ClassVar, Mapping, Sequence, TYPE_CHECKING, TypeAlias
 
 from metaclass_registry import AutoRegisterMeta
 
-from openhcs.constants.constants import AllComponents, LOADABLE_IMAGE_EXTENSIONS
+from openhcs.constants.constants import AllComponents
+from polystore.formats import get_format_from_extension
+from openhcs.core.component_set import ComponentSet
 from openhcs.core.process_local_cache import IdentityBoundProcessCache
 from openhcs.core.source_bindings import (
     MetadataExtractionRule,
     MetadataSource,
+    SourceBindingDeclarationsMixin,
     SourceFilterClause,
     SourceFilterMatchType,
     SourceFilterSubject,
@@ -31,13 +34,19 @@ from openhcs.core.source_metadata import (
     SourceMetadataRoleView,
     SourceMetadataScalar,
     SourceMetadataValue,
+    SourceComponentProjectionStrategy,
     canonical_path_metadata_value,
     path_metadata_values_equivalent,
+    source_metadata_field_identity,
+    source_metadata_scalar,
 )
 from openhcs.core.source_path_identity import (
     source_path_identity_key,
     source_paths_equal,
 )
+
+if TYPE_CHECKING:
+    from openhcs.core.config import PipelineConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,9 +100,12 @@ def _string_does_not_end_with(target: str, value: str) -> bool:
 
 def is_image_path(file_path: str) -> bool:
     """Return whether the path extension is a loadable image source."""
-
     suffix = os.path.splitext(file_path)[1].lower()
-    return suffix in LOADABLE_IMAGE_EXTENSIONS
+    try:
+        file_format = get_format_from_extension(suffix)
+    except ValueError:
+        return False
+    return file_format.is_pixel_payload
 
 
 def is_tif_path(file_path: str) -> bool:
@@ -269,7 +281,7 @@ def metadata_from_rules(
     metadata_rules: tuple[MetadataExtractionRule, ...],
     *,
     filter_path: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, SourceMetadataValue]:
     """Extract metadata fields from one source path using typed rules."""
 
     extracted: dict[str, str] = {}
@@ -293,7 +305,13 @@ def metadata_from_rules(
             },
             path=file_path,
         )
-    return extracted
+    if not extracted:
+        return {}
+    return with_original_source_metadata(
+        extracted,
+        extracted,
+        path=file_path,
+    )
 
 
 def metadata_source_text(
@@ -344,7 +362,17 @@ def _source_filters_match_cached(
     file_path: str,
     filters: tuple[SourceFilterClause, ...],
 ) -> bool:
-    return all(filter_clause_matches(file_path, clause) for clause in filters)
+    any_group_matches: dict[int, bool] = {}
+    for clause in filters:
+        matches = filter_clause_matches(file_path, clause)
+        if clause.any_group is None:
+            if not matches:
+                return False
+            continue
+        any_group_matches[clause.any_group] = (
+            any_group_matches.get(clause.any_group, False) or matches
+        )
+    return all(any_group_matches.values())
 
 
 def filter_clause_matches(
@@ -376,9 +404,7 @@ class SourceImageSetComponentRole(Enum):
 class SourceImageSetIdentityPolicy:
     """Nominal policy for reducing source plane metadata to image-set identity."""
 
-    plane_member_components: frozenset[AllComponents] = field(
-        default_factory=lambda: frozenset((AllComponents.CHANNEL,))
-    )
+    plane_member_components: frozenset[AllComponents] = frozenset()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -406,10 +432,9 @@ class SourceImageSetIdentityPolicy:
         cls,
         fields: frozenset[str],
     ) -> "SourceImageSetIdentityPolicy":
-        """Return an identity policy whose plane members include declared fields."""
+        """Return the exact image-plane membership declared by the step stack."""
 
-        base_policy = cls()
-        plane_member_components = set(base_policy.plane_member_components)
+        plane_member_components: set[AllComponents] = set()
         for field in fields:
             component = source_metadata_component(field)
             if component is None:
@@ -424,36 +449,103 @@ class SourceImageSetIdentityPolicy:
         """Return whether a metadata component participates in image-set identity."""
         return self.role(component) is SourceImageSetComponentRole.IMAGE_SET_AXIS
 
+    def including_source_bindings(
+        self,
+        source_bindings: SourceBindingDeclarationsMixin,
+    ) -> "SourceImageSetIdentityPolicy":
+        """Include plane-member components declared by source bindings."""
+
+        declared = type(self).from_source_bindings(source_bindings)
+        return type(self)(
+            self.plane_member_components | declared.plane_member_components
+        )
+
+    @classmethod
+    def from_source_bindings(
+        cls,
+        source_bindings: SourceBindingDeclarationsMixin,
+        *,
+        group_component: AllComponents | None = None,
+    ) -> "SourceImageSetIdentityPolicy":
+        """Return image-plane membership declared by source and group semantics."""
+
+        if not isinstance(source_bindings, SourceBindingDeclarationsMixin):
+            raise TypeError(
+                "SourceImageSetIdentityPolicy.from_source_bindings requires "
+                "SourceBindingDeclarationsMixin."
+            )
+        return cls(
+            frozenset(
+                ComponentSet.collect(
+                    source_bindings.source_stack_components,
+                    (
+                        selector.component
+                        for binding in source_bindings.primary_plane_bindings
+                        for selector in (
+                            *binding.selector.components,
+                            *binding.component_identity,
+                        )
+                    ),
+                    (group_component,),
+                )
+            )
+        )
+
+    @classmethod
+    def from_pipeline_config(
+        cls,
+        pipeline_config: "PipelineConfig",
+    ) -> "SourceImageSetIdentityPolicy":
+        """Compile plate-wide image-set identity from resolved source semantics."""
+
+        from objectstate.lazy_factory import (
+            resolve_lazy_configurations_for_serialization,
+        )
+
+        group_by = pipeline_config.processing_config.group_by
+        group_component = (
+            None
+            if group_by is None or group_by.value is None
+            else ComponentSet.coerce_component(group_by)
+        )
+        source_bindings = resolve_lazy_configurations_for_serialization(
+            pipeline_config.source_bindings_config
+        )
+        return cls.from_source_bindings(
+            source_bindings,
+            group_component=group_component,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class SourceImageSetIdentity:
     """Image-set identity from source metadata under a typed component policy."""
 
-    DEFAULT_POLICY: ClassVar[SourceImageSetIdentityPolicy] = (
-        SourceImageSetIdentityPolicy()
-    )
-
     components: tuple[tuple[str, str], ...]
+
+    @property
+    def has_metadata_scope(self) -> bool:
+        """Return whether identity comes from semantic metadata rather than a path."""
+        return any(key != "source_path" for key, _value in self.components)
 
     @classmethod
     def components_from_metadata(
         cls,
         metadata: SourceMetadataMapping,
         *,
-        policy: SourceImageSetIdentityPolicy = DEFAULT_POLICY,
+        policy: SourceImageSetIdentityPolicy,
     ) -> tuple[tuple[str, str], ...]:
         """Return ordered source image-set components from one metadata mapping."""
-        component_values: dict[str, str] = {}
-        for field_name, value in SourceMetadataRoleView(metadata).scalar_items():
-            if value is None:
-                continue
-            component = source_metadata_component(str(field_name))
-            if component is not None and policy.is_identity_component(component):
-                component_values[component.value] = str(value)
         return tuple(
-            (component.value, component_values[component.value])
+            (component.value, value)
             for component in policy.identity_components()
-            if component.value in component_values
+            if (
+                value := SourceComponentProjectionStrategy.metadata_component(
+                    component,
+                    metadata,
+                )
+            )
+            is not None
         )
 
     @classmethod
@@ -462,12 +554,14 @@ class SourceImageSetIdentity:
         metadata: SourceMetadataMapping,
         *,
         fallback_source_path: str,
-        policy: SourceImageSetIdentityPolicy = DEFAULT_POLICY,
+        policy: SourceImageSetIdentityPolicy,
     ) -> "SourceImageSetIdentity":
         """Return the source image-set identity represented by one image plane."""
         ordered_components = cls.components_from_metadata(metadata, policy=policy)
         if ordered_components:
             return cls(ordered_components)
+        if not fallback_source_path:
+            return cls((("source_path", ""),))
         return cls((("source_path", source_path_identity_key(fallback_source_path)),))
 
 
@@ -556,14 +650,21 @@ def merge_source_metadata(
             ).merge_into(target, path=path)
             continue
         existing = target.get(key)
-        normalized_value = canonical_path_metadata_value(str(value))
+        normalized_value = source_metadata_scalar(value)
+        component = source_metadata_component(key)
+        canonical_component_values_match = (
+            component is not None
+            and key == component.value
+            and str(existing) == str(normalized_value)
+        )
         if (
             existing is not None
-            and _metadata_equivalence_value(key, str(existing))
-            != _metadata_equivalence_value(key, normalized_value)
-            and not path_metadata_values_equivalent(
-                str(existing),
-                normalized_value,
+            and existing != normalized_value
+            and not canonical_component_values_match
+            and not (
+                isinstance(existing, str)
+                and isinstance(normalized_value, str)
+                and path_metadata_values_equivalent(existing, normalized_value)
             )
         ):
             raise RuntimeError(
@@ -571,18 +672,6 @@ def merge_source_metadata(
                 f"{path!r}: {existing!r} != {normalized_value!r}."
             )
         target[key] = normalized_value
-
-
-def _metadata_equivalence_value(key: str, value: str) -> str:
-    from openhcs.core.pipeline_image_schema import (
-        SOURCE_IMAGE_TYPE_METADATA_FIELD,
-        image_type_source_role_key,
-    )
-
-    if key == SOURCE_IMAGE_TYPE_METADATA_FIELD:
-        return image_type_source_role_key(value)
-    return canonical_path_metadata_value(value)
-
 
 def with_original_source_metadata(
     metadata: SourceMetadataMapping,
@@ -603,8 +692,8 @@ def with_original_source_metadata(
 def source_metadata_value(
     metadata: SourceMetadataMapping,
     key: str,
-) -> str | None:
-    """Return a metadata value by semantic key, ignoring spelling separators."""
+) -> SourceMetadataScalar:
+    """Return one source-literal metadata value by its exact declared key."""
     return _source_metadata_lookup_projection(metadata).value(key)
 
 
@@ -613,34 +702,67 @@ def source_component_metadata_value(
     component: AllComponents,
 ) -> str | None:
     """Return metadata for an OpenHCS component across canonical and alias fields."""
-    return _source_metadata_lookup_projection(metadata).component_value(component)
+    return SourceComponentProjectionStrategy.metadata_component(component, metadata)
 
 
 def source_component_metadata_items(
     metadata: SourceMetadataMapping,
 ) -> tuple[tuple[AllComponents, SourceMetadataScalar], ...]:
-    """Return OpenHCS component metadata values resolved in one metadata scan."""
-    return _source_metadata_lookup_projection(metadata).component_items()
+    """Return component metadata through each registered nominal projection."""
+    return tuple(
+        (component, value)
+        for component in AllComponents
+        if (
+            value := SourceComponentProjectionStrategy.metadata_component(
+                component,
+                metadata,
+            )
+        )
+        is not None
+    )
 
 
 def source_component_metadata_raw_value(
     metadata: SourceMetadataMapping,
     component: AllComponents,
 ) -> SourceMetadataScalar:
-    """Return raw metadata for an OpenHCS component across canonical and alias fields."""
-    return _source_metadata_lookup_projection(metadata).component_raw_value(component)
+    """Return metadata through the registered nominal component projection."""
+    return SourceComponentProjectionStrategy.metadata_component(component, metadata)
 
 
 def semantic_source_metadata_value(
     metadata: SourceMetadataMapping,
     field_name: str,
-) -> str | None:
-    """Return metadata by OpenHCS component semantics or literal field key."""
+) -> SourceMetadataScalar:
+    """Return one field through exact, semantic, then component identity."""
+
+    literal_value = source_metadata_value(metadata, field_name)
+    if literal_value is not None:
+        return literal_value
+
+    field_identity = source_metadata_field_identity(field_name)
+    semantic_values = tuple(
+        value
+        for field, value in SourceMetadataRoleView(metadata).scalar_items()
+        if value is not None
+        and source_metadata_field_identity(str(field)) == field_identity
+    )
+    if semantic_values:
+        first = semantic_values[0]
+        if any(
+            not source_metadata_values_equal(first, value)
+            for value in semantic_values[1:]
+        ):
+            raise RuntimeError(
+                "Source metadata contains conflicting values for semantic field "
+                f"{field_name!r}: {semantic_values!r}."
+            )
+        return first
 
     component = source_metadata_component(field_name)
     if component is not None:
         return source_component_metadata_value(metadata, component)
-    return source_metadata_value(metadata, field_name)
+    return None
 
 
 def source_component_metadata_values(
@@ -674,18 +796,15 @@ def with_source_component_metadata(
     }
 
 
-def source_metadata_values_equal(left: str, right: str) -> bool:
-    """Compare metadata selector values with source-schema numeric normalization."""
+def source_metadata_values_equal(
+    left: SourceMetadataScalar,
+    right: SourceMetadataScalar,
+) -> bool:
+    """Compare source metadata after the scalar-to-selector projection."""
 
-    if left == right:
-        return True
-    stripped_left = left.strip()
-    stripped_right = right.strip()
-    if stripped_left == stripped_right:
-        return True
-    if stripped_left.isdigit() and stripped_right.isdigit():
-        return int(stripped_left) == int(stripped_right)
-    return False
+    if left is None or right is None:
+        return left is right
+    return str(left) == str(right)
 
 
 SourceAxisMetadataValue: TypeAlias = SourceMetadataScalar
@@ -733,21 +852,31 @@ class SourceAxisMetadataScope:
             for component, value in self.component_values
         )
 
-    def image_set_identity_scope(
+    def matching_indices(
         self,
-        policy: SourceImageSetIdentityPolicy = SourceImageSetIdentity.DEFAULT_POLICY,
-    ) -> "SourceAxisMetadataScope":
-        """Return this scope reduced to source image-set identity components."""
+        metadata_records: Sequence[SourceAxisMetadataRecord | None],
+    ) -> tuple[int, ...]:
+        """Return indices whose complete metadata satisfies this scope."""
+
+        return tuple(
+            index
+            for index, metadata in enumerate(metadata_records)
+            if metadata is not None and self.matches_metadata(metadata)
+        )
+
+    def multiprocessing_axis_scope(self) -> "SourceAxisMetadataScope":
+        """Return the stable worker-axis partition of this runtime scope."""
+        from openhcs.constants.constants import get_multiprocessing_axis
+
+        multiprocessing_axis = ComponentSet.coerce_component(
+            get_multiprocessing_axis()
+        )
         return type(self).from_component_values(
             tuple(
                 (component, value)
                 for component, value in self.component_values
-                if component is None
-                or (
-                    (resolved_component := source_metadata_component(str(component)))
-                    is None
-                )
-                or policy.is_identity_component(resolved_component)
+                if component is not None
+                and source_metadata_component(str(component)) is multiprocessing_axis
             )
         )
 
@@ -770,29 +899,11 @@ class SourceAxisMetadataScope:
         )
 
 
-@lru_cache(maxsize=4096)
-def normalize_source_metadata_key(key: str) -> str:
-    """Normalize metadata keys across parser, regex, and setup-module spellings."""
-
-    return "".join(character for character in key.lower() if character.isalnum())
-
-
 @lru_cache(maxsize=256)
 def source_metadata_component(field: str) -> AllComponents | None:
-    """Return the OpenHCS component identified by a metadata field name."""
+    """Return the nominal component owner of a metadata field."""
 
-    normalized = normalize_source_metadata_key(field)
-    candidate_keys = (normalized,)
-    if normalized.startswith("metadata"):
-        candidate_keys = (*candidate_keys, normalized.removeprefix("metadata"))
-    for component in AllComponents:
-        if normalize_source_metadata_key(component.value) in candidate_keys:
-            return component
-    if candidate_keys[-1] in {"time", "frame", "framenumber"}:
-        return AllComponents.TIMEPOINT
-    if "channelnumber" in candidate_keys:
-        return AllComponents.CHANNEL
-    return None
+    return SourceComponentProjectionStrategy.component_for_metadata_field(field)
 
 
 class SourceMetadataLookupProjectionCache(IdentityBoundProcessCache):
@@ -806,100 +917,29 @@ class SourceMetadataLookupProjection:
     """Cached lookup projection over one source metadata mapping."""
 
     scalar_items: tuple[tuple[str, SourceMetadataScalar], ...]
-    original_items: tuple[tuple[str, str], ...]
+    original_items: tuple[tuple[str, SourceMetadataScalar], ...]
 
-    def value(self, key: str) -> str | None:
-        """Return a metadata value by semantic key, ignoring spelling separators."""
-        normalized_key = normalize_source_metadata_key(key)
+    def value(self, key: str) -> SourceMetadataScalar:
+        """Return a source-literal metadata value by exact key."""
+        for candidate_key, value in self.original_items:
+            if str(candidate_key) == key and value is not None:
+                return value
         for candidate_key, value in self.scalar_items:
             if str(candidate_key) == key and value is not None:
-                return str(value)
-        for candidate_key, value in self.original_items:
-            if (
-                normalize_source_metadata_key(str(candidate_key)) == normalized_key
-                and value is not None
-            ):
-                return str(value)
-        for candidate_key, value in self.scalar_items:
-            if (
-                normalize_source_metadata_key(str(candidate_key)) == normalized_key
-                and value is not None
-            ):
-                return str(value)
+                return value
         return None
-
-    def component_value(self, component: AllComponents) -> str | None:
-        """Return the preferred metadata value for one OpenHCS component."""
-        value = self.component_raw_value(component)
-        return None if value is None else str(value)
-
-    def component_raw_value(
-        self,
-        component: AllComponents,
-    ) -> SourceMetadataScalar:
-        """Return the preferred raw metadata value for one OpenHCS component."""
-        normalized_component_key = normalize_source_metadata_key(component.value)
-        for field, field_value in self.scalar_items:
-            field_text = str(field)
-            if (
-                normalize_source_metadata_key(field_text) == normalized_component_key
-                and field_value is not None
-            ):
-                return field_value
-        for field, field_value in self.scalar_items:
-            field_text = str(field)
-            if (
-                source_metadata_component(field_text) is component
-                and field_value is not None
-            ):
-                return field_value
-        return None
-
-    def component_items(self) -> tuple[tuple[AllComponents, SourceMetadataScalar], ...]:
-        """Return OpenHCS component metadata values resolved in one metadata scan."""
-        canonical_values: dict[AllComponents, SourceMetadataScalar] = {}
-        alias_values: dict[AllComponents, SourceMetadataScalar] = {}
-        for field, field_value in self.scalar_items:
-            if field_value is None:
-                continue
-            field_text = str(field)
-            component = source_metadata_component(field_text)
-            if component is None:
-                continue
-            if (
-                normalize_source_metadata_key(field_text)
-                == normalize_source_metadata_key(component.value)
-            ):
-                canonical_values.setdefault(component, field_value)
-                continue
-            alias_values.setdefault(component, field_value)
-
-        return tuple(
-            (
-                component,
-                canonical_values[component]
-                if component in canonical_values
-                else alias_values[component],
-            )
-            for component in AllComponents
-            if component in canonical_values or component in alias_values
-        )
 
     def component_values(self, component: AllComponents) -> tuple[str, ...]:
         """Return all metadata values that semantically describe a component."""
         values: list[str] = []
-        normalized_component_key = normalize_source_metadata_key(component.value)
         for field, field_value in self.scalar_items:
             field_text = str(field)
-            if (
-                normalize_source_metadata_key(field_text) == normalized_component_key
-                and field_value is not None
-            ):
+            if field_text == component.value and field_value is not None:
                 values.append(str(field_value))
         for field, field_value in self.scalar_items:
             field_text = str(field)
             if (
-                normalize_source_metadata_key(field_text) != normalized_component_key
+                field_text != component.value
                 and source_metadata_component(field_text) is component
             ) and field_value is not None:
                 values.append(str(field_value))

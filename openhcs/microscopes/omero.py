@@ -10,10 +10,13 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
-from openhcs.constants.constants import Backend
+from openhcs.constants.constants import Backend, Microscope
 from polystore.exceptions import MetadataNotFoundError
 from polystore.filemanager import FileManager
-from openhcs.microscopes.microscope_base import MicroscopeHandler
+from openhcs.microscopes.microscope_base import (
+    MicroscopeHandler,
+    MicroscopeSourceSelectionRole,
+)
 from openhcs.microscopes.microscope_interfaces import (
     FilenameParseResult,
     FilenameParser,
@@ -356,8 +359,24 @@ class OMEROFilenameParser(FilenameParser):
 class OMEROHandler(MicroscopeHandler):
     """OMERO microscope handler - uses OMERO native metadata."""
 
-    _microscope_type = 'omero'
+    _microscope_type = Microscope.OMERO.value
     _metadata_handler_class = None  # Set after class definition
+
+    @classmethod
+    def source_selection_role(cls) -> MicroscopeSourceSelectionRole:
+        """Declare OMERO as a remote-service owner, not a disk filename format."""
+
+        return MicroscopeSourceSelectionRole.REMOTE_SERVICE
+
+    @classmethod
+    def source_selection_guidance(cls) -> str:
+        """Explain when the OMERO virtual source owner should be selected."""
+
+        return (
+            "Use for plates addressed through an OMERO connection. Its filename "
+            "parser describes projected virtual names, so local disk filenames are "
+            "not evidence that OMERO owns a folder."
+        )
 
     def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
         """
@@ -384,7 +403,7 @@ class OMEROHandler(MicroscopeHandler):
 
     @property
     def microscope_type(self) -> str:
-        return "omero"
+        return self._microscope_type
 
     @property
     def metadata_handler_class(self) -> Type[MetadataHandler]:

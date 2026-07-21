@@ -7,54 +7,23 @@ from enum import Enum
 from pathlib import Path
 from typing import ClassVar
 
+from polystore.base import _create_storage_registry
+from polystore.filemanager import FileManager
+
+from openhcs.constants import Backend
 from openhcs.core.input_workspace import (
     InputWorkspacePreparationRequest,
     InputWorkspacePreparationResult,
     PipelineImportDiagnostic,
 )
-from openhcs.interop.cellprofiler.runtime_pipeline import prepare_generated_pipeline
-from openhcs.interop.cellprofiler.source_schema_ingestion import (
-    CellProfilerSourceSchemaWorkspace,
-    CellProfilerSourceSchemaWorkspaceRequest,
-    prepare_cellprofiler_source_schema_only_workspace,
-    prepare_cellprofiler_source_schema_workspace,
+from openhcs.core.function_step_transport import FunctionStepTransportAuthority
+from openhcs.core.source_binding_workspace import (
+    SourceBindingWorkspaceMaterialization,
+    materialize_source_binding_workspace,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerPlateWorkspaceRequest:
-    """Request to prepare a selected folder for OpenHCS plate initialization."""
-
-    plate_root: Path
-    cppipe_path: Path | None = None
-
-    @classmethod
-    def from_paths(
-        cls,
-        plate_root: Path | str,
-        cppipe_path: Path | str | None = None,
-    ) -> "CellProfilerPlateWorkspaceRequest":
-        return cls(
-            plate_root=Path(plate_root),
-            cppipe_path=cls._optional_cppipe_path(cppipe_path),
-        )
-
-    @staticmethod
-    def _optional_cppipe_path(cppipe_path: Path | str | None) -> Path | None:
-        if cppipe_path is None:
-            return None
-        return Path(cppipe_path)
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerPlateWorkspaceResult(CellProfilerPlateWorkspaceRequest):
-    """Result of preparing a CellProfiler folder as an OpenHCS workspace."""
-
-    ingestion: CellProfilerSourceSchemaWorkspace | None = None
-
-    @property
-    def materialized(self) -> bool:
-        return self.ingestion is not None and self.ingestion.materialization is not None
+from openhcs.core.source_bindings import source_bindings_defaults_to_base
+from openhcs.interop.cellprofiler.pipeline_import import import_cellprofiler_pipeline
+from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
 
 class CellProfilerPipelineStage(Enum):
@@ -133,56 +102,57 @@ class CellProfilerPipelineFile:
 
 
 @dataclass(frozen=True, slots=True)
-class CellProfilerPlateWorkspacePreparer(CellProfilerPlateWorkspaceRequest):
+class CellProfilerPlateWorkspacePreparer:
     """Prepare direct `.cppipe` folders for OpenHCS plate initialization."""
 
-    def prepare(self) -> CellProfilerPlateWorkspaceResult:
+    plate_root: Path
+    cppipe_path: Path | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "plate_root", Path(self.plate_root))
+        if self.cppipe_path is not None:
+            object.__setattr__(self, "cppipe_path", Path(self.cppipe_path))
+
+    @classmethod
+    def from_paths(
+        cls,
+        plate_root: Path | str,
+        cppipe_path: Path | str | None = None,
+    ) -> "CellProfilerPlateWorkspacePreparer":
+        return cls(
+            plate_root=Path(plate_root),
+            cppipe_path=None if cppipe_path is None else Path(cppipe_path),
+        )
+
+    def prepare(self) -> InputWorkspacePreparationResult:
         plate_root = self.plate_root
         cppipe_path = self.resolved_cppipe_path()
         if cppipe_path is None:
-            return CellProfilerPlateWorkspaceResult(
-                plate_root=plate_root,
-                cppipe_path=cppipe_path,
-                ingestion=None,
+            return InputWorkspacePreparationResult(
+                original_source_root=plate_root,
+                execution_plate_path=plate_root,
             )
-        ingestion = prepare_cellprofiler_source_schema_workspace(
-            CellProfilerSourceSchemaWorkspaceRequest.from_paths(
-                source_root=plate_root,
-                cppipe_path=cppipe_path,
-                workspace_root=self.source_schema_workspace_root(cppipe_path),
-                generated_pipeline_path=self.generated_pipeline_path(cppipe_path),
-                force_materialization=True,
-            )
-        )
-        return CellProfilerPlateWorkspaceResult(
-            plate_root=plate_root,
-            cppipe_path=cppipe_path,
-            ingestion=ingestion,
-        )
-
-    def prepare_input_workspace(self) -> InputWorkspacePreparationResult:
-        """Prepare source workspace first, reporting pipeline import as diagnostic."""
-
         return prepare_cellprofiler_input_workspace(
             InputWorkspacePreparationRequest(
-                selected_path=self.plate_root,
-                selected_pipeline_path=self.cppipe_path,
+                selected_path=plate_root,
+                selected_pipeline_path=cppipe_path,
+                workspace_root=self.source_workspace_root(cppipe_path),
             )
         )
 
     def resolved_cppipe_path(self) -> Path | None:
-        candidates = self.cppipe_paths()
         if self.cppipe_path is not None:
             cppipe_path = self.cppipe_path
             if not cppipe_path.is_absolute():
                 cppipe_path = self.plate_root / cppipe_path
             if cppipe_path.suffix != ".cppipe":
                 raise ValueError(f"Expected a .cppipe file, got {cppipe_path}.")
-            if cppipe_path not in candidates:
+            if not cppipe_path.is_file():
                 raise FileNotFoundError(
-                    f"Requested CellProfiler pipeline not found in plate workspace: {cppipe_path}"
+                    f"Requested CellProfiler pipeline does not exist: {cppipe_path}"
                 )
             return cppipe_path
+        candidates = self.cppipe_paths()
         if not candidates:
             return None
         if len(candidates) == 1:
@@ -239,12 +209,7 @@ class CellProfilerPlateWorkspacePreparer(CellProfilerPlateWorkspaceRequest):
 
         return candidates[0]
 
-    def generated_pipeline_path(self, cppipe_path: Path) -> Path:
-        generated_dir = self.plate_root / ".openhcs_cellprofiler"
-        generated_dir.mkdir(parents=True, exist_ok=True)
-        return generated_dir / f"{cppipe_path.stem}_openhcs.py"
-
-    def source_schema_workspace_root(self, cppipe_path: Path) -> Path:
+    def source_workspace_root(self, cppipe_path: Path) -> Path:
         generated_dir = self.plate_root / ".openhcs_cellprofiler"
         generated_dir.mkdir(parents=True, exist_ok=True)
         return generated_dir / f"{cppipe_path.stem}_source_workspace"
@@ -267,37 +232,26 @@ def prepare_cellprofiler_input_workspace(
             execution_plate_path=plate_root,
         )
 
-    generated_pipeline_path = (
-        request.generated_pipeline_path
-        if request.generated_pipeline_path is not None
-        else preparer.generated_pipeline_path(cppipe_path)
-    )
     workspace_root = (
         request.workspace_root
         if request.workspace_root is not None
-        else preparer.source_schema_workspace_root(cppipe_path)
+        else preparer.source_workspace_root(cppipe_path)
     )
-    source_schema_request = CellProfilerSourceSchemaWorkspaceRequest.from_paths(
-        source_root=plate_root,
-        cppipe_path=cppipe_path,
-        workspace_root=workspace_root,
-        generated_pipeline_path=generated_pipeline_path,
-    )
-
-    source_preparation = prepare_cellprofiler_source_schema_only_workspace(
-        source_schema_request
-    )
-    source_schema = source_preparation.source_schema
-    execution_plate_path = source_preparation.execution_plate_path
-
-    prepared_pipeline = None
+    pipeline_steps = None
+    pipeline_config = None
     import_error = None
+    filemanager = FileManager(_create_storage_registry())
     try:
-        prepared_pipeline = prepare_generated_pipeline(
+        pipeline_steps, pipeline_config = import_cellprofiler_pipeline(
             cppipe_path,
-            output_path=generated_pipeline_path,
+            source_root=plate_root,
         )
-        source_schema = prepared_pipeline.source_schema
+        if request.generated_source_path is not None:
+            filemanager.save(
+                FunctionStepTransportAuthority.source_from_pipeline(pipeline_steps),
+                request.generated_source_path,
+                Backend.DISK.value,
+            )
     except ValueError as exc:
         import_error = PipelineImportDiagnostic(
             pipeline_path=cppipe_path,
@@ -305,12 +259,41 @@ def prepare_cellprofiler_input_workspace(
             message=str(exc),
         )
 
+    materialization: SourceBindingWorkspaceMaterialization | None = None
+    execution_plate_path = plate_root
+    if pipeline_config is not None:
+        source_bindings = source_bindings_defaults_to_base(
+            pipeline_config.source_bindings_config
+        ).resolved_imported_metadata_locations(
+            plate_root,
+            portable_roots=(cppipe_path.parent,),
+        )
+        if not source_bindings.is_empty:
+            source_files = tuple(
+                filemanager.list_files(
+                    plate_root,
+                    Backend.DISK.value,
+                    recursive=True,
+                )
+            )
+            materialization = materialize_source_binding_workspace(
+                plate_root,
+                workspace_root,
+                source_bindings,
+                filemanager=filemanager,
+                source_backend=Backend.DISK,
+                workspace_backend=Backend.DISK,
+                source_files=source_files,
+                parser=SourceSchemaFilenameParser(),
+            )
+            execution_plate_path = materialization.workspace_root
+
     return InputWorkspacePreparationResult(
-        original_source_root=source_preparation.source_root,
+        original_source_root=plate_root,
         execution_plate_path=execution_plate_path,
         pipeline_path=cppipe_path,
-        source_schema=source_schema,
-        materialization=source_preparation.materialization,
-        prepared_pipeline=prepared_pipeline,
+        pipeline_steps=pipeline_steps,
+        pipeline_config=pipeline_config,
+        materialization=materialization,
         pipeline_import_error=import_error,
     )

@@ -148,6 +148,24 @@ class GridDimensionsMetadataArtifactProvider(MetadataArtifactProvider):
         return handler.get_grid_dimensions(plate_path)
 
 
+class PixelSizeMetadataArtifactProvider(MetadataArtifactProvider):
+    """Provide plate pixel size for physical-unit analysis backends."""
+
+    artifact_name = "pixel_size"
+    description = "Pixel size in micrometers per pixel for physical-unit analysis."
+
+    @classmethod
+    def supports_handler(cls, handler: "MetadataHandler") -> bool:
+        return isinstance(handler, MetadataHandler)
+
+    def resolve(
+        self,
+        handler: "MetadataHandler",
+        plate_path: Union[str, Path],
+    ) -> float:
+        return handler.get_pixel_size(plate_path)
+
+
 @dataclass(frozen=True)
 class MetadataViewEntry:
     """One metadata object projected for UI/document consumers."""
@@ -307,6 +325,28 @@ class MetadataHandler(ViewerMetadataHandlerABC, ABC):
         """Return source-workspace metadata for handlers that own virtual mappings."""
 
         return None
+
+    def physical_source_paths(
+        self,
+        plate_path: Union[str, Path],
+    ) -> tuple[Path, ...]:
+        """Return physical source files for format-recognition diagnostics."""
+
+        root = Path(plate_path)
+        return tuple(
+            path if path.is_absolute() else root / path
+            for value in self.get_image_files(plate_path, all_subdirs=True)
+            for path in (Path(value),)
+        )
+
+    def source_diagnostics(
+        self,
+        plate_path: Union[str, Path],
+    ) -> tuple[Mapping[str, object], ...]:
+        """Return structured source-level diagnostics owned by this handler."""
+
+        del plate_path
+        return ()
 
     def can_resolve_metadata_artifact(self, artifact_name: str) -> bool:
         """Return whether this handler can provide a declared metadata artifact."""
@@ -530,6 +570,10 @@ class MetadataHandler(ViewerMetadataHandlerABC, ABC):
             z_indexes=component_values.z_indexes,
             timepoints=component_values.timepoints,
             available_backends={"disk": True},
+            source_diagnostics=[
+                dict(diagnostic)
+                for diagnostic in self.source_diagnostics(plate_path)
+            ] or None,
             main=None,
         )
         title = f"Metadata - {microscope_handler.microscope_type}"

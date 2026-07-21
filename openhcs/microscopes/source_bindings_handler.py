@@ -12,12 +12,11 @@ from openhcs.core.source_bindings import (
     SourceBindingsConfig,
     source_bindings_defaults_to_base,
 )
+from openhcs.core.virtual_workspace_metadata import FIELDS
 from openhcs.microscopes.microscope_base import MicroscopeHandler
+from openhcs.microscopes.microscope_base import MicroscopeSourceSelectionRole
 from openhcs.microscopes.microscope_interfaces import MetadataHandler
-from openhcs.microscopes.openhcs import (
-    FIELDS,
-    OpenHCSMetadataHandler,
-)
+from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
 
@@ -26,6 +25,29 @@ class SourceBindingsHandler(MicroscopeHandler):
 
     _microscope_type = Microscope.SOURCE_BINDINGS.value
     _metadata_handler_class = OpenHCSMetadataHandler
+
+    @classmethod
+    def projects_declared_source_bindings(cls) -> bool:
+        """Declare that this handler owns generic source-binding projection."""
+
+        return True
+
+    @classmethod
+    def source_selection_role(cls) -> MicroscopeSourceSelectionRole:
+        """Declare source bindings as the arbitrary-file ingestion fallback."""
+
+        return MicroscopeSourceSelectionRole.DECLARED_FILE_FALLBACK
+
+    @classmethod
+    def source_selection_guidance(cls) -> str:
+        """Explain when declarations, rather than a vendor/store owner, ingest files."""
+
+        return (
+            "Use for arbitrary ordinary image files whose selection, semantic aliases, "
+            "and filename metadata are declared by SourceBindingsConfig. Do not replace "
+            "a recognized vendor layout or supported structured container with this "
+            "fallback."
+        )
 
     @classmethod
     def create(
@@ -98,33 +120,41 @@ class SourceBindingsHandler(MicroscopeHandler):
         plate_path: Union[str, Path],
         filemanager: FileManager,
     ) -> Path:
-        from openhcs.core.source_schema_workspace import (
-            materialize_source_schema_workspace,
+        from openhcs.core.source_binding_workspace import (
+            materialize_source_binding_workspace,
         )
 
         plate_root = Path(plate_path)
         self.plate_folder = plate_root
-        metadata_path = plate_root / "openhcs_metadata.json"
-        if metadata_path.exists():
+        metadata_path = plate_root / OpenHCSMetadataHandler.METADATA_FILENAME
+        if filemanager.exists(str(metadata_path), Backend.DISK.value):
             from openhcs.core.source_workspace_projection import (
                 VirtualWorkspaceSourceProjection,
             )
 
-            metadata = self.metadata_handler._load_metadata_dict(plate_root)
-            if VirtualWorkspaceSourceProjection.openhcs_metadata_has_workspace_mapping(
-                metadata
-            ):
+            metadata = self.metadata_handler.source_workspace_metadata_document(
+                plate_root
+            )
+            projection = (
+                VirtualWorkspaceSourceProjection.from_openhcs_metadata_if_available(
+                    plate_root,
+                    metadata,
+                )
+            )
+            if projection is not None:
                 self._register_virtual_workspace_backend(plate_root, filemanager)
                 return plate_root
-        materialize_source_schema_workspace(
+        materialize_source_binding_workspace(
             plate_root,
             plate_root,
-            self._projector.source_schema(),
+            self._source_bindings_config,
             filemanager=filemanager,
             source_backend=Backend.DISK,
             workspace_backend=Backend.DISK,
             source_files=self._list_source_files(plate_root, filemanager),
+            parser=self.parser,
         )
+        self.metadata_handler = OpenHCSMetadataHandler(filemanager)
         self._register_virtual_workspace_backend(plate_root, filemanager)
         return plate_root
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from openhcs.core.artifacts import ArtifactSpec, ArtifactSpecCollection
+from openhcs.core.equivalence.keys import RuntimeMeasurementSourcePair
 
 if TYPE_CHECKING:
     from openhcs.interop.cellprofiler.runtime.invocation import (
@@ -23,10 +24,20 @@ def single_source_name(source_names: tuple[str, ...]) -> str | None:
 def measurement_source_name_for_specs(
     image_inputs: tuple[ArtifactSpec, ...],
 ) -> str | None:
-    """Return the composed measurement source name for declared image inputs."""
-    if not image_inputs:
+    """Return the scalar source identity represented by declared image inputs."""
+    source_names = ArtifactSpecCollection(image_inputs).names()
+    distinct_source_names = tuple(
+        source_name
+        for index, source_name in enumerate(source_names)
+        if source_name not in source_names[:index]
+    )
+    if not distinct_source_names:
         return None
-    return "__".join(ArtifactSpecCollection(image_inputs).names())
+    if len(distinct_source_names) == 1:
+        return distinct_source_names[0]
+    if len(distinct_source_names) == 2:
+        return RuntimeMeasurementSourcePair(*distinct_source_names).source_name
+    return None
 
 
 def measurement_row_source_names_required(

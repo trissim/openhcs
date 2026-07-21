@@ -18,13 +18,16 @@ def write_bioformats_manifest_fixture(root: Path) -> np.ndarray:
     payload = {
         "plates": [
             {
+                "plate_id": "Plate:0",
                 "name": "fixture",
                 "wells": [
                     {
+                        "well_id": "Well:0:0",
                         "row": 0,
                         "column": 0,
                         "samples": [
                             {
+                                "sample_id": "WellSample:0:0:0",
                                 "image_id": "image:0",
                                 "index": 0,
                             }

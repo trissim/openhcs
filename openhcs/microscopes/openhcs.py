@@ -14,12 +14,18 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union, Type, cast
 
-from openhcs.constants.constants import Backend, GroupBy, AllComponents
+from openhcs.constants.constants import AllComponents, Backend, GroupBy, Microscope
 from metaclass_registry import AutoRegisterMeta
-from polystore.atomic import LOCK_CONFIG, FileLockError, atomic_update_json
 from polystore.exceptions import MetadataNotFoundError
 from polystore.filemanager import FileManager
 from polystore.streaming.viewer_transport import ViewerMicroscopeHandlerABC
+from openhcs.core.virtual_workspace_metadata import (
+    AtomicMetadataWriter,
+    FIELDS,
+    METADATA_CONFIG,
+    MetadataWriteError,
+    get_metadata_path,
+)
 from openhcs.microscopes.microscope_interfaces import (
     AnalysisResultDirectory,
     MetadataHandler,
@@ -42,228 +48,14 @@ def resolve_subdirectory_path(subdir_name: str, plate_path: Union[str, Path]) ->
     return root_path if subdir_name == "." else root_path / subdir_name
 
 
-def workspace_mapping_source_ref(mapping_value: Any) -> str:
-    """Return the source path/ref carried by a workspace_mapping value."""
-    source_ref = (
-        mapping_value.get("source_path")
-        if isinstance(mapping_value, Mapping)
-        else mapping_value
-    )
-    if not isinstance(source_ref, (str, os.PathLike)):
-        raise ValueError(
-            "workspace_mapping values must be path strings or structured refs "
-            "with a source_path field."
-        )
-    return str(source_ref)
-
-
-def workspace_mapping_source_path(
-    plate_root: Union[str, Path],
-    mapping_value: Any,
-) -> Path:
-    """Resolve a workspace_mapping value to the physical source path."""
-    source_path = Path(workspace_mapping_source_ref(mapping_value))
-    return source_path if source_path.is_absolute() else Path(plate_root) / source_path
-
-
-@dataclass(frozen=True)
-class MetadataConfig:
-    """Configuration constants for OpenHCS metadata operations."""
-
-    METADATA_FILENAME: str = os.getenv(
-        "OPENHCS_METADATA_FILENAME",
-        "openhcs_metadata.json",
-    )
-    SUBDIRECTORIES_KEY: str = "subdirectories"
-    AVAILABLE_BACKENDS_KEY: str = "available_backends"
-    DEFAULT_TIMEOUT: float = LOCK_CONFIG.DEFAULT_TIMEOUT
-
-
-METADATA_CONFIG = MetadataConfig()
-
-
-class MetadataWriteError(Exception):
-    """Raised when OpenHCS metadata writes fail."""
-
-
-class AtomicMetadataWriter:
-    """Atomic writer for OpenHCS subdirectory-keyed metadata."""
-
-    def __init__(self, timeout: float = METADATA_CONFIG.DEFAULT_TIMEOUT):
-        self.timeout = timeout
-        self.logger = logging.getLogger(__name__)
-
-    def update_available_backends(
-        self,
-        metadata_path: Union[str, Path],
-        available_backends: Dict[str, bool],
-    ) -> None:
-        """Atomically update the top-level available backend map."""
-
-        def update_func(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-            if data is None:
-                raise MetadataWriteError(
-                    "Cannot update backends: metadata file does not exist"
-                )
-            data[METADATA_CONFIG.AVAILABLE_BACKENDS_KEY] = available_backends
-            return data
-
-        self._execute_update(metadata_path, update_func)
-        self.logger.debug("Updated available backends in %s", metadata_path)
-
-    def merge_subdirectory_metadata(
-        self,
-        metadata_path: Union[str, Path],
-        subdirectory_updates: Dict[str, Dict[str, Any]],
-    ) -> None:
-        """Atomically deep-merge subdirectory metadata updates."""
-
-        def update_func(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-            data = self._ensure_subdirectories_structure(data)
-            subdirs = data[METADATA_CONFIG.SUBDIRECTORIES_KEY]
-            for subdir_name, updates in subdirectory_updates.items():
-                subdir = subdirs.setdefault(subdir_name, {})
-                for key, value in updates.items():
-                    if (
-                        key == METADATA_CONFIG.AVAILABLE_BACKENDS_KEY
-                        and isinstance(value, dict)
-                    ):
-                        existing_backends = subdir.get(key, {})
-                        subdir[key] = {**existing_backends, **value}
-                    else:
-                        subdir[key] = value
-            return data
-
-        self._execute_update(
-            metadata_path,
-            update_func,
-            {METADATA_CONFIG.SUBDIRECTORIES_KEY: {}},
-        )
-        self.logger.debug(
-            "Merged %d subdirectories in %s",
-            len(subdirectory_updates),
-            metadata_path,
-        )
-
-    def replace_subdirectory_metadata(
-        self,
-        metadata_path: Union[str, Path],
-        subdirectory_name: str,
-        subdirectory_metadata: Dict[str, Any],
-    ) -> None:
-        """Atomically replace one managed subdirectory metadata record."""
-
-        def update_func(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-            data = self._ensure_subdirectories_structure(data)
-            data[METADATA_CONFIG.SUBDIRECTORIES_KEY][subdirectory_name] = dict(
-                subdirectory_metadata
-            )
-            return data
-
-        self._execute_update(
-            metadata_path,
-            update_func,
-            {METADATA_CONFIG.SUBDIRECTORIES_KEY: {}},
-        )
-        self.logger.debug(
-            "Replaced subdirectory %s in %s",
-            subdirectory_name,
-            metadata_path,
-        )
-
-    def _execute_update(
-        self,
-        metadata_path: Union[str, Path],
-        update_func: Callable[[Optional[Dict[str, Any]]], Dict[str, Any]],
-        default_data: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        try:
-            atomic_update_json(metadata_path, update_func, self.timeout, default_data)
-        except FileLockError as exc:
-            raise MetadataWriteError(f"Failed to update metadata: {exc}") from exc
-
-    @staticmethod
-    def _ensure_subdirectories_structure(
-        data: Optional[Dict[str, Any]],
-    ) -> Dict[str, Any]:
-        if data is None:
-            data = {}
-        data.setdefault(METADATA_CONFIG.SUBDIRECTORIES_KEY, {})
-        return data
-
-
-def get_metadata_path(plate_root: Union[str, Path]) -> Path:
-    """Return the standard OpenHCS metadata path for a plate root."""
-    return Path(plate_root) / METADATA_CONFIG.METADATA_FILENAME
-
-
-@dataclass(frozen=True)
-class OpenHCSMetadataFields:
-    """Centralized constants for OpenHCS metadata field names."""
-    # Core metadata structure - use centralized constants
-    SUBDIRECTORIES: str = METADATA_CONFIG.SUBDIRECTORIES_KEY
-    IMAGE_FILES: str = "image_files"
-    AVAILABLE_BACKENDS: str = METADATA_CONFIG.AVAILABLE_BACKENDS_KEY
-    SOURCE_METADATA: str = "source_metadata"
-    WORKSPACE_MAPPING: str = "workspace_mapping"
-
-    # Required metadata fields
-    GRID_DIMENSIONS: str = "grid_dimensions"
-    PIXEL_SIZE: str = "pixel_size"
-    SOURCE_FILENAME_PARSER_NAME: str = "source_filename_parser_name"
-    MICROSCOPE_HANDLER_NAME: str = "microscope_handler_name"
-
-    # Optional metadata fields
-    CHANNELS: str = "channels"
-    WELLS: str = "wells"
-    SITES: str = "sites"
-    Z_INDEXES: str = "z_indexes"
-    TIMEPOINTS: str = "timepoints"
-    OBJECTIVES: str = "objectives"
-    ACQUISITION_DATETIME: str = "acquisition_datetime"
-    PLATE_NAME: str = "plate_name"
-
-    # Default values
-    DEFAULT_SUBDIRECTORY: str = "."
-    DEFAULT_SUBDIRECTORY_LEGACY: str = "images"
-
-    # Microscope type identifier
-    MICROSCOPE_TYPE: str = "openhcsdata"
-
-
-# Global instance for easy access
-FIELDS = OpenHCSMetadataFields()
-
-
-@dataclass(frozen=True)
-class FilenameParserCatalog:
-    """Available OpenHCS source filename parsers keyed by class authority."""
-
-    parser_types: Tuple[Type[Any], ...]
-
-    def by_class_name(self) -> Dict[str, Type[Any]]:
-        return {parser_type.__name__: parser_type for parser_type in self.parser_types}
-
-
 def _get_available_filename_parsers():
-    """
-    Lazy import of filename parsers to avoid circular imports.
+    """Return registered source filename parsers keyed by nominal class name."""
+    from openhcs.microscopes.microscope_interfaces import FilenameParser
 
-    Returns:
-        Dict mapping parser class names to parser classes
-    """
-    # Import parsers only when needed to avoid circular imports
-    from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
-    from openhcs.microscopes.opera_phenix import OperaPhenixFilenameParser
-    from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
-
-    return FilenameParserCatalog(
-        (
-            ImageXpressFilenameParser,
-            OperaPhenixFilenameParser,
-            SourceSchemaFilenameParser,
-        )
-    ).by_class_name()
+    return {
+        parser_type.__name__: parser_type
+        for parser_type in FilenameParser.__registry__.values()
+    }
 
 
 class OpenHCSMetadataBase(ABC, metaclass=AutoRegisterMeta):
@@ -394,6 +186,55 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
 
         return self.load_metadata_document(plate_path)
 
+    def source_diagnostics(
+        self,
+        plate_path: Union[str, Path],
+    ) -> tuple[Mapping[str, object], ...]:
+        """Return source diagnostics retained by all declared subdirectories."""
+
+        metadata_document = self.load_metadata_document(plate_path)
+        subdirectories = self._metadata_subdirectories(
+            metadata_document,
+            plate_path,
+        )
+        return tuple(
+            diagnostic
+            for subdirectory_name, subdirectory_data in subdirectories.items()
+            for diagnostic in _source_diagnostics_from_subdirectory(
+                subdirectory_name,
+                subdirectory_data,
+            )
+        )
+
+    def workspace_mapping_metadata(
+        self,
+        plate_path: Union[str, Path],
+    ) -> Mapping[str, Any] | None:
+        """Return the unambiguous subdirectory that owns a workspace mapping."""
+
+        metadata_document = self.source_workspace_metadata_document(plate_path)
+        subdirectories = self._metadata_subdirectories(
+            metadata_document,
+            plate_path,
+        )
+        mapped_subdirectories = {
+            subdirectory_name: subdirectory_metadata
+            for subdirectory_name, subdirectory_metadata in subdirectories.items()
+            if subdirectory_metadata.get(FIELDS.WORKSPACE_MAPPING)
+        }
+        if not mapped_subdirectories:
+            return None
+        if len(mapped_subdirectories) == 1:
+            return next(iter(mapped_subdirectories.values()))
+
+        main_subdirectory = self._main_subdirectory_name(subdirectories, plate_path)
+        if main_subdirectory not in mapped_subdirectories:
+            raise ValueError(
+                f"OpenHCS main subdirectory {main_subdirectory!r} for {plate_path} "
+                "does not own one of the declared workspace mappings."
+            )
+        return mapped_subdirectories[main_subdirectory]
+
     def build_metadata_view_document(
         self,
         plate_path: Union[str, Path],
@@ -404,16 +245,9 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
         subdirectories = self._metadata_subdirectories(metadata_document, plate_path)
 
         entries = tuple(
-            MetadataViewEntry(
-                name=subdirectory_name,
-                object_instance=_openhcs_metadata_from_subdirectory(
-                    subdirectory_name,
-                    subdirectory_data,
-                ),
-                summary=(
-                    "Image files: "
-                    f"{len(subdirectory_data[FIELDS.IMAGE_FILES])} (hidden)"
-                ),
+            _openhcs_metadata_view_entry(
+                subdirectory_name,
+                subdirectory_data,
             )
             for subdirectory_name, subdirectory_data in subdirectories.items()
         )
@@ -894,6 +728,7 @@ class OpenHCSMetadata:
     workspace_mapping: Optional[Dict[str, Any]] = None  # Virtual path -> path string or structured backend ref
     source_metadata: Optional[Dict[str, Dict[str, str]]] = None  # Virtual or real path → source metadata fields
     source_projection: Optional[List[Dict[str, Any]]] = None  # Typed source-plane projection records
+    source_diagnostics: Optional[List[Dict[str, Any]]] = None  # Source-level exclusions and warnings
     main: Optional[bool] = None  # Indicates if this subdirectory is the primary/input subdirectory
     results_dir: Optional[str] = None  # Sibling directory containing analysis results for this subdirectory
 
@@ -943,9 +778,65 @@ def _openhcs_metadata_from_subdirectory(
         workspace_mapping=_optional_metadata_field(subdirectory_data, FIELDS.WORKSPACE_MAPPING),
         source_metadata=_optional_metadata_field(subdirectory_data, FIELDS.SOURCE_METADATA),
         source_projection=_optional_metadata_field(subdirectory_data, "source_projection"),
+        source_diagnostics=list(
+            _source_diagnostics_from_subdirectory(
+                subdirectory_name,
+                subdirectory_data,
+            )
+        ) or None,
         main=_optional_metadata_field(subdirectory_data, "main"),
         results_dir=_optional_metadata_field(subdirectory_data, "results_dir"),
     )
+
+
+def _openhcs_metadata_view_entry(
+    subdirectory_name: str,
+    subdirectory_data: Mapping[str, Any],
+) -> MetadataViewEntry:
+    """Build one read-only OpenHCS metadata entry and concise summary."""
+
+    metadata = _openhcs_metadata_from_subdirectory(
+        subdirectory_name,
+        subdirectory_data,
+    )
+    diagnostic_summary = (
+        f"; source diagnostics: {len(metadata.source_diagnostics)}"
+        if metadata.source_diagnostics
+        else ""
+    )
+    return MetadataViewEntry(
+        name=subdirectory_name,
+        object_instance=metadata,
+        summary=(
+            f"Image files: {len(metadata.image_files)} (hidden)"
+            f"{diagnostic_summary}"
+        ),
+    )
+
+
+def _source_diagnostics_from_subdirectory(
+    subdirectory_name: str,
+    subdirectory_data: Mapping[str, Any],
+) -> tuple[Dict[str, Any], ...]:
+    """Validate and project optional structured source diagnostics."""
+
+    if FIELDS.SOURCE_DIAGNOSTICS not in subdirectory_data:
+        return ()
+    diagnostics = subdirectory_data[FIELDS.SOURCE_DIAGNOSTICS]
+    if not isinstance(diagnostics, list):
+        raise TypeError(
+            f"OpenHCS metadata subdirectory {subdirectory_name!r} field "
+            f"{FIELDS.SOURCE_DIAGNOSTICS!r} must be a list."
+        )
+    projected: list[Dict[str, Any]] = []
+    for diagnostic_index, diagnostic in enumerate(diagnostics):
+        if not isinstance(diagnostic, Mapping):
+            raise TypeError(
+                f"OpenHCS metadata subdirectory {subdirectory_name!r} source "
+                f"diagnostic {diagnostic_index} must be an object."
+            )
+        projected.append(dict(diagnostic))
+    return tuple(projected)
 
 
 def _optional_metadata_field(
@@ -999,6 +890,8 @@ class OpenHCSMetadataGenerationRequest:
     is_main: bool
     sub_dir: str
     results_dir: Optional[str] = None
+    grid_dimensions: tuple[int, int] | None = None
+    pixel_size: float | None = None
 
 
 class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
@@ -1032,7 +925,9 @@ class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
         sub_dir: str = None,
         results_dir: str = None,
         skip_if_complete: bool = False,
-        allow_none_override: bool = False
+        allow_none_override: bool = False,
+        grid_dimensions: tuple[int, int] | None = None,
+        pixel_size: float | None = None,
     ) -> None:
         """Create or update subdirectory-keyed OpenHCS metadata file.
 
@@ -1043,6 +938,11 @@ class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
         """
         plate_root_path = Path(plate_root)
         metadata_path = get_metadata_path(plate_root_path)
+        if (grid_dimensions is None) != (pixel_size is None):
+            raise ValueError(
+                "Explicit metadata generation requires both grid_dimensions "
+                "and pixel_size."
+            )
 
         # Check if metadata already complete (if requested)
         if skip_if_complete and metadata_path.exists():
@@ -1064,6 +964,8 @@ class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
                 is_main=is_main,
                 sub_dir=sub_dir,
                 results_dir=results_dir,
+                grid_dimensions=grid_dimensions,
+                pixel_size=pixel_size,
             )
         )
         metadata_dict = asdict(current_metadata)
@@ -1107,8 +1009,14 @@ class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
             results_path = Path(request.results_dir)
             relative_results_dir = results_path.name  # Just the directory name, not full path
 
-        grid_dimensions = handler.metadata_handler.get_grid_dimensions(context.input_dir)
-        pixel_size = handler.metadata_handler.get_pixel_size(context.input_dir)
+        if request.grid_dimensions is None:
+            grid_dimensions = handler.metadata_handler.get_grid_dimensions(
+                context.input_dir
+            )
+            pixel_size = handler.metadata_handler.get_pixel_size(context.input_dir)
+        else:
+            grid_dimensions = request.grid_dimensions
+            pixel_size = request.pixel_size
 
         # CRITICAL: Extract component metadata from actual output files by parsing filenames
         # This ensures metadata reflects what was actually written, not the original input
@@ -1141,9 +1049,6 @@ class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
         """
         Extract component metadata by parsing actual filenames.
 
-        Filenames are architecturally guaranteed to be properly formed by the pipeline.
-        Parser.parse_filename() is guaranteed to succeed. No defensive checks.
-
         Args:
             file_paths: List of image file paths (guaranteed properly formed)
             parser: FilenameParser instance
@@ -1156,6 +1061,8 @@ class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
         for file_path in file_paths:
             filename = Path(file_path).name
             parsed = parser.parse_filename(filename)
+            if parsed is None:
+                continue
 
             # Extract each component from the parsed filename
             for component in AllComponents:
@@ -1212,7 +1119,10 @@ class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
 
 
 
-from openhcs.microscopes.microscope_base import MicroscopeHandler
+from openhcs.microscopes.microscope_base import (
+    MicroscopeHandler,
+    MicroscopeSourceSelectionRole,
+)
 from openhcs.microscopes.microscope_interfaces import FilenameParser
 
 
@@ -1226,8 +1136,24 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
     """
 
     # Class attributes for automatic registration
-    _microscope_type = FIELDS.MICROSCOPE_TYPE  # Override automatic naming
+    _microscope_type = Microscope.OPENHCS.value
     _metadata_handler_class = None  # Set explicitly after class definition
+
+    @classmethod
+    def source_selection_role(cls) -> MicroscopeSourceSelectionRole:
+        """Declare OpenHCS data as an already prepared workspace format."""
+
+        return MicroscopeSourceSelectionRole.PREPARED_WORKSPACE
+
+    @classmethod
+    def source_selection_guidance(cls) -> str:
+        """Explain when OpenHCS workspace metadata is authoritative."""
+
+        return (
+            "Use for a workspace already prepared by OpenHCS and carrying its "
+            "metadata document. The recorded workspace metadata, not raw vendor "
+            "filename resemblance, owns parser and backend selection."
+        )
 
     def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
         """
@@ -1334,7 +1260,7 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
     @property
     def microscope_type(self) -> str:
         """Microscope type identifier (for interface enforcement only)."""
-        return FIELDS.MICROSCOPE_TYPE
+        return self._microscope_type
 
     @property
     def metadata_handler_class(self) -> Type[MetadataHandler]:
@@ -1408,13 +1334,17 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
         if 'zarr' in available_backends_dict and available_backends_dict['zarr']:
             return 'zarr'
 
-        # 2. Prefer virtual_workspace if available (for plates with workspace_mapping)
-        if 'virtual_workspace' in available_backends_dict and available_backends_dict['virtual_workspace']:
-            # PERFORMANCE: Only register if not already registered (avoid reloading mappings)
-            from openhcs.constants.constants import Backend
-            if Backend.VIRTUAL_WORKSPACE.value not in filemanager.registry:
-                self._register_virtual_workspace_backend(self.plate_folder, filemanager)
-            return 'virtual_workspace'
+        # 2. A declared workspace mapping is itself the virtual-workspace authority.
+        subdir_metadata = self.metadata_handler.workspace_mapping_metadata(
+            self.plate_folder
+        )
+        if subdir_metadata is not None:
+            self._register_declared_workspace_backends(
+                self.plate_folder,
+                subdir_metadata,
+                filemanager,
+            )
+            return Backend.VIRTUAL_WORKSPACE.value
 
         # 3. Fall back to first available backend (usually disk)
         return next(iter(available_backends_dict.keys()))
@@ -1447,21 +1377,14 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
         input_dir = plate_root / main_subdir
 
         # Check if workspace_mapping exists in metadata - if so, register virtual workspace backend
-        metadata_dict = self.metadata_handler._load_metadata_dict(plate_root)
-        subdirectories = metadata_dict.get(FIELDS.SUBDIRECTORIES)
-        if not isinstance(subdirectories, Mapping):
-            raise ValueError(
-                f"OpenHCS metadata missing required {FIELDS.SUBDIRECTORIES!r} mapping."
-            )
-        subdir_metadata = subdirectories.get(main_subdir)
-        if not isinstance(subdir_metadata, Mapping):
-            raise ValueError(
-                f"OpenHCS metadata missing required subdirectory {main_subdir!r}."
-            )
+        subdir_metadata = self._main_subdirectory_metadata(plate_root)
 
         if subdir_metadata.get('workspace_mapping'):
-            # Register virtual_workspace backend using centralized helper
-            self._register_virtual_workspace_backend(plate_root, filemanager)
+            self._register_declared_workspace_backends(
+                plate_root,
+                subdir_metadata,
+                filemanager,
+            )
 
         # Verify the subdirectory exists - fail-loud if missing
         if not filemanager.is_dir(str(input_dir), Backend.DISK.value):
@@ -1475,6 +1398,53 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
             f"(subdirectory: {main_subdir})"
         )
         return input_dir
+
+    def _main_subdirectory_metadata(
+        self,
+        plate_root: Path,
+    ) -> Mapping[str, object]:
+        metadata = self.metadata_handler.source_workspace_metadata_document(
+            plate_root
+        )
+        if not isinstance(metadata, Mapping):
+            raise ValueError("OpenHCS source-workspace metadata must be a mapping.")
+        subdirectories = metadata.get(FIELDS.SUBDIRECTORIES)
+        if not isinstance(subdirectories, Mapping):
+            raise ValueError(
+                f"OpenHCS metadata missing required {FIELDS.SUBDIRECTORIES!r} mapping."
+            )
+        main_subdir = self.metadata_handler.determine_main_subdirectory(plate_root)
+        subdir_metadata = subdirectories.get(main_subdir)
+        if not isinstance(subdir_metadata, Mapping):
+            raise ValueError(
+                f"OpenHCS metadata missing required subdirectory {main_subdir!r}."
+            )
+        return subdir_metadata
+
+    def _register_declared_workspace_backends(
+        self,
+        plate_root: Path,
+        subdir_metadata: Mapping[str, object],
+        filemanager: FileManager,
+    ) -> None:
+        source_handler_name = str(
+            subdir_metadata[FIELDS.MICROSCOPE_HANDLER_NAME]
+        )
+        source_handler_type = MicroscopeHandler.__registry__.get(source_handler_name)
+        if source_handler_type is None:
+            raise ValueError(
+                "OpenHCS metadata declares unknown workspace handler "
+                f"{source_handler_name!r}."
+            )
+        source_handler = (
+            self
+            if source_handler_type is type(self)
+            else source_handler_type.create(
+                filemanager=filemanager,
+                pattern_format=self.pattern_format,
+            )
+        )
+        source_handler.register_workspace_backends(plate_root, filemanager)
 
     def post_workspace(self, plate_path: Union[str, Path], filemanager: FileManager, skip_preparation: bool = False) -> Path:
         """

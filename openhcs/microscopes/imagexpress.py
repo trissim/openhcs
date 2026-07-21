@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, Type
 
-from openhcs.constants.constants import Backend
+from openhcs.constants.constants import Backend, Microscope
 from openhcs.core.components.parser_metaprogramming import (
     format_filename_component,
     optional_filename_component,
@@ -18,6 +18,7 @@ from openhcs.core.components.parser_metaprogramming import (
 )
 from polystore.exceptions import MetadataNotFoundError
 from polystore.filemanager import FileManager
+from polystore.virtual_workspace import SourcePixelRef
 from openhcs.microscopes.microscope_base import MicroscopeHandler
 from openhcs.microscopes.microscope_interfaces import (
     DiskImageFileListingMetadataHandler,
@@ -37,7 +38,7 @@ class ImageXpressHandler(MicroscopeHandler):
     """
 
     # Explicit microscope type for proper registration
-    _microscope_type = 'imagexpress'
+    _microscope_type = Microscope.IMAGEXPRESS.value
 
     # Class attribute for automatic metadata handler registration (set after class definition)
     _metadata_handler_class = None
@@ -61,7 +62,7 @@ class ImageXpressHandler(MicroscopeHandler):
     @property
     def microscope_type(self) -> str:
         """Microscope type identifier (for interface enforcement only)."""
-        return 'imagexpress'
+        return self._microscope_type
 
     @property
     def metadata_handler_class(self) -> Type[MetadataHandler]:
@@ -115,7 +116,7 @@ class ImageXpressHandler(MicroscopeHandler):
         self,
         directory: Path,
         fm: FileManager,
-        mapping_dict: Dict[str, str],
+        mapping_dict: Dict[str, SourcePixelRef],
         plate_path: Path,
         folder_components: Optional[Dict[str, int]] = None,
     ):
@@ -142,7 +143,7 @@ class ImageXpressHandler(MicroscopeHandler):
             folder_components=folder_components,
         )
 
-    def _flatten_timepoints(self, directory: Path, fm: FileManager, mapping_dict: Dict[str, str], plate_path: Path):
+    def _flatten_timepoints(self, directory: Path, fm: FileManager, mapping_dict: Dict[str, SourcePixelRef], plate_path: Path):
         """
         Process TimePoint folders virtually by building plate-relative mapping dict.
 
@@ -183,7 +184,7 @@ class ImageXpressHandler(MicroscopeHandler):
 
     def _flatten_indexed_folders(self, directory: Path, fm: FileManager,
                                  folder_pattern: re.Pattern, component_name: str,
-                                 folder_type: str, mapping_dict: Dict[str, str], plate_path: Path,
+                                 folder_type: str, mapping_dict: Dict[str, SourcePixelRef], plate_path: Path,
                                  folder_components: Optional[Dict[str, int]] = None):
         """
         Generic helper to flatten indexed folders virtually (TimePoint_N, ZStep_M, etc.).
@@ -255,7 +256,10 @@ class ImageXpressHandler(MicroscopeHandler):
                 real_relative = Path(img_file).relative_to(plate_path).as_posix()
 
                 # Add to mapping (both plate-relative)
-                mapping_dict[virtual_relative] = real_relative
+                mapping_dict[virtual_relative] = SourcePixelRef(
+                    backend=Backend.DISK.value,
+                    backend_address=real_relative,
+                )
                 logger.debug(f"  Mapped: {virtual_relative} → {real_relative}")
 
 

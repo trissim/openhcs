@@ -6,7 +6,7 @@ import pytest
 from openhcs.microscopes.bioformats import BioFormatsHandler
 from openhcs.microscopes.bioformats_adapter import (
     BioFormatsAdapterUnavailableError,
-    BioFormatsCompositeAdapter,
+    SourcePlaneStoreAdapter,
 )
 from polystore.base import ensure_storage_registry, storage_registry
 from polystore.filemanager import FileManager
@@ -20,30 +20,16 @@ def test_bioformats_detects_synthetic_imagexpress_plate(tmp_path: Path) -> None:
     IMAGE_XPRESS_PLATE_FACTORY.create(plate)
 
     try:
-        metadata = BioFormatsCompositeAdapter().discover(plate)
+        dataset = SourcePlaneStoreAdapter.discover_dataset(plate)
     except BioFormatsAdapterUnavailableError as exc:
         if "Could not initialize Fiji/Bio-Formats" in str(exc):
             pytest.skip(str(exc))
         raise
-    sampled_wells = [
-        (well.row, well.column, len(well.samples))
-        for plate_record in metadata.plates
-        for well in plate_record.wells
-        if well.samples
-    ]
-
-    assert len(metadata.plates) == 1
-    assert len(metadata.images) == 2
-    assert sampled_wells == [(0, 0, 2)]
-    assert {
-        (
-            image.pixels.size_c,
-            image.pixels.size_z,
-            image.pixels.size_t,
-            len(image.pixels.planes),
-        )
-        for image in metadata.images
-    } == {(2, 2, 1, 4)}
+    assert dataset.identity.value == "Plate:0"
+    assert len(dataset.candidates) == 8
+    assert {candidate.declared_address.well for candidate in dataset.candidates} == {
+        "A01"
+    }
 
     ensure_storage_registry()
     filemanager = FileManager(dict(storage_registry))

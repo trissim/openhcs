@@ -11,13 +11,14 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Type, Tuple
 
-from openhcs.constants.constants import Backend
+from openhcs.constants.constants import Backend, Microscope
 from openhcs.core.components.parser_metaprogramming import (
     format_filename_component,
     require_filename_component,
 )
 from openhcs.microscopes.opera_phenix_xml_parser import OperaPhenixXmlParser
 from polystore.filemanager import FileManager
+from polystore.virtual_workspace import SourcePixelRef
 from polystore.exceptions import MetadataNotFoundError
 from openhcs.microscopes.microscope_base import MicroscopeHandler
 from openhcs.microscopes.microscope_interfaces import (
@@ -42,7 +43,7 @@ class OperaPhenixHandler(MicroscopeHandler):
     """
 
     # Explicit microscope type for proper registration
-    _microscope_type = 'opera_phenix'
+    _microscope_type = Microscope.OPERAPHENIX.value
 
     # Class attribute for automatic metadata handler registration (set after class definition)
     _metadata_handler_class = None
@@ -66,7 +67,7 @@ class OperaPhenixHandler(MicroscopeHandler):
     @property
     def microscope_type(self) -> str:
         """Microscope type identifier (for interface enforcement only)."""
-        return 'opera_phenix'
+        return self._microscope_type
 
     @property
     def metadata_handler_class(self) -> Type[MetadataHandler]:
@@ -161,7 +162,10 @@ class OperaPhenixHandler(MicroscopeHandler):
             # Use .as_posix() to ensure forward slashes on all platforms (Windows uses backslashes with str())
             virtual_relative = (Path("Images") / new_name).as_posix()
             real_relative = (Path("Images") / file_name).as_posix()
-            workspace_mapping[virtual_relative] = real_relative
+            workspace_mapping[virtual_relative] = SourcePixelRef(
+                backend=Backend.DISK.value,
+                backend_address=real_relative,
+            )
 
         logger.info(f"Built {len(workspace_mapping)} virtual path mappings for Opera Phenix")
 

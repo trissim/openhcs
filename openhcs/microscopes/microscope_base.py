@@ -8,11 +8,13 @@ including filename parsing and metadata handling.
 import logging
 import os
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, Type, TYPE_CHECKING
 
 # Import constants
-from openhcs.constants.constants import Backend
+from openhcs.constants.constants import Backend, Microscope
 # Import generic metaclass infrastructure from external package
 from metaclass_registry import (
     AutoRegisterMeta,
@@ -23,6 +25,7 @@ from metaclass_registry import (
 # PatternDiscoveryEngine imported locally to avoid circular imports
 from polystore.filemanager import FileManager
 from polystore.streaming.viewer_transport import ViewerMicroscopeHandlerABC
+from polystore.virtual_workspace import SourcePixelRef
 # Import interfaces from the base interfaces module
 from openhcs.microscopes.microscope_interfaces import (
     FilenameParseResult,
@@ -38,7 +41,7 @@ if TYPE_CHECKING:
 # Dictionary to store registered metadata handlers for auto-detection
 # This will be auto-wrapped with SecondaryRegistryDict by the metaclass
 METADATA_HANDLERS = {}
-OPENHCS_DATA_MICROSCOPE_TYPE = "openhcsdata"
+OPENHCS_DATA_MICROSCOPE_TYPE = Microscope.OPENHCS.value
 
 
 def register_metadata_handler(handler_class, metadata_handler_class):
@@ -54,8 +57,35 @@ def register_metadata_handler(handler_class, metadata_handler_class):
 
 
 
+class MicroscopeSourceSelectionRole(str, Enum):
+    """How a registered handler should participate in source selection."""
+
+    FORMAT_SPECIFIC = "format_specific"
+    BROAD_STRUCTURED_STORE = "broad_structured_store"
+    DECLARED_FILE_FALLBACK = "declared_file_fallback"
+    REMOTE_SERVICE = "remote_service"
+    PREPARED_WORKSPACE = "prepared_workspace"
+
+
 class BroadMicroscopeDetector:
-    """Marker for generic detectors that must run after format-specific handlers."""
+    """Generic store detector that must run after format-specific handlers."""
+
+    @classmethod
+    def source_selection_role(cls) -> MicroscopeSourceSelectionRole:
+        """Declare broad structured-store ownership through the existing marker."""
+
+        return MicroscopeSourceSelectionRole.BROAD_STRUCTURED_STORE
+
+    @classmethod
+    def source_selection_guidance(cls) -> str:
+        """Explain when a broad structured-store decoder is the right owner."""
+
+        return (
+            "Use for a supported structured or rich container when no registered "
+            "format-specific parser recognizes the source layout. A missing native "
+            "metadata file alone does not make the broad decoder semantically "
+            "preferable when a format-specific parser recognizes the filenames."
+        )
 
 
 class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterMeta):
@@ -110,6 +140,30 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
         """Construct a registered microscope handler from factory inputs."""
         del source_bindings_config
         return cls(filemanager, pattern_format=pattern_format)
+
+    @classmethod
+    def projects_declared_source_bindings(cls) -> bool:
+        """Return whether this handler projects named bindings onto its sources."""
+
+        return False
+
+    @classmethod
+    def source_selection_role(cls) -> MicroscopeSourceSelectionRole:
+        """Declare this handler as the owner of a format-specific source layout."""
+
+        return MicroscopeSourceSelectionRole.FORMAT_SPECIFIC
+
+    @classmethod
+    def source_selection_guidance(cls) -> str:
+        """Explain format-specific auto-detection and explicit partial selection."""
+
+        return (
+            "Use when this handler's parser and layout describe the dataset. Prefer a "
+            "complete source layout/export so the handler detection contract and "
+            "metadata owner can supply the available plate facts. If the parser "
+            "recognizes an intentionally incomplete export, select this handler "
+            "explicitly and expect metadata-derived fields to remain unavailable."
+        )
 
     @classmethod
     def detect(cls, plate_folder: Path, filemanager: FileManager) -> bool:
@@ -249,7 +303,11 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
         logger.info(f"⚠️ Using backend '{available_backends[0].value}' from compatible backends (virtual workspace not registered)")
         return available_backends[0].value
 
-    def save_virtual_workspace_metadata(self, plate_path: Path, workspace_mapping: dict) -> None:
+    def save_virtual_workspace_metadata(
+        self,
+        plate_path: Path,
+        workspace_mapping: Mapping[str, SourcePixelRef],
+    ) -> None:
         """
         Save virtual workspace mapping and handler metadata to openhcs_metadata.json.
 
@@ -258,9 +316,9 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
 
         Args:
             plate_path: Path to plate directory
-            workspace_mapping: Dict mapping virtual paths to real paths
+            workspace_mapping: Virtual paths mapped to backend-owned source refs.
         """
-        from openhcs.microscopes.openhcs import (
+        from openhcs.core.virtual_workspace_metadata import (
             AtomicMetadataWriter,
             get_metadata_path,
         )
@@ -270,7 +328,10 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
 
         # Build metadata dict with all available fields
         metadata_dict = {
-            "workspace_mapping": workspace_mapping,
+            "workspace_mapping": {
+                virtual_path: source_ref.to_workspace_mapping()
+                for virtual_path, source_ref in workspace_mapping.items()
+            },
             "available_backends": {"disk": True, "virtual_workspace": True},
             "microscope_handler_name": self.microscope_type,
             "source_filename_parser_name": self.parser.__class__.__name__
@@ -299,8 +360,17 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
 
         # Always create a new backend for this plate (VirtualWorkspace is plate-specific)
         backend = VirtualWorkspaceBackend(plate_root=Path(plate_path))
-        filemanager.registry[Backend.VIRTUAL_WORKSPACE.value] = backend
+        filemanager.register_backend(Backend.VIRTUAL_WORKSPACE.value, backend)
         logger.info(f"Registered virtual workspace backend for {plate_path}")
+
+    def register_workspace_backends(
+        self,
+        plate_path: Union[str, Path],
+        filemanager: FileManager,
+    ) -> None:
+        """Register the backends required to replay this handler's workspace."""
+
+        self._register_virtual_workspace_backend(plate_path, filemanager)
 
     def initialize_workspace(self, plate_path: Path, filemanager: FileManager) -> Path:
         """
@@ -360,8 +430,8 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
             logger.info("📁 SKIPPING PREPARATION: Virtual mapping already built")
             # When skipping, we need to determine image_dir from metadata
             # Read metadata to get the subdirectory key
+            from openhcs.core.virtual_workspace_metadata import FIELDS
             from openhcs.microscopes.openhcs import (
-                FIELDS,
                 OpenHCSMetadataHandler,
                 resolve_subdirectory_path,
             )
@@ -695,21 +765,52 @@ def create_microscope_handler(microscope_type: str = 'auto',
 
     logger.info("Using provided FileManager for microscope handler.")
 
-    # Auto-detect microscope type if needed
+    source_bindings = None
+    if source_bindings_config is not None:
+        from openhcs.core.source_bindings import source_bindings_defaults_to_base
+
+        source_bindings = source_bindings_defaults_to_base(source_bindings_config)
+
     if microscope_type == 'auto':
         if not plate_folder:
             raise ValueError("plate_folder is required for auto-detection")
-
         plate_folder = Path(plate_folder) if isinstance(plate_folder, str) else plate_folder
-        microscope_type = _auto_detect_microscope_type(plate_folder, filemanager, allowed_types=allowed_auto_types)
+        detected_microscope_type = _auto_detect_microscope_type(
+            plate_folder,
+            filemanager,
+            allowed_types=allowed_auto_types,
+        )
+        if detected_microscope_type is None:
+            if source_bindings is None or source_bindings.is_empty:
+                raise ValueError(
+                    f"Could not auto-detect microscope type in {plate_folder}."
+                )
+            detected_microscope_type = source_bindings.microscope_handler_name
+        microscope_type = detected_microscope_type
         logger.info("Auto-detected microscope type: %s", microscope_type)
+
+    # Source bindings use a store handler when that detected/declared owner projects them.
+    if source_bindings is not None:
+        declared_handler_class = MICROSCOPE_HANDLERS.get(microscope_type)
+        if (
+            not source_bindings.is_empty
+            and (
+                declared_handler_class is None
+                or not declared_handler_class.projects_declared_source_bindings()
+            )
+        ):
+            microscope_type = source_bindings.microscope_handler_name
+            logger.info(
+                "Selected %s microscope from source-binding declarations",
+                microscope_type,
+            )
 
     # Handlers auto-discovered on first access to MICROSCOPE_HANDLERS
     from openhcs.microscopes.handler_registry_service import get_all_handler_types
 
     # Get the appropriate handler class from the registry
     # No dynamic imports or fallbacks (Clause 77: Rot Intolerance)
-    handler_class = MICROSCOPE_HANDLERS.get(microscope_type.lower())
+    handler_class = MICROSCOPE_HANDLERS.get(microscope_type)
     if not handler_class:
         available_types = get_all_handler_types()
         raise ValueError(
@@ -764,7 +865,7 @@ def validate_backend_compatibility(handler: MicroscopeHandler, backend: Backend)
 
 
 def _auto_detect_microscope_type(plate_folder: Path, filemanager: FileManager,
-                                allowed_types: Optional[List[str]] = None) -> str:
+                                allowed_types: Optional[List[str]] = None) -> Optional[str]:
     """
     Auto-detect microscope type using registry iteration.
 
@@ -778,10 +879,7 @@ def _auto_detect_microscope_type(plate_folder: Path, filemanager: FileManager,
     Returns:
         Detected microscope type string
 
-    Raises:
-        ValueError: If microscope type cannot be determined
-        MetadataNotFoundError: If metadata files are missing
-        Any other exception from metadata handlers (fail-loud)
+    Returns ``None`` when no registered physical handler declares the path.
     """
     # Build detection order: OpenHCS data first, then filtered/ordered handlers.
     detection_order = [OPENHCS_DATA_MICROSCOPE_TYPE]
@@ -812,14 +910,12 @@ def _auto_detect_microscope_type(plate_folder: Path, filemanager: FileManager,
             return handler_name
         logger.debug(f"{handler_name} metadata not found in {plate_folder}")
 
-    # No handler succeeded - provide detailed error message
-    available_types = list(MICROSCOPE_HANDLERS.keys())
-    msg = (f"Could not auto-detect microscope type in {plate_folder}. "
-           f"Tried: {detection_order}. "
-           f"Available types: {available_types}. "
-           f"Ensure metadata files are present for supported formats.")
-    logger.error(msg)
-    raise ValueError(msg)
+    logger.debug(
+        "No registered physical microscope handler declared %s after trying %s",
+        plate_folder,
+        detection_order,
+    )
+    return None
 
 
 # ============================================================================
