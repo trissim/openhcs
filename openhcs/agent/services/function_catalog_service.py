@@ -63,8 +63,9 @@ class CatalogSearchRank(Enum):
     ID_CONTAINS = 40
     IMPORT_CONTAINS = 50
     TAG_CONTAINS = 60
-    SUMMARY_CONTAINS = 70
-    DOC_CONTAINS = 80
+    PARAMETER_CONTAINS = 70
+    SUMMARY_CONTAINS = 80
+    DOC_CONTAINS = 90
     NO_MATCH = 1000
 
     @property
@@ -188,7 +189,10 @@ class CatalogFilterText:
         return self.search_match(entry, metadata).rank
 
     def search_match(
-        self, entry: FunctionCatalogEntry, metadata: FunctionMetadata
+        self,
+        entry: FunctionCatalogEntry,
+        metadata: FunctionMetadata,
+        parameters: tuple[FunctionParameterSpec, ...] = (),
     ) -> "CatalogTextMatch":
         if not self.text:
             return CatalogTextMatch(CatalogSearchRank.ALL_PASS, 0)
@@ -205,6 +209,10 @@ class CatalogFilterText:
             (CatalogSearchRank.ID_CONTAINS, function_id_text),
             (CatalogSearchRank.IMPORT_CONTAINS, import_path_text),
             (CatalogSearchRank.TAG_CONTAINS, tag_text),
+            (
+                CatalogSearchRank.PARAMETER_CONTAINS,
+                _parameter_search_text(parameters),
+            ),
             (CatalogSearchRank.SUMMARY_CONTAINS, entry.summary or ""),
             (CatalogSearchRank.DOC_CONTAINS, metadata.doc or ""),
         ):
@@ -398,7 +406,7 @@ class ParameterDocumentationPolicy:
         primary_input_name = callable_contract.primary_input_parameter_name
         if primary_input_name in supplied_by:
             supplied_by[primary_input_name] = FunctionParameterSource.PRIMARY_INPUT
-        for name in callable_contract.artifact_inputs.names():
+        for name in callable_contract.artifact_input_parameter_names:
             if name in supplied_by:
                 supplied_by[name] = FunctionParameterSource.ARTIFACT_INPUT
         for name in callable_contract.runtime_bound_parameters:
@@ -506,13 +514,27 @@ class FunctionCatalogService:
         summary_view = SummaryView.COMPACT if compact_signatures else SummaryView.FULL
         candidates = []
         for function_id, metadata in sorted(self._all_metadata().items()):
-            entry = self._entry(function_id, metadata, signature_view, summary_view)
+            contract = CallableContract.from_callable(metadata.func)
+            entry = self._entry(
+                function_id,
+                metadata,
+                signature_view,
+                summary_view,
+                contract=contract,
+            )
             if not library_filter.accepts_library_or_tag(
                 entry.library,
                 entry.backend_tags,
             ):
                 continue
-            match = query_filter.search_match(entry, metadata)
+            match = query_filter.search_match(
+                entry,
+                metadata,
+                PARAMETER_DOCUMENTATION_POLICY.parameter_specs(
+                    metadata.func,
+                    contract,
+                ),
+            )
             if not match.matched:
                 continue
             candidates.append(CatalogSearchCandidate(match.rank, match.score, entry))
@@ -778,6 +800,29 @@ def _normalized_search_text(value: str) -> str:
     for separator in ("_", "-", ".", ":"):
         text = text.replace(separator, " ")
     return " ".join(text.split())
+
+
+def _parameter_search_text(
+    parameters: tuple[FunctionParameterSpec, ...],
+) -> str:
+    """Project declaration-owned parameter vocabulary into catalog search."""
+
+    values = []
+    for parameter in parameters:
+        values.extend(
+            value
+            for value in (
+                parameter.name,
+                parameter.annotation,
+                parameter.default_repr,
+                parameter.description,
+                parameter.enum_import_path,
+                *parameter.enum_members,
+                *parameter.enum_values,
+            )
+            if value
+        )
+    return " ".join(values)
 
 
 def _metadata_display_name(function_id: str, metadata: FunctionMetadata) -> str:

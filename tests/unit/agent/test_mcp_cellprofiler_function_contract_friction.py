@@ -10,6 +10,7 @@ from openhcs.processing.backends.cellprofiler.feature_enhancement import (
 from openhcs.processing.backends.cellprofiler.primary_objects import (
     identify_primary_objects,
 )
+from openhcs.processing.backends.cellprofiler.skeleton import measure_object_skeleton
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,24 @@ def test_function_parameters_project_enum_import_members_and_values(monkeypatch)
     assert neurite_method.enum_values == ("Line structures", "Tubeness")
 
 
+def test_function_search_indexes_declared_parameter_and_enum_vocabulary(monkeypatch):
+    catalog = _catalog(
+        monkeypatch,
+        "openhcs:cellprofiler_enhance_or_suppress_features",
+        enhance_or_suppress_features,
+    )
+
+    by_parameter = catalog.search(query="neurite", library="cellprofiler")
+    by_enum_value = catalog.search(query="tubeness", library="cellprofiler")
+
+    assert tuple(item.function_id for item in by_parameter.items) == (
+        "openhcs:cellprofiler_enhance_or_suppress_features",
+    )
+    assert tuple(item.function_id for item in by_enum_value.items) == (
+        "openhcs:cellprofiler_enhance_or_suppress_features",
+    )
+
+
 def test_cellprofiler_detail_distinguishes_static_and_compiled_artifacts(monkeypatch):
     catalog = _catalog(
         monkeypatch,
@@ -116,4 +135,22 @@ def test_cellprofiler_detail_distinguishes_static_and_compiled_artifacts(monkeyp
     assert runtime_contract.pattern_compatibility_rule is not None
     assert "may intentionally cover only a subset" in (
         runtime_contract.pattern_compatibility_rule
+    )
+
+
+def test_function_detail_classifies_normalized_artifact_fed_parameter(monkeypatch):
+    catalog = _catalog(
+        monkeypatch,
+        "openhcs:cellprofiler_measure_object_skeleton",
+        measure_object_skeleton,
+    )
+
+    detail = catalog.get("openhcs:cellprofiler_measure_object_skeleton")
+    parameters = {parameter.name: parameter for parameter in detail.parameters}
+
+    assert "seed_labels" not in detail.entry.signature
+    assert parameters["seed_labels"].supplied_by == "runtime_artifact_input"
+    assert parameters["seed_labels"].required is False
+    assert "do not pass this as a function kwarg" in (
+        parameters["seed_labels"].description or ""
     )
