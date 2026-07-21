@@ -1,28 +1,44 @@
 #!/usr/bin/env python3
-import re
 import subprocess
 import sys
-from pathlib import Path
 
 import requests
 from packaging import version
+
+ACTIONS_URL = "https://github.com/OpenHCSDev/OpenHCS/actions"
 
 
 def get_current_version():
     with open("openhcs/__init__.py", "r") as f:
         for line in f:
             if line.startswith("__version__"):
-                return line.split("=")[1].strip().strip('"\'')
+                return line.split("=")[1].strip().strip("\"'")
     return None
+
 
 def get_pypi_version():
     try:
         response = requests.get("https://pypi.org/pypi/openhcs/json")
         if response.status_code == 200:
             return response.json()["info"]["version"]
-    except:
+    except (requests.RequestException, KeyError, TypeError, ValueError):
         pass
     return None
+
+
+def run_release_preflight(current_version):
+    """Require package and generated MCP release metadata to match."""
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/sync_mcp_release_metadata.py",
+            "--check",
+            "--expected-version",
+            current_version,
+        ],
+        check=True,
+    )
+
 
 def main():
     # Get current version
@@ -30,34 +46,49 @@ def main():
     if not current_version:
         print("Error: Could not find version in __init__.py")
         sys.exit(1)
-    
+
     # Get PyPI version
     pypi_version = get_pypi_version()
     print(f"Current package version: {current_version}")
     print(f"Current PyPI version: {pypi_version}")
-    
+
     if pypi_version and version.parse(current_version) <= version.parse(pypi_version):
-        print(f"Error: Current version ({current_version}) must be greater than PyPI version ({pypi_version})")
+        print(
+            f"Error: Current version ({current_version}) must be greater than PyPI version ({pypi_version})"
+        )
         sys.exit(1)
-    
+
     # Confirm with user
     response = input(f"Create release for v{current_version}? [y/N] ")
-    if response.lower() != 'y':
+    if response.lower() != "y":
         print("Aborted.")
         return
-    
+
     try:
+        run_release_preflight(current_version)
+
         # Create and push tag
-        subprocess.run(['git', 'tag', '-a', f'v{current_version}', '-m', f'Release version {current_version}'], check=True)
-        subprocess.run(['git', 'push', 'origin', f'v{current_version}'], check=True)
-        
+        subprocess.run(
+            [
+                "git",
+                "tag",
+                "-a",
+                f"v{current_version}",
+                "-m",
+                f"Release version {current_version}",
+            ],
+            check=True,
+        )
+        subprocess.run(["git", "push", "origin", f"v{current_version}"], check=True)
+
         print(f"\nSuccessfully created and pushed tag v{current_version}")
         print("GitHub Actions workflow should start automatically.")
-        print("Monitor progress at: https://github.com/trissim/openhcs/actions")
-    
+        print(f"Monitor progress at: {ACTIONS_URL}")
+
     except subprocess.CalledProcessError as e:
         print(f"Error during release process: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
