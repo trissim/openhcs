@@ -9,12 +9,6 @@ import openhcs.serialization.pycodify_formatters  # noqa: F401
 from openhcs.config_framework.object_state import ObjectState
 from openhcs.constants import InputSource
 from openhcs.constants.constants import GroupBy
-from openhcs.core.artifacts import (
-    ArtifactSpec,
-    ImageArtifactType,
-    ObjectLabelsArtifactType,
-    MeasurementsArtifactType,
-)
 from openhcs.core.config import (
     DtypeConfig,
     LazyNapariStreamingConfig,
@@ -23,22 +17,7 @@ from openhcs.core.config import (
     PipelineConfig,
 )
 from openhcs.core.memory import DtypeConversion
-from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
-from openhcs.core.module_artifact_contract import (
-    DeclaredArtifactOutputPartition,
-    ModuleArtifactContract,
-    RecordedArtifactOutputPartition,
-    RuntimeArtifactInputPartition,
-    SourceArtifactInputPartition,
-)
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.interop.cellprofiler.runtime.module_execution import (
-    CellProfilerProcessingContractAuthority,
-    cellprofiler_module_callable,
-)
-from openhcs.processing.backends.cellprofiler import (
-    CellProfilerFunctionCatalog,
-)
 from openhcs.processing.backends.cellprofiler.colocalization import (
     measure_colocalization_objects,
 )
@@ -47,28 +26,6 @@ from openhcs.processing.backends.analysis.count_cells_simple import count_cells_
 
 def configurable_test_function(image, threshold: int = 3, enabled: bool = True):
     return image
-
-
-def _declared_cellprofiler_runtime_callable(
-    func,
-    contract: ModuleArtifactContract,
-):
-    canonical_func = CellProfilerFunctionCatalog.get_function(func.__name__)
-    metadata = CellProfilerFunctionCatalog.runtime_metadata(canonical_func)
-    if metadata is None:
-        processing_contract = CellProfilerProcessingContractAuthority.for_callable(
-            canonical_func
-        )
-        declared_processing_contract = processing_contract.name
-    else:
-        processing_contract = metadata.processing_contract
-        declared_processing_contract = metadata.declared_processing_contract
-    return cellprofiler_module_callable(
-        canonical_func,
-        contract,
-        processing_contract=processing_contract,
-        declared_processing_contract=declared_processing_contract,
-    )
 
 
 def _source(value, *, clean_mode: bool = True) -> str:
@@ -82,6 +39,7 @@ def test_clean_pipeline_config_omits_empty_inherited_lazy_config_groups():
     source = _source(PipelineConfig())
 
     assert "config = PipelineConfig()" in source
+    assert "step_source_bindings_config=" not in source
     assert "LazyWellFilterConfig" not in source
     assert "napari_display_config=" not in source
     assert "napari_streaming_config=" not in source
@@ -254,52 +212,15 @@ def test_function_pattern_source_does_not_emit_declared_hidden_parameters():
     assert "DirectObjectColocalizationRankProvider" not in source
 
 
-def test_cellprofiler_runtime_callable_source_keeps_raw_hidden_parameters_hidden():
+def test_cellprofiler_public_callable_source_keeps_hidden_parameters_hidden():
     rank_provider_default = (
         inspect.signature(measure_colocalization_objects)
         .parameters["rank_provider"]
         .default
     )
-    inputs = (
-        ArtifactSpec.input("Mito", ImageArtifactType),
-        ArtifactSpec.input("Syto", ImageArtifactType),
-        ArtifactSpec.input("Nuclei", ObjectLabelsArtifactType),
-    )
-    runtime_callable = _declared_cellprofiler_runtime_callable(
-        measure_colocalization_objects,
-        ModuleArtifactContract(
-            module_name="MeasureColocalization",
-            items=(
-                *ModuleArtifactContract.items_for_partition(
-                    SourceArtifactInputPartition, inputs
-                ),
-                *ModuleArtifactContract.items_for_partition(
-                    RuntimeArtifactInputPartition, inputs
-                ),
-                *ModuleArtifactContract.items_for_partition(
-                    RecordedArtifactOutputPartition,
-                    (
-                        ArtifactSpec.output(
-                            "MeasureColocalization_14_measurements",
-                            MeasurementsArtifactType,
-                        ),
-                    ),
-                ),
-                *ModuleArtifactContract.items_for_partition(
-                    DeclaredArtifactOutputPartition,
-                    (
-                        ArtifactSpec.output(
-                            "MeasureColocalization_14_measurements",
-                            MeasurementsArtifactType,
-                        ),
-                    ),
-                ),
-            ),
-        ),
-    )
     step = FunctionStep(
         func=(
-            runtime_callable,
+            measure_colocalization_objects,
             {
                 "labels": None,
                 "rank_provider": rank_provider_default,
@@ -314,36 +235,9 @@ def test_cellprofiler_runtime_callable_source_keeps_raw_hidden_parameters_hidden
     )
 
     ast.parse(source)
-    assert "cellprofiler_module_callable" not in source
+    assert "CellProfilerModuleExecutor" not in source
     assert "ModuleArtifactContract(" not in source
     assert "MeasureColocalization_14_measurements" not in source
     assert "measure_colocalization_objects" in source
     assert "rank_provider" not in source
     assert "DirectObjectColocalizationRankProvider" not in source
-
-
-def test_module_artifact_contract_source_imports_no_artifact_materialization():
-    contract = ModuleArtifactContract(
-        module_name="Probe",
-        items=ModuleArtifactContract.items_for_partition(
-            RecordedArtifactOutputPartition,
-            (
-                ArtifactSpec.output(
-                    "Measurements",
-                    MeasurementsArtifactType,
-                    materialization=NO_ARTIFACT_MATERIALIZATION,
-                ),
-            ),
-        ),
-    )
-
-    source = generate_python_source(
-        Assignment("contracts", {1: contract}),
-        clean_mode=False,
-    )
-
-    ast.parse(source)
-    assert "NO_ARTIFACT_MATERIALIZATION" in source
-    namespace: dict[str, object] = {}
-    exec(source, namespace)
-    assert namespace["contracts"] == {1: contract}
