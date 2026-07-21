@@ -22,8 +22,11 @@ from openhcs.core.component_set import ComponentSet
 from openhcs.constants.constants import Backend
 from openhcs.core.function_patterns import (
     CompiledFunctionPattern,
+    FunctionInvocationKey,
+    MainFlowInputProjection,
     compile_function_pattern,
 )
+from openhcs.core.invocation_artifacts import unnamed_main_flow_artifact_name
 from openhcs.core.pipeline.function_contracts import artifact_inputs
 from openhcs.core.pipeline.path_planner import PathPlanner, PathPlannerArtifactStage
 from openhcs.core.runtime_image_values import (
@@ -96,6 +99,86 @@ def test_compiled_input_edges_own_exact_main_flow_membership() -> None:
     assert tuple(edge.spec for edge in edges) == (plate_template, combined_image)
     assert tuple(edge.storage_plan for edge in edges) == (None, None)
     assert tuple(edge.consumes_main_flow for edge in edges) == (False, True)
+    assert tuple(edge.main_flow_projection for edge in edges) == (
+        None,
+        MainFlowInputProjection.COMPLETE_PAYLOAD,
+    )
+
+
+def test_implicit_native_main_flow_consumes_complete_payload_not_source_alias() -> None:
+    native_key = FunctionInvocationKey("percentile_normalize", "default", 0)
+    cursor = ArtifactSpec.input(
+        unnamed_main_flow_artifact_name(0, native_key),
+        ImageArtifactType,
+    )
+
+    @artifact_inputs(cursor)
+    def threshold_like(image: np.ndarray) -> np.ndarray:
+        return image
+
+    compiled = compile_function_pattern(threshold_like, {}, {})
+    compiled = PathPlannerArtifactStage(
+        PathPlanner.__new__(PathPlanner)
+    ).compile_invocation_input_edges(
+        compiled,
+        artifact_inputs={},
+        relation_source_scopes={},
+        execution_group_scope=ComponentGroupScope.ungrouped(),
+        consumer_variable_components=ComponentSet(),
+        main_flow_artifacts=ArtifactSpecCollection((cursor,)),
+    )
+    invocation = next(compiled.iter_invocations())
+    edge = invocation.artifact_input_edges[0]
+    source_payload = ImagePayloadMetadata(
+        source_image_names=("Hoechst",),
+    ).payload_with(np.full((2, 3), 11.0, dtype=np.float32), None)
+    adapter = cellprofiler_runtime_adapter_for_test(
+        runtime_value_store=RuntimeValueStore(),
+        callable_contract=replace(invocation.contract, module_name="Threshold"),
+        artifact_inputs={edge.key: edge},
+        axis_scope=RuntimeExecutionAxisScope.from_raw(
+            "R04C09",
+            component=None,
+            value=None,
+        ),
+    )
+
+    request = RuntimeInputBindingRequest(
+        adapter=adapter,
+        kwargs={},
+        current_image=source_payload,
+    ).artifact_request(edge)
+
+    assert edge.consumes_main_flow is True
+    assert edge.main_flow_projection is MainFlowInputProjection.COMPLETE_PAYLOAD
+    assert request.value is source_payload
+    assert image_payload_metadata(request.value).source_image_names == ("Hoechst",)
+
+
+def test_multiple_main_flow_images_keep_declared_source_projection() -> None:
+    first = ArtifactSpec.input("Hoechst", ImageArtifactType)
+    second = ArtifactSpec.input("MAP2", ImageArtifactType)
+
+    @artifact_inputs(first, second)
+    def consume_both(image: np.ndarray) -> np.ndarray:
+        return image
+
+    compiled = PathPlannerArtifactStage(
+        PathPlanner.__new__(PathPlanner)
+    ).compile_invocation_input_edges(
+        compile_function_pattern(consume_both, {}, {}),
+        artifact_inputs={},
+        relation_source_scopes={},
+        execution_group_scope=ComponentGroupScope.ungrouped(),
+        consumer_variable_components=ComponentSet(),
+        main_flow_artifacts=ArtifactSpecCollection((first, second)),
+    )
+
+    edges = next(compiled.iter_invocations()).artifact_input_edges
+    assert tuple(edge.main_flow_projection for edge in edges) == (
+        MainFlowInputProjection.DECLARED_SOURCE_IMAGE,
+        MainFlowInputProjection.DECLARED_SOURCE_IMAGE,
+    )
 
 
 def test_primary_workspace_role_does_not_override_compiled_input_ownership(

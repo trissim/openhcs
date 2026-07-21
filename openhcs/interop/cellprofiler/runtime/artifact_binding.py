@@ -28,7 +28,10 @@ from openhcs.core.aligned_image_payload import (
     ImageOutputBundle,
 )
 from openhcs.core.callable_contract import ImagePayloadConsumption
-from openhcs.core.function_patterns import InvocationArtifactInputEdgePlan
+from openhcs.core.function_patterns import (
+    InvocationArtifactInputEdgePlan,
+    MainFlowInputProjection,
+)
 from openhcs.core.pipeline.function_contracts import (
     object_label_input_execution_mode_from_callable,
 )
@@ -534,10 +537,19 @@ class RuntimeInputBindingRequest:
             tables.extend(spec_tables)
         return tuple(tables)
 
-    def main_flow_value(self, spec: ArtifactSpec) -> RuntimeCallableArgument:
+    def main_flow_value(
+        self,
+        spec: ArtifactSpec,
+        *,
+        projection: MainFlowInputProjection = (
+            MainFlowInputProjection.DECLARED_SOURCE_IMAGE
+        ),
+    ) -> RuntimeCallableArgument:
         """Project one exact callable input from the current OpenHCS image flow."""
 
         current_image = self.current_image
+        if projection is MainFlowInputProjection.COMPLETE_PAYLOAD:
+            return current_image
         if isinstance(current_image, AlignedImageStack) and current_image.slice_contexts:
             payload = current_image.output_payload(spec.ref())
             if payload is None:
@@ -642,7 +654,16 @@ class RuntimeInputBindingRequest:
                 ),
             )
         else:
-            value = self.main_flow_value(spec)
+            main_flow_projection = edge.main_flow_projection
+            if main_flow_projection is None:
+                raise ValueError(
+                    f"{self.module_name} input {spec.ref()!r} consumes main flow "
+                    "without a compiled projection."
+                )
+            value = self.main_flow_value(
+                spec,
+                projection=main_flow_projection,
+            )
         return RuntimeArtifactInputRequest(
             spec=spec,
             value=value,

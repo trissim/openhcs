@@ -140,6 +140,13 @@ class RuntimeInvocationDomain(str, Enum):
         return anchors
 
 
+class MainFlowInputProjection(str, Enum):
+    """Compile-resolved projection of the current main-flow payload."""
+
+    DECLARED_SOURCE_IMAGE = "declared_source_image"
+    COMPLETE_PAYLOAD = "complete_payload"
+
+
 @dataclass(frozen=True)
 class FunctionInvocationKey:
     """Stable identity for one callable position inside a function pattern."""
@@ -217,12 +224,33 @@ class InvocationArtifactInputEdgePlan:
     storage_plan: ArtifactInputPlan | None = field(compare=False)
     projection: ArtifactInputProjectionPlan | None
     consumes_main_flow: bool = False
+    main_flow_projection: MainFlowInputProjection | None = None
 
     def __post_init__(self) -> None:
         if type(self.consumes_main_flow) is not bool:
             raise TypeError(
                 "Invocation artifact input edge consumes_main_flow must be bool, "
                 f"got {type(self.consumes_main_flow).__name__}."
+            )
+        if self.consumes_main_flow and self.main_flow_projection is None:
+            object.__setattr__(
+                self,
+                "main_flow_projection",
+                MainFlowInputProjection.DECLARED_SOURCE_IMAGE,
+            )
+        elif not self.consumes_main_flow and self.main_flow_projection is not None:
+            raise ValueError(
+                "Invocation artifact input edge cannot declare a main-flow "
+                "projection when it does not consume main flow."
+            )
+        if self.main_flow_projection is not None and not isinstance(
+            self.main_flow_projection,
+            MainFlowInputProjection,
+        ):
+            raise TypeError(
+                "Invocation artifact input edge main_flow_projection must be a "
+                "MainFlowInputProjection or None, got "
+                f"{type(self.main_flow_projection).__name__}."
             )
         if self.consumes_main_flow and self.storage_plan is not None:
             raise ValueError(

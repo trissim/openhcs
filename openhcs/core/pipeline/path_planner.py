@@ -35,6 +35,7 @@ from openhcs.core.function_patterns import (
     FunctionPatternSyntax,
     InvocationArtifactInputEdgePlan,
     InvocationArtifactInputProjectionKey,
+    MainFlowInputProjection,
     RuntimeParameterBinding,
     compile_function_pattern,
     inject_artifact_input_values,
@@ -1148,6 +1149,15 @@ class PathPlannerArtifactStage:
                                 storage_plan=None,
                                 projection=None,
                                 consumes_main_flow=consumes_main_flow,
+                                main_flow_projection=(
+                                    MainFlowInputProjection.COMPLETE_PAYLOAD
+                                    if consumes_main_flow and len(main_flow_refs) == 1
+                                    else (
+                                        MainFlowInputProjection.DECLARED_SOURCE_IMAGE
+                                        if consumes_main_flow
+                                        else None
+                                    )
+                                ),
                             )
                         )
                         continue
