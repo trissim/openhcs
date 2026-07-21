@@ -135,12 +135,16 @@ def cellprofiler_runtime_adapter_factory(
 
 
 def cellprofiler_runtime_callable_factory(
-    raw_func: Callable[..., RuntimeFunctionOutput],
+    registered_func: Callable[..., RuntimeFunctionOutput],
     callable_contract: CallableContract,
 ) -> "CellProfilerModuleExecutor":
     """Build the runtime adapter callable from one compiled contract."""
 
-    return CellProfilerModuleExecutor(raw_func, callable_contract)
+    del registered_func
+    return CellProfilerModuleExecutor(
+        callable_contract.resolve_canonical_raw_callable(),
+        callable_contract,
+    )
 
 
 @dataclass(slots=True)

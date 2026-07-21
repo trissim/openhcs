@@ -119,6 +119,14 @@ class FunctionStepTransportAuthority:
             ):
                 return func_spec
             return normalized_items
+        if isinstance(func_spec, dict):
+            normalized_items = {
+                key: cls.normalize_function_spec(item)
+                for key, item in func_spec.items()
+            }
+            if all(normalized_items[key] is item for key, item in func_spec.items()):
+                return func_spec
+            return normalized_items
         if isinstance(func_spec, tuple) and func_spec:
             normalized_func = cls.normalize_function_spec(func_spec[0])
             if normalized_func is func_spec[0]:
@@ -129,6 +137,12 @@ class FunctionStepTransportAuthority:
                 "Pipeline contains a module object where a callable is required: "
                 f"{func_spec.__name__}. Reload or edit the step to select a function."
             )
+        if callable(func_spec):
+            from openhcs.processing.backends.lib_registry.registry_service import (
+                RegistryService,
+            )
+
+            return RegistryService.registered_callable(func_spec)
         return func_spec
 
     @classmethod

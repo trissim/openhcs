@@ -33,23 +33,29 @@ class FunctionReference:
 
     def resolve(self) -> Callable:
         """Resolve this reference to the decorated callable for execution."""
-        resolved = FunctionReferenceTransportAuthority.importable_function(
-            self.original_module,
-            self.function_name,
-        )
-        if callable(resolved):
-            return resolved
+        if self.registry_name == "python":
+            resolved = FunctionReferenceTransportAuthority.importable_function(
+                self.original_module,
+                self.function_name,
+            )
+            if callable(resolved):
+                return resolved
+            raise RuntimeError(
+                f"Python function {self.original_module}.{self.function_name} "
+                "is not importable in this process."
+            )
+
         from openhcs.processing.backends.lib_registry.registry_service import (
             RegistryService,
         )
 
         all_functions = RegistryService.get_all_functions_with_metadata()
-        if self.composite_key in all_functions:
-            return all_functions[self.composite_key].func
-        raise RuntimeError(
-            f"Function {self.composite_key} not found in registry. "
-            f"Ensure the function registry is initialized in this process."
-        )
+        if self.composite_key not in all_functions:
+            raise RuntimeError(
+                f"Function {self.composite_key} not found in registry. "
+                "Ensure the function registry is initialized in this process."
+            )
+        return all_functions[self.composite_key].func
 
 
 class FunctionReferenceTransportAuthority:
@@ -165,6 +171,20 @@ class FunctionReferenceTransportAuthority:
         original_name = original_func.__name__
         original_module = original_func.__module__
 
+        registry_match = RegistryService.metadata_for_callable(func)
+        if registry_match is not None:
+            composite_key, metadata = registry_match
+            return FunctionReference(
+                function_name=original_name,
+                registry_name=metadata.registry.library_name,
+                memory_type=metadata.registry.MEMORY_TYPE,
+                composite_key=composite_key,
+                original_module=original_module,
+                metadata=FunctionReferenceTransportAuthority.callable_metadata(
+                    metadata.func
+                ),
+            )
+
         imported = FunctionReferenceTransportAuthority.importable_function(
             original_module,
             original_name,
@@ -184,25 +204,6 @@ class FunctionReferenceTransportAuthority:
                 original_module=original_module,
                 metadata=FunctionReferenceTransportAuthority.callable_metadata(func),
             )
-
-        all_functions = RegistryService.get_all_functions_with_metadata()
-        for composite_key, metadata in all_functions.items():
-            registry_original = inspect.unwrap(metadata.func)
-            registry_module = registry_original.__module__
-            if (
-                registry_original.__name__ == original_name
-                and registry_module == original_module
-            ):
-                return FunctionReference(
-                    function_name=original_name,
-                    registry_name=metadata.registry.library_name,
-                    memory_type=metadata.registry.MEMORY_TYPE,
-                    composite_key=composite_key,
-                    original_module=original_module,
-                    metadata=FunctionReferenceTransportAuthority.callable_metadata(
-                        func
-                    ),
-                )
 
         raise RuntimeError(
             f"Function {original_name} (module: {original_module}) not found in "

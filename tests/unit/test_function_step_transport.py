@@ -1,84 +1,66 @@
+"""Transport boundaries for public FunctionStep declarations."""
+
+from __future__ import annotations
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
+
 import ast
+import importlib
+import inspect
 import pickle
-from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import SimpleNamespace
 
-import openhcs.processing.backends.cellprofiler as cellprofiler_backend
-import openhcs.serialization.pycodify_formatters  # noqa: F401
-from pycodify import Assignment, generate_python_source
+import pytest
 from zmqruntime.messages import MessageFields
 
 from openhcs.constants.constants import GroupBy, VariableComponents
-from openhcs.constants.input_source import InputSource
-from openhcs.core.callable_contract import CallableContract, CallableMetadata
-from openhcs.core.artifact_materialization_policy import (
-    NO_ARTIFACT_MATERIALIZATION,
+from openhcs.core.config import (
+    GlobalPipelineConfig,
+    LazyProcessingConfig,
+    PipelineConfig,
 )
-from openhcs.core.artifacts import (
-    ArtifactSpec,
-    ImageArtifactType,
-    ObjectLabelsArtifactType,
+from openhcs.core.callable_contract import CallableContract
+from openhcs.core.function_reference import (
+    FunctionReference,
+    FunctionReferenceTransportAuthority,
 )
-from openhcs.core.compiled_step_plan import CompiledStepPlan
-from openhcs.core.function_patterns import (
-    CompiledFunctionGroup,
-    CompiledFunctionInvocation,
-    CompiledFunctionPattern,
-    FunctionInvocationKey,
-)
-from openhcs.core.function_step_invocation_contracts import (
-    FunctionStepInvocationContractBinding,
-    FunctionStepInvocationContracts,
-)
-from openhcs.core.config import LazyProcessingConfig
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
-from openhcs.core.module_artifact_contract import ModuleArtifactContract
-from openhcs.core.module_artifact_contract import (
-    DeclaredArtifactOutputPartition,
-    RecordedArtifactOutputPartition,
-    RuntimeArtifactInputPartition,
-    SourceArtifactInputPartition,
-)
-from openhcs.core.function_reference import FunctionReference
-from openhcs.core.function_reference import FunctionReferenceTransportAuthority
 from openhcs.core.source_bindings import (
     NamedSourceBinding,
     SourceBindingOrigin,
     StepSourceBindingsConfig,
 )
-from openhcs.core.steps.function_runtime import FunctionInvocationCallableResolver
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.interop.cellprofiler.runtime.module_execution import (
-    cellprofiler_module_callable,
+from openhcs.processing.backends import cellprofiler as cellprofiler_backend
+from openhcs.processing.backends.lib_registry.registry_service import RegistryService
+from openhcs.processing.backends.cellprofiler.illumination import (
+    IlluminationCorrectionMethod,
 )
-from openhcs.processing.materialization.core import MaterializationSpec
-from openhcs.processing.materialization.options import TiffStackOptions
 from openhcs.runtime.zmq_execution_client import (
     OpenHCSExecutionSubmission,
-    PycodifiedPipelineCode,
     ZMQExecutionClient,
-)
-from openhcs.runtime.zmq_pipeline_transport import (
-    PipelineStepsBoundary,
-    PipelineStepsNamespaceProjection,
-    ZMQPipelineCodeTransport,
-    ZMQPipelineSourcePayload,
+    ZMQExecutionRequestBuilder,
 )
 
 
-def _declared_runtime_callable(func, contract):
-    metadata = cellprofiler_backend.CellProfilerFunctionCatalog.runtime_metadata(func)
-    return cellprofiler_module_callable(
-        func,
-        contract,
-        declared_processing_contract=metadata.declared_processing_contract,
-        processing_contract=metadata.processing_contract,
+def _public_step() -> FunctionStep:
+    return FunctionStep(
+        func=(
+            cellprofiler_backend.correct_illumination_apply,
+            {
+                "method": IlluminationCorrectionMethod.SUBTRACT,
+                "truncate_low": False,
+            },
+        ),
+        name="CorrectIlluminationApply",
+        processing_config=LazyProcessingConfig(
+            variable_components=[VariableComponents.CHANNEL],
+            group_by=GroupBy.SITE,
+        ),
     )
 
 
-def test_transport_authority_accepts_stripped_compiled_function_steps():
+def test_transport_authority_accepts_stripped_compiled_function_steps() -> None:
     step = FunctionStep(func=cellprofiler_backend.crop, name="Crop")
     for field_name in tuple(vars(step)):
         delattr(step, field_name)
@@ -88,247 +70,169 @@ def test_transport_authority_accepts_stripped_compiled_function_steps():
     assert normalized == [step]
 
 
-def test_no_artifact_materialization_survives_pickle_by_identity():
-    restored = pickle.loads(pickle.dumps(NO_ARTIFACT_MATERIALIZATION))
-
-    assert restored is NO_ARTIFACT_MATERIALIZATION
-
-
-def test_transport_authority_normalizes_unstripped_pipeline_steps():
-    crop = cellprofiler_backend.crop
-
-    normalized = FunctionStepTransportAuthority.normalize_pipeline(
-        [FunctionStep(func=crop, name="Crop")]
-    )
-
-    assert normalized[0].func is cellprofiler_backend.crop
-    pickle.dumps(normalized)
-
-
-def test_transport_normalization_preserves_runtime_callable_contracts():
-    from openhcs.interop.cellprofiler.runtime.module_execution import (
-        CellProfilerRuntimeCallable,
-    )
-
-    contract = ModuleArtifactContract(
-        module_name="Crop",
-        items=(
-            *ModuleArtifactContract.items_for_partition(
-                RecordedArtifactOutputPartition,
-                (ArtifactSpec.output("CropBlue", ImageArtifactType),),
-            ),
-            *ModuleArtifactContract.items_for_partition(
-                DeclaredArtifactOutputPartition,
-                (ArtifactSpec.output("CropBlue", ImageArtifactType),),
-            ),
-        ),
-    )
-    runtime_callable = _declared_runtime_callable(
-        cellprofiler_backend.crop,
-        contract,
-    )
-
-    normalized = FunctionStepTransportAuthority.normalize_pipeline(
-        [
-            FunctionStep(
-                func=(runtime_callable, {"crop_shape": "Rectangle"}),
-                name="Crop",
-            )
-        ]
-    )
-    normalized_func = normalized[0].func[0]
-    normalized_contract = CallableContract.from_callable(normalized_func)
-
-    assert normalized_func is runtime_callable
-    assert isinstance(normalized_func, CellProfilerRuntimeCallable)
-    assert normalized_contract.module_artifact_contract == contract
-    assert normalized_contract.runtime_adapter is not None
-    pickle.dumps(normalized)
-
-
-def test_zmq_pipeline_transport_source_omits_cellprofiler_runtime_contracts():
-    contract = ModuleArtifactContract(
-        module_name="Crop",
-        items=(
-            *ModuleArtifactContract.items_for_partition(
-                RecordedArtifactOutputPartition,
-                (ArtifactSpec.output("CropBlue", ImageArtifactType),),
-            ),
-            *ModuleArtifactContract.items_for_partition(
-                DeclaredArtifactOutputPartition,
-                (ArtifactSpec.output("CropBlue", ImageArtifactType),),
-            ),
-        ),
-    )
-    runtime_callable = _declared_runtime_callable(
-        cellprofiler_backend.crop,
-        contract,
-    )
-    pipeline = [FunctionStep(func=runtime_callable, name="Crop")]
-    pipeline_source = generate_python_source(
-        Assignment("pipeline_steps", pipeline),
-        clean_mode=True,
-    )
-
-    source = ZMQPipelineCodeTransport.from_pipeline_source(
-        ZMQPipelineSourcePayload(
-            source=pipeline_source,
-            source_pipeline=PipelineStepsBoundary(pipeline),
+def test_function_reference_transport_rejects_three_member_leaf() -> None:
+    with pytest.raises(TypeError, match="exactly two"):
+        FunctionReferenceTransportAuthority.reference_function_spec(
+            (cellprofiler_backend.crop, {}, object())
         )
-    ).source
+
+
+def test_transport_round_trip_preserves_public_steps_and_typed_kwargs_only() -> None:
+    source = FunctionStepTransportAuthority.source_from_pipeline([_public_step()])
     namespace: dict[str, object] = {}
-    exec(source, namespace)
+    exec(compile(source, "<pipeline>", "exec"), namespace)
 
-    restored = PipelineStepsNamespaceProjection(namespace).boundary_or_none()
-    restored_func = restored[0].func
-    restored_contract = CallableContract.from_callable(restored_func)
+    restored = FunctionStepTransportAuthority.pipeline_steps_from_namespace(namespace)
 
-    assert "__openhcs_zmq_pipeline_payload__" not in source
-    assert "ModuleArtifactContract(" not in source
-    assert "cellprofiler_module_callable" not in source
-    assert restored_func.__name__ == "crop"
-    assert restored_contract.module_artifact_contract is None
-    pickle.dumps(restored)
-
-
-def test_zmq_execution_submission_source_omits_cellprofiler_runtime_contracts():
-    from openhcs.core.config import GlobalPipelineConfig
-
-    contract = ModuleArtifactContract(
-        module_name="IdentifySecondaryObjects",
-        items=(
-            *ModuleArtifactContract.items_for_partition(
-                SourceArtifactInputPartition,
-                (ArtifactSpec.input("Primary", ObjectLabelsArtifactType),),
-            ),
-            *ModuleArtifactContract.items_for_partition(
-                RecordedArtifactOutputPartition,
-                (ArtifactSpec.output("Secondary", ObjectLabelsArtifactType),),
-            ),
-            *ModuleArtifactContract.items_for_partition(
-                DeclaredArtifactOutputPartition,
-                (ArtifactSpec.output("Secondary", ObjectLabelsArtifactType),),
-            ),
-        ),
+    assert type(restored) is list
+    assert len(restored) == 1
+    restored_func, restored_kwargs = restored[0].func
+    assert restored_func is RegistryService.registered_callable(
+        cellprofiler_backend.correct_illumination_apply
     )
-    runtime_callable = _declared_runtime_callable(
-        cellprofiler_backend.identify_secondary_objects,
-        contract,
-    )
-    submission = OpenHCSExecutionSubmission(
-        plate_id="/tmp/plate",
-        pipeline_steps=[
-            FunctionStep(
-                func=runtime_callable,
-                name="IdentifySecondaryObjects",
-            )
-        ],
-        global_config=GlobalPipelineConfig(),
-    )
-
-    source = PycodifiedPipelineCode.from_task(submission).source
-    namespace: dict[str, object] = {}
-    exec(source, namespace)
-    restored = PipelineStepsNamespaceProjection(namespace).boundary_or_none()
-    restored_func = restored[0].func
-    restored_contract = CallableContract.from_callable(restored_func)
-
-    assert "cellprofiler_module_callable" not in source
-    assert "ModuleArtifactContract(" not in source
-    assert restored_func.__name__ == "identify_secondary_objects"
-    assert restored_contract.module_artifact_contract is None
-    pickle.dumps(restored.steps)
-
-
-def test_zmq_execution_submission_emits_clean_source_without_step_invocation_contracts():
-    from openhcs.core.config import GlobalPipelineConfig
-
-    contract = ModuleArtifactContract(
-        module_name="IdentifySecondaryObjects",
-        items=(
-            *ModuleArtifactContract.items_for_partition(
-                SourceArtifactInputPartition,
-                (ArtifactSpec.input("Primary", ObjectLabelsArtifactType),),
-            ),
-            *ModuleArtifactContract.items_for_partition(
-                RecordedArtifactOutputPartition,
-                (ArtifactSpec.output("Secondary", ObjectLabelsArtifactType),),
-            ),
-            *ModuleArtifactContract.items_for_partition(
-                DeclaredArtifactOutputPartition,
-                (ArtifactSpec.output("Secondary", ObjectLabelsArtifactType),),
-            ),
-        ),
-    )
-    key = FunctionInvocationKey("identify_secondary_objects", "default", 0)
-    step = FunctionStep(
-        func=cellprofiler_backend.identify_secondary_objects,
-        name="IdentifySecondaryObjects",
-        invocation_contracts=FunctionStepInvocationContracts(
-            (FunctionStepInvocationContractBinding(key, contract),)
-        ),
-    )
-    clean_source = generate_python_source(
-        Assignment("pipeline_steps", [step]),
-        clean_mode=True,
-    )
-    submission = OpenHCSExecutionSubmission(
-        plate_id="/tmp/plate",
-        pipeline_steps=[step],
-        global_config=GlobalPipelineConfig(),
-    )
-
-    source = PycodifiedPipelineCode.from_task(submission).source
-    module = ast.parse(source)
-    assigned_names = {
-        target.id
-        for node in module.body
-        if isinstance(node, ast.Assign)
-        for target in node.targets
-        if isinstance(target, ast.Name)
+    assert restored_kwargs == {
+        "method": IlluminationCorrectionMethod.SUBTRACT,
+        "truncate_low": False,
     }
-    imported_names = {
-        alias.name
-        for node in module.body
-        if isinstance(node, ast.ImportFrom)
-        for alias in node.names
-    }
+
+
+def test_compiler_referenced_steps_render_only_public_callables() -> None:
+    pipeline = [
+        _public_step(),
+        FunctionStep(
+            func={
+                "1": cellprofiler_backend.crop,
+                "2": cellprofiler_backend.crop,
+            },
+            name="Crop",
+        ),
+    ]
+    FunctionReferenceTransportAuthority.reference_pipeline_in_place(pipeline)
+
+    first_reference = pipeline[0].func[0]
+    assert isinstance(first_reference, FunctionReference)
+    assert all(
+        isinstance(reference, FunctionReference)
+        for reference in pipeline[1].func.values()
+    )
+
+    source = FunctionStepTransportAuthority.source_from_pipeline(pipeline)
     namespace: dict[str, object] = {}
-    exec(source, namespace)
-    restored = PipelineStepsNamespaceProjection(namespace).boundary_or_none()
+    exec(compile(source, "<pipeline>", "exec"), namespace)
+    restored = FunctionStepTransportAuthority.pipeline_steps_from_namespace(namespace)
 
-    assert "invocation_contracts" not in clean_source
-    assert "cellprofiler_module_callable" not in source
-    assert "pipeline_steps" in assigned_names
-    assert "__openhcs_step_invocation_contracts" not in assigned_names
-    assert "ModuleArtifactContract" not in imported_names
-    assert "FunctionStepInvocationContracts" not in imported_names
-    assert restored[0].func.__name__ == "identify_secondary_objects"
-    assert restored[0].invocation_contracts.contract_for(key) is None
-    assert CallableContract.from_callable(
-        restored[0].func
-    ).module_artifact_contract is None
-    pickle.dumps(restored.steps)
+    assert "FunctionReference" not in source
+    assert "CallableMetadata" not in source
+    assert restored[0].func[0] is RegistryService.registered_callable(
+        cellprofiler_backend.correct_illumination_apply
+    )
+    assert tuple(restored[1].func) == ("1", "2")
+    assert all(
+        func is RegistryService.registered_callable(cellprofiler_backend.crop)
+        for func in restored[1].func.values()
+    )
+    assert FunctionStepTransportAuthority.source_from_pipeline(restored) == source
 
 
-def test_zmq_execution_submission_serializes_default_plate_config_on_client():
-    from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+@pytest.mark.parametrize(
+    ("namespace", "message"),
+    (
+        ({}, "pipeline_steps"),
+        ({"pipeline_steps": ()}, "list"),
+        ({"pipeline_steps": [object()]}, "FunctionStep"),
+    ),
+)
+def test_pipeline_namespace_requires_direct_function_step_list(
+    namespace: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises((TypeError, ValueError), match=message):
+        FunctionStepTransportAuthority.pipeline_steps_from_namespace(namespace)
 
+
+def test_submission_namespace_and_server_payload_use_direct_step_lists() -> None:
+    step = _public_step()
+    global_config = GlobalPipelineConfig()
+    pipeline_config = PipelineConfig()
     submission = OpenHCSExecutionSubmission(
         plate_id="/tmp/plate",
+        pipeline_document=PipelineDocumentAuthority.from_values(
+            pipeline_config=pipeline_config, pipeline_steps=[step]
+        ),
+        global_config=global_config,
+    )
+
+    assert type(submission.pipeline_steps) is list
+    submitted_func, submitted_kwargs = submission.pipeline_steps[0].func
+    assert submitted_func is RegistryService.registered_callable(
+        cellprofiler_backend.correct_illumination_apply
+    )
+    assert submitted_kwargs == step.func[1]
+    assert submission.global_pipeline_config is global_config
+    assert submission.pipeline_config is pipeline_config
+    assert submission.pipeline_code() == PipelineDocumentAuthority.render(
+        submission.pipeline_document
+    )
+    assert not hasattr(submission, "submission_pipeline")
+    assert "pipeline_steps_boundary" not in dir(submission)
+
+
+def test_request_builder_stores_explicit_pipeline_code_directly() -> None:
+    pipeline_document = PipelineDocumentAuthority.from_values(
+        pipeline_config=PipelineConfig(),
         pipeline_steps=[],
+    )
+    pipeline_source = PipelineDocumentAuthority.render(pipeline_document)
+    submission = OpenHCSExecutionSubmission(
+        plate_id="/tmp/plate",
+        pipeline_document=PipelineDocumentAuthority.from_source(pipeline_source),
+        global_config=GlobalPipelineConfig(),
+    )
+    compile_submission = submission.compile_request()
+    builder = ZMQExecutionRequestBuilder.from_task(compile_submission)
+    artifact_submission = OpenHCSExecutionSubmission(
+        plate_id="/tmp/plate",
+        pipeline_document=PipelineDocumentAuthority.from_source(pipeline_source),
+        global_config=submission.global_pipeline_config,
+        compile_artifact_id="compile-1",
+    )
+    artifact_builder = ZMQExecutionRequestBuilder.from_task(artifact_submission)
+
+    assert compile_submission.pipeline_steps is submission.pipeline_steps
+    assert compile_submission.pipeline_code() == pipeline_source
+    assert compile_submission.compile_only is True
+    assert builder.pipeline_code == pipeline_source
+    assert builder.request_payload.pipeline_code == pipeline_source
+    assert builder.request().values[MessageFields.PIPELINE_CODE] == pipeline_source
+    assert not hasattr(builder, "pipeline_transport")
+    assert builder.request().values[MessageFields.COMPILE_ONLY] is True
+    assert artifact_builder.pipeline_code == pipeline_source
+    assert artifact_builder.request().values[MessageFields.COMPILE_ARTIFACT_ID] == (
+        "compile-1"
+    )
+    assert MessageFields.COMPILE_ONLY not in artifact_builder.request().values
+
+
+def test_zmq_execution_submission_serializes_default_plate_config_on_client() -> None:
+    submission = OpenHCSExecutionSubmission(
+        plate_id="/tmp/plate",
+        pipeline_document=PipelineDocumentAuthority.from_values(
+            pipeline_config=PipelineConfig(), pipeline_steps=[]
+        ),
         global_config=GlobalPipelineConfig(),
     )
 
     payload = ZMQExecutionClient().serialize_task(submission)
-    namespace: dict[str, object] = {}
-    exec(payload[MessageFields.PIPELINE_CONFIG_CODE], namespace)
+    document = PipelineDocumentAuthority.from_source(
+        payload[MessageFields.PIPELINE_CODE]
+    )
 
     assert MessageFields.CONFIG_CODE in payload
-    assert isinstance(namespace["config"], PipelineConfig)
+    assert MessageFields.PIPELINE_CONFIG_CODE not in payload
+    assert isinstance(document.pipeline_config, PipelineConfig)
 
 
-def test_function_step_source_emits_source_bindings_once():
+def test_function_step_source_emits_source_bindings_once() -> None:
     source_bindings = StepSourceBindingsConfig(
         bindings=(
             NamedSourceBinding(
@@ -345,184 +249,65 @@ def test_function_step_source_emits_source_bindings_once():
         )
     ]
 
-    pipeline_source = generate_python_source(
-        Assignment("pipeline_steps", pipeline),
-        clean_mode=True,
-    )
+    source = FunctionStepTransportAuthority.source_from_pipeline(pipeline)
 
-    compile(pipeline_source, "<pipeline>", "exec")
-    assert pipeline_source.count("source_bindings=") == 1
+    compile(source, "<pipeline>", "exec")
+    assert source.count("source_bindings=") == 1
 
 
-def test_zmq_pipeline_transport_preserves_explicit_lazy_processing_defaults():
-    pipeline = [
-        FunctionStep(
-            func=cellprofiler_backend.identify_primary_objects,
-            name="IdentifyPrimaryObjects",
-            processing_config=LazyProcessingConfig(
-                variable_components=[VariableComponents.SITE],
-                group_by=GroupBy.NONE,
-                input_source=InputSource.PREVIOUS_STEP,
-            ),
-        )
+def test_transport_preserves_explicit_lazy_processing_defaults() -> None:
+    source = FunctionStepTransportAuthority.source_from_pipeline([_public_step()])
+    namespace: dict[str, object] = {}
+    exec(compile(source, "<pipeline>", "exec"), namespace)
+    restored = FunctionStepTransportAuthority.pipeline_steps_from_namespace(namespace)
+
+    assert restored[0].processing_config.variable_components == [
+        VariableComponents.CHANNEL
     ]
-    pipeline_source = generate_python_source(
-        Assignment("pipeline_steps", pipeline),
-        clean_mode=True,
-    )
-
-    source = ZMQPipelineCodeTransport.from_pipeline_source(
-        ZMQPipelineSourcePayload(
-            source=pipeline_source,
-            source_pipeline=PipelineStepsBoundary(pipeline),
-        )
-    ).source
-    namespace: dict[str, object] = {}
-    exec(source, namespace)
-    restored = PipelineStepsNamespaceProjection(namespace).boundary_or_none()
-    restored_processing_config = vars(restored[0])["processing_config"]
-
-    assert "group_by=GroupBy.NONE" in source
-    assert "input_source=InputSource.PREVIOUS_STEP" in source
-    assert (
-        object.__getattribute__(restored_processing_config, "group_by") is GroupBy.NONE
-    )
-    assert (
-        object.__getattribute__(restored_processing_config, "input_source")
-        is InputSource.PREVIOUS_STEP
-    )
+    assert restored[0].processing_config.group_by is GroupBy.SITE
 
 
-def test_function_step_parameter_order_uses_abstract_step_declaration_order():
-    from python_introspect import UnifiedParameterAnalyzer
+def test_cellprofiler_callable_uses_registered_function_reference() -> None:
+    func = cellprofiler_backend.crop
+    registered = RegistryService.registered_callable(func)
+    reference = FunctionReferenceTransportAuthority.function_reference(func)
 
-    parameter_names = list(
-        UnifiedParameterAnalyzer.analyze(FunctionStep(func=cellprofiler_backend.crop))
-    )
-
-    assert parameter_names.index("source_bindings") > parameter_names.index(
-        "processing_config"
-    )
-    assert parameter_names.index("source_bindings") < parameter_names.index(
-        "step_well_filter_config"
-    )
+    assert reference.function_name == "crop"
+    assert reference.original_module == func.__module__
+    assert reference.resolve() is registered
+    assert reference.metadata == CallableContract.from_callable(registered).metadata
 
 
-def test_cellprofiler_runtime_callable_is_function_step_picklable():
-    contract = ModuleArtifactContract(
-        module_name="IdentifyTertiaryObjects",
-        items=(
-            *ModuleArtifactContract.items_for_partition(
-                RecordedArtifactOutputPartition,
-                (ArtifactSpec.output("Tertiary", ObjectLabelsArtifactType),),
-            ),
-            *ModuleArtifactContract.items_for_partition(
-                DeclaredArtifactOutputPartition,
-                (ArtifactSpec.output("Tertiary", ObjectLabelsArtifactType),),
-            ),
-        ),
-    )
-    runtime_callable = _declared_runtime_callable(
-        cellprofiler_backend.identify_tertiary_objects,
-        contract,
-    )
-
-    restored_step = pickle.loads(
-        pickle.dumps(
-            FunctionStep(func=runtime_callable, name="IdentifyTertiaryObjects")
-        )
-    )
-    restored_contract = CallableContract.from_callable(restored_step.func)
-
-    assert restored_step.func.__name__ == "identify_tertiary_objects"
-    assert restored_contract.module_artifact_contract == contract
-
-
-def test_cellprofiler_runtime_callable_source_omits_materialization_contract():
-    contract = ModuleArtifactContract(
-        module_name="Crop",
-        items=(
-            *ModuleArtifactContract.items_for_partition(
-                RecordedArtifactOutputPartition,
-                (
-                    ArtifactSpec.output(
-                        "CropBlue",
-                        ImageArtifactType,
-                        materialization=MaterializationSpec(
-                            TiffStackOptions(normalize_uint8=True),
-                        ),
-                    ),
-                ),
-            ),
-            *ModuleArtifactContract.items_for_partition(
-                DeclaredArtifactOutputPartition,
-                (
-                    ArtifactSpec.output(
-                        "CropBlue",
-                        ImageArtifactType,
-                        materialization=MaterializationSpec(
-                            TiffStackOptions(normalize_uint8=True),
-                        ),
-                    ),
-                ),
-            ),
-        ),
-    )
-    runtime_callable = _declared_runtime_callable(
-        cellprofiler_backend.crop,
-        contract,
-    )
-    pipeline = [FunctionStep(func=runtime_callable, name="Crop")]
-    pipeline_source = generate_python_source(
-        Assignment("pipeline_steps", pipeline),
-        clean_mode=True,
-    )
-    namespace: dict[str, object] = {}
-    exec(pipeline_source, namespace)
-
-    restored = PipelineStepsNamespaceProjection(namespace).boundary_or_none()
-    restored_contract = CallableContract.from_callable(restored[0].func)
-
-    assert "MaterializationSpec(" not in pipeline_source
-    assert "ModuleArtifactContract(" not in pipeline_source
-    assert restored_contract.module_artifact_contract is None
-
-
-def test_zmq_pipeline_transport_uses_source_only_cellprofiler_catalog_identity_after_reload():
-    import importlib
-
-    crop = cellprofiler_backend.crop
+def test_module_objects_are_rejected_as_function_specs() -> None:
     crop_module = importlib.import_module(
         "openhcs.processing.backends.cellprofiler.crop"
     )
-    importlib.reload(crop_module)
-    pipeline = [FunctionStep(func=(crop, {"crop_shape": "Rectangle"}), name="Crop")]
-    pipeline_source = generate_python_source(
-        Assignment("pipeline_steps", pipeline),
-        clean_mode=True,
+
+    with pytest.raises(TypeError, match="module object"):
+        FunctionStepTransportAuthority.normalize_function_spec(crop_module)
+
+
+def test_generated_source_imports_underlying_cellprofiler_callable() -> None:
+    source = FunctionStepTransportAuthority.source_from_pipeline(
+        [FunctionStep(func=cellprofiler_backend.crop, name="Crop")]
+    )
+    module = ast.parse(source)
+    imported_modules = {
+        node.module for node in module.body if isinstance(node, ast.ImportFrom)
+    }
+
+    assert cellprofiler_backend.crop.__module__ in imported_modules
+    assert (
+        "openhcs.interop.cellprofiler.runtime.module_execution" not in imported_modules
     )
 
-    source = ZMQPipelineCodeTransport.from_pipeline_source(
-        ZMQPipelineSourcePayload(
-            source=pipeline_source,
-            source_pipeline=PipelineStepsBoundary(pipeline),
-        )
-    ).source
-    namespace: dict[str, object] = {}
-    exec(source, namespace)
 
-    restored = PipelineStepsNamespaceProjection(namespace).boundary_or_none()
-    restored_func = restored[0].func
-
-    assert "__openhcs_zmq_pipeline_payload__" not in source
-    assert restored_func is cellprofiler_backend.crop
-    pickle.dumps(restored)
-
-
-def test_registered_custom_function_is_function_step_picklable():
+def test_registered_custom_function_is_function_step_picklable() -> None:
     from openhcs.processing.custom_functions import CustomFunctionManager
     import openhcs.processing.custom_functions as custom_functions
+    from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
+    canonical_crop = cellprofiler_backend.crop
     code = """
 @numpy
 def codex_pickle_probe(image):
@@ -531,17 +316,38 @@ def codex_pickle_probe(image):
     with TemporaryDirectory() as tmp_dir:
         manager = CustomFunctionManager()
         manager.storage_dir = Path(tmp_dir)
-        manager.register_from_code(code, persist=False)
+        manager.register_from_code(code, persist=False, emit_signal=False)
 
         custom_func = custom_functions.codex_pickle_probe
+        assert inspect.unwrap(custom_func).__module__ == (
+            "openhcs.processing.custom_functions"
+        )
+
+        reference = FunctionReferenceTransportAuthority.function_reference(custom_func)
+        assert reference.original_module == "openhcs.processing.custom_functions"
+        assert reference.resolve() is custom_func
+
+        compiler_pipeline = [FunctionStep(func=custom_func, name="CustomProbe")]
+        FunctionReferenceTransportAuthority.reference_pipeline_in_place(
+            compiler_pipeline
+        )
+        assert isinstance(compiler_pipeline[0].func, FunctionReference)
+        assert compiler_pipeline[0].func.resolve() is custom_func
+
         restored_step = pickle.loads(
             pickle.dumps(FunctionStep(func=custom_func, name="CustomProbe"))
         )
 
     assert restored_step.func is custom_functions.codex_pickle_probe
+    assert (
+        CellProfilerModule.require_module("Crop").require_callable() is canonical_crop
+    )
 
 
-def test_persisted_custom_function_is_importable_from_package(monkeypatch, tmp_path):
+def test_persisted_custom_function_is_importable_from_package(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     import openhcs.processing.custom_functions as custom_functions
     import openhcs.processing.custom_functions.manager as manager_module
 
@@ -557,11 +363,7 @@ def codex_lazy_import_probe(image):
         encoding="utf-8",
     )
     vars(custom_functions).pop(func_name, None)
-    monkeypatch.setattr(
-        manager_module,
-        "get_data_file_path",
-        lambda _name: storage_dir,
-    )
+    monkeypatch.setattr(manager_module, "get_data_file_path", lambda _name: storage_dir)
 
     namespace: dict[str, object] = {}
     try:
@@ -577,241 +379,3 @@ def codex_lazy_import_probe(image):
         assert vars(custom_functions)[func_name] is imported
     finally:
         vars(custom_functions).pop(func_name, None)
-
-
-def test_function_reference_transport_preserves_runtime_callable_contracts():
-    from openhcs.interop.cellprofiler.runtime.module_execution import (
-        CellProfilerRuntimeCallable,
-    )
-
-    contract = ModuleArtifactContract(
-        module_name="Crop",
-        items=(
-            *ModuleArtifactContract.items_for_partition(
-                RecordedArtifactOutputPartition,
-                (ArtifactSpec.output("CropBlue", ImageArtifactType),),
-            ),
-            *ModuleArtifactContract.items_for_partition(
-                DeclaredArtifactOutputPartition,
-                (ArtifactSpec.output("CropBlue", ImageArtifactType),),
-            ),
-        ),
-    )
-    runtime_callable = _declared_runtime_callable(
-        cellprofiler_backend.crop,
-        contract,
-    )
-
-    referenced = FunctionReferenceTransportAuthority.reference_pipeline(
-        [
-            FunctionStep(
-                func=(runtime_callable, {"crop_shape": "Rectangle"}), name="Crop"
-            )
-        ]
-    )
-
-    referenced_func = referenced[0].func[0]
-    referenced_contract = CallableContract.from_callable(referenced_func)
-
-    assert isinstance(referenced_func, CellProfilerRuntimeCallable)
-    assert referenced_contract.module_artifact_contract == contract
-    pickle.dumps(referenced)
-
-
-def test_transport_authority_normalizes_compiled_context_callable_contracts():
-    crop = cellprofiler_backend.crop
-
-    contract = CallableContract.from_callable(crop)
-    step_plan = CompiledStepPlan(
-        step_index=0,
-        step_name="Crop",
-        step_type="FunctionStep",
-        axis_id="A01",
-        func=(crop, {"crop_shape": "Rectangle"}),
-        compiled_function_pattern=CompiledFunctionPattern(
-            groups=(
-                CompiledFunctionGroup(
-                    group_key="default",
-                    invocations=(
-                        CompiledFunctionInvocation(
-                            key=FunctionInvocationKey.from_contract(
-                                contract,
-                                "default",
-                                0,
-                            ),
-                            contract=contract,
-                        ),
-                    ),
-                ),
-            ),
-            is_grouped=False,
-        ),
-    )
-    context = SimpleNamespace(step_plans={0: step_plan})
-
-    normalized_contexts = FunctionStepTransportAuthority.normalize_contexts(
-        {"A01": context}
-    )
-
-    normalized_plan = normalized_contexts["A01"].step_plans[0]
-    normalized_invocation = next(
-        normalized_plan.compiled_function_pattern.iter_invocations()
-    )
-    assert normalized_plan.func[0] is cellprofiler_backend.crop
-    assert normalized_invocation.contract.func is cellprofiler_backend.crop
-    assert (
-        normalized_invocation.contract.raw_processing_function
-        is cellprofiler_backend.crop
-    )
-    pickle.dumps(normalized_contexts)
-
-
-def test_transport_authority_normalizes_cellprofiler_submodule_raw_contract():
-    from openhcs.processing.backends.cellprofiler.crop import crop as raw_crop
-
-    contract = CallableContract.from_callable(cellprofiler_backend.crop)
-    contract = replace(
-        contract,
-        metadata=contract.metadata.with_raw_processing_function(raw_crop),
-    )
-    step_plan = CompiledStepPlan(
-        step_index=0,
-        step_name="Crop",
-        step_type="FunctionStep",
-        axis_id="A01",
-        func=cellprofiler_backend.crop,
-        compiled_function_pattern=CompiledFunctionPattern(
-            groups=(
-                CompiledFunctionGroup(
-                    group_key="default",
-                    invocations=(
-                        CompiledFunctionInvocation(
-                            key=FunctionInvocationKey.from_contract(
-                                contract,
-                                "default",
-                                0,
-                            ),
-                            contract=contract,
-                        ),
-                    ),
-                ),
-            ),
-            is_grouped=False,
-        ),
-    )
-
-    normalized_contexts = FunctionStepTransportAuthority.normalize_contexts(
-        {"A01": SimpleNamespace(step_plans={0: step_plan})}
-    )
-    normalized_invocation = next(
-        normalized_contexts["A01"]
-        .step_plans[0]
-        .compiled_function_pattern.iter_invocations()
-    )
-
-    assert normalized_invocation.contract.raw_processing_function is (
-        cellprofiler_backend.crop
-    )
-    pickle.dumps(normalized_contexts)
-
-
-def test_transport_authority_normalizes_function_reference_preserved_callables():
-    from openhcs.processing.backends.cellprofiler.crop import crop as raw_crop
-
-    def local_prepare():
-        pass
-
-    reference = FunctionReference(
-        function_name="crop",
-        registry_name="openhcs",
-        memory_type="numpy",
-        composite_key="openhcs:openhcs.processing.backends.cellprofiler:crop",
-        original_module="openhcs.processing.backends.cellprofiler",
-        metadata=CallableMetadata(
-            raw_processing_function=raw_crop,
-            prepare=local_prepare,
-        ),
-    )
-
-    normalized = FunctionStepTransportAuthority.normalize_function_spec(reference)
-
-    assert normalized.metadata.prepare is None
-    assert normalized.metadata.raw_processing_function is cellprofiler_backend.crop
-    pickle.dumps(normalized)
-
-
-def test_function_reference_resolver_preserves_cellprofiler_module_contracts(
-    monkeypatch,
-):
-    raw_crop = cellprofiler_backend.crop
-    blue_callable = _declared_runtime_callable(
-        raw_crop,
-        ModuleArtifactContract(
-            module_name="Crop",
-            items=(
-                *ModuleArtifactContract.items_for_partition(
-                    SourceArtifactInputPartition,
-                    (ArtifactSpec.input("OrigBlue", ImageArtifactType),),
-                ),
-            ),
-        ),
-    )
-    green_callable = _declared_runtime_callable(
-        raw_crop,
-        ModuleArtifactContract(
-            module_name="Crop",
-            items=(
-                *ModuleArtifactContract.items_for_partition(
-                    SourceArtifactInputPartition,
-                    (ArtifactSpec.input("OrigGreen", ImageArtifactType),),
-                ),
-            ),
-        ),
-    )
-    blue_contract = CallableContract.from_callable(blue_callable)
-    green_contract = CallableContract.from_callable(green_callable)
-    blue_reference = FunctionReference(
-        function_name="crop",
-        registry_name="openhcs",
-        memory_type="numpy",
-        composite_key="openhcs:openhcs.processing.backends.cellprofiler:crop",
-        original_module="openhcs.processing.backends.cellprofiler",
-    )
-    green_reference = FunctionReference(
-        function_name="crop",
-        registry_name="openhcs",
-        memory_type="numpy",
-        composite_key="openhcs:openhcs.processing.backends.cellprofiler:crop",
-        original_module="openhcs.processing.backends.cellprofiler",
-    )
-    blue_contract = replace(blue_contract, func=blue_reference)
-    green_contract = replace(green_contract, func=green_reference)
-    monkeypatch.setattr(FunctionReference, "resolve", lambda _self: raw_crop)
-    FunctionInvocationCallableResolver._cache.clear()
-
-    blue_resolved = FunctionInvocationCallableResolver.resolve(
-        CompiledFunctionInvocation(
-            key=FunctionInvocationKey.from_contract(blue_contract, "default", 0),
-            contract=blue_contract,
-        )
-    )
-    green_resolved = FunctionInvocationCallableResolver.resolve(
-        CompiledFunctionInvocation(
-            key=FunctionInvocationKey.from_contract(green_contract, "default", 0),
-            contract=green_contract,
-        )
-    )
-
-    assert blue_resolved is not green_resolved
-    assert tuple(
-        spec.name
-        for spec in CallableContract.from_callable(
-            blue_resolved
-        ).module_artifact_contract.inputs
-    ) == ("OrigBlue",)
-    assert tuple(
-        spec.name
-        for spec in CallableContract.from_callable(
-            green_resolved
-        ).module_artifact_contract.inputs
-    ) == ("OrigGreen",)

@@ -6,6 +6,8 @@ Follows OpenHCS generic solution principle - automatically adapts to new registr
 """
 
 import logging
+import inspect
+from collections.abc import Callable
 from typing import Dict, List, Optional, Type
 from os import environ
 
@@ -77,6 +79,31 @@ class RegistryService:
         logger.info(f"Total functions discovered: {len(all_functions)}")
         cls._metadata_cache = all_functions
         return all_functions
+
+    @classmethod
+    def metadata_for_callable(
+        cls,
+        func: Callable,
+    ) -> tuple[str, FunctionMetadata] | None:
+        """Return the registry-owned callable projection for one declaration.
+
+        Registry wrappers preserve their declaration through ``__wrapped__``.
+        Comparing that nominal callable identity keeps transport code blind to
+        library names, generated registry keys, and module naming conventions.
+        """
+
+        declared = inspect.unwrap(func)
+        for composite_key, metadata in cls.get_all_functions_with_metadata().items():
+            if inspect.unwrap(metadata.func) is declared:
+                return composite_key, metadata
+        return None
+
+    @classmethod
+    def registered_callable(cls, func: Callable) -> Callable:
+        """Project a declaration onto its registered runtime owner when present."""
+
+        match = cls.metadata_for_callable(func)
+        return func if match is None else match[1].func
     
 
     
