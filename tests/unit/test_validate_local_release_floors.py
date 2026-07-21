@@ -1,5 +1,6 @@
 """Tests for local extracted-package release-floor validation."""
 
+import ast
 from pathlib import Path
 
 from scripts import validate_local_release_floors as floors
@@ -32,6 +33,42 @@ def _write_project(
 
 def test_checked_in_local_candidate_versions_satisfy_declared_floors():
     assert floors.validate() == ()
+
+
+def test_setup_py_only_projects_build_command_hooks():
+    setup_path = floors.REPO_ROOT / "setup.py"
+    module = ast.parse(setup_path.read_text(encoding="utf-8"), filename=str(setup_path))
+    setup_calls = tuple(
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "setup"
+    )
+
+    assert len(setup_calls) == 1
+    assert {keyword.arg for keyword in setup_calls[0].keywords} == {"cmdclass"}
+    obsolete_dependency_selectors = {
+        "PYPI_DEPENDENCIES",
+        "get_local_external_dependencies",
+        "get_external_dependencies",
+        "is_development_mode",
+    }
+    declared_names = {
+        node.name
+        for node in module.body
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    declared_names.update(
+        target.id
+        for node in module.body
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        for target in (
+            node.targets if isinstance(node, ast.Assign) else (node.target,)
+        )
+        if isinstance(target, ast.Name)
+    )
+    assert declared_names.isdisjoint(obsolete_dependency_selectors)
 
 
 def test_rejects_openhcs_floor_above_available_candidate(tmp_path):

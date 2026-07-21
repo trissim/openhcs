@@ -18,7 +18,7 @@ the install-surface projections:
 
    python scripts/sync_mcp_release_metadata.py
    python scripts/sync_mcp_release_metadata.py --check
-   python scripts/sync_mcp_release_metadata.py --check --expected-version 0.5.22.dev0
+   python scripts/sync_mcp_release_metadata.py --check --expected-version 0.5.22
 
 The script reads the literal assignment with Python's AST and updates structured
 JSON/TOML metadata. Do not edit the same version independently in the Codex
@@ -40,11 +40,12 @@ Install ``dist/*.whl[gui,mcp]`` into a disposable environment and run
 asserts that:
 
 * ``openhcs.__file__`` belongs to the installed environment;
-* the main, GUI, stdio MCP, hosted MCP, development, and recache console scripts
-  exist;
+* every console script declared by the installed distribution exists and loads
+  its callable entry point;
 * the combined client environment contains the PyQt UI dependency;
-* health succeeds over a real stdio session;
-* the packaged knowledge catalog and a document can be read; and
+* health succeeds over a real stdio session and reports the wheel's version;
+* the health resource projection reports no missing package resource;
+* every document in the packaged knowledge catalog can be read; and
 * no knowledge path resolves back into the source checkout.
 
 Client artifacts
@@ -66,10 +67,25 @@ self-signed artifact is not a public release.
 Registry preparation
 --------------------
 
-The PyPI README contains the MCP Registry ownership marker. Validate
-``server.json`` against its declared schema, publish the matching wheel first,
-then use ``mcp-publisher`` to authenticate and publish the metadata. The
-Registry points to PyPI or a release artifact; it does not host OpenHCS code.
+The PyPI README contains the MCP Registry ownership marker. The tag workflow's
+build job validates ``server.json`` against its declared schema before
+publishing the matching wheel. A dependent Registry-only job rechecks the exact
+tag and generated metadata, then polls the exact-version PyPI JSON endpoint
+every five seconds for up to 15 minutes until the release exposes at least one
+downloadable file. Only after that signal succeeds does it download and verify
+the pinned ``mcp-publisher``, run the publisher's live validator, authenticate
+through GitHub Actions OIDC, and publish the metadata. No MCP Registry secret or
+second release action is required. The Registry points to PyPI; it does not host
+OpenHCS code.
+
+The build/upload job has no OIDC permission. ``id-token: write`` and read-only
+repository access are scoped to the dependent Registry publication job.
+
+Registry versions are immutable. Official publication is therefore the final
+workflow action. If the Registry is unavailable, rerun the failed tag workflow
+after confirming that the exact PyPI version is live. Use interactive
+``mcp-publisher login github`` followed by ``mcp-publisher publish`` only as a
+manual recovery path, not as the normal release procedure.
 
 CI and publication gates
 ------------------------
@@ -78,8 +94,10 @@ Extend the existing cross-platform and cross-Python wheel matrix rather than
 creating a second release-validation system. Each matrix installation runs from
 outside the checkout and tests the installed wheel. The tag-triggered publish
 workflow repeats the installed-wheel smoke before upload and rejects a tag whose
-version differs from the package authority or generated release metadata. Treat
-the full matrix as the release candidate gate before creating the tag.
+version differs from the package authority or generated release metadata. Its
+least-privilege dependent job completes official Registry publication after
+PyPI confirms the exact release. Treat the full matrix as the release candidate
+gate before creating the tag.
 
 External steps
 --------------
@@ -89,7 +107,6 @@ require publisher-controlled external state:
 
 * PyPI and GitHub Release publication;
 * production MCPB code signing;
-* official MCP Registry publication;
 * Codex/OpenAI and Claude directory submissions; and
 * hosted domain, OAuth issuer, deployment credentials, and privacy/legal URLs.
 

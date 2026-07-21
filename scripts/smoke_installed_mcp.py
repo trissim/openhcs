@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib.util
+from importlib.metadata import distribution
 import json
 import os
 import shutil
@@ -12,6 +13,32 @@ import sys
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
+
+
+def _load_installed_console_scripts() -> tuple[str, ...]:
+    """Load every console script declared by the installed OpenHCS wheel."""
+    entry_points = tuple(
+        entry_point
+        for entry_point in distribution("openhcs").entry_points
+        if entry_point.group == "console_scripts"
+    )
+    if not entry_points:
+        raise AssertionError("Installed OpenHCS distribution has no console scripts.")
+    executable_search_path = os.pathsep.join(
+        (str(Path(sys.executable).parent), os.environ.get("PATH", ""))
+    )
+    for entry_point in entry_points:
+        if shutil.which(entry_point.name, path=executable_search_path) is None:
+            raise AssertionError(
+                f"Installed console script is missing: {entry_point.name}"
+            )
+        loaded = entry_point.load()
+        if not callable(loaded):
+            raise AssertionError(
+                f"Installed console script does not resolve to a callable: "
+                f"{entry_point.name}={entry_point.value}"
+            )
+    return tuple(sorted(entry_point.name for entry_point in entry_points))
 
 
 def _tool_payload(result) -> dict:
@@ -62,12 +89,50 @@ async def _run_protocol_smoke() -> dict:
                 timeout=30,
             )
 
+            catalog = _tool_payload(catalog_result)
+            document_ids = tuple(
+                sorted(
+                    item["document_id"]
+                    for item in catalog.get("documents", ())
+                    if isinstance(item, dict)
+                    and isinstance(item.get("document_id"), str)
+                )
+            )
+            if not document_ids:
+                raise AssertionError(
+                    f"Installed knowledge catalog is empty: {catalog}"
+                )
+            document_results = {
+                document_id: _tool_payload(
+                    await asyncio.wait_for(
+                        session.call_tool(
+                            "openhcs_get_knowledge_document",
+                            {
+                                "document_id": document_id,
+                                "max_chars": 1,
+                            },
+                        ),
+                        timeout=30,
+                    )
+                )
+                for document_id in document_ids
+            }
+
     health = _tool_payload(health_result)
     capabilities = _tool_payload(capabilities_result)
-    catalog = _tool_payload(catalog_result)
     document = _tool_payload(document_result)
     if health.get("status") != "ok":
         raise AssertionError(f"Installed MCP health failed: {health}")
+    installed_version = distribution("openhcs").version
+    if health.get("openhcs_version") != installed_version:
+        raise AssertionError(
+            "Installed MCP health version diverged from wheel metadata: "
+            f"health={health.get('openhcs_version')} wheel={installed_version}"
+        )
+    if not health.get("packaged_resources_ready"):
+        raise AssertionError(f"Installed MCP resources are incomplete: {health}")
+    if health.get("missing_packaged_resource_paths"):
+        raise AssertionError(f"Installed MCP resources are missing: {health}")
     if capabilities.get("surface_profile") != "desktop":
         raise AssertionError(
             f"Installed MCP did not select the desktop surface: {capabilities}"
@@ -85,11 +150,6 @@ async def _run_protocol_smoke() -> dict:
         )
     if not all(tool.outputSchema for tool in tools_result.tools):
         raise AssertionError("Installed MCP tools are missing output schemas.")
-    document_ids = {
-        item.get("document_id")
-        for item in catalog.get("documents", ())
-        if isinstance(item, dict)
-    }
     if "openhcs_core_model" not in document_ids:
         raise AssertionError(f"Installed knowledge catalog is incomplete: {catalog}")
     if "OpenHCS" not in str(document.get("content", "")):
@@ -98,11 +158,23 @@ async def _run_protocol_smoke() -> dict:
         raise AssertionError(
             f"Installed knowledge document returned errors: {document}"
         )
+    unreadable_documents = {
+        document_id: payload
+        for document_id, payload in document_results.items()
+        if payload.get("errors") or not payload.get("content")
+    }
+    if unreadable_documents:
+        raise AssertionError(
+            "Installed knowledge resources are unreadable: "
+            f"{unreadable_documents}"
+        )
     return {
         "health_status": health["status"],
+        "openhcs_version": installed_version,
+        "packaged_resource_count": health.get("packaged_resource_count"),
         "mcp_surface_profile": capabilities["surface_profile"],
         "mcp_tool_count": len(listed_tool_names),
-        "knowledge_document_count": len(document_ids),
+        "knowledge_document_count": len(document_results),
         "knowledge_document": "openhcs_core_model",
     }
 
@@ -148,18 +220,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise AssertionError(
                     f"Packaged knowledge manifest is missing: {manifest_path}"
                 )
-            for command in (
-                "openhcs",
-                "openhcs-gui",
-                "openhcs-mcp",
-                "openhcs-mcp-http",
-                "openhcs-mcp-dev",
-                "openhcs-recache",
-            ):
-                if shutil.which(command) is None:
-                    raise AssertionError(
-                        f"Installed console script is missing: {command}"
-                    )
+            console_scripts = _load_installed_console_scripts()
             if importlib.util.find_spec("PyQt6") is None:
                 raise AssertionError(
                     "The combined local client installation is missing the PyQt6 UI."
@@ -170,6 +231,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 {
                     "package_path": str(package_path),
                     "knowledge_root": str(knowledge_root),
+                    "console_scripts": console_scripts,
                     "working_directory": str(working_directory),
                 }
             )

@@ -66,9 +66,9 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev,gui]"
 ```
 
-`OPENHCS_DEV_MODE` is not a supported dependency-selection switch. Although
-helper functions with that name remain in `setup.py`, `setup()` currently uses
-the dependencies declared by `pyproject.toml`.
+`OPENHCS_DEV_MODE` is not a supported dependency-selection switch.
+`pyproject.toml` is the only dependency authority; `setup.py` contains only the
+build hooks that project MCP knowledge resources into release artifacts.
 
 ## Run tests
 

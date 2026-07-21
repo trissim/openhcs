@@ -440,7 +440,23 @@ jobs:
           fi
           pip install "$WHEEL"
           # Verify core OpenHCS works without GUI
-          python -c "import openhcs; from openhcs.core.pipeline import Pipeline; print(f'[OK] OpenHCS {openhcs.__version__} headless installation OK')"
+          python - <<'PY'
+          import openhcs
+          from openhcs.core.config import PipelineConfig
+          from openhcs.core.pipeline_document import PipelineDocumentAuthority
+          from openhcs.core.steps.function_step import FunctionStep
+
+          pipeline_document = PipelineDocumentAuthority.from_values(
+              pipeline_config=PipelineConfig(),
+              pipeline_steps=[FunctionStep()],
+          )
+          assert isinstance(pipeline_document.pipeline_config, PipelineConfig)
+          assert len(pipeline_document.pipeline_steps) == 1
+          assert isinstance(pipeline_document.pipeline_steps[0], FunctionStep)
+          print(
+              f'[OK] OpenHCS {openhcs.__version__} headless installation OK'
+          )
+          PY
 
       - name: Test GUI dependencies installation
         shell: bash

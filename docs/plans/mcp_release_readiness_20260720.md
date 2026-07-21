@@ -1,11 +1,12 @@
 # OpenHCS MCP release readiness
 
-Status: **prepared, not ready to publish**.
+Status: **repository gate prepared; final PyPI-only acceptance verified**.
 
 This plan separates repository work that is complete from publisher-controlled
-steps and deployment work that still block a public release. No package,
-registry entry, plugin, connector, or GitHub Release was published during this
-preparation.
+steps and deployment work that still block a public release. The extracted
+owner packages were published in dependency order for clean-wheel acceptance;
+no OpenHCS package, MCP Registry entry, plugin, connector, or OpenHCS GitHub
+Release was published during this preparation.
 
 ## Implemented release surfaces
 
@@ -19,25 +20,32 @@ preparation.
   validate against their current tooling/schema.
 - The wheel build projects the manifest-declared knowledge corpus into package
   resources without checking in a second document tree.
-- The existing Python 3.11/3.12, Linux/macOS/Windows wheel matrix installs the
-  combined GUI/MCP product and runs the real stdio protocol outside the source
-  checkout.
+- The existing Linux/macOS/Windows integration matrix covers Python 3.11-3.13.
+  Its Python 3.11/3.12 PyPI installed-wheel cells install the combined GUI/MCP
+  product and run the real stdio protocol outside the source checkout; the
+  documented OMERO subset remains limited to 3.11/3.12 by ZeroC Ice wheels.
 - Hosted Streamable HTTP is a separate, fail-closed OAuth resource-server
   boundary. Remote exposure comes from nominal capability inheritance, not a
   copied tool list.
 - The browser plugin is generated only after a public HTTPS endpoint is known.
 
-## Required extracted-package release train
+## Dependency isolation and extracted-package release train
 
-The current OpenHCS wheel cannot install purely from PyPI until eight candidate
-packages are published. The safe dependency order is:
+Published `openhcs==0.5.21` exact-pins the previous eight owner releases, so
+publishing the candidate owner versions cannot change existing or fresh 0.5.21
+installs.  The 0.5.22 candidate uses explicit lower bounds on the new versions;
+only the new OpenHCS release can select them.
+
+All eight owner versions below are now available from PyPI. They were published
+in this dependency order:
 
 1. `metaclass-registry 0.1.5`
-2. `arraybridge 0.2.11`, then `PolyStore 0.1.10`
-3. `python-introspect 0.1.5`, then `ObjectState 1.0.18`, then
-   `pyqt-reactive 0.1.22`
-4. `zmqruntime 0.1.9` and `pycodify 0.1.3` at any point before OpenHCS
-5. OpenHCS last
+2. `python-introspect 0.1.5`, then `ObjectState 1.0.18`
+3. `arraybridge 0.2.11`
+4. `zmqruntime 0.1.9`, then `PolyStore 0.1.11`
+5. `pycodify 0.1.3`
+6. `pyqt-reactive 0.1.22` after its ObjectState and python-introspect owners
+7. OpenHCS last
 
 `pycodify 0.1.3` is required because OpenHCS consumes the post-0.1.2 immutable
 render-context extension API; the OpenHCS floor now names that candidate.
@@ -46,11 +54,14 @@ versions, and dependencies from PEP 621 metadata and rejects stale OpenHCS
 floors or unsatisfied local dependency edges. It contains no API or feature
 mirror.
 
-The first clean PyPI-only failure was `python-introspect 0.1.4`, which lacks the
-current `signature_analysis_target` export. A one-shot install using the eight
-local candidate wheels passed with 117 compatible packages, MCP health `ok`,
-all 43 knowledge documents, PyQt/QScintilla offscreen import, and all six
-console entrypoints.
+The first diagnostic PyPI-only failure was `python-introspect 0.1.4`, which
+lacks the current `signature_analysis_target` export. A local-candidate overlay
+proved the dependency graph and installed MCP path before publication, but it is
+not release evidence. Final acceptance subsequently resolved every owner from
+PyPI, installed the `0.5.22` wheel outside the checkout, and passed the real
+stdio MCP protocol and packaged-resource smoke. The smoke reports its
+manifest-derived knowledge-document and distribution-derived console-entrypoint
+counts rather than copying those authorities into this plan.
 
 ## Final local-package release gate
 
@@ -62,23 +73,65 @@ For each extracted package:
 4. Verify its wheel metadata and import surface from a clean environment.
 5. Advance only after downstream candidate installation resolves from PyPI.
 
-After all eight are available, run the existing OpenHCS cross-platform matrix
-without local wheel overlays. A pure-PyPI `wheel[gui,mcp]` smoke on every
-supported Python/OS cell is the dependency-release acceptance test.
+All eight are now available. Run the existing OpenHCS cross-platform matrix
+without local wheel overlays as the ordinary pre-merge CI gate. The final local
+acceptance installed `wheel[gui,mcp]` from PyPI-only dependencies and exercised
+the installed stdio server outside the checkout.
 
-## OpenHCS publication gate
+## Pre-merge OpenHCS publication gate
 
-1. Replace `0.5.22.dev0` with the intended final PEP 440 version.
-2. Run `scripts/sync_mcp_release_metadata.py` and its `--check` mode.
-3. Run the dependency-floor preflight, documentation validator, focused MCP
+1. Confirm all eight exact candidate versions are downloadable from PyPI in a
+   clean environment, with no local wheel overlay or editable submodule.
+2. Confirm the package authority is the intended final PEP 440 version
+   (`0.5.22` for this release).
+3. Run `scripts/sync_mcp_release_metadata.py` and its `--check` mode so the
+   Codex plugin, MCPB wrapper, and `server.json` are committed at that same final
+   version before merge.
+4. Run the dependency-floor preflight, documentation validator, focused MCP
    suites, and the complete existing integration matrix.
-4. Build sdist and wheel, install `wheel[gui,mcp]` outside the checkout, and run
-   `scripts/smoke_installed_mcp.py`.
-5. Validate the Codex plugin and skill, validate/pack/sign MCPB, and validate
-   `server.json`.
-6. Create the release tag only after every candidate gate is green. The publish
-   workflow rejects a tag/version projection mismatch and repeats the installed
-   wheel smoke before upload.
+5. Build sdist and wheel from the merge candidate, install
+   `wheel[gui,mcp]` outside the checkout, and run
+   `scripts/smoke_installed_mcp.py`. The smoke derives installed entry points
+   from wheel metadata and reads every manifest-declared knowledge document.
+6. Validate the Codex plugin and skill, validate/pack/sign MCPB, and validate
+   `server.json` against its declared official MCP Registry schema.
+7. Merge only after the final version projection and clean-wheel gate are green.
+
+The package authority and every generated MCP distribution projection agree on
+final version `0.5.22`. Clean PyPI-only owner resolution and the built-wheel
+protocol smoke are complete; the existing cross-platform workflow remains the
+normal merge gate.
+
+## Post-merge publication action
+
+When the pre-merge gate is complete, the normal annotated tag is the only
+repository action required to publish OpenHCS:
+
+```bash
+git tag -a v0.5.22 -m "Release OpenHCS 0.5.22"
+git push origin v0.5.22
+```
+
+The tag workflow's build job independently checks that the tag, package
+authority, Codex plugin, MCPB wrapper, and `server.json` agree; validates owner
+floors and the official Registry schema; rebuilds the artifacts; installs
+`wheel[gui,mcp]` outside the checkout; runs the real stdio MCP protocol smoke;
+and only then uploads to PyPI and creates the GitHub Release. A dependent
+Registry-only job rechecks the exact tag and generated metadata, polls the
+exact-version PyPI JSON endpoint every five seconds for up to 15 minutes until
+it exposes a downloadable release file, downloads and verifies a pinned
+`mcp-publisher`, runs its live validator, authenticates with GitHub Actions
+OIDC, and publishes the synchronized Registry record as its final action. The
+build/upload job has no OIDC permission; read-only repository access and
+`id-token: write` are scoped to the dependent Registry job. No separate MCP
+Registry secret or normal post-tag command is required.
+
+The Registry record must follow the wheel because it pins the exact PyPI
+version; it is not a substitute for the wheel release gate. Registry versions
+are immutable, so the publisher step intentionally has no later workflow action
+that could fail after a successful official publication. Interactive Registry
+login and publication remain a recovery path only if the tag workflow cannot be
+rerun after an external service failure.
 
 The MCP SDK remains pinned to the stable `mcp>=1.28,<2` line. MCP SDK v2 should
 be a deliberate compatibility migration after its stable release, not an
@@ -86,11 +139,12 @@ unbounded dependency update in this release train.
 
 ## External blockers
 
-- PyPI publication authority for the eight extracted packages and OpenHCS.
+- OpenHCS PyPI, GitHub Release, and official MCP Registry publication through
+  the post-merge tag workflow.
 - A production MCPB signing certificate and signed Claude artifact.
 - Codex/plugin marketplace and Claude directory submission/approval.
-- Official MCP Registry authentication and publication after the PyPI wheel is
-  live.
+- External availability of PyPI, GitHub OIDC, and the official MCP Registry
+  during the tag workflow.
 - A hosted domain, TLS certificate, OAuth issuer/introspection client, secret
   store, tenant workspace provisioning, reverse-proxy limits, durable audit
   sink, privacy/legal URLs, and end-to-end tenant-isolation/load tests.

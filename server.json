@@ -8,19 +8,19 @@
     "url": "https://github.com/OpenHCSDev/OpenHCS",
     "source": "github"
   },
-  "version": "0.5.22.dev0",
+  "version": "0.5.22",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "openhcs",
-      "version": "0.5.22.dev0",
+      "version": "0.5.22",
       "runtimeHint": "uvx",
       "runtimeArguments": [
         {
           "type": "named",
           "name": "--with",
-          "value": "openhcs[gui,mcp]==0.5.22.dev0",
+          "value": "openhcs[gui,mcp]==0.5.22",
           "description": "Install the matching OpenHCS GUI and MCP dependencies."
         }
       ],
