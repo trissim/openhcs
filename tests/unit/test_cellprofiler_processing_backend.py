@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import ast
+import inspect
 from pathlib import Path
 
 import numpy as np
 import pytest
+from python_introspect import Enableable, is_enableable
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.callable_contract import CallableContract, FunctionStepExecutionScope
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
+from openhcs.core.pipeline.function_contracts import execution_scope
 from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -15,6 +19,9 @@ from openhcs.core.runtime_object_labels import ObjectLabelVariantData
 from openhcs.processing.backends.cellprofiler.morphology import (
     resize_objects,
     resize_objects_3d,
+)
+from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
+    export_to_spreadsheet,
 )
 
 
@@ -384,6 +391,18 @@ def test_openhcs_registry_discovers_cellprofiler_backend_contracts() -> None:
     assert metadata.func.input_memory_type == MemoryType.NUMPY.value
     assert "cellprofiler" in metadata.tags
     assert "cellprofiler_identify_objects_in_grid" in functions
+    spreadsheet = functions["cellprofiler_export_to_spreadsheet"]
+    assert spreadsheet.original_name == "export_to_spreadsheet"
+    assert spreadsheet.func is not export_to_spreadsheet
+    assert spreadsheet.func.__wrapped__ is export_to_spreadsheet
+    assert is_enableable(spreadsheet.func)
+    assert CallableContract.from_callable(
+        spreadsheet.func
+    ).resolve_canonical_raw_callable() is export_to_spreadsheet
+    assert (
+        Enableable.require_parameter_name()
+        in inspect.signature(spreadsheet.func).parameters
+    )
 
 
 def test_openhcs_registry_cache_invalidates_when_scanned_modules_change(
@@ -399,6 +418,56 @@ def test_openhcs_registry_cache_invalidates_when_scanned_modules_change(
     functions = registry.load_or_discover_functions()
 
     assert "cellprofiler_identify_primary_objects" in functions
+
+
+def test_openhcs_registry_cache_preserves_plate_scoped_callable_contract(
+    tmp_path,
+) -> None:
+    cache_path = tmp_path / "openhcs_function_metadata.json"
+    discovery_registry = OpenHCSRegistry()
+    discovery_registry._cache_path = cache_path
+    discovery_registry.MODULES_TO_SCAN = [
+        "openhcs.processing.backends.cellprofiler"
+    ]
+    discovery_registry.load_or_discover_functions()
+
+    cache_registry = OpenHCSRegistry()
+    cache_registry._cache_path = cache_path
+    cache_registry.MODULES_TO_SCAN = [
+        "openhcs.processing.backends.cellprofiler"
+    ]
+    cached = cache_registry.load_or_discover_functions()[
+        "cellprofiler_export_to_spreadsheet"
+    ]
+    contract = CallableContract.from_callable(cached.func)
+
+    assert cached.func is not export_to_spreadsheet
+    assert cached.func.__wrapped__ is export_to_spreadsheet
+    assert is_enableable(cached.func)
+    assert contract.execution_scope is FunctionStepExecutionScope.PLATE
+    assert contract.runtime_bound_parameters == ("artifact_batch",)
+    assert contract.resolve_canonical_raw_callable() is export_to_spreadsheet
+
+
+def test_shared_registry_wrapper_preserves_plate_call_semantics() -> None:
+    @execution_scope(FunctionStepExecutionScope.PLATE)
+    def plate_probe(*, value: int) -> int:
+        return value
+
+    wrapped = OpenHCSRegistry().apply_contract_wrapper(
+        plate_probe,
+        ProcessingContract.FLEXIBLE,
+    )
+
+    assert wrapped is not plate_probe
+    assert wrapped(value=3, enabled=False) == 3
+    assert is_enableable(wrapped)
+    assert CallableContract.from_callable(wrapped).execution_scope is (
+        FunctionStepExecutionScope.PLATE
+    )
+    assert CallableContract.from_callable(wrapped).resolve_canonical_raw_callable() is (
+        plate_probe
+    )
 
 
 def test_cellprofiler_threshold_diagnostics_backend_resolves_numpy() -> None:

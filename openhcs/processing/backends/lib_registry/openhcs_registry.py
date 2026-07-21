@@ -19,9 +19,12 @@ import os
 from functools import lru_cache
 
 from openhcs.constants import MemoryType, VALID_MEMORY_TYPES
-from openhcs.core.callable_contract import CallableContract
+from openhcs.core.callable_contract import CallableContract, FunctionStepExecutionScope
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
-from openhcs.processing.backends.lib_registry.unified_registry import LibraryRegistryBase, FunctionMetadata
+from openhcs.processing.backends.lib_registry.unified_registry import (
+    FunctionMetadata,
+    LibraryRegistryBase,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +188,9 @@ class OpenHCSRegistry(LibraryRegistryBase):
 
     def cache_source_mtimes(self) -> Dict[str, float]:
         """Return scanned OpenHCS backend source mtimes without importing modules."""
-        source_mtimes: Dict[str, float] = {}
+        source_mtimes: Dict[str, float] = {
+            f"{__name__}:{__file__}": Path(__file__).stat().st_mtime,
+        }
         for module_name in self.MODULES_TO_SCAN:
             spec = importlib.util.find_spec(module_name)
             origin = spec.origin if spec is not None else None
@@ -332,25 +337,33 @@ class OpenHCSRegistry(LibraryRegistryBase):
         ProcessingContract,
     ) -> FunctionMetadata | None:
         callable_contract = CallableContract.from_callable(func)
+        plate_scoped = (
+            callable_contract.execution_scope is FunctionStepExecutionScope.PLATE
+        )
 
         # Look for functions with memory type attributes (added by @numpy, @cupy, etc.)
         if (
             callable_contract.input_memory_type is None
             or callable_contract.output_memory_type is None
         ):
-            return None
+            if not plate_scoped:
+                return None
+            input_type = None
+            output_type = None
+        else:
+            input_type = callable_contract.input_memory_type
+            output_type = callable_contract.output_memory_type
 
-        input_type = callable_contract.input_memory_type
-        output_type = callable_contract.output_memory_type
-
-        if input_type not in VALID_MEMORY_TYPES or output_type not in VALID_MEMORY_TYPES:
+        if not plate_scoped and (
+            input_type not in VALID_MEMORY_TYPES or output_type not in VALID_MEMORY_TYPES
+        ):
             logger.debug(
                 f"Skipping {name} - invalid memory types: {input_type} -> {output_type}"
             )
             return None
 
         # Check if function's backend is available before including it
-        if not self._is_function_backend_available(input_type):
+        if input_type is not None and not self._is_function_backend_available(input_type):
             logger.debug(f"Skipping {name} - backend not available")
             return None
 
@@ -359,10 +372,12 @@ class OpenHCSRegistry(LibraryRegistryBase):
             ProcessingContract,
         )
 
-        # Attach nominal contract metadata for downstream authorities.
-        vars(func)[FunctionContractAttribute.processing_contract] = contract
+        if not plate_scoped:
+            # Attach nominal contract metadata for downstream authorities.
+            vars(func)[FunctionContractAttribute.processing_contract] = contract
 
-        # Apply nominal contract wrapper.
+        # Apply the shared nominal registration wrapper. Plate-scoped callables
+        # receive Enableable identity without image-processing execution.
         wrapped_func = self.apply_contract_wrapper(func, contract)
 
         # Generate unique function name using module information

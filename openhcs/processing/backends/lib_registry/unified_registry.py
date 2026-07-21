@@ -1340,8 +1340,60 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         """Apply contract wrapper with nominal runtime parameter injection."""
         from functools import wraps
         import inspect
-        from python_introspect import Enableable, set_signature_analysis_target
+        from python_introspect import (
+            Enableable,
+            mark_enableable,
+            set_signature_analysis_target,
+        )
+        from openhcs.core.callable_contract import (
+            CallableContract,
+            FunctionStepExecutionScope,
+        )
         from openhcs.core.config import runtime_config_parameter
+
+        callable_contract = CallableContract.from_callable(func)
+        if callable_contract.execution_scope is FunctionStepExecutionScope.PLATE:
+            original_sig = inspect.signature(func, eval_str=True)
+            enabled_parameter = Enableable.parameter()
+            parameters = list(original_sig.parameters.values())
+            if enabled_parameter.name not in original_sig.parameters:
+                insert_index = next(
+                    (
+                        index
+                        for index, parameter in enumerate(parameters)
+                        if parameter.kind is inspect.Parameter.VAR_KEYWORD
+                    ),
+                    len(parameters),
+                )
+                parameters.insert(insert_index, enabled_parameter)
+
+            @wraps(func)
+            def plate_wrapper(*args, **kwargs):
+                return func(*args, **Enableable.without_parameter(kwargs))
+
+            plate_wrapper.__signature__ = original_sig.replace(parameters=parameters)
+            plate_wrapper.__annotations__ = inspect.get_annotations(
+                func,
+                eval_str=False,
+            ).copy()
+            plate_wrapper.__annotations__[enabled_parameter.name] = (
+                enabled_parameter.annotation
+            )
+            set_signature_analysis_target(plate_wrapper, func)
+            _set_registry_runtime_parameter_exclusions(
+                plate_wrapper,
+                plate_wrapper.__signature__,
+                (),
+                source=func,
+            )
+            from openhcs.core.callable_contract import attach_callable_contract_metadata
+
+            attach_callable_contract_metadata(
+                plate_wrapper,
+                raw_processing_function=func,
+            )
+            mark_enableable(plate_wrapper, enabled_default=True)
+            return plate_wrapper
 
         declaration = contract.declaration
         original_sig = inspect.signature(func, eval_str=True)
@@ -1397,7 +1449,6 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         # If nothing to inject, return original function
         if not params_to_add and not params_to_strip and public_sig == original_sig:
             # Still brand the callable as Enableable metadata.
-            from python_introspect import mark_enableable
             from openhcs.core.callable_contract import attach_callable_contract_metadata
 
             mark_enableable(func, enabled_default=True)
@@ -1503,8 +1554,6 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
 
         # Nominal enable semantics: decorated callables are Enableable.
         # (Enableable is metadata only; enabled remains owned by python_introspect.)
-        from python_introspect import mark_enableable
-
         mark_enableable(wrapper, enabled_default=True)
 
         return wrapper
@@ -1524,6 +1573,16 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
     ) -> Callable:
         """Return the callable shape used before contract wrapping."""
         return original_func
+
+    def reconstruct_cached_callable(
+        self,
+        func: Callable,
+        contract: ProcessingContract,
+    ) -> Callable:
+        """Reconstruct one cached callable through this registry's runtime policy."""
+
+        adapted_func = self.create_library_adapter(func, contract)
+        return self.apply_contract_wrapper(adapted_func, contract)
 
     # ===== PROCESSING CONTRACT EXECUTION METHODS =====
     def execute_pure_3d(self, func, image, *args, **kwargs):
@@ -1845,8 +1904,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
                 return None
             contract = ProcessingContract[cached_data["contract"]]
 
-            adapted_func = self.create_library_adapter(func, contract)
-            final_func = self.apply_contract_wrapper(adapted_func, contract)
+            final_func = self.reconstruct_cached_callable(func, contract)
 
             metadata = FunctionMetadata(
                 name=func_name,
