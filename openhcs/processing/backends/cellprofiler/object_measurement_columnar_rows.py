@@ -5,11 +5,13 @@ from __future__ import annotations
 from abc import ABC
 from collections.abc import Sequence
 
-from openhcs.core.runtime_semantics import (
+from openhcs.core.runtime_measurements import (
     ObjectMeasurementSliceValueRow,
     ObjectMeasurementValueRow,
 )
-from openhcs.core.runtime_values import ColumnarRows
+from openhcs.core.runtime_tabular_values import (
+    ColumnarRows,
+)
 
 
 class ObjectMeasurementColumnarRows(ColumnarRows, ABC):

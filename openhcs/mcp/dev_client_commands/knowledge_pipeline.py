@@ -10,34 +10,42 @@ from typing import ClassVar
 from openhcs.agent.capabilities import agent_capabilities
 from openhcs.agent.authoring_contexts import (
     AuthoringContextDeclaration,
-    PipelineAuthoringContext,
 )
 from openhcs.agent.dto.authoring import AuthoringContextRequest
 from openhcs.agent.dto.common import JsonObject, JsonValue
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.dto.functions import FunctionDetailRequest, FunctionSearchRequest
-from openhcs.agent.serialization import to_jsonable
+from openhcs.agent.dto.pipeline import (
+    PipelineSourceRenderRequest,
+    PipelineValidationRequest,
+)
+from openhcs.serialization.json import to_jsonable
 from openhcs.mcp.dev_client_commanding import McpDevCommandSpec, SingleToolCommandSpec
 from openhcs.mcp.dev_client_core import (
     DEFAULT_REGISTRY_DISCOVERY_TIMEOUT_SECONDS,
     McpDevCliUsageError,
-    McpDevServerSpec,
+    McpDevStdioSession,
     McpDevToolBatchResponse,
     McpDevToolCall,
-    McpDevToolListResponse,
     McpToolArgumentAuthority,
     add_pipeline_source_options,
-    call_execute_source_with_submission,
-    call_fresh_mcp_server,
-    call_pipeline_draft_step,
+    call_mcp_tool,
+    execute_source_session_tool_arguments,
+    execute_source_submit_timeout_seconds,
+    execute_source_submit_tool_arguments,
+    first_mapping_payload,
     optional_int,
+    optional_str,
+    parse_optional_json_object,
     parse_required_axis_labels,
     pipeline_source_from_args,
+    resolve_positional_option_alias,
 )
 from openhcs.mcp.dev_client_rendering import (
     AuthoringContextRenderOptions,
     CatalogRenderOptions,
 )
+
 
 class KnowledgeCommandSpec(SingleToolCommandSpec):
     capability = agent_capabilities.list_knowledge_documents
@@ -64,6 +72,7 @@ class KnowledgeCommandSpec(SingleToolCommandSpec):
         del tool_arguments
         return argparse.Namespace(json=False, contains=None, limit=20)
 
+
 class ArchitectureCommandSpec(SingleToolCommandSpec):
     capability = agent_capabilities.list_architecture_topics
 
@@ -88,6 +97,7 @@ class ArchitectureCommandSpec(SingleToolCommandSpec):
     ) -> argparse.Namespace:
         del tool_arguments
         return argparse.Namespace(json=False, contains=None, limit=20)
+
 
 class FunctionsCommandSpec(SingleToolCommandSpec):
     capability = agent_capabilities.search_functions
@@ -118,15 +128,13 @@ class FunctionsCommandSpec(SingleToolCommandSpec):
         self,
         args: argparse.Namespace,
     ) -> dict[str, JsonValue]:
-        if (
-            args.query is not None
-            and args.query_option is not None
-            and args.query != args.query_option
-        ):
-            raise McpDevCliUsageError(
-                "Cannot pass both positional query and --query with different values."
-            )
-        query = args.query_option if args.query_option is not None else args.query
+        query = resolve_positional_option_alias(
+            args.query,
+            args.query_option,
+            default=None,
+            value_name="query",
+            option_name="--query",
+        )
         return McpToolArgumentAuthority.from_payload(
             to_jsonable(
                 FunctionSearchRequest(
@@ -137,6 +145,7 @@ class FunctionsCommandSpec(SingleToolCommandSpec):
                 )
             )
         )
+
 
 class FunctionCommandSpec(SingleToolCommandSpec):
     capability = agent_capabilities.describe_function
@@ -170,6 +179,7 @@ class FunctionCommandSpec(SingleToolCommandSpec):
                 )
             )
         )
+
 
 class RegisterCustomFunctionCommandSpec(SingleToolCommandSpec):
     capability = agent_capabilities.register_custom_function
@@ -218,16 +228,22 @@ class RegisterCustomFunctionCommandSpec(SingleToolCommandSpec):
             }
         )
 
+
 class AuthoringContextCommandSpec(SingleToolCommandSpec):
     capability = agent_capabilities.get_authoring_context
     default_timeout_seconds = DEFAULT_REGISTRY_DISCOVERY_TIMEOUT_SECONDS
 
     def configure_parser(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
+            "kind",
+            nargs="?",
+            choices=AuthoringContextDeclaration.allowed_values(),
+            help="Authoring-context kind; positional alias for --kind.",
+        )
+        parser.add_argument(
             "--kind",
             "--topic",
-            dest="kind",
-            default=PipelineAuthoringContext.require_kind(),
+            dest="kind_option",
             choices=AuthoringContextDeclaration.allowed_values(),
         )
         parser.add_argument(
@@ -245,10 +261,17 @@ class AuthoringContextCommandSpec(SingleToolCommandSpec):
         self,
         args: argparse.Namespace,
     ) -> dict[str, JsonValue]:
+        kind = resolve_positional_option_alias(
+            args.kind,
+            args.kind_option,
+            default=AuthoringContextRequest().kind,
+            value_name="kind",
+            option_name="--kind/--topic",
+        )
         return McpToolArgumentAuthority.from_payload(
             to_jsonable(
                 AuthoringContextRequest(
-                    kind=args.kind,
+                    kind=kind,
                     max_chars=args.max_chars,
                 )
             )
@@ -272,9 +295,12 @@ class AuthoringContextCommandSpec(SingleToolCommandSpec):
             ),
         )
 
+
 class DraftPipelineStepCommandSpec(McpDevCommandSpec):
     command = "draft-pipeline-step"
-    help = "Create, add one FunctionStep, validate, and render a draft in one MCP session."
+    help = (
+        "Create, add one FunctionStep, validate, and render a draft in one MCP session."
+    )
 
     def calls_from_args(
         self,
@@ -314,16 +340,74 @@ class DraftPipelineStepCommandSpec(McpDevCommandSpec):
             help="Render the complete MCP JSON response instead of a compact summary.",
         )
 
-    async def run(
+    async def run_session(
         self,
-        server_spec: McpDevServerSpec,
+        session: McpDevStdioSession,
         args: argparse.Namespace,
     ) -> McpDevToolBatchResponse:
-        return await call_pipeline_draft_step(
-            server_spec,
-            args,
-            timeout_seconds=args.timeout_seconds,
+        timeout_seconds = self.timeout_seconds(args)
+        create_result = await call_mcp_tool(
+            session,
+            McpDevToolCall(agent_capabilities.create_pipeline.name, {}),
+            timeout_seconds,
         )
+        results = [create_result]
+        create_payload = first_mapping_payload(create_result)
+        pipeline_id = (
+            None if create_payload is None else create_payload.get("pipeline_id")
+        )
+        if isinstance(pipeline_id, str):
+            add_arguments: dict[str, JsonValue] = {
+                "pipeline_id": pipeline_id,
+                "function_id": args.function_id,
+                "name": args.name,
+                "kwargs": parse_optional_json_object(args.kwargs),
+                "step_config_overrides": parse_optional_json_object(
+                    args.step_config_overrides
+                ),
+                "step_id": args.step_id,
+                "description": args.description,
+                "enabled": not args.disabled,
+                "debug_pause": args.debug_pause,
+                "index": args.index,
+            }
+            results.append(
+                await call_mcp_tool(
+                    session,
+                    McpDevToolCall(
+                        agent_capabilities.add_function_step.name,
+                        add_arguments,
+                    ),
+                    timeout_seconds,
+                )
+            )
+            results.append(
+                await call_mcp_tool(
+                    session,
+                    McpDevToolCall(
+                        agent_capabilities.validate_pipeline.name,
+                        to_jsonable(PipelineValidationRequest(pipeline_id=pipeline_id)),
+                    ),
+                    timeout_seconds,
+                )
+            )
+            if not args.no_source:
+                results.append(
+                    await call_mcp_tool(
+                        session,
+                        McpDevToolCall(
+                            agent_capabilities.render_pipeline_source.name,
+                            to_jsonable(
+                                PipelineSourceRenderRequest(
+                                    pipeline_id=pipeline_id,
+                                    clean=args.clean,
+                                )
+                            ),
+                        ),
+                        timeout_seconds,
+                    )
+                )
+        return McpDevToolBatchResponse.from_results(session.server_spec, tuple(results))
 
     def render_response(
         self,
@@ -338,6 +422,7 @@ class DraftPipelineStepCommandSpec(McpDevCommandSpec):
             payload,
             max_source_chars=args.max_source_chars,
         )
+
 
 class ArtifactPlanCommandSpec(SingleToolCommandSpec):
     capability = agent_capabilities.inspect_pipeline_source_artifact_plan
@@ -359,7 +444,6 @@ class ArtifactPlanCommandSpec(SingleToolCommandSpec):
             help="Alias for --axis-filter when axes are wells.",
         )
         parser.add_argument("--global-config-id")
-        parser.add_argument("--pipeline-config-id")
         parser.add_argument(
             "--json",
             action="store_true",
@@ -383,21 +467,9 @@ class ArtifactPlanCommandSpec(SingleToolCommandSpec):
                 "pipeline_source": pipeline_source_from_args(args),
                 "axis_filter": selected_axis_filter or None,
                 "global_config_id": args.global_config_id,
-                "pipeline_config_id": args.pipeline_config_id,
             }
         )
 
-
-    async def run(
-        self,
-        server_spec: McpDevServerSpec,
-        args: argparse.Namespace,
-    ) -> McpDevToolBatchResponse | McpDevToolListResponse:
-        return await call_fresh_mcp_server(
-            server_spec,
-            self.calls_from_args(args),
-            max(args.timeout_seconds, self.default_timeout_seconds),
-        )
 
 class ExecuteSourceCommandSpec(McpDevCommandSpec):
     command = "execute-source"
@@ -415,7 +487,6 @@ class ExecuteSourceCommandSpec(McpDevCommandSpec):
         parser.add_argument("plate_path")
         add_pipeline_source_options(parser)
         parser.add_argument("--global-config-id")
-        parser.add_argument("--pipeline-config-id")
         parser.add_argument("--host", default=ExecutionConnectionSpec().host)
         parser.add_argument("--port", type=int)
         parser.add_argument("--transport-mode")
@@ -453,16 +524,45 @@ class ExecuteSourceCommandSpec(McpDevCommandSpec):
             help="Render the complete MCP JSON response instead of a compact summary.",
         )
 
-    async def run(
+    async def run_session(
         self,
-        server_spec: McpDevServerSpec,
+        session: McpDevStdioSession,
         args: argparse.Namespace,
     ) -> McpDevToolBatchResponse:
-        return await call_execute_source_with_submission(
-            server_spec,
-            args,
-            timeout_seconds=args.timeout_seconds,
+        timeout_seconds = self.timeout_seconds(args)
+        create_result = await call_mcp_tool(
+            session,
+            McpDevToolCall(
+                agent_capabilities.create_orchestrator_session_from_pipeline_source.name,
+                execute_source_session_tool_arguments(args),
+            ),
+            timeout_seconds,
         )
+        results = [create_result]
+        create_payload = first_mapping_payload(create_result)
+        session_id = (
+            optional_str(create_payload.get("session_id"))
+            if create_payload is not None
+            else None
+        )
+        if session_id is not None:
+            results.append(
+                await call_mcp_tool(
+                    session,
+                    McpDevToolCall(
+                        agent_capabilities.submit_pipeline_execution.name,
+                        execute_source_submit_tool_arguments(
+                            args,
+                            session_id=session_id,
+                        ),
+                    ),
+                    execute_source_submit_timeout_seconds(
+                        args,
+                        timeout_seconds=timeout_seconds,
+                    ),
+                )
+            )
+        return McpDevToolBatchResponse.from_results(session.server_spec, tuple(results))
 
     def render_response(
         self,

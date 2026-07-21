@@ -7,20 +7,36 @@ It takes a binary image and labels the worms, untangling them and
 associating all of a worm's pieces together.
 """
 
+from __future__ import annotations
+
+import inspect
+
 from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
     block_setting_value,
+    normalized_symbol_name,
+    optional_setting_value,
     repeating_setting_blocks,
+    required_setting_value,
+    setting_name_matches,
+    setting_names,
+    setting_values,
 )
-from openhcs.interop.cellprofiler.settings_binder import parse_cellprofiler_bool
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingsBinder,
+    SettingToKeywordBinding,
+    parse_cellprofiler_bool,
+    parse_cellprofiler_float,
+    parse_cellprofiler_int,
+)
 import numpy as np
 import re
 import scipy.ndimage
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from enum import Enum
-from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, TypeVar
 from xml.dom.minidom import parse
 from metaclass_registry import AutoRegisterMeta
 from scipy.ndimage import (
@@ -30,98 +46,217 @@ from scipy.ndimage import (
     find_objects,
     label,
 )
+from python_introspect import set_signature_analysis_target
+from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.aligned_image_payload import (
+    AlignedImageStack,
+    pack_aligned_image_outputs,
+)
 from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ArtifactOutputPlan,
+    ArtifactSpec,
     ArtifactSpecCollection,
-    ArtifactType,
+    ArtifactSpecRelation,
     ImageArtifactType,
     MeasurementsArtifactType,
     ObjectLabelsArtifactType,
+    SourceStackLineageSourceRelation,
 )
-from openhcs.interop.cellprofiler.runtime.bound_parameters import (
-    RuntimeBoundParameterName,
+from openhcs.core.callable_contract import KeywordRuntimeParameter
+from openhcs.core.runtime_array_values import RuntimeArrayData
+from openhcs.core.measurement_row_materialization import (
+    ConcatenatedColumnarRows,
+    DataclassMeasurementColumnarRows,
+    MeasurementRowQualifier,
+    MeasurementSparseColumnarRows,
+    QualifiedMeasurementColumnarRows,
 )
-from openhcs.interop.cellprofiler.runtime.mapping_lookup import MappingValueLookup
-from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
-    CellProfilerObjectInputCountAuthority,
-)
-from openhcs.interop.cellprofiler.runtime.payload_types import CellProfilerKwargDict
-from openhcs.interop.cellprofiler.runtime.special_input_policies import (
-    CellProfilerSpecialInputPolicyMixin,
-    SpecialInputBindingRequest,
-)
+from openhcs.core.steps.function_runtime import RuntimeCallableArgument
 from openhcs.interop.cellprofiler.worm_measurements import (
     WormControlPointMeasurementSchema,
 )
-from openhcs.core.runtime_semantics import (
+from openhcs.core.runtime_tabular_values import (
+    FieldSpec,
+)
+from openhcs.core.runtime_measurements import (
     MeasurementRowAxisField,
+)
+from openhcs.core.runtime_object_labels import (
     ObjectLabelRepresentation,
 )
-from openhcs.core.runtime_values import (
+from openhcs.core.runtime_tabular_values import ColumnarRows
+from openhcs.core.runtime_object_labels import (
     ObjectLabelPayload,
     ObjectLabelValue,
-    SourceImageObjectLabelBuildRequest,
-    SparseIJVLabelRows,
     object_label_dense_array,
+    object_label_sparse_ijv_rows,
+    object_label_value_with_dense_labels,
 )
+from openhcs.core.runtime_image_values import (
+    image_payload_data,
+    image_payload_metadata,
+    with_image_payload_data,
+)
+from openhcs.core.runtime_object_label_building import (
+    SourceImageObjectLabelBuildRequest,
+)
+from openhcs.core.runtime_sparse_labels import SparseIJVLabelRows
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
-from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
+from openhcs.core.pipeline.function_contracts import (
+    ObjectLabelInputExecutionMode,
+    object_label_input_execution_mode,
+    required_variable_components,
+    runtime_bound_parameters,
+    special_inputs,
+)
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
-from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
-    BinderSettingsSourceModule,
+from openhcs.interop.cellprofiler.module_settings import (
     BoundModuleSettings,
+)
+from openhcs.interop.cellprofiler.module_declarations import (
     CellProfilerModule,
-    ImageArtifactInputCapability,
-    ImageArtifactInputModule,
-    ImageArtifactOutputCapability,
-    ImageArtifactOutputModule,
+)
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
     MeasurementArtifactOutputModule,
-    ModuleSettingsSourceModule,
     ObjectArtifactInputModule,
     ObjectArtifactOutputModule,
-    ObjectLabelArtifactInputCapability,
-    ObjectLabelArtifactOutputCapability,
-    ScopedMeasurementModule,
-    StructuringElementSettingsModule,
-)
-from openhcs.interop.cellprofiler.runtime.measurement_recording import (
-    CellProfilerMeasurementRecordModule,
 )
 from openhcs.interop.cellprofiler.runtime.measurement_rows import measurement_table_rows
-from openhcs.interop.cellprofiler.setting_names import (
-    optional_setting_value,
-    required_setting_value,
-    setting_values,
-    split_symbol_names,
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    CurrentPayloadMeasurementRecordMixin,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import (
-    cellprofiler_enum_from_literal,
-)
-from openhcs.processing.backends.cellprofiler.thresholding import (
-    ThresholdSettingsModule,
-)
+from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.processing.backends.cellprofiler.distance_propagation_numba import (
     _propagate_labels_and_distances_zero_image_numba,
 )
+from openhcs.processing.backends.cellprofiler.object_images import (
+    object_label_colormap,
+)
+from openhcs.processing.backends.cellprofiler.worm_geometry import (
+    branchpoints,
+    calculate_cumulative_lengths,
+    control_points_for_label_image,
+    endpoints,
+    eight_connectivity,
+    rebuild_worm_from_control_points_approx,
+    sample_control_points,
+    skeletonize_worm_mask,
+)
+from openhcs.interop.cellprofiler.runtime.artifact_binding import (
+    RuntimeInputBindingRequest,
+)
+
+if TYPE_CHECKING:
+    from openhcs.core.function_patterns import (
+        FunctionInvocationKey,
+        NormalizedFunctionItem,
+    )
+    from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
+    from openhcs.interop.cellprofiler.runtime.output_record_request import (
+        CellProfilerOutputRecordRequest,
+    )
 
 MAX_CLUSTER_PATHS = 400
 MAX_CLUSTER_PATH_SETS_CONSIDERED = 50_000
 
 
+class OverlapStyle(str, Enum):
+    WITH_OVERLAP = "with_overlap"
+    WITHOUT_OVERLAP = "without_overlap"
+    BOTH = "both"
+
+
+WormOutput = TypeVar("WormOutput")
+
+
+class WormLabelOutputStrategy(
+    EnumKeyedStrategyMixin[OverlapStyle], ABC, metaclass=AutoRegisterMeta
+):
+    """Own the exact UntangleWorms output topology for one overlap style."""
+
+    __registry_key__ = "overlap_style_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "overlap_style"
+    __enum_label_attr__ = "overlap_style_label"
+    overlap_style_label: ClassVar[str | None] = None
+    overlap_style: ClassVar[OverlapStyle | None] = None
+    callable_name: ClassVar[str]
+
+    @classmethod
+    def for_overlap_style(
+        cls, overlap_style: OverlapStyle
+    ) -> "WormLabelOutputStrategy":
+        return cls.for_enum_member(overlap_style)
+
+    @abstractmethod
+    def select(
+        self,
+        *,
+        overlapping: WormOutput,
+        nonoverlapping: WormOutput,
+    ) -> tuple[WormOutput, ...]:
+        """Select ordered values from the two declared object roles."""
+
+
+class WithOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
+    overlap_style = OverlapStyle.WITH_OVERLAP
+    callable_name = "untangle_worms_with_overlap"
+
+    def select(
+        self,
+        *,
+        overlapping: WormOutput,
+        nonoverlapping: WormOutput,
+    ) -> tuple[WormOutput, ...]:
+        del nonoverlapping
+        return (overlapping,)
+
+
+class WithoutOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
+    overlap_style = OverlapStyle.WITHOUT_OVERLAP
+    callable_name = "untangle_worms"
+
+    def select(
+        self,
+        *,
+        overlapping: WormOutput,
+        nonoverlapping: WormOutput,
+    ) -> tuple[WormOutput, ...]:
+        del overlapping
+        return (nonoverlapping,)
+
+
+class BothOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
+    overlap_style = OverlapStyle.BOTH
+    callable_name = "untangle_worms_both"
+
+    def select(
+        self,
+        *,
+        overlapping: WormOutput,
+        nonoverlapping: WormOutput,
+    ) -> tuple[WormOutput, ...]:
+        return (overlapping, nonoverlapping)
+
+
 class UntangleWormsModule(
-    CellProfilerMeasurementRecordModule,
-    ImageArtifactInputModule,
-    ObjectArtifactOutputModule,
+    CurrentPayloadMeasurementRecordMixin,
     MeasurementArtifactOutputModule,
-    ModuleSettingsSourceModule,
+    ObjectArtifactOutputModule,
 ):
     module_name = "UntangleWorms"
     function_name = "untangle_worms"
+    function_variants = tuple(
+        strategy.callable_name
+        for strategy in WormLabelOutputStrategy.__registry__.values()
+        if strategy.overlap_style is not OverlapStyle.WITHOUT_OVERLAP
+    )
     validated = True
     confidence = 1.0
+
     calculated_measurement_feature_prefixes = (
         ("worm",),
         ("fat", "regions"),
@@ -132,12 +267,108 @@ class UntangleWormsModule(
     )
     overlapping_objects_setting = "Name the output overlapping worm objects"
     nonoverlapping_objects_setting = "Name the output non-overlapping worm objects"
-    image_input_settings = (input_image_setting,)
-    object_output_settings = (
-        overlapping_objects_setting,
-        nonoverlapping_objects_setting,
+    overlap_style_setting = "Overlap style"
+    num_control_points_setting = "Number of control points"
+    overlapping_object_output_binding = SettingToKeywordBinding.output(
+        overlapping_objects_setting, ObjectLabelsArtifactType
+    )
+    nonoverlapping_object_output_binding = SettingToKeywordBinding.output(
+        nonoverlapping_objects_setting, ObjectLabelsArtifactType
+    )
+    retain_overlapping_outline_setting = "Retain outlines of the overlapping objects?"
+    overlapping_outline_colormap_setting = "Outline colormap?"
+    overlapping_outline_name_setting = "Name the overlapped outline image"
+    retain_nonoverlapping_outline_setting = (
+        "Retain outlines of the non-overlapping worms?"
+    )
+    nonoverlapping_outline_name_setting = "Name the non-overlapped outlines image"
+    overlapping_outline_output_binding = SettingToKeywordBinding.output(
+        overlapping_outline_name_setting,
+        ImageArtifactType,
+        "overlapping_outline_name",
+    )
+    nonoverlapping_outline_output_binding = SettingToKeywordBinding.output(
+        nonoverlapping_outline_name_setting,
+        ImageArtifactType,
+        "nonoverlapping_outline_name",
     )
     training_file_name_setting = "Training set file name"
+    training_file_location_setting = "Training set file location"
+    use_training_weights_setting = "Use training set weights?"
+    execution_mode_setting = "Train or untangle worms?"
+    overlap_weight_setting = "Overlap weight"
+    leftover_weight_setting = "Leftover weight"
+    minimum_area_percentile_setting = "Minimum area percentile"
+    minimum_area_factor_setting = "Minimum area factor"
+    maximum_area_percentile_setting = "Maximum area percentile"
+    maximum_area_factor_setting = "Maximum area factor"
+    minimum_length_percentile_setting = "Minimum length percentile"
+    minimum_length_factor_setting = "Minimum length factor"
+    maximum_length_percentile_setting = "Maximum length percentile"
+    maximum_length_factor_setting = "Maximum length factor"
+    maximum_cost_percentile_setting = "Maximum cost percentile"
+    maximum_cost_factor_setting = "Maximum cost factor"
+    maximum_radius_percentile_setting = "Maximum radius percentile"
+    maximum_radius_factor_setting = "Maximum radius factor"
+    maximum_complexity_setting = "Maximum complexity"
+    custom_complexity_setting = "Custom complexity"
+    training_adjustment_settings = (
+        minimum_area_percentile_setting,
+        minimum_area_factor_setting,
+        maximum_area_percentile_setting,
+        maximum_area_factor_setting,
+        minimum_length_percentile_setting,
+        minimum_length_factor_setting,
+        maximum_length_percentile_setting,
+        maximum_length_factor_setting,
+        maximum_cost_percentile_setting,
+        maximum_cost_factor_setting,
+        maximum_radius_percentile_setting,
+        maximum_radius_factor_setting,
+    )
+    overlap_style_binding = SettingToKeywordBinding(
+        overlap_style_setting,
+        "overlap_style",
+        lambda value: coerce_overlap_style(value),
+    )
+    num_control_points_binding = SettingToKeywordBinding(
+        num_control_points_setting,
+        "num_control_points",
+        parse_cellprofiler_int,
+    )
+    setting_bindings = (
+        SettingToKeywordBinding.input(input_image_setting, ImageArtifactType),
+        overlapping_object_output_binding,
+        nonoverlapping_object_output_binding,
+        overlapping_outline_output_binding,
+        nonoverlapping_outline_output_binding,
+        overlap_style_binding,
+        num_control_points_binding,
+        SettingToKeywordBinding(
+            overlap_weight_setting,
+            "overlap_weight",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            leftover_weight_setting,
+            "leftover_weight",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            retain_overlapping_outline_setting,
+            "retain_overlapping_outline",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            overlapping_outline_colormap_setting,
+            "overlapping_outline_colormap",
+        ),
+        SettingToKeywordBinding(
+            retain_nonoverlapping_outline_setting,
+            "retain_nonoverlapping_outline",
+            parse_cellprofiler_bool,
+        ),
+    )
     training_parameter_tags: ClassVar[tuple[tuple[str, str, type], ...]] = (
         ("min-area", "min_worm_area", float),
         ("max-area", "max_worm_area", float),
@@ -159,83 +390,189 @@ class UntangleWormsModule(
         ("inv-angles-covariance-matrix", "inv_angles_covariance_matrix"),
     )
 
-    class OverlapStyle(str, Enum):
-        WITH_OVERLAP = "with_overlap"
-        WITHOUT_OVERLAP = "without_overlap"
-        BOTH = "both"
+    @classmethod
+    def overlap_output_strategy(
+        cls,
+        module: ModuleBlock,
+    ) -> WormLabelOutputStrategy:
+        """Return the nominal output topology selected by the module settings."""
+
+        return WormLabelOutputStrategy.for_overlap_style(
+            coerce_overlap_style(
+                required_setting_value(module, cls.overlap_style_setting)
+            )
+        )
 
     @classmethod
-    def settings_source(cls, module: "ModuleBlock") -> "CellProfilerKwargs":
-        """Bind UntangleWorms settings that affect runtime output semantics."""
-        overlap_style = coerce_cellprofiler_enum(
-            cls.OverlapStyle, module.get_setting("Overlap style", "Without overlap")
+    def active_artifact_bindings(
+        cls,
+        module: ModuleBlock | None = None,
+        *,
+        invocation_key: "FunctionInvocationKey | None" = None,
+    ) -> tuple[SettingToKeywordBinding, ...]:
+        """Return object and outline outputs active for the overlap style."""
+
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
         )
-        kwargs: dict[str, str | int | float | tuple[Any, ...]] = {
-            "overlap_style": overlap_style.value,
-        }
-        if (
-            num_control_points := optional_setting_value(
-                module, "Number of control points"
+        if module is None:
+            return bindings
+        object_outputs = cls.overlap_output_strategy(module).select(
+            overlapping=cls.overlapping_object_output_binding,
+            nonoverlapping=cls.nonoverlapping_object_output_binding,
+        )
+        outline_outputs = cls.overlap_output_strategy(module).select(
+            overlapping=(
+                cls.overlapping_outline_output_binding
+                if cls._retains_outline(
+                    module,
+                    cls.retain_overlapping_outline_setting,
+                )
+                else None
+            ),
+            nonoverlapping=(
+                cls.nonoverlapping_outline_output_binding
+                if cls._retains_outline(
+                    module,
+                    cls.retain_nonoverlapping_outline_setting,
+                )
+                else None
+            ),
+        )
+        selected = frozenset(
+            (*object_outputs, *(item for item in outline_outputs if item is not None))
+        )
+        declared_outputs = frozenset(
+            cls.declared_artifact_bindings(plan_type=ArtifactOutputPlan)
+        )
+        return tuple(
+            binding
+            for binding in bindings
+            if binding not in declared_outputs or binding in selected
+        )
+
+    @classmethod
+    def _retains_outline(
+        cls,
+        module: ModuleBlock,
+        setting_name: str,
+    ) -> bool:
+        value = optional_setting_value(module, setting_name)
+        return value is not None and parse_cellprofiler_bool(value)
+
+    @classmethod
+    def resolve_function(
+        cls,
+        module: ModuleBlock,
+        *,
+        contract,
+        source_bindings,
+    ) -> Callable[..., object]:
+        """Select the callable whose static label ABI matches the overlap style."""
+
+        del contract, source_bindings
+        return cls.require_callable(cls.overlap_output_strategy(module).callable_name)
+
+    @classmethod
+    def bind_settings(
+        cls,
+        module: "ModuleBlock",
+        *,
+        binder: SettingsBinder,
+    ) -> BoundModuleSettings:
+        """Expand one training model into ordinary typed callable kwargs."""
+
+        execution_mode = optional_setting_value(module, cls.execution_mode_setting)
+        if execution_mode is not None and execution_mode.casefold() != "untangle":
+            raise NotImplementedError("UntangleWorms training mode is interactive.")
+        use_training_weights = optional_setting_value(
+            module,
+            cls.use_training_weights_setting,
+        )
+        if use_training_weights is not None and not parse_cellprofiler_bool(
+            use_training_weights
+        ):
+            raise NotImplementedError(
+                "UntangleWorms custom percentile/factor weights are not supported."
             )
-        ) is not None:
-            kwargs["num_control_points"] = int(float(num_control_points))
-        kwargs.update(cls.training_parameter_kwargs(module))
-        return kwargs
+        maximum_complexity = optional_setting_value(
+            module,
+            cls.maximum_complexity_setting,
+        )
+        if (
+            maximum_complexity is not None
+            and maximum_complexity.casefold() != "process all clusters"
+        ):
+            raise NotImplementedError(
+                "UntangleWorms custom cluster complexity is not supported."
+            )
+
+        training_kwargs = cls.training_parameter_kwargs(module, binder=binder)
+        if use_training_weights is not None and not training_kwargs:
+            raise FileNotFoundError(
+                f"UntangleWorms({module.module_num}) could not load training model "
+                f"{optional_setting_value(module, cls.training_file_name_setting)!r}."
+            )
+        bound = cls._bind_declared_settings(module, binder=binder)
+        bound = bound.with_kwargs(training_kwargs).with_consumed_settings(
+            cls.execution_mode_setting,
+            cls.training_file_location_setting,
+            cls.training_file_name_setting,
+            cls.use_training_weights_setting,
+            cls.maximum_complexity_setting,
+            cls.custom_complexity_setting,
+            *cls.training_adjustment_settings,
+        )
+        return cls._finalize_bound_settings(module, binder=binder, bound=bound)
 
     @classmethod
     def measurement_record_rows(
         cls, request: "CellProfilerOutputRecordRequest"
-    ) -> list[CellProfilerKwargDict]:
-        rows = tuple(measurement_table_rows(request.output_value))
-        if not rows:
-            return []
-        object_names: tuple[str, ...] | None = None
-        qualified_rows: list[CellProfilerKwargDict] = []
+    ) -> ColumnarRows:
+        rows = measurement_table_rows(request.output_value)
         object_name_field = MeasurementRowAxisField.OBJECT_NAME.value
-        for row in rows:
-            row_mapping = dict(row)
-            if object_name_field in row_mapping or "object_number" not in row_mapping:
-                qualified_rows.append(row_mapping)
-                continue
-            if object_names is None:
-                object_names = cls.measurement_object_names(request)
-            qualified_rows.extend(
-                {object_name_field: object_name, **row_mapping}
-                for object_name in object_names
-            )
-        return [*qualified_rows, *super().measurement_record_rows(request)]
-
-    @classmethod
-    def measurement_object_names(
-        cls, request: "CellProfilerOutputRecordRequest"
-    ) -> tuple[str, ...]:
-        object_outputs = ArtifactSpecCollection(request.outputs).of_artifact_type(
-            ObjectLabelsArtifactType
-        )
-        if len(object_outputs) != 2:
-            raise ValueError(
-                "UntangleWorms measurement rows require exactly two declared "
-                f"object-label outputs, got {[spec.name for spec in object_outputs]!r}."
-            )
-        overlap_style = coerce_overlap_style(
-            MappingValueLookup(request.call_kwargs, "overlap_style").value_or(
-                OverlapStyle.WITHOUT_OVERLAP
-            )
-        )
-        return WormLabelOutputStrategy.for_overlap_style(
-            overlap_style
-        ).measurement_object_names(
-            overlapping_object_name=object_outputs[0].name,
-            nonoverlapping_object_name=object_outputs[1].name,
-        )
+        object_number_field = MeasurementRowAxisField.OBJECT_NUMBER.value
+        field_names = frozenset(field_spec.name for field_spec in rows.fields)
+        row_batches: list[ColumnarRows] = []
+        if rows.row_count():
+            if (
+                object_name_field in field_names
+                or object_number_field not in field_names
+            ):
+                row_batches.append(rows)
+            else:
+                row_batches.extend(
+                    QualifiedMeasurementColumnarRows(
+                        rows,
+                        (
+                            MeasurementRowQualifier(
+                                field_name=object_name_field,
+                                value=object_name,
+                            ),
+                        ),
+                    )
+                    for object_name in (
+                        object_spec.name
+                        for object_spec in cls.measurement_object_output_specs_for_request(
+                            request
+                        )
+                    )
+                )
+        row_batches.append(super().measurement_record_rows(request))
+        return ConcatenatedColumnarRows(tuple(row_batches))
 
     @classmethod
     def training_parameter_kwargs(
-        cls, module: "ModuleBlock"
+        cls,
+        module: "ModuleBlock",
+        *,
+        binder: SettingsBinder,
     ) -> dict[str, float | int | tuple[Any, ...]]:
-        training_path = cls.training_file_path(module)
-        if training_path is None:
+        file_name = optional_setting_value(module, cls.training_file_name_setting)
+        if not file_name:
             return {}
+        training_path = binder.resolve_source_file(file_name)
         doc = parse(str(training_path))
         kwargs: dict[str, float | int | tuple[Any, ...]] = {}
         for tag_name, parameter_name, coerce in cls.training_parameter_tags:
@@ -303,97 +640,72 @@ class UntangleWormsModule(
         ).strip()
         return float(text)
 
-    @classmethod
-    def training_file_path(cls, module: "ModuleBlock") -> Path | None:
-        file_name = optional_setting_value(module, cls.training_file_name_setting)
-        if not file_name or module.cppipe_path is None:
-            return None
-        for candidate in (
-            module.cppipe_path.parent / file_name,
-            module.cppipe_path.parent / "images" / file_name,
-        ):
-            if candidate.is_file():
-                return candidate
-        return None
+
+class _StraightenWormControlPointsRuntimeParameter(KeywordRuntimeParameter):
+    """Runtime-bound control points reconstructed from producer measurements."""
+
+    parameter_name = "control_points"
+    annotation_type = np.ndarray | None
+    parameter_default = None
 
 
-from openhcs.processing.backends.cellprofiler.worm_geometry import (
-    branchpoints,
-    calculate_cumulative_lengths,
-    control_points_for_label_image,
-    endpoints,
-    eight_connectivity,
-    rebuild_worm_from_control_points_approx,
-    sample_control_points,
-    skeletonize_worm_mask,
-    trace_skeleton_path,
-)
-
-
-class StraightenWormsSpecialInputPolicy(CellProfilerSpecialInputPolicyMixin):
+class StraightenWormsSpecialInputPolicy:
     """Resolve worm labels plus producer-derived control points."""
 
-    worm_labels_kwarg: ClassVar[RuntimeBoundParameterName] = RuntimeBoundParameterName(
-        "worm_labels"
-    )
-    control_points_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName("control_points")
-    )
-
-    def extra_bound_parameter_names(
-        self, plan: "CellProfilerModuleRuntimePlan"
-    ) -> tuple[str, ...]:
-        if ArtifactSpecCollection(plan.runtime_inputs).of_artifact_type(
-            MeasurementsArtifactType
-        ):
-            return super().extra_bound_parameter_names(plan)
-        return ()
-
-    def bind(self, request: SpecialInputBindingRequest) -> CellProfilerKwargDict:
+    @classmethod
+    def bind_runtime_inputs(
+        cls,
+        request: RuntimeInputBindingRequest,
+    ) -> dict[str, RuntimeCallableArgument]:
         object_inputs = request.object_inputs
-        CellProfilerObjectInputCountAuthority.require_exact(
-            request.module_name, object_inputs, 1
-        )
-        measurement_inputs = ArtifactSpecCollection(
-            request.runtime_inputs
-        ).of_artifact_type(MeasurementsArtifactType)
-        bound: CellProfilerKwargDict = {
-            self.worm_labels_kwarg: request.labels_for(object_inputs[0])
-        }
+        measurement_inputs = request.declared_measurement_specs
+        bound = super().bind_runtime_inputs(request)
         if not measurement_inputs:
             return bound
-        if len(measurement_inputs) > 1:
-            raise NotImplementedError(
-                f"{request.module_name} supports one producer measurement input; got {[spec.name for spec in measurement_inputs]}."
-            )
-        num_control_points = int(
-            MappingValueLookup(request.kwargs, "num_control_points").value_or(21)
-        )
+        if "num_control_points" in request.kwargs:
+            num_control_points = int(request.kwargs["num_control_points"])
+        else:
+            parameter = inspect.signature(request.func).parameters["num_control_points"]
+            if parameter.default is inspect.Parameter.empty:
+                raise ValueError(
+                    f"{cls.module_name} requires num_control_points to reconstruct "
+                    "producer control-point measurements."
+                )
+            num_control_points = int(parameter.default)
         control_points = WormControlPointMeasurementSchema(
             num_control_points=num_control_points
         ).control_points_from_rows(
-            request.runtime_value(measurement_inputs[0]),
+            request.runtime_value_for_spec(measurement_inputs[0]),
             object_name=object_inputs[0].name,
         )
         if control_points is not None:
-            bound[self.control_points_kwarg] = control_points
+            bound[
+                _StraightenWormControlPointsRuntimeParameter.require_parameter_name()
+            ] = control_points
         return bound
+
+
+class FlipMode(Enum):
+    """CellProfiler head/tail alignment policy for straightened worms."""
+
+    NONE = "do_not_align"
+    TOP = "top_brightest"
+    BOTTOM = "bottom_brightest"
+    MANUAL = "flip_manually"
 
 
 class StraightenWormsModule(
     StraightenWormsSpecialInputPolicy,
     ObjectArtifactInputModule,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
     ObjectArtifactOutputModule,
     MeasurementArtifactOutputModule,
-    ModuleSettingsSourceModule,
 ):
     module_name = "StraightenWorms"
     function_name = "straighten_worms"
     validated = True
-    contract = ProcessingContract.FLEXIBLE
+    group_by = GroupBy.SITE
     confidence = 1.0
+
     input_objects_setting = "Select the input untangled worm objects"
     output_objects_setting = "Name the output straightened worm objects"
     input_image_setting = "Select an input image to straighten"
@@ -403,92 +715,276 @@ class StraightenWormsModule(
     transverse_segments_setting = "Number of transverse segments"
     longitudinal_stripes_setting = "Number of longitudinal stripes"
     alignment_setting = "Align worms?"
+    alignment_image_setting = "Alignment image"
+    image_count_setting = "Image count"
+    training_file_location_setting = "Training set file location"
+    training_file_name_setting = "Training set file name"
+    input_objects_binding = SettingToKeywordBinding.input(
+        input_objects_setting,
+        ObjectLabelsArtifactType,
+        runtime_parameter_name="worm_labels",
+    )
+    output_objects_binding = SettingToKeywordBinding.output(
+        output_objects_setting, ObjectLabelsArtifactType
+    )
+    input_image_binding = SettingToKeywordBinding.input(
+        input_image_setting, ImageArtifactType, repeated=True
+    )
+    output_image_binding = SettingToKeywordBinding.output(
+        output_image_setting, ImageArtifactType, repeated=True
+    )
+    worm_width_binding = SettingToKeywordBinding(
+        worm_width_setting,
+        "worm_width",
+        parse_cellprofiler_int,
+    )
+    measure_intensity_binding = SettingToKeywordBinding(
+        measure_intensity_setting,
+        "measure_intensity",
+        parse_cellprofiler_bool,
+    )
+    transverse_segments_binding = SettingToKeywordBinding(
+        transverse_segments_setting,
+        "number_of_segments",
+        parse_cellprofiler_int,
+    )
+    longitudinal_stripes_binding = SettingToKeywordBinding(
+        longitudinal_stripes_setting,
+        "number_of_stripes",
+        parse_cellprofiler_int,
+    )
+    alignment_binding = SettingToKeywordBinding(
+        alignment_setting,
+        "flip_mode",
+        lambda value: coerce_cellprofiler_enum(FlipMode, value),
+    )
+    setting_bindings = (
+        worm_width_binding,
+        measure_intensity_binding,
+        transverse_segments_binding,
+        longitudinal_stripes_binding,
+        alignment_binding,
+        input_objects_binding,
+        output_objects_binding,
+        input_image_binding,
+        output_image_binding,
+    )
 
     @classmethod
-    def compile_time_public_setting_names(cls):
+    def bind_settings(cls, module: ModuleBlock, *, binder) -> BoundModuleSettings:
+        """Bind ordered image rows and their shared alignment semantics."""
+
+        image_bindings = cls.image_bindings(module)
+        image_count = optional_setting_value(module, cls.image_count_setting)
+        if image_count is not None and int(float(image_count)) != len(image_bindings):
+            raise ValueError(
+                f"StraightenWorms({module.module_num}) declares image count "
+                f"{image_count!r} but contains {len(image_bindings)} image rows."
+            )
+
+        output_names = tuple(binding.output_image_name for binding in image_bindings)
+        kwargs: dict[str, Any] = {
+            cls.output_image_binding.require_parameter_name(): (
+                output_names[0] if len(output_names) == 1 else output_names
+            )
+        }
+        alignment_image = optional_setting_value(module, cls.alignment_image_setting)
+        if alignment_image is not None:
+            matching_indexes = tuple(
+                index
+                for index, binding in enumerate(image_bindings)
+                if binding.input_image_name == alignment_image
+            )
+            if len(matching_indexes) != 1:
+                raise ValueError(
+                    f"StraightenWorms({module.module_num}) alignment image "
+                    f"{alignment_image!r} must select exactly one input image."
+                )
+            kwargs["alignment_image_index"] = matching_indexes[0]
+
+        training_name = optional_setting_value(
+            module,
+            cls.training_file_name_setting,
+        )
+        if training_name is not None:
+            training_kwargs = UntangleWormsModule.training_parameter_kwargs(
+                module,
+                binder=binder,
+            )
+            if not training_kwargs:
+                raise FileNotFoundError(
+                    f"StraightenWorms({module.module_num}) could not load training "
+                    f"model {training_name!r}."
+                )
+            if "num_control_points" in training_kwargs:
+                kwargs["num_control_points"] = training_kwargs["num_control_points"]
+
+        bound = cls._bind_declared_settings(module, binder=binder)
+        bound = bound.with_kwargs(kwargs).with_consumed_settings(
+            cls.alignment_image_setting,
+            cls.image_count_setting,
+            cls.training_file_location_setting,
+            cls.training_file_name_setting,
+        )
+        return cls._finalize_bound_settings(module, binder=binder, bound=bound)
+
+    @classmethod
+    def artifact_output_relations(
+        cls,
+        module: ModuleBlock,
+        *,
+        invocation_key,
+        step_context,
+        binding,
+        name,
+        artifact_inputs: ArtifactSpecCollection,
+        output_position: int,
+    ):
+        """Anchor each straightened artifact to its exact declared input."""
+
+        if binding is cls.output_objects_binding:
+            del name, invocation_key, step_context, output_position
+            source = artifact_inputs.require_by_name_and_artifact_type(
+                cls.input_objects_name(module),
+                ObjectLabelsArtifactType,
+            )
+            return (SourceStackLineageSourceRelation(source=source.ref()),)
+        del invocation_key, step_context, name
+        image_bindings = cls.image_bindings(module)
+        if output_position >= len(image_bindings):
+            raise ValueError(
+                f"StraightenWorms({module.module_num}) output position "
+                f"{output_position} has no declared image row."
+            )
+        source = artifact_inputs.require_by_name_and_artifact_type(
+            image_bindings[output_position].input_image_name,
+            ImageArtifactType,
+        )
+        return (SourceStackLineageSourceRelation(source=source.ref()),)
+
+    @classmethod
+    def finalize_module_blocks_for_invocation(
+        cls,
+        blocks, *,
+        invocation: NormalizedFunctionItem,
+        step_context: ArtifactDeclarationStepContext,
+    ) -> tuple[ModuleBlock, ...]:
+        """Reconstruct all ordered input/output image pairs exactly once."""
+
+        blocks = super().finalize_module_blocks_for_invocation(
+            blocks, invocation=invocation,
+            step_context=step_context,
+        )
+        reconstructed: list[ModuleBlock] = []
+        output_offset = 0
+        for block in blocks:
+            rebuilt = cls._block_with_image_bindings(
+                block,
+                output_offset=output_offset,
+                step_context=step_context,
+            )
+            reconstructed.append(rebuilt)
+            output_offset += len(cls.image_bindings(rebuilt))
+        return tuple(reconstructed)
+
+    @classmethod
+    def derives_missing_output_identity(
+        cls,
+        binding: SettingToKeywordBinding,
+    ) -> bool:
+        """Leave repeated image-output cardinality with its row owner."""
+
         return (
-            *super().compile_time_public_setting_names(),
-            cls.input_objects_setting,
-            cls.output_objects_setting,
-            cls.input_image_setting,
-            cls.output_image_setting,
+            False
+            if binding is cls.output_image_binding
+            else super().derives_missing_output_identity(binding)
         )
 
     @classmethod
-    def compile_time_public_setting_records(cls, module, source_schema=None):
-        del source_schema
-        from openhcs.interop.cellprofiler.parser import ModuleSetting
+    def _block_with_image_bindings(
+        cls,
+        block: ModuleBlock,
+        *,
+        output_offset: int,
+        step_context: ArtifactDeclarationStepContext,
+    ) -> ModuleBlock:
+        input_names = cls._required_image_names(
+            block,
+            setting=cls.input_image_setting,
+        )
+        output_names = cls._image_names(
+            block,
+            setting=cls.output_image_setting,
+        )
+        if not output_names:
+            output_names = tuple(
+                cls.canonical_output_artifact_name(
+                    artifact_type=ImageArtifactType,
+                    output_position=output_position,
+                    block_position=output_offset,
+                    step_context=step_context,
+                )
+                for output_position in range(len(input_names))
+            )
+        if len(output_names) != len(input_names):
+            raise ValueError(
+                "StraightenWorms public image identity kwargs must contain "
+                "the same number of input and output image names."
+            )
 
         records = [
-            ModuleSetting(setting_name, value)
-            for setting_name in (
-                cls.input_objects_setting,
-                cls.output_objects_setting,
+            record
+            for record in block.iter_settings()
+            if not (
+                setting_name_matches(
+                    record.name,
+                    cls.input_image_binding.setting_name,
+                )
+                or setting_name_matches(
+                    record.name,
+                    cls.output_image_binding.setting_name,
+                )
             )
-            for value in setting_values(module, setting_name)
         ]
-        for binding in cls.image_bindings(module):
-            records.append(ModuleSetting(cls.input_image_setting, binding.input_image_name))
-            records.append(ModuleSetting(cls.output_image_setting, binding.output_image_name))
-        return tuple(records)
+        for input_name, output_name in zip(input_names, output_names, strict=True):
+            records.extend(
+                (
+                    ModuleSetting(cls.input_image_setting, input_name),
+                    ModuleSetting(cls.output_image_setting, output_name),
+                )
+            )
+        return replace(
+            block,
+            setting_records=records,
+        )
 
     @classmethod
-    def compile_time_public_setting_records_from_kwargs(cls, kwargs):
-        from openhcs.interop.cellprofiler.cellprofiler_literals import (
-            cellprofiler_setting_literal,
-        )
-        from openhcs.interop.cellprofiler.parser import ModuleSetting
-        from openhcs.interop.cellprofiler.settings_binder import (
-            normalize_cellprofiler_setting_name,
-        )
-
-        records = []
-        for setting_name in (
-            cls.input_objects_setting,
-            cls.output_objects_setting,
-        ):
-            key = normalize_cellprofiler_setting_name(setting_name)
-            if key in kwargs:
-                records.append(
-                    ModuleSetting(
-                        setting_name,
-                        cellprofiler_setting_literal(kwargs[key]),
-                    )
-                )
-
-        input_values = _compile_time_tuple_kwarg(
-            kwargs,
-            cls.input_image_setting,
-        )
-        output_values = _compile_time_tuple_kwarg(
-            kwargs,
-            cls.output_image_setting,
-        )
-        if len(input_values) != len(output_values):
+    def _required_image_names(
+        cls,
+        block: ModuleBlock,
+        *,
+        setting: str | SettingNameFamily,
+    ) -> tuple[str, ...]:
+        names = cls._image_names(block, setting=setting)
+        if not names:
             raise ValueError(
-                "StraightenWorms public image identity kwargs must contain the "
-                "same number of input and output image names."
+                "StraightenWorms row reconstruction requires at least one "
+                f"value for {setting_names(setting)[0]!r}."
             )
-        for input_name, output_name in zip(input_values, output_values, strict=True):
-            records.append(
-                ModuleSetting(
-                    cls.input_image_setting,
-                    cellprofiler_setting_literal(input_name),
-                )
-            )
-            records.append(
-                ModuleSetting(
-                    cls.output_image_setting,
-                    cellprofiler_setting_literal(output_name),
-                )
-            )
-        return tuple(records)
+        return names
 
-    class FlipMode(Enum):
-        NONE = "do_not_align"
-        TOP = "top_brightest"
-        BOTTOM = "bottom_brightest"
-        MANUAL = "flip_manually"
+    @classmethod
+    def _image_names(
+        cls,
+        block: ModuleBlock,
+        *,
+        setting: str | SettingNameFamily,
+    ) -> tuple[str, ...]:
+        return tuple(
+            name
+            for value in setting_values(block, setting)
+            if (name := normalized_symbol_name(value)) is not None
+        )
 
     @dataclass(frozen=True, slots=True)
     class ImageBinding:
@@ -496,140 +992,103 @@ class StraightenWormsModule(
         output_image_name: str
 
     @classmethod
-    def settings_source(cls, module: "ModuleBlock") -> "CellProfilerKwargs":
-        kwargs: dict[str, Any] = {}
-        cls._bind_optional_int(module, cls.worm_width_setting, "worm_width", kwargs)
-        cls._bind_optional_bool(
-            module, cls.measure_intensity_setting, "measure_intensity", kwargs
-        )
-        cls._bind_optional_int(
-            module, cls.transverse_segments_setting, "number_of_segments", kwargs
-        )
-        cls._bind_optional_int(
-            module, cls.longitudinal_stripes_setting, "number_of_stripes", kwargs
-        )
-        alignment = optional_setting_value(module, cls.alignment_setting)
-        if alignment is not None:
-            kwargs["flip_mode"] = coerce_cellprofiler_enum(
-                cls.FlipMode, alignment
-            ).value
-        return kwargs
-
-    @classmethod
     def input_objects_name(cls, module: "ModuleBlock") -> str:
-        return required_setting_value(module, cls.input_objects_setting)
-
-    @classmethod
-    def output_objects_name(cls, module: "ModuleBlock") -> str:
-        return required_setting_value(module, cls.output_objects_setting)
+        return required_setting_value(module, cls.input_objects_binding.setting_name)
 
     @classmethod
     def image_bindings(
         cls, module: "ModuleBlock"
     ) -> tuple["StraightenWormsModule.ImageBinding", ...]:
-        return tuple(
-            (
-                cls.ImageBinding(
-                    input_image_name=block_setting_value(
-                        block, cls.input_image_setting
-                    ),
-                    output_image_name=block_setting_value(
-                        block, cls.output_image_setting
-                    ),
-                )
-                for block in repeating_setting_blocks(
-                    module.iter_settings(), start_name=cls.input_image_setting
-                )
-                if block_setting_value(block, cls.input_image_setting)
-                and block_setting_value(block, cls.output_image_setting)
-            )
+        blocks = repeating_setting_blocks(
+            module.iter_settings(), start_name=cls.input_image_binding.setting_name
         )
-
-    @classmethod
-    def _bind_optional_int(
-        cls,
-        module: "ModuleBlock",
-        setting_name: str,
-        parameter_name: str,
-        kwargs: dict[str, Any],
-    ) -> None:
-        value = optional_setting_value(module, setting_name)
-        if value is not None:
-            kwargs[parameter_name] = int(float(value))
-
-    @classmethod
-    def _bind_optional_bool(
-        cls,
-        module: "ModuleBlock",
-        setting_name: str,
-        parameter_name: str,
-        kwargs: dict[str, Any],
-    ) -> None:
-        value = optional_setting_value(module, setting_name)
-        if value is not None:
-            kwargs[parameter_name] = parse_cellprofiler_bool(value)
-
-    @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        input_objects = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(cls.input_objects_name(module)))
-        image_bindings = cls.image_bindings(module)
-        image_inputs = [
-            ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(binding.input_image_name))
-            for binding in image_bindings
-        ]
-        image_outputs = [
-            cls.image_output_artifact(
-                builder,
-                module,
-                binding.output_image_name,
+        bindings = tuple(cls._image_binding(module, block) for block in blocks)
+        if not bindings:
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) declares no "
+                "StraightenWorms image rows."
             )
-            for binding in image_bindings
-        ]
-        output_objects = ObjectLabelArtifactOutputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactOutputCapability.spec(cls.output_objects_name(module)))
-        producer_measurements = builder.measurement_output_for_module_num(
-            input_objects.producer_module_num
+        return bindings
+
+    @classmethod
+    def _image_binding(
+        cls,
+        module: ModuleBlock,
+        block: Sequence[ModuleSetting],
+    ) -> "StraightenWormsModule.ImageBinding":
+        input_name = normalized_symbol_name(
+            block_setting_value(block, cls.input_image_binding.setting_name)
         )
-        measurements = cls.measurement_output_artifact(builder, module)
-        side_inputs = [input_objects]
-        if producer_measurements is not None:
-            side_inputs.append(producer_measurements)
-        return assembler.assemble_contract(
+        output_name = normalized_symbol_name(
+            block_setting_value(block, cls.output_image_binding.setting_name)
+        )
+        if input_name is None or output_name is None:
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) requires an input and "
+                "output image name for every StraightenWorms row."
+            )
+        return cls.ImageBinding(input_name, output_name)
+
+    @classmethod
+    def producer_measurement_input(
+        cls,
+        object_input: ArtifactSpec,
+        *,
+        step_context: "ArtifactDeclarationStepContext",
+    ) -> ArtifactSpec | None:
+        """Select the measurement artifact related to one exact object output."""
+
+        if object_input.artifact_type is not ObjectLabelsArtifactType:
+            raise TypeError(
+                f"{cls.__name__} requires an object-label input, got "
+                f"{object_input.artifact_type.value}."
+            )
+        object_output_ref = object_input.ref().for_plan_type(ArtifactOutputPlan)
+        producer_measurements = ArtifactSpecCollection(
+            spec
+            for spec, relation in step_context.available_artifacts.relation_refs(
+                ArtifactSpecRelation
+            )
+            if spec.artifact_type is MeasurementsArtifactType
+            and relation.source == object_output_ref
+        ).unique(conflict_context=f"{cls.__name__} producer measurement")
+        if not producer_measurements:
+            return None
+        if len(producer_measurements) != 1:
+            raise ValueError(
+                f"{cls.__name__} found multiple measurement artifacts related to "
+                f"{object_output_ref!r}: "
+                f"{tuple(spec.ref() for spec in producer_measurements)!r}."
+            )
+        return producer_measurements[0].for_plan_type(ArtifactInputPlan)
+
+    @classmethod
+    def artifact_contract_inputs(
+        cls,
+        module: ModuleBlock,
+        *,
+        invocation_key: FunctionInvocationKey,
+        step_context: ArtifactDeclarationStepContext,
+    ) -> tuple[ArtifactSpec, ...]:
+        input_objects_name = cls.input_objects_name(module)
+        inputs = super().artifact_contract_inputs(
             module,
-            builder,
-            inputs=[*side_inputs, *image_inputs],
-            outputs=[*image_outputs, output_objects, measurements],
+            invocation_key=invocation_key,
+            step_context=step_context,
         )
-
-
-def _compile_time_tuple_kwarg(kwargs: dict[str, Any], setting_name: str) -> tuple[Any, ...]:
-    from openhcs.interop.cellprofiler.settings_binder import (
-        normalize_cellprofiler_setting_name,
-    )
-
-    key = normalize_cellprofiler_setting_name(setting_name)
-    if key not in kwargs:
-        return ()
-    value = kwargs[key]
-    if isinstance(value, tuple):
-        return value
-    if isinstance(value, list):
-        return tuple(value)
-    return (value,)
-
-
-class OverlapStyle(str, Enum):
-    WITH_OVERLAP = "with_overlap"
-    WITHOUT_OVERLAP = "without_overlap"
-    BOTH = "both"
-
-
-class FlipMode(Enum):
-    """StraightenWorms head/tail alignment policy."""
-
-    NONE = "do_not_align"
-    TOP = "top_brightest"
-    BOTTOM = "bottom_brightest"
-    MANUAL = "flip_manually"
+        input_objects = ArtifactSpecCollection(
+            inputs
+        ).require_by_name_and_artifact_type(
+            input_objects_name,
+            ObjectLabelsArtifactType,
+        )
+        producer_measurements = cls.producer_measurement_input(
+            input_objects,
+            step_context=step_context,
+        )
+        if producer_measurements is None:
+            return inputs
+        return (*inputs, producer_measurements)
 
 
 @dataclass(frozen=True, slots=True)
@@ -724,37 +1183,51 @@ class StraightenWormsSliceRequest:
         labels = np.unique(self.labels)
         return labels[labels > 0]
 
-    def execute(self) -> tuple[np.ndarray, np.ndarray, list[WormMeasurement]]:
-        image = self.image
-        labels = self.labels
+    def planned_placements(self) -> list[StraightenedWormPlacement]:
+        """Return object placements using this slice's alignment intensities."""
+
         unique_labels = self.positive_labels
         if len(unique_labels) == 0:
-            shape = (self.output_width, self.output_width)
-            return (
-                np.zeros(shape, dtype=image.dtype),
-                np.zeros(shape, dtype=np.int32),
-                [],
-            )
+            return []
         lengths = self.worm_lengths(len(unique_labels))
         if not lengths:
+            return []
+        return self.placements(unique_labels, lengths)
+
+    def execute(
+        self,
+        placements: list[StraightenedWormPlacement] | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, DataclassMeasurementColumnarRows]:
+        image = self.image
+        resolved_placements = (
+            self.planned_placements() if placements is None else placements
+        )
+        if not resolved_placements:
             shape = (self.output_width, self.output_width)
             return (
                 np.zeros(shape, dtype=image.dtype),
                 np.zeros(shape, dtype=np.int32),
-                [],
+                DataclassMeasurementColumnarRows((), row_type=WormMeasurement),
             )
         shape = (
-            max(lengths) + self.output_width,
-            len(unique_labels) * self.output_width,
+            max(placement.output_y.stop for placement in resolved_placements),
+            max(placement.output_x.stop for placement in resolved_placements),
         )
         straightened_image = np.zeros(shape, dtype=image.dtype)
         straightened_labels = np.zeros(shape, dtype=np.int32)
-        placements = self.placements(unique_labels, lengths)
-        self.apply_placements(straightened_image, straightened_labels, placements)
+        self.apply_placements(
+            straightened_image,
+            straightened_labels,
+            resolved_placements,
+        )
         return (
             straightened_image,
             straightened_labels,
-            self.measurements(straightened_image, straightened_labels, placements),
+            self.measurements(
+                straightened_image,
+                straightened_labels,
+                resolved_placements,
+            ),
         )
 
     def worm_lengths(self, worm_count: int) -> list[int]:
@@ -918,9 +1391,9 @@ class StraightenWormsSliceRequest:
         straightened_image: np.ndarray,
         straightened_labels: np.ndarray,
         placements: list[StraightenedWormPlacement],
-    ) -> list[WormMeasurement]:
+    ) -> DataclassMeasurementColumnarRows:
         if not self.measure_intensity:
-            return []
+            return DataclassMeasurementColumnarRows((), row_type=WormMeasurement)
         measurements: list[WormMeasurement] = []
         for placement in placements:
             mask = (
@@ -950,7 +1423,10 @@ class StraightenWormsSliceRequest:
                     std_intensity=float(np.std(values)),
                 )
             )
-        return measurements
+        return DataclassMeasurementColumnarRows(
+            tuple(measurements),
+            row_type=WormMeasurement,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1107,86 +1583,6 @@ class DeadWormAdjacencyPolicy:
         return (np.array(first, dtype=int), np.array(second, dtype=int))
 
 
-@dataclass(frozen=True, slots=True)
-class WormLabelOutputRequest:
-    sparse_overlapping: ObjectLabelValue
-    overlapping: ObjectLabelPayload
-    nonoverlapping: ObjectLabelPayload
-
-
-class WormLabelOutputStrategy(
-    EnumKeyedStrategyMixin[OverlapStyle], ABC, metaclass=AutoRegisterMeta
-):
-    """Select UntangleWorms label outputs for one CellProfiler overlap style."""
-
-    __registry_key__ = "overlap_style_label"
-    __skip_if_no_key__ = True
-    __enum_member_attr__ = "overlap_style"
-    __enum_label_attr__ = "overlap_style_label"
-    overlap_style_label: ClassVar[str | None] = None
-    overlap_style: ClassVar[OverlapStyle | None] = None
-
-    @classmethod
-    def for_overlap_style(
-        cls, overlap_style: OverlapStyle
-    ) -> "WormLabelOutputStrategy":
-        return cls.for_enum_member(overlap_style)
-
-    @abstractmethod
-    def outputs(
-        self, request: WormLabelOutputRequest
-    ) -> tuple[ObjectLabelValue, ObjectLabelPayload]:
-        """Return the public overlapping and nonoverlapping label payloads."""
-
-    @abstractmethod
-    def measurement_object_names(
-        self, *, overlapping_object_name: str, nonoverlapping_object_name: str
-    ) -> tuple[str, ...]:
-        """Return object names that should receive UntangleWorms measurements."""
-
-
-class WithOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
-    overlap_style = OverlapStyle.WITH_OVERLAP
-
-    def outputs(
-        self, request: WormLabelOutputRequest
-    ) -> tuple[ObjectLabelValue, ObjectLabelPayload]:
-        return (request.sparse_overlapping, request.overlapping)
-
-    def measurement_object_names(
-        self, *, overlapping_object_name: str, nonoverlapping_object_name: str
-    ) -> tuple[str, ...]:
-        return (overlapping_object_name,)
-
-
-class WithoutOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
-    overlap_style = OverlapStyle.WITHOUT_OVERLAP
-
-    def outputs(
-        self, request: WormLabelOutputRequest
-    ) -> tuple[ObjectLabelValue, ObjectLabelPayload]:
-        return (request.nonoverlapping, request.nonoverlapping)
-
-    def measurement_object_names(
-        self, *, overlapping_object_name: str, nonoverlapping_object_name: str
-    ) -> tuple[str, ...]:
-        return (nonoverlapping_object_name,)
-
-
-class BothOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
-    overlap_style = OverlapStyle.BOTH
-
-    def outputs(
-        self, request: WormLabelOutputRequest
-    ) -> tuple[ObjectLabelValue, ObjectLabelPayload]:
-        return (request.sparse_overlapping, request.nonoverlapping)
-
-    def measurement_object_names(
-        self, *, overlapping_object_name: str, nonoverlapping_object_name: str
-    ) -> tuple[str, ...]:
-        return (overlapping_object_name, nonoverlapping_object_name)
-
-
 def coerce_overlap_style(value: str | OverlapStyle) -> OverlapStyle:
     """Normalize CellProfiler overlap-style literals into the typed enum."""
     if isinstance(value, OverlapStyle):
@@ -1206,6 +1602,31 @@ class WormControlPointGeometry:
     """CP-compatible geometry derived from sampled worm control points."""
 
     control_coords: np.ndarray
+    path_length: float
+
+    @classmethod
+    def from_path_coords(
+        cls,
+        path_coords: np.ndarray,
+        cumulative_lengths: np.ndarray,
+        *,
+        num_control_points: int,
+    ) -> "WormControlPointGeometry":
+        """Sample one path once for all downstream worm geometry consumers."""
+
+        if len(path_coords) < 2:
+            return cls(
+                np.zeros((num_control_points, 2), dtype=float),
+                0.0,
+            )
+        return cls(
+            sample_control_points(
+                path_coords,
+                cumulative_lengths,
+                num_control_points,
+            ),
+            float(cumulative_lengths[-1]),
+        )
 
     @property
     def angles(self) -> np.ndarray:
@@ -1220,15 +1641,56 @@ class WormControlPointGeometry:
         return angles
 
 
-@numpy(contract=ProcessingContract.PURE_2D)
-@special_outputs(
-    ("worm_measurements", csv_materializer(analysis_type="worm_analysis")),
-    ("overlapping_labels", segmentation_mask_rois()),
-    ("nonoverlapping_labels", segmentation_mask_rois()),
-)
-def untangle_worms(
+@dataclass(frozen=True, slots=True)
+class WormLabelCandidates:
+    """The two semantic object-label roles produced by worm untangling."""
+
+    overlapping: ObjectLabelValue
+    nonoverlapping: ObjectLabelPayload
+
+
+@dataclass(frozen=True, slots=True)
+class UntangleWormsExecution:
+    """Shared algorithm result lowered by the three public output ABIs."""
+
+    image: RuntimeArrayData
+    measurements: MeasurementSparseColumnarRows
+    labels: WormLabelCandidates
+
+    def canonical_image_output(
+        self,
+        *,
+        overlap_style: OverlapStyle,
+        retain_overlapping_outline: bool,
+        retain_nonoverlapping_outline: bool,
+        overlapping_outline_colormap: str,
+    ) -> RuntimeArrayData | AlignedImageStack:
+        strategy = WormLabelOutputStrategy.for_overlap_style(overlap_style)
+        selected = strategy.select(
+            overlapping=(
+                _overlapping_worm_outline(
+                    self.image,
+                    self.labels.overlapping,
+                    overlapping_outline_colormap,
+                )
+                if retain_overlapping_outline
+                else None
+            ),
+            nonoverlapping=(
+                _nonoverlapping_worm_outline(
+                    self.image,
+                    self.labels.nonoverlapping,
+                )
+                if retain_nonoverlapping_outline
+                else None
+            ),
+        )
+        retained = tuple(output for output in selected if output is not None)
+        return pack_aligned_image_outputs(retained) if retained else self.image
+
+
+def _execute_untangle_worms(
     image: np.ndarray,
-    overlap_style: OverlapStyle = OverlapStyle.WITHOUT_OVERLAP,
     min_worm_area: float = 100.0,
     max_worm_area: float = 5000.0,
     num_control_points: int = 21,
@@ -1243,9 +1705,7 @@ def untangle_worms(
     mean_angles: tuple[float, ...] | None = None,
     inv_angles_covariance_matrix: tuple[tuple[float, ...], ...] | None = None,
     radii_from_training: tuple[float, ...] | None = None,
-) -> tuple[
-    np.ndarray, list[dict[str, float | int | str]], ObjectLabelValue, ObjectLabelPayload
-]:
+) -> UntangleWormsExecution:
     """
     Untangle overlapping worms in a binary image.
 
@@ -1254,24 +1714,23 @@ def untangle_worms(
     overlap or cross each other.
 
     Args:
-        image: Binary input image (H, W) where foreground indicates worms
-        overlap_style: How to handle overlapping regions:
-            - "with_overlap": Include overlapping regions in both worms
-            - "without_overlap": Exclude overlapping regions from both worms
-            - "both": Generate both types of output
-        min_worm_area: Minimum area for a valid worm (pixels)
-        max_worm_area: Maximum area for a single worm (larger = cluster)
-        num_control_points: Number of control points for worm shape model
-        cost_threshold: Maximum shape cost for accepting a worm
-        min_path_length: Minimum skeleton path length for a worm
-        max_path_length: Maximum skeleton path length for a worm
-        overlap_weight: Penalty weight for overlapping worm regions
-        leftover_weight: Penalty weight for uncovered foreground
+        min_worm_area: Minimum accepted worm area in square pixels.
+        max_worm_area: Maximum accepted worm area in square pixels.
+        num_control_points: Number of points sampled along each candidate worm.
+        cost_threshold: Maximum model-assignment cost accepted for a candidate worm.
+        min_path_length: Minimum skeleton-path length in pixels.
+        max_path_length: Maximum skeleton-path length in pixels.
+        overlap_weight: Cost penalty for pixels assigned to overlapping worms.
+        leftover_weight: Cost penalty for foreground pixels left unassigned.
+        median_worm_area: Training-set median worm area in square pixels.
+        max_radius: Maximum training-model radius in pixels.
+        max_skel_length: Maximum accepted skeleton length in pixels.
+        mean_angles: Training-set mean angle at each interior control point.
+        inv_angles_covariance_matrix: Inverse covariance matrix for the training angles.
+        radii_from_training: Training-set worm radii sampled at the control points.
 
-    Returns:
-        Tuple of (original_image, measurements, overlapping_labels, nonoverlapping_labels)
+    Returns the complete semantic result before output-topology projection.
     """
-    overlap_style = coerce_overlap_style(overlap_style)
     mean_angles_array = _coerce_mean_angles(mean_angles, num_control_points)
     inv_angles_covariance_array = _coerce_inverse_covariance(
         inv_angles_covariance_matrix, num_control_points
@@ -1280,14 +1739,19 @@ def untangle_worms(
     binary = image > 0
     labels, count = label(binary, structure=eight_connectivity())
     if count == 0:
-        empty_labels, empty_nonoverlapping_labels = _worm_label_outputs(
-            [],
-            source_image=image,
-            image_shape=image.shape,
-            radii_from_training=radii_array,
-            overlap_style=overlap_style,
+        return UntangleWormsExecution(
+            image=image,
+            measurements=_worm_descriptor_rows(
+                [],
+                num_control_points=num_control_points,
+            ),
+            labels=_worm_label_outputs(
+                [],
+                source_image=image,
+                image_shape=image.shape,
+                radii_from_training=radii_array,
+            ),
         )
-        return (image, [], empty_labels, empty_nonoverlapping_labels)
     skeleton = skeletonize_worm_mask(binary)
     eroded = binary_erosion(binary, structure=eight_connectivity())
     skeleton = skeletonize_worm_mask(skeleton & eroded)
@@ -1313,11 +1777,12 @@ def untangle_worms(
             if len(path_coords) < 2:
                 continue
             cumul_lengths = calculate_cumulative_lengths(path_coords)
-            total_length = cumul_lengths[-1]
             if not WormShapeCostRequest(
-                path_coords=path_coords,
-                total_length=total_length,
-                num_control_points=num_control_points,
+                geometry=WormControlPointGeometry.from_path_coords(
+                    path_coords,
+                    cumul_lengths,
+                    num_control_points=num_control_points,
+                ),
                 mean_angles=mean_angles_array,
                 inv_angles_covariance_matrix=inv_angles_covariance_array,
             ).passes(cost_threshold):
@@ -1360,116 +1825,388 @@ def untangle_worms(
                     ).select(graph, paths)
                 )
             )
-    overlapping_labels, nonoverlapping_labels = _worm_label_outputs(
-        all_path_coords,
-        source_image=image,
-        image_shape=image.shape,
-        radii_from_training=radii_array,
-        overlap_style=overlap_style,
-    )
-    measurements = _worm_descriptor_rows(
-        all_path_coords,
-        num_control_points=num_control_points,
-    )
-    return (image, measurements, overlapping_labels, nonoverlapping_labels)
-
-
-@numpy(contract=ProcessingContract.FLEXIBLE)
-@special_inputs("worm_labels")
-@special_outputs(
-    ("straightened_labels", None),
-    (
-        "worm_measurements",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "object_number",
-                "center_x",
-                "center_y",
-                "mean_intensity",
-                "std_intensity",
-            ],
-            analysis_type="worm_measurements",
-        ),
-    ),
-)
-def straighten_worms(
-    image: np.ndarray,
-    worm_labels: np.ndarray,
-    control_points: np.ndarray | None = None,
-    worm_width: int = 20,
-    num_control_points: int = 21,
-    flip_mode: FlipMode = FlipMode.NONE,
-    number_of_segments: int = 4,
-    number_of_stripes: int = 3,
-    measure_intensity: bool = True,
-) -> tuple[Any, ...]:
-    """Straighten labeled worms using sampled or provided control points."""
-    del number_of_segments, number_of_stripes
-    flip_mode = coerce_cellprofiler_enum(FlipMode, flip_mode)
-    if flip_mode is FlipMode.MANUAL:
-        raise NotImplementedError("StraightenWorms manual flipping is interactive.")
-    image_stack = image[np.newaxis, :, :] if image.ndim == 2 else image
-    labels_stack = object_label_dense_array(worm_labels, dtype=np.int32)
-    if labels_stack.ndim == 2:
-        labels_stack = labels_stack[np.newaxis, :, :]
-    straightened_images: list[np.ndarray] = []
-    straightened_label_planes: list[np.ndarray] = []
-    all_measurements: list[WormMeasurement] = []
-    for slice_index in range(image_stack.shape[0]):
-        labels_slice = (
-            labels_stack[slice_index]
-            if slice_index < labels_stack.shape[0]
-            else labels_stack[0]
-        )
-        slice_image, slice_labels, measurements = StraightenWormsSliceRequest(
-            image=image_stack[slice_index],
-            labels=labels_slice,
-            control_points=StraightenWormControlPoints(
-                points=control_points,
-                labels=labels_slice,
-                num_control_points=num_control_points,
-            ).normalized,
-            worm_width=worm_width,
+    worm_geometries = tuple(
+        WormControlPointGeometry.from_path_coords(
+            path_coords,
+            calculate_cumulative_lengths(path_coords),
             num_control_points=num_control_points,
-            flip_mode=flip_mode,
-            measure_intensity=measure_intensity,
-            slice_index=slice_index,
-        ).execute()
-        straightened_images.append(slice_image)
-        straightened_label_planes.append(slice_labels)
-        all_measurements.extend(measurements)
-    straightened_image_stack = np.stack(straightened_images, axis=0)
-    straightened_label_stack = np.stack(straightened_label_planes, axis=0)
-    return (
-        *tuple(
-            (
-                straightened_image_stack[index]
-                for index in range(straightened_image_stack.shape[0])
-            )
+        )
+        for path_coords in all_path_coords
+    )
+    return UntangleWormsExecution(
+        image=image,
+        measurements=_worm_descriptor_rows(
+            worm_geometries,
+            num_control_points=num_control_points,
         ),
-        straightened_label_stack,
-        all_measurements,
+        labels=_worm_label_outputs(
+            worm_geometries,
+            source_image=image,
+            image_shape=image.shape,
+            radii_from_training=radii_array,
+        ),
+    )
+
+
+def _untangle_worms_output(
+    image: np.ndarray,
+    *,
+    expected_style: OverlapStyle,
+    overlap_style: OverlapStyle,
+    min_worm_area: float,
+    max_worm_area: float,
+    num_control_points: int,
+    cost_threshold: float,
+    min_path_length: float,
+    max_path_length: float,
+    overlap_weight: float,
+    leftover_weight: float,
+    median_worm_area: float | None,
+    max_radius: float | None,
+    max_skel_length: float | None,
+    mean_angles: tuple[float, ...] | None,
+    inv_angles_covariance_matrix: tuple[tuple[float, ...], ...] | None,
+    radii_from_training: tuple[float, ...] | None,
+    retain_overlapping_outline: bool,
+    retain_nonoverlapping_outline: bool,
+    overlapping_outline_colormap: str,
+) -> tuple[
+    RuntimeArrayData
+    | AlignedImageStack
+    | MeasurementSparseColumnarRows
+    | ObjectLabelValue,
+    ...,
+]:
+    """Execute once and lower through the statically selected public ABI."""
+
+    resolved_style = coerce_overlap_style(overlap_style)
+    if resolved_style is not expected_style:
+        raise ValueError(
+            f"{WormLabelOutputStrategy.for_overlap_style(expected_style).callable_name} "
+            f"requires overlap_style={expected_style.value!r}, got "
+            f"{resolved_style.value!r}."
+        )
+    execution = _execute_untangle_worms(
+        image,
+        min_worm_area=min_worm_area,
+        max_worm_area=max_worm_area,
+        num_control_points=num_control_points,
+        cost_threshold=cost_threshold,
+        min_path_length=min_path_length,
+        max_path_length=max_path_length,
+        overlap_weight=overlap_weight,
+        leftover_weight=leftover_weight,
+        median_worm_area=median_worm_area,
+        max_radius=max_radius,
+        max_skel_length=max_skel_length,
+        mean_angles=mean_angles,
+        inv_angles_covariance_matrix=inv_angles_covariance_matrix,
+        radii_from_training=radii_from_training,
+    )
+    labels = WormLabelOutputStrategy.for_overlap_style(resolved_style).select(
+        overlapping=execution.labels.overlapping,
+        nonoverlapping=execution.labels.nonoverlapping,
+    )
+    return (
+        execution.canonical_image_output(
+            overlap_style=resolved_style,
+            retain_overlapping_outline=retain_overlapping_outline,
+            retain_nonoverlapping_outline=retain_nonoverlapping_outline,
+            overlapping_outline_colormap=overlapping_outline_colormap,
+        ),
+        execution.measurements,
+        *labels,
     )
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
-@special_outputs(
-    (
-        "dead_worm_stats",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "object_count",
-                "mean_center_x",
-                "mean_center_y",
-                "mean_angle",
-            ],
-            analysis_type="dead_worm_identification",
+def untangle_worms(
+    image: np.ndarray,
+    overlap_style: OverlapStyle = OverlapStyle.WITHOUT_OVERLAP,
+    min_worm_area: float = 100.0,
+    max_worm_area: float = 5000.0,
+    num_control_points: int = 21,
+    cost_threshold: float = 100.0,
+    min_path_length: float = 50.0,
+    max_path_length: float = 500.0,
+    overlap_weight: float = 5.0,
+    leftover_weight: float = 10.0,
+    median_worm_area: float | None = None,
+    max_radius: float | None = None,
+    max_skel_length: float | None = None,
+    mean_angles: tuple[float, ...] | None = None,
+    inv_angles_covariance_matrix: tuple[tuple[float, ...], ...] | None = None,
+    radii_from_training: tuple[float, ...] | None = None,
+    retain_overlapping_outline: bool = False,
+    retain_nonoverlapping_outline: bool = False,
+    overlapping_outline_colormap: str = "viridis",
+) -> tuple[
+    RuntimeArrayData | AlignedImageStack,
+    MeasurementSparseColumnarRows,
+    ObjectLabelPayload,
+]:
+    """Untangle worms while excluding pixels shared by multiple worms."""
+
+    output = _untangle_worms_output(
+        image,
+        expected_style=OverlapStyle.WITHOUT_OVERLAP,
+        overlap_style=overlap_style,
+        min_worm_area=min_worm_area,
+        max_worm_area=max_worm_area,
+        num_control_points=num_control_points,
+        cost_threshold=cost_threshold,
+        min_path_length=min_path_length,
+        max_path_length=max_path_length,
+        overlap_weight=overlap_weight,
+        leftover_weight=leftover_weight,
+        median_worm_area=median_worm_area,
+        max_radius=max_radius,
+        max_skel_length=max_skel_length,
+        mean_angles=mean_angles,
+        inv_angles_covariance_matrix=inv_angles_covariance_matrix,
+        radii_from_training=radii_from_training,
+        retain_overlapping_outline=retain_overlapping_outline,
+        retain_nonoverlapping_outline=retain_nonoverlapping_outline,
+        overlapping_outline_colormap=overlapping_outline_colormap,
+    )
+    return (output[0], output[1], output[2])
+
+
+@numpy(contract=ProcessingContract.PURE_2D)
+def untangle_worms_with_overlap(
+    image: np.ndarray,
+    overlap_style: OverlapStyle = OverlapStyle.WITH_OVERLAP,
+    min_worm_area: float = 100.0,
+    max_worm_area: float = 5000.0,
+    num_control_points: int = 21,
+    cost_threshold: float = 100.0,
+    min_path_length: float = 50.0,
+    max_path_length: float = 500.0,
+    overlap_weight: float = 5.0,
+    leftover_weight: float = 10.0,
+    median_worm_area: float | None = None,
+    max_radius: float | None = None,
+    max_skel_length: float | None = None,
+    mean_angles: tuple[float, ...] | None = None,
+    inv_angles_covariance_matrix: tuple[tuple[float, ...], ...] | None = None,
+    radii_from_training: tuple[float, ...] | None = None,
+    retain_overlapping_outline: bool = False,
+    retain_nonoverlapping_outline: bool = False,
+    overlapping_outline_colormap: str = "viridis",
+) -> tuple[
+    RuntimeArrayData | AlignedImageStack,
+    MeasurementSparseColumnarRows,
+    ObjectLabelValue,
+]:
+    """Untangle worms while retaining pixels shared by multiple worms."""
+
+    output = _untangle_worms_output(
+        image,
+        expected_style=OverlapStyle.WITH_OVERLAP,
+        overlap_style=overlap_style,
+        min_worm_area=min_worm_area,
+        max_worm_area=max_worm_area,
+        num_control_points=num_control_points,
+        cost_threshold=cost_threshold,
+        min_path_length=min_path_length,
+        max_path_length=max_path_length,
+        overlap_weight=overlap_weight,
+        leftover_weight=leftover_weight,
+        median_worm_area=median_worm_area,
+        max_radius=max_radius,
+        max_skel_length=max_skel_length,
+        mean_angles=mean_angles,
+        inv_angles_covariance_matrix=inv_angles_covariance_matrix,
+        radii_from_training=radii_from_training,
+        retain_overlapping_outline=retain_overlapping_outline,
+        retain_nonoverlapping_outline=retain_nonoverlapping_outline,
+        overlapping_outline_colormap=overlapping_outline_colormap,
+    )
+    return (output[0], output[1], output[2])
+
+
+@numpy(contract=ProcessingContract.PURE_2D)
+def untangle_worms_both(
+    image: np.ndarray,
+    overlap_style: OverlapStyle = OverlapStyle.BOTH,
+    min_worm_area: float = 100.0,
+    max_worm_area: float = 5000.0,
+    num_control_points: int = 21,
+    cost_threshold: float = 100.0,
+    min_path_length: float = 50.0,
+    max_path_length: float = 500.0,
+    overlap_weight: float = 5.0,
+    leftover_weight: float = 10.0,
+    median_worm_area: float | None = None,
+    max_radius: float | None = None,
+    max_skel_length: float | None = None,
+    mean_angles: tuple[float, ...] | None = None,
+    inv_angles_covariance_matrix: tuple[tuple[float, ...], ...] | None = None,
+    radii_from_training: tuple[float, ...] | None = None,
+    retain_overlapping_outline: bool = False,
+    retain_nonoverlapping_outline: bool = False,
+    overlapping_outline_colormap: str = "viridis",
+) -> tuple[
+    RuntimeArrayData | AlignedImageStack,
+    MeasurementSparseColumnarRows,
+    ObjectLabelValue,
+    ObjectLabelPayload,
+]:
+    """Untangle worms and return both overlapping and exclusive object sets."""
+
+    output = _untangle_worms_output(
+        image,
+        expected_style=OverlapStyle.BOTH,
+        overlap_style=overlap_style,
+        min_worm_area=min_worm_area,
+        max_worm_area=max_worm_area,
+        num_control_points=num_control_points,
+        cost_threshold=cost_threshold,
+        min_path_length=min_path_length,
+        max_path_length=max_path_length,
+        overlap_weight=overlap_weight,
+        leftover_weight=leftover_weight,
+        median_worm_area=median_worm_area,
+        max_radius=max_radius,
+        max_skel_length=max_skel_length,
+        mean_angles=mean_angles,
+        inv_angles_covariance_matrix=inv_angles_covariance_matrix,
+        radii_from_training=radii_from_training,
+        retain_overlapping_outline=retain_overlapping_outline,
+        retain_nonoverlapping_outline=retain_nonoverlapping_outline,
+        overlapping_outline_colormap=overlapping_outline_colormap,
+    )
+    return (output[0], output[1], output[2], output[3])
+
+
+for _function_name in UntangleWormsModule.declared_function_names():
+    set_signature_analysis_target(
+        UntangleWormsModule.require_callable(_function_name),
+        _execute_untangle_worms,
+    )
+del _function_name
+
+
+@required_variable_components(VariableComponents.CHANNEL)
+@numpy(contract=ProcessingContract.FLEXIBLE)
+@object_label_input_execution_mode(ObjectLabelInputExecutionMode.SLICE_ALIGNED)
+@special_inputs("worm_labels")
+@runtime_bound_parameters(_StraightenWormControlPointsRuntimeParameter)
+def straighten_worms(
+    image: np.ndarray,
+    worm_labels: ObjectLabelValue,
+    control_points: np.ndarray | None = None,
+    worm_width: int = 20,
+    num_control_points: int = 21,
+    flip_mode: FlipMode = FlipMode.NONE,
+    alignment_image_index: int = 0,
+    number_of_segments: int = 4,
+    number_of_stripes: int = 3,
+    measure_intensity: bool = True,
+) -> tuple[
+    RuntimeArrayData | AlignedImageStack,
+    ColumnarRows,
+    ObjectLabelValue,
+]:
+    """Straighten labeled worms using sampled or provided control points.
+
+    Args:
+        worm_labels: Segmented worm regions that define each body to straighten.
+        num_control_points: Number of centerline samples used to warp each worm;
+            must be positive.
+        alignment_image_index: Zero-based channel used to plan a common worm
+            orientation for every input channel.
+    """
+    del number_of_segments, number_of_stripes
+    flip_mode = coerce_cellprofiler_enum(FlipMode, flip_mode)
+    if flip_mode is FlipMode.MANUAL:
+        raise NotImplementedError("StraightenWorms manual flipping is interactive.")
+    image_data = np.asarray(image_payload_data(image))
+    image_stack = image_data[np.newaxis, :, :] if image_data.ndim == 2 else image_data
+    source_metadata = image_payload_metadata(image)
+    if image_stack.shape[0] > 1 and source_metadata.plane_axis is None:
+        raise ValueError(
+            "StraightenWorms requires a declared leading plane axis for "
+            "multiple input images."
+        )
+    if not isinstance(worm_labels, ObjectLabelValue):
+        raise TypeError(
+            "StraightenWorms requires a runtime-projected ObjectLabelValue."
+        )
+    label_plane = object_label_dense_array(worm_labels, dtype=np.int32)
+    if label_plane.ndim != 2:
+        raise ValueError(
+            "StraightenWorms requires one runtime-projected 2-D object-label plane; "
+            f"got shape {label_plane.shape!r}, plane axis {worm_labels.plane_axis!r}, "
+            f"and domain scope {worm_labels.domain.scope!r}."
+        )
+    if not 0 <= alignment_image_index < image_stack.shape[0]:
+        raise ValueError(
+            "StraightenWorms alignment_image_index must address the input image "
+            f"stack, got {alignment_image_index} for {image_stack.shape[0]} images."
+        )
+    normalized_control_points = StraightenWormControlPoints(
+        points=control_points,
+        labels=label_plane,
+        num_control_points=num_control_points,
+    ).normalized
+    placements = StraightenWormsSliceRequest(
+        image=image_stack[alignment_image_index],
+        labels=label_plane,
+        control_points=normalized_control_points,
+        worm_width=worm_width,
+        num_control_points=num_control_points,
+        flip_mode=flip_mode,
+        measure_intensity=measure_intensity,
+        slice_index=alignment_image_index,
+    ).planned_placements()
+    straightened_images: list[RuntimeArrayData] = []
+    straightened_labels: np.ndarray | None = None
+    measurement_batches: list[ColumnarRows] = []
+    for slice_index in range(image_stack.shape[0]):
+        slice_image, slice_labels, measurements = StraightenWormsSliceRequest(
+            image=image_stack[slice_index],
+            labels=label_plane,
+            control_points=normalized_control_points,
+            worm_width=worm_width,
+            num_control_points=num_control_points,
+            flip_mode=FlipMode.NONE,
+            measure_intensity=measure_intensity,
+            slice_index=slice_index,
+        ).execute(placements)
+        output_metadata = (
+            source_metadata.for_leading_source_plane(slice_index)
+            if source_metadata.plane_axis is not None
+            else source_metadata
+        )
+        output_spatial_shape = output_metadata.spatial_shape_yx(slice_image)
+        if output_spatial_shape is None:
+            raise ValueError(
+                "StraightenWorms output does not declare two spatial axes."
+            )
+        output_metadata = output_metadata.with_spatial_resize(output_spatial_shape)
+        straightened_images.append(output_metadata.payload_with(slice_image))
+        if slice_index == alignment_image_index:
+            straightened_labels = slice_labels
+        measurement_batches.append(measurements)
+    if straightened_labels is None:
+        raise RuntimeError("StraightenWorms did not execute its alignment image.")
+    return (
+        pack_aligned_image_outputs(straightened_images),
+        ConcatenatedColumnarRows(tuple(measurement_batches)),
+        object_label_value_with_dense_labels(
+            worm_labels,
+            straightened_labels,
+            source_spatial_domain=(
+                worm_labels.object_label_source_spatial_domain().with_spatial_resize(
+                    straightened_labels.shape[-2:]
+                )
+            ),
         ),
-    ),
-    ("labels", segmentation_mask_rois()),
-)
+    )
+
+
+@numpy(contract=ProcessingContract.PURE_2D)
 def identify_dead_worms(
     image: np.ndarray,
     worm_width: int = 10,
@@ -1478,8 +2215,20 @@ def identify_dead_worms(
     auto_distance: bool = True,
     space_distance: float = 5.0,
     angular_distance: float = 30.0,
-) -> tuple[np.ndarray, DeadWormStats, np.ndarray]:
-    """Identify straight dead worms by diamond-template matches across angles."""
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
+    """Identify straight dead worms by diamond-template matches across angles.
+
+    Args:
+        worm_width: Expected worm width in pixels for the diamond template.
+        worm_length: Expected worm length in pixels for the diamond template.
+        angle_count: Number of evenly spaced orientations tested over 180 degrees.
+        auto_distance: Derive spatial and angular clustering distances from worm
+            dimensions when enabled.
+        space_distance: Maximum center separation in pixels when automatic spacing
+            is disabled.
+        angular_distance: Maximum orientation difference in degrees when automatic
+            spacing is disabled.
+    """
     from scipy.ndimage import binary_erosion
 
     mask = image > 0
@@ -1501,7 +2250,18 @@ def identify_dead_worms(
         a_coords.append(np.ones(point_count) * angle)
     if not i_coords:
         labels = np.zeros(mask.shape, dtype=np.int32)
-        return (image, DeadWormStats(0, 0, 0.0, 0.0, 0.0), labels)
+        return (
+            image,
+            DataclassMeasurementColumnarRows(
+                (DeadWormStats(0, 0, 0.0, 0.0, 0.0),),
+                row_type=DeadWormStats,
+            ),
+            SourceImageObjectLabelBuildRequest(
+                image=image,
+                labels=labels,
+                declared_object_count=0,
+            ).payload(),
+        )
     i = np.concatenate(i_coords)
     j = np.concatenate(j_coords)
     a = np.concatenate(a_coords)
@@ -1542,7 +2302,19 @@ def identify_dead_worms(
         mean_center_y=float(np.mean(center_y)) if len(center_y) > 0 else 0.0,
         mean_angle=float(np.mean(angles) * 180 / np.pi) if len(angles) > 0 else 0.0,
     )
-    return (image, stats, labels)
+    return (
+        image,
+        DataclassMeasurementColumnarRows(
+            (stats,),
+            row_type=DeadWormStats,
+        ),
+        SourceImageObjectLabelBuildRequest(
+            image=image,
+            labels=labels,
+            declared_object_count=int(label_count),
+            declared_object_ids=tuple(range(1, int(label_count) + 1)),
+        ).payload(),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1958,34 +2730,40 @@ class WormClusterPathSelectionPolicy:
     max_path_length: float
 
     def select(self, graph: WormGraph, paths: list[WormGraphPath]) -> list[np.ndarray]:
-        paths_and_costs: list[tuple[WormGraphPath, float]] = []
+        paths_costs_and_coords: list[tuple[WormGraphPath, float, np.ndarray]] = []
         for path in paths:
             coords = path.to_pixel_coords(graph)
-            total_length = float(calculate_cumulative_lengths(coords)[-1])
+            cumulative_lengths = calculate_cumulative_lengths(coords)
+            total_length = float(cumulative_lengths[-1])
             if (
                 total_length > self.max_path_length
                 or total_length < self.min_path_length
             ):
                 continue
             cost = WormShapeCostRequest(
-                path_coords=coords,
-                total_length=total_length,
-                num_control_points=self.num_control_points,
+                geometry=WormControlPointGeometry.from_path_coords(
+                    coords,
+                    cumulative_lengths,
+                    num_control_points=self.num_control_points,
+                ),
                 mean_angles=self.mean_angles,
                 inv_angles_covariance_matrix=self.inv_angles_covariance_matrix,
             ).cost
             if cost < self.cost_threshold:
-                paths_and_costs.append((path, cost))
-        if not paths_and_costs:
+                paths_costs_and_coords.append((path, cost, coords))
+        if not paths_costs_and_coords:
             return []
-        costs = np.asarray([cost for _path, cost in paths_and_costs], dtype=float)
+        costs = np.asarray(
+            [cost for _path, cost, _coords in paths_costs_and_coords],
+            dtype=float,
+        )
         order = np.lexsort([costs])
         if len(order) > MAX_CLUSTER_PATHS:
             order = order[:MAX_CLUSTER_PATHS]
         costs = costs[order]
         path_segment_matrix = np.zeros((len(graph.segments), len(order)), dtype=bool)
         for column, ordered_index in enumerate(order):
-            path = paths_and_costs[int(ordered_index)][0]
+            path = paths_costs_and_coords[int(ordered_index)][0]
             path_segment_matrix[list(path.segments), column] = True
         selected_indexes = WormPathSubsetSelectionContext(
             costs=costs,
@@ -1997,11 +2775,10 @@ class WormClusterPathSelectionPolicy:
                 self.component_area, median_worm_area=self.median_worm_area
             ),
         ).select()
-        selected_paths = [
-            paths_and_costs[int(order[selected_index])][0]
+        return [
+            paths_costs_and_coords[int(order[selected_index])][2]
             for selected_index in selected_indexes
         ]
-        return [path.to_pixel_coords(graph) for path in selected_paths]
 
 
 def _cluster_max_worms(component_area: int, *, median_worm_area: float | None) -> int:
@@ -2104,19 +2881,18 @@ class WormPathSubsetSelectionContext:
 
 
 def _worm_label_outputs(
-    all_path_coords: list[np.ndarray],
+    worm_geometries: Sequence[WormControlPointGeometry],
     *,
     source_image: object,
     image_shape: tuple[int, int],
     radii_from_training: np.ndarray,
-    overlap_style: OverlapStyle,
-) -> tuple[ObjectLabelValue, ObjectLabelPayload]:
+) -> WormLabelCandidates:
     ijv_parts: list[np.ndarray] = []
     overlap_hits = np.zeros(image_shape, dtype=np.int16)
     overlapping = np.zeros(image_shape, dtype=np.int32)
-    for object_number, path_coords in enumerate(all_path_coords, start=1):
+    for object_number, geometry in enumerate(worm_geometries, start=1):
         rows, cols = _reconstructed_worm_pixels(
-            path_coords,
+            geometry,
             image_shape=image_shape,
             radii_from_training=radii_from_training,
         )
@@ -2145,36 +2921,87 @@ def _worm_label_outputs(
     ).payload(
         representation=ObjectLabelRepresentation.SPARSE_IJV,
     )
-    overlapping_payload = SourceImageObjectLabelBuildRequest(
-        image=source_image,
-        labels=overlapping,
-    ).payload()
     nonoverlapping_payload = SourceImageObjectLabelBuildRequest(
         image=source_image,
         labels=nonoverlapping,
     ).payload()
-    return WormLabelOutputStrategy.for_overlap_style(overlap_style).outputs(
-        WormLabelOutputRequest(
-            sparse_overlapping=sparse_overlapping,
-            overlapping=overlapping_payload,
-            nonoverlapping=nonoverlapping_payload,
-        )
+    return WormLabelCandidates(
+        overlapping=sparse_overlapping,
+        nonoverlapping=nonoverlapping_payload,
+    )
+
+
+def _overlapping_worm_outline(
+    source_image: RuntimeArrayData,
+    labels: ObjectLabelValue,
+    colormap_name: str,
+) -> RuntimeArrayData:
+    """Render per-worm inner outlines without erasing sparse overlaps."""
+
+    from skimage.segmentation import find_boundaries
+
+    rows = object_label_sparse_ijv_rows(labels)
+    row_array = rows.as_array()
+    image_shape = tuple(np.asarray(source_image).shape[-2:])
+    max_label = int(np.max(row_array[:, rows.label_column])) if row_array.size else 0
+    resolved_colormap = (
+        "viridis" if colormap_name.strip().casefold() == "default" else colormap_name
+    )
+    colors = object_label_colormap(resolved_colormap, max_label)
+    output = np.zeros((*image_shape, 3), dtype=np.float32)
+    label_ids = row_array[:, rows.label_column].astype(int, copy=False)
+    for label_id in np.unique(label_ids[label_ids > 0]):
+        label_rows = row_array[label_ids == label_id]
+        label_y = label_rows[:, rows.y_column].astype(int, copy=False)
+        label_x = label_rows[:, rows.x_column].astype(int, copy=False)
+        y_start = max(int(np.min(label_y)) - 1, 0)
+        y_stop = min(int(np.max(label_y)) + 2, image_shape[0])
+        x_start = max(int(np.min(label_x)) - 1, 0)
+        x_stop = min(int(np.max(label_x)) + 2, image_shape[1])
+        local_mask = np.zeros((y_stop - y_start, x_stop - x_start), dtype=bool)
+        local_mask[label_y - y_start, label_x - x_start] = True
+        local_outline = find_boundaries(local_mask, mode="inner")
+        output[y_start:y_stop, x_start:x_stop][local_outline] = colors[label_id]
+    return with_image_payload_data(
+        source_image,
+        output,
+        metadata=image_payload_metadata(source_image).replace_fields(
+            source_channel_axis=-1
+        ),
+    )
+
+
+def _nonoverlapping_worm_outline(
+    source_image: RuntimeArrayData,
+    labels: ObjectLabelValue,
+) -> RuntimeArrayData:
+    """Render the binary inner outline of exclusive worm labels."""
+
+    from skimage.segmentation import find_boundaries
+
+    outline = find_boundaries(
+        object_label_dense_array(labels, dtype=np.int32),
+        mode="inner",
+    )
+    return with_image_payload_data(
+        source_image,
+        outline,
+        metadata=image_payload_metadata(source_image).without_source_channel_axis(),
     )
 
 
 def _reconstructed_worm_pixels(
-    path_coords: np.ndarray,
+    geometry: WormControlPointGeometry,
     *,
     image_shape: tuple[int, int],
     radii_from_training: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    if len(path_coords) < 2:
+    if len(geometry.control_coords) < 2:
         return (np.zeros(0, dtype=int), np.zeros(0, dtype=int))
-    control_coords = sample_control_points(
-        path_coords, calculate_cumulative_lengths(path_coords), len(radii_from_training)
-    )
     return rebuild_worm_from_control_points_approx(
-        control_coords, radii_from_training, image_shape
+        geometry.control_coords,
+        radii_from_training,
+        image_shape,
     )
 
 
@@ -2214,26 +3041,22 @@ def _coerce_worm_radii(
 class WormShapeCostRequest:
     """Mahalanobis-style CP worm shape cost for one candidate path."""
 
-    path_coords: np.ndarray
-    total_length: float
-    num_control_points: int
+    geometry: WormControlPointGeometry
     mean_angles: np.ndarray
     inv_angles_covariance_matrix: np.ndarray
 
     @property
     def cost(self) -> float:
-        control_coords = sample_control_points(
-            self.path_coords,
-            calculate_cumulative_lengths(self.path_coords),
-            self.num_control_points,
-        )
-        if len(self.mean_angles) != self.num_control_points - 1:
+        num_control_points = len(self.geometry.control_coords)
+        if len(self.mean_angles) != num_control_points - 1:
             return 0.0
-        expected_shape = (self.num_control_points - 1, self.num_control_points - 1)
+        expected_shape = (num_control_points - 1, num_control_points - 1)
         if self.inv_angles_covariance_matrix.shape != expected_shape:
             return 0.0
-        angles = WormControlPointGeometry(control_coords).angles
-        feature_vector = np.hstack((angles, [self.total_length])) - self.mean_angles
+        feature_vector = (
+            np.hstack((self.geometry.angles, [self.geometry.path_length]))
+            - self.mean_angles
+        )
         return float(
             feature_vector @ self.inv_angles_covariance_matrix @ feature_vector
         )
@@ -2243,45 +3066,50 @@ class WormShapeCostRequest:
 
 
 def _worm_descriptor_rows(
-    all_path_coords: list[np.ndarray],
+    worm_geometries: Sequence[WormControlPointGeometry],
     *,
     num_control_points: int,
-) -> list[dict[str, float | int | str]]:
+) -> MeasurementSparseColumnarRows:
     """Return CellProfiler-compatible per-object worm descriptor rows."""
-    return [
-        _worm_descriptor_row(
-            path_coords,
-            object_number=object_number,
-            num_control_points=num_control_points,
-        )
-        for object_number, path_coords in enumerate(all_path_coords, start=1)
-    ]
+    schema = WormControlPointMeasurementSchema(num_control_points=num_control_points)
+    control_point_fields = tuple(
+        schema.row_fields(np.zeros((num_control_points, 2), dtype=float))
+    )
+    return MeasurementSparseColumnarRows.from_rows(
+        tuple(
+            _worm_descriptor_row(
+                geometry,
+                object_number=object_number,
+            )
+            for object_number, geometry in enumerate(worm_geometries, start=1)
+        ),
+        fields=(
+            FieldSpec(MeasurementRowAxisField.OBJECT_NUMBER.value, int),
+            FieldSpec("worm_length", float),
+            *(
+                FieldSpec(f"worm_angle_{index}", float)
+                for index in range(1, max(num_control_points - 2, 0) + 1)
+            ),
+            *(FieldSpec(field_name, float) for field_name in control_point_fields),
+        ),
+    )
 
 
 def _worm_descriptor_row(
-    path_coords: np.ndarray, *, object_number: int, num_control_points: int
+    geometry: WormControlPointGeometry,
+    *,
+    object_number: int,
 ) -> dict[str, float | int]:
-    cumul_lengths = calculate_cumulative_lengths(path_coords)
-    if len(path_coords) < 2:
-        control_coords = np.zeros((num_control_points, 2), dtype=float)
-        angles = np.zeros(max(num_control_points - 2, 0), dtype=float)
-        length = 0.0
-    else:
-        control_coords = sample_control_points(
-            path_coords, cumul_lengths, num_control_points
-        )
-        angles = WormControlPointGeometry(control_coords).angles
-        length = float(cumul_lengths[-1])
     row: dict[str, float | int] = {
         "object_number": object_number,
-        "worm_length": length,
+        "worm_length": geometry.path_length,
     }
-    for index, angle in enumerate(angles, start=1):
+    for index, angle in enumerate(geometry.angles, start=1):
         row[f"worm_angle_{index}"] = float(angle)
     row.update(
         WormControlPointMeasurementSchema(
-            num_control_points=num_control_points
-        ).row_fields(control_coords)
+            num_control_points=len(geometry.control_coords)
+        ).row_fields(geometry.control_coords)
     )
     return row
 

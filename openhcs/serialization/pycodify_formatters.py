@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from dataclasses import dataclass, fields
 from enum import Enum
+from pathlib import Path
 
 from openhcs.core.callable_contract import CallableContract
-from openhcs.core.function_reference import FunctionReferenceTransportStrategy
+from openhcs.core.function_reference import FunctionReference
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.config_framework.field_access import DataclassFieldAccess, DottedFieldPath
 from python_introspect import parameter_exclusions
 from pyqt_reactive.pattern_metadata import PatternScopeToken
 from openhcs.config_framework.lazy_factory import LazyDataclass
@@ -106,19 +109,20 @@ class OpenHCSCallableFormatter(SourceFormatter):
         return SourceFragment(mapped, imports)
 
 
-class CellProfilerRuntimeCallableFormatter(SourceFormatter):
-    priority = 90
+class FunctionReferenceFormatter(SourceFormatter):
+    """Render compiler transport references as their public callables."""
+
+    priority = 76
 
     def can_format(self, value) -> bool:
-        from openhcs.interop.cellprofiler.runtime.module_execution import (
-            CellProfilerGroupedRuntimeCallable,
-            CellProfilerRuntimeCallable,
-        )
+        return isinstance(value, FunctionReference)
 
-        return isinstance(value, (CellProfilerRuntimeCallable, CellProfilerGroupedRuntimeCallable))
-
-    def format(self, value, context: FormatContext) -> SourceFragment:
-        return to_source(value.raw_func, context)
+    def format(
+        self,
+        value: FunctionReference,
+        context: FormatContext,
+    ) -> SourceFragment:
+        return to_source(value.resolve(), context)
 
 
 class PythonSourceLiteralFormatter(SourceFormatter):
@@ -138,6 +142,37 @@ class PythonSourceLiteralFormatter(SourceFormatter):
                 f"got {type(value).__name__}."
             )
         return SourceFragment(value.source_literal(), value.source_literal_imports())
+
+
+class OpenHCSPathFormatter(SourceFormatter):
+    """Collect and substitute document-scoped path expressions."""
+
+    priority = 118
+
+    def can_format(self, value) -> bool:
+        return isinstance(value, Path)
+
+    def format(self, value: Path, context: FormatContext) -> SourceFragment:
+        from openhcs.serialization.source_path_factoring import (
+            SourcePathFactoringPlan,
+            SourcePathOccurrenceCollector,
+        )
+
+        collector = context.extension(SourcePathOccurrenceCollector)
+        if collector is not None:
+            collector.record(value)
+        plan = context.extension(SourcePathFactoringPlan)
+        if plan is not None:
+            expression = plan.expression_for(value)
+            if expression is not None:
+                return to_source(expression, context)
+
+        import_pair = ("pathlib", "Path")
+        name = NameMappingLookup.resolve(context, import_pair, "Path")
+        return SourceFragment(
+            f"{name}({str(value)!r})",
+            frozenset((import_pair,)),
+        )
 
 
 class EnumMemberFormatter(SourceFormatter):
@@ -192,6 +227,12 @@ class MaterializationSpecFormatter(SourceFormatter):
             args.append(f"allowed_backends={allowed_backends_frag.code}")
         if value.primary != 0:
             args.append(f"primary={value.primary}")
+        from openhcs.processing.materialization.constants import WriteMode
+
+        if value.write_mode is not WriteMode.OVERWRITE:
+            write_mode_frag = to_source(value.write_mode, item_ctx)
+            imports |= set(write_mode_frag.imports)
+            args.append(f"write_mode={write_mode_frag.code}")
 
         inner = f",\n{item_ctx.indent_str}".join(args)
         return SourceFragment(
@@ -200,17 +241,23 @@ class MaterializationSpecFormatter(SourceFormatter):
         )
 
 
+def _public_pattern_callable(value: object) -> Callable | None:
+    if isinstance(value, FunctionReference):
+        return value.resolve()
+    return value if callable(value) else None
+
+
 def _is_pattern_tuple(value) -> bool:
     return (
         isinstance(value, tuple)
         and len(value) == 2
-        and callable(value[0])
+        and _public_pattern_callable(value[0]) is not None
         and isinstance(value[1], dict)
     )
 
 
 def _is_pattern_item(value) -> bool:
-    return callable(value) or _is_pattern_tuple(value)
+    return _public_pattern_callable(value) is not None or _is_pattern_tuple(value)
 
 
 def _strip_internal_pattern_metadata(args):
@@ -223,17 +270,15 @@ def _strip_internal_pattern_metadata(args):
 def _exported_callable_parameter_exclusions(func) -> set[str]:
     """Return parameters that must not be emitted for a callable wrapper."""
 
+    func = _public_pattern_callable(func)
+    if func is None:
+        raise TypeError("Function-pattern leaves must resolve to public callables.")
+    contract = CallableContract.from_callable(func)
     excluded = set(parameter_exclusions(func))
-    raw_func = CallableContract.from_callable(func).raw_processing_function
+    excluded.update(contract.runtime_bound_parameters)
+    raw_func = contract.raw_processing_function
     if callable(raw_func):
         excluded.update(parameter_exclusions(raw_func))
-        normalized_raw = (
-            FunctionReferenceTransportStrategy.normalized_registered_callable(
-                raw_func
-            )
-        )
-        if normalized_raw is not None and normalized_raw is not raw_func:
-            excluded.update(parameter_exclusions(normalized_raw))
     return excluded
 
 
@@ -245,8 +290,11 @@ class FunctionPatternTupleFormatter(SourceFormatter):
 
     def format(self, value, context: FormatContext) -> SourceFragment:
         func, args = value
+        public_func = _public_pattern_callable(func)
+        if public_func is None:
+            raise TypeError("Function-pattern leaves must resolve to public callables.")
         args = _strip_internal_pattern_metadata(args)
-        hidden_parameters = _exported_callable_parameter_exclusions(func)
+        hidden_parameters = _exported_callable_parameter_exclusions(public_func)
         if hidden_parameters:
             args = {
                 name: arg_value
@@ -255,13 +303,13 @@ class FunctionPatternTupleFormatter(SourceFormatter):
             }
 
         if not args and context.clean_mode:
-            return to_source(func, context)
+            return to_source(public_func, context)
 
         if context.clean_mode:
             try:
                 defaults = {
                     k: v.default
-                    for k, v in inspect.signature(func).parameters.items()
+                    for k, v in inspect.signature(public_func).parameters.items()
                     if v.default is not inspect.Parameter.empty
                 }
             except (ValueError, TypeError):
@@ -274,9 +322,21 @@ class FunctionPatternTupleFormatter(SourceFormatter):
             final_args = args
 
         if not final_args and context.clean_mode:
-            return to_source(func, context)
+            return to_source(public_func, context)
 
-        func_frag = to_source(func, context)
+        declared_paths = CallableContract.from_callable(
+            public_func
+        ).declared_path_parameters
+        final_args = {
+            name: (
+                Path(arg_value)
+                if name in declared_paths and isinstance(arg_value, str)
+                else arg_value
+            )
+            for name, arg_value in final_args.items()
+        }
+
+        func_frag = to_source(public_func, context)
         args_frag = to_source(final_args, context.indented())
         code = f"({func_frag.code}, {args_frag.code})"
         imports = func_frag.imports | args_frag.imports
@@ -358,6 +418,57 @@ class LazyDataclassFieldEmissionState:
                 return False
         return True
 
+    @classmethod
+    def retain_only_authored_paths(
+        cls,
+        value: LazyDataclass,
+        authored_field_paths: frozenset[str] | set[str],
+    ) -> LazyDataclass:
+        """Restore constructor intent after a flattened ObjectState rebuild.
+
+        ObjectState reconstructs lazy dataclasses from every flattened field so
+        their constructors can preserve raw ``None`` inheritance markers. That
+        necessarily marks every constructor keyword as explicit. Clean source
+        generation instead needs the raw-vs-signature paths already owned by
+        ObjectState, so apply those paths to the existing lazy metadata without
+        changing field values.
+        """
+
+        paths = tuple(DottedFieldPath(path) for path in authored_field_paths)
+        return cls._copy_with_only_authored_paths(
+            value,
+            prefix=DottedFieldPath(""),
+            authored_field_paths=paths,
+        )
+
+    @classmethod
+    def _copy_with_only_authored_paths(
+        cls,
+        value: LazyDataclass,
+        *,
+        prefix: DottedFieldPath,
+        authored_field_paths: tuple[DottedFieldPath, ...],
+    ) -> LazyDataclass:
+        field_values = {}
+        for field in fields(value):
+            field_value = DataclassFieldAccess.raw_value(value, field.name)
+            if isinstance(field_value, LazyDataclass):
+                field_value = cls._copy_with_only_authored_paths(
+                    field_value,
+                    prefix=prefix.child(field.name),
+                    authored_field_paths=authored_field_paths,
+                )
+            field_values[field.name] = field_value
+
+        projected = type(value)(**field_values)
+        explicit_field_names = {
+            field.name
+            for field in fields(projected)
+            if prefix.child(field.name).contains_any(authored_field_paths)
+        }
+        object.__setattr__(projected, "_explicitly_set_fields", explicit_field_names)
+        return projected
+
 
 @dataclass(frozen=True)
 class LazyDataclassSerializedField:
@@ -420,8 +531,6 @@ class LazyDataclassFormatEligibility:
 
 
 class FunctionStepCleanModeFieldPolicy:
-    internal_clean_hidden_fields = frozenset(("invocation_contracts",))
-
     def should_emit(
         self,
         field_name,
@@ -429,8 +538,6 @@ class FunctionStepCleanModeFieldPolicy:
         default_value,
         context: FormatContext,
     ) -> bool:
-        if context.clean_mode and field_name in self.internal_clean_hidden_fields:
-            return False
         if not context.clean_mode:
             return True
 

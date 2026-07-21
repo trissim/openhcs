@@ -8,9 +8,9 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from functools import lru_cache
 from types import MappingProxyType
-from typing import ClassVar, Generic, cast
+from typing import Generic, cast
 
-from metaclass_registry import RegistryFamily, RegistryKeyAttribute
+from openhcs.core.component_group_scope import ComponentGroupScope
 from openhcs.core.equivalence.cells import (
     RuntimeCellSignature,
     RuntimeMeasurementCellSignatureProjection,
@@ -20,7 +20,6 @@ from openhcs.core.equivalence.cells import (
     runtime_cell_signature,
     runtime_measurement_cell_signature,
     runtime_measurement_cell_signature_if_present,
-    runtime_measurement_cell_is_present,
     runtime_measurement_value_is_present,
     runtime_numeric_text_value,
     runtime_value_is_mapping,
@@ -29,9 +28,7 @@ from openhcs.core.equivalence.keys import (
     RuntimeMeasurementFeatureKey,
     RuntimeMeasurementFeatureKeyProjection,
     RuntimeMeasurementFeatureKeySourceContext,
-    RuntimeMeasurementNamePartsProjection,
     RuntimeMeasurementSubjectKey,
-    SemanticCoreFeatureAndSourceNameProjection,
     canonical_measurement_feature_name,
 )
 from openhcs.core.equivalence.measurement_facts import (
@@ -52,11 +49,8 @@ from openhcs.core.equivalence.policy import (
     RuntimeMeasurementQualifierValueMode,
     RuntimeMeasurementRowQualifier,
     normalize_runtime_identifier,
-    runtime_measurement_dialect_cache_id,
-    runtime_measurement_dialect_for_cache_id,
 )
 from openhcs.core.equivalence.tables import (
-    CSV_HEADER_CONTEXT_STOPWORDS,
     MEASUREMENT_IDENTITY_FIELDS,
 )
 from openhcs.core.measurement_row_materialization import (
@@ -66,22 +60,30 @@ from openhcs.core.measurement_row_materialization import (
     MeasurementRowObjectName,
     MeasurementRowSourceImageName,
     measurement_row_has_long_form_measurement_fields,
-    measurement_table_axis_values,
 )
-from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
-from openhcs.core.runtime_semantics import (
+from openhcs.core.runtime_measurements import (
     MeasurementRowValueField,
-    MeasurementObjectRowIdentity,
     MeasurementRowAxisField,
     MeasurementScope,
     MeasurementStatistic,
-    ObjectInstanceKey,
+    MeasuredObjectAnchorFeatureMarker,
+    RuntimeMeasurementFeatureOwner,
+    RuntimeMeasurementRowIdentityContract,
+)
+from openhcs.core.runtime_tabular_values import (
+    MeasurementObjectRowIdentity,
     measurement_row_mapping,
+)
+from openhcs.core.runtime_relationships import (
+    ObjectInstanceKey,
 )
 
 IMAGE_IDENTITY_FIELDS = (
     DEFAULT_RUNTIME_MEASUREMENT_DIALECT.row_identity_contract.image_identity_fields
 )
+OBJECT_LABEL_ROW_IDENTITY_FIELD = "object_label"
+RUNTIME_AXIS_ROW_IDENTITY_FIELD = "_runtime_axis"
+RUNTIME_SLICE_ROW_IDENTITY_FIELD = "_runtime_slice"
 _MeasurementQualifierValueRenderer = Callable[[tuple[object, ...]], str | None]
 _MEASUREMENT_DIALECT_QUALIFIER_FIELD_NAMES_CACHE: dict[
     int,
@@ -179,7 +181,7 @@ def axis_scoped_measurement_row_identity(
     if axis_key is None:
         return row_identity
     return (
-        ("_runtime_axis", measurement_table_cell_payload(axis_key)),
+        (RUNTIME_AXIS_ROW_IDENTITY_FIELD, measurement_table_cell_payload(axis_key)),
         *row_identity,
     )
 
@@ -231,13 +233,7 @@ class RuntimeImageNumberOffset:
     @classmethod
     def from_measurement_table(cls, table: object) -> "RuntimeImageNumberOffset":
         """Return image-number offset from table schema/columns when available."""
-        image_numbers = measurement_table_axis_values(
-            table,
-            MeasurementRowAxisField.IMAGE_NUMBER,
-        )
-        if image_numbers:
-            return cls(min(image_numbers) - 1.0)
-        return cls.from_runtime_rows(table.iter_rows())
+        return cls.from_runtime_rows(table.rows.iter_row_mappings())
 
     @classmethod
     def _offset_from_values(cls, values: Iterable[object]) -> float:
@@ -275,6 +271,26 @@ class RuntimeImageNumberOffset:
             return value
         normalized = numeric_value - self.value
         return int(normalized) if normalized.is_integer() else normalized
+
+    def object_instance_key(
+        self,
+        row: Mapping[str, object],
+        object_id: int,
+    ) -> ObjectInstanceKey:
+        """Normalize an external image-number row into runtime object identity."""
+        runtime_key = ObjectInstanceKey.from_measurement_row(row, object_id)
+        if runtime_key.slice_index is not None:
+            return runtime_key
+        image_number = RuntimeMeasurementRowMapping(row).first_value(("image_number",))
+        if image_number is None:
+            return runtime_key
+        numeric_value = runtime_numeric_text_value(str(image_number))
+        if numeric_value is None or not math.isfinite(numeric_value):
+            return runtime_key
+        slice_index = numeric_value - self.value - 1.0
+        if slice_index < 0 or not slice_index.is_integer():
+            return runtime_key
+        return ObjectInstanceKey(object_id, slice_index=int(slice_index))
 
 
 def measurement_row_qualifiers(
@@ -493,24 +509,6 @@ def _first_row_value(
     return None
 
 
-_NON_MEASUREMENT_FIELD_PREFIXES = (
-    "channel_",
-    "execution_time_",
-    "file_name_",
-    "frame_",
-    "group_",
-    "height_",
-    "image_quality_scaling_",
-    "image_set_",
-    "md_5_digest_",
-    "md5_digest_",
-    "module_error_",
-    "path_name_",
-    "scaling_",
-    "series_",
-    "url_",
-    "width_",
-)
 _CACHE_MISS = object()
 
 RuntimeMeasurementIndexedQualifier = tuple[
@@ -524,20 +522,8 @@ RuntimeMeasurementQualifierCacheKey = tuple[
     RuntimeMeasurementRowQualifier,
     tuple[object | None, ...],
 ]
-RuntimeMeasurementRowSubjectSchemaValue = tuple[
-    int | None,
-    int | None,
-    tuple[int, ...],
-    tuple[int, ...],
-]
-RuntimeMeasurementRowSubjectSchemaCache = dict[
-    tuple[str, ...],
-    RuntimeMeasurementRowSubjectSchemaValue,
-]
 RuntimeMeasurementRowIdentity = tuple[tuple[str, object], ...]
 RuntimeMeasurementRowIdentityOrMissing = RuntimeMeasurementRowIdentity | None
-OBJECT_LABEL_ROW_IDENTITY_FIELD = "object_label"
-RUNTIME_SLICE_ROW_IDENTITY_FIELD = "_runtime_slice"
 
 
 def object_label_signature_from_row_identity(
@@ -563,8 +549,17 @@ class RuntimeMeasurementRowSchema:
 
     feature_indexes: tuple[int, ...]
     qualifiers_by_index: dict[int, tuple[RuntimeMeasurementIndexedQualifier, ...]]
+    long_form_qualifiers: tuple[RuntimeMeasurementIndexedQualifier, ...]
     long_form_feature_indexes: tuple[int, ...]
     long_form_value_indexes: tuple[int, ...]
+
+    @property
+    def has_measurement_features(self) -> bool:
+        """Return whether this schema declares wide or long-form measurements."""
+        return bool(
+            self.feature_indexes
+            or (self.long_form_feature_indexes and self.long_form_value_indexes)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -594,10 +589,6 @@ RuntimeMeasurementFeatureKeyCache = dict[
     RuntimeMeasurementFeatureKeyCacheKey,
     RuntimeMeasurementFeatureKey | None,
 ]
-RuntimeMeasurementLongFormKeyCache = dict[
-    tuple[RuntimeMeasurementSubjectKey, str | None, str],
-    RuntimeMeasurementFeatureKey | None,
-]
 RuntimeMeasurementWideFeatureIndexCacheKey = tuple[
     tuple[str, ...],
     MeasurementScope,
@@ -620,7 +611,8 @@ class RuntimeWideProjectionColumn:
     key: RuntimeMeasurementFeatureKey
     projected_key: RuntimeMeasurementProjectedFeatureCacheKey
     padding_group: RuntimeMeasurementPaddingGroup
-    qualified_observation: bool
+    measured_object_anchor: bool
+    producer_owned_feature: bool
 
 
 RuntimeMeasurementWideFeaturePlanCacheKey = tuple[
@@ -628,6 +620,7 @@ RuntimeMeasurementWideFeaturePlanCacheKey = tuple[
     MeasurementScope,
     str | None,
     str | None,
+    type[RuntimeMeasurementFeatureOwner] | None,
     str,
     int,
 ]
@@ -635,71 +628,6 @@ RuntimeMeasurementWideFeaturePlanCache = dict[
     RuntimeMeasurementWideFeaturePlanCacheKey,
     tuple[RuntimeWideProjectionColumn, ...],
 ]
-
-
-def runtime_measurement_category_priority(
-    prefix: tuple[str, ...],
-    dialect: RuntimeMeasurementDialect,
-) -> int | None:
-    """Return the dialect priority for one category prefix."""
-    return _runtime_measurement_category_priority_cached(
-        prefix,
-        runtime_measurement_dialect_cache_id(dialect),
-    )
-
-
-@lru_cache(maxsize=8192)
-def _runtime_measurement_category_priority_cached(
-    prefix: tuple[str, ...],
-    dialect_id: int,
-) -> int | None:
-    """Return cached dialect priority for one category prefix."""
-    dialect = runtime_measurement_dialect_for_cache_id(dialect_id)
-    return next(
-        (
-            index
-            for index, category_prefix in enumerate(
-                dialect.resolved_category_prefixes()
-            )
-            if category_prefix == prefix
-        ),
-        None,
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeMeasurementFeatureCategoryPriority:
-    """Dialect category-prefix priority for runtime measurement feature names."""
-
-    feature_name: str
-    dialect: RuntimeMeasurementDialect
-
-    def priority(self) -> int | None:
-        return runtime_measurement_feature_category_priority(
-            self.feature_name,
-            runtime_measurement_dialect_cache_id(self.dialect),
-        )
-
-
-@lru_cache(maxsize=65536)
-def runtime_measurement_feature_category_priority(
-    feature_name: str,
-    dialect_id: int,
-) -> int | None:
-    """Return cached dialect category priority for one feature name."""
-    dialect = runtime_measurement_dialect_for_cache_id(dialect_id)
-    normalized = normalize_runtime_identifier(feature_name)
-    if normalized_runtime_measurement_identity_field_matches(
-        normalized,
-        dialect,
-    ):
-        return None
-    parts = tuple(part for part in normalized.split("_") if part)
-    parts_projection = RuntimeMeasurementNamePartsProjection(parts, dialect)
-    for index, prefix in enumerate(dialect.resolved_category_prefixes()):
-        if parts_projection.should_strip_category_prefix(prefix):
-            return index
-    return -1
 
 
 RuntimeMeasurementQualifierRenderCache = dict[
@@ -710,7 +638,6 @@ RuntimeMeasurementPaddingGroupCache = dict[
     tuple[str, RuntimeMeasurementProjectedFeatureCacheKey],
     RuntimeMeasurementPaddingGroup,
 ]
-RuntimeCollapsedNumericQualifierCache = dict[tuple[str, tuple[str, ...]], bool]
 RuntimeMeasurementIndexedQualifierCache = dict[int, tuple[str, ...]]
 RuntimeRowQualifierResolutionCache = dict[
     int,
@@ -744,13 +671,14 @@ def runtime_measurement_field_indexes(
 def normalized_runtime_measurement_identity_field_matches_qualifier_names(
     normalized: str,
     qualifier_field_names: frozenset[str],
+    non_measurement_field_prefixes: tuple[str, ...],
 ) -> bool:
     """Return whether a normalized field is structural row metadata."""
     if normalized in MEASUREMENT_IDENTITY_FIELDS:
         return True
     if normalized in qualifier_field_names:
         return True
-    if normalized.startswith(_NON_MEASUREMENT_FIELD_PREFIXES):
+    if normalized.startswith(non_measurement_field_prefixes):
         return True
     return normalized.startswith("metadata_")
 
@@ -759,9 +687,14 @@ def normalized_runtime_measurement_identity_field_matches_qualifier_names(
 def runtime_measurement_row_schema_for_header(
     header: tuple[str, ...],
     row_qualifiers: tuple[RuntimeMeasurementRowQualifier, ...],
+    row_identity_contract: RuntimeMeasurementRowIdentityContract,
+    non_measurement_field_prefixes: tuple[str, ...],
 ) -> RuntimeMeasurementRowSchema:
     """Return cached projection schema for one header and qualifier declaration."""
     normalized_fields = tuple(normalize_runtime_identifier(field) for field in header)
+    object_identity_field = row_identity_contract.selected_object_identity_field(
+        frozenset(normalized_fields)
+    )
     aggregate_reference_indexes = frozenset(
         index
         for index, field_name in enumerate(header)
@@ -771,7 +704,9 @@ def runtime_measurement_row_schema_for_header(
         field_name: index for index, field_name in enumerate(normalized_fields)
     }
     qualifier_field_names = frozenset(
-        field_name for qualifier in row_qualifiers for field_name in qualifier.field_names
+        field_name
+        for qualifier in row_qualifiers
+        for field_name in qualifier.field_names
     )
     feature_indexes = tuple(
         index
@@ -779,7 +714,9 @@ def runtime_measurement_row_schema_for_header(
         if not normalized_runtime_measurement_identity_field_matches_qualifier_names(
             field_name,
             qualifier_field_names,
+            non_measurement_field_prefixes,
         )
+        and field_name != object_identity_field
         and index not in aggregate_reference_indexes
     )
     qualifier_indexes = {
@@ -817,10 +754,8 @@ def runtime_measurement_row_schema_for_header(
 
     return RuntimeMeasurementRowSchema(
         feature_indexes,
-        {
-            index: canonical_qualifiers_for_index(index)
-            for index in feature_indexes
-        },
+        {index: canonical_qualifiers_for_index(index) for index in feature_indexes},
+        tuple(qualifier_indexes.items()),
         runtime_measurement_field_indexes(
             normalized_field_indexes,
             MeasurementRowAxisField.feature_name_field_names_ordered(),
@@ -1053,6 +988,7 @@ class RuntimeMeasurementRowMapping:
     """Nominal row boundary for runtime measurement-row semantics."""
 
     row: Mapping[str, object]
+    object_row_identity: MeasurementObjectRowIdentity | None = None
     _header: tuple[str, ...] = field(init=False, repr=False, compare=False)
     _values: tuple[object, ...] | None = field(init=False, repr=False, compare=False)
     _normalized_fields: Mapping[str, str] = field(
@@ -1168,10 +1104,30 @@ class RuntimeMeasurementRowMapping:
     def object_label(self) -> int | None:
         return cast(int | None, self.declared_value(MeasurementRowObjectLabel))
 
+    def object_identity_value(
+        self,
+        dialect: RuntimeMeasurementDialect,
+    ) -> tuple[str, object] | None:
+        """Return the object-identity field and value selected by the dialect."""
+        selected_field = dialect.row_identity_contract.selected_object_identity_field(
+            self.normalized_field_names
+        )
+        if selected_field is None:
+            return None
+        field_name = self.normalized_fields[selected_field]
+        value = self.row[field_name]
+        if not runtime_measurement_value_is_present(value):
+            return None
+        return field_name, value
+
     def identity_role(self) -> MeasurementObjectRowIdentity | None:
         return cast(
             MeasurementObjectRowIdentity | None,
-            self.declared_value(MeasurementRowObjectIdentityRole),
+            MeasurementRowObjectIdentityRole.resolve_value_from_row(
+                self.row,
+                carrier_identity=self.object_row_identity,
+                normalized_fields=self.normalized_fields,
+            ),
         )
 
     def image_identity_key(
@@ -1214,7 +1170,7 @@ class RuntimeMeasurementRowMapping:
         if axis_key is None:
             return row_identity
         return (
-            ("_runtime_axis", measurement_table_cell_payload(axis_key)),
+            (RUNTIME_AXIS_ROW_IDENTITY_FIELD, measurement_table_cell_payload(axis_key)),
             *row_identity,
         )
 
@@ -1224,6 +1180,13 @@ class RuntimeObjectMeasurementRowIdentity:
     """Nominal identity for one object measurement row within a runtime axis."""
 
     row_identity: RuntimeMeasurementRowIdentity
+    occurrence_scope: ComponentGroupScope | None = None
+
+    def without_occurrence_scope(self) -> "RuntimeObjectMeasurementRowIdentity":
+        """Return this row identity independent of invocation grouping."""
+        if self.occurrence_scope is None:
+            return self
+        return type(self)(self.row_identity)
 
     @classmethod
     def from_row(
@@ -1258,14 +1221,23 @@ class RuntimeObjectMeasurementRowIdentity:
         axis_key: str | None,
         policy: RuntimeEquivalencePolicy,
         object_instance_key: ObjectInstanceKey,
+        *,
+        occurrence_scope: ComponentGroupScope | None = None,
     ) -> "RuntimeObjectMeasurementRowIdentity":
         row_identity = row.axis_scoped_identity(
             axis_key,
             policy.measurement_dialect,
         )
         if object_instance_key.slice_index is not None:
+            image_identity_fields = (
+                policy.measurement_dialect.row_identity_contract.image_identity_fields
+            )
             row_identity = (
-                *row_identity,
+                *(
+                    field
+                    for field in row_identity
+                    if field[0] not in image_identity_fields
+                ),
                 (RUNTIME_SLICE_ROW_IDENTITY_FIELD, object_instance_key.slice_index),
             )
         return cls(
@@ -1278,7 +1250,8 @@ class RuntimeObjectMeasurementRowIdentity:
                         policy,
                     ).signature(),
                 ),
-            )
+            ),
+            occurrence_scope,
         )
 
     @property
@@ -1293,7 +1266,11 @@ class RuntimeObjectMeasurementRowIdentity:
     def has_image_identity(self) -> bool:
         return any(
             field[0] in IMAGE_IDENTITY_FIELDS
-            or field[0] == RUNTIME_SLICE_ROW_IDENTITY_FIELD
+            or field[0]
+            in (
+                RUNTIME_AXIS_ROW_IDENTITY_FIELD,
+                RUNTIME_SLICE_ROW_IDENTITY_FIELD,
+            )
             for field in self.row_identity
         )
 
@@ -1332,7 +1309,7 @@ def normalized_runtime_measurement_identity_field_matches(
         return True
     if normalized in measurement_qualifier_field_names(dialect):
         return True
-    if normalized.startswith(_NON_MEASUREMENT_FIELD_PREFIXES):
+    if normalized.startswith(dialect.non_measurement_field_prefixes):
         return True
     return normalized.startswith("metadata_")
 
@@ -1351,15 +1328,21 @@ RuntimeProjectedCells = tuple[
 class RuntimeRowProjection(Generic[RuntimeRowProjectionValueT]):
     records: RuntimeRowProjectionRecords[RuntimeRowProjectionValueT]
     long_form: bool = False
+    declared_anchor_groups: frozenset[RuntimeMeasurementPaddingGroup] = frozenset()
 
 
 def runtime_row_projection(
     records: Iterable[RuntimeRowProjectionRecord[RuntimeRowProjectionValueT]] = (),
     *,
     long_form: bool = False,
+    declared_anchor_groups: frozenset[RuntimeMeasurementPaddingGroup] = frozenset(),
 ) -> RuntimeRowProjection[RuntimeRowProjectionValueT]:
     """Build a row projection through one normalized record boundary."""
-    return RuntimeRowProjection(tuple(records), long_form=long_form)
+    return RuntimeRowProjection(
+        tuple(records),
+        long_form=long_form,
+        declared_anchor_groups=declared_anchor_groups,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1367,6 +1350,7 @@ class RuntimeRowProjectionContext:
     row: RuntimeMeasurementRowMapping
     subject: RuntimeMeasurementSubjectKey
     policy: RuntimeEquivalencePolicy
+    measurement_feature_owner: type[RuntimeMeasurementFeatureOwner] | None
     source_name: str | None
     known_source_names: tuple[str, ...]
     required_keys: RuntimeRequiredMeasurementKeys
@@ -1375,13 +1359,12 @@ class RuntimeRowProjectionContext:
     derive_directional_pair_facts: bool
     schema_cache: RuntimeMeasurementRowSchemaCache
     key_cache: RuntimeMeasurementFeatureKeyCache
-    long_form_key_cache: RuntimeMeasurementLongFormKeyCache
     wide_feature_index_cache: RuntimeMeasurementWideFeatureIndexCache
     wide_feature_plan_cache: RuntimeMeasurementWideFeaturePlanCache
     qualifier_render_cache: RuntimeMeasurementQualifierRenderCache
     padding_group_cache: RuntimeMeasurementPaddingGroupCache
-    collapsed_numeric_qualifier_cache: RuntimeCollapsedNumericQualifierCache
     required_key_index: RuntimeMeasurementRequiredKeyIndex
+    table_schema: RuntimeMeasurementRowSchema
 
     @classmethod
     def from_row(
@@ -1390,6 +1373,7 @@ class RuntimeRowProjectionContext:
         subject: RuntimeMeasurementSubjectKey,
         policy: RuntimeEquivalencePolicy,
         *,
+        measurement_feature_owner: type[RuntimeMeasurementFeatureOwner] | None,
         source_name: str | None,
         known_source_names: tuple[str, ...],
         required_keys: RuntimeRequiredMeasurementKeys,
@@ -1398,18 +1382,18 @@ class RuntimeRowProjectionContext:
         derive_directional_pair_facts: bool,
         schema_cache: RuntimeMeasurementRowSchemaCache,
         key_cache: RuntimeMeasurementFeatureKeyCache,
-        long_form_key_cache: RuntimeMeasurementLongFormKeyCache,
         wide_feature_index_cache: RuntimeMeasurementWideFeatureIndexCache,
         wide_feature_plan_cache: RuntimeMeasurementWideFeaturePlanCache,
         qualifier_render_cache: RuntimeMeasurementQualifierRenderCache,
         padding_group_cache: RuntimeMeasurementPaddingGroupCache,
-        collapsed_numeric_qualifier_cache: RuntimeCollapsedNumericQualifierCache,
         required_key_index: RuntimeMeasurementRequiredKeyIndex,
+        table_schema: RuntimeMeasurementRowSchema,
     ) -> "RuntimeRowProjectionContext":
         return cls(
             row=row,
             subject=subject,
             policy=policy,
+            measurement_feature_owner=measurement_feature_owner,
             source_name=source_name,
             known_source_names=known_source_names,
             required_keys=required_keys,
@@ -1418,13 +1402,12 @@ class RuntimeRowProjectionContext:
             derive_directional_pair_facts=derive_directional_pair_facts,
             schema_cache=schema_cache,
             key_cache=key_cache,
-            long_form_key_cache=long_form_key_cache,
             wide_feature_index_cache=wide_feature_index_cache,
             wide_feature_plan_cache=wide_feature_plan_cache,
             qualifier_render_cache=qualifier_render_cache,
             padding_group_cache=padding_group_cache,
-            collapsed_numeric_qualifier_cache=collapsed_numeric_qualifier_cache,
             required_key_index=required_key_index,
+            table_schema=table_schema,
         )
 
     def subject_for_field_index(
@@ -1467,33 +1450,85 @@ class RuntimeRowProjectionContext:
             return long_form_projection
         return self._wide_projection(header, row_schema, row_values, value_projector)
 
-    def facts(self) -> RuntimeMeasurementFacts:
-        """Project this runtime row into semantic fact views."""
+    def fact_projection(
+        self,
+        *,
+        covers_declared_object_measurement_domain: bool = False,
+    ) -> RuntimeRowProjection[RuntimeCellSignature]:
+        """Project this row while preserving declared alias ownership."""
         projection = self.project(
             RuntimeMeasurementCellFactProjection(),
             RuntimeRowLongFormFactProjection(),
         )
-        row_facts = (
-            RuntimeMeasurementFactProjectionContract.dedupe_observed_qualified_records(
-                projection.records,
-                self.policy,
+        records = projection.records
+        if (
+            self.subject.scope is MeasurementScope.OBJECT
+            and not self.table_schema.has_measurement_features
+        ):
+            object_identity = self.row.object_identity_value(
+                self.policy.measurement_dialect
             )
+            if object_identity is not None:
+                field_name, value = object_identity
+                key = self._feature_key(field_name, self.subject, ())
+                if key is not None and (
+                    self.required_keys is None or key in self.required_keys
+                ):
+                    records = (
+                        *records,
+                        RuntimeRowProjectionRecord(
+                            self._padding_group(field_name, key),
+                            key,
+                            runtime_measurement_cell_signature(value, self.policy),
+                            measured_object_anchor=True,
+                        ),
+                    )
+        if not (
+            covers_declared_object_measurement_domain
+            and self.subject.scope is MeasurementScope.OBJECT
+        ):
+            records = RuntimeMeasurementFactProjectionContract.observed_records(
+                records,
+                self.policy,
+                declared_anchor_groups=projection.declared_anchor_groups,
+            )
+        projection = runtime_row_projection(
+            records,
+            long_form=projection.long_form,
+            declared_anchor_groups=projection.declared_anchor_groups,
+        )
+        row_facts = RuntimeMeasurementFactProjectionContract.dedupe_records(
+            projection.records
         )
         if projection.long_form:
-            return row_facts
+            return projection
         if not self.derive_directional_pair_facts:
-            return row_facts
+            return projection
         derived_facts = RuntimeDirectionalPairMeasurementDerivationContract(
             self.policy,
             self.known_source_names,
         ).derive(row_facts)
-        if self.required_keys is not None:
-            return tuple(
-                (key, value)
-                for key, value in derived_facts
-                if key in self.required_keys
+        explicit_facts = frozenset(row_facts)
+        return runtime_row_projection(
+            (
+                *projection.records,
+                *(
+                    RuntimeRowProjectionRecord(
+                        RuntimeMeasurementFactProjectionContract.padding_group(
+                            self.table_padding_group,
+                            key.feature_name,
+                            key,
+                            self.policy.measurement_dialect,
+                        ),
+                        key,
+                        value,
+                    )
+                    for key, value in derived_facts
+                    if (key, value) not in explicit_facts
+                    and (self.required_keys is None or key in self.required_keys)
+                ),
             )
-        return derived_facts
+        )
 
     def numeric_values(self) -> RuntimeNumericMeasurementValues:
         """Project numeric runtime row values without building cell signatures."""
@@ -1503,7 +1538,8 @@ class RuntimeRowProjectionContext:
         )
         row_values_by_key = dedupe_numeric_measurement_values(
             (key, value)
-            for _padding_group, key, value, _qualified_observation in projection.records
+            for record in projection.records
+            for key, value in ((record.key, record.value),)
         )
         if projection.long_form:
             return row_values_by_key
@@ -1540,6 +1576,8 @@ class RuntimeRowProjectionContext:
         cached_schema = runtime_measurement_row_schema_for_header(
             header,
             self.policy.measurement_dialect.row_qualifiers,
+            self.policy.measurement_dialect.row_identity_contract,
+            self.policy.measurement_dialect.non_measurement_field_prefixes,
         )
         self.schema_cache[header] = cached_schema
         return cached_schema
@@ -1561,6 +1599,7 @@ class RuntimeRowProjectionContext:
                 row_values,
                 row_schema.long_form_feature_indexes,
                 row_schema.long_form_value_indexes,
+                row_schema.long_form_qualifiers,
             )
         ).fact()
         if long_form_fact is None:
@@ -1572,11 +1611,11 @@ class RuntimeRowProjectionContext:
             return runtime_row_projection(long_form=True)
         return runtime_row_projection(
             (
-                (
+                RuntimeRowProjectionRecord(
                     (self.subject, self.source_name, ()),
                     key,
                     value,
-                    False,
+                    measured_object_anchor=self._measured_object_anchor(key),
                 )
                 for key, value in long_form_projector.project(long_form_fact)
                 if self.required_keys is None or key in self.required_keys
@@ -1632,12 +1671,41 @@ class RuntimeRowProjectionContext:
                     value_projector,
                 )
             )
+        declared_anchor_groups = {
+            column.padding_group
+            for column in static_columns
+            if column.measured_object_anchor
+        }
+        for index in self.wide_feature_indexes(header, row_schema):
+            if not row_schema.qualifiers_by_index[index]:
+                continue
+            qualifiers = self._qualifiers_for_index(
+                row_schema,
+                row_values,
+                index,
+                row_qualifier_cache,
+            )
+            key = self._feature_key(
+                header[index],
+                self.subject_for_field_index(index),
+                qualifiers,
+            )
+            if key is None or not self._measured_object_anchor(key):
+                continue
+            declared_anchor_groups.add(
+                self._padding_group(
+                    header[index],
+                    key,
+                    runtime_measurement_projected_feature_cache_key(key),
+                )
+            )
         return runtime_row_projection(
             (
-                (padding_group, key, value, qualified_observation)
-                for padding_group, key, value, qualified_observation in records
-                if padding_group_presence.get(padding_group, True)
-            )
+                record
+                for record in records
+                if padding_group_presence.get(record.padding_group, True)
+            ),
+            declared_anchor_groups=frozenset(declared_anchor_groups),
         )
 
     def static_wide_projection_columns(
@@ -1653,6 +1721,7 @@ class RuntimeRowProjectionContext:
             self.subject.scope,
             self.subject.name,
             self.source_name,
+            self.measurement_feature_owner,
             self.table_padding_group,
             id(self.required_key_index),
         )
@@ -1685,9 +1754,8 @@ class RuntimeRowProjectionContext:
                         key,
                         projected_key,
                     ),
-                    qualified_observation=self._field_has_collapsed_numeric_qualifier(
-                        field_name
-                    ),
+                    measured_object_anchor=self._measured_object_anchor(key),
+                    producer_owned_feature=self._producer_owns_feature(field_name),
                 )
             )
         planned_columns = tuple(columns)
@@ -1792,13 +1860,13 @@ class RuntimeRowProjectionContext:
             value_is_present=True,
             value_is_mapping=value_is_mapping,
         )
-        qualified_observation = self._field_has_collapsed_numeric_qualifier(field_name)
         return tuple(
-            (
+            RuntimeRowProjectionRecord(
                 padding_group,
                 cell_key,
                 cell_value,
-                qualified_observation,
+                self._measured_object_anchor(cell_key),
+                self._producer_owns_feature(field_name),
             )
             for cell_key, cell_value in projected_values
         )
@@ -1845,21 +1913,23 @@ class RuntimeRowProjectionContext:
                 return cast(
                     RuntimeRowProjectionRecords[RuntimeRowProjectionValueT],
                     (
-                        (
+                        RuntimeRowProjectionRecord(
                             column.padding_group,
                             column.key,
                             signature,
-                            column.qualified_observation,
+                            column.measured_object_anchor,
+                            column.producer_owned_feature,
                         ),
                     ),
                 )
             padding_group_presence[column.padding_group] = True
             return tuple(
-                (
+                RuntimeRowProjectionRecord(
                     column.padding_group,
                     cell_key,
                     cell_value,
-                    column.qualified_observation,
+                    column.measured_object_anchor,
+                    column.producer_owned_feature,
                 )
                 for cell_key, cell_value in projected_values
             )
@@ -1874,11 +1944,12 @@ class RuntimeRowProjectionContext:
             return cast(
                 RuntimeRowProjectionRecords[RuntimeRowProjectionValueT],
                 (
-                    (
+                    RuntimeRowProjectionRecord(
                         column.padding_group,
                         column.key,
                         numeric_value,
-                        column.qualified_observation,
+                        column.measured_object_anchor,
+                        column.producer_owned_feature,
                     ),
                 ),
             )
@@ -1893,27 +1964,36 @@ class RuntimeRowProjectionContext:
             value_is_mapping=value_is_mapping,
         )
         return tuple(
-            (
+            RuntimeRowProjectionRecord(
                 column.padding_group,
                 cell_key,
                 cell_value,
-                column.qualified_observation,
+                column.measured_object_anchor,
+                column.producer_owned_feature,
             )
             for cell_key, cell_value in projected_values
         )
 
-    def _field_has_collapsed_numeric_qualifier(self, field_name: str) -> bool:
-        cache_key = (field_name, self.known_source_names)
-        cached = self.collapsed_numeric_qualifier_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        collapsed = measurement_field_has_collapsed_numeric_qualifier(
-            field_name,
-            self.policy.measurement_dialect,
-            known_source_names=self.known_source_names,
+    def _producer_owns_feature(self, field_name: str) -> bool:
+        owner = self.measurement_feature_owner
+        return (
+            owner.owns_primary_measurement_feature_name(field_name)
+            if owner is not None
+            else self.policy.measurement_dialect.feature_name_has_primary_category(
+                field_name
+            )
         )
-        self.collapsed_numeric_qualifier_cache[cache_key] = collapsed
-        return collapsed
+
+    def _measured_object_anchor(
+        self,
+        key: RuntimeMeasurementFeatureKey,
+    ) -> bool:
+        return any(
+            issubclass(marker_type, MeasuredObjectAnchorFeatureMarker)
+            for marker_type in self.policy.measurement_dialect.measurement_feature_marker_types(
+                key
+            )
+        )
 
     def _qualifiers_for_index(
         self,
@@ -2228,7 +2308,9 @@ class CachedRuntimeLongFormMeasurementContext:
     image_number_offset: RuntimeImageNumberOffset
     feature_indexes: tuple[int, ...]
     value_indexes: tuple[int, ...]
-    key_cache: RuntimeMeasurementLongFormKeyCache
+    indexed_qualifiers: tuple[RuntimeMeasurementIndexedQualifier, ...]
+    qualifier_render_cache: RuntimeMeasurementQualifierRenderCache
+    key_cache: RuntimeMeasurementFeatureKeyCache
 
     @classmethod
     def from_runtime_row_projection(
@@ -2237,6 +2319,7 @@ class CachedRuntimeLongFormMeasurementContext:
         row_values: RuntimeIndexedRowValues,
         feature_indexes: tuple[int, ...],
         value_indexes: tuple[int, ...],
+        indexed_qualifiers: tuple[RuntimeMeasurementIndexedQualifier, ...],
     ) -> "CachedRuntimeLongFormMeasurementContext":
         return cls(
             row_values,
@@ -2247,7 +2330,9 @@ class CachedRuntimeLongFormMeasurementContext:
             context.image_number_offset,
             feature_indexes,
             value_indexes,
-            context.long_form_key_cache,
+            indexed_qualifiers,
+            context.qualifier_render_cache,
+            context.key_cache,
         )
 
 
@@ -2283,148 +2368,6 @@ def parts_contain_adjacent_image_number(parts: tuple[str, ...]) -> bool:
         parts[index] == "image" and parts[index + 1] == "number"
         for index in range(len(parts) - 1)
     )
-
-
-def measurement_field_has_collapsed_numeric_qualifier(
-    field_name: str,
-    dialect: RuntimeMeasurementDialect,
-    *,
-    known_source_names: tuple[str, ...],
-) -> bool:
-    """Return true when semantic normalization drops a numeric feature qualifier."""
-    parts = tuple(
-        part for part in normalize_runtime_identifier(field_name).split("_") if part
-    )
-    category_prefix = RuntimeMeasurementNamePartsProjection(
-        parts,
-        dialect,
-    ).category_prefix()
-    if category_prefix:
-        parts = parts[len(category_prefix) :]
-    parts, _source_names = RuntimeMeasurementNamePartsProjection(
-        parts,
-        dialect,
-        known_source_names,
-    ).source_qualifier_tokens()
-    return (
-        RuntimeMeasurementNamePartsProjection(parts, dialect).semantic_core_parts()
-        != parts
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class ContextualMeasurementPaddingColumn:
-    """One contextual wide-table column that may belong to a padding group."""
-
-    context: str | None
-    field_name: str
-    dialect: RuntimeMeasurementDialect
-    known_source_names: tuple[str, ...]
-
-    @property
-    def normalized_context(self) -> str | None:
-        if self.context is None:
-            return None
-        normalized = normalize_runtime_identifier(self.context)
-        if not normalized or normalized in CSV_HEADER_CONTEXT_STOPWORDS:
-            return None
-        return normalized
-
-    @property
-    def normalized_field_parts(self) -> tuple[str, ...]:
-        if runtime_measurement_identity_field_matches(self.field_name, self.dialect):
-            return ()
-        return tuple(
-            part
-            for part in normalize_runtime_identifier(self.field_name).split("_")
-            if part
-        )
-
-    def group(self) -> _ContextualMeasurementPaddingGroup | None:
-        normalized_context = self.normalized_context
-        parts = self.normalized_field_parts
-        if normalized_context is None or not parts:
-            return None
-        feature_group = (
-            RuntimeMeasurementNamePartsProjection(
-                parts,
-                self.dialect,
-            ).category_prefix()
-            or parts[:1]
-        )
-        _feature_name, source_name = SemanticCoreFeatureAndSourceNameProjection(
-            normalize_runtime_identifier(self.field_name),
-            self.dialect,
-            self.known_source_names,
-        ).project()
-        return normalized_context, feature_group, source_name
-
-
-@dataclass(frozen=True, slots=True)
-class ContextualMeasurementPaddingProjection:
-    """Resolve contextual wide-table cells that represent padding, not facts."""
-
-    column_context: tuple[str | None, ...]
-    header: tuple[str, ...]
-    feature_indexes: tuple[int, ...]
-    dialect: RuntimeMeasurementDialect
-    known_source_names: tuple[str, ...]
-
-    def groups_by_index(
-        self,
-    ) -> Mapping[int, _ContextualMeasurementPaddingGroup | None]:
-        if not self.column_context:
-            return MappingProxyType({})
-        return MappingProxyType(
-            {index: self.group_for_index(index) for index in self.feature_indexes}
-        )
-
-    def padding_indexes(
-        self,
-        row_values: RuntimeIndexedRowValues,
-        *,
-        padding_groups_by_index: (
-            Mapping[
-                int,
-                _ContextualMeasurementPaddingGroup | None,
-            ]
-            | None
-        ) = None,
-    ) -> frozenset[int]:
-        if not self.column_context:
-            return frozenset()
-        if padding_groups_by_index is None:
-            padding_groups_by_index = self.groups_by_index()
-
-        indexes_by_group: dict[_ContextualMeasurementPaddingGroup, list[int]] = {}
-        for index in self.feature_indexes:
-            group = padding_groups_by_index.get(index)
-            if group is None:
-                continue
-            indexes_by_group.setdefault(group, []).append(index)
-
-        padding_indexes: set[int] = set()
-        for indexes in indexes_by_group.values():
-            if any(
-                runtime_measurement_cell_is_present(row_values.at(index))
-                for index in indexes
-            ):
-                continue
-            padding_indexes.update(indexes)
-        return frozenset(padding_indexes)
-
-    def group_for_index(
-        self,
-        index: int,
-    ) -> _ContextualMeasurementPaddingGroup | None:
-        if index >= len(self.column_context):
-            return None
-        return ContextualMeasurementPaddingColumn(
-            self.column_context[index],
-            self.header[index],
-            self.dialect,
-            self.known_source_names,
-        ).group()
 
 
 @dataclass(frozen=True, slots=True)
@@ -2512,12 +2455,17 @@ class RuntimeSnapshotLongFormMeasurementFactProjector:
         source = RuntimeLongFormMeasurementSource.from_row(self.context.row)
         if source is None:
             return RuntimeLongFormMeasurementFact(None, None)
+        qualifiers = measurement_row_qualifiers(
+            self.context.row.row,
+            self.context.policy.measurement_dialect,
+            source.feature_text,
+        )
         key = RuntimeMeasurementFeatureKeyProjection(
             RuntimeMeasurementFeatureKeySourceContext(
                 source.feature_text,
                 self.context.subject,
                 self.context.policy,
-                (),
+                qualifiers,
                 self.context.source_name,
                 self.context.known_source_names,
             ),
@@ -2551,14 +2499,33 @@ class RuntimeMeasurementLongFormFactProjector:
         )
         if source is None:
             return RuntimeLongFormMeasurementFact(None, None)
+        feature_parts = tuple(
+            part
+            for part in normalize_runtime_identifier(source.feature_text).split("_")
+            if part
+        )
+        indexed_qualifiers = tuple(
+            indexed_qualifier
+            for indexed_qualifier in self.context.indexed_qualifiers
+            if row_qualifier_applies_to_field(
+                indexed_qualifier[0],
+                feature_parts,
+            )
+        )
+        qualifiers = measurement_row_qualifiers_from_indexed_values_cached(
+            self.context.row_values,
+            indexed_qualifiers,
+            self.context.qualifier_render_cache,
+        )
         cache_key = runtime_measurement_feature_key_cache_key(
             self.context.subject,
             self.context.source_name,
             source.feature_text,
+            qualifiers,
         )
         key = self.context.key_cache.get(cache_key, _CACHE_MISS)
         if key is _CACHE_MISS:
-            key = self._feature_key(source.feature_text)
+            key = self._feature_key(source.feature_text, qualifiers)
             self.context.key_cache[cache_key] = key
         if key is None:
             return RuntimeLongFormMeasurementFact(None, None)
@@ -2573,13 +2540,14 @@ class RuntimeMeasurementLongFormFactProjector:
     def _feature_key(
         self,
         feature_text: str,
+        qualifiers: tuple[str, ...],
     ) -> RuntimeMeasurementFeatureKey | None:
         return RuntimeMeasurementFeatureKeyProjection(
             RuntimeMeasurementFeatureKeySourceContext(
                 feature_text,
                 self.context.subject,
                 self.context.policy,
-                (),
+                qualifiers,
                 self.context.source_name,
                 self.context.known_source_names,
             ),
@@ -2607,248 +2575,28 @@ def dedupe_numeric_measurement_values(
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeMeasurementRowSubjectResolutionContext:
-    """Typed subject-resolution facts for one measurement row."""
-
-    table_subject: RuntimeMeasurementSubjectKey
-    object_name: str | None
-    row_source_name: str | None
-    has_object_identity: bool
-    has_image_identity: bool
-
-
-class RuntimeMeasurementRowSubjectResolutionStrategy(
-    MostDerivedContextStrategyMixin[RuntimeMeasurementRowSubjectResolutionContext],
-    ABC,
-):
-    """Nominal row-subject resolver for runtime measurement tables."""
-
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_KEY)
-
-    strategy_key: ClassVar[str | None] = None
-
-    @classmethod
-    def resolve(
-        cls,
-        context: RuntimeMeasurementRowSubjectResolutionContext,
-    ) -> RuntimeMeasurementSubjectKey:
-        """Resolve a row subject through the nominal strategy family."""
-        return cls._resolve_cached(context)
-
-    @classmethod
-    @lru_cache(maxsize=512)
-    def _resolve_cached(
-        cls,
-        context: RuntimeMeasurementRowSubjectResolutionContext,
-    ) -> RuntimeMeasurementSubjectKey:
-        strategy = cls.for_context(
-            context,
-            error_subject="Runtime measurement row subject resolution",
-        )
-        if strategy is None:
-            raise ValueError(
-                "Runtime measurement row subject resolution requires a strategy."
-            )
-        return strategy.subject(context)
-
-    @abstractmethod
-    def subject(
-        self,
-        context: RuntimeMeasurementRowSubjectResolutionContext,
-    ) -> RuntimeMeasurementSubjectKey:
-        """Return the semantic measurement subject for this row."""
-
-
-class FallbackTableSubjectResolutionStrategy(
-    RuntimeMeasurementRowSubjectResolutionStrategy
-):
-    """Fallback to the table's declared subject."""
-
-    strategy_key = "fallback_table_subject"
-
-    def matches(
-        self,
-        context: RuntimeMeasurementRowSubjectResolutionContext,
-    ) -> bool:
-        return True
-
-    def subject(
-        self,
-        context: RuntimeMeasurementRowSubjectResolutionContext,
-    ) -> RuntimeMeasurementSubjectKey:
-        return context.table_subject
-
-
-class SourceImageRowSubjectResolutionStrategy(FallbackTableSubjectResolutionStrategy):
-    """Rows declaring only source-image identity remain image-scoped."""
-
-    strategy_key = "source_image_row"
-
-    def matches(
-        self,
-        context: RuntimeMeasurementRowSubjectResolutionContext,
-    ) -> bool:
-        return context.row_source_name is not None
-
-    def subject(
-        self,
-        context: RuntimeMeasurementRowSubjectResolutionContext,
-    ) -> RuntimeMeasurementSubjectKey:
-        return RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, "Image")
-
-
-class ImageTableSubjectResolutionStrategy(SourceImageRowSubjectResolutionStrategy):
-    """Image tables own rows that do not carry a stronger row identity."""
-
-    strategy_key = "image_table_subject"
-
-    def matches(
-        self,
-        context: RuntimeMeasurementRowSubjectResolutionContext,
-    ) -> bool:
-        return context.table_subject.scope is MeasurementScope.IMAGE
-
-    def subject(
-        self,
-        context: RuntimeMeasurementRowSubjectResolutionContext,
-    ) -> RuntimeMeasurementSubjectKey:
-        return context.table_subject
-
-
-class ObjectTableSubjectResolutionStrategy(ImageTableSubjectResolutionStrategy):
-    """Object tables own rows that do not carry a stronger row identity."""
-
-    strategy_key = "object_table_subject"
-
-    def matches(
-        self,
-        context: RuntimeMeasurementRowSubjectResolutionContext,
-    ) -> bool:
-        return context.table_subject.scope is MeasurementScope.OBJECT
-
-    def subject(
-        self,
-        context: RuntimeMeasurementRowSubjectResolutionContext,
-    ) -> RuntimeMeasurementSubjectKey:
-        return context.table_subject
-
-
-class ImageIdentityRowSubjectResolutionStrategy(ObjectTableSubjectResolutionStrategy):
-    """Rows with image identity and no object identity are image-scoped."""
-
-    strategy_key = "image_identity"
-
-    def matches(
-        self,
-        context: RuntimeMeasurementRowSubjectResolutionContext,
-    ) -> bool:
-        return context.has_image_identity and not context.has_object_identity
-
-    def subject(
-        self,
-        context: RuntimeMeasurementRowSubjectResolutionContext,
-    ) -> RuntimeMeasurementSubjectKey:
-        return RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, "Image")
-
-
-class ObjectIdentityRowSubjectResolutionStrategy(
-    ImageIdentityRowSubjectResolutionStrategy
-):
-    """Rows with object identity are object-scoped."""
-
-    strategy_key = "object_identity"
-
-    def matches(
-        self,
-        context: RuntimeMeasurementRowSubjectResolutionContext,
-    ) -> bool:
-        return context.object_name is not None and context.has_object_identity
-
-    def subject(
-        self,
-        context: RuntimeMeasurementRowSubjectResolutionContext,
-    ) -> RuntimeMeasurementSubjectKey:
-        return RuntimeMeasurementSubjectKey(
-            MeasurementScope.OBJECT, context.object_name
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class RuntimeMeasurementRowSubjectProjection:
-    """Resolve runtime-row source and measurement subject from row values."""
+    """Resolve runtime-row source and subject from nominal row identity."""
 
     table_subject: RuntimeMeasurementSubjectKey
     table_source_name: str | None
-    row_values: RuntimeIndexedRowValues
-    subject_schema: RuntimeMeasurementRowSubjectSchemaValue
-
-    @property
-    def indexed_values(self) -> RuntimeIndexedRowValues:
-        return self.row_values
+    row: RuntimeMeasurementRowMapping
+    dialect: RuntimeMeasurementDialect
 
     def source_name(self) -> str | None:
-        row_source_name = self.row_values.text_at(self.subject_schema[1])
+        row_source_name = self.row.source_name()
         if row_source_name is not None:
             return row_source_name
         return self.table_source_name
 
     def subject(self) -> RuntimeMeasurementSubjectKey:
-        (
-            object_name_index,
-            source_name_index,
-            object_identity_indexes,
-            image_identity_indexes,
-        ) = self.subject_schema
-        indexed_values = self.indexed_values
-        return RuntimeMeasurementRowSubjectResolutionStrategy.resolve(
-            RuntimeMeasurementRowSubjectResolutionContext(
-                table_subject=self.table_subject,
-                object_name=self.row_values.text_at(object_name_index),
-                row_source_name=self.row_values.text_at(source_name_index),
-                has_object_identity=indexed_values.has_text_at_any(
-                    object_identity_indexes
-                ),
-                has_image_identity=indexed_values.has_text_at_any(
-                    image_identity_indexes
-                ),
+        object_identity = self.row.object_identity_value(self.dialect)
+        object_name = self.row.object_name()
+        if object_name is not None and object_identity is not None:
+            return RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, object_name)
+        if self.row.source_name() is not None and object_identity is None:
+            return RuntimeMeasurementSubjectKey(
+                MeasurementScope.IMAGE,
+                MeasurementScope.IMAGE.value,
             )
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeMeasurementRowSubjectSchema:
-    """Column indexes used to resolve runtime measurement row subjects."""
-
-    header: tuple[str, ...]
-
-    def schema(self) -> RuntimeMeasurementRowSubjectSchemaValue:
-        normalized_fields = tuple(
-            normalize_runtime_identifier(field) for field in self.header
-        )
-        normalized_field_indexes = {
-            field_name: index for index, field_name in enumerate(normalized_fields)
-        }
-        return (
-            normalized_field_indexes.get(MeasurementRowAxisField.OBJECT_NAME.value),
-            normalized_field_indexes.get(MeasurementRowAxisField.SOURCE_IMAGE_NAME.value),
-            runtime_measurement_field_indexes(
-                normalized_field_indexes,
-                MeasurementRowAxisField.object_id_field_names(),
-            ),
-            runtime_measurement_field_indexes(
-                normalized_field_indexes,
-                tuple(sorted(IMAGE_IDENTITY_FIELDS)),
-            ),
-        )
-
-
-def runtime_measurement_row_subject_schema(
-    header: tuple[str, ...],
-    cache: RuntimeMeasurementRowSubjectSchemaCache,
-) -> RuntimeMeasurementRowSubjectSchemaValue:
-    """Return the cached subject schema for a runtime measurement row header."""
-    cached_schema = cache.get(header)
-    if cached_schema is None:
-        cached_schema = RuntimeMeasurementRowSubjectSchema(header).schema()
-        cache[header] = cached_schema
-    return cached_schema
+        return self.table_subject

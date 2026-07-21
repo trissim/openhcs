@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import pytest
 
+from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ObjectLabelsArtifactType,
     ArtifactOutputPlan,
     ArtifactType,
     MeasurementsArtifactType,
@@ -13,15 +17,15 @@ from openhcs.core.artifacts import (
 from openhcs.core.measurement_row_materialization import (
     ConcatenatedColumnarRows,
     MeasurementProjectedColumnarRows,
-    MeasurementRowsAxisProjection,
+    MeasurementRowObjectName,
     MeasurementRowOwnership,
-    MeasurementSliceIndexImageNumberProjection,
+    MeasurementRowSourceImageName,
     MeasurementSparseColumnarRows,
-    MeasurementSourceImageNumberProjection,
     MEASUREMENT_SPARSE_CELL,
 )
 from openhcs.core.runtime_artifact_queries import (
     RuntimeArtifactQueryContext,
+    MeasurementLabelSliceFeatureBatchQueryCache,
     MeasurementLabelSliceFeatureBatchQuery,
     MeasurementLabelSliceFeatureQuery,
     MeasurementTableAxisProjection,
@@ -32,6 +36,9 @@ from openhcs.core.runtime_artifact_queries import (
     runtime_relationship,
 )
 from openhcs.core.measurement_feature_queries import (
+    MeasurementAxisValueProjection,
+    MeasurementFeatureQuery,
+    MeasurementFeatureValueIndex,
     MeasurementObjectFeatureAxisBatchQueryCache,
     MeasurementObjectFeatureVectorBatchQuery,
     MeasurementTableObjectFeatureSemantics,
@@ -41,36 +48,78 @@ from openhcs.core.measurement_feature_queries import (
     ordered_measurement_feature_candidates,
     measurement_values_for_feature,
 )
-from openhcs.core.runtime_semantics import (
+from openhcs.core.runtime_tabular_values import (
     FieldSpec,
-    MeasurementRowAxisField,
+    MeasurementObjectRowIdentity,
     MeasurementRowMappingCache,
+)
+from openhcs.core.runtime_measurements import (
+    MeasurementRowAxisField,
     MeasurementScope,
     MeasurementSubject,
-    RelationshipSemantics,
+)
+from openhcs.core.runtime_object_label_domains import (
+    ObjectLabelDomain,
+    ObjectLabelDomainScope,
+)
+from openhcs.core.runtime_relationships import (
+    DirectedObjectRelationshipPayload,
+    ObjectRelationshipDeclaration,
+)
+from openhcs.core.runtime_plane_projection import (
+    RuntimePlaneAxis,
+    RuntimePlaneProjection,
 )
 from openhcs.core.runtime_stores import RuntimeValueStore
-from openhcs.core.runtime_values import (
+from openhcs.core.runtime_measurements import (
     MeasurementTable,
+)
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelVariantData,
+    ObjectLabelSet,
+)
+from openhcs.core.runtime_relationships import (
     ObjectRelationship,
-    normalize_artifact_value,
+)
+from openhcs.core.source_image_provenance import (
+    RuntimeSourceImageProvenancePlane,
+    SourceImageProvenancePlanes,
 )
 from openhcs.interop.cellprofiler.measurement_dialect import (
     CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
 )
-
+from openhcs.core.runtime_artifact_values import RuntimeValue
 
 AXIS_ID = "A01"
+
+
+@pytest.mark.parametrize(
+    ("declaration_type", "field_name"),
+    (
+        (MeasurementRowObjectName, MeasurementRowAxisField.OBJECT_NAME.value),
+        (
+            MeasurementRowSourceImageName,
+            MeasurementRowAxisField.SOURCE_IMAGE_NAME.value,
+        ),
+    ),
+)
+def test_declared_text_ownership_ignores_structural_missing_cells(
+    declaration_type,
+    field_name: str,
+) -> None:
+    assert (
+        declaration_type.value_from_row({field_name: MEASUREMENT_SPARSE_CELL}) is None
+    )
 
 
 def measurement_values_for_label_slices(
     measurement_tables: tuple[MeasurementTable, ...],
     feature_name: str,
-    labels: object,
+    labels: ObjectLabelSet,
     *,
+    plane_projector: RuntimePlaneProjection,
     object_name: str | None = None,
     row_axis: MeasurementRowAxisField = MeasurementRowAxisField.SLICE_INDEX,
-    row_axis_start: int | None = None,
     dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
 ) -> tuple[object, ...]:
     return MeasurementLabelSliceFeatureQuery(
@@ -79,59 +128,24 @@ def measurement_values_for_label_slices(
         object_name=object_name,
         dialect=dialect,
         row_axis=row_axis,
-    ).values_for_labels(labels, row_axis_start=row_axis_start)
+        plane_projector=plane_projector,
+    ).values_for_labels(labels)
 
 
-def test_source_qualified_image_rows_use_source_identity_before_slice_index() -> None:
-    rows = (
-        {
-            "slice_index": 0,
-            "source_image_name": "ColocalizedRegion",
-            "feature_name": "AreaOccupied_AreaOccupied_ColocalizedRegion",
-            "result_value": 17809.0,
-        },
-        {
-            "slice_index": 1,
-            "source_image_name": "Objects1",
-            "feature_name": "AreaOccupied_AreaOccupied_Objects1",
-            "result_value": 30324.0,
-        },
-    )
-
-    projected = MeasurementRowsAxisProjection.from_rows(rows).apply(
-        MeasurementSliceIndexImageNumberProjection(
-            start=1,
-            image_numbers_by_slice={0: 1, 1: 2},
+def object_labels(
+    labels: object,
+    *,
+    declared_object_id_domains: tuple[tuple[int, ...], ...],
+) -> ObjectLabelSet:
+    return ObjectLabelSet(
+        name="Labels",
+        variant_data=ObjectLabelVariantData(labels=labels),
+        domain=ObjectLabelDomain.declared(
+            scope=ObjectLabelDomainScope.PLANE,
+            declared_object_id_domains=declared_object_id_domains,
         ),
-        source_image_numbers=MeasurementSourceImageNumberProjection(
-            {
-                "ColocalizedRegion": 1,
-                "Objects1": 1,
-            }
-        ),
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
     )
-
-    assert [row["image_number"] for row in projected] == [1, 1]
-    assert [row["slice_index"] for row in projected] == [0, 1]
-
-
-def test_source_qualified_image_rows_require_source_identity() -> None:
-    rows = (
-        {
-            "slice_index": 1,
-            "source_image_name": "Objects1",
-            "feature_name": "AreaOccupied_AreaOccupied_Objects1",
-            "result_value": 30324.0,
-        },
-    )
-
-    with pytest.raises(ValueError, match="source-qualified measurement rows"):
-        MeasurementRowsAxisProjection.from_rows(rows).apply(
-            MeasurementSliceIndexImageNumberProjection(
-                start=1,
-                image_numbers_by_slice={1: 2},
-            ),
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,8 +160,14 @@ def test_runtime_measurement_query_matches_schema_and_row_object_subjects() -> N
         store,
         MeasurementTable(
             name="NucleiMeasurements",
-            rows=({"object_label": 1, "area": 42.0},),
-            object_name="Nuclei",
+            rows=MeasurementSparseColumnarRows.from_rows(
+                ({"object_label": 1, "area": 42.0},),
+                fields=(
+                    FieldSpec("object_label", int),
+                    FieldSpec("area", float),
+                ),
+            ),
+            subject=MeasurementSubject(MeasurementScope.OBJECT, "Nuclei"),
         ),
         MeasurementsArtifactType,
     )
@@ -155,16 +175,30 @@ def test_runtime_measurement_query_matches_schema_and_row_object_subjects() -> N
         store,
         MeasurementTable(
             name="MixedMeasurements",
-            rows=(
-                {"object_name": "Nuclei", "object_label": 1, "mean": 3.0},
-                {"object_name": "Cells", "object_label": 1, "mean": 9.0},
+            rows=MeasurementSparseColumnarRows.from_rows(
+                (
+                    {"object_name": "Nuclei", "object_label": 1, "mean": 3.0},
+                    {"object_name": "Cells", "object_label": 1, "mean": 9.0},
+                ),
+                fields=(
+                    FieldSpec("object_name", str),
+                    FieldSpec("object_label", int),
+                    FieldSpec("mean", float),
+                ),
             ),
+            subject=MeasurementSubject(MeasurementScope.ARTIFACT, "MixedMeasurements"),
         ),
         MeasurementsArtifactType,
     )
     _record_native(
         store,
-        MeasurementTable(name="ImageMeasurements", rows=({"area": 100.0},)),
+        MeasurementTable(
+            name="ImageMeasurements",
+            rows=MeasurementSparseColumnarRows.from_rows(
+                ({"area": 100.0},), fields=(FieldSpec("area", float),)
+            ),
+            subject=MeasurementSubject(MeasurementScope.ARTIFACT, "ImageMeasurements"),
+        ),
         MeasurementsArtifactType,
     )
 
@@ -191,7 +225,9 @@ def test_measurement_row_mapping_accepts_slotted_dataclasses() -> None:
     assert mapping["object_name"] == "Nuclei"
     with pytest.raises(KeyError):
         mapping["not_a_field"]
-    assert MeasurementRowOwnership(object_name="Cells").annotate_row({"area": 42.0}) == {
+    assert MeasurementRowOwnership(object_name="Cells").annotate_row(
+        {"area": 42.0}
+    ) == {
         "area": 42.0,
         "object_name": "Cells",
     }
@@ -213,7 +249,11 @@ def test_projected_columnar_rows_preserve_none_values() -> None:
         {
             "object_label": (1, 2),
             "nullable_measurement": (None, 4.0),
-        }
+        },
+        fields=(
+            FieldSpec("object_label", int),
+            FieldSpec("nullable_measurement", float, required=False),
+        ),
     )
 
     assert rows.row_mappings() == (
@@ -227,7 +267,11 @@ def test_sparse_columnar_rows_omit_structural_missing_cells_only() -> None:
         {
             "object_label": (1, 2),
             "optional_measurement": (MEASUREMENT_SPARSE_CELL, None),
-        }
+        },
+        fields=(
+            FieldSpec("object_label", int),
+            FieldSpec("optional_measurement", float, required=False),
+        ),
     )
 
     assert rows.row_mappings() == (
@@ -236,40 +280,105 @@ def test_sparse_columnar_rows_omit_structural_missing_cells_only() -> None:
     )
 
 
+def test_axis_filtered_sparse_rows_preserve_image_and_object_ownership() -> None:
+    table = MeasurementTable(
+        name="ClassifyObjectsMeasurements",
+        rows=MeasurementProjectedColumnarRows(
+            {
+                "slice_index": (0, 0, 1),
+                "feature_name": (
+                    "Classify_Positive_NumObjectsPerBin",
+                    "Classify_Positive",
+                    "Classify_Positive_NumObjectsPerBin",
+                ),
+                "result_value": (3, 1, 4),
+                "object_name": (
+                    MEASUREMENT_SPARSE_CELL,
+                    "Nuclei",
+                    MEASUREMENT_SPARSE_CELL,
+                ),
+                "object_label": (
+                    MEASUREMENT_SPARSE_CELL,
+                    1,
+                    MEASUREMENT_SPARSE_CELL,
+                ),
+            },
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("feature_name", str),
+                FieldSpec("result_value", int),
+                FieldSpec("object_name", str, required=False),
+                FieldSpec("object_label", int, required=False),
+            ),
+        ),
+        subject=MeasurementSubject(
+            MeasurementScope.ARTIFACT, "ClassifyObjectsMeasurements"
+        ),
+    )
+
+    projected = MeasurementTableAxisProjection(
+        axis=MeasurementRowAxisField.SLICE_INDEX,
+        value=0,
+        table=table,
+    ).apply()
+
+    assert projected.rows.row_mappings() == (
+        {
+            "slice_index": 0,
+            "feature_name": "Classify_Positive_NumObjectsPerBin",
+            "result_value": 3,
+        },
+        {
+            "slice_index": 0,
+            "feature_name": "Classify_Positive",
+            "result_value": 1,
+            "object_name": "Nuclei",
+            "object_label": 1,
+        },
+    )
+
+
 def test_sparse_columnar_rows_coalesce_duplicate_axis_identity_fragments() -> None:
     rows = MeasurementSparseColumnarRows.from_rows(
         (
             {
-                "image_number": 1,
+                "slice_index": 0,
                 "object_name": "Cells",
                 "object_label": 1,
                 "correlation_a_b": 0.5,
             },
             {
-                "image_number": 1,
+                "slice_index": 0,
                 "object_name": "Cells",
                 "object_label": 1,
                 "correlation_a_c": 0.75,
             },
             {
-                "image_number": 1,
+                "slice_index": 0,
                 "object_name": "Cells",
                 "object_label": 2,
                 "correlation_a_b": 0.25,
             },
-        )
+        ),
+        fields=(
+            FieldSpec("slice_index", int),
+            FieldSpec("object_name", str),
+            FieldSpec("object_label", int),
+            FieldSpec("correlation_a_b", float, required=False),
+            FieldSpec("correlation_a_c", float, required=False),
+        ),
     )
 
     assert rows.row_mappings() == (
         {
-            "image_number": 1,
+            "slice_index": 0,
             "object_name": "Cells",
             "object_label": 1,
             "correlation_a_b": 0.5,
             "correlation_a_c": 0.75,
         },
         {
-            "image_number": 1,
+            "slice_index": 0,
             "object_name": "Cells",
             "object_label": 2,
             "correlation_a_b": 0.25,
@@ -285,7 +394,14 @@ def test_projected_columnar_rows_omit_structural_missing_cells() -> None:
             "result_value": (2, 1),
             "object_name": (MEASUREMENT_SPARSE_CELL, "Nuclei"),
             "object_label": (MEASUREMENT_SPARSE_CELL, 1),
-        }
+        },
+        fields=(
+            FieldSpec("slice_index", int),
+            FieldSpec("feature_name", str),
+            FieldSpec("result_value", int),
+            FieldSpec("object_name", str, required=False),
+            FieldSpec("object_label", int, required=False),
+        ),
     )
 
     assert rows.row_mappings() == (
@@ -313,9 +429,16 @@ def test_source_qualified_columnar_query_uses_row_source_over_table_source() -> 
                 "object_label": (1, 2, 1, 2),
                 "source_image_name": ("OrigGreen", "OrigGreen", "OrigBlue", "OrigBlue"),
                 "max_intensity": (0.5, 0.9, 0.1, 0.2),
-            }
+            },
+            fields=(
+                FieldSpec("object_name", str),
+                FieldSpec("object_label", int),
+                FieldSpec("source_image_name", str),
+                FieldSpec("max_intensity", float),
+            ),
         ),
         source_image_name="OrigBlue__OrigGreen",
+        subject=MeasurementSubject(MeasurementScope.IMAGE, "OrigBlue__OrigGreen"),
     )
 
     values = measurement_values_for_feature(
@@ -329,6 +452,58 @@ def test_source_qualified_columnar_query_uses_row_source_over_table_source() -> 
     assert values.tolist() == [0.5, 0.9]
 
 
+def test_source_qualified_sequence_query_uses_row_source_over_table_source() -> None:
+    table = MeasurementTable(
+        name="MeasureObjectIntensityMeasurements",
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {
+                    "object_name": "Nuclei",
+                    "object_label": 1,
+                    "source_image_name": "OrigGreen",
+                    "max_intensity": 0.5,
+                },
+                {
+                    "object_name": "Nuclei",
+                    "object_label": 2,
+                    "source_image_name": "OrigGreen",
+                    "max_intensity": 0.9,
+                },
+                {
+                    "object_name": "Nuclei",
+                    "object_label": 1,
+                    "source_image_name": "OrigBlue",
+                    "max_intensity": 0.1,
+                },
+                {
+                    "object_name": "Nuclei",
+                    "object_label": 2,
+                    "source_image_name": "OrigBlue",
+                    "max_intensity": 0.2,
+                },
+            ),
+            fields=(
+                FieldSpec("object_name", str),
+                FieldSpec("object_label", int),
+                FieldSpec("source_image_name", str),
+                FieldSpec("max_intensity", float),
+            ),
+        ),
+        source_image_name="OrigBlue__OrigGreen",
+        subject=MeasurementSubject(MeasurementScope.IMAGE, "OrigBlue__OrigGreen"),
+    )
+    query = MeasurementFeatureQuery(
+        "Intensity_MaxIntensity_OrigGreen",
+        object_name="Nuclei",
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    assert query.table_may_carry_feature(table)
+    values = query.values_for_domain((table,), (1, 2))
+
+    assert values.tolist() == [0.5, 0.9]
+
+
 def test_measurement_table_axis_values_omit_sparse_columnar_axis_cells() -> None:
     table = MeasurementTable(
         name="SparseAxisMeasurements",
@@ -337,8 +512,14 @@ def test_measurement_table_axis_values_omit_sparse_columnar_axis_cells() -> None
                 "slice_index": (0, MEASUREMENT_SPARSE_CELL, 1, None),
                 "feature_name": ("first", "missing", "second", "absent"),
                 "result_value": (2.0, MEASUREMENT_SPARSE_CELL, 4.0, 6.0),
-            }
+            },
+            fields=(
+                FieldSpec("slice_index", int, required=False),
+                FieldSpec("feature_name", str),
+                FieldSpec("result_value", float, required=False),
+            ),
         ),
+        subject=MeasurementSubject(MeasurementScope.ARTIFACT, "SparseAxisMeasurements"),
     )
 
     assert measurement_table_axis_values(
@@ -347,23 +528,31 @@ def test_measurement_table_axis_values_omit_sparse_columnar_axis_cells() -> None
     ) == {0, 1}
 
 
-def test_axis_projection_returns_original_columnar_table_when_filter_keeps_all_rows() -> None:
+def test_axis_projection_returns_original_columnar_table_when_filter_keeps_all_rows() -> (
+    None
+):
     table = MeasurementTable(
         name="Measurements",
         rows=MeasurementProjectedColumnarRows(
             {
-                "image_number": (1, 1),
+                "slice_index": (0, 0),
                 "object_name": ("Nuclei", "Cells"),
                 "object_label": (1, 1),
                 "Intensity_MeanIntensity_CorrProtein": (4.0, 5.0),
-            }
+            },
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("object_name", str),
+                FieldSpec("object_label", int),
+                FieldSpec("Intensity_MeanIntensity_CorrProtein", float),
+            ),
         ),
-        object_id_field="object_label",
+        subject=MeasurementSubject(MeasurementScope.ARTIFACT, "Measurements"),
     )
 
     projected = MeasurementTableAxisProjection(
-        axis=MeasurementRowAxisField.IMAGE_NUMBER,
-        value=1,
+        axis=MeasurementRowAxisField.SLICE_INDEX,
+        value=0,
         table=table,
     ).apply()
 
@@ -378,14 +567,26 @@ def test_concatenated_sparse_columnar_rows_do_not_expose_missing_sentinel() -> N
                     "object_label": (1,),
                     "area": (4.0,),
                     "mean": (MEASUREMENT_SPARSE_CELL,),
-                }
+                },
+                fields=(
+                    FieldSpec("object_label", int),
+                    FieldSpec("area", float, required=False),
+                    FieldSpec("mean", float, required=False),
+                ),
+                object_row_identity=MeasurementObjectRowIdentity.LABEL_ID,
             ),
             MeasurementSparseColumnarRows(
                 {
                     "object_label": (2,),
                     "area": (MEASUREMENT_SPARSE_CELL,),
                     "mean": (8.0,),
-                }
+                },
+                fields=(
+                    FieldSpec("object_label", int),
+                    FieldSpec("area", float, required=False),
+                    FieldSpec("mean", float, required=False),
+                ),
+                object_row_identity=MeasurementObjectRowIdentity.LABEL_ID,
             ),
         )
     )
@@ -399,7 +600,7 @@ def test_concatenated_sparse_columnar_rows_do_not_expose_missing_sentinel() -> N
             MeasurementTable(
                 name="SparseMeasurements",
                 rows=rows,
-                object_id_field="object_label",
+                subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
             ),
         ),
         "area",
@@ -412,12 +613,17 @@ def test_concatenated_sparse_columnar_rows_do_not_expose_missing_sentinel() -> N
 def test_measurement_feature_query_uses_table_object_id_field() -> None:
     table = MeasurementTable(
         name="ObjectMeasurements",
-        rows=(
-            {"cell_id": 2, "area": 20.0},
-            {"cell_id": 1, "area": 10.0},
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {"cell_id": 2, "area": 20.0},
+                {"cell_id": 1, "area": 10.0},
+            ),
+            fields=(
+                FieldSpec("cell_id", int),
+                FieldSpec("area", float),
+            ),
         ),
-        object_name="Cells",
-        object_id_field="cell_id",
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells", "cell_id"),
     )
 
     values = measurement_values_for_feature(
@@ -435,15 +641,18 @@ def test_measurement_table_semantics_cache_reuses_table_identity() -> None:
     cache.entries.clear()
     table = MeasurementTable(
         name="ObjectMeasurements",
-        rows=(
-            {"object_name": "Cells", "object_label": 1, "area": 10.0},
-            {"object_name": "Cells", "object_label": 2, "area": 20.0},
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {"object_name": "Cells", "object_label": 1, "area": 10.0},
+                {"object_name": "Cells", "object_label": 2, "area": 20.0},
+            ),
+            fields=(
+                FieldSpec("object_name", str),
+                FieldSpec("object_label", int),
+                FieldSpec("area", float),
+            ),
         ),
-        fields=(
-            FieldSpec("object_name"),
-            FieldSpec("object_label"),
-            FieldSpec("area"),
-        ),
+        subject=MeasurementSubject(MeasurementScope.ARTIFACT, "ObjectMeasurements"),
     )
 
     first = MeasurementTableObjectFeatureSemantics.from_table(table)
@@ -454,7 +663,9 @@ def test_measurement_table_semantics_cache_reuses_table_identity() -> None:
     assert "area" in first.feature_names
 
 
-def test_measurement_feature_candidates_match_cellprofiler_compact_metric_names() -> None:
+def test_measurement_feature_candidates_match_cellprofiler_compact_metric_names() -> (
+    None
+):
     candidates = measurement_feature_candidates("Intensity_MADIntensity_typeI")
 
     assert "madintensity" in candidates
@@ -479,11 +690,24 @@ def test_matching_measurement_field_prefers_specific_feature_suffix() -> None:
 def test_cellprofiler_shape_area_query_uses_volume_when_area_is_empty() -> None:
     table = MeasurementTable(
         name="ShapeMeasurements",
-        rows=(
-            {"image_number": 1, "object_label": 1, "area": "", "volume": 12.0},
-            {"image_number": 1, "object_label": 2, "area": None, "volume": 24.0},
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {"slice_index": 0, "object_label": 1, "area": "", "volume": 12.0},
+                {"slice_index": 0, "object_label": 2, "area": None, "volume": 24.0},
+            ),
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("object_label", int),
+                FieldSpec("area", float, required=False),
+                FieldSpec("volume", float),
+            ),
+            object_row_identity=MeasurementObjectRowIdentity.LABEL_ID,
         ),
-        object_name="Cells",
+        subject=MeasurementSubject(
+            MeasurementScope.OBJECT,
+            "Cells",
+            MeasurementRowAxisField.OBJECT_LABEL.value,
+        ),
     )
 
     values = measurement_values_for_feature(
@@ -500,18 +724,53 @@ def test_cellprofiler_shape_area_query_uses_volume_when_area_is_empty() -> None:
 def test_heterogeneous_shape_rows_prefer_area_over_later_volume_alias() -> None:
     table = MeasurementTable(
         name="MixedShapeMeasurements",
-        rows=(
-            {"slice_index": 0, "object_name": "Cells", "object_label": 1, "volume": 7.0},
-            {"slice_index": 0, "object_name": "Nuclei", "object_label": 1, "area": 3.0},
-            {"slice_index": 0, "object_name": "Nuclei", "object_label": 2, "area": 5.0},
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {
+                    "slice_index": 0,
+                    "object_name": "Cells",
+                    "object_label": 1,
+                    "volume": 7.0,
+                },
+                {
+                    "slice_index": 0,
+                    "object_name": "Nuclei",
+                    "object_label": 1,
+                    "area": 3.0,
+                },
+                {
+                    "slice_index": 0,
+                    "object_name": "Nuclei",
+                    "object_label": 2,
+                    "area": 5.0,
+                },
+            ),
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("object_name", str),
+                FieldSpec("object_label", int),
+                FieldSpec("volume", float, required=False),
+                FieldSpec("area", float, required=False),
+            ),
+        ),
+        subject=MeasurementSubject(MeasurementScope.ARTIFACT, "MixedShapeMeasurements"),
+    )
+    labels = ObjectLabelSet(
+        name="Nuclei",
+        variant_data=ObjectLabelVariantData(
+            labels=pytest.importorskip("numpy").array([[1, 2]], dtype="int32")
+        ),
+        domain=ObjectLabelDomain.declared(
+            scope=ObjectLabelDomainScope.PAYLOAD,
+            declared_object_ids=(1, 2),
         ),
     )
-    labels = pytest.importorskip("numpy").array([[1, 2]], dtype="int32")
 
     values = measurement_values_for_label_slices(
         (table,),
         "AreaShape_Area",
         labels,
+        plane_projector=RuntimePlaneProjection.selected(0, 1),
         object_name="Nuclei",
         dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
     )
@@ -519,28 +778,39 @@ def test_heterogeneous_shape_rows_prefer_area_over_later_volume_alias() -> None:
     assert tuple(value.tolist() for value in values) == ([3.0, 5.0],)
 
 
-def test_label_slice_measurement_lookup_uses_declared_image_number_axis() -> None:
-    labels = pytest.importorskip("numpy").array(
-        (
-            ((1, 2),),
-            ((1, 0),),
+def test_label_slice_measurement_lookup_uses_runtime_slice_axis() -> None:
+    labels = object_labels(
+        pytest.importorskip("numpy").array(
+            (
+                ((1, 2),),
+                ((1, 0),),
+            ),
+            dtype="int32",
         ),
-        dtype="int32",
+        declared_object_id_domains=((1, 2), (1,)),
     )
     table = MeasurementTable(
         name="ShapeMeasurements",
-        rows=(
-            {"image_number": 1, "object_label": 1, "FormFactor": 0.5},
-            {"image_number": 1, "object_label": 2, "FormFactor": 0.7},
-            {"image_number": 2, "object_label": 1, "FormFactor": 0.9},
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {"slice_index": 0, "object_label": 1, "FormFactor": 0.5},
+                {"slice_index": 0, "object_label": 2, "FormFactor": 0.7},
+                {"slice_index": 1, "object_label": 1, "FormFactor": 0.9},
+            ),
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("object_label", int),
+                FieldSpec("FormFactor", float),
+            ),
         ),
-        object_name="Cells",
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
     )
 
     values = measurement_values_for_label_slices(
         (table,),
         "AreaShape_FormFactor",
         labels,
+        plane_projector=RuntimePlaneProjection.stack(2),
         object_name="Cells",
         dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
     )
@@ -548,38 +818,256 @@ def test_label_slice_measurement_lookup_uses_declared_image_number_axis() -> Non
     assert tuple(value.tolist() for value in values) == ([0.5, 0.7], [0.9])
 
 
-def test_batch_label_slice_measurement_lookup_uses_per_object_axis_semantics() -> None:
+def test_projected_payload_measurement_lookup_uses_selected_runtime_slice() -> None:
     np = pytest.importorskip("numpy")
-    cell_labels = np.array(
-        (
-            ((1, 2),),
-            ((1, 0),),
+    labels = ObjectLabelSet(
+        name="Cells",
+        variant_data=ObjectLabelVariantData(labels=np.array(((1, 2),), dtype="int32")),
+        domain=ObjectLabelDomain.declared(
+            scope=ObjectLabelDomainScope.PAYLOAD,
+            declared_object_ids=(1, 2),
         ),
-        dtype="int32",
     )
-    nucleus_labels = np.array(
-        (
-            ((1,),),
-            ((1,),),
+    table = MeasurementTable(
+        name="ShapeMeasurements",
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {"slice_index": 0, "object_label": 1, "FormFactor": 0.5},
+                {"slice_index": 0, "object_label": 2, "FormFactor": 0.7},
+                {"slice_index": 1, "object_label": 1, "FormFactor": 0.9},
+                {"slice_index": 1, "object_label": 2, "FormFactor": 1.1},
+            ),
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("object_label", int),
+                FieldSpec("FormFactor", float),
+            ),
         ),
-        dtype="int32",
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
+    )
+
+    values = measurement_values_for_label_slices(
+        (table,),
+        "AreaShape_FormFactor",
+        labels,
+        plane_projector=RuntimePlaneProjection.selected(1, 2),
+        object_name="Cells",
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    assert tuple(value.tolist() for value in values) == ([0.9, 1.1],)
+
+
+def test_payload_measurement_projection_ignores_source_contributor_alias_count() -> (
+    None
+):
+    np = pytest.importorskip("numpy")
+    labels = ObjectLabelSet(
+        name="Cells",
+        variant_data=ObjectLabelVariantData(labels=np.array(((1, 2),), dtype="int32")),
+        domain=ObjectLabelDomain.declared(
+            scope=ObjectLabelDomainScope.PAYLOAD,
+            declared_object_ids=(1, 2),
+        ),
+        source_image_names=("Image", "Mask"),
+    )
+    table = MeasurementTable(
+        name="ShapeMeasurements",
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {"slice_index": 0, "object_label": 1, "FormFactor": 0.5},
+                {"slice_index": 0, "object_label": 2, "FormFactor": 0.7},
+            ),
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("object_label", int),
+                FieldSpec("FormFactor", float),
+            ),
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
+    )
+
+    values = measurement_values_for_label_slices(
+        (table,),
+        "AreaShape_FormFactor",
+        labels,
+        plane_projector=RuntimePlaneProjection.selected(0, 1),
+        object_name="Cells",
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    assert tuple(value.tolist() for value in values) == ([0.5, 0.7],)
+
+
+def test_payload_measurement_lookup_rejects_unselected_runtime_stack() -> None:
+    np = pytest.importorskip("numpy")
+    labels = ObjectLabelSet(
+        name="Cells",
+        variant_data=ObjectLabelVariantData(labels=np.array(((1,),), dtype="int32")),
+        domain=ObjectLabelDomain.declared(
+            scope=ObjectLabelDomainScope.PAYLOAD,
+            declared_object_ids=(1,),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="requires one selected runtime slice"):
+        measurement_values_for_label_slices(
+            (),
+            "AreaShape_FormFactor",
+            labels,
+            plane_projector=RuntimePlaneProjection.stack(2),
+            object_name="Cells",
+            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+        )
+
+
+def test_payload_measurement_lookup_accepts_declared_singleton_runtime_stack() -> None:
+    np = pytest.importorskip("numpy")
+    labels = ObjectLabelSet(
+        name="Cells",
+        variant_data=ObjectLabelVariantData(labels=np.array(((1,),), dtype="int32")),
+        domain=ObjectLabelDomain.declared(
+            scope=ObjectLabelDomainScope.PAYLOAD,
+            declared_object_ids=(1,),
+        ),
+    )
+    table = MeasurementTable(
+        name="ShapeMeasurements",
+        rows=MeasurementSparseColumnarRows.from_rows(
+            ({"slice_index": 0, "object_label": 1, "FormFactor": 0.5},),
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("object_label", int),
+                FieldSpec("FormFactor", float),
+            ),
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
+    )
+
+    values = measurement_values_for_label_slices(
+        (table,),
+        "AreaShape_FormFactor",
+        labels,
+        plane_projector=RuntimePlaneProjection.stack(1),
+        object_name="Cells",
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    assert tuple(value.tolist() for value in values) == ([0.5],)
+
+
+def test_batch_label_slice_measurement_lookup_scans_each_axis_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    np = pytest.importorskip("numpy")
+    MeasurementLabelSliceFeatureBatchQueryCache.process_cache().entries.clear()
+    MeasurementObjectFeatureAxisBatchQueryCache.process_cache().entries.clear()
+    table_scans: list[tuple[int, int | None, tuple[str, ...]]] = []
+    original_table_value_indexes = (
+        MeasurementObjectFeatureVectorBatchQuery.table_value_indexes
+    )
+
+    def counted_table_value_indexes(
+        query: MeasurementObjectFeatureVectorBatchQuery,
+        table: MeasurementTable,
+        table_query: MeasurementFeatureQuery,
+        table_object_names: tuple[str, ...],
+        query_objects_by_requested_object: Mapping[str, str | None],
+        *,
+        projection: MeasurementAxisValueProjection | None = None,
+    ) -> dict[str, MeasurementFeatureValueIndex]:
+        table_scans.append(
+            (
+                id(table),
+                None if projection is None else projection.value,
+                table_object_names,
+            )
+        )
+        return original_table_value_indexes(
+            query,
+            table,
+            table_query,
+            table_object_names,
+            query_objects_by_requested_object,
+            projection=projection,
+        )
+
+    monkeypatch.setattr(
+        MeasurementObjectFeatureVectorBatchQuery,
+        "table_value_indexes",
+        counted_table_value_indexes,
+    )
+    cell_labels = object_labels(
+        np.array(
+            (
+                ((1, 2),),
+                ((1, 0),),
+            ),
+            dtype="int32",
+        ),
+        declared_object_id_domains=((1, 2), (1,)),
+    )
+    nucleus_labels = object_labels(
+        np.array(
+            (
+                ((1,),),
+                ((1,),),
+            ),
+            dtype="int32",
+        ),
+        declared_object_id_domains=((1,), (1,)),
     )
     table = MeasurementTable(
         name="MixedShapeMeasurements",
-        rows=(
-            {"image_number": 1, "object_name": "Cells", "object_label": 1, "FormFactor": 0.5},
-            {"image_number": 1, "object_name": "Cells", "object_label": 2, "FormFactor": 0.7},
-            {"image_number": 2, "object_name": "Cells", "object_label": 1, "FormFactor": 0.9},
-            {"image_number": 1, "object_name": "Nuclei", "object_label": 1, "FormFactor": 1.5},
-            {"image_number": 2, "object_name": "Nuclei", "object_label": 1, "FormFactor": 1.9},
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {
+                    "slice_index": 0,
+                    "object_name": "Cells",
+                    "object_label": 1,
+                    "FormFactor": 0.5,
+                },
+                {
+                    "slice_index": 0,
+                    "object_name": "Cells",
+                    "object_label": 2,
+                    "FormFactor": 0.7,
+                },
+                {
+                    "slice_index": 1,
+                    "object_name": "Cells",
+                    "object_label": 1,
+                    "FormFactor": 0.9,
+                },
+                {
+                    "slice_index": 0,
+                    "object_name": "Nuclei",
+                    "object_label": 1,
+                    "FormFactor": 1.5,
+                },
+                {
+                    "slice_index": 1,
+                    "object_name": "Nuclei",
+                    "object_label": 1,
+                    "FormFactor": 1.9,
+                },
+            ),
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("object_name", str),
+                FieldSpec("object_label", int),
+                FieldSpec("FormFactor", float),
+            ),
         ),
+        subject=MeasurementSubject(MeasurementScope.ARTIFACT, "MixedShapeMeasurements"),
     )
 
     batch_values = MeasurementLabelSliceFeatureBatchQuery(
         measurement_tables=(table,),
         feature_name="AreaShape_FormFactor",
         dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-        row_axis=MeasurementRowAxisField.IMAGE_NUMBER,
+        row_axis=MeasurementRowAxisField.SLICE_INDEX,
+        plane_projector=RuntimePlaneProjection.stack(2),
         labels_by_object={
             "Cells": cell_labels,
             "Nuclei": nucleus_labels,
@@ -594,6 +1082,81 @@ def test_batch_label_slice_measurement_lookup_uses_per_object_axis_semantics() -
         [1.5],
         [1.9],
     )
+    assert [(table_id, axis) for table_id, axis, _ in table_scans] == [
+        (id(table), 0),
+        (id(table), 1),
+    ]
+    assert all(
+        set(object_names) == {"Cells", "Nuclei"}
+        for _, _, object_names in table_scans
+    )
+
+
+def test_label_slice_measurement_lookup_preserves_producer_runtime_slice_axis() -> None:
+    np = pytest.importorskip("numpy")
+    labels = object_labels(
+        np.ones((2, 1, 3), dtype="int32"),
+        declared_object_id_domains=((1,), (1,)),
+    )
+    first = MeasurementTable(
+        name="FirstIntensityMeasurements",
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {
+                    "slice_index": 0,
+                    "object_name": "Tiles",
+                    "object_label": 1,
+                    "source_image_name": "DF_image",
+                    "std_intensity": 0.25,
+                },
+            ),
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("object_name", str),
+                FieldSpec("object_label", int),
+                FieldSpec("source_image_name", str),
+                FieldSpec("std_intensity", float),
+            ),
+        ),
+        subject=MeasurementSubject(
+            MeasurementScope.ARTIFACT, "FirstIntensityMeasurements"
+        ),
+    )
+    second = MeasurementTable(
+        name="SecondIntensityMeasurements",
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {
+                    "slice_index": 1,
+                    "object_name": "Tiles",
+                    "object_label": 1,
+                    "source_image_name": "DF_image",
+                    "std_intensity": 0.0,
+                },
+            ),
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("object_name", str),
+                FieldSpec("object_label", int),
+                FieldSpec("source_image_name", str),
+                FieldSpec("std_intensity", float),
+            ),
+        ),
+        subject=MeasurementSubject(
+            MeasurementScope.ARTIFACT, "SecondIntensityMeasurements"
+        ),
+    )
+
+    values = measurement_values_for_label_slices(
+        (first, second),
+        "Intensity_StdIntensity_DF_image",
+        labels,
+        plane_projector=RuntimePlaneProjection.stack(2),
+        object_name="Tiles",
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    assert tuple(value.tolist() for value in values) == ([0.25], [0.0])
 
 
 def test_axis_batch_cache_rebuilds_partial_object_axes() -> None:
@@ -605,7 +1168,6 @@ def test_axis_batch_cache_rebuilds_partial_object_axes() -> None:
         rows=MeasurementProjectedColumnarRows(
             {
                 "slice_index": (0, 0, 1, 1, 2, 2),
-                "image_number": (1, 1, 2, 2, 3, 3),
                 "object_name": (
                     "Nuclei",
                     "Nuclei",
@@ -616,10 +1178,16 @@ def test_axis_batch_cache_rebuilds_partial_object_axes() -> None:
                 ),
                 "object_label": (1, 2, 1, 2, 1, 2),
                 "mean_intensity": (1.0, 2.0, 3.0, 4.0, 5.0, 6.0),
-            }
+            },
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("object_name", str),
+                FieldSpec("object_label", int),
+                FieldSpec("mean_intensity", float),
+            ),
         ),
         source_image_name="CropBlue",
-        object_id_field="object_label",
+        subject=MeasurementSubject(MeasurementScope.IMAGE, "CropBlue"),
     )
     batch_query = MeasurementObjectFeatureVectorBatchQuery(
         "Intensity_MeanIntensity_CropBlue",
@@ -638,19 +1206,23 @@ def test_axis_batch_cache_rebuilds_partial_object_axes() -> None:
             },
         ),
     )
-    labels = np.array(
-        (
-            ((1, 2),),
-            ((1, 2),),
-            ((1, 2),),
+    labels = object_labels(
+        np.array(
+            (
+                ((1, 2),),
+                ((1, 2),),
+                ((1, 2),),
+            ),
+            dtype="int32",
         ),
-        dtype="int32",
+        declared_object_id_domains=((1, 2), (1, 2), (1, 2)),
     )
 
     values = measurement_values_for_label_slices(
         (table,),
         "Intensity_MeanIntensity_CropBlue",
         labels,
+        plane_projector=RuntimePlaneProjection.stack(3),
         object_name="Nuclei",
         dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
     )
@@ -662,7 +1234,7 @@ def test_axis_batch_cache_rebuilds_partial_object_axes() -> None:
     )
 
 
-def test_axis_batch_projection_ignores_other_object_axes_for_singleton_broadcast() -> None:
+def test_axis_batch_projection_rejects_missing_object_axes() -> None:
     np = pytest.importorskip("numpy")
     table = MeasurementTable(
         name="IntensityMeasurements",
@@ -678,56 +1250,75 @@ def test_axis_batch_projection_ignores_other_object_axes_for_singleton_broadcast
                 ),
                 "object_label": (1, 2, 1, 1, 1),
                 "mean_intensity": (1.0, 2.0, 10.0, 20.0, 30.0),
-            }
+            },
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("object_name", str),
+                FieldSpec("object_label", int),
+                FieldSpec("mean_intensity", float),
+            ),
         ),
         source_image_name="CropBlue",
-        object_id_field="object_label",
+        subject=MeasurementSubject(MeasurementScope.IMAGE, "CropBlue"),
     )
-    labels = np.array(
-        (
-            ((1, 2),),
-            ((1, 2),),
-            ((1, 2),),
+    labels = object_labels(
+        np.array(
+            (
+                ((1, 2),),
+                ((1, 2),),
+                ((1, 2),),
+            ),
+            dtype="int32",
         ),
-        dtype="int32",
+        declared_object_id_domains=((1, 2), (1, 2), (1, 2)),
     )
 
-    values = measurement_values_for_label_slices(
-        (table,),
-        "Intensity_MeanIntensity_CropBlue",
-        labels,
-        object_name="Nuclei",
-        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-    )
-
-    assert tuple(value.tolist() for value in values) == (
-        [1.0, 2.0],
-        [1.0, 2.0],
-        [1.0, 2.0],
-    )
+    with pytest.raises(ValueError, match="does not match the declared label domain"):
+        measurement_values_for_label_slices(
+            (table,),
+            "Intensity_MeanIntensity_CropBlue",
+            labels,
+            plane_projector=RuntimePlaneProjection.stack(3),
+            object_name="Nuclei",
+            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+        )
 
 
 def test_mixed_wide_and_long_measurement_rows_resolve_explicit_feature_rows() -> None:
     table = MeasurementTable(
         name="RelationshipMeasurements",
-        rows=(
-            {
-                "parent_object_count": 2,
-                "child_object_count": 2,
-                "mean_children_per_parent": 1.0,
-            },
-            {
-                "object_name": "Objects1",
-                "object_label": 1,
-                "feature_name": "Children_Objects2_Count",
-                "result_value": 2.0,
-            },
-            {
-                "object_name": "Objects1",
-                "object_label": 2,
-                "feature_name": "Children_Objects2_Count",
-                "result_value": 0.0,
-            },
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {
+                    "parent_object_count": 2,
+                    "child_object_count": 2,
+                    "mean_children_per_parent": 1.0,
+                },
+                {
+                    "object_name": "Objects1",
+                    "object_label": 1,
+                    "feature_name": "Children_Objects2_Count",
+                    "result_value": 2.0,
+                },
+                {
+                    "object_name": "Objects1",
+                    "object_label": 2,
+                    "feature_name": "Children_Objects2_Count",
+                    "result_value": 0.0,
+                },
+            ),
+            fields=(
+                FieldSpec("parent_object_count", int, required=False),
+                FieldSpec("child_object_count", int, required=False),
+                FieldSpec("mean_children_per_parent", float, required=False),
+                FieldSpec("object_name", str, required=False),
+                FieldSpec("object_label", int, required=False),
+                FieldSpec("feature_name", str, required=False),
+                FieldSpec("result_value", float, required=False),
+            ),
+        ),
+        subject=MeasurementSubject(
+            MeasurementScope.ARTIFACT, "RelationshipMeasurements"
         ),
     )
 
@@ -745,20 +1336,21 @@ def test_mixed_wide_and_long_measurement_rows_resolve_explicit_feature_rows() ->
 def test_row_sequence_feature_semantics_ignore_stale_partition_fields() -> None:
     table = MeasurementTable(
         name="RelationshipMeasurements",
-        rows=(
-            {
-                "object_name": "Objects2",
-                "object_label": 1,
-                "Parent_Objects1": 1,
-            },
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {
+                    "object_name": "Objects2",
+                    "object_label": 1,
+                    "Parent_Objects1": 1,
+                },
+            ),
+            fields=(
+                FieldSpec("object_name", str),
+                FieldSpec("object_label", int),
+                FieldSpec("Parent_Objects1", int),
+            ),
         ),
-        object_name="Objects2",
-        fields=(
-            FieldSpec("object_name"),
-            FieldSpec("object_label"),
-            FieldSpec("Children_Objects2_Count"),
-        ),
-        validated_runtime_schema=True,
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Objects2"),
     )
 
     semantics = MeasurementTableObjectFeatureSemantics.from_table(table)
@@ -769,11 +1361,18 @@ def test_row_sequence_feature_semantics_ignore_stale_partition_fields() -> None:
 def test_measurement_table_axis_query_projects_sequence_rows() -> None:
     table = MeasurementTable(
         name="ObjectMeasurements",
-        rows=(
-            {"slice_index": 0, "object_label": 1, "area": 10.0},
-            {"slice_index": 1, "object_label": 1, "area": 20.0},
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {"slice_index": 0, "object_label": 1, "area": 10.0},
+                {"slice_index": 1, "object_label": 1, "area": 20.0},
+            ),
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("object_label", int),
+                FieldSpec("area", float),
+            ),
         ),
-        object_name="Objects",
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Objects"),
     )
 
     query = MeasurementTableAxisProjection(MeasurementRowAxisField.SLICE_INDEX, 1)
@@ -785,132 +1384,340 @@ def test_measurement_table_axis_query_projects_sequence_rows() -> None:
 
     assert query.axis is MeasurementRowAxisField.SLICE_INDEX
     assert query.value == 1
-    assert tuple(projected.rows) == (
+    assert projected.rows.row_mappings() == (
         {"slice_index": 1, "object_label": 1, "area": 20.0},
     )
+    assert MeasurementTableObjectFeatureSemantics.from_table(
+        table
+    ).feature_names == frozenset({"area"})
 
 
 def test_measurement_table_union_preserves_compatible_schema() -> None:
     subject = MeasurementSubject(MeasurementScope.OBJECT, "Cells", "cell_id")
     first = MeasurementTable(
         name="CellMeasurements",
-        rows=({"cell_id": 1, "area": 10.0},),
-        fields=(FieldSpec("cell_id"), FieldSpec("area")),
-        object_name="Cells",
-        object_id_field="cell_id",
+        rows=MeasurementSparseColumnarRows.from_rows(
+            ({"cell_id": 1, "area": 10.0},),
+            fields=(
+                FieldSpec("cell_id", int),
+                FieldSpec("area", float),
+            ),
+        ),
         subject=subject,
-        validated_runtime_schema=True,
     )
     second = MeasurementTable(
         name="CellMeasurements",
-        rows=({"cell_id": 2, "area": 20.0},),
-        fields=(FieldSpec("cell_id"), FieldSpec("area")),
-        object_name="Cells",
-        object_id_field="cell_id",
+        rows=MeasurementSparseColumnarRows.from_rows(
+            ({"cell_id": 2, "area": 20.0},),
+            fields=(
+                FieldSpec("cell_id", int),
+                FieldSpec("area", float),
+            ),
+        ),
         subject=subject,
-        validated_runtime_schema=True,
     )
 
     union = MeasurementTableUnion("CellMeasurements", (first, second)).as_table()
 
-    assert union.fields == (FieldSpec("cell_id"), FieldSpec("area"))
-    assert union.object_name == "Cells"
-    assert union.object_id_field == "cell_id"
+    assert union.rows.fields == (FieldSpec("cell_id", int), FieldSpec("area", float))
+    assert union.subject.object_name == "Cells"
+    assert union.subject.object_id_field == "cell_id"
     assert union.subject == subject
-    assert union.validated_runtime_schema is True
-    assert union.schema_loss_reasons == frozenset()
-    assert tuple(union.rows) == (
+    assert union.rows.row_mappings() == (
         {"cell_id": 1, "area": 10.0},
         {"cell_id": 2, "area": 20.0},
     )
 
 
+def test_measurement_table_union_composes_ordered_source_provenance() -> None:
+    subject = MeasurementSubject(MeasurementScope.OBJECT, "Cells", "cell_id")
+    paths = ("/plate/site-1.tif", "/plate/site-2.tif")
+    tables = tuple(
+        MeasurementTable(
+            name="CellMeasurements",
+            rows=MeasurementSparseColumnarRows.from_rows(
+                ({"cell_id": index, "area": float(index * 10)},),
+                fields=(FieldSpec("cell_id", int), FieldSpec("area", float)),
+            ),
+            subject=subject,
+            source_image_provenance_planes=(
+                SourceImageProvenancePlanes.from_components(paths=(path,))
+            ),
+        )
+        for index, path in enumerate(paths, start=1)
+    )
+
+    union = MeasurementTableUnion("CellMeasurements", tables).as_table()
+
+    assert union.rows.row_mappings() == (
+        {"cell_id": 1, "area": 10.0},
+        {"cell_id": 2, "area": 20.0},
+    )
+    assert union.source_provenance.source_plane_count == 2
+    assert all(
+        isinstance(plane, RuntimeSourceImageProvenancePlane)
+        for plane in union.source_image_provenance_planes.planes
+    )
+    assert union.source_image_provenance_planes.paths == paths
+    assert union.source_provenance.for_source_plane(0).source_path == paths[0]
+    assert union.source_provenance.for_source_plane(1).source_path == paths[1]
+
+
+def test_measurement_table_union_bundles_sources_per_declared_runtime_slice() -> None:
+    subject = MeasurementSubject(MeasurementScope.IMAGE, "quality_metrics")
+    tables = tuple(
+        MeasurementTable(
+            name="quality_metrics",
+            rows=MeasurementSparseColumnarRows.from_rows(
+                (
+                    {"slice_index": 0, "focus_score": float(channel)},
+                    {"slice_index": 1, "focus_score": float(channel + 1)},
+                ),
+                fields=(
+                    FieldSpec("slice_index", int),
+                    FieldSpec("focus_score", float),
+                ),
+            ),
+            source_image_name="InputImages",
+            subject=subject,
+            source_image_provenance_planes=(
+                SourceImageProvenancePlanes.from_components(
+                    paths=(
+                        f"/plate/A01_s001_w{channel}.tif",
+                        f"/plate/A01_s002_w{channel}.tif",
+                    ),
+                    component_metadata=(
+                        {
+                            "well": "A01",
+                            "site": "1",
+                            "channel": str(channel),
+                        },
+                        {
+                            "well": "A01",
+                            "site": "2",
+                            "channel": str(channel),
+                        },
+                    ),
+                )
+            ),
+            source_image_names=("InputImages", "InputImages"),
+        )
+        for channel in (1, 2)
+    )
+
+    metadata = MeasurementTableUnion("quality_metrics", tables).source_metadata()
+
+    assert metadata.source_provenance.source_plane_count == 2
+    assert tuple(
+        metadata.source_provenance.for_source_plane(index).source_component_metadata[
+            "site"
+        ]
+        for index in range(2)
+    ) == ("1", "2")
+    assert tuple(
+        tuple(
+            contributor.path
+            for contributor in metadata.source_provenance.for_source_plane(
+                index
+            ).source_image_provenance_planes.contributors
+        )
+        for index in range(2)
+    ) == (
+        ("/plate/A01_s001_w1.tif", "/plate/A01_s001_w2.tif"),
+        ("/plate/A01_s002_w1.tif", "/plate/A01_s002_w2.tif"),
+    )
+
+
+def test_measurement_table_union_accepts_axisless_payload_domain() -> None:
+    table = MeasurementTable(
+        name="CellMeasurements",
+        rows=MeasurementSparseColumnarRows.from_rows(
+            ({"cell_id": 1, "area": 10.0},),
+            fields=(
+                FieldSpec("cell_id", int),
+                FieldSpec("area", float),
+            ),
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells", "cell_id"),
+    )
+
+    assert (
+        MeasurementTableUnion("CellMeasurements", (table,)).row_axis_domain(
+            MeasurementRowAxisField.SLICE_INDEX
+        )
+        is None
+    )
+
+
+def test_measurement_table_union_preserves_payload_rows_in_axis_declaring_table() -> (
+    None
+):
+    table = MeasurementTable(
+        name="CellMeasurements",
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {"slice_index": 0, "cell_id": 1, "area": 10.0},
+                {"cell_id": 1, "Children_Nuclei_Count": 1},
+            ),
+            fields=(
+                FieldSpec("slice_index", int, required=False),
+                FieldSpec("cell_id", int),
+                FieldSpec("area", float, required=False),
+                FieldSpec("Children_Nuclei_Count", int, required=False),
+            ),
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells", "cell_id"),
+    )
+
+    assert MeasurementTableUnion(
+        "CellMeasurements",
+        (table,),
+    ).row_axis_domain(MeasurementRowAxisField.SLICE_INDEX) == (0,)
+
+
+def test_measurement_table_union_rejects_mixed_slice_domains() -> None:
+    tables = (
+        MeasurementTable(
+            name="CellMeasurements",
+            rows=MeasurementSparseColumnarRows.from_rows(
+                ({"slice_index": 0, "cell_id": 1, "area": 10.0},),
+                fields=(
+                    FieldSpec("slice_index", int),
+                    FieldSpec("cell_id", int),
+                    FieldSpec("area", float),
+                ),
+            ),
+            subject=MeasurementSubject(MeasurementScope.ARTIFACT, "CellMeasurements"),
+        ),
+        MeasurementTable(
+            name="CellMeasurements",
+            rows=MeasurementSparseColumnarRows.from_rows(
+                ({"cell_id": 2, "area": 20.0},),
+                fields=(
+                    FieldSpec("cell_id", int),
+                    FieldSpec("area", float),
+                ),
+            ),
+            subject=MeasurementSubject(MeasurementScope.ARTIFACT, "CellMeasurements"),
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="mixes declared and axisless 'slice_index' row domains",
+    ):
+        MeasurementTableUnion("CellMeasurements", tables).row_axis_domain(
+            MeasurementRowAxisField.SLICE_INDEX
+        )
+
+
 def test_measurement_table_union_drops_incompatible_schema_facts() -> None:
     first = MeasurementTable(
         name="MixedMeasurements",
-        rows=({"object_label": 1, "area": 10.0},),
-        fields=(FieldSpec("object_label"), FieldSpec("area")),
-        object_name="Cells",
+        rows=MeasurementSparseColumnarRows.from_rows(
+            ({"object_label": 1, "area": 10.0},),
+            fields=(
+                FieldSpec("object_label", int),
+                FieldSpec("area", float),
+            ),
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
     )
     second = MeasurementTable(
         name="MixedMeasurements",
-        rows=({"object_label": 1, "area": 20.0},),
-        fields=(FieldSpec("object_label"), FieldSpec("area")),
-        object_name="Nuclei",
+        rows=MeasurementSparseColumnarRows.from_rows(
+            ({"object_label": 1, "area": 20.0},),
+            fields=(
+                FieldSpec("object_label", int),
+                FieldSpec("area", float),
+            ),
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Nuclei"),
     )
 
-    union = MeasurementTableUnion("MixedMeasurements", (first, second)).as_table()
-
-    assert union.fields == (FieldSpec("object_label"), FieldSpec("area"))
-    assert union.object_name is None
-    assert union.subject.scope is MeasurementScope.ARTIFACT
-    assert union.validated_runtime_schema is False
-    assert "object_name" in union.schema_loss_reasons
-    assert "subject" in union.schema_loss_reasons
+    with pytest.raises(
+        ValueError,
+        match="require one exact nominal subject",
+    ):
+        MeasurementTableUnion("MixedMeasurements", (first, second)).as_table()
 
 
 def test_measurement_table_axis_query_projects_table_sequences() -> None:
     first = MeasurementTable(
         name="FirstMeasurements",
-        rows=(
-            {"image_number": 1, "area": 10.0},
-            {"image_number": 2, "area": 20.0},
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {"slice_index": 0, "area": 10.0},
+                {"slice_index": 1, "area": 20.0},
+            ),
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("area", float),
+            ),
         ),
+        subject=MeasurementSubject(MeasurementScope.ARTIFACT, "FirstMeasurements"),
     )
     second = MeasurementTable(
         name="SecondMeasurements",
-        rows=({"area": 99.0},),
+        rows=MeasurementSparseColumnarRows.from_rows(
+            ({"area": 99.0},), fields=(FieldSpec("area", float),)
+        ),
+        subject=MeasurementSubject(MeasurementScope.ARTIFACT, "SecondMeasurements"),
     )
 
     projected = MeasurementTableAxisProjection(
-        MeasurementRowAxisField.IMAGE_NUMBER,
-        2,
+        MeasurementRowAxisField.SLICE_INDEX,
+        1,
     ).tables((first, second))
 
-    assert tuple(projected[0].rows) == ({"image_number": 2, "area": 20.0},)
+    assert projected[0].rows.row_mappings() == ({"slice_index": 1, "area": 20.0},)
     assert projected[1] is second
 
 
-def test_axis_specific_measurement_table_query_projects_declared_axes() -> None:
-    table = MeasurementTable(
-        name="ObjectMeasurements",
-        rows=(
-            {"slice_index": 0, "image_number": 1, "area": 10.0},
-            {"slice_index": 1, "image_number": 2, "area": 20.0},
+def test_axis_specific_measurement_table_query_projects_runtime_slice_axis() -> None:
+    runtime_table = MeasurementTable(
+        name="RuntimeObjectMeasurements",
+        rows=MeasurementSparseColumnarRows.from_rows(
+            (
+                {"slice_index": 0, "area": 10.0},
+                {"slice_index": 1, "area": 20.0},
+            ),
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("area", float),
+            ),
         ),
-        object_name="Objects",
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Objects"),
     )
 
     assert tuple(
         MeasurementTableAxisProjection(
             MeasurementRowAxisField.SLICE_INDEX,
             1,
-        ).tables((table,))[0].rows
-    ) == (
-        {"slice_index": 1, "image_number": 2, "area": 20.0},
-    )
-    assert tuple(
-        MeasurementTableAxisProjection(
-            MeasurementRowAxisField.IMAGE_NUMBER,
-            2,
-        ).tables((table,))[0].rows
-    ) == (
-        {"slice_index": 1, "image_number": 2, "area": 20.0},
-    )
+        )
+        .tables((runtime_table,))[0]
+        .rows.row_mappings()
+    ) == ({"slice_index": 1, "area": 20.0},)
 
 
 def test_runtime_relationship_query_reconstructs_typed_relationship() -> None:
     store = RuntimeValueStore()
-    semantics = RelationshipSemantics.parent_child("Cells", "Nuclei")
+    declaration = ObjectRelationshipDeclaration.parent_child(
+        source=ArtifactSpec.output("Cells", ObjectLabelsArtifactType).ref(),
+        target=ArtifactSpec.output("Nuclei", ObjectLabelsArtifactType).ref(),
+        producer_module_number=1,
+    )
     _record_native(
         store,
         ObjectRelationship(
             name="ParentChild",
-            source=semantics.source,
-            target=semantics.target,
-            source_ids=(10, 11),
-            target_ids=(1, 2),
-            relationship_type=semantics.relationship_type,
+            declaration=declaration,
+            payload=DirectedObjectRelationshipPayload(
+                source_ids=(10, 11),
+                target_ids=(1, 2),
+                slice_indices=(),
+                slice_count=None,
+            ),
         ),
         RelationshipsArtifactType,
     )
@@ -920,11 +1727,11 @@ def test_runtime_relationship_query_reconstructs_typed_relationship() -> None:
         "ParentChild",
     )
 
-    assert relationship.source.name == "Cells"
-    assert relationship.target.name == "Nuclei"
-    assert relationship.source_ids == (10, 11)
-    assert relationship.target_ids == (1, 2)
-    assert relationship.relationship_type == "parent_child"
+    assert relationship.declaration.source.name == "Cells"
+    assert relationship.declaration.target.name == "Nuclei"
+    assert relationship.payload.source_ids == (10, 11)
+    assert relationship.payload.target_ids == (1, 2)
+    assert relationship.declaration.relationship_type == "parent_child"
 
 
 def test_runtime_artifact_ambiguity_reports_locations_without_payload_repr() -> None:
@@ -938,7 +1745,13 @@ def test_runtime_artifact_ambiguity_reports_locations_without_payload_repr() -> 
             store,
             MeasurementTable(
                 name="SharedMeasurements",
-                rows=({"payload": ReprMustNotRun()},),
+                rows=MeasurementSparseColumnarRows.from_rows(
+                    ({"payload": ReprMustNotRun()},),
+                    fields=(FieldSpec("payload", ReprMustNotRun),),
+                ),
+                subject=MeasurementSubject(
+                    MeasurementScope.ARTIFACT, "SharedMeasurements"
+                ),
             ),
             MeasurementsArtifactType,
             group_key=group_key,
@@ -958,12 +1771,13 @@ def _record_native(
     *,
     group_key: str | None = None,
 ) -> None:
-    value = normalize_artifact_value(
+    value = RuntimeValue.normalize(
         ArtifactOutputPlan(
             name=native_value.name,
             path=f"/memory/{native_value.name}.pkl",
             artifact_type=kind,
             group_keys=(group_key,) if group_key is not None else (),
+            group_component=(AllComponents.CHANNEL if group_key is not None else None),
         ),
         native_value,
         axis_id=AXIS_ID,

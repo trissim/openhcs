@@ -2,6 +2,7 @@ import asyncio
 import importlib.util
 import inspect
 import json
+import logging
 import os
 from pathlib import Path
 import sys
@@ -10,8 +11,20 @@ import tomllib
 
 import pytest
 
-from openhcs.agent.capabilities import get_capability_registry
+import openhcs
+from openhcs.agent.capabilities import (
+    AuthoringLocalCapabilitySurfaceProfile,
+    CapabilityKind,
+    CapabilityTransport,
+    CoreLocalCapabilitySurfaceProfile,
+    DesktopLocalCapabilitySurfaceProfile,
+    FullLocalCapabilitySurfaceProfile,
+    agent_capabilities,
+    get_capability_registry,
+)
+from openhcs.agent.authoring_contexts import AuthoringContextDeclaration
 from openhcs.agent.dto.common import AgentError, SCHEMA_VERSION
+from openhcs.agent.dto.config import ConfigPatch
 from openhcs.agent.dto.functions import (
     CustomFunctionRegistrationResult,
     FunctionCatalogEntry,
@@ -64,16 +77,30 @@ from openhcs.agent.dto.viewer import (
 from openhcs.agent.services.object_state_field_help_service import (
     ObjectStateFieldHelpService,
 )
+from openhcs.agent.services.config_service import ConfigService
 from openhcs.agent.services.object_state_field_projection import (
     ObjectStateFieldListProjector,
 )
 from openhcs.agent.services.selected_plate_service import SelectedPlateService
 from openhcs.agent.services.viewer_window_service import ViewerWindowService
-from openhcs.core.runtime_semantics import coerce_enum
 from openhcs.runtime.window_snapshot import WindowSnapshotCaptureScope
 
 import openhcs.mcp.bootstrap as bootstrap
 import openhcs.mcp.server as server
+from openhcs.mcp.context import OpenHCSAgentContext
+
+
+def _direct_tool_text(result) -> str:
+    """Return first text block from FastMCP structured or legacy direct calls."""
+    if hasattr(result, "content"):
+        content = result.content
+    else:
+        content = result[0] if isinstance(result, tuple) else result
+    return content[0].text
+
+
+def _direct_tool_structured(result):
+    return result[1] if isinstance(result, tuple) else result.structuredContent
 
 
 def _selected_plate_mcp_context(
@@ -150,7 +177,8 @@ def test_development_extra_installs_mcp_dependency():
     with (Path(__file__).resolve().parents[3] / "pyproject.toml").open("rb") as fh:
         pyproject = tomllib.load(fh)
 
-    assert "mcp>=1.0" in pyproject["project"]["optional-dependencies"]["dev"]
+    assert "mcp>=1.28,<2" in pyproject["project"]["optional-dependencies"]["dev"]
+    assert "mcp>=1.28,<2" in pyproject["project"]["optional-dependencies"]["mcp"]
 
 
 def test_agent_dto_package_exports_mcp_debugging_contracts():
@@ -224,6 +252,374 @@ def test_mcp_server_builds_when_optional_dependency_is_installed():
     assert built is not None
 
 
+def test_mcp_server_publishes_canonical_instructions():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    built = server.build_server()
+
+    assert built.instructions == server.MCP_SERVER_INSTRUCTIONS
+    assert "openhcs_health_check" in built.instructions
+    assert "kind='first_use'" in built.instructions
+    assert "compact orientation and intent router" in built.instructions
+    assert "instead of loading every guide" in built.instructions
+    assert "read it completely before advising" not in built.instructions
+    assert "expert curriculum" not in built.instructions
+    for kind in AuthoringContextDeclaration.allowed_values():
+        assert kind in built.instructions
+    assert "PipelineDocument containing PipelineConfig" in built.instructions
+    assert "SourceBindingsConfig" in built.instructions
+    assert "SourceBindingsHandler is the fallback ingestion owner" in built.instructions
+    assert "CZI, OME-TIFF" in built.instructions
+    assert "bounded representative samples" in built.instructions
+    assert "openhcs_list_capabilities" in built.instructions
+    assert "surface profile, workflow groups, target contexts" in built.instructions
+    health_index = built.instructions.index("openhcs_health_check")
+    first_use_index = built.instructions.index("kind='first_use'")
+    capability_index = built.instructions.index("openhcs_list_capabilities")
+    assert health_index < first_use_index < capability_index
+    assert "kind='first_use' before choosing tools" in built.instructions
+    assert "openhcs_search_knowledge" in built.instructions
+    assert "openhcs_describe_config_schema" in built.instructions
+    assert "already-running OpenHCS GUI" in built.instructions
+    assert "same typed declarations" in built.instructions
+    assert "names begin" not in built.instructions
+    assert "compile before running" in built.instructions
+    assert "structured execution results" in built.instructions
+
+
+def test_mcp_server_factory_receives_canonical_identity_and_binds_tools():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    from mcp.server.fastmcp import FastMCP
+
+    construction_calls = []
+
+    def factory(name, *, instructions):
+        construction_calls.append((name, instructions))
+        return FastMCP(name, instructions=instructions)
+
+    built = server.build_server(fastmcp_factory=factory)
+    listed_tools = built.list_tools()
+    tools = (
+        asyncio.run(listed_tools) if inspect.isawaitable(listed_tools) else listed_tools
+    )
+
+    assert construction_calls == [("OpenHCS", server.MCP_SERVER_INSTRUCTIONS)]
+    assert "openhcs_health_check" in {tool.name for tool in tools}
+
+
+def test_mcp_hosted_surface_is_generated_from_transport_availability():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    hosted_registry = get_capability_registry(
+        CapabilityTransport.HOSTED_STREAMABLE_HTTP
+    )
+    all_registry = get_capability_registry()
+    built = server.build_server(
+        capability_transport=CapabilityTransport.HOSTED_STREAMABLE_HTTP
+    )
+    listed_tools = built.list_tools()
+    tools = (
+        asyncio.run(listed_tools) if inspect.isawaitable(listed_tools) else listed_tools
+    )
+    listed_resources = built.list_resources()
+    resources = (
+        asyncio.run(listed_resources)
+        if inspect.isawaitable(listed_resources)
+        else listed_resources
+    )
+
+    expected_tool_names = {
+        capability.name
+        for capability in hosted_registry.capabilities
+        if capability.kind is CapabilityKind.TOOL
+    }
+    expected_resource_names = {
+        capability.name
+        for capability in hosted_registry.capabilities
+        if capability.kind is CapabilityKind.RESOURCE
+    }
+    local_only_names = {
+        capability.name
+        for capability in all_registry.capabilities
+        if not capability.supports_transport(CapabilityTransport.HOSTED_STREAMABLE_HTTP)
+    }
+
+    assert {tool.name for tool in tools} == expected_tool_names
+    assert {str(resource.uri) for resource in resources} == expected_resource_names
+    assert expected_tool_names.isdisjoint(local_only_names)
+    assert all(tool.annotations.readOnlyHint is True for tool in tools)
+    assert built.instructions == server.MCP_HOSTED_SERVER_INSTRUCTIONS
+
+
+def test_mcp_hosted_capability_discovery_matches_registered_surface():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    hosted_registry = get_capability_registry(
+        CapabilityTransport.HOSTED_STREAMABLE_HTTP
+    )
+    expected_names = {capability.name for capability in hosted_registry.capabilities}
+
+    async def call_capability_discovery():
+        built = server.build_server(
+            capability_transport=CapabilityTransport.HOSTED_STREAMABLE_HTTP
+        )
+        return (
+            await asyncio.wait_for(
+                built.call_tool("openhcs_list_capabilities", {}),
+                timeout=2,
+            ),
+            await asyncio.wait_for(
+                built.read_resource("openhcs://capabilities"),
+                timeout=2,
+            ),
+        )
+
+    result, resource_result = asyncio.run(call_capability_discovery())
+    payload = json.loads(_direct_tool_text(result))
+    resource_payload = json.loads(resource_result[0].content)
+
+    assert {
+        capability["name"] for capability in payload["capabilities"]
+    } == expected_names
+    assert {
+        capability["name"] for capability in resource_payload["capabilities"]
+    } == expected_names
+    assert all(
+        capability["transport_availability"]
+        == [
+            CapabilityTransport.LOCAL_STDIO.value,
+            CapabilityTransport.HOSTED_STREAMABLE_HTTP.value,
+        ]
+        for capability in payload["capabilities"]
+    )
+
+
+def test_mcp_invocation_observer_receives_nominal_capability_outcome():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    observed = []
+
+    async def call_capability_discovery():
+        built = server.build_server(
+            capability_transport=CapabilityTransport.HOSTED_STREAMABLE_HTTP,
+            invocation_observer=lambda capability, outcome: observed.append(
+                (capability, outcome)
+            ),
+        )
+        tool_result = await asyncio.wait_for(
+            built.call_tool("openhcs_list_capabilities", {}),
+            timeout=2,
+        )
+        resource_result = await asyncio.wait_for(
+            built.read_resource("openhcs://capabilities"),
+            timeout=2,
+        )
+        return tool_result, resource_result
+
+    asyncio.run(call_capability_discovery())
+
+    assert observed == [
+        (
+            agent_capabilities.list_capabilities,
+            server.McpInvocationOutcome.SUCCEEDED,
+        ),
+        (
+            agent_capabilities.capabilities,
+            server.McpInvocationOutcome.SUCCEEDED,
+        ),
+    ]
+
+
+def test_mcp_tool_annotations_are_derived_from_capability_registry():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    capabilities = {
+        capability.name: capability
+        for capability in get_capability_registry().capabilities
+        if capability.kind.value == "tool"
+    }
+    built = server.build_server()
+    listed_tools = built.list_tools()
+    tools = (
+        asyncio.run(listed_tools) if inspect.isawaitable(listed_tools) else listed_tools
+    )
+
+    assert {tool.name for tool in tools} == set(capabilities)
+    for tool in tools:
+        capability = capabilities[tool.name]
+        read_only = not capability.mutating and not capability.side_effects
+        open_world = bool(
+            capability.side_effects
+            or capability.requires_network
+            or capability.data_exposure
+            or capability.security_requirements
+        )
+        assert tool.annotations.title == capability.title
+        assert tool.annotations.readOnlyHint is read_only
+        assert tool.annotations.destructiveHint is (not read_only)
+        assert tool.annotations.idempotentHint is read_only
+        assert tool.annotations.openWorldHint is open_world
+
+
+@pytest.mark.parametrize(
+    "profile",
+    (
+        FullLocalCapabilitySurfaceProfile(),
+        DesktopLocalCapabilitySurfaceProfile(),
+        AuthoringLocalCapabilitySurfaceProfile(),
+        CoreLocalCapabilitySurfaceProfile(),
+    ),
+)
+def test_mcp_local_surface_profiles_bind_exact_selected_registry(profile):
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    registry = get_capability_registry(capability_surface_profile=profile)
+    built = server.build_server(capability_surface_profile=profile)
+    tools = asyncio.run(built.list_tools())
+    resources = asyncio.run(built.list_resources())
+
+    assert {tool.name for tool in tools} == {
+        capability.name
+        for capability in registry.capabilities
+        if capability.kind is CapabilityKind.TOOL
+    }
+    assert {str(resource.uri) for resource in resources} == {
+        capability.name
+        for capability in registry.capabilities
+        if capability.kind is CapabilityKind.RESOURCE
+    }
+    discovery_result = asyncio.run(built.call_tool("openhcs_list_capabilities", {}))
+    discovery_payload = _direct_tool_structured(discovery_result)
+    assert discovery_payload["surface_profile"] == profile.name
+    assert {capability["name"] for capability in discovery_payload["capabilities"]} == {
+        capability.name for capability in registry.capabilities
+    }
+
+
+def test_mcp_tools_advertise_structured_json_and_nominal_output_contract():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    built = server.build_server(
+        capability_surface_profile=CoreLocalCapabilitySurfaceProfile()
+    )
+    tools = asyncio.run(built.list_tools())
+    capabilities = {
+        capability.name: capability
+        for capability in get_capability_registry(
+            capability_surface_profile=CoreLocalCapabilitySurfaceProfile()
+        ).capabilities
+        if capability.kind is CapabilityKind.TOOL
+    }
+
+    assert tools
+    assert all(tool.outputSchema is not None for tool in tools)
+    assert all(
+        tool.meta == {"openhcs/outputContract": capabilities[tool.name].output_type}
+        for tool in tools
+    )
+
+    result = asyncio.run(built.call_tool("openhcs_health_check", {}))
+    assert json.loads(_direct_tool_text(result)) == _direct_tool_structured(result)
+
+
+def test_mcp_dev_client_prefers_structured_content_and_preserves_tool_metadata():
+    import openhcs.mcp.dev_client as dev_client
+    from openhcs.mcp.dev_client_core import mcp_tool_metadata_from_wire
+
+    result = server.to_jsonable(
+        server.McpToolErrorResult(
+            schema_version=SCHEMA_VERSION,
+            ok=False,
+            tool="openhcs_test",
+            errors=(AgentError(code="test", message="structured"),),
+        )
+    )
+    projected = dev_client.McpDevToolResult.from_payload(
+        "openhcs_test",
+        {
+            "isError": False,
+            "content": [{"type": "text", "text": '{"legacy": true}'}],
+            "structuredContent": result,
+        },
+    )
+    metadata = mcp_tool_metadata_from_wire(
+        {
+            "name": "openhcs_test",
+            "title": "Test",
+            "description": "Test tool",
+            "inputSchema": {"type": "object"},
+            "outputSchema": {"type": "object"},
+            "annotations": {"readOnlyHint": True},
+            "_meta": {"openhcs/outputContract": "TestResult"},
+        }
+    )
+
+    assert projected.payloads == (result,)
+    assert metadata.title == "Test"
+    assert metadata.output_schema == {"type": "object"}
+    assert metadata.meta == {"openhcs/outputContract": "TestResult"}
+
+
+def test_mcp_bootstrap_defaults_to_desktop_surface():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    built = bootstrap.build_bootstrapped_server()
+    tools = asyncio.run(built.list_tools())
+    desktop_registry = get_capability_registry(
+        capability_surface_profile=DesktopLocalCapabilitySurfaceProfile()
+    )
+
+    assert {tool.name for tool in tools} == {
+        capability.name
+        for capability in desktop_registry.capabilities
+        if capability.kind is CapabilityKind.TOOL
+    }
+    assert bootstrap._build_parser().parse_args(()).surface == "desktop"
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected_open_world"),
+    (
+        ({}, False),
+        ({"side_effects": ("writes_state",)}, True),
+        ({"requires_network": True}, True),
+        ({"data_exposure": ("local_path",)}, True),
+        ({"security_requirements": ("user_consent",)}, True),
+    ),
+)
+def test_mcp_open_world_annotation_projects_every_authoritative_signal(
+    metadata,
+    expected_open_world,
+):
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    from openhcs.agent.capabilities import AgentCapabilitySpec, CapabilityKind
+
+    capability = AgentCapabilitySpec(
+        name="openhcs_test_projection",
+        kind=CapabilityKind.TOOL,
+        title="Projection test",
+        description="Test capability metadata projection.",
+        service="test",
+        **metadata,
+    )
+
+    annotations = server._mcp_tool_annotations(capability)
+
+    assert annotations.openWorldHint is expected_open_world
+
+
 def test_mcp_tools_have_blind_agent_descriptions():
     if importlib.util.find_spec("mcp") is None:
         return
@@ -238,6 +634,48 @@ def test_mcp_tools_have_blind_agent_descriptions():
 
     assert tools
     assert all(tool.description for tool in tools)
+
+
+def test_mcp_create_pipeline_uses_optional_config_reference_in_full_document():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    config_service = ConfigService()
+    config_ref = config_service.create(
+        "pipeline",
+        ConfigPatch(
+            config_type="PipelineConfig",
+            values={"well_filter_config": {"well_filter": 2}},
+        ),
+    )
+    built = server.build_server(OpenHCSAgentContext(config_service=config_service))
+    listed_tools = built.list_tools()
+    tools = (
+        asyncio.run(listed_tools) if inspect.isawaitable(listed_tools) else listed_tools
+    )
+    create_schema = {tool.name: tool.inputSchema for tool in tools}[
+        "openhcs_create_pipeline"
+    ]
+
+    async def create_and_render():
+        created = await built.call_tool(
+            "openhcs_create_pipeline",
+            {"pipeline_config_id": config_ref.config_id},
+        )
+        pipeline_id = json.loads(_direct_tool_text(created))["pipeline_id"]
+        return await built.call_tool(
+            "openhcs_render_pipeline_source",
+            {"pipeline_id": pipeline_id},
+        )
+
+    rendered = asyncio.run(create_and_render())
+    source = json.loads(_direct_tool_text(rendered))["source"]
+
+    assert "pipeline_config_id" in create_schema["properties"]
+    assert "pipeline_config_id" not in create_schema.get("required", ())
+    assert "pipeline_config = PipelineConfig(" in source
+    assert "well_filter=2" in source
+    assert "pipeline_steps = []" in source
 
 
 def test_mcp_tool_descriptions_expose_debugging_result_contracts():
@@ -263,7 +701,9 @@ def test_mcp_tool_descriptions_expose_debugging_result_contracts():
     assert "include_response" in viewer_payload_properties
     assert "axis_indices" in viewer_payload_properties
     assert "array_slices" in viewer_payload_properties
-    assert "bounded pixel data" in descriptions["openhcs_sample_viewer_window_image"]
+    assert "bounded image records" in descriptions[
+        "openhcs_sample_viewer_window_image"
+    ]
     viewer_sample_properties = schemas["openhcs_sample_viewer_window_image"][
         "properties"
     ]
@@ -300,8 +740,12 @@ def test_mcp_tool_descriptions_expose_debugging_result_contracts():
     assert "compact_signature" in schemas["openhcs_describe_function"]["properties"]
     assert "kind='first_use'" in descriptions["openhcs_get_authoring_context"]
     assert "before choosing tools" in descriptions["openhcs_get_authoring_context"]
+    assert "Diagnostic-only" in descriptions["openhcs_inspect_plate_path"]
+    assert "PlateManager code document" in descriptions["openhcs_inspect_plate_path"]
     assert "CustomFunctionManager" in descriptions["openhcs_register_custom_function"]
-    custom_function_properties = schemas["openhcs_register_custom_function"]["properties"]
+    custom_function_properties = schemas["openhcs_register_custom_function"][
+        "properties"
+    ]
     assert "source_code" in custom_function_properties
     assert "persist" in custom_function_properties
     assert "revision" in descriptions["openhcs_ui_apply_code_document"]
@@ -329,7 +773,7 @@ def test_mcp_tool_descriptions_expose_debugging_result_contracts():
     assert "revision_token" not in apply_properties
     assert "clean=False" in descriptions["openhcs_ui_get_code_document"]
     assert "full" in descriptions["openhcs_ui_get_code_document"]
-    assert "Read-only inspection" in descriptions["openhcs_inspect_plate_path"]
+    assert "read-only inspection" in descriptions["openhcs_inspect_plate_path"]
     assert "microscope metadata" in descriptions["openhcs_inspect_plate_path"]
     assert "max_files_to_parse" in schemas["openhcs_inspect_plate_path"]["properties"]
     assert "bounded synthetic" in descriptions["openhcs_generate_synthetic_plate"]
@@ -349,28 +793,36 @@ def test_mcp_tool_descriptions_expose_debugging_result_contracts():
     assert "virtual/source path" in descriptions["openhcs_sample_plate_image"]
     assert "bounded pixels" in descriptions["openhcs_sample_plate_image"]
     assert "image_path" in schemas["openhcs_sample_plate_image"]["properties"]
-    assert "current PlateManager selection" in descriptions[
-        "openhcs_ui_inspect_selected_plate_images"
-    ]
+    assert "resolution_index" in schemas["openhcs_sample_plate_image"]["properties"]
+    assert (
+        "max_auto_resolution_size"
+        in schemas["openhcs_sample_plate_image"]["properties"]
+    )
+    assert (
+        "current PlateManager selection"
+        in descriptions["openhcs_ui_inspect_selected_plate_images"]
+    )
     selected_plate_image_properties = schemas[
         "openhcs_ui_inspect_selected_plate_images"
     ]["properties"]
     assert "max_sample_files" in selected_plate_image_properties
     assert "connection" in selected_plate_image_properties
-    assert "current PlateManager selection" in descriptions[
-        "openhcs_ui_query_selected_plate_files"
+    assert (
+        "current PlateManager selection"
+        in descriptions["openhcs_ui_query_selected_plate_files"]
+    )
+    selected_plate_file_properties = schemas["openhcs_ui_query_selected_plate_files"][
+        "properties"
     ]
-    selected_plate_file_properties = schemas[
-        "openhcs_ui_query_selected_plate_files"
-    ]["properties"]
     assert "kind" in selected_plate_file_properties
     assert "target" in selected_plate_file_properties
     assert "path_contains" in selected_plate_file_properties
     assert "include_previews" in selected_plate_file_properties
     assert "connection" in selected_plate_file_properties
-    assert "Sample a selected-plate image" in descriptions[
-        "openhcs_ui_sample_selected_plate_image"
-    ]
+    assert (
+        "Sample a selected-plate image"
+        in descriptions["openhcs_ui_sample_selected_plate_image"]
+    )
     selected_plate_sample_properties = schemas[
         "openhcs_ui_sample_selected_plate_image"
     ]["properties"]
@@ -384,9 +836,10 @@ def test_mcp_tool_descriptions_expose_debugging_result_contracts():
     navigate_properties = schemas["openhcs_navigate_viewer_window"]["properties"]
     assert "route_key" in navigate_properties
     assert "axis_indices" in navigate_properties
-    assert "only selected viewer layers" in descriptions[
-        "openhcs_isolate_viewer_window_layers"
-    ]
+    assert (
+        "only selected viewer layers"
+        in descriptions["openhcs_isolate_viewer_window_layers"]
+    )
     isolate_properties = schemas["openhcs_isolate_viewer_window_layers"]["properties"]
     assert "visible_route_keys" in isolate_properties
     assert "selected_route_key" in isolate_properties
@@ -401,32 +854,33 @@ def test_mcp_tool_descriptions_expose_debugging_result_contracts():
         "maximum_item_model_nodes"
         in schemas["openhcs_ui_get_widget_tree"]["properties"]
     )
-    assert "include_field_values" in schemas[
-        "openhcs_ui_list_object_state_scopes"
-    ]["properties"]
-    assert "include_system_scopes" in schemas[
-        "openhcs_ui_list_object_state_scopes"
-    ]["properties"]
-    assert "scope_visibility" not in schemas[
-        "openhcs_ui_list_object_state_scopes"
-    ]["properties"]
-    assert "include_field_values" in schemas[
-        "openhcs_ui_get_object_state_fields"
-    ]["properties"]
-    assert "ObjectState field" in descriptions[
-        "openhcs_ui_describe_object_state_field"
+    assert (
+        "include_field_values"
+        in schemas["openhcs_ui_list_object_state_scopes"]["properties"]
+    )
+    assert (
+        "include_system_scopes"
+        in schemas["openhcs_ui_list_object_state_scopes"]["properties"]
+    )
+    assert (
+        "scope_visibility"
+        not in schemas["openhcs_ui_list_object_state_scopes"]["properties"]
+    )
+    assert (
+        "include_field_values"
+        in schemas["openhcs_ui_get_object_state_fields"]["properties"]
+    )
+    assert "ObjectState field" in descriptions["openhcs_ui_describe_object_state_field"]
+    object_state_help_properties = schemas["openhcs_ui_describe_object_state_field"][
+        "properties"
     ]
-    object_state_help_properties = schemas[
-        "openhcs_ui_describe_object_state_field"
-    ]["properties"]
     assert "object_state_scope_id" in object_state_help_properties
     assert "field_path" in object_state_help_properties
-    assert "field_path" in schemas[
-        "openhcs_ui_describe_object_state_field"
-    ]["required"]
-    assert "object_state_scope_id" not in schemas[
-        "openhcs_ui_describe_object_state_field"
-    ]["required"]
+    assert "field_path" in schemas["openhcs_ui_describe_object_state_field"]["required"]
+    assert (
+        "object_state_scope_id"
+        not in schemas["openhcs_ui_describe_object_state_field"]["required"]
+    )
     assert "max_description_chars" in object_state_help_properties
     add_step_properties = schemas["openhcs_add_function_step"]["properties"]
     assert "step_config_overrides" in add_step_properties
@@ -642,7 +1096,9 @@ def test_mcp_widget_tree_projection_can_return_full_action_fields():
         ),
     )
 
-    payload = server.McpWidgetTreePayloadProjection(compact_actions=False).project(result)
+    payload = server.McpWidgetTreePayloadProjection(compact_actions=False).project(
+        result
+    )
     action = payload["actionable_widgets"][0]
 
     assert "object_name" in action
@@ -764,8 +1220,8 @@ def test_mcp_widget_tree_binding_projects_request_and_compact_actions():
             }
         )
     )
-    compact_payload = json.loads(compact_result[0].text)
-    full_payload = json.loads(full_result[0].text)
+    compact_payload = json.loads(_direct_tool_text(compact_result))
+    full_payload = json.loads(_direct_tool_text(full_result))
 
     assert compact_payload["projected"] is True
     compact_action = compact_payload["actionable_widgets"][0]
@@ -895,10 +1351,16 @@ def test_mcp_health_check_tool_returns_promptly():
         )
 
     result = asyncio.run(call_health_check())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert payload["status"] == "ok"
     assert payload["service"] == "openhcs.mcp"
+    assert payload["openhcs_version"] == openhcs.__version__
+    assert payload["packaged_resources_ready"] is True
+    assert payload["packaged_resource_count"] == len(
+        server.MCP_SERVER_PACKAGED_RESOURCE_PATHS
+    )
+    assert payload["missing_packaged_resource_paths"] == []
     assert isinstance(payload["server_process_id"], int)
     assert isinstance(payload["started_at_unix"], float)
     assert payload["server_source_path"].endswith("openhcs/mcp/server.py")
@@ -911,10 +1373,35 @@ def test_mcp_health_check_tool_returns_promptly():
     assert payload["restart_hint"] is None
 
 
+def test_mcp_health_check_reports_missing_packaged_resources(monkeypatch, tmp_path):
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    missing_resource = tmp_path / "missing-knowledge-resource.json"
+    monkeypatch.setattr(
+        server,
+        "MCP_SERVER_PACKAGED_RESOURCE_PATHS",
+        (missing_resource,),
+    )
+
+    async def call_health_check():
+        built = server.build_server()
+        return await asyncio.wait_for(
+            built.call_tool("openhcs_health_check", {}),
+            timeout=2,
+        )
+
+    result = asyncio.run(call_health_check())
+    payload = json.loads(_direct_tool_text(result))
+
+    assert payload["packaged_resources_ready"] is False
+    assert payload["packaged_resource_count"] == 1
+    assert payload["missing_packaged_resource_paths"] == [str(missing_resource)]
+
+
 def test_mcp_stale_watchlist_includes_agent_contract_sources():
     watched_paths = {
-        source_path.as_posix()
-        for source_path in server.MCP_SERVER_SOURCE_PATHS
+        source_path.as_posix() for source_path in server.MCP_SERVER_SOURCE_PATHS
     }
 
     assert any(path.endswith("openhcs/mcp/server.py") for path in watched_paths)
@@ -922,7 +1409,9 @@ def test_mcp_stale_watchlist_includes_agent_contract_sources():
     assert any(path.endswith("openhcs/agent/capabilities.py") for path in watched_paths)
     assert any(path.endswith("openhcs/agent/path_policy.py") for path in watched_paths)
     assert any(path.endswith("openhcs/agent/dto/mcp.py") for path in watched_paths)
-    assert any(path.endswith("openhcs/agent/dto/knowledge.py") for path in watched_paths)
+    assert any(
+        path.endswith("openhcs/agent/dto/knowledge.py") for path in watched_paths
+    )
     assert any(path.endswith("openhcs/agent/dto/plate.py") for path in watched_paths)
     assert any(
         path.endswith("openhcs/agent/services/knowledge_base_service.py")
@@ -937,24 +1426,21 @@ def test_mcp_stale_watchlist_includes_agent_contract_sources():
         for path in watched_paths
     )
     assert any(
-        path.endswith("openhcs/core/plate_image_inventory.py")
-        for path in watched_paths
+        path.endswith("openhcs/core/plate_image_inventory.py") for path in watched_paths
     )
     assert any(
-        path.endswith("openhcs/agent/services/stdio.py")
-        for path in watched_paths
+        path.endswith("openhcs/agent/services/stdio.py") for path in watched_paths
     )
     assert any(
         path.endswith("openhcs/processing/custom_functions/manager.py")
         for path in watched_paths
     )
     assert any(
-        path.endswith("docs/plans/openhcs_mcp_agent_knowledge_base_20260625.md")
+        path.endswith("docs/source/development/mcp_knowledge_base_manifest.json")
         for path in watched_paths
     )
     assert any(
-        path.endswith("docs/source/concepts/core_model.rst")
-        for path in watched_paths
+        path.endswith("docs/source/concepts/core_model.rst") for path in watched_paths
     )
     assert any(
         path.endswith("docs/source/guide_for_biologists/domain_expert_onboarding.rst")
@@ -969,10 +1455,12 @@ def test_mcp_stale_watchlist_includes_agent_contract_sources():
         for path in watched_paths
     )
     assert any(
-        path.endswith("docs/source/user_guide/production_examples.rst")
+        path.endswith("docs/source/architecture/system_overview.rst")
         for path in watched_paths
     )
-    assert any(path.endswith("openhcs/agent/dto/ui_bridge.py") for path in watched_paths)
+    assert any(
+        path.endswith("openhcs/agent/dto/ui_bridge.py") for path in watched_paths
+    )
     assert any(path.endswith("openhcs/agent/dto/viewer.py") for path in watched_paths)
     assert any(
         path.endswith("openhcs/agent/services/execution_session_service.py")
@@ -994,8 +1482,12 @@ def test_mcp_stale_watchlist_includes_agent_contract_sources():
         path.endswith("openhcs/agent/services/runtime_server_service.py")
         for path in watched_paths
     )
-    assert any(path.endswith("openhcs/runtime/viewer_protocol.py") for path in watched_paths)
-    assert any(path.endswith("openhcs/runtime/window_snapshot.py") for path in watched_paths)
+    assert any(
+        path.endswith("openhcs/runtime/viewer_protocol.py") for path in watched_paths
+    )
+    assert any(
+        path.endswith("openhcs/runtime/window_snapshot.py") for path in watched_paths
+    )
 
 
 def test_mcp_tools_fail_fast_when_server_source_is_stale(monkeypatch):
@@ -1021,17 +1513,21 @@ def test_mcp_tools_fail_fast_when_server_source_is_stale(monkeypatch):
         return blocked_tool, health_tool
 
     blocked_result, health_result = asyncio.run(call_stale_server())
-    blocked_payload = json.loads(blocked_result[0].text)
-    health_payload = json.loads(health_result[0].text)
+    blocked_payload = json.loads(_direct_tool_text(blocked_result))
+    health_payload = json.loads(_direct_tool_text(health_result))
 
     assert blocked_payload["schema_version"] == "openhcs.agent.v1"
     assert blocked_payload["ok"] is False
     assert blocked_payload["tool"] == "openhcs_list_capabilities"
     assert blocked_payload["errors"][0]["code"] == "mcp_server_stale"
     assert blocked_payload["errors"][0]["path"].endswith("openhcs/mcp/server.py")
-    assert "Restart the MCP client/server process" in blocked_payload["errors"][0]["hint"]
+    assert (
+        "Restart the MCP client/server process" in blocked_payload["errors"][0]["hint"]
+    )
     assert blocked_payload["server_process_id"] == server.MCP_SERVER_PROCESS_ID
-    assert blocked_payload["server_started_at_unix"] == server.MCP_SERVER_IMPORTED_AT_UNIX
+    assert (
+        blocked_payload["server_started_at_unix"] == server.MCP_SERVER_IMPORTED_AT_UNIX
+    )
     assert blocked_payload["stale_source_paths"][0].endswith("openhcs/mcp/server.py")
     assert blocked_payload["restart_required"] is True
     assert blocked_payload["restart_command"][0] == sys.executable
@@ -1075,8 +1571,8 @@ def test_mcp_tools_fail_fast_when_agent_source_is_stale(monkeypatch):
         return blocked_tool, health_tool
 
     blocked_result, health_result = asyncio.run(call_stale_server())
-    blocked_payload = json.loads(blocked_result[0].text)
-    health_payload = json.loads(health_result[0].text)
+    blocked_payload = json.loads(_direct_tool_text(blocked_result))
+    health_payload = json.loads(_direct_tool_text(health_result))
 
     assert blocked_payload["schema_version"] == "openhcs.agent.v1"
     assert blocked_payload["ok"] is False
@@ -1236,7 +1732,7 @@ def test_mcp_register_custom_function_delegates_to_function_catalog_service():
         return result
 
     result = asyncio.run(call_register_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert len(function_catalog.requests) == 1
     request = function_catalog.requests[0]
@@ -1285,7 +1781,7 @@ def test_mcp_knowledge_tools_are_registered_and_callable():
             built.call_tool(
                 "openhcs_get_knowledge_document",
                 {
-                    "document_id": "openhcs_agent_mcp_overview",
+                    "document_id": "openhcs_architecture_quick_start",
                     "max_chars": 300,
                 },
             ),
@@ -1302,19 +1798,22 @@ def test_mcp_knowledge_tools_are_registered_and_callable():
 
     tools, catalog, document, search = asyncio.run(call_knowledge_tools())
     tool_names = {tool.name for tool in tools}
-    catalog_payload = json.loads(catalog[0].text)
-    document_payload = json.loads(document[0].text)
-    search_payload = json.loads(search[0].text)
+    catalog_payload = json.loads(_direct_tool_text(catalog))
+    document_payload = json.loads(_direct_tool_text(document))
+    search_payload = json.loads(_direct_tool_text(search))
 
     assert "openhcs_list_knowledge_documents" in tool_names
     assert "openhcs_get_knowledge_document" in tool_names
     assert "openhcs_search_knowledge" in tool_names
     assert catalog_payload["schema_version"] == "openhcs.agent.v1"
     assert any(
-        item["document_id"] == "openhcs_agent_mcp_overview"
+        item["document_id"] == "openhcs_architecture_quick_start"
         for item in catalog_payload["documents"]
     )
-    assert document_payload["document"]["document_id"] == "openhcs_agent_mcp_overview"
+    assert (
+        document_payload["document"]["document_id"]
+        == "openhcs_architecture_quick_start"
+    )
     assert document_payload["truncated"] is True
     assert search_payload["hits"]
 
@@ -1343,7 +1842,7 @@ def test_mcp_plate_inspection_tool_is_registered_and_callable(tmp_path):
 
     tools, result = asyncio.run(call_plate_tool())
     tool_names = {tool.name for tool in tools}
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert "openhcs_inspect_plate_path" in tool_names
     assert payload["schema_version"] == "openhcs.agent.v1"
@@ -1412,7 +1911,7 @@ def test_mcp_synthetic_plate_generation_tool_projects_request(tmp_path):
 
     tools, result = asyncio.run(call_synthetic_plate_tool())
     tool_names = {tool.name for tool in tools}
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert "openhcs_generate_synthetic_plate" in tool_names
     assert synthetic_plate_service.request.output_dir == str(output_dir)
@@ -1457,7 +1956,7 @@ def test_mcp_plate_file_query_tool_is_registered_and_callable(tmp_path):
 
     tools, result = asyncio.run(call_plate_query_tool())
     tool_names = {tool.name for tool in tools}
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert "openhcs_query_plate_files" in tool_names
     assert payload["schema_version"] == "openhcs.agent.v1"
@@ -1476,9 +1975,7 @@ def test_mcp_object_state_field_search_supports_exact_paths_and_leaf_default():
                 field_path=field_path,
             ),
             field_name=field_path.rsplit(".", 1)[-1],
-            container_path=(
-                field_path.rsplit(".", 1)[0] if "." in field_path else ""
-            ),
+            container_path=(field_path.rsplit(".", 1)[0] if "." in field_path else ""),
             object_state_path_type="openhcs.core.config.NapariStreamingConfig",
             raw_value_type="None",
             resolved_value_type="str",
@@ -1582,10 +2079,12 @@ def test_mcp_object_state_field_search_supports_exact_paths_and_leaf_default():
         )
         return exact_result, broad_result, container_result
 
-    exact_result, broad_result, container_result = asyncio.run(call_object_state_tools())
-    exact_payload = json.loads(exact_result[0].text)
-    broad_payload = json.loads(broad_result[0].text)
-    container_payload = json.loads(container_result[0].text)
+    exact_result, broad_result, container_result = asyncio.run(
+        call_object_state_tools()
+    )
+    exact_payload = json.loads(_direct_tool_text(exact_result))
+    broad_payload = json.loads(_direct_tool_text(broad_result))
+    container_payload = json.loads(_direct_tool_text(container_result))
 
     exact_fields = exact_payload["scopes"][0]["fields"]
     assert [field["field_path"] for field in exact_fields] == [
@@ -1600,8 +2099,7 @@ def test_mcp_object_state_field_search_supports_exact_paths_and_leaf_default():
     assert ui_bridge_service.requests[2].field_paths == ()
 
     broad_field_paths = [
-        field["field_path"]
-        for field in broad_payload["scopes"][0]["fields"]
+        field["field_path"] for field in broad_payload["scopes"][0]["fields"]
     ]
     assert broad_field_paths == [
         "napari_streaming_config.enabled",
@@ -1609,8 +2107,7 @@ def test_mcp_object_state_field_search_supports_exact_paths_and_leaf_default():
     ]
 
     container_field_paths = [
-        field["field_path"]
-        for field in container_payload["scopes"][0]["fields"]
+        field["field_path"] for field in container_payload["scopes"][0]["fields"]
     ]
     assert container_field_paths == [
         "napari_streaming_config",
@@ -1684,11 +2181,10 @@ def test_mcp_list_object_state_scopes_filters_scope_ids(monkeypatch):
         )
 
     result = asyncio.run(call_scope_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert [
-        scope["identity"]["object_state_scope_id"]
-        for scope in payload["scopes"]
+        scope["identity"]["object_state_scope_id"] for scope in payload["scopes"]
     ] == ["/tmp/plate"]
 
 
@@ -1761,9 +2257,7 @@ def test_mcp_describe_object_state_field_tool_projects_request(monkeypatch):
     ui_bridge_service = _UiBridgeService()
     context = SimpleNamespace(
         ui_bridge_service=ui_bridge_service,
-        object_state_field_help_service=ObjectStateFieldHelpService(
-            ui_bridge_service
-        ),
+        object_state_field_help_service=ObjectStateFieldHelpService(ui_bridge_service),
     )
 
     async def call_describe_tool():
@@ -1783,7 +2277,7 @@ def test_mcp_describe_object_state_field_tool_projects_request(monkeypatch):
         )
 
     result = asyncio.run(call_describe_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert len(ui_bridge_service.requests) == 1
     request = ui_bridge_service.requests[0]
@@ -1835,9 +2329,7 @@ def test_mcp_describe_object_state_field_tool_infers_unique_scope(monkeypatch):
                             UiObjectStateFieldSummary(
                                 schema_version=SCHEMA_VERSION,
                                 address=UiSemanticAddress(
-                                    object_state_scope_id=(
-                                        "plate::step::function_0"
-                                    ),
+                                    object_state_scope_id=("plate::step::function_0"),
                                     field_path="threshold",
                                 ),
                                 field_name="threshold",
@@ -1870,9 +2362,7 @@ def test_mcp_describe_object_state_field_tool_infers_unique_scope(monkeypatch):
     ui_bridge_service = _UiBridgeService()
     context = SimpleNamespace(
         ui_bridge_service=ui_bridge_service,
-        object_state_field_help_service=ObjectStateFieldHelpService(
-            ui_bridge_service
-        ),
+        object_state_field_help_service=ObjectStateFieldHelpService(ui_bridge_service),
     )
 
     async def call_describe_tool():
@@ -1890,7 +2380,7 @@ def test_mcp_describe_object_state_field_tool_infers_unique_scope(monkeypatch):
         )
 
     result = asyncio.run(call_describe_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert len(ui_bridge_service.requests) == 2
     assert ui_bridge_service.requests[0].include_field_descriptions is False
@@ -1972,9 +2462,7 @@ def test_mcp_describe_object_state_field_tool_reports_ambiguous_scope(monkeypatc
     ui_bridge_service = _UiBridgeService()
     context = SimpleNamespace(
         ui_bridge_service=ui_bridge_service,
-        object_state_field_help_service=ObjectStateFieldHelpService(
-            ui_bridge_service
-        ),
+        object_state_field_help_service=ObjectStateFieldHelpService(ui_bridge_service),
     )
 
     async def call_describe_tool():
@@ -1991,7 +2479,7 @@ def test_mcp_describe_object_state_field_tool_reports_ambiguous_scope(monkeypatc
         )
 
     result = asyncio.run(call_describe_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert len(ui_bridge_service.requests) == 1
     assert payload["errors"][0]["code"] == "ambiguous_ui_object_state_field"
@@ -2029,9 +2517,7 @@ def test_object_state_field_help_service_describes_function_parameter_target():
                             UiObjectStateFieldSummary(
                                 schema_version=SCHEMA_VERSION,
                                 address=UiSemanticAddress(
-                                    object_state_scope_id=(
-                                        "plate::step::function_0"
-                                    ),
+                                    object_state_scope_id=("plate::step::function_0"),
                                     field_path="threshold",
                                 ),
                                 field_name="threshold",
@@ -2127,7 +2613,7 @@ def test_mcp_mutate_object_state_field_tool_projects_request(monkeypatch):
         )
 
     result = asyncio.run(call_mutation_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert payload["mutated"] is True
     assert payload["receipt"]["accepted"] is True
@@ -2185,10 +2671,7 @@ def test_mcp_object_state_field_search_filters_before_paging():
         def list_object_state_scopes(self, request, connection):
             assert connection == "ui-connection"
             self.requests.append(request)
-            clean_fields = tuple(
-                field_summary(f"clean_{index}")
-                for index in range(5)
-            )
+            clean_fields = tuple(field_summary(f"clean_{index}") for index in range(5))
             semantic_fields = tuple(
                 field_summary(f"changed_{index}", signature_diff=True)
                 for index in range(5)
@@ -2247,7 +2730,7 @@ def test_mcp_object_state_field_search_filters_before_paging():
         )
 
     result = asyncio.run(call_object_state_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     request = ui_bridge_service.requests[0]
     assert request.field_offset == 0
@@ -2258,10 +2741,11 @@ def test_mcp_object_state_field_search_filters_before_paging():
     assert payload["field_limit"] == 3
     assert payload["next_offset"] == 3
     assert payload["truncated"] is True
-    assert [
-        field["field_path"]
-        for field in payload["scopes"][0]["fields"]
-    ] == ["changed_0", "changed_1", "changed_2"]
+    assert [field["field_path"] for field in payload["scopes"][0]["fields"]] == [
+        "changed_0",
+        "changed_1",
+        "changed_2",
+    ]
 
 
 def test_mcp_selected_plate_image_inspection_composes_ui_state_and_plate_service():
@@ -2345,7 +2829,7 @@ def test_mcp_selected_plate_image_inspection_composes_ui_state_and_plate_service
         return result
 
     result = asyncio.run(call_selected_plate_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert ui_bridge_service.state_surface_request.surface_id == "plate_manager.state"
     assert ui_bridge_service.state_surface_request.selection_mode == "selected"
@@ -2431,7 +2915,7 @@ def test_mcp_selected_plate_image_inspection_targets_output_plate():
         return result
 
     result = asyncio.run(call_selected_plate_images_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert plate_inspection_service.request.plate_path == output_plate_root
     assert plate_inspection_service.request.microscope_type == "auto"
@@ -2536,7 +3020,7 @@ def test_mcp_selected_plate_file_query_composes_ui_state_and_plate_service():
         return result
 
     result = asyncio.run(call_selected_plate_query_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert ui_bridge_service.state_surface_request.surface_id == "plate_manager.state"
     assert ui_bridge_service.state_surface_request.selection_mode == "selected"
@@ -2565,7 +3049,7 @@ def test_mcp_selected_plate_file_query_composes_ui_state_and_plate_service():
         return result
 
     result = asyncio.run(call_selected_plate_source_query_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert plate_inspection_service.request.plate_path == selected_plate_root
     assert plate_inspection_service.request.kind.value == "image"
@@ -2647,7 +3131,7 @@ def test_mcp_selected_plate_result_stream_uses_output_context_for_output_target(
         )
 
     result = asyncio.run(call_selected_plate_stream_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert plate_streaming_service.request.plate_path == output_plate_root
     assert plate_streaming_service.request.context_plate_path == selected_plate_root
@@ -2766,6 +3250,8 @@ def test_mcp_selected_plate_image_sample_composes_ui_state_and_plate_service():
                     "microscope_type": "openhcsdata",
                     "height": 2,
                     "width": 2,
+                    "resolution_index": 0,
+                    "max_auto_resolution_size": 512,
                 },
             ),
             timeout=2,
@@ -2773,7 +3259,7 @@ def test_mcp_selected_plate_image_sample_composes_ui_state_and_plate_service():
         return result
 
     result = asyncio.run(call_selected_plate_sample_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert ui_bridge_service.state_surface_request.surface_id == "plate_manager.state"
     assert ui_bridge_service.state_surface_request.selection_mode == "selected"
@@ -2781,6 +3267,8 @@ def test_mcp_selected_plate_image_sample_composes_ui_state_and_plate_service():
     assert plate_inspection_service.sample_request.plate_path == selected_plate_root
     assert plate_inspection_service.sample_request.image_path == selected_image_path
     assert plate_inspection_service.sample_request.height == 2
+    assert plate_inspection_service.sample_request.resolution_index == 0
+    assert plate_inspection_service.sample_request.max_auto_resolution_size == 512
     assert payload["selected_plate"]["plate_root"] == selected_plate_root
     assert payload["image_path"] == selected_image_path
     assert payload["auto_selected_image_path"] is False
@@ -2884,7 +3372,7 @@ def test_mcp_selected_plate_image_sample_auto_selects_first_inventory_record():
         return result
 
     result = asyncio.run(call_selected_plate_sample_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert plate_inspection_service.inspect_request.plate_path == selected_plate_root
     assert plate_inspection_service.inspect_request.bounds.max_sample_files == 1
@@ -2973,7 +3461,7 @@ def test_mcp_selected_plate_image_sample_targets_output_plate():
         return result
 
     result = asyncio.run(call_selected_plate_sample_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert plate_inspection_service.sample_request.plate_path == output_plate_root
     assert plate_inspection_service.sample_request.microscope_type == "auto"
@@ -3011,8 +3499,8 @@ def test_mcp_stdio_server_roundtrip_returns_errors_as_payloads():
                 return health, bad_viewer_call
 
     health, bad_viewer_call = asyncio.run(call_stdio_server())
-    health_payload = json.loads(health.content[0].text)
-    bad_payload = json.loads(bad_viewer_call.content[0].text)
+    health_payload = json.loads(_direct_tool_text(health))
+    bad_payload = json.loads(_direct_tool_text(bad_viewer_call))
 
     assert health_payload["status"] == "ok"
     assert health_payload["server_source_path"].endswith("openhcs/mcp/server.py")
@@ -3055,8 +3543,8 @@ def test_mcp_stdio_validation_error_keeps_session_alive():
                 return invalid_workflow, health
 
     invalid_workflow, health = asyncio.run(call_stdio_server())
-    invalid_text = invalid_workflow.content[0].text
-    health_payload = json.loads(health.content[0].text)
+    invalid_text = _direct_tool_text(invalid_workflow)
+    health_payload = json.loads(_direct_tool_text(health))
 
     assert invalid_workflow.isError is True
     assert "not_a_workflow" in invalid_text
@@ -3115,9 +3603,9 @@ def test_mcp_dev_client_knowledge_commands_project_tool_arguments():
     document_args = parser.parse_args(
         (
             "knowledge-document",
-            "openhcs_agent_mcp_overview",
+            "openhcs_architecture_quick_start",
             "--section-id",
-            "mcp-knowledge-surface",
+            "first-mcp-session",
             "--max-chars",
             "4096",
         )
@@ -3125,7 +3613,7 @@ def test_mcp_dev_client_knowledge_commands_project_tool_arguments():
     inline_section_args = parser.parse_args(
         (
             "knowledge-document",
-            "openhcs_agent_mcp_overview#mcp-knowledge-surface",
+            "openhcs_architecture_quick_start#first-mcp-session",
         )
     )
     search_args = parser.parse_args(
@@ -3148,15 +3636,15 @@ def test_mcp_dev_client_knowledge_commands_project_tool_arguments():
     assert list_call.arguments == {}
     assert document_call.name == "openhcs_get_knowledge_document"
     assert document_call.arguments == {
-        "document_id": "openhcs_agent_mcp_overview",
-        "section_id": "mcp-knowledge-surface",
+        "document_id": "openhcs_architecture_quick_start",
+        "section_id": "first-mcp-session",
         "max_chars": 4096,
     }
     assert inline_section_call.arguments == {
-        "document_id": "openhcs_agent_mcp_overview",
-        "section_id": "mcp-knowledge-surface",
+        "document_id": "openhcs_architecture_quick_start",
+        "section_id": "first-mcp-session",
         "max_chars": KnowledgeBaseDocumentRequest.from_fields(
-            document_id="openhcs_agent_mcp_overview"
+            document_id="openhcs_architecture_quick_start"
         ).bounds.max_chars,
     }
     assert search_call.name == "openhcs_search_knowledge"
@@ -3178,7 +3666,9 @@ def test_mcp_dev_client_architecture_commands_project_tool_arguments():
     topic_args = parser.parse_args(("architecture-topic", "source_semantics"))
     topic_alias_args = parser.parse_args(("explain-architecture", "pipeline_model"))
     symbol_args = parser.parse_args(("internal-symbol", "core.FunctionStep"))
-    symbol_alias_args = parser.parse_args(("architecture-symbol", "source.StepSourceBindingsConfig"))
+    symbol_alias_args = parser.parse_args(
+        ("architecture-symbol", "source.StepSourceBindingsConfig")
+    )
 
     list_call = dev_client._calls_from_args(list_args)[0]
     topic_call = dev_client._calls_from_args(topic_args)[0]
@@ -3311,7 +3801,7 @@ def test_mcp_dev_client_knowledge_command_renders_compact_catalog():
                                 "section_count": 3,
                                 "source_path": "docs/viewer.rst",
                                 "tags": ["viewer"],
-                            }
+                            },
                         ],
                         "errors": [],
                     }
@@ -3375,14 +3865,16 @@ def test_mcp_dev_client_knowledge_search_renders_compact_hits():
         ],
     }
 
-    rendered = dev_client.McpDevCommandSpec.for_name("knowledge-search").render_response(
+    rendered = dev_client.McpDevCommandSpec.for_name(
+        "knowledge-search"
+    ).render_response(
         response,
         args,
     )
 
     assert 'Knowledge search: query="count cells" hits=1' in rendered
     assert (
-        '- openhcs_real_time_visualization#roi-streaming: score=60 line=244 '
+        "- openhcs_real_time_visualization#roi-streaming: score=60 line=244 "
         'title="ROI Streaming" terms=roi,cells'
     ) in rendered
     assert "OpenHCS automatically streams ROIs." in rendered
@@ -3461,7 +3953,7 @@ def test_mcp_dev_client_knowledge_document_renders_compact_content():
     ).render_response(response, args)
 
     assert (
-        'Knowledge document: id=openhcs_domain_expert_onboarding '
+        "Knowledge document: id=openhcs_domain_expert_onboarding "
         'title="OpenHCS domain expert onboarding" path=docs/domain.rst '
         "sections=1 max_chars=1200"
     ) in rendered
@@ -3532,8 +4024,7 @@ def test_mcp_dev_client_knowledge_document_renders_truncation_warning():
     assert "Sections:" in rendered
     assert "- examplehuman: ExampleHuman" in rendered
     assert (
-        "Content truncated; rerun with a larger --max-chars or a narrower "
-        "--section-id."
+        "Content truncated; rerun with a larger --max-chars or a narrower --section-id."
     ) in rendered
 
 
@@ -3544,7 +4035,9 @@ def test_mcp_dev_client_architecture_commands_render_compact_context():
     import openhcs.mcp.dev_client as dev_client
 
     parser = dev_client._build_parser()
-    list_args = parser.parse_args(("architecture", "--contains", "source", "--limit", "1"))
+    list_args = parser.parse_args(
+        ("architecture", "--contains", "source", "--limit", "1")
+    )
     topic_args = parser.parse_args(("architecture-topic", "source_semantics"))
     symbol_args = parser.parse_args(("internal-symbol", "core.FunctionStep"))
     call_args = parser.parse_args(
@@ -3656,7 +4149,10 @@ def test_mcp_dev_client_architecture_commands_render_compact_context():
     assert "- MetadataExtractionRule owns filename semantics." in topic_rendered
     assert "- source.StepSourceBindingsConfig:" in topic_rendered
     assert "role=Step-local semantic input bindings." in topic_rendered
-    assert 'Internal symbol: id=core.FunctionStep title="FunctionStep" kind=class' in symbol_rendered
+    assert (
+        'Internal symbol: id=core.FunctionStep title="FunctionStep" kind=class'
+        in symbol_rendered
+    )
     assert "Source: openhcs/core/steps/function_step.py:18" in symbol_rendered
     assert "Signature: (func=[], **kwargs)" in symbol_rendered
     assert "Architecture topic: id=source_semantics" in call_rendered
@@ -3692,7 +4188,9 @@ def test_mcp_dev_client_function_commands_project_tool_arguments(tmp_path):
         )
     )
     custom_source = tmp_path / "custom.py"
-    custom_source.write_text("from openhcs.core.memory import numpy\n", encoding="utf-8")
+    custom_source.write_text(
+        "from openhcs.core.memory import numpy\n", encoding="utf-8"
+    )
     register_args = parser.parse_args(
         (
             "register-custom-function",
@@ -3740,6 +4238,16 @@ def test_mcp_dev_client_function_commands_project_tool_arguments(tmp_path):
     topic_call = dev_client._calls_from_args(topic_args)[0]
     assert topic_call.arguments["kind"] == "pipeline"
 
+    positional_args = parser.parse_args(("authoring-context", "first_use"))
+    positional_call = dev_client._calls_from_args(positional_args)[0]
+    assert positional_call.arguments["kind"] == "first_use"
+
+    conflicting_args = parser.parse_args(
+        ("authoring-context", "first_use", "--kind", "pipeline")
+    )
+    with pytest.raises(dev_client.McpDevCliUsageError, match="different values"):
+        dev_client._calls_from_args(conflicting_args)
+
 
 def test_mcp_dev_client_authoring_context_kind_choices_are_explicit(capsys):
     if importlib.util.find_spec("mcp") is None:
@@ -3770,51 +4278,32 @@ def test_mcp_dev_client_authoring_context_kind_choices_are_explicit(capsys):
         parser.parse_args(("authoring-context", "--kind", "function"))
 
 
-def test_mcp_dev_client_registry_context_commands_use_cold_start_timeout(
-    monkeypatch,
-):
+def test_mcp_dev_client_registry_context_commands_use_cold_start_timeout():
     if importlib.util.find_spec("mcp") is None:
         return
 
     import openhcs.mcp.dev_client as dev_client
-    import openhcs.mcp.dev_client_commanding as dev_client_commanding
-
-    captured_timeouts = []
-
-    async def fake_call_fresh_mcp_server(server_spec, calls, timeout_seconds):
-        del server_spec, calls
-        captured_timeouts.append(timeout_seconds)
-        return SimpleNamespace()
-
-    monkeypatch.setattr(
-        dev_client_commanding,
-        "call_fresh_mcp_server",
-        fake_call_fresh_mcp_server,
-    )
 
     parser = dev_client._build_parser()
     default_args = parser.parse_args(("authoring-context",))
+    default_call = dev_client._calls_from_args(default_args)[0]
     explicit_args = parser.parse_args(
         ("functions", "--timeout-seconds", "60", "--limit", "1")
     )
 
-    asyncio.run(
-        dev_client.McpDevCommandSpec.for_name("authoring-context").run(
-            dev_client.McpDevServerSpec(sys.executable),
-            default_args,
-        )
-    )
-    asyncio.run(
-        dev_client.McpDevCommandSpec.for_name("functions").run(
-            dev_client.McpDevServerSpec(sys.executable),
-            explicit_args,
-        )
-    )
-
-    assert captured_timeouts == [
+    assert [
+        dev_client.McpDevCommandSpec.for_name("authoring-context").timeout_seconds(
+            default_args
+        ),
+        dev_client.McpDevCommandSpec.for_name("functions").timeout_seconds(
+            explicit_args
+        ),
+    ] == [
         dev_client.DEFAULT_REGISTRY_DISCOVERY_TIMEOUT_SECONDS,
         60.0,
     ]
+    assert default_call.arguments["kind"] == "first_use"
+    assert default_call.arguments["max_chars"] == 16_000
 
 
 def test_mcp_dev_client_functions_command_renders_compact_search_results():
@@ -3862,7 +4351,10 @@ def test_mcp_dev_client_functions_command_renders_compact_search_results():
         args,
     )
 
-    assert 'Function search: query="count cells" library=<none> shown=1 total=29' in rendered
+    assert (
+        'Function search: query="count cells" library=<none> shown=1 total=29'
+        in rendered
+    )
     assert (
         "- openhcs:analysis_count_cells_simple_count_cells_simple: "
         "count_cells_simple(image, ...) tags=openhcs,analysis,count_cells_simple"
@@ -3895,9 +4387,7 @@ def test_mcp_dev_client_register_custom_function_renders_next_steps():
                         "functions": [
                             {
                                 "function_id": "openhcs:agent_registered_custom",
-                                "signature": (
-                                    "agent_registered_custom(gain=1.0)"
-                                ),
+                                "signature": ("agent_registered_custom(gain=1.0)"),
                                 "backend_tags": ["openhcs", "custom"],
                                 "summary": "Agent custom function.",
                             }
@@ -3919,9 +4409,15 @@ def test_mcp_dev_client_register_custom_function_renders_next_steps():
         "storage=/tmp/custom_functions"
     ) in rendered
     assert "Lifetime: process-local only" in rendered
-    assert "- openhcs:agent_registered_custom: agent_registered_custom(gain=1.0)" in rendered
+    assert (
+        "- openhcs:agent_registered_custom: agent_registered_custom(gain=1.0)"
+        in rendered
+    )
     assert "- function openhcs:agent_registered_custom" in rendered
-    assert "- draft-pipeline-step openhcs:agent_registered_custom --name <step_name>" in rendered
+    assert (
+        "- draft-pipeline-step openhcs:agent_registered_custom --name <step_name>"
+        in rendered
+    )
 
 
 def test_mcp_dev_client_function_command_renders_parameters_and_artifacts():
@@ -3996,7 +4492,10 @@ def test_mcp_dev_client_function_command_renders_parameters_and_artifacts():
         args,
     )
 
-    assert "Function: id=openhcs:analysis_count_cells_simple_count_cells_simple" in rendered
+    assert (
+        "Function: id=openhcs:analysis_count_cells_simple_count_cells_simple"
+        in rendered
+    )
     assert "Agent parameters:" in rendered
     assert "- min_size: required=False type=int default=20" in rendered
     assert "Runtime inputs:" in rendered
@@ -4125,7 +4624,10 @@ def test_mcp_dev_client_draft_pipeline_step_command_renders_composite_summary():
                 "tool": "openhcs_create_pipeline",
                 "mcp_error": False,
                 "payloads": [
-                    {"pipeline_id": "pipeline-1", "uri": "openhcs://pipelines/pipeline-1"}
+                    {
+                        "pipeline_id": "pipeline-1",
+                        "uri": "openhcs://pipelines/pipeline-1",
+                    }
                 ],
             },
             {
@@ -4158,9 +4660,7 @@ def test_mcp_dev_client_draft_pipeline_step_command_renders_composite_summary():
                 "payloads": [
                     {
                         "valid": True,
-                        "warnings": [
-                            {"code": "note", "message": "Pipeline is small."}
-                        ],
+                        "warnings": [{"code": "note", "message": "Pipeline is small."}],
                         "errors": [],
                     }
                 ],
@@ -4283,13 +4783,12 @@ def test_mcp_dev_client_draft_pipeline_step_suggests_missing_kwargs_repair():
     assert "Pipeline draft: id=pipeline-1 valid=False steps=1" in rendered
     assert "Validate errors:" in rendered
     assert (
-        "Next: function "
-        "openhcs:analysis_cell_counting_cpu_count_cells_multi_channel"
+        "Next: function openhcs:analysis_cell_counting_cpu_count_cells_multi_channel"
     ) in rendered
     assert (
         "Retry shape: draft-pipeline-step "
         "openhcs:analysis_cell_counting_cpu_count_cells_multi_channel "
-        "--kwargs '{\"chan_1\": <value>, \"chan_2\": <value>}'"
+        '--kwargs \'{"chan_1": <value>, "chan_2": <value>}\''
     ) in rendered
 
 
@@ -4299,19 +4798,22 @@ def test_mcp_dev_client_artifact_plan_command_projects_tool_arguments():
 
     import openhcs.mcp.dev_client as dev_client
 
+    pipeline_source = (
+        "from openhcs.core.config import PipelineConfig\n"
+        "pipeline_config = PipelineConfig()\n"
+        "pipeline_steps = []"
+    )
     parser = dev_client._build_parser()
     args = parser.parse_args(
         (
             "artifact-plan",
             "/tmp/example-plate",
             "--source-text",
-            "pipeline_steps = []",
+            pipeline_source,
             "--well-filter",
             "A01,A02",
             "--global-config-id",
             "global-1",
-            "--pipeline-config-id",
-            "pipeline-config-1",
         )
     )
 
@@ -4320,10 +4822,9 @@ def test_mcp_dev_client_artifact_plan_command_projects_tool_arguments():
     assert call.name == "openhcs_inspect_pipeline_source_artifact_plan"
     assert call.arguments == {
         "plate_path": "/tmp/example-plate",
-        "pipeline_source": "pipeline_steps = []",
+        "pipeline_source": pipeline_source,
         "axis_filter": ["A01", "A02"],
         "global_config_id": "global-1",
-        "pipeline_config_id": "pipeline-config-1",
     }
 
 
@@ -4449,7 +4950,10 @@ def test_mcp_dev_client_artifact_plan_command_renders_compact_summary():
         args,
     )
 
-    assert "Artifact plan: plate=/tmp/example-plate axes=1 steps=1 progress_events=1" in rendered
+    assert (
+        "Artifact plan: plate=/tmp/example-plate axes=1 steps=1 progress_events=1"
+        in rendered
+    )
     assert "Axes: A01" in rendered
     assert "Source workspace (source-bound files): files=2 truncated=0" in rendered
     assert "axis files: A01=2" in rendered
@@ -4464,7 +4968,10 @@ def test_mcp_dev_client_artifact_plan_command_renders_compact_summary():
         "path=/tmp/example-plate_openhcs/results/A01_positions_step0.pkl "
         "groups=None source_step=0 source_scope=step-find-positions"
     ) in rendered
-    assert "artifact cell_counts: kind=special path=/tmp/example-plate_openhcs/results/A01_cell_counts_step0.pkl groups=None" in rendered
+    assert (
+        "artifact cell_counts: kind=special path=/tmp/example-plate_openhcs/results/A01_cell_counts_step0.pkl groups=None"
+        in rendered
+    )
     assert (
         "materialization: explicit persistent=True backend=disk "
         "analysis_dir=/tmp/example-plate_openhcs/images_results "
@@ -4541,20 +5048,7 @@ def test_mcp_dev_client_execute_source_composes_session_and_submit(monkeypatch):
         return
 
     import openhcs.mcp.dev_client as dev_client
-    import openhcs.mcp.dev_client_core as dev_client_core
-
-    class FakeMcpDevStdioSession:
-        def __init__(self, server_spec, server_stderr):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def initialize(self, *, timeout_seconds):
-            return None
+    import openhcs.mcp.dev_client_commands.knowledge_pipeline as knowledge_pipeline
 
     calls: list[dev_client.McpDevToolCall] = []
     timeouts: list[float] = []
@@ -4591,20 +5085,20 @@ def test_mcp_dev_client_execute_source_composes_session_and_submit(monkeypatch):
             ),
         )
 
-    monkeypatch.setattr(
-        dev_client_core,
-        "McpDevStdioSession",
-        FakeMcpDevStdioSession,
-    )
-    monkeypatch.setattr(dev_client_core, "_call_tool", fake_call_tool)
+    monkeypatch.setattr(knowledge_pipeline, "call_mcp_tool", fake_call_tool)
 
+    pipeline_source = (
+        "from openhcs.core.config import PipelineConfig\n"
+        "pipeline_config = PipelineConfig()\n"
+        "pipeline_steps = []"
+    )
     parser = dev_client._build_parser()
     args = parser.parse_args(
         (
             "execute-source",
             "/tmp/plate",
             "--source-text",
-            "pipeline_steps = []",
+            pipeline_source,
             "--host",
             "127.0.0.1",
             "--port",
@@ -4617,10 +5111,9 @@ def test_mcp_dev_client_execute_source_composes_session_and_submit(monkeypatch):
     )
 
     response = asyncio.run(
-        dev_client.call_execute_source_with_submission(
-            dev_client.McpDevServerSpec(sys.executable),
+        dev_client.McpDevCommandSpec.for_name("execute-source").run_session(
+            SimpleNamespace(server_spec=dev_client.McpDevServerSpec(sys.executable)),
             args,
-            timeout_seconds=5,
         )
     )
 
@@ -4629,7 +5122,7 @@ def test_mcp_dev_client_execute_source_composes_session_and_submit(monkeypatch):
         "openhcs_submit_pipeline_execution",
     ]
     assert calls[0].arguments["plate_path"] == "/tmp/plate"
-    assert calls[0].arguments["pipeline_source"] == "pipeline_steps = []"
+    assert calls[0].arguments["pipeline_source"] == pipeline_source
     assert calls[0].arguments["host"] == "127.0.0.1"
     assert calls[0].arguments["port"] == 5557
     assert calls[0].arguments["transport_mode"] == "ipc"
@@ -4957,6 +5450,36 @@ def test_mcp_dev_client_inspect_plate_command_renders_compact_summary():
                             "read_only_inspection": True,
                             "required_before_execution": False,
                         },
+                        "workflow_advice": {
+                            "workflow_scope": "diagnostic",
+                            "ingestion_route": "detected_handler",
+                            "ingestion_owner": "bioformats",
+                            "source_binding_role": "semantic_selection",
+                            "ui_code_document_id": "plate_manager.orchestrator_config",
+                            "ui_operation": "init",
+                            "knowledge_query": (
+                                "source model CZI Bio-Formats source bindings"
+                            ),
+                            "message": (
+                                "Keep Bio-Formats as the ingestion owner; source "
+                                "bindings select its emitted planes."
+                            ),
+                        },
+                        "format_specific_handler_candidates": [
+                            {
+                                "microscope_type": "opera_phenix",
+                                "handler_class": "OperaPhenixHandler",
+                                "parser_class": "OperaPhenixFilenameParser",
+                                "root_dir": "Images",
+                                "tested_file_count": 3,
+                                "recognized_file_count": 3,
+                                "recognizes_all_tested_files": True,
+                                "files_under_expected_root": True,
+                                "metadata_detected": False,
+                                "metadata_file_path": None,
+                                "metadata_diagnostic": "Index.xml not found",
+                            }
+                        ],
                         "components": [
                             {
                                 "component": "well",
@@ -4976,6 +5499,15 @@ def test_mcp_dev_client_inspect_plate_command_renders_compact_summary():
                                 "truncated_value_count": 0,
                             },
                         ],
+                        "source_diagnostics": [
+                            {
+                                "diagnostic_type": (
+                                    "bioformats_packed_rgb_series_exclusion"
+                                ),
+                                "message": "Packed RGB label series was excluded.",
+                                "series_index": 7,
+                            }
+                        ],
                         "warnings": [],
                     }
                 ],
@@ -4993,6 +5525,19 @@ def test_mcp_dev_client_inspect_plate_command_renders_compact_summary():
     assert "Images: count=2 sampled=2 truncated=0" in rendered
     assert "Results: count=1 sampled=1 scanned=1 truncated=0" in rendered
     assert (
+        "Routing: scope=diagnostic ingestion=detected_handler owner=bioformats "
+        "source_bindings=semantic_selection"
+    ) in rendered
+    assert (
+        "UI next: document=plate_manager.orchestrator_config operation=init"
+    ) in rendered
+    assert "Advice: Keep Bio-Formats as the ingestion owner" in rendered
+    assert "Format-specific handler candidates:" in rendered
+    assert (
+        "opera_phenix parser=OperaPhenixFilenameParser recognized=3/3 "
+        "root=Images metadata_detected=False diagnostic=Index.xml not found"
+    ) in rendered
+    assert (
         "Axis sizes: wells=1 sites=<unknown> channels=2 z=<unknown> "
         "timepoints=<unknown> profile=unknown-site,multi-channel,unknown-z_index,"
         "unknown-timepoint"
@@ -5002,7 +5547,15 @@ def test_mcp_dev_client_inspect_plate_command_renders_compact_summary():
         "channel=metadata_and_parsed_filenames"
     ) in rendered
     assert "- well: count=1 source=metadata_and_parsed_filenames values=A01" in rendered
-    assert "- channel: count=2 source=metadata_and_parsed_filenames values=1 (W1), 2 (W2)" in rendered
+    assert (
+        "- channel: count=2 source=metadata_and_parsed_filenames values=1 (W1), 2 (W2)"
+        in rendered
+    )
+    assert "Source diagnostics: 1" in rendered
+    assert (
+        "- bioformats_packed_rgb_series_exclusion: Packed RGB label series was excluded."
+        in rendered
+    )
     assert "Sample records:" in rendered
     assert (
         "- ./A01_s001_w1_z001_t001.tif -> "
@@ -5433,8 +5986,7 @@ def test_mcp_dev_client_query_plate_files_renders_empty_records():
     assert "Records: <none>" in rendered
     assert (
         "Next: query-plate-files /tmp/example-plate --microscope-type openhcsdata "
-        "--kind result --include-previews"
-        in rendered
+        "--kind result --include-previews" in rendered
     )
 
 
@@ -5648,7 +6200,7 @@ def test_mcp_dev_client_inspect_plate_renders_result_only_warning_compactly():
     assert "Warnings:" in rendered
     assert (
         "- plate_handler_detection_failed: Microscope handler detection failed, "
-        "but OpenHCS analysis result artifacts were found. hint=\"metadata missing\""
+        'but OpenHCS analysis result artifacts were found. hint="metadata missing"'
     ) in rendered
     assert "{'code':" not in rendered
     assert "'modified':" not in rendered
@@ -5678,6 +6230,10 @@ def test_mcp_dev_client_sample_plate_image_command_projects_tool_arguments():
             "3",
             "--width",
             "4",
+            "--resolution-index",
+            "0",
+            "--max-auto-resolution-size",
+            "512",
             "--max-array-elements",
             "12",
             "--no-array-values",
@@ -5696,6 +6252,8 @@ def test_mcp_dev_client_sample_plate_image_command_projects_tool_arguments():
         "x": 2,
         "height": 3,
         "width": 4,
+        "resolution_index": 0,
+        "max_auto_resolution_size": 512,
         "include_array_values": False,
         "max_array_elements": 12,
     }
@@ -5853,10 +6411,15 @@ def test_mcp_dev_client_sample_plate_image_command_renders_compact_summary():
                         "virtual_path": "images/A01_s001_w1_z001_t001.tif",
                         "source_path": "/tmp/example-plate/images/A01_s001_w1_z001_t001.tif",
                         "shape": [1, 96, 96],
+                        "resolution_shape": [1, 24, 24],
                         "dtype": "uint16",
                         "minimum": 0,
                         "maximum": 65535,
                         "mean": 123.4567,
+                        "selected_resolution_index": 2,
+                        "resolution_count": 3,
+                        "downsample_yx": [4.0, 4.0],
+                        "statistics_scope": "bounded_sample",
                         "sample_origin_yx": [0, 0],
                         "sample_shape": [1, 2, 2],
                         "sample_included": True,
@@ -5873,7 +6436,14 @@ def test_mcp_dev_client_sample_plate_image_command_renders_compact_summary():
     ).render_response(response, args)
 
     assert "Image: images/A01_s001_w1_z001_t001.tif" in rendered
-    assert "Array: shape=1x96x96 dtype=uint16 min=0 max=65535 mean=123.457" in rendered
+    assert (
+        "Resolution: selected=2 count=3 source_shape=1x96x96 "
+        "resolution_shape=1x24x24 downsample_yx=4.0x4.0"
+    ) in rendered
+    assert (
+        "Statistics: scope=bounded_sample dtype=uint16 min=0 max=65535 "
+        "mean=123.457"
+    ) in rendered
     assert "Sample: origin_yx=0x0 shape=1x2x2 included=True" in rendered
     assert "[\n  [\n    [\n      1," in rendered
 
@@ -6097,7 +6667,10 @@ def test_mcp_dev_client_selected_plate_files_command_renders_compact_summary():
         "selected-plate-files"
     ).render_response(response, args)
 
-    assert "Selected plate: selected-plate root=/tmp/selected-plate target=selected" in rendered
+    assert (
+        "Selected plate: selected-plate root=/tmp/selected-plate target=selected"
+        in rendered
+    )
     assert "Plate file query: /tmp/selected-plate" in rendered
     assert "Result: returned=1 total=1 offset=0 limit=50 truncated=0" in rendered
     assert "- image ./A01_s001_w1_z001_t001.tif -> /tmp/source/A01_w1.tif" in rendered
@@ -6312,7 +6885,7 @@ def test_mcp_dev_client_selected_plate_images_command_renders_compact_summary():
                                             "modified": "2026-06-27T16:50:37",
                                             "size": "12 KiB",
                                         },
-                                    }
+                                    },
                                 ],
                                 "truncated_file_count": 0,
                             },
@@ -6378,7 +6951,10 @@ def test_mcp_dev_client_selected_plate_images_command_renders_compact_summary():
         "selected-plate-images"
     ).render_response(response, args)
 
-    assert "Selected plate: selected-plate root=/tmp/selected-plate target=selected" in rendered
+    assert (
+        "Selected plate: selected-plate root=/tmp/selected-plate target=selected"
+        in rendered
+    )
     assert "Plate: /tmp/selected-plate" in rendered
     assert "Images: count=2 sampled=2 truncated=0" in rendered
     assert "Results: count=1 sampled=1 scanned=1 truncated=0" in rendered
@@ -6387,22 +6963,22 @@ def test_mcp_dev_client_selected_plate_images_command_renders_compact_summary():
         "earliest=2026-06-27T14:30:06 distinct=3 older_records=2"
     ) in rendered
     assert (
-        "- images/A01_s001_w1_z001_t001.tif "
-        "modified=2026-06-27T16:50:37 size=12 KiB"
+        "- images/A01_s001_w1_z001_t001.tif modified=2026-06-27T16:50:37 size=12 KiB"
     ) in rendered
     assert (
-        "- results/A01.roi.zip type=ROI "
-        "modified=2026-06-27T15:42:42 size=48 B"
+        "- results/A01.roi.zip type=ROI modified=2026-06-27T15:42:42 size=48 B"
     ) in rendered
     assert (
         "roi preview: count=2 members=3 duplicate_members=1 "
         "area=min=4.0,mean=5.500,max=7.0"
     ) in rendered
-    assert "roi example: label=1 area=4.0 bbox=[0, 0, 2, 2] centroid=[1.0, 1.0]" in rendered
+    assert (
+        "roi example: label=1 area=4.0 bbox=[0, 0, 2, 2] centroid=[1.0, 1.0]"
+        in rendered
+    )
     assert (
         "Next: selected-plate-sample images/A01_s001_w1_z001_t001.tif "
-        "--height 8 --width 8 --no-array-values"
-        in rendered
+        "--height 8 --width 8 --no-array-values" in rendered
     )
 
 
@@ -6443,6 +7019,8 @@ def test_mcp_dev_client_selected_plate_sample_command_projects_tool_arguments():
         "x": 0,
         "height": 2,
         "width": 3,
+        "resolution_index": None,
+        "max_auto_resolution_size": 1024,
         "include_array_values": False,
         "max_array_elements": 4096,
         "connection": {"timeout_ms": 1234},
@@ -6553,10 +7131,15 @@ def test_mcp_dev_client_selected_plate_sample_command_renders_compact_summary():
                             "virtual_path": "./A01_s001_w1_z001_t001.tif",
                             "source_path": "/tmp/source/A01_w1.tif",
                             "shape": [1, 2, 2],
+                            "resolution_shape": [1, 2, 2],
                             "dtype": "uint16",
                             "minimum": 1,
                             "maximum": 4,
                             "mean": 2.5,
+                            "selected_resolution_index": 0,
+                            "resolution_count": 1,
+                            "downsample_yx": [1.0, 1.0],
+                            "statistics_scope": "source_resolution",
                             "sample_origin_yx": [0, 0],
                             "sample_shape": [1, 2, 2],
                             "sample_included": True,
@@ -6575,10 +7158,20 @@ def test_mcp_dev_client_selected_plate_sample_command_renders_compact_summary():
         "selected-plate-sample"
     ).render_response(response, args)
 
-    assert "Selected plate: selected-plate root=/tmp/selected-plate target=selected" in rendered
+    assert (
+        "Selected plate: selected-plate root=/tmp/selected-plate target=selected"
+        in rendered
+    )
     assert "Selected image: ./A01_s001_w1_z001_t001.tif auto=True" in rendered
     assert "Image: ./A01_s001_w1_z001_t001.tif" in rendered
-    assert "Array: shape=1x2x2 dtype=uint16 min=1 max=4 mean=2.500" in rendered
+    assert (
+        "Resolution: selected=0 count=1 source_shape=1x2x2 "
+        "resolution_shape=1x2x2 downsample_yx=1.0x1.0"
+    ) in rendered
+    assert (
+        "Statistics: scope=source_resolution dtype=uint16 min=1 max=4 mean=2.500"
+        in rendered
+    )
     assert "[\n  [\n    [\n      1," in rendered
 
 
@@ -6633,7 +7226,10 @@ def test_mcp_dev_client_selected_plate_sample_omission_suggests_element_budget()
         "selected-plate-sample"
     ).render_response(response, args)
 
-    assert "Selected plate: selected-plate root=/tmp/selected-plate target=output" in rendered
+    assert (
+        "Selected plate: selected-plate root=/tmp/selected-plate target=output"
+        in rendered
+    )
     assert (
         "Sample values omitted: sample has 256 elements, above max_array_elements=40; "
         "rerun with --max-array-elements 256 or smaller --width/--height"
@@ -6679,7 +7275,10 @@ def test_mcp_dev_client_selected_plate_sample_error_keeps_target_context():
     ).render_response(response, args)
 
     assert "Selected plate sample: failed" in rendered
-    assert "Selected plate: selected-plate root=/tmp/selected-plate target=output" in rendered
+    assert (
+        "Selected plate: selected-plate root=/tmp/selected-plate target=output"
+        in rendered
+    )
     assert "ui_selected_plate_no_sample_image" in rendered
 
 
@@ -6911,9 +7510,18 @@ def test_mcp_dev_client_runtime_scan_command_renders_endpoint_kinds():
     )
 
     assert "Runtime scan: ports=5555,7777 timeout_ms=300 servers=2" in rendered
-    assert "port=5555 server=NapariViewer reachable=True ready=True control=6555" in rendered
-    assert "port=7777 server=ZMQExecutionServer reachable=True ready=True control=8777" in rendered
-    assert "active=1 running=1 queued=0 workers=1 uptime=12.3s log=/tmp/exec.log" in rendered
+    assert (
+        "port=5555 server=NapariViewer reachable=True ready=True control=6555"
+        in rendered
+    )
+    assert (
+        "port=7777 server=ZMQExecutionServer reachable=True ready=True control=8777"
+        in rendered
+    )
+    assert (
+        "active=1 running=1 queued=0 workers=1 uptime=12.3s log=/tmp/exec.log"
+        in rendered
+    )
 
 
 def test_mcp_dev_client_runtime_info_command_projects_tool_arguments():
@@ -6989,7 +7597,9 @@ def test_mcp_dev_client_runtime_status_command_renders_execution_counts():
         args,
     )
 
-    assert "Runtime execution status: status=ok execution_id=run-1 port=7777" in rendered
+    assert (
+        "Runtime execution status: status=ok execution_id=run-1 port=7777" in rendered
+    )
     assert "Executions: known=2 active=1 running=1 queued=0 uptime=12.3s" in rendered
 
 
@@ -7206,7 +7816,7 @@ def test_mcp_dev_client_ui_commands_project_connection_arguments():
     assert "Window: * Configuration - GlobalPipelineConfig" in rendered
     assert 'QModelIndex "* WellFilter"' in rendered
     assert "shortened before it reaches the terminal renderer output" not in rendered
-    assert "current=\"selected plate with a very long configuration preview" in rendered
+    assert 'current="selected plate with a very long configuration preview' in rendered
 
     outline_subtree_args = parser.parse_args(
         (
@@ -7242,7 +7852,10 @@ def test_mcp_dev_client_ui_commands_project_connection_arguments():
                                                 "text": "WellFilter",
                                                 "children": [],
                                             },
-                                            {"class_name": "QScrollBar", "children": []},
+                                            {
+                                                "class_name": "QScrollBar",
+                                                "children": [],
+                                            },
                                         ],
                                     },
                                 ],
@@ -7357,7 +7970,7 @@ def test_mcp_dev_client_widget_tree_outline_shows_disabled_action_paths():
                                         "clickable": False,
                                         "actionable": False,
                                         "children": [],
-                                    }
+                                    },
                                 ],
                             },
                             "actionable_widgets": [],
@@ -7485,7 +8098,9 @@ def test_mcp_dev_client_code_documents_command_renders_compact_summary():
     import openhcs.mcp.dev_client as dev_client
 
     parser = dev_client._build_parser()
-    args = parser.parse_args(("code-documents",))
+    args = parser.parse_args(
+        ("code-documents", "--contains", "plate", "--limit", "1")
+    )
     response = {
         "errors": [],
         "results": [
@@ -7506,7 +8121,17 @@ def test_mcp_dev_client_code_documents_command_renders_compact_summary():
                                 "current_selection_count": 1,
                                 "total_scope_count": 2,
                                 "title": "Plate manager orchestrator config",
-                            }
+                            },
+                            {
+                                "document_id": "plate_manager.pipeline",
+                                "widget_id": "plate_manager",
+                                "readable": True,
+                                "writable": True,
+                                "supported_selection_modes": ["selected", "all"],
+                                "current_selection_count": 1,
+                                "total_scope_count": 2,
+                                "title": "Plate manager pipeline",
+                            },
                         ],
                     }
                 ],
@@ -7514,16 +8139,34 @@ def test_mcp_dev_client_code_documents_command_renders_compact_summary():
         ],
     }
 
-    rendered = dev_client.McpDevCommandSpec.for_name(
-        "code-documents"
-    ).render_response(response, args)
+    rendered = dev_client.McpDevCommandSpec.for_name("code-documents").render_response(
+        response, args
+    )
 
-    assert "Code documents: count=1" in rendered
+    assert "Code documents: count=2 matched=2 shown=1" in rendered
+    assert "Filter: contains=plate" in rendered
     assert (
         "- plate_manager.orchestrator_config: widget=plate_manager "
         "readable=True writable=True selection=1/2 modes=selected,all "
         'title="Plate manager orchestrator config"'
     ) in rendered
+    assert "plate_manager.pipeline" not in rendered
+    assert "...<truncated 1 documents>" in rendered
+
+    call_args = parser.parse_args(
+        (
+            "call",
+            "openhcs_ui_list_code_documents",
+            "--arguments",
+            "{}",
+        )
+    )
+    call_rendered = dev_client.McpDevCommandSpec.for_name("call").render_response(
+        response,
+        call_args,
+    )
+
+    assert "Code documents: count=2 matched=2 shown=2" in call_rendered
 
 
 def test_mcp_dev_client_code_document_command_projects_tool_arguments():
@@ -7569,7 +8212,10 @@ def test_mcp_dev_client_code_document_command_projects_tool_arguments():
     )
     alias_call = dev_client._calls_from_args(alias_args)[0]
     assert alias_call.name == "openhcs_ui_get_code_document"
-    assert alias_call.arguments["document_id"] == "object_state_scope:/tmp/plate::function_0"
+    assert (
+        alias_call.arguments["document_id"]
+        == "object_state_scope:/tmp/plate::function_0"
+    )
 
 
 def test_mcp_dev_client_code_document_command_renders_source_and_revision():
@@ -7624,16 +8270,19 @@ def test_mcp_dev_client_code_document_command_renders_source_and_revision():
         ],
     }
 
-    rendered = dev_client.McpDevCommandSpec.for_name(
-        "code-document"
-    ).render_response(response, args)
+    rendered = dev_client.McpDevCommandSpec.for_name("code-document").render_response(
+        response, args
+    )
 
     assert (
         "Code document: id=object_state_scope:/tmp/plate::function_0 "
         'title="Edit Function" widget=object_state_scope writable=True '
         "mode=selected scopes=/tmp/plate::function_0"
     ) in rendered
-    assert "Revision: token=rev-123 sha256=sha-abc bytes=42 snapshot=main@9 head=True" in rendered
+    assert (
+        "Revision: token=rev-123 sha256=sha-abc bytes=42 snapshot=main@9 head=True"
+        in rendered
+    )
     assert "Source:\npattern = (some_func" in rendered
     assert "...<truncated" in rendered
 
@@ -7724,7 +8373,10 @@ def test_mcp_dev_client_validate_code_document_renders_errors():
         "normalized_scopes=<none>"
     ) in rendered
     assert "Errors:" in rendered
-    assert "- ui_code_document_validation_failed: Document must define pattern." in rendered
+    assert (
+        "- ui_code_document_validation_failed: Document must define pattern."
+        in rendered
+    )
 
 
 def test_mcp_dev_client_apply_code_document_projects_guarded_mutation(tmp_path):
@@ -7860,8 +8512,7 @@ def test_mcp_dev_client_apply_code_document_renders_receipt_and_snapshots():
     ) in rendered
     assert "Revision: base=rev-123 current=rev-456 new=rev-456" in rendered
     assert (
-        "Receipt: accepted=True request_token=request-1 "
-        "bridge_operation=operation-1"
+        "Receipt: accepted=True request_token=request-1 bridge_operation=operation-1"
     ) in rendered
     assert "Snapshots: current=main@10:snapshot-10 undo=main@9:snapshot-9" in rendered
 
@@ -8012,7 +8663,9 @@ def test_mcp_dev_client_actions_command_renders_side_effects_and_tokens():
 
     assert "UI actions: count=1" in rendered
     assert "Warnings:" in rendered
-    assert "- plate_path_setup_uses_code_document: Prefer code document setup." in rendered
+    assert (
+        "- plate_path_setup_uses_code_document: Prefer code document setup." in rendered
+    )
     assert (
         '- plate_manager/compile_plate: title="Compile" enabled=True '
         "confirm=True mode=sync selection=1 targets=/tmp/plate "
@@ -8075,7 +8728,10 @@ def test_mcp_dev_client_actions_command_can_filter_by_widget_id():
     assert "UI actions: count=1 widget=plate_manager" in rendered
     assert "plate_manager/compile_plate" in rendered
     assert "Disabled hints:" in rendered
-    assert 'plate_manager/compile_plate: "Run init_plate before compile_plate."' in rendered
+    assert (
+        'plate_manager/compile_plate: "Run init_plate before compile_plate."'
+        in rendered
+    )
     assert "image_browser/open_file" not in rendered
 
 
@@ -8124,7 +8780,9 @@ def test_mcp_dev_client_actions_filter_suppresses_unrelated_global_warnings():
         plate_args,
     )
     pipeline_args = parser.parse_args(("actions", "pipeline_editor"))
-    pipeline_rendered = dev_client.McpDevCommandSpec.for_name("actions").render_response(
+    pipeline_rendered = dev_client.McpDevCommandSpec.for_name(
+        "actions"
+    ).render_response(
         response,
         pipeline_args,
     )
@@ -8134,7 +8792,6 @@ def test_mcp_dev_client_actions_filter_suppresses_unrelated_global_warnings():
     assert "UI actions: count=0 widget=pipeline_editor" in pipeline_rendered
     assert "Warnings:" not in pipeline_rendered
     assert "widget-tree pipeline_editor" in pipeline_rendered
-
 
 
 def test_mcp_dev_client_invoke_action_projects_guarded_call():
@@ -8243,15 +8900,17 @@ def test_mcp_dev_client_invoke_action_renders_receipt_and_polling():
         args,
     )
 
-    assert "UI action invoke: action=plate_manager/compile_plate status=rejected" in rendered
     assert (
-        "Receipt: accepted=False request_token=request-1 "
-        "bridge_operation=operation-1"
+        "UI action invoke: action=plate_manager/compile_plate status=rejected"
+        in rendered
+    )
+    assert (
+        "Receipt: accepted=False request_token=request-1 bridge_operation=operation-1"
     ) in rendered
     assert "Selection: targets=/tmp/plate selection_rev=selection-rev" in rendered
     assert "Polling: surfaces=plate_manager.state interval_ms=500" in rendered
     assert "- confirmation_required: UI confirmation is required." in rendered
-    assert "hint=\"Call openhcs_ui_navigate_window" in rendered
+    assert 'hint="Call openhcs_ui_navigate_window' in rendered
 
 
 def test_mcp_dev_client_invoke_widget_action_projects_tool_arguments():
@@ -8265,6 +8924,7 @@ def test_mcp_dev_client_invoke_widget_action_projects_tool_arguments():
     default_call = dev_client._calls_from_args(default_args)[0]
 
     assert default_call.arguments["action_kind"] == "auto"
+    assert default_call.arguments["target_index"] is None
 
     args = parser.parse_args(
         (
@@ -8273,6 +8933,8 @@ def test_mcp_dev_client_invoke_widget_action_projects_tool_arguments():
             "1.0.6",
             "--action-kind",
             "button",
+            "--target-index",
+            "2",
             "--create-if-missing",
             "--request-token",
             "request-1",
@@ -8289,6 +8951,7 @@ def test_mcp_dev_client_invoke_widget_action_projects_tool_arguments():
     assert call.arguments["window_id"] == "plate_manager"
     assert call.arguments["path_id"] == "1.0.6"
     assert call.arguments["action_kind"] == "button"
+    assert call.arguments["target_index"] == 2
     assert call.arguments["create_if_missing"] is True
     assert call.arguments["request_token"] == "request-1"
     assert call.arguments["connection"] == {
@@ -8341,12 +9004,10 @@ def test_mcp_dev_client_invoke_widget_action_renders_summary():
     ).render_response(response, args)
 
     assert (
-        "Widget action invoke: window=plate_manager path=1.0.6 "
-        "kind=button invoked=True"
+        "Widget action invoke: window=plate_manager path=1.0.6 kind=button invoked=True"
     ) in rendered
     assert (
-        "Receipt: accepted=True request_token=request-1 "
-        "bridge_operation=operation-1"
+        "Receipt: accepted=True request_token=request-1 bridge_operation=operation-1"
     ) in rendered
     assert 'Widget: label="Code" enabled=True clickable=True actions=button' in rendered
 
@@ -8505,10 +9166,7 @@ def test_mcp_dev_client_object_state_scope_command_renders_compact_summary():
         "ObjectState scopes: scopes=1 token=12 branch=main snapshot=-1 active=False"
         in rendered
     )
-    assert (
-        "Markers: [*]=unsaved/dirty [_]=differs-from-defaults [-]=clean"
-        in rendered
-    )
+    assert "Markers: [*]=unsaved/dirty [_]=differs-from-defaults [-]=clean" in rendered
     assert (
         "- [_] scope=global_config: type=GlobalPipelineConfig params=136 dirty=0 "
         "default_diff=1 unsaved=False overrides=True changed=num_workers "
@@ -8521,8 +9179,7 @@ def test_mcp_dev_client_object_state_scope_command_renders_compact_summary():
     ) in rendered
     assert "<none>: raw=True" not in rendered
     assert (
-        "Next field page: rerun with "
-        "--include-fields --field-offset 1 --field-limit 1"
+        "Next field page: rerun with --include-fields --field-offset 1 --field-limit 1"
     ) in rendered
 
 
@@ -8948,10 +9605,7 @@ def test_mcp_dev_client_object_state_fields_command_renders_resolved_values():
         "ObjectState fields: scopes=1 fields=1 returned=1 offset=0 limit=100 "
         "truncated=False token=12 branch=main snapshot=-1"
     ) in rendered
-    assert (
-        "Markers: [*]=unsaved/dirty [_]=differs-from-defaults [-]=clean"
-        in rendered
-    )
+    assert "Markers: [*]=unsaved/dirty [_]=differs-from-defaults [-]=clean" in rendered
     assert (
         "Returned semantics: dirty=0 default_diff=0 inherited=1 "
         "raw_none_resolved=1 resolved_none_raw=0 plain=0"
@@ -9133,9 +9787,13 @@ def test_mcp_dev_client_object_state_field_help_truncates_long_target_summary():
             "napari_streaming_config.enabled",
         )
     )
-    long_target_summary = "NapariStreamingConfig(" + ", ".join(
-        f"field_{index}: SomeVeryLongTypeName = None" for index in range(20)
-    ) + ")"
+    long_target_summary = (
+        "NapariStreamingConfig("
+        + ", ".join(
+            f"field_{index}: SomeVeryLongTypeName = None" for index in range(20)
+        )
+        + ")"
+    )
     response = {
         "errors": [],
         "results": [
@@ -9325,23 +9983,22 @@ def test_mcp_dev_client_windows_renders_compact_summary():
 
     assert "Windows: 4" in rendered
     assert (
-        'Attention: 1 visible top-level window(s): '
-        'qt_top_level:2 title="Error"'
+        'Attention: 1 visible top-level window(s): qt_top_level:2 title="Error"'
     ) in rendered
     assert (
-        '- qt_top_level:1 [qt_top_level] visible=True dirty=False diff=False '
+        "- qt_top_level:1 [qt_top_level] visible=True dirty=False diff=False "
         'title="OpenHCS"'
     ) in rendered
     assert (
-        '- qt_top_level:2 [qt_top_level] visible=True dirty=False diff=False '
+        "- qt_top_level:2 [qt_top_level] visible=True dirty=False diff=False "
         'title="Error"'
     ) in rendered
     assert (
-        '- plate_manager [embedded] visible=True dirty=False diff=False '
+        "- plate_manager [embedded] visible=True dirty=False diff=False "
         'title="Plate Manager"'
     ) in rendered
     assert (
-        '- image_browser [managed] visible=False dirty=True diff=True '
+        "- image_browser [managed] visible=False dirty=True diff=True "
         'title="Image Browser"'
     ) in rendered
 
@@ -9440,8 +10097,7 @@ def test_mcp_dev_client_ui_smoke_renders_compact_window_attention():
     assert "Bridges: live=1 errors=0" in rendered
     assert "Windows: 2" in rendered
     assert (
-        'Attention: 1 visible top-level window(s): '
-        'qt_top_level:2 title="Error"'
+        'Attention: 1 visible top-level window(s): qt_top_level:2 title="Error"'
     ) in rendered
 
 
@@ -9452,7 +10108,9 @@ def test_mcp_dev_client_state_surfaces_renders_compact_summary():
     import openhcs.mcp.dev_client as dev_client
 
     parser = dev_client._build_parser()
-    args = parser.parse_args(("state-surfaces",))
+    args = parser.parse_args(
+        ("state-surfaces", "--contains", "plate", "--limit", "1")
+    )
     response = {
         "errors": [],
         "results": [
@@ -9472,7 +10130,16 @@ def test_mcp_dev_client_state_surfaces_renders_compact_summary():
                                 "current_selection_count": 1,
                                 "total_scope_count": 2,
                                 "title": "Plate manager state",
-                            }
+                            },
+                            {
+                                "surface_id": "plate_manager.debug",
+                                "widget_id": "plate_manager",
+                                "readable": True,
+                                "supported_selection_modes": ["selected", "all"],
+                                "current_selection_count": 1,
+                                "total_scope_count": 2,
+                                "title": "Plate manager debug",
+                            },
                         ],
                     }
                 ],
@@ -9480,15 +10147,18 @@ def test_mcp_dev_client_state_surfaces_renders_compact_summary():
         ],
     }
 
-    rendered = dev_client.McpDevCommandSpec.for_name(
-        "state-surfaces"
-    ).render_response(response, args)
+    rendered = dev_client.McpDevCommandSpec.for_name("state-surfaces").render_response(
+        response, args
+    )
 
-    assert "State surfaces: count=1" in rendered
+    assert "State surfaces: count=2 matched=2 shown=1" in rendered
+    assert "Filter: contains=plate" in rendered
     assert (
         "- plate_manager.state: widget=plate_manager readable=True "
-        "selection=1/2 modes=selected,all title=\"Plate manager state\""
+        'selection=1/2 modes=selected,all title="Plate manager state"'
     ) in rendered
+    assert "plate_manager.debug" not in rendered
+    assert "...<truncated 1 surfaces>" in rendered
 
 
 def test_mcp_dev_client_unavailable_state_surface_renders_errors_and_next_step():
@@ -9528,9 +10198,9 @@ def test_mcp_dev_client_unavailable_state_surface_renders_errors_and_next_step()
         ],
     }
 
-    rendered = dev_client.McpDevCommandSpec.for_name(
-        "state-surface"
-    ).render_response(response, args)
+    rendered = dev_client.McpDevCommandSpec.for_name("state-surface").render_response(
+        response, args
+    )
 
     assert "Surface: plate_manager" in rendered
     assert "Readable: False" in rendered
@@ -9607,9 +10277,9 @@ def test_mcp_dev_client_plate_manager_state_surface_renders_compact_rows():
         ],
     }
 
-    rendered = dev_client.McpDevCommandSpec.for_name(
-        "state-surface"
-    ).render_response(response, args)
+    rendered = dev_client.McpDevCommandSpec.for_name("state-surface").render_response(
+        response, args
+    )
 
     assert "Plate manager: rows=2 selected=1 manager=idle" in rendered
     assert 'Snapshot: 3 "auto-add output plate [__plates__]"' in rendered
@@ -9698,9 +10368,9 @@ def test_mcp_dev_client_pipeline_editor_state_surface_renders_compact_steps():
         ],
     }
 
-    rendered = dev_client.McpDevCommandSpec.for_name(
-        "state-surface"
-    ).render_response(response, args)
+    rendered = dev_client.McpDevCommandSpec.for_name("state-surface").render_response(
+        response, args
+    )
 
     assert (
         "Pipeline editor: steps=2 selected=1/2 plate=/tmp/plate-a "
@@ -9795,9 +10465,9 @@ def test_mcp_dev_client_pipeline_debug_session_surface_renders_runtime_frame():
         ],
     }
 
-    rendered = dev_client.McpDevCommandSpec.for_name(
-        "state-surface"
-    ).render_response(response, args)
+    rendered = dev_client.McpDevCommandSpec.for_name("state-surface").render_response(
+        response, args
+    )
 
     assert "Pipeline debug: phase=active_session" in rendered
     assert (
@@ -9857,9 +10527,9 @@ def test_mcp_dev_client_pipeline_editor_state_omits_missing_function_ids():
         ],
     }
 
-    rendered = dev_client.McpDevCommandSpec.for_name(
-        "state-surface"
-    ).render_response(response, args)
+    rendered = dev_client.McpDevCommandSpec.for_name("state-surface").render_response(
+        response, args
+    )
 
     assert "funcs=normalize" in rendered
     assert "ids=<none>" not in rendered
@@ -9917,6 +10587,41 @@ def test_mcp_dev_client_selected_workflow_poll_arguments_are_projected():
             "timeout_ms": 1234,
         },
     }
+
+
+def test_mcp_dev_client_selected_workflow_wait_alias_preserves_poll_controls():
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    import openhcs.mcp.dev_client as dev_client
+
+    parser = dev_client._build_parser()
+    args = parser.parse_args(
+        (
+            "selected-workflow",
+            "compile_plate",
+            "--wait",
+            "--wait-selection-mode",
+            "all",
+            "--wait-interval-seconds",
+            "0.25",
+            "--wait-timeout-seconds",
+            "7.5",
+        )
+    )
+
+    assert args.poll_state is True
+    assert args.poll_selection_mode == "all"
+    assert args.poll_interval_seconds == 0.25
+    assert args.poll_timeout_seconds == 7.5
+
+    selected_workflow_parser = next(
+        action for action in parser._actions if action.dest == "command"
+    ).choices["selected-workflow"]
+    help_text = selected_workflow_parser.format_help()
+    compact_help_text = " ".join(help_text.split())
+    assert "--wait, --poll-state" in help_text
+    assert "not the wait for a UI operation receipt" in compact_help_text
 
 
 def test_mcp_dev_client_workflow_poll_terminal_state_policy():
@@ -10081,20 +10786,7 @@ def test_mcp_dev_client_selected_workflow_poll_composes_followup_state_calls(
         return
 
     import openhcs.mcp.dev_client as dev_client
-    import openhcs.mcp.dev_client_core as dev_client_core
-
-    class FakeMcpDevStdioSession:
-        def __init__(self, server_spec, server_stderr):
-            self.initialized = False
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, traceback):
-            return False
-
-        async def initialize(self, *, timeout_seconds):
-            self.initialized = True
+    import openhcs.mcp.dev_client_commands.ui as ui_commands
 
     calls: list[dev_client.McpDevToolCall] = []
     state_call_count = 0
@@ -10131,18 +10823,13 @@ def test_mcp_dev_client_selected_workflow_poll_composes_followup_state_calls(
                                 "compile_pending": False,
                                 "compiled": compiled,
                             }
-                        ]
-                    }
+                        ],
+                    },
                 },
             ),
         )
 
-    monkeypatch.setattr(
-        dev_client_core,
-        "McpDevStdioSession",
-        FakeMcpDevStdioSession,
-    )
-    monkeypatch.setattr(dev_client_core, "_call_tool", fake_call_tool)
+    monkeypatch.setattr(ui_commands, "call_mcp_tool", fake_call_tool)
 
     parser = dev_client._build_parser()
     args = parser.parse_args(
@@ -10164,10 +10851,9 @@ def test_mcp_dev_client_selected_workflow_poll_composes_followup_state_calls(
     )
 
     response = asyncio.run(
-        dev_client.call_selected_workflow_with_state_poll(
-            dev_client.McpDevServerSpec(sys.executable),
+        dev_client.McpDevCommandSpec.for_name("selected-workflow").run_session(
+            SimpleNamespace(server_spec=dev_client.McpDevServerSpec(sys.executable)),
             args,
-            timeout_seconds=5,
         )
     )
 
@@ -10205,20 +10891,7 @@ def test_mcp_dev_client_selected_workflow_poll_summary_reports_failure(
         return
 
     import openhcs.mcp.dev_client as dev_client
-    import openhcs.mcp.dev_client_core as dev_client_core
-
-    class FakeMcpDevStdioSession:
-        def __init__(self, server_spec, server_stderr):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, traceback):
-            return False
-
-        async def initialize(self, *, timeout_seconds):
-            return None
+    import openhcs.mcp.dev_client_commands.ui as ui_commands
 
     state_call_count = 0
 
@@ -10252,25 +10925,18 @@ def test_mcp_dev_client_selected_workflow_poll_summary_reports_failure(
                                 "plate_scope_id": "scope-a",
                                 "execution_active": False,
                                 "queue_position": None,
-                                "terminal_status": (
-                                    "failed" if failed else None
-                                ),
+                                "terminal_status": ("failed" if failed else None),
                                 "orchestrator_state": (
                                     "exec_failed" if failed else "compiled"
                                 ),
                             }
-                        ]
-                    }
+                        ],
+                    },
                 },
             ),
         )
 
-    monkeypatch.setattr(
-        dev_client_core,
-        "McpDevStdioSession",
-        FakeMcpDevStdioSession,
-    )
-    monkeypatch.setattr(dev_client_core, "_call_tool", fake_call_tool)
+    monkeypatch.setattr(ui_commands, "call_mcp_tool", fake_call_tool)
 
     parser = dev_client._build_parser()
     args = parser.parse_args(
@@ -10286,13 +10952,106 @@ def test_mcp_dev_client_selected_workflow_poll_summary_reports_failure(
     )
 
     response = asyncio.run(
-        dev_client.call_selected_workflow_with_state_poll(
-            dev_client.McpDevServerSpec(sys.executable),
+        dev_client.McpDevCommandSpec.for_name("selected-workflow").run_session(
+            SimpleNamespace(server_spec=dev_client.McpDevServerSpec(sys.executable)),
             args,
-            timeout_seconds=5,
         )
     )
 
+    summary = response.results[-1]
+    assert summary.tool == "mcp_dev_selected_workflow_poll"
+    assert summary.mcp_error is True
+    assert summary.payloads[0] == {
+        "poll_status": "failed",
+        "poll_requested": True,
+        "poll_completed": False,
+        "poll_count": 1,
+        "target_scope_ids": ["scope-a"],
+        "workflow": "run_plate",
+        "action_status": "accepted",
+    }
+
+
+def test_mcp_dev_client_selected_workflow_poll_stops_on_agent_error(
+    monkeypatch,
+):
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    import openhcs.mcp.dev_client as dev_client
+    import openhcs.mcp.dev_client_commands.ui as ui_commands
+
+    state_call_count = 0
+
+    async def fake_call_tool(session, call, timeout_seconds):
+        nonlocal state_call_count
+        if call.name == "openhcs_ui_selected_plate_workflow":
+            return dev_client.McpDevToolResult(
+                tool=call.name,
+                mcp_error=False,
+                payloads=(
+                    {
+                        "action_result": {
+                            "status": "accepted",
+                            "target_scope_ids": ["scope-a"],
+                        }
+                    },
+                ),
+            )
+        state_call_count += 1
+        if state_call_count == 1:
+            return dev_client.McpDevToolResult(
+                tool=call.name,
+                mcp_error=False,
+                payloads=(
+                    {
+                        "current_revision_token": "rev-1",
+                        "payload": {
+                            "object_state_token": 1,
+                            "rows": [],
+                        },
+                    },
+                ),
+            )
+        return dev_client.McpDevToolResult(
+            tool=call.name,
+            mcp_error=False,
+            payloads=(
+                {
+                    "errors": [
+                        {
+                            "code": "mcp_server_stale",
+                            "message": "The MCP server source changed.",
+                        }
+                    ]
+                },
+            ),
+        )
+
+    monkeypatch.setattr(ui_commands, "call_mcp_tool", fake_call_tool)
+
+    parser = dev_client._build_parser()
+    args = parser.parse_args(
+        (
+            "selected-workflow",
+            "run_plate",
+            "--poll-state",
+            "--poll-timeout-seconds",
+            "60",
+            "--poll-interval-seconds",
+            "10",
+        )
+    )
+
+    response = asyncio.run(
+        dev_client.McpDevCommandSpec.for_name("selected-workflow").run_session(
+            SimpleNamespace(server_spec=dev_client.McpDevServerSpec(sys.executable)),
+            args,
+        )
+    )
+
+    assert state_call_count == 2
+    assert response.results[-2].has_errors()
     summary = response.results[-1]
     assert summary.tool == "mcp_dev_selected_workflow_poll"
     assert summary.mcp_error is True
@@ -10385,7 +11144,10 @@ def test_mcp_dev_client_selected_workflow_poll_renders_compact_summary():
     assert "Workflow: run_plate" in rendered
     assert "Action: accepted poll=completed count=4" in rendered
     assert "Targets: scope-a" in rendered
-    assert '- plate-a: state=completed, status="Complete", terminal=complete, selected=True' in rendered
+    assert (
+        '- plate-a: state=completed, status="Complete", terminal=complete, selected=True'
+        in rendered
+    )
     assert '- plate-a_openhcs: state=created, status="", terminal=<none>' in rendered
 
 
@@ -10396,20 +11158,7 @@ def test_mcp_dev_client_selected_workflow_poll_summarizes_rejection(
         return
 
     import openhcs.mcp.dev_client as dev_client
-    import openhcs.mcp.dev_client_core as dev_client_core
-
-    class FakeMcpDevStdioSession:
-        def __init__(self, server_spec, server_stderr):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, traceback):
-            return False
-
-        async def initialize(self, *, timeout_seconds):
-            return None
+    import openhcs.mcp.dev_client_commands.ui as ui_commands
 
     calls: list[dev_client.McpDevToolCall] = []
 
@@ -10456,12 +11205,7 @@ def test_mcp_dev_client_selected_workflow_poll_summarizes_rejection(
             ),
         )
 
-    monkeypatch.setattr(
-        dev_client_core,
-        "McpDevStdioSession",
-        FakeMcpDevStdioSession,
-    )
-    monkeypatch.setattr(dev_client_core, "_call_tool", fake_call_tool)
+    monkeypatch.setattr(ui_commands, "call_mcp_tool", fake_call_tool)
 
     parser = dev_client._build_parser()
     args = parser.parse_args(
@@ -10475,10 +11219,9 @@ def test_mcp_dev_client_selected_workflow_poll_summarizes_rejection(
     )
 
     response = asyncio.run(
-        dev_client.call_selected_workflow_with_state_poll(
-            dev_client.McpDevServerSpec(sys.executable),
+        dev_client.McpDevCommandSpec.for_name("selected-workflow").run_session(
+            SimpleNamespace(server_spec=dev_client.McpDevServerSpec(sys.executable)),
             args,
-            timeout_seconds=5,
         )
     )
 
@@ -10871,22 +11614,25 @@ def test_mcp_dev_client_viewer_payloads_renders_compact_summary(tmp_path):
         ],
     }
 
-    rendered = dev_client.McpDevCommandSpec.for_name(
-        "viewer-payloads"
-    ).render_response(response, args)
+    rendered = dev_client.McpDevCommandSpec.for_name("viewer-payloads").render_response(
+        response, args
+    )
 
     assert "Viewer payloads: observed=True layers=1" in rendered
-    assert '- image-layer: title="Images" mounted=True items=2 axes=channel,y,x' in rendered
+    assert (
+        '- image-layer: title="Images" mounted=True items=2 axes=channel,y,x'
+        in rendered
+    )
     assert "payload type=image axis=0 aggregate_axis=<none>" in rendered
     assert "components=channel=1, well=A01" in rendered
     assert f"path={streamed_path} (streamed/non-materialized)" in rendered
     assert "payload type=shapes axis=<none> aggregate_axis=<none>" in rendered
+    assert "shape_members=7 returned_shapes=2 semantic_rois=use-viewer-rois" in rendered
+    assert "shape=[96, 96] dtype=uint16 nonzero=9216" in rendered
     assert (
-        "shape_members=7 returned_shapes=2 semantic_rois=use-viewer-rois"
+        "array=included=False:shape=[96, 96]:reason=max_array_elements_exceeded"
         in rendered
     )
-    assert "shape=[96, 96] dtype=uint16 nonzero=9216" in rendered
-    assert "array=included=False:shape=[96, 96]:reason=max_array_elements_exceeded" in rendered
 
 
 def test_mcp_dev_client_probe_viewer_command_projects_tool_arguments():
@@ -10946,7 +11692,7 @@ def test_mcp_dev_client_probe_viewer_command_renders_compact_summary():
     )
 
     assert (
-        'Viewer probe: reachable=True observed=True type=napari '
+        "Viewer probe: reachable=True observed=True type=napari "
         'title="OpenHCS Napari Visualization"'
     ) in rendered
     assert "Window: port=5555 layers=2 component_groups=2 component_items=4" in rendered
@@ -11003,12 +11749,12 @@ def test_mcp_dev_client_window_snapshot_command_renders_resource():
         ],
     }
 
-    rendered = dev_client.McpDevCommandSpec.for_name(
-        "window-snapshot"
-    ).render_response(response, args)
+    rendered = dev_client.McpDevCommandSpec.for_name("window-snapshot").render_response(
+        response, args
+    )
 
     assert (
-        'Window snapshot: captured=True window=global_config '
+        "Window snapshot: captured=True window=global_config "
         'title="Configuration - GlobalPipelineConfig" kind=scope scope=window'
     ) in rendered
     assert (
@@ -11155,7 +11901,7 @@ def test_mcp_viewer_snapshot_binding_projects_request():
         )
 
     result = asyncio.run(call_snapshot_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert payload["captured"] is True
     assert payload["output_dir_path"] == "/tmp/snapshots"
@@ -11210,7 +11956,7 @@ def test_mcp_ui_snapshot_binding_projects_request_and_connection():
         )
 
     result = asyncio.run(call_snapshot_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert payload["captured"] is True
     assert payload["window_id"] == "global_config"
@@ -11224,17 +11970,14 @@ def test_mcp_ui_snapshot_binding_projects_request_and_connection():
     assert request.capture_scope is WindowSnapshotCaptureScope.WINDOW
 
 
-def test_mcp_snapshot_capture_scope_validation_reports_allowed_values():
-    assert (
-        coerce_enum(WindowSnapshotCaptureScope, "widget", "capture_scope").value
-        == "widget"
-    )
+def test_mcp_snapshot_capture_scope_uses_nominal_enum_validation():
+    assert WindowSnapshotCaptureScope("widget").value == "widget"
 
     with pytest.raises(
         ValueError,
-        match="capture_scope must be one of widget, window, native",
+        match="'canvas' is not a valid WindowSnapshotCaptureScope",
     ):
-        coerce_enum(WindowSnapshotCaptureScope, "canvas", "capture_scope")
+        WindowSnapshotCaptureScope("canvas")
 
 
 def test_mcp_dev_client_snapshot_viewer_rejects_invalid_capture_scope():
@@ -11284,13 +12027,19 @@ def test_mcp_dev_client_snapshot_viewer_command_renders_resource():
         ],
     }
 
-    rendered = dev_client.McpDevCommandSpec.for_name(
-        "snapshot-viewer"
-    ).render_response(response, args)
+    rendered = dev_client.McpDevCommandSpec.for_name("snapshot-viewer").render_response(
+        response, args
+    )
 
-    assert 'Viewer snapshot: captured=True type=napari title="Viewer" scope=widget' in rendered
+    assert (
+        'Viewer snapshot: captured=True type=napari title="Viewer" scope=widget'
+        in rendered
+    )
     assert "Image: size=640x480 bytes=12345 mime=image/png" in rendered
-    assert "Resource: path=/tmp/snapshots/viewer.png uri=file:///tmp/snapshots/viewer.png sha256=abc123" in rendered
+    assert (
+        "Resource: path=/tmp/snapshots/viewer.png uri=file:///tmp/snapshots/viewer.png sha256=abc123"
+        in rendered
+    )
 
 
 def test_mcp_dev_client_viewer_state_command_projects_tool_arguments():
@@ -11417,10 +12166,19 @@ def test_mcp_dev_client_viewer_state_command_renders_component_metadata(tmp_path
         args,
     )
 
-    assert 'Viewer state: observed=True type=napari title="OpenHCS Napari Visualization"' in rendered
-    assert "Window: layers=1 ndim=3 axes=channel,y,x current_step=[0, 47, 47]" in rendered
-    assert '- image-layer: title="1. Agent invert" visible=True selected=True' in rendered
-    assert "components: channel=1,2, site=1, timepoint=1, well=A01, z_index=1" in rendered
+    assert (
+        'Viewer state: observed=True type=napari title="OpenHCS Napari Visualization"'
+        in rendered
+    )
+    assert (
+        "Window: layers=1 ndim=3 axes=channel,y,x current_step=[0, 47, 47]" in rendered
+    )
+    assert (
+        '- image-layer: title="1. Agent invert" visible=True selected=True' in rendered
+    )
+    assert (
+        "components: channel=1,2, site=1, timepoint=1, well=A01, z_index=1" in rendered
+    )
     assert "axis values: channel=1,2" in rendered
     assert "payload type=image shape=[96, 96] dtype=uint16 min=0 max=25647" in rendered
     assert f"path={streamed_path} (streamed/non-materialized)" in rendered
@@ -11567,7 +12325,6 @@ def test_mcp_dev_client_validate_viewer_command_renders_compact_summary():
                         "zero_payload_count": 0,
                         "missing_payload_coordinate_count": 0,
                         "duplicate_payload_coordinate_count": 0,
-                        "spatial_mismatch_count": 0,
                         "validation_policy": {
                             "expected_layer_count": 2,
                             "required_axis_labels": ["well", "channel"],
@@ -11613,10 +12370,12 @@ def test_mcp_dev_client_validate_viewer_command_renders_compact_summary():
     assert "Viewer validation: valid=True observed=True layers=2 mounted=2" in rendered
     assert "Payloads: total=4 nonzero=4 zero=0 missing=0" in rendered
     assert (
-        "Policy: expected_layers=2 required_axes=well,channel "
-        "required_components=site"
+        "Policy: expected_layers=2 required_axes=well,channel required_components=site"
     ) in rendered
-    assert '- image-layer: valid=True mounted=True items=1 axes=well,channel,y,x' in rendered
+    assert (
+        "- image-layer: valid=True mounted=True items=1 axes=well,channel,y,x"
+        in rendered
+    )
     assert "components=channel,site,well missing_components=<none>" in rendered
 
 
@@ -11646,7 +12405,6 @@ def test_mcp_dev_client_validate_viewer_renders_axis_component_hint():
                         "zero_payload_count": 0,
                         "missing_payload_coordinate_count": 0,
                         "duplicate_payload_coordinate_count": 0,
-                        "spatial_mismatch_count": 0,
                         "validation_policy": {
                             "required_axis_labels": ["site", "well", "channel"],
                             "required_component_labels": [],
@@ -11702,108 +12460,6 @@ def test_mcp_dev_client_validate_viewer_renders_axis_component_hint():
     assert "axis_as_components=site,well" in rendered
     assert (
         'hint="These labels are present as component metadata rather than mounted axes: site, well."'
-        in rendered
-    )
-
-
-def test_mcp_dev_client_validate_viewer_explains_cross_layer_shape_mismatch():
-    if importlib.util.find_spec("mcp") is None:
-        return
-
-    import openhcs.mcp.dev_client as dev_client
-
-    parser = dev_client._build_parser()
-    args = parser.parse_args(("validate-viewer", "5563"))
-    response = {
-        "errors": [],
-        "results": [
-            {
-                "tool": "openhcs_validate_viewer_window_state",
-                "mcp_error": False,
-                "payloads": [
-                    {
-                        "valid": False,
-                        "observed": True,
-                        "layer_count": 2,
-                        "mounted_layer_count": 2,
-                        "pending_update_count": 0,
-                        "payload_count": 2,
-                        "nonzero_payload_count": 2,
-                        "zero_payload_count": 0,
-                        "missing_payload_coordinate_count": 0,
-                        "duplicate_payload_coordinate_count": 0,
-                        "spatial_mismatch_count": 1,
-                        "validation_policy": {
-                            "expected_layer_count": 2,
-                            "required_axis_labels": [],
-                            "required_component_labels": [],
-                            "require_nonzero_payloads": True,
-                        },
-                        "connection": {
-                            "host": "localhost",
-                            "port": 5563,
-                            "transport_mode": "ipc",
-                        },
-                        "layer_summaries": [
-                            {
-                                "route_key": "pre-stitch",
-                                "title": "Pre-stitch",
-                                "valid": True,
-                                "mounted": True,
-                                "item_count": 1,
-                                "axis_labels": ["channel", "site", "y", "x"],
-                                "stack_axes": ["channel", "site"],
-                                "component_labels": ["channel", "site"],
-                                "payload_count": 1,
-                                "nonzero_payload_count": 1,
-                                "coordinate_gap_count": 0,
-                                "missing_required_axis_labels": [],
-                                "missing_required_component_labels": [],
-                                "axis_labels_present_as_components": [],
-                            },
-                            {
-                                "route_key": "stitched",
-                                "title": "Stitched",
-                                "valid": True,
-                                "mounted": True,
-                                "item_count": 1,
-                                "axis_labels": ["channel", "site", "y", "x"],
-                                "stack_axes": ["channel", "site"],
-                                "component_labels": ["channel", "site"],
-                                "payload_count": 1,
-                                "nonzero_payload_count": 1,
-                                "coordinate_gap_count": 0,
-                                "missing_required_axis_labels": [],
-                                "missing_required_component_labels": [],
-                                "axis_labels_present_as_components": [],
-                            },
-                        ],
-                        "warnings": [
-                            {
-                                "code": "viewer_cross_layer_spatial_mismatch",
-                                "message": "Visible layers have incompatible shapes.",
-                            }
-                        ],
-                    }
-                ],
-            }
-        ],
-    }
-
-    rendered = dev_client.McpDevCommandSpec.for_name("validate-viewer").render_response(
-        response,
-        args,
-    )
-
-    assert "Viewer validation: valid=False observed=True layers=2 mounted=2" in rendered
-    assert (
-        "Interpretation: individual layers are valid; mismatch is across visible "
-        "layers with different spatial shapes."
-    ) in rendered
-    assert "Next:" in rendered
-    assert "`validate-viewer 5563 --route-key <route_key>`" in rendered
-    assert (
-        "`isolate-viewer 5563 <route_key> --selected-route-key <route_key>`"
         in rendered
     )
 
@@ -12030,7 +12686,8 @@ def test_mcp_dev_client_viewer_rois_command_renders_compact_summary():
                                 },
                                 "bounds_yx": [[1, 2], [10, 11]],
                                 "coordinate_count": 128,
-                                "source_spatial_shapes_yx": [[96, 96]],
+                                "spatial_origin_yx": [0, 0],
+                                "source_spatial_shape_yx": [96, 96],
                                 "out_of_source_bounds_count": 0,
                                 "example_rois": [
                                     {
@@ -12065,7 +12722,10 @@ def test_mcp_dev_client_viewer_rois_command_renders_compact_summary():
     ) in rendered
     assert "area=min=10.0,median=42.0,mean=40.0,max=80.0" in rendered
     assert "perimeter=min=8.0,median=20.0,mean=21.0,max=44.0" in rendered
-    assert "coords=128 source_shapes=[[96, 96]] out_of_bounds=0" in rendered
+    assert (
+        "coords=128 source_origin=[0, 0] source_shape=[96, 96] out_of_bounds=0"
+        in rendered
+    )
     assert "example label=cell-1 area=42 centroid=[5, 6]" in rendered
 
 
@@ -12206,7 +12866,7 @@ def test_mcp_viewer_rois_collapses_duplicate_member_metadata():
         )
 
     result = asyncio.run(call_viewer_rois())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert payload["total_roi_count"] == 2
     assert payload["returned_roi_count"] == 2
@@ -12246,14 +12906,14 @@ def test_mcp_sample_viewer_image_auto_selects_single_image_layer():
                         route_key="image-layer",
                         title="Image",
                         mounted=True,
-                        item_count=1,
-                        payloads=(
+                        item_count=5,
+                        payloads=tuple(
                             ViewerWindowPayloadRecord(
-                                route_key="image-layer:0",
+                                route_key=f"image-layer:{index}",
                                 data_type="image",
-                                path="/tmp/image.tif",
+                                path=f"/tmp/image-{index}.tif",
                                 components={"well": "A01", "channel": 1},
-                                axis_indices=(0,),
+                                axis_indices=(index,),
                                 summary={
                                     "shape": [96, 96],
                                     "dtype": "uint16",
@@ -12265,7 +12925,8 @@ def test_mcp_sample_viewer_image_auto_selects_single_image_layer():
                                     "requested": True,
                                     "included": False,
                                 },
-                            ),
+                            )
+                            for index in range(5)
                         ),
                     ),
                     ViewerWindowLayerPayloads(
@@ -12291,7 +12952,7 @@ def test_mcp_sample_viewer_image_auto_selects_single_image_layer():
         )
 
     result = asyncio.run(call_sample_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert viewer_window_service.payload_requests
     request = viewer_window_service.payload_requests[0]
@@ -12300,10 +12961,13 @@ def test_mcp_sample_viewer_image_auto_selects_single_image_layer():
     assert payload["route_key"] == "image-layer"
     assert payload["auto_selected_route_key"] == "image-layer"
     assert payload["candidate_image_route_keys"] == ["image-layer"]
-    assert payload["record_count"] == 1
-    assert {
-        warning["code"] for warning in payload["warnings"]
-    } == {"viewer_image_route_auto_selected"}
+    assert payload["record_count"] == 5
+    assert payload["returned_record_count"] == 3
+    assert payload["records_truncated_count"] == 2
+    assert len(payload["records"]) == 3
+    assert {warning["code"] for warning in payload["warnings"]} == {
+        "viewer_image_route_auto_selected"
+    }
 
 
 def test_mcp_sample_viewer_image_ambiguous_route_returns_no_records():
@@ -12377,7 +13041,7 @@ def test_mcp_sample_viewer_image_ambiguous_route_returns_no_records():
         )
 
     result = asyncio.run(call_sample_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert payload["candidate_image_route_keys"] == [
         "first-image-layer",
@@ -12468,7 +13132,7 @@ def test_mcp_sample_viewer_image_axis_filter_preserves_route_filter():
         )
 
     result = asyncio.run(call_sample_tool())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert payload["record_count"] == 1
     assert payload["raw_image_record_count"] == 2
@@ -12500,6 +13164,8 @@ def test_mcp_dev_client_sample_viewer_image_command_projects_tool_arguments():
             "5",
             "--max-array-elements",
             "20",
+            "--max-records",
+            "2",
         )
     )
 
@@ -12515,6 +13181,7 @@ def test_mcp_dev_client_sample_viewer_image_command_projects_tool_arguments():
     assert call.arguments["width"] == 5
     assert call.arguments["include_array_values"] is False
     assert call.arguments["max_array_elements"] == 20
+    assert call.arguments["max_records"] == 2
 
 
 def test_mcp_dev_client_sample_viewer_image_command_allows_omitted_route_key():
@@ -12601,6 +13268,8 @@ def test_mcp_dev_client_sample_viewer_image_command_renders_compact_summary(tmp_
                         "axis_indices": [0, 1],
                         "array_slices": [[2, 6], [3, 8]],
                         "record_count": 1,
+                        "returned_record_count": 1,
+                        "records_truncated_count": 0,
                         "raw_image_record_count": 1,
                         "total_payload_record_count": 2,
                         "sample_protocol_supported": True,
@@ -12639,7 +13308,10 @@ def test_mcp_dev_client_sample_viewer_image_command_renders_compact_summary(tmp_
     ).render_response(response, args)
 
     assert "Viewer image sample: observed=True route=image-layer axis=0,1" in rendered
-    assert "Records: matched=1 image=1 total_payloads=2 sample_supported=True" in rendered
+    assert (
+        "Records: matched=1 returned=1 truncated=0 image=1 "
+        "total_payloads=2 sample_supported=True" in rendered
+    )
     assert (
         "- image-layer:0: layer=image-layer axis=0,1 "
         f"path={streamed_path} (streamed/non-materialized)"
@@ -13053,10 +13725,12 @@ def test_mcp_dev_client_launches_fresh_current_source_server():
     import openhcs.mcp.dev_client as dev_client
 
     async def call_health_through_dev_client():
-        return await dev_client.call_fresh_mcp_server(
+        args = dev_client._build_parser().parse_args(
+            ("call", "openhcs_health_check", "--json", "--timeout-seconds", "5")
+        )
+        return await dev_client.McpDevCommandSpec.for_name("call").run(
             dev_client.McpDevServerSpec(sys.executable),
-            (dev_client.McpDevToolCall("openhcs_health_check", {}),),
-            timeout_seconds=5,
+            args,
         )
 
     payload = asyncio.run(call_health_through_dev_client())
@@ -13091,6 +13765,8 @@ def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatc
     assert dev_client.McpDevServerSpec(sys.executable).process_args() == (
         "-m",
         "openhcs.mcp",
+        "--surface",
+        "full",
     )
 
 
@@ -13101,13 +13777,15 @@ def test_mcp_dev_client_reports_startup_transport_failure():
     import openhcs.mcp.dev_client as dev_client
 
     async def call_missing_server_module():
-        return await dev_client.call_fresh_mcp_server(
+        args = dev_client._build_parser().parse_args(
+            ("call", "openhcs_health_check", "--json", "--timeout-seconds", "2")
+        )
+        return await dev_client.McpDevCommandSpec.for_name("call").run(
             dev_client.McpDevServerSpec(
                 sys.executable,
                 module_name="openhcs.mcp_missing",
             ),
-            (dev_client.McpDevToolCall("openhcs_health_check", {}),),
-            timeout_seconds=2,
+            args,
         )
 
     payload = asyncio.run(call_missing_server_module())
@@ -13154,7 +13832,8 @@ def test_mcp_stdio_bootstrap_failure_keeps_transport_open(tmp_path):
             (
                 "import openhcs.mcp.server as openhcs_mcp_server",
                 "",
-                "def fail_build_server():",
+                "def fail_build_server(**kwargs):",
+                "    del kwargs",
                 "    raise RuntimeError('stdio construction failed')",
                 "",
                 "openhcs_mcp_server.build_server = fail_build_server",
@@ -13189,8 +13868,8 @@ def test_mcp_stdio_bootstrap_failure_keeps_transport_open(tmp_path):
                 return health, failure
 
     health, failure = asyncio.run(call_stdio_server())
-    health_payload = json.loads(health.content[0].text)
-    failure_payload = json.loads(failure.content[0].text)
+    health_payload = json.loads(_direct_tool_text(health))
+    failure_payload = json.loads(_direct_tool_text(failure))
 
     assert health_payload["schema_version"] == "openhcs.mcp.bootstrap.v1"
     assert health_payload["ok"] is False
@@ -13212,7 +13891,7 @@ def test_mcp_bootstrap_failure_server_reports_startup_exception():
         )
 
     result = asyncio.run(call_bootstrap_failure_tool())
-    payload = json.loads(result[0][0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert payload["schema_version"] == "openhcs.mcp.bootstrap.v1"
     assert payload["ok"] is False
@@ -13227,7 +13906,8 @@ def test_mcp_bootstrap_wraps_server_construction_failure(monkeypatch):
     if importlib.util.find_spec("mcp") is None:
         return
 
-    def fail_build_server():
+    def fail_build_server(**kwargs):
+        del kwargs
         raise RuntimeError("construction failed")
 
     monkeypatch.setattr(server, "build_server", fail_build_server)
@@ -13240,7 +13920,7 @@ def test_mcp_bootstrap_wraps_server_construction_failure(monkeypatch):
         )
 
     result = asyncio.run(call_bootstrap_failure_tool())
-    payload = json.loads(result[0][0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert payload["schema_version"] == "openhcs.mcp.bootstrap.v1"
     assert payload["ok"] is False
@@ -13255,13 +13935,16 @@ def test_mcp_bootstrap_wraps_server_run_failure(monkeypatch):
     phases: list[bootstrap.McpBootstrapFailurePhase] = []
     messages: list[str] = []
     failure_server_runs: list[bool] = []
+    transports: list[str] = []
 
     class FailingRunServer:
-        def run(self) -> None:
+        def run(self, *, transport: str) -> None:
+            transports.append(transport)
             raise RuntimeError("run failed")
 
     class FailureReportServer:
-        def run(self) -> None:
+        def run(self, *, transport: str) -> None:
+            transports.append(transport)
             failure_server_runs.append(True)
 
     def build_failure_server(
@@ -13290,6 +13973,23 @@ def test_mcp_bootstrap_wraps_server_run_failure(monkeypatch):
     assert phases == [bootstrap.McpBootstrapFailurePhase.RUN_SERVER]
     assert messages == ["run failed"]
     assert failure_server_runs == [True]
+    assert transports == ["stdio", "stdio"]
+
+
+def test_mcp_bootstrap_main_quiets_info_logs_and_restores_logging(monkeypatch):
+    observed_disable_levels: list[int] = []
+    original_disable_level = logging.root.manager.disable
+
+    def record_run(_surface_profile) -> None:
+        observed_disable_levels.append(logging.root.manager.disable)
+
+    monkeypatch.delenv(bootstrap.MCP_VERBOSE_ENVIRONMENT_VARIABLE, raising=False)
+    monkeypatch.setattr(bootstrap, "run_bootstrapped_server", record_run)
+
+    bootstrap.main(["--surface", "core"])
+
+    assert observed_disable_levels == [logging.INFO]
+    assert logging.root.manager.disable == original_disable_level
 
 
 def test_mcp_tool_adapter_returns_error_payload_instead_of_raising(monkeypatch):
@@ -13322,7 +14022,7 @@ def test_mcp_tool_adapter_returns_error_payload_instead_of_raising(monkeypatch):
     results = asyncio.run(call_bad_tools())
 
     for tool_name, result in results:
-        payload = json.loads(result[0].text)
+        payload = json.loads(_direct_tool_text(result))
         assert payload["schema_version"] == "openhcs.agent.v1"
         assert payload["ok"] is False
         assert payload["tool"] == tool_name
@@ -13367,15 +14067,18 @@ def test_execution_capabilities_distinguish_headless_and_ui_owned_runs():
         for capability in get_capability_registry().capabilities
     }
 
-    assert "headless execution session" in capabilities[
-        "openhcs_create_orchestrator_session"
-    ].description
-    assert "does not update the running UI PlateManager" in capabilities[
-        "openhcs_submit_pipeline_execution"
-    ].description
-    assert "ObjectState snapshots" in capabilities[
-        "openhcs_ui_selected_plate_workflow"
-    ].description
+    assert (
+        "headless execution session"
+        in capabilities["openhcs_create_orchestrator_session"].description
+    )
+    assert (
+        "does not update the running UI PlateManager"
+        in capabilities["openhcs_submit_pipeline_execution"].description
+    )
+    assert (
+        "ObjectState snapshots"
+        in capabilities["openhcs_ui_selected_plate_workflow"].description
+    )
 
 
 def test_viewer_capabilities_advertise_payload_coordinate_validation():
@@ -13406,10 +14109,7 @@ def test_viewer_capabilities_advertise_payload_coordinate_validation():
     assert isolate_capability.output_type == "ViewerWindowLayerIsolationResult"
     assert "mutates_viewer_window_state" in isolate_capability.side_effects
     assert "viewer_coordinate_coverage" in validation_capability.data_exposure
-    assert (
-        "viewer_payload_spatial_compatibility"
-        in validation_capability.data_exposure
-    )
+    assert "viewer_payload_spatial_compatibility" in validation_capability.data_exposure
     assert "routed coordinate coverage" in validation_capability.description
 
 
@@ -13457,6 +14157,19 @@ def test_mcp_server_exposes_ui_bridge_tools():
     assert "openhcs_ui_selected_plate_workflow" in tool_names
     assert "openhcs_ui_restore_snapshot" in tool_names
     assert "openhcs_ui_get_operation_status" in tool_names
+    assert "openhcs_ui_wait_for_operation" in tool_names
+    wait_tool = next(
+        tool for tool in tools if tool.name == "openhcs_ui_wait_for_operation"
+    )
+    wait_properties = wait_tool.inputSchema["properties"]
+    assert set(wait_properties) == {
+        "operation_id",
+        "timeout_seconds",
+        "poll_interval_seconds",
+        "connection",
+    }
+    assert wait_properties["timeout_seconds"]["default"] == 30.0
+    assert wait_properties["poll_interval_seconds"]["default"] == 0.5
 
 
 def test_mcp_ui_bridge_timeout_policy_is_fail_fast():
@@ -13524,7 +14237,9 @@ def test_mcp_dev_client_viewer_connection_timeout_fails_before_mcp_call():
 
     assert valid_call.arguments["timeout_ms"] == 2000
 
-    invalid_args = parser.parse_args(("validate-viewer", "5555", "--timeout-ms", "2001"))
+    invalid_args = parser.parse_args(
+        ("validate-viewer", "5555", "--timeout-ms", "2001")
+    )
     with pytest.raises(dev_client.McpDevCliUsageError, match="--timeout-ms: .*2000ms"):
         dev_client._calls_from_args(invalid_args)
 
@@ -13541,7 +14256,9 @@ def test_mcp_dev_client_viewer_payload_timeout_fails_before_mcp_call():
 
     assert valid_call.arguments["timeout_ms"] == 2000
 
-    invalid_args = parser.parse_args(("viewer-payloads", "5555", "--timeout-ms", "2001"))
+    invalid_args = parser.parse_args(
+        ("viewer-payloads", "5555", "--timeout-ms", "2001")
+    )
     with pytest.raises(dev_client.McpDevCliUsageError, match="--timeout-ms: .*2000ms"):
         dev_client._calls_from_args(invalid_args)
 
@@ -13568,8 +14285,7 @@ def test_mcp_viewer_connection_fields_project_timeout_policy():
 
     assert fields.to_control_args().timeout_ms == 750
     assert (
-        fields.to_control_args(server.McpViewerCommandTimeoutPolicy).timeout_ms
-        == 2000
+        fields.to_control_args(server.McpViewerCommandTimeoutPolicy).timeout_ms == 2000
     )
 
 
@@ -13660,8 +14376,7 @@ def test_mcp_viewer_mutation_tools_default_to_command_timeout():
     )
     assert viewer_window_service.state_requests
     assert all(
-        request.timeout_ms == 2000
-        for request in viewer_window_service.state_requests
+        request.timeout_ms == 2000 for request in viewer_window_service.state_requests
     )
 
 
@@ -13745,7 +14460,7 @@ def test_mcp_isolate_viewer_reports_applied_when_final_state_times_out():
         )
 
     result = asyncio.run(call_isolate_viewer())
-    payload = json.loads(result[0].text)
+    payload = json.loads(_direct_tool_text(result))
 
     assert payload["applied"] is True
     assert payload["observed"] is False

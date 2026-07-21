@@ -20,7 +20,7 @@ from openhcs.core.equivalence.policy import (
     runtime_measurement_dialect_for_cache_id,
     runtime_source_name_tokens,
 )
-from openhcs.core.runtime_semantics import (
+from openhcs.core.runtime_measurements import (
     MeasurementScope,
     MeasurementStatistic,
     MeasurementSubject,
@@ -137,34 +137,15 @@ class RuntimeMeasurementSourcePair:
     def from_source_name(
         cls,
         source_name: str | None,
-        known_source_names: Iterable[str] = (),
     ) -> "RuntimeMeasurementSourcePair | None":
-        """Resolve a dialect source identity into an ordered source pair."""
+        """Decode the canonical ordered source-pair identity."""
         normalized = normalize_runtime_source_name(source_name)
         if normalized is None:
             return None
         direct_parts = tuple(part for part in normalized.split("__") if part)
         if len(direct_parts) == 2:
             return cls(direct_parts[0], direct_parts[1])
-
-        source_tokens = tuple(token for token in normalized.split("_") if token)
-        known_sources = cls.known_single_source_names(known_source_names)
-        for split_index in range(1, len(source_tokens)):
-            left = "_".join(source_tokens[:split_index])
-            right = "_".join(source_tokens[split_index:])
-            if left in known_sources and right in known_sources:
-                return cls(left, right)
         return None
-
-    @staticmethod
-    def known_single_source_names(known_source_names: Iterable[str]) -> frozenset[str]:
-        """Return normalized non-pair source names available for pair decoding."""
-        return frozenset(
-            normalized
-            for source_name in known_source_names
-            if (normalized := normalize_runtime_source_name(source_name)) is not None
-            and "__" not in normalized
-        )
 
     @property
     def source_name(self) -> str:
@@ -340,7 +321,6 @@ class RuntimeMeasurementFeatureKey:
         self,
         measurement_dialect: RuntimeMeasurementDialect,
         feature_families: Iterable[str],
-        known_source_names: Iterable[str] = (),
     ) -> RuntimeMeasurementSourcePair | None:
         """Return the ordered source-pair identity carried by this key."""
         return RuntimeMeasurementSourcePair.from_source_name(
@@ -348,7 +328,6 @@ class RuntimeMeasurementFeatureKey:
                 measurement_dialect,
                 feature_families,
             ),
-            known_source_names,
         )
 
     def source_token_counter(
@@ -395,13 +374,11 @@ class RuntimeMeasurementFeatureKey:
         self,
         measurement_dialect: RuntimeMeasurementDialect,
         feature_families: Iterable[str],
-        known_source_names: Iterable[str] = (),
     ) -> "RuntimeMeasurementFeatureKey | None":
         """Return this feature key with source-pair orientation reversed."""
         pair = self.source_pair(
             measurement_dialect,
             feature_families,
-            known_source_names,
         )
         if pair is None:
             return None
@@ -962,22 +939,24 @@ def _directional_pair_feature_name_and_source(
     if alias is None or source_name is None:
         return feature_name, source_name
 
-    source_parts = tuple(part for part in source_name.split("__") if part)
-    if len(source_parts) != 2:
+    source_pair = RuntimeMeasurementSourcePair.from_source_name(source_name)
+    if source_pair is None:
         return feature_name, source_name
 
     canonical_feature_name, direction_index = alias
     directed_source_name = (
-        "__".join(reversed(source_parts)) if direction_index == 2 else source_name
+        source_pair.reversed_source_name if direction_index == 2 else source_pair.source_name
     )
     return canonical_feature_name, directed_source_name
 
 
 def _canonical_pair_source_name(source_name: str) -> str:
-    source_parts = tuple(part for part in source_name.split("__") if part)
-    if len(source_parts) != 2:
+    source_pair = RuntimeMeasurementSourcePair.from_source_name(source_name)
+    if source_pair is None:
         return source_name
-    return "__".join(sorted(source_parts))
+    return RuntimeMeasurementSourcePair(
+        *sorted((source_pair.first, source_pair.second))
+    ).source_name
 
 
 @lru_cache(maxsize=1024)

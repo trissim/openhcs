@@ -35,6 +35,7 @@ from openhcs.agent.ui_bridge_identities import (
     UiStateSurfaceIdentityDeclarationBase,
 )
 from openhcs.mcp.dev_client_rendering import (
+    CatalogRenderOptions,
     CodeDocumentRenderOptions,
     McpDevOutputRenderer,
     McpDevPayloadProjection,
@@ -238,20 +239,68 @@ class UiStateSurfaceCatalogRenderer(McpDevOutputRenderer):
     """Compact renderer for UI state-surface catalogs."""
 
     output_contract = UiStateSurfaceCatalog
+    render_options_type = CatalogRenderOptions
 
     @classmethod
-    def render(cls, response: JsonObject) -> str:
+    def render_with_options(
+        cls,
+        response: JsonObject,
+        options: CatalogRenderOptions,
+    ) -> str:
+        return cls.render(
+            response,
+            contains=options.contains,
+            limit=options.limit,
+        )
+
+    @classmethod
+    def render(
+        cls,
+        response: JsonObject,
+        *,
+        contains: str | None = None,
+        limit: int = 20,
+    ) -> str:
         payload = McpDevPayloadProjection.first_tool_payload(response)
         if payload is None:
             return json.dumps(response, indent=2, sort_keys=True)
 
-        surfaces = McpDevPayloadProjection.sequence_of_mappings(payload.get("surfaces"))
-        lines = [f"State surfaces: count={len(surfaces)}"]
+        all_surfaces = McpDevPayloadProjection.sequence_of_mappings(
+            payload.get("surfaces")
+        )
+        surfaces = cls._matching_surfaces(all_surfaces, contains)
+        visible_surfaces = surfaces[: max(limit, 0)]
+        lines = [
+            "State surfaces: "
+            f"count={len(all_surfaces)} matched={len(surfaces)} "
+            f"shown={len(visible_surfaces)}"
+        ]
+        if contains:
+            lines.append(f"Filter: contains={contains}")
         ObjectStateScopeRenderer._append_messages(lines, payload)
-        if surfaces:
+        if visible_surfaces:
             lines.append("Surfaces:")
-            lines.extend(cls._surface_lines(surfaces))
+            lines.extend(cls._surface_lines(visible_surfaces))
+        if len(visible_surfaces) < len(surfaces):
+            lines.append(
+                f"...<truncated {len(surfaces) - len(visible_surfaces)} surfaces>"
+            )
         return "\n".join(lines)
+
+    @classmethod
+    def _matching_surfaces(
+        cls,
+        surfaces: tuple[Mapping[str, JsonValue], ...],
+        contains: str | None,
+    ) -> tuple[Mapping[str, JsonValue], ...]:
+        if not contains:
+            return surfaces
+        needle = contains.casefold()
+        return tuple(
+            surface
+            for surface in surfaces
+            if needle in cls._surface_line(surface).casefold()
+        )
 
     @classmethod
     def _surface_lines(
@@ -1048,23 +1097,69 @@ class CodeDocumentCatalogRenderer(McpDevOutputRenderer):
     """Compact renderer for UI code-document catalogs."""
 
     output_contract = UiCodeDocumentCatalog
+    render_options_type = CatalogRenderOptions
 
     @classmethod
-    def render(cls, response: JsonObject) -> str:
+    def render_with_options(
+        cls,
+        response: JsonObject,
+        options: CatalogRenderOptions,
+    ) -> str:
+        return cls.render(
+            response,
+            contains=options.contains,
+            limit=options.limit,
+        )
+
+    @classmethod
+    def render(
+        cls,
+        response: JsonObject,
+        *,
+        contains: str | None = None,
+        limit: int = 20,
+    ) -> str:
         payload = McpDevPayloadProjection.first_tool_payload(response)
         if payload is None:
             return json.dumps(response, indent=2, sort_keys=True)
 
-        documents = McpDevPayloadProjection.sequence_of_mappings(
+        all_documents = McpDevPayloadProjection.sequence_of_mappings(
             payload.get("documents")
         )
-        lines = [f"Code documents: count={len(documents)}"]
+        documents = cls._matching_documents(all_documents, contains)
+        visible_documents = documents[: max(limit, 0)]
+        lines = [
+            "Code documents: "
+            f"count={len(all_documents)} matched={len(documents)} "
+            f"shown={len(visible_documents)}"
+        ]
+        if contains:
+            lines.append(f"Filter: contains={contains}")
         ObjectStateScopeRenderer._append_messages(lines, payload)
-        if documents:
+        if visible_documents:
             lines.append("Documents:")
-            for document in documents:
+            for document in visible_documents:
                 lines.append(cls._document_line(document))
+        if len(visible_documents) < len(documents):
+            lines.append(
+                f"...<truncated {len(documents) - len(visible_documents)} documents>"
+            )
         return "\n".join(lines)
+
+    @classmethod
+    def _matching_documents(
+        cls,
+        documents: tuple[Mapping[str, JsonValue], ...],
+        contains: str | None,
+    ) -> tuple[Mapping[str, JsonValue], ...]:
+        if not contains:
+            return documents
+        needle = contains.casefold()
+        return tuple(
+            document
+            for document in documents
+            if needle in cls._document_line(document).casefold()
+        )
 
     @classmethod
     def _document_line(cls, document: Mapping[str, JsonValue]) -> str:

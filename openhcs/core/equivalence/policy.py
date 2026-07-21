@@ -17,12 +17,14 @@ from openhcs.core.runtime_identifier import (
     normalize_runtime_source_name,
     runtime_source_name_tokens,
 )
-from openhcs.core.runtime_semantics import (
+from openhcs.core.runtime_measurements import (
+    DEFAULT_RUNTIME_MEASUREMENT_ROW_IDENTITY_CONTRACT,
     MeasurementScope,
     RuntimeMeasurementFeatureRelation,
     RuntimeMeasurementFeatureRelationDeclaration,
     RuntimeMeasurementFeatureRelationDeclarationCollection,
     RuntimeMeasurementFeatureSemanticMarker,
+    RuntimeMeasurementRowIdentityContract,
 )
 
 
@@ -280,54 +282,6 @@ class RuntimeMeasurementRowQualifierSequence:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class RuntimeMeasurementRowIdentityContract:
-    """Declarative identity-field precedence for measurement table rows."""
-
-    primary_image_fields: frozenset[str] = frozenset({"slice_index"})
-    fallback_image_fields: frozenset[str] = frozenset({"image_number", "image_id"})
-
-    def __post_init__(self) -> None:
-        primary_image_fields = frozenset(
-            normalize_runtime_identifier(field_name)
-            for field_name in self.primary_image_fields
-            if str(field_name).strip()
-        )
-        fallback_image_fields = frozenset(
-            normalize_runtime_identifier(field_name)
-            for field_name in self.fallback_image_fields
-            if str(field_name).strip()
-        )
-        overlap = primary_image_fields & fallback_image_fields
-        if overlap:
-            raise ValueError(
-                "RuntimeMeasurementRowIdentityContract fields must be disjoint: "
-                f"{sorted(overlap)!r}."
-            )
-        object.__setattr__(self, "primary_image_fields", primary_image_fields)
-        object.__setattr__(self, "fallback_image_fields", fallback_image_fields)
-
-    @property
-    def image_identity_fields(self) -> frozenset[str]:
-        """Return every field that can identify an image row."""
-        return self.primary_image_fields | self.fallback_image_fields
-
-    def selected_image_identity_fields(
-        self,
-        normalized_present_fields: frozenset[str],
-    ) -> frozenset[str]:
-        """Return the identity fields that own a row under this contract."""
-        primary_fields = normalized_present_fields & self.primary_image_fields
-        if primary_fields:
-            return primary_fields
-        return normalized_present_fields & self.fallback_image_fields
-
-
-DEFAULT_RUNTIME_MEASUREMENT_ROW_IDENTITY_CONTRACT = (
-    RuntimeMeasurementRowIdentityContract()
-)
-
-
 _DEFAULT_MEASUREMENT_ROW_QUALIFIERS = (
     RuntimeMeasurementRowQualifier(("scale",)),
     RuntimeMeasurementRowQualifier(
@@ -354,6 +308,10 @@ class RuntimeMeasurementDialect:
 
     category_prefixes: tuple[tuple[str, ...], ...] = ()
     category_prefixes_provider: Callable[[], Iterable[tuple[str, ...]]] | None = None
+    primary_category_prefixes: tuple[tuple[str, ...], ...] = ()
+    primary_category_prefixes_provider: (
+        Callable[[], Iterable[tuple[str, ...]]] | None
+    ) = None
     feature_part_aliases: Mapping[tuple[str, ...], tuple[str, ...]] = field(
         default_factory=lambda: _EMPTY_FEATURE_ALIASES
     )
@@ -391,6 +349,10 @@ class RuntimeMeasurementDialect:
     threshold_qualifier_tokens: frozenset[str] = frozenset()
     source_qualifier_prefix_tokens: frozenset[str] = frozenset()
     source_qualifier_suffix_tokens: frozenset[str] = frozenset()
+    non_measurement_field_prefixes_provider: Callable[[], Iterable[str]] | None = None
+    spatial_grid_measurement_feature_name_provider: (
+        Callable[[str, str], str] | None
+    ) = None
     row_qualifiers: tuple[RuntimeMeasurementRowQualifier, ...] = (
         _DEFAULT_MEASUREMENT_ROW_QUALIFIERS
     )
@@ -435,6 +397,14 @@ class RuntimeMeasurementDialect:
             tuple(
                 tuple(part for part in prefix if part)
                 for prefix in self.category_prefixes
+            ),
+        )
+        object.__setattr__(
+            self,
+            "primary_category_prefixes",
+            tuple(
+                tuple(part for part in prefix if part)
+                for prefix in self.primary_category_prefixes
             ),
         )
         object.__setattr__(
@@ -635,6 +605,7 @@ class RuntimeMeasurementDialect:
             )
         for field_name in (
             "category_prefixes_provider",
+            "primary_category_prefixes_provider",
             "feature_part_aliases_provider",
             "source_feature_prefixes_provider",
             "calculated_feature_prefixes_provider",
@@ -651,11 +622,69 @@ class RuntimeMeasurementDialect:
                 raise TypeError(
                     f"RuntimeMeasurementDialect.{field_name} must be callable."
                 )
+        if self.non_measurement_field_prefixes_provider is not None and not callable(
+            self.non_measurement_field_prefixes_provider
+        ):
+            raise TypeError(
+                "RuntimeMeasurementDialect.non_measurement_field_prefixes_provider "
+                "must be callable."
+            )
+        if (
+            self.spatial_grid_measurement_feature_name_provider is not None
+            and not callable(self.spatial_grid_measurement_feature_name_provider)
+        ):
+            raise TypeError(
+                "RuntimeMeasurementDialect."
+                "spatial_grid_measurement_feature_name_provider must be callable."
+            )
+
+    @property
+    def non_measurement_field_prefixes(self) -> tuple[str, ...]:
+        """Return normalized structural-field prefixes declared by the dialect."""
+        return _resolved_non_measurement_field_prefixes(
+            runtime_measurement_dialect_cache_id(self)
+        )
 
     def resolved_category_prefixes(self) -> tuple[tuple[str, ...], ...]:
         """Return static and provider-supplied measurement category prefixes."""
         return _resolved_category_prefixes(
             runtime_measurement_dialect_cache_id(self)
+        )
+
+    def spatial_grid_measurement_feature_name(
+        self,
+        grid_name: str,
+        field_name: str,
+    ) -> str:
+        """Render one canonical spatial-grid field in this dialect."""
+
+        normalized_grid_name = normalize_runtime_identifier(grid_name)
+        normalized_field_name = normalize_runtime_identifier(field_name)
+        provider = self.spatial_grid_measurement_feature_name_provider
+        if provider is None:
+            return "_".join(
+                ("spatial_grid", normalized_grid_name, normalized_field_name)
+            )
+        return normalize_runtime_identifier(
+            provider(normalized_grid_name, normalized_field_name)
+        )
+
+    def resolved_primary_category_prefixes(self) -> tuple[tuple[str, ...], ...]:
+        """Return category prefixes declared canonical by their nominal owners."""
+        return _resolved_primary_category_prefixes(
+            runtime_measurement_dialect_cache_id(self)
+        )
+
+    def feature_name_has_primary_category(self, feature_name: str) -> bool:
+        """Return whether a raw feature uses an owner-declared primary category."""
+        parts = tuple(
+            part
+            for part in normalize_runtime_identifier(feature_name).split("_")
+            if part
+        )
+        return any(
+            len(parts) > len(prefix) and parts[: len(prefix)] == prefix
+            for prefix in self.resolved_primary_category_prefixes()
         )
 
     def resolved_feature_part_aliases(self) -> Mapping[tuple[str, ...], tuple[str, ...]]:
@@ -1055,6 +1084,23 @@ def _resolved_category_prefixes(
 
 
 @lru_cache(maxsize=64)
+def _resolved_primary_category_prefixes(
+    dialect_id: int,
+) -> tuple[tuple[str, ...], ...]:
+    dialect = runtime_measurement_dialect_for_cache_id(dialect_id)
+    provider = dialect.primary_category_prefixes_provider
+    provided = () if provider is None else provider()
+    return tuple(
+        dict.fromkeys(
+            (
+                *dialect.primary_category_prefixes,
+                *(tuple(part for part in prefix if part) for prefix in provided),
+            )
+        )
+    )
+
+
+@lru_cache(maxsize=64)
 def _resolved_feature_part_aliases(
     dialect_id: int,
 ) -> Mapping[tuple[str, ...], tuple[str, ...]]:
@@ -1190,6 +1236,17 @@ def _resolved_threshold_sensitive_pair_feature_names(
             *dialect.threshold_sensitive_pair_feature_names,
             *provided,
         )
+    )
+
+
+@lru_cache(maxsize=64)
+def _resolved_non_measurement_field_prefixes(dialect_id: int) -> tuple[str, ...]:
+    dialect = runtime_measurement_dialect_for_cache_id(dialect_id)
+    provider = dialect.non_measurement_field_prefixes_provider
+    return tuple(
+        normalize_runtime_identifier(prefix).rstrip("_") + "_"
+        for prefix in (() if provider is None else provider())
+        if str(prefix).strip()
     )
 
 

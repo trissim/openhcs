@@ -16,6 +16,7 @@ from openhcs.agent.knowledge_manifest import (
     DEFAULT_KNOWLEDGE_BASE_MANIFEST_PATH,
     KnowledgeBaseManifestField,
     default_repo_root,
+    packaged_knowledge_base_root,
 )
 from openhcs.agent.dto.common import (
     AgentError,
@@ -48,6 +49,8 @@ MAX_SEARCH_HITS = 25
 class KnowledgeBaseIssueCode(str, Enum):
     DOCUMENT_MISSING = "knowledge_document_missing"
     DOCUMENT_UNKNOWN = "knowledge_document_unknown"
+    OFFICIAL30_CONVERSION_FAILED = "official30_conversion_failed"
+    OFFICIAL30_SOURCE_MISSING = "official30_source_missing"
     QUERY_EMPTY = "knowledge_query_empty"
     SECTION_UNKNOWN = "knowledge_section_unknown"
 
@@ -192,6 +195,19 @@ class _Official30CaseModuleInventory:
 
 
 @dataclass(frozen=True, slots=True)
+class _Official30CaseProjection:
+    case: Mapping[str, JsonValue]
+    lines: tuple[str, ...]
+    source_heading_offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class _Official30RecipeProjection:
+    lines: tuple[str, ...]
+    source_cases_by_heading_line: tuple[tuple[int, Mapping[str, JsonValue]], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class _ExampleSourceFile:
     relative_path: Path
     source_text: str
@@ -245,7 +261,9 @@ def _manifest_document_spec(document: JsonObject) -> KnowledgeBaseDocumentSpec:
     )
 
 
-def _manifest_value(document: JsonObject, field: KnowledgeBaseManifestField) -> JsonValue:
+def _manifest_value(
+    document: JsonObject, field: KnowledgeBaseManifestField
+) -> JsonValue:
     if field.value not in document:
         raise ValueError(f"Knowledge-base manifest document missing {field.value!r}")
     return document[field.value]
@@ -254,14 +272,18 @@ def _manifest_value(document: JsonObject, field: KnowledgeBaseManifestField) -> 
 def _manifest_string(document: JsonObject, field: KnowledgeBaseManifestField) -> str:
     value = _manifest_value(document, field)
     if not isinstance(value, str):
-        raise ValueError(f"Knowledge-base manifest field {field.value!r} must be a string")
+        raise ValueError(
+            f"Knowledge-base manifest field {field.value!r} must be a string"
+        )
     return value
 
 
 def _manifest_int(document: JsonObject, field: KnowledgeBaseManifestField) -> int:
     value = _manifest_value(document, field)
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"Knowledge-base manifest field {field.value!r} must be an integer")
+        raise ValueError(
+            f"Knowledge-base manifest field {field.value!r} must be an integer"
+        )
     return value
 
 
@@ -271,7 +293,9 @@ def _manifest_sequence(
 ) -> tuple[JsonObject, ...]:
     value = _manifest_value(document, field)
     if not isinstance(value, list):
-        raise ValueError(f"Knowledge-base manifest field {field.value!r} must be a list")
+        raise ValueError(
+            f"Knowledge-base manifest field {field.value!r} must be a list"
+        )
     for item in value:
         if not isinstance(item, Mapping):
             raise ValueError(
@@ -286,7 +310,9 @@ def _manifest_string_tuple(
 ) -> tuple[str, ...]:
     value = _manifest_value(document, field)
     if not isinstance(value, list):
-        raise ValueError(f"Knowledge-base manifest field {field.value!r} must be a list")
+        raise ValueError(
+            f"Knowledge-base manifest field {field.value!r} must be a list"
+        )
     for item in value:
         if not isinstance(item, str):
             raise ValueError(
@@ -302,8 +328,12 @@ class _ParsedDocument:
     text: str
     lines: tuple[str, ...]
     sections: tuple[KnowledgeBaseSectionSummary, ...]
+    official30_source_cases: tuple[tuple[str, Mapping[str, JsonValue]], ...] = ()
+    official30_manifest: Mapping[str, JsonValue] | None = None
 
-    def source_projection(self, repo_root: Path) -> KnowledgeBaseDocumentSourceProjection:
+    def source_projection(
+        self, repo_root: Path
+    ) -> KnowledgeBaseDocumentSourceProjection:
         return KnowledgeBaseDocumentSourceProjection(
             source_path=self.source_path.relative_to(repo_root).as_posix(),
             section_count=len(self.sections),
@@ -320,6 +350,15 @@ class _ParsedDocument:
             section.start_line - 1 : max(section.start_line, next_heading_line - 1)
         ]
 
+    def official30_source_case(
+        self,
+        section_id: str,
+    ) -> Mapping[str, JsonValue] | None:
+        for source_section_id, case in self.official30_source_cases:
+            if source_section_id == section_id:
+                return case
+        return None
+
 
 @dataclass(frozen=True, slots=True)
 class KnowledgeBaseRootPolicy:
@@ -328,11 +367,20 @@ class KnowledgeBaseRootPolicy:
 
     def repo_root(self) -> Path:
         candidate_roots = tuple(
-            root.resolve()
-            for root in self.path_policy.readable_roots.roots
+            root.resolve() for root in self.path_policy.readable_roots.roots
         )
         if not candidate_roots:
             raise ValueError("Knowledge base requires at least one readable root")
+        default_root = default_repo_root().resolve()
+        packaged_root = packaged_knowledge_base_root().resolve()
+        if default_root == packaged_root:
+            candidate_roots = tuple(dict.fromkeys((default_root, *candidate_roots)))
+        elif default_root not in candidate_roots and any(
+            default_root == candidate_root
+            or default_root.is_relative_to(candidate_root)
+            for candidate_root in candidate_roots
+        ):
+            candidate_roots = (*candidate_roots, default_root)
         canonical_root = self._canonical_document_root(candidate_roots)
         if canonical_root is not None:
             return canonical_root
@@ -485,9 +533,7 @@ class KnowledgeBaseSearchQuery:
 
     def snippet(self, lines: tuple[str, ...]) -> str:
         scored_lines = tuple(
-            (self.score_text(line)[0], line.strip())
-            for line in lines
-            if line.strip()
+            (self.score_text(line)[0], line.strip()) for line in lines if line.strip()
         )
         for _, line in sorted(scored_lines, key=lambda item: item[0], reverse=True):
             if line:
@@ -514,6 +560,9 @@ class KnowledgeBaseService:
         self._specs_by_id = {spec.document.document_id: spec for spec in document_specs}
         if len(self._specs_by_id) != len(document_specs):
             raise ValueError("Duplicate knowledge-base document id")
+        source_paths = {spec.document.source_path for spec in document_specs}
+        if len(source_paths) != len(document_specs):
+            raise ValueError("Duplicate knowledge-base document source path")
 
     @classmethod
     def from_path_policy(
@@ -547,8 +596,7 @@ class KnowledgeBaseService:
         return KnowledgeBaseCatalog(
             schema_version=SCHEMA_VERSION,
             documents=tuple(
-                self._document_summary(parsed)
-                for parsed in parsed_documents
+                self._document_summary(parsed) for parsed in parsed_documents
             ),
             warnings=self._missing_document_warnings(),
         )
@@ -606,7 +654,21 @@ class KnowledgeBaseService:
                         ),
                     ),
                 )
-            selected_lines = section.span.line_slice(parsed.lines)
+            selected_lines, selection_error = self._selected_section_content_lines(
+                parsed,
+                section,
+            )
+            if selection_error is not None:
+                return KnowledgeBaseDocument(
+                    schema_version=SCHEMA_VERSION,
+                    document=self._document_summary(parsed),
+                    sections=parsed.sections,
+                    content="",
+                    selected_section_id=section_id,
+                    truncated=False,
+                    max_chars=bounds.effective_max_chars(MAX_DOCUMENT_CHARS),
+                    errors=(selection_error,),
+                )
 
         content, truncated, effective_max_chars = bounds.apply(
             "\n".join(selected_lines),
@@ -625,24 +687,28 @@ class KnowledgeBaseService:
     def _document_content_lines(self, parsed: _ParsedDocument) -> tuple[str, ...]:
         return parsed.lines
 
+    def _selected_section_content_lines(
+        self,
+        parsed: _ParsedDocument,
+        section: KnowledgeBaseSectionSummary,
+    ) -> tuple[tuple[str, ...], AgentError | None]:
+        source_case = parsed.official30_source_case(section.section_id)
+        if source_case is None:
+            return section.span.line_slice(parsed.lines), None
+        if parsed.official30_manifest is None:
+            raise ValueError("Official30 source case has no owning manifest.")
+        return self._official30_source_section_lines(
+            manifest=parsed.official30_manifest,
+            case=source_case,
+        )
+
     @staticmethod
     def _display_lines(
         spec: KnowledgeBaseDocumentSpec,
-        text: str,
         lines: tuple[str, ...],
         *,
         repo_root: Path,
-        source_path: Path,
     ) -> tuple[str, ...]:
-        manifest = KnowledgeBaseService._official30_recipe_manifest(text)
-        if manifest is not None:
-            return KnowledgeBaseService._official30_recipe_content_lines(
-                spec,
-                manifest,
-                lines,
-                repo_root=repo_root,
-                source_path=source_path,
-            )
         if spec.document.document_id == "openhcs_example_corpus_map":
             return (
                 *lines,
@@ -703,17 +769,48 @@ class KnowledgeBaseService:
         return cast(Mapping[str, JsonValue], manifest)
 
     @staticmethod
-    def _official30_recipe_content_lines(
+    def _official30_cases(
+        manifest: Mapping[str, JsonValue],
+    ) -> tuple[Mapping[str, JsonValue], ...]:
+        raw_cases = manifest.get("cases")
+        if not isinstance(raw_cases, list):
+            raise ValueError("Official30 manifest cases must be a list.")
+        cases: list[Mapping[str, JsonValue]] = []
+        case_names: set[str] = set()
+        for index, raw_case in enumerate(raw_cases):
+            if not isinstance(raw_case, Mapping):
+                raise ValueError(f"Official30 manifest case {index} must be an object.")
+            case_name = KnowledgeBaseService._official30_case_name(raw_case)
+            if case_name in case_names:
+                raise ValueError(
+                    f"Official30 manifest case name {case_name!r} is duplicated."
+                )
+            case_names.add(case_name)
+            cases.append(cast(Mapping[str, JsonValue], raw_case))
+        return tuple(cases)
+
+    @staticmethod
+    def _official30_case_name(case: Mapping[str, JsonValue]) -> str:
+        case_name = case.get("name")
+        if (
+            not isinstance(case_name, str)
+            or not case_name
+            or case_name.strip() != case_name
+        ):
+            raise ValueError(
+                "Official30 manifest cases require a nonempty, trimmed string name."
+            )
+        return case_name
+
+    @staticmethod
+    def _official30_recipe_projection(
         spec: KnowledgeBaseDocumentSpec,
         manifest: Mapping[str, JsonValue],
-        fallback_lines: tuple[str, ...],
         *,
         repo_root: Path,
         source_path: Path,
-    ) -> tuple[str, ...]:
-        cases = manifest.get("cases")
-        if not isinstance(cases, list):
-            return fallback_lines
+    ) -> _Official30RecipeProjection:
+        cases = KnowledgeBaseService._official30_cases(manifest)
 
         recipe_lines = [
             "Official30 Benchmark Pipeline Recipes",
@@ -725,10 +822,6 @@ class KnowledgeBaseService:
             KnowledgeBaseService._official30_mapping_line(
                 "Default pipeline params",
                 manifest.get("default_pipeline_params"),
-            ),
-            KnowledgeBaseService._official30_mapping_line(
-                "Default source-schema selection",
-                manifest.get("default_source_schema_image_set_selection"),
             ),
             KnowledgeBaseService._official30_mapping_line(
                 "Path roots",
@@ -743,17 +836,12 @@ class KnowledgeBaseService:
             "----------",
             "",
         ]
-        valid_cases: list[Mapping[str, JsonValue]] = [
-            case
-            for case in cases
-            if isinstance(case, dict)
-        ]
         inventories = KnowledgeBaseService._official30_module_inventories(
             source_path=source_path,
             repo_root=repo_root,
-            cases=tuple(valid_cases),
+            cases=cases,
         )
-        for index, case in enumerate(valid_cases, 1):
+        for index, case in enumerate(cases, 1):
             recipe_lines.append(
                 KnowledgeBaseService._official30_recipe_line(index, case)
             )
@@ -763,24 +851,33 @@ class KnowledgeBaseService:
         )
 
         inventories_by_case = {
-            inventory.case_name: inventory
-            for inventory in inventories
+            inventory.case_name: inventory for inventory in inventories
         }
-        for case in valid_cases:
-            recipe_lines.extend(
-                KnowledgeBaseService._official30_case_section_lines(
-                    case,
-                    inventories_by_case.get(str(case.get("name") or "<unnamed>")),
+        source_cases_by_heading_line: list[tuple[int, Mapping[str, JsonValue]]] = []
+        for case in cases:
+            case_name = KnowledgeBaseService._official30_case_name(case)
+            case_projection = KnowledgeBaseService._official30_case_projection(
+                case,
+                inventories_by_case.get(case_name),
+            )
+            source_cases_by_heading_line.append(
+                (
+                    len(recipe_lines) + case_projection.source_heading_offset + 1,
+                    case_projection.case,
                 )
             )
-        return tuple(recipe_lines)
+            recipe_lines.extend(case_projection.lines)
+        return _Official30RecipeProjection(
+            lines=tuple(recipe_lines),
+            source_cases_by_heading_line=tuple(source_cases_by_heading_line),
+        )
 
     @staticmethod
-    def _official30_case_section_lines(
+    def _official30_case_projection(
         case: Mapping[str, JsonValue],
         inventory: _Official30CaseModuleInventory | None,
-    ) -> tuple[str, ...]:
-        name = str(case.get("name") or "<unnamed>")
+    ) -> _Official30CaseProjection:
+        name = KnowledgeBaseService._official30_case_name(case)
         lines = [
             "",
             name,
@@ -801,19 +898,12 @@ class KnowledgeBaseService:
         ):
             if key not in case:
                 continue
-            lines.append(
-                f"{key}: {KnowledgeBaseService._official30_scalar(case[key])}"
-            )
+            lines.append(f"{key}: {KnowledgeBaseService._official30_scalar(case[key])}")
         if inventory is not None:
             if inventory.modules:
-                lines.append(
-                    "modules: "
-                    + ", ".join(inventory.unique_modules)
-                )
+                lines.append("modules: " + ", ".join(inventory.unique_modules))
             if inventory.cppipe_path is not None:
-                lines.append(
-                    f"resolved_cppipe_path: {inventory.cppipe_path}"
-                )
+                lines.append(f"resolved_cppipe_path: {inventory.cppipe_path}")
         if "pipeline_params" in case:
             lines.append(
                 KnowledgeBaseService._official30_mapping_line(
@@ -821,18 +911,116 @@ class KnowledgeBaseService:
                     case.get("pipeline_params"),
                 )
             )
-        return tuple(lines)
+        source_title = KnowledgeBaseService._official30_source_title(name)
+        source_heading_offset = len(lines) + 1
+        lines.extend(
+            (
+                "",
+                source_title,
+                "^" * len(source_title),
+                "",
+                "Generated only when this exact section is requested. The source "
+                "contains the public ``pipeline_config`` and ``pipeline_steps`` "
+                "declarations produced from this manifest case.",
+            )
+        )
+        return _Official30CaseProjection(
+            case=case,
+            lines=tuple(lines),
+            source_heading_offset=source_heading_offset,
+        )
+
+    @staticmethod
+    def _official30_source_title(case_name: str) -> str:
+        return f"{case_name} OpenHCS Python"
+
+    @staticmethod
+    def _official30_source_section_lines(
+        *,
+        manifest: Mapping[str, JsonValue],
+        case: Mapping[str, JsonValue],
+    ) -> tuple[tuple[str, ...], AgentError | None]:
+        case_name = KnowledgeBaseService._official30_case_name(case)
+        title = KnowledgeBaseService._official30_source_title(case_name)
+        try:
+            path_resolver = _ComparisonManifestPathResolver.from_payload(
+                manifest,
+                cellprofiler_examples_root=os.environ.get("CELLPROFILER_EXAMPLES_ROOT"),
+                dataset_cache_root=os.environ.get(
+                    "OPENHCS_BENCHMARK_DATASET_CACHE_ROOT"
+                ),
+            )
+            cppipe_path = path_resolver.resolve(case, "cppipe_path").resolve()
+            dataset_path = path_resolver.resolve(case, "dataset_path").resolve()
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            return (), AgentError(
+                code=KnowledgeBaseIssueCode.OFFICIAL30_SOURCE_MISSING.value,
+                message=(
+                    f"Official30 case {case_name!r} has no resolvable source path: "
+                    f"{exc}"
+                ),
+                hint=(
+                    "Inspect the manifest path roots and configure the declared "
+                    "CellProfiler example or benchmark dataset cache."
+                ),
+            )
+
+        if not cppipe_path.is_file():
+            return (), AgentError(
+                code=KnowledgeBaseIssueCode.OFFICIAL30_SOURCE_MISSING.value,
+                message=(
+                    f"Official30 case {case_name!r} cannot be converted because "
+                    "its manifest-resolved .cppipe source is absent."
+                ),
+                hint=(
+                    "Materialize the benchmark manifest roots, then request this "
+                    "section again. Raw .cppipe text is not returned as a fallback."
+                ),
+                path=str(cppipe_path),
+            )
+
+        try:
+            source = _official30_public_source(
+                str(cppipe_path),
+                str(dataset_path),
+            )
+        except Exception as exc:
+            return (), AgentError(
+                code=KnowledgeBaseIssueCode.OFFICIAL30_CONVERSION_FAILED.value,
+                message=(
+                    f"Official30 case {case_name!r} failed public OpenHCS "
+                    f"conversion: {type(exc).__name__}: {exc}"
+                ),
+                hint=(
+                    "The canonical CellProfiler importer must return public "
+                    "PipelineConfig and FunctionStep declarations for this case."
+                ),
+                path=str(cppipe_path),
+            )
+
+        return (
+            (
+                title,
+                "^" * len(title),
+                "",
+                "Generated lazily from the manifest-resolved CellProfiler source "
+                "through the canonical public importer. No generated copy is stored "
+                "in the repository.",
+                "",
+                ".. code-block:: python",
+                "",
+                *(f"   {line}" if line else "" for line in source.splitlines()),
+            ),
+            None,
+        )
 
     @staticmethod
     def _official30_mapping_line(label: str, value: JsonValue) -> str:
         if not isinstance(value, dict) or not value:
             return f"{label}: <none>"
-        return (
-            f"{label}: "
-            + ", ".join(
-                f"{key}={KnowledgeBaseService._official30_scalar(item)}"
-                for key, item in sorted(value.items())
-            )
+        return f"{label}: " + ", ".join(
+            f"{key}={KnowledgeBaseService._official30_scalar(item)}"
+            for key, item in sorted(value.items())
         )
 
     @staticmethod
@@ -856,8 +1044,7 @@ class KnowledgeBaseService:
         if isinstance(value, (list, tuple)):
             visible_items = value[:4]
             body = ", ".join(
-                KnowledgeBaseService._official30_scalar(item)
-                for item in visible_items
+                KnowledgeBaseService._official30_scalar(item) for item in visible_items
             )
             if len(value) > len(visible_items):
                 body += f", +{len(value) - len(visible_items)}"
@@ -869,7 +1056,7 @@ class KnowledgeBaseService:
         index: int,
         case: Mapping[str, JsonValue],
     ) -> str:
-        name = str(case.get("name") or "<unnamed>")
+        name = KnowledgeBaseService._official30_case_name(case)
         dataset_id = str(case.get("dataset_id") or "<unknown>")
         cppipe_path = str(case.get("cppipe_path") or "<none>")
         return f"{index}. {name}: dataset={dataset_id} cppipe={cppipe_path}"
@@ -929,7 +1116,7 @@ class KnowledgeBaseService:
         except (ImportError, OSError, TypeError, ValueError, UnicodeDecodeError):
             return tuple(
                 _Official30CaseModuleInventory(
-                    case_name=str(case.get("name") or "<unnamed>"),
+                    case_name=KnowledgeBaseService._official30_case_name(case),
                     cppipe_path=None,
                     modules=(),
                 )
@@ -949,7 +1136,7 @@ class KnowledgeBaseService:
                         message="Knowledge-base search query must not be empty.",
                     ),
                 ),
-        )
+            )
 
         hit_limit = max(1, min(request.limit, MAX_SEARCH_HITS))
         ranked_hits: list[tuple[int, int, KnowledgeBaseSearchHit]] = []
@@ -994,13 +1181,12 @@ class KnowledgeBaseService:
                 title_score, title_terms = query.score_text(section.title)
                 text_score, text_terms = query.score_text(section_text)
                 score = title_score + text_score
-                if (
-                    self._official30_recipe_manifest(parsed.text) is not None
-                    and not self._official30_query_is_specific_to_case(
-                        query,
-                        section,
-                        section_text,
-                    )
+                if self._official30_recipe_manifest(
+                    parsed.text
+                ) is not None and not self._official30_query_is_specific_to_case(
+                    query,
+                    section,
+                    section_text,
                 ):
                     score = max(0, score - 50)
                 if (
@@ -1011,9 +1197,7 @@ class KnowledgeBaseService:
                     score = max(0, score - 80)
                 if not score:
                     continue
-                matched_terms = tuple(
-                    dict.fromkeys((*title_terms, *text_terms))
-                )
+                matched_terms = tuple(dict.fromkeys((*title_terms, *text_terms)))
                 ranked_hits.append(
                     (
                         score,
@@ -1084,9 +1268,7 @@ class KnowledgeBaseService:
                 flags=re.MULTILINE,
             ):
                 module_case_names = frozenset(
-                    item.strip()
-                    for item in match.group(2).split(",")
-                    if item.strip()
+                    item.strip() for item in match.group(2).split(",") if item.strip()
                 )
                 if case_names and module_case_names == case_names:
                     continue
@@ -1118,20 +1300,59 @@ class KnowledgeBaseService:
         source_path = self._source_path(spec)
         text = source_path.read_text(encoding="utf-8")
         source_lines = tuple(text.splitlines())
-        lines = self._display_lines(
-            spec,
-            text,
-            source_lines,
-            repo_root=self._repo_root,
-            source_path=source_path,
+        official30_projection: _Official30RecipeProjection | None = None
+        official30_manifest = self._official30_recipe_manifest(text)
+        if official30_manifest is None:
+            lines = self._display_lines(
+                spec,
+                source_lines,
+                repo_root=self._repo_root,
+            )
+        else:
+            official30_projection = self._official30_recipe_projection(
+                spec,
+                official30_manifest,
+                repo_root=self._repo_root,
+                source_path=source_path,
+            )
+            lines = official30_projection.lines
+        sections = _parse_sections(lines)
+        official30_source_cases = (
+            self._official30_source_cases_for_sections(
+                official30_projection,
+                sections,
+            )
+            if official30_projection is not None
+            else ()
         )
         return _ParsedDocument(
             spec=spec,
             source_path=source_path,
             text=text,
             lines=lines,
-            sections=_parse_sections(lines),
+            sections=sections,
+            official30_source_cases=official30_source_cases,
+            official30_manifest=official30_manifest,
         )
+
+    @staticmethod
+    def _official30_source_cases_for_sections(
+        projection: _Official30RecipeProjection,
+        sections: tuple[KnowledgeBaseSectionSummary, ...],
+    ) -> tuple[tuple[str, Mapping[str, JsonValue]], ...]:
+        sections_by_start_line = {section.start_line: section for section in sections}
+        source_cases: list[tuple[str, Mapping[str, JsonValue]]] = []
+        for heading_line, case in projection.source_cases_by_heading_line:
+            section = sections_by_start_line.get(heading_line)
+            case_name = KnowledgeBaseService._official30_case_name(case)
+            expected_title = KnowledgeBaseService._official30_source_title(case_name)
+            if section is None or section.title != expected_title:
+                raise ValueError(
+                    f"Official30 source section for case {case_name!r} was not "
+                    "preserved by the parsed-section authority."
+                )
+            source_cases.append((section.section_id, case))
+        return tuple(source_cases)
 
     def _existing_parsed_documents(self) -> tuple[_ParsedDocument, ...]:
         parsed_documents: list[_ParsedDocument] = []
@@ -1208,6 +1429,29 @@ def _default_repo_root() -> Path:
     return default_repo_root()
 
 
+def _official30_public_source(
+    cppipe_path: str,
+    source_root: str,
+) -> str:
+    """Convert and render one manifest-resolved official30 case on demand."""
+    from openhcs.core.pipeline_document import PipelineDocumentAuthority
+    from openhcs.interop.cellprofiler.pipeline_import import (
+        import_cellprofiler_pipeline,
+    )
+
+    pipeline_steps, pipeline_config = import_cellprofiler_pipeline(
+        Path(cppipe_path),
+        source_root=Path(source_root),
+    )
+
+    return PipelineDocumentAuthority.render(
+        PipelineDocumentAuthority.from_values(
+            pipeline_config=pipeline_config,
+            pipeline_steps=pipeline_steps,
+        )
+    )
+
+
 @lru_cache(maxsize=8)
 def _official30_module_inventories_cached(
     manifest_path: str,
@@ -1232,8 +1476,8 @@ def _official30_module_inventories_cached(
     inventories: list[_Official30CaseModuleInventory] = []
     for raw_case in raw_cases:
         if not isinstance(raw_case, Mapping):
-            continue
-        case_name = str(raw_case.get("name") or "<unnamed>")
+            raise ValueError("Official30 manifest cases must be objects.")
+        case_name = KnowledgeBaseService._official30_case_name(raw_case)
         cppipe_path = _official30_existing_cppipe_path(
             repo_root=Path(repo_root),
             manifest=manifest,
@@ -1501,14 +1745,12 @@ class KnowledgeBaseSectionHierarchy:
         completed: list[KnowledgeBaseSectionSummary] = []
         for index, section in enumerate(self.sections):
             next_start_line = self.line_count + 1
-            for candidate in self.sections[index + 1:]:
+            for candidate in self.sections[index + 1 :]:
                 if candidate.level <= section.level:
                     next_start_line = candidate.start_line
                     break
             completed.append(
-                section.with_span(
-                    section.span.close_before(next_start_line)
-                )
+                section.with_span(section.span.close_before(next_start_line))
             )
         return tuple(completed)
 

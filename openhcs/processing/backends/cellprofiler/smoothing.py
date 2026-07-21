@@ -5,9 +5,9 @@ from collections.abc import Callable
 from typing import Any
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.callable_contract import runtime_image_execution_mode
-from openhcs.core.runtime_values import image_payload_data, with_image_payload_data
-from openhcs.interop.cellprofiler.semantic_defaults import (
-    SourceVolumetricPixelDataExecutionContract,
+from openhcs.core.runtime_image_values import (
+    image_payload_data,
+    with_image_payload_data,
 )
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
@@ -15,72 +15,38 @@ from openhcs.interop.cellprofiler.settings_binder import (
     parse_cellprofiler_int,
 )
 from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
-    BinderSettingsSourceModule,
-    BoundModuleSettings,
     CellProfilerModule,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
-    ModuleSettingsSourceModule,
-    ScopedMeasurementModule,
-    StructuringElementSettingsModule,
 )
-from openhcs.interop.cellprofiler.setting_names import (
-    optional_setting_value,
-    required_setting_value,
-    setting_values,
-    split_symbol_names,
-)
-from openhcs.interop.cellprofiler.cellprofiler_literals import (
-    cellprofiler_enum_from_literal,
-)
-from openhcs.processing.backends.cellprofiler.thresholding import (
-    ThresholdSettingsModule,
-)
-
-
-class ReduceNoiseExecutionDomainContract(SourceVolumetricPixelDataExecutionContract):
-    contract_key = "ReduceNoise.execution_domain"
-    source_filename = "reducenoise.py"
-    callable_name = "reducenoise"
-
-    @property
-    def absorbed_callable(self) -> Callable[..., Any]:
-        return reducenoise
+from openhcs.core.artifacts import ImageArtifactType
 
 
 class ReducenoiseModule(
-    ImageArtifactInputModule, ImageArtifactOutputModule, CellProfilerModule
+    CellProfilerModule
 ):
     module_name = "Reducenoise"
     aliases = ("ReduceNoise",)
     function_name = "reducenoise"
     validated = True
     confidence = 1.0
-    image_input_settings = ("Select the input image",)
-    image_output_settings = ("Name the output image",)
-    semantic_default_contract_types = (ReduceNoiseExecutionDomainContract,)
-    semantic_default_contract_module_name = "ReduceNoise"
-    setting_bindings = (
-        SettingToKeywordBinding("Size", "patch_size", parse_cellprofiler_int),
+    input_image_setting = "Select the input image"
+    output_image_setting = "Name the output image"
+    setting_bindings = (SettingToKeywordBinding.input(input_image_setting, ImageArtifactType),SettingToKeywordBinding.output(output_image_setting, ImageArtifactType),SettingToKeywordBinding("Size", "patch_size", parse_cellprofiler_int),
         SettingToKeywordBinding("Distance", "patch_distance", parse_cellprofiler_int),
         SettingToKeywordBinding(
             "Cut-off distance", "cutoff_distance", parse_cellprofiler_float
-        ),
-    )
+        ),)
 
 
 class SmoothModule(
-    ImageArtifactInputModule, ImageArtifactOutputModule, CellProfilerModule
+    CellProfilerModule
 ):
     module_name = "Smooth"
     function_name = "smooth"
     validated = True
     confidence = 1.0
-    image_input_settings = ("Select the input image",)
-    image_output_settings = ("Name the output image",)
-    setting_bindings = (
-        SettingToKeywordBinding("Select smoothing method", "smoothing_method"),
+    input_image_setting = "Select the input image"
+    output_image_setting = "Name the output image"
+    setting_bindings = (SettingToKeywordBinding.input(input_image_setting, ImageArtifactType),SettingToKeywordBinding.output(output_image_setting, ImageArtifactType),SettingToKeywordBinding("Select smoothing method", "smoothing_method"),
         SettingToKeywordBinding(
             "Calculate artifact diameter automatically?", "auto_object_size"
         ),
@@ -88,8 +54,7 @@ class SmoothModule(
         SettingToKeywordBinding(
             "Edge intensity difference", "edge_intensity_difference"
         ),
-        SettingToKeywordBinding("Clip intensities to 0 and 1?", "clip_polynomial"),
-    )
+        SettingToKeywordBinding("Clip intensities to 0 and 1?", "clip_polynomial"),)
 
 
 from abc import ABC, abstractmethod
@@ -101,15 +66,13 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy as numpy_decorator
-from openhcs.core.pipeline.function_contracts import (
+from openhcs.core.runtime_batch_contracts import (
     RuntimePure2DSliceBatchRequest,
     pure_2d_batch_executor,
 )
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
-from openhcs.core.runtime_values import (
-    RuntimeImagePayloadContext,
-    image_payload_data,
+from openhcs.core.runtime_image_values import (
     image_payload_mask,
     image_payload_metadata,
 )
@@ -704,11 +667,11 @@ def smooth_image(
         clip_polynomial=bool(clip_polynomial),
     )
     output = SmoothingStrategy.for_request(request).smooth(request)
-    return RuntimeImagePayloadContext(
-        np.asarray(output, dtype=np.float32),
-        mask=mask,
-        metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
-    ).payload()
+    return (
+        image_payload_metadata(image)
+        .without_unit_interval_intensity_scale()
+        .payload_with(np.asarray(output, dtype=np.float32), mask)
+    )
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
@@ -812,13 +775,9 @@ def smooth_batch(request: RuntimePure2DSliceBatchRequest) -> list[Any]:
         pixel_stack, mask_stack, float(selection_request.sigma)
     ).astype(np.float32, copy=False)
     return [
-        RuntimeImagePayloadContext(
-            output_stack[slice_index],
-            mask=masks[slice_index],
-            metadata=image_payload_metadata(
-                slice_2d
-            ).without_unit_interval_intensity_scale(),
-        ).payload()
+        image_payload_metadata(slice_2d)
+        .without_unit_interval_intensity_scale()
+        .payload_with(output_stack[slice_index], masks[slice_index])
         for slice_index, slice_2d in enumerate(slices_2d)
     ]
 

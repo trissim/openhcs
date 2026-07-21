@@ -3,38 +3,21 @@
 from __future__ import annotations
 from openhcs.interop.cellprofiler.settings_binder import SettingToKeywordBinding
 from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
-    BinderSettingsSourceModule,
-    BoundModuleSettings,
     CellProfilerModule,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
-    ModuleSettingsSourceModule,
-    ScopedMeasurementModule,
-    StructuringElementSettingsModule,
 )
-from openhcs.interop.cellprofiler.setting_names import (
-    optional_setting_value,
-    required_setting_value,
-    setting_values,
-    split_symbol_names,
-)
-from openhcs.interop.cellprofiler.cellprofiler_literals import (
-    cellprofiler_enum_from_literal,
-)
+from openhcs.core.artifacts import ImageArtifactType
 
 
 class EnhanceEdgesModule(
-    ImageArtifactInputModule, ImageArtifactOutputModule, CellProfilerModule
+    CellProfilerModule
 ):
     module_name = "EnhanceEdges"
     function_name = "enhance_edges"
     validated = True
     confidence = 1.0
-    image_input_settings = ("Select the input image",)
-    image_output_settings = ("Name the output image",)
-    setting_bindings = (
-        SettingToKeywordBinding(
+    input_image_setting = "Select the input image"
+    output_image_setting = "Name the output image"
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (SettingToKeywordBinding.input(input_image_setting, ImageArtifactType),SettingToKeywordBinding.output(output_image_setting, ImageArtifactType),SettingToKeywordBinding(
             "Automatically calculate the threshold?", "automatic_threshold"
         ),
         SettingToKeywordBinding("Absolute threshold", "manual_threshold"),
@@ -51,8 +34,7 @@ class EnhanceEdgesModule(
             "Calculate value for low threshold automatically?",
             "automatic_low_threshold",
         ),
-        SettingToKeywordBinding("Low threshold value", "low_threshold"),
-    )
+        SettingToKeywordBinding("Low threshold value", "low_threshold"),)
 
 
 from abc import ABC, abstractmethod
@@ -65,7 +47,7 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit
 from openhcs.core.memory.decorators import numpy as numpy_decorator
 from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.runtime_values import (
+from openhcs.core.runtime_image_values import (
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
@@ -82,9 +64,6 @@ from openhcs.processing.backends.cellprofiler.image_geometry import (
     CellProfilerPlaneGeometry,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.backends.cellprofiler.thresholding import (
-    ThresholdSettingsModule,
-)
 
 
 class EdgeMethod(Enum):
@@ -419,7 +398,7 @@ def enhance_edges(
     operation_mask = (
         np.ones(pixel_data.shape[:2], dtype=bool)
         if payload_mask is None
-        else CellProfilerPlaneGeometry.from_image_plane(pixel_data).binary_mask(
+        else CellProfilerPlaneGeometry.from_image_plane(image).binary_mask(
             np.asarray(payload_mask)
         )
     )

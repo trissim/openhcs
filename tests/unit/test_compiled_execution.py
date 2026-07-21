@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactOutputPlan, MeasurementsArtifactType
 from openhcs.core.compiled_execution import (
     CompiledExecutionBundle,
@@ -8,12 +9,18 @@ from openhcs.core.compiled_execution import (
     CompiledWorkerStartPlan,
 )
 from openhcs.core.config import MultiprocessingStartMethod
+from openhcs.core.measurement_row_materialization import (
+    MeasurementSparseColumnarRows,
+)
 from openhcs.core.orchestrator.execution_result import (
     RuntimeContextObservation,
     RuntimeExecutionObservation,
 )
+from openhcs.core.runtime_measurements import MeasurementTable
+from openhcs.core.runtime_measurements import MeasurementScope, MeasurementSubject
+from openhcs.core.runtime_tabular_values import FieldSpec
 from openhcs.core.runtime_stores import RuntimeValueStore
-from openhcs.core.runtime_values import normalize_artifact_value
+from openhcs.core.runtime_artifact_values import RuntimeValue
 
 
 def _runtime_environment() -> CompiledRuntimeEnvironmentPlan:
@@ -74,14 +81,25 @@ def test_compiled_execution_bundle_exports_bundle_only_compilation_result():
 
 def test_runtime_execution_observation_merges_into_parent_contexts():
     worker_store = RuntimeValueStore()
-    value = normalize_artifact_value(
+    value = RuntimeValue.normalize(
         ArtifactOutputPlan(
             name="measurements",
             path="/memory/measurements.pkl",
             artifact_type=MeasurementsArtifactType,
+            group_component=AllComponents.CHANNEL,
             group_keys=("DAPI",),
         ),
-        [{"object_id": 1}],
+        MeasurementTable(
+            name="measurements",
+            rows=MeasurementSparseColumnarRows.from_rows(
+                ({"object_id": 1},),
+                fields=(FieldSpec("object_id", int),),
+            ),
+            subject=MeasurementSubject(
+                MeasurementScope.ARTIFACT,
+                "measurements",
+            ),
+        ),
         axis_id="A01",
     )
     record = worker_store.record(

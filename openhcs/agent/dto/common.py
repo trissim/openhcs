@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Self, TypeAlias
+from typing import Self
 
+from openhcs.serialization.json import (
+    JsonObject,
+    JsonScalar as JsonScalar,
+    JsonValue as JsonValue,
+)
 
 SCHEMA_VERSION = "openhcs.agent.v1"
-
-JsonScalar: TypeAlias = str | int | float | bool | None
-JsonValue: TypeAlias = JsonScalar | Mapping[str, "JsonValue"] | tuple["JsonValue", ...] | list["JsonValue"]
-JsonObject: TypeAlias = Mapping[str, JsonValue]
 
 
 @dataclass(frozen=True, slots=True)

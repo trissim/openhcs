@@ -1,20 +1,67 @@
-"""MeasureObjectOverlap execution policy for CellProfiler-compatible backends."""
+"""Overlap measurement semantics for CellProfiler-compatible backends."""
 
+from __future__ import annotations
+
+from collections.abc import Callable
 import numpy as np
-from typing import Tuple
+from typing import TYPE_CHECKING, Annotated, ClassVar, Tuple
 from dataclasses import dataclass
 from enum import Enum
 import scipy.ndimage
 import scipy.sparse
+from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
+    MeasurementProjectedColumnarRows,
+)
+from openhcs.core.pipeline.function_contracts import (
+    ObjectLabelInputExecutionMode,
+    object_label_input_execution_mode,
+    special_inputs,
+    )
 from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.runtime_values import object_label_dense_array
+from openhcs.core.runtime_tabular_values import (
+    FieldSpec,
+)
+from openhcs.core.runtime_measurements import (
+    MeasurementRowAxisField,
+    RuntimeMeasurementFeature,
+)
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelValue,
+    object_label_dense_array,
+)
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
     CellProfilerModule,
 )
-from openhcs.processing.materialization import csv_materializer
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
+    MeasurementArtifactOutputModule,
+    ObjectArtifactInputModule,
+)
+from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    FieldDerivedMeasurementFeatureModule,
+    NoObjectNameMeasurementRecordMixin,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_rows import (
+    ModuleOwnedResultMeasurementRows,
+)
+from openhcs.interop.cellprofiler.setting_names import optional_setting_value
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    cellprofiler_enum_value_setting_parser,
+    parse_cellprofiler_bool,
+    parse_cellprofiler_int,
+)
+
+if TYPE_CHECKING:
+    from openhcs.core.callable_contract import CallableContract
+    from openhcs.core.source_bindings import StepSourceBindingsConfig
+    from openhcs.interop.cellprofiler.runtime.output_record_request import (
+        CellProfilerOutputRecordRequest,
+    )
 
 
 class DecimationMethod(Enum):
@@ -22,12 +69,22 @@ class DecimationMethod(Enum):
     SKELETON = "skeleton"
 
 
+GroundTruthObjectLabelsInput = Annotated[
+    ObjectLabelValue,
+    "Reference object-label plane against which overlap accuracy is measured.",
+]
+TestObjectLabelsInput = Annotated[
+    ObjectLabelValue,
+    "Candidate object-label plane whose regions are compared with the reference.",
+]
+
+
 @dataclass
 class OverlapMeasurements:
     """Measurements from object overlap analysis."""
 
     slice_index: int
-    f_factor: float
+    ffactor: float
     precision: float
     recall: float
     true_positive_rate: float
@@ -36,6 +93,12 @@ class OverlapMeasurements:
     false_negative_rate: float
     rand_index: float
     adjusted_rand_index: float
+
+
+@dataclass
+class OverlapMeasurementsWithEmd(OverlapMeasurements):
+    """Object-overlap measurements including optional EMD."""
+
     earth_movers_distance: float
 
 
@@ -48,12 +111,63 @@ class ImageOverlapMeasurement:
     true_negative_rate: float
     precision: float
     recall: float
-    f_factor: float
-    jaccard_index: float
-    dice_coefficient: float
+    ffactor: float
     rand_index: float
     adjusted_rand_index: float
+
+
+@dataclass
+class ImageOverlapMeasurementWithEmd(ImageOverlapMeasurement):
+    """Image-overlap measurements including optional EMD."""
+
     earth_movers_distance: float
+
+
+@dataclass(frozen=True, slots=True)
+class OverlapMeasurementRows(ModuleOwnedResultMeasurementRows):
+    """Project raw overlap fields into exact CellProfiler feature names."""
+
+    qualifiers: tuple[str, ...]
+
+    @classmethod
+    def for_request(
+        cls,
+        module_type: type[object],
+        request: "CellProfilerOutputRecordRequest",
+    ) -> "OverlapMeasurementRows":
+        if not issubclass(module_type, _OverlapMeasurementModule):
+            raise TypeError(
+                f"{cls.__name__} requires an overlap module owner, got "
+                f"{module_type.__name__}."
+            )
+        return cls(
+            request.output_value,
+            module_type=module_type,
+            qualifiers=module_type.measurement_qualifiers(request),
+        )
+
+    def rows(self) -> MeasurementProjectedColumnarRows:
+        source_rows = self.source_rows()
+        slice_field = MeasurementRowAxisField.SLICE_INDEX.value
+        projected_fields = [self.source_field(slice_field)]
+        projected_columns: dict[str, object] = {
+            slice_field: source_rows.column_values(slice_field)
+        }
+        for field in source_rows.fields:
+            if field.name == slice_field:
+                continue
+            feature_name = self.module_type.overlap_measurement_feature_name(
+                field.name,
+                *self.qualifiers,
+            )
+            projected_fields.append(
+                FieldSpec(feature_name, field.dtype, required=False)
+            )
+            projected_columns[feature_name] = source_rows.column_values(field.name)
+        return MeasurementProjectedColumnarRows(
+            projected_columns,
+            fields=tuple(projected_fields),
+        )
 
 
 def _nan_divide(numerator: float, denominator: float) -> float:
@@ -210,38 +324,18 @@ def _compute_emd_simple(
     return total_distance / len(src_coords) if len(src_coords) > 0 else 0.0
 
 
-@numpy(contract=ProcessingContract.PURE_3D)
-@special_outputs(
-    (
-        "overlap_measurements",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "true_positive_rate",
-                "false_positive_rate",
-                "false_negative_rate",
-                "true_negative_rate",
-                "precision",
-                "recall",
-                "f_factor",
-                "jaccard_index",
-                "dice_coefficient",
-                "rand_index",
-                "adjusted_rand_index",
-                "earth_movers_distance",
-            ],
-            analysis_type="image_overlap",
-        ),
-    )
-)
-def measureimageoverlap(
+def _measure_image_overlap(
     image: np.ndarray,
-    calculate_emd: bool = False,
+    *,
+    calculate_emd: bool,
     max_distance: int = 250,
     penalize_missing: bool = False,
     decimation_method: DecimationMethod = DecimationMethod.KMEANS,
     max_points: int = 250,
-) -> Tuple[np.ndarray, ImageOverlapMeasurement]:
+) -> tuple[
+    np.ndarray,
+    DataclassMeasurementColumnarRows,
+]:
     """Measure binary overlap between ground-truth and test image planes."""
     if image.shape[0] < 2:
         raise ValueError("Image must have at least 2 slices (ground_truth, test)")
@@ -266,12 +360,6 @@ def measureimageoverlap(
     precision = true_positive / (true_positive + false_positive + eps)
     recall = true_positive_rate
     f_factor = 2 * precision * recall / (precision + recall + eps)
-    intersection = true_positive
-    union = true_positive + false_positive + false_negative
-    jaccard_index = intersection / (union + eps)
-    dice_coefficient = (
-        2 * intersection / (2 * intersection + false_positive + false_negative + eps)
-    )
     n = total_pixels
     a = true_positive
     b = false_positive
@@ -285,17 +373,7 @@ def measureimageoverlap(
     max_index = (sum_ni_choose_2 + sum_nj_choose_2) / 2
     adjusted_rand_index = (a - expected_index) / (max_index - expected_index + eps)
     adjusted_rand_index = max(0.0, min(1.0, adjusted_rand_index))
-    earth_movers_distance = 0.0
-    if calculate_emd:
-        earth_movers_distance = compute_image_earth_movers_distance(
-            ground_truth_image,
-            test_image,
-            max_distance=max_distance,
-            penalize_missing=penalize_missing,
-            decimation_method=decimation_method,
-            max_points=max_points,
-        )
-    measurements = ImageOverlapMeasurement(
+    common = dict(
         slice_index=0,
         true_positive_rate=float(true_positive_rate),
         false_positive_rate=float(false_positive_rate),
@@ -303,14 +381,57 @@ def measureimageoverlap(
         true_negative_rate=float(true_negative_rate),
         precision=float(precision),
         recall=float(recall),
-        f_factor=float(f_factor),
-        jaccard_index=float(jaccard_index),
-        dice_coefficient=float(dice_coefficient),
+        ffactor=float(f_factor),
         rand_index=float(rand_index),
         adjusted_rand_index=float(adjusted_rand_index),
-        earth_movers_distance=float(earth_movers_distance),
     )
-    return (ground_truth_image.astype(np.float32)[np.newaxis, ...], measurements)
+    if calculate_emd:
+        measurement = ImageOverlapMeasurementWithEmd(
+            **common,
+            earth_movers_distance=float(
+                compute_image_earth_movers_distance(
+                    ground_truth_image,
+                    test_image,
+                    max_distance=max_distance,
+                    penalize_missing=penalize_missing,
+                    decimation_method=decimation_method,
+                    max_points=max_points,
+                )
+            ),
+        )
+        row_type = ImageOverlapMeasurementWithEmd
+    else:
+        measurement = ImageOverlapMeasurement(**common)
+        row_type = ImageOverlapMeasurement
+    rows = DataclassMeasurementColumnarRows((measurement,), row_type=row_type)
+    return (ground_truth_image.astype(np.float32)[np.newaxis, ...], rows)
+
+
+@numpy(contract=ProcessingContract.PURE_3D)
+def measureimageoverlap(
+    image: np.ndarray,
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows]:
+    """Measure binary overlap without the optional EMD feature."""
+    return _measure_image_overlap(image, calculate_emd=False)
+
+
+@numpy(contract=ProcessingContract.PURE_3D)
+def measureimageoverlap_with_emd(
+    image: np.ndarray,
+    max_distance: int = 250,
+    penalize_missing: bool = False,
+    decimation_method: DecimationMethod = DecimationMethod.KMEANS,
+    max_points: int = 250,
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows]:
+    """Measure binary overlap including Earth Mover's Distance."""
+    return _measure_image_overlap(
+        image,
+        calculate_emd=True,
+        max_distance=max_distance,
+        penalize_missing=penalize_missing,
+        decimation_method=decimation_method,
+        max_points=max_points,
+    )
 
 
 def compute_image_earth_movers_distance(
@@ -350,39 +471,17 @@ def decimate_overlap_points(
     return coords[indices]
 
 
-@numpy(contract=ProcessingContract.FLEXIBLE)
-@special_inputs("labels_ground_truth", "labels_test")
-@special_outputs(
-    (
-        "overlap_measurements",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "f_factor",
-                "precision",
-                "recall",
-                "true_positive_rate",
-                "false_positive_rate",
-                "true_negative_rate",
-                "false_negative_rate",
-                "rand_index",
-                "adjusted_rand_index",
-                "earth_movers_distance",
-            ],
-            analysis_type="object_overlap",
-        ),
-    )
-)
-def measure_object_overlap(
+def _measure_object_overlap(
     image: np.ndarray,
-    labels_ground_truth: np.ndarray,
-    labels_test: np.ndarray,
-    calculate_emd: bool = False,
+    labels_ground_truth: ObjectLabelValue,
+    labels_test: ObjectLabelValue,
+    *,
+    calculate_emd: bool,
     max_points: int = 250,
     decimation_method: DecimationMethod = DecimationMethod.KMEANS,
     max_distance: int = 250,
     penalize_missing: bool = False,
-) -> Tuple[np.ndarray, OverlapMeasurements]:
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows]:
     """
     Calculate overlap statistics between ground truth and test segmentation objects.
 
@@ -400,21 +499,9 @@ def measure_object_overlap(
     Returns:
         Tuple of (original image, overlap measurements)
     """
-    if labels_ground_truth is None or labels_test is None:
-        if image.ndim == 3 and image.shape[0] >= 2:
-            labels_ground_truth = image[0].astype(np.int32)
-            labels_test = image[1].astype(np.int32)
-            output_image = image[0] if image.shape[0] == 2 else image[2:]
-        else:
-            raise ValueError(
-                "Labels must be provided either via special_inputs or stacked in image"
-            )
-    else:
-        output_image = image
-        labels_ground_truth = object_label_dense_array(
-            labels_ground_truth, dtype=np.int32
-        )
-        labels_test = object_label_dense_array(labels_test, dtype=np.int32)
+    output_image = image
+    labels_ground_truth = object_label_dense_array(labels_ground_truth, dtype=np.int32)
+    labels_test = object_label_dense_array(labels_test, dtype=np.int32)
     if labels_ground_truth.ndim == 3:
         labels_ground_truth = labels_ground_truth[0]
     if labels_test.ndim == 3:
@@ -441,15 +528,9 @@ def measure_object_overlap(
     false_negative_rate = _nan_divide(FN, FN + TP)
     true_negative_rate = _nan_divide(TN, FP + TN)
     rand_index, adjusted_rand_index = _compute_rand_index_ijv(gt_ijv, test_ijv, shape)
-    if calculate_emd:
-        emd = _compute_emd_simple(
-            labels_ground_truth, labels_test, max_points, max_distance, penalize_missing
-        )
-    else:
-        emd = np.nan
-    measurements = OverlapMeasurements(
+    common = dict(
         slice_index=0,
-        f_factor=float(f_factor) if not np.isnan(f_factor) else 0.0,
+        ffactor=float(f_factor) if not np.isnan(f_factor) else 0.0,
         precision=float(precision) if not np.isnan(precision) else 0.0,
         recall=float(recall) if not np.isnan(recall) else 0.0,
         true_positive_rate=(
@@ -468,33 +549,328 @@ def measure_object_overlap(
         adjusted_rand_index=(
             float(adjusted_rand_index) if not np.isnan(adjusted_rand_index) else 0.0
         ),
-        earth_movers_distance=float(emd) if not np.isnan(emd) else 0.0,
     )
-    return (output_image, measurements)
+    if calculate_emd:
+        measurement = OverlapMeasurementsWithEmd(
+            **common,
+            earth_movers_distance=float(
+                _compute_emd_simple(
+                    labels_ground_truth,
+                    labels_test,
+                    max_points,
+                    max_distance,
+                    penalize_missing,
+                )
+            ),
+        )
+        row_type = OverlapMeasurementsWithEmd
+    else:
+        measurement = OverlapMeasurements(**common)
+        row_type = OverlapMeasurements
+    return (
+        output_image,
+        DataclassMeasurementColumnarRows((measurement,), row_type=row_type),
+    )
 
 
-class MeasureimageoverlapModule(CellProfilerModule):
-    module_name = "Measureimageoverlap"
+@numpy(contract=ProcessingContract.FLEXIBLE)
+@object_label_input_execution_mode(ObjectLabelInputExecutionMode.MATCH_IMAGE_STACK)
+@special_inputs("labels_ground_truth", "labels_test")
+def measure_object_overlap(
+    image: np.ndarray,
+    labels_ground_truth: GroundTruthObjectLabelsInput,
+    labels_test: TestObjectLabelsInput,
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows]:
+    """Measure object overlap without the optional EMD feature."""
+    return _measure_object_overlap(
+        image,
+        labels_ground_truth,
+        labels_test,
+        calculate_emd=False,
+    )
+
+
+@numpy(contract=ProcessingContract.FLEXIBLE)
+@object_label_input_execution_mode(ObjectLabelInputExecutionMode.MATCH_IMAGE_STACK)
+@special_inputs("labels_ground_truth", "labels_test")
+def measure_object_overlap_with_emd(
+    image: np.ndarray,
+    labels_ground_truth: GroundTruthObjectLabelsInput,
+    labels_test: TestObjectLabelsInput,
+    max_points: int = 250,
+    decimation_method: DecimationMethod = DecimationMethod.KMEANS,
+    max_distance: int = 250,
+    penalize_missing: bool = False,
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows]:
+    """Measure object overlap including Earth Mover's Distance."""
+    return _measure_object_overlap(
+        image,
+        labels_ground_truth,
+        labels_test,
+        calculate_emd=True,
+        max_points=max_points,
+        decimation_method=decimation_method,
+        max_distance=max_distance,
+        penalize_missing=penalize_missing,
+    )
+
+
+class _OverlapMeasurementModule:
+    """Shared authoritative declaration for conditional overlap measurements."""
+
+    measurement_feature_family = "Overlap"
+    measurement_category_prefixes = (("overlap",),)
+    calculate_emd_setting: ClassVar[str] = "Calculate earth mover's distance?"
+    max_points_setting: ClassVar[str] = "Maximum # of points"
+    decimation_method_setting: ClassVar[str] = "Point selection method"
+    max_distance_setting: ClassVar[str] = "Maximum distance"
+    penalize_missing_setting: ClassVar[str] = "Penalize missing pixels"
+    calculate_emd_binding = SettingToKeywordBinding(
+        calculate_emd_setting,
+        "calculate_emd",
+        parse_cellprofiler_bool,
+    )
+    setting_bindings = (
+        calculate_emd_binding,
+        SettingToKeywordBinding(
+            max_points_setting, "max_points", parse_cellprofiler_int
+        ),
+        SettingToKeywordBinding(
+            decimation_method_setting,
+            "decimation_method",
+            cellprofiler_enum_value_setting_parser(DecimationMethod),
+        ),
+        SettingToKeywordBinding(
+            max_distance_setting,
+            "max_distance",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            penalize_missing_setting,
+            "penalize_missing",
+            parse_cellprofiler_bool,
+        ),
+    )
+
+    class MeasurementFeature(RuntimeMeasurementFeature):
+        """Exact CellProfiler Overlap feature vocabulary."""
+
+        F_FACTOR = ("Ffactor", (), (), (), "ffactor")
+        PRECISION = ("Precision", (), (), (), "precision")
+        RECALL = ("Recall", (), (), (), "recall")
+        TRUE_POSITIVE_RATE = (
+            "TruePosRate",
+            (),
+            (),
+            (),
+            "true_positive_rate",
+        )
+        FALSE_POSITIVE_RATE = (
+            "FalsePosRate",
+            (),
+            (),
+            (),
+            "false_positive_rate",
+        )
+        TRUE_NEGATIVE_RATE = (
+            "TrueNegRate",
+            (),
+            (),
+            (),
+            "true_negative_rate",
+        )
+        FALSE_NEGATIVE_RATE = (
+            "FalseNegRate",
+            (),
+            (),
+            (),
+            "false_negative_rate",
+        )
+        RAND_INDEX = ("RandIndex", (), (), (), "rand_index")
+        ADJUSTED_RAND_INDEX = (
+            "AdjustedRandIndex",
+            (),
+            (),
+            (),
+            "adjusted_rand_index",
+        )
+        EARTH_MOVERS_DISTANCE = (
+            "EarthMoversDistance",
+            (),
+            (),
+            (),
+            "earth_movers_distance",
+        )
+
+    MeasurementRows = OverlapMeasurementRows
+
+    @classmethod
+    def overlap_measurement_feature_name(
+        cls,
+        field_name: str,
+        *qualifiers: str,
+    ) -> str:
+        matching = tuple(
+            feature
+            for feature in cls.MeasurementFeature
+            if feature.measurement_row_field_name == field_name
+        )
+        if len(matching) != 1:
+            raise ValueError(
+                f"{cls.__name__} requires one overlap feature for result field "
+                f"{field_name!r}, got {matching!r}."
+            )
+        return "_".join(("Overlap", matching[0].value, *qualifiers))
+
+    @classmethod
+    def emd_enabled(cls, module: ModuleBlock) -> bool:
+        value = optional_setting_value(module, cls.calculate_emd_setting)
+        return value is not None and parse_cellprofiler_bool(value)
+
+    @classmethod
+    def resolve_function(
+        cls,
+        module: ModuleBlock,
+        *,
+        contract: "CallableContract",
+        source_bindings: "StepSourceBindingsConfig",
+    ) -> Callable[..., object]:
+        """Select the callable whose result schema matches EMD topology."""
+        del contract, source_bindings
+        function_name = (
+            cls.function_variants[0]
+            if cls.emd_enabled(module)
+            else str(cls.function_name)
+        )
+        return cls.require_callable(function_name)
+
+    @classmethod
+    def _derived_identity_setting_records(
+        cls,
+        *,
+        invocation,
+        block_position,
+        existing_records,
+        step_context,
+    ):
+        """Reconstruct the EMD condition from the public callable variant."""
+        setting_key = cls.normalize_setting_name(cls.calculate_emd_setting)
+        own = (
+            (
+                ModuleSetting(
+                    cls.calculate_emd_setting,
+                    "Yes",
+                ),
+            )
+            if invocation.contract.function_name == cls.function_variants[0]
+            and setting_key
+            not in cls._normalized_record_setting_names(existing_records)
+            else ()
+        )
+        return (
+            *own,
+            *super()._derived_identity_setting_records(
+                invocation=invocation,
+                block_position=block_position,
+                existing_records=(*existing_records, *own),
+                step_context=step_context,
+            ),
+        )
+
+
+class MeasureImageOverlapModule(
+    _OverlapMeasurementModule,
+    NoObjectNameMeasurementRecordMixin,
+    FieldDerivedMeasurementFeatureModule,
+    MeasurementArtifactOutputModule,
+    CellProfilerModule,
+):
+    module_name = "MeasureImageOverlap"
     function_name = "measureimageoverlap"
+    function_variants = ("measureimageoverlap_with_emd",)
     validated = True
-    contract = ProcessingContract.PURE_3D
     confidence = 1.0
+    ground_truth_setting = "Select the image to be used as the ground truth basis for calculating the amount of overlap"
+    test_image_setting = "Select the image to be used to test for overlap"
+    setting_bindings = (
+        SettingToKeywordBinding.input(ground_truth_setting, ImageArtifactType),
+        SettingToKeywordBinding.input(test_image_setting, ImageArtifactType),
+    )
+
+    @classmethod
+    def measurement_qualifiers(
+        cls,
+        request: "CellProfilerOutputRecordRequest",
+    ) -> tuple[str, ...]:
+        image_inputs = tuple(
+            spec
+            for spec in request.callable_contract.artifact_inputs.specs
+            if spec.artifact_type is ImageArtifactType
+        )
+        if len(image_inputs) != 2:
+            raise ValueError(
+                "MeasureImageOverlap requires exactly two image inputs, got "
+                f"{tuple(spec.name for spec in image_inputs)!r}."
+            )
+        return (image_inputs[1].name,)
 
 
-class MeasureObjectOverlapModule(CellProfilerModule):
+class MeasureObjectOverlapModule(
+    _OverlapMeasurementModule,
+    NoObjectNameMeasurementRecordMixin,
+    FieldDerivedMeasurementFeatureModule,
+    ObjectArtifactInputModule,
+    MeasurementArtifactOutputModule,
+    CellProfilerModule,
+):
     module_name = "MeasureObjectOverlap"
     function_name = "measure_object_overlap"
+    function_variants = ("measure_object_overlap_with_emd",)
     validated = True
-    contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
+    ground_truth_setting = "Select the objects to be used as the ground truth basis for calculating the amount of overlap"
+    test_objects_setting = (
+        "Select the objects to be tested for overlap against the ground truth"
+    )
+    setting_bindings = (
+        SettingToKeywordBinding.input(
+            ground_truth_setting,
+            ObjectLabelsArtifactType,
+            runtime_parameter_name="labels_ground_truth",
+        ),
+        SettingToKeywordBinding.input(
+            test_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="labels_test"
+        ),
+    )
+
+    @classmethod
+    def measurement_qualifiers(
+        cls,
+        request: "CellProfilerOutputRecordRequest",
+    ) -> tuple[str, ...]:
+        object_inputs = tuple(
+            spec
+            for spec in request.callable_contract.artifact_inputs.specs
+            if spec.artifact_type is ObjectLabelsArtifactType
+        )
+        if len(object_inputs) != 2:
+            raise ValueError(
+                "MeasureObjectOverlap requires exactly two object inputs, got "
+                f"{tuple(spec.name for spec in object_inputs)!r}."
+            )
+        return tuple(spec.name for spec in object_inputs)
 
 
 __all__ = public_names_from_objects(
     DecimationMethod,
     ImageOverlapMeasurement,
+    ImageOverlapMeasurementWithEmd,
     OverlapMeasurements,
+    OverlapMeasurementsWithEmd,
     compute_image_earth_movers_distance,
     decimate_overlap_points,
     measureimageoverlap,
+    measureimageoverlap_with_emd,
     measure_object_overlap,
+    measure_object_overlap_with_emd,
 )

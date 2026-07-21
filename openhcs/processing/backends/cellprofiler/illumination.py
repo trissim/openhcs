@@ -1,1025 +1,90 @@
 """Illumination backends for CellProfiler-compatible processing."""
 
 from __future__ import annotations
-from dataclasses import dataclass, replace
-from enum import Enum
-from typing import ClassVar
-import numpy as np
-from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
-from openhcs.core.artifacts import ArtifactSpec, ArtifactType, ImageArtifactType
-from openhcs.core.image_shapes import is_color_image_slice
-from openhcs.core.runtime_invocation import RuntimeInvocationOptions
-from openhcs.core.runtime_values import (
-    image_payload_data,
-    image_payload_metadata,
-    image_payload_slice_context,
-)
-from openhcs.interop.cellprofiler.runtime.execution_mode_policies import (
-    CellProfilerInvocationExecutionModePolicyMixin,
-)
-from openhcs.interop.cellprofiler.runtime.main_flow import (
-    CellProfilerMainFlowReplacementPolicyMixin,
-)
-from openhcs.interop.cellprofiler.runtime.output_contexts import (
-    CellProfilerImageOutputSourcePayloadPolicyMixin,
-    CellProfilerImageOutputValuePolicyMixin,
-)
-from openhcs.interop.cellprofiler.runtime.output_record_request import (
-    CellProfilerOutputRecordRequest,
-)
-from openhcs.interop.cellprofiler.runtime.payload_types import (
-    CellProfilerKwargs,
-    CellProfilerRuntimeValue,
-)
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
-from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
-from openhcs.interop.cellprofiler.settings_binder import (
-    SettingToKeywordBinding,
-    cellprofiler_enum_value_setting_parser,
-    parse_cellprofiler_bool,
-    parse_cellprofiler_float,
-    parse_cellprofiler_int,
-)
-from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
-    BinderSettingsSourceModule,
-    BoundModuleSettings,
-    CellProfilerModule,
-    ImageArtifactInputCapability,
-    ImageArtifactInputModule,
-    ImageArtifactOutputCapability,
-    ImageArtifactOutputModule,
-    ModuleSettingsSourceModule,
-    ScopedMeasurementModule,
-    StructuringElementSettingsModule,
-    source_schema_declares_image_alias,
-)
-from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
-from openhcs.interop.cellprofiler.setting_names import (
-    optional_setting_value,
-    required_setting_value,
-    setting_values,
-    split_symbol_names,
-)
-from openhcs.interop.cellprofiler.cellprofiler_literals import (
-    cellprofiler_enum_from_literal,
-)
-
-
-class IlluminationIntensityChoice(Enum):
-    REGULAR = "regular"
-    BACKGROUND = "background"
-
-
-class IlluminationSmoothingMethod(Enum):
-    NONE = "none"
-    CONVEX_HULL = "convex_hull"
-    FIT_POLYNOMIAL = "fit_polynomial"
-    MEDIAN_FILTER = "median_filter"
-    GAUSSIAN_FILTER = "gaussian_filter"
-    TO_AVERAGE = "to_average"
-    SPLINES = "splines"
-
-
-IlluminationSmoothingMethod.NONE.cellprofiler_literals = ("No smoothing",)
-
-
-class IlluminationFilterSizeMethod(Enum):
-    AUTOMATIC = "automatic"
-    OBJECT_SIZE = "object_size"
-    MANUALLY = "manually"
-
-
-class IlluminationRescaleOption(Enum):
-    YES = "yes"
-    NO = "no"
-    MEDIAN = "median"
-
-
-class IlluminationSplineBackgroundMode(Enum):
-    AUTO = "auto"
-    DARK = "dark"
-    BRIGHT = "bright"
-    GRAY = "gray"
-
-
-class IlluminationCalculationScope(Enum):
-    EACH = "each"
-    ALL_FIRST_CYCLE = "all_first_cycle"
-    ALL_ACROSS_CYCLES = "all_across_cycles"
-
-    @property
-    def requires_channel_grouping(self) -> bool:
-        return self is not IlluminationCalculationScope.EACH
-
-
-class IlluminationCorrectionMethod(Enum):
-    DIVIDE = "divide"
-    SUBTRACT = "subtract"
-
-
-class CorrectIlluminationApplyMainFlowReplacementMixin(
-    CellProfilerMainFlowReplacementPolicyMixin
-):
-    """CorrectIlluminationApply publishes corrected image outputs to main flow."""
-
-    def replaces_main_flow(self, image_outputs: tuple[ArtifactSpec, ...]) -> bool:
-        return bool(image_outputs)
-
-
-class CorrectIlluminationCalculateMainFlowReplacementMixin(
-    CellProfilerMainFlowReplacementPolicyMixin
-):
-    """CorrectIlluminationCalculate records image artifacts without replacing flow."""
-
-    def replaces_main_flow(self, image_outputs: tuple[ArtifactSpec, ...]) -> bool:
-        del image_outputs
-        return False
-
-
-class CorrectIlluminationApplyImageOutputSourcePayloadMixin(
-    CellProfilerImageOutputSourcePayloadPolicyMixin
-):
-    """Use the corrected channel's original image as output provenance."""
-
-    def source_payload(
-        self, request: CellProfilerOutputRecordRequest
-    ) -> CellProfilerRuntimeValue | None:
-        source_spec = self.source_spec(request)
-        if source_spec is None:
-            return request.primary_image_output_source_payload()
-        return request.input_image_source_payload(source_spec)
-
-    def source_spec(
-        self, request: CellProfilerOutputRecordRequest
-    ) -> ArtifactSpec | None:
-        """Return the original source image input for a corrected image output."""
-        original_inputs = self.original_image_inputs(request)
-        input_specs = {spec.name: spec for spec in original_inputs}
-        candidate_names = CorrectIlluminationOriginalImageName(
-            request.spec.name
-        ).output_candidate_names()
-        for candidate_name in candidate_names:
-            if candidate_name in input_specs:
-                return input_specs[candidate_name]
-        output_index = request.image_output_index()
-        image_outputs = request.image_outputs()
-        if output_index is not None and len(original_inputs) == len(image_outputs):
-            return original_inputs[output_index]
-        return None
-
-    def original_image_inputs(
-        self, request: CellProfilerOutputRecordRequest
-    ) -> tuple[ArtifactSpec, ...]:
-        """Return declared primary image inputs with CellProfiler Orig* semantics."""
-        return tuple(
-            (
-                spec
-                for spec in request.runtime_plan.primary_image_inputs
-                if CorrectIlluminationOriginalImageName(spec.name).is_original_source()
-            )
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class CorrectIlluminationOriginalImageName:
-    """Original-image naming rule used by CorrectIlluminationApply outputs."""
-
-    name: str
-    prefix: ClassVar[str] = "Orig"
-
-    def is_original_source(self) -> bool:
-        return self.name[: len(type(self).prefix)] == type(self).prefix
-
-    def output_candidate_names(self) -> tuple[str, ...]:
-        if self.is_original_source():
-            return (self.name,)
-        return (f"{type(self).prefix}{self.name}", self.name)
-
-
-@dataclass(frozen=True, slots=True)
-class CorrectIlluminationCanonicalImageNames:
-    """Canonical CP image names derived from an original source image name."""
-
-    source_name: str
-    original_prefix: ClassVar[str] = "Orig"
-    illumination_prefix: ClassVar[str] = "Illum"
-    corrected_prefix: ClassVar[str] = "Corrected"
-
-    def suffix(self) -> str:
-        if self.source_name.startswith(type(self).original_prefix):
-            return self.source_name[len(type(self).original_prefix):]
-        return self.source_name
-
-    def illumination_function_name(self) -> str:
-        return f"{type(self).illumination_prefix}{self.suffix()}"
-
-    def corrected_image_name(self) -> str:
-        return f"{type(self).corrected_prefix}{self.suffix()}"
-
-
-def _single_compile_time_setting_value(
-    records: tuple[ModuleSetting, ...],
-    setting_name: str,
-) -> str | None:
-    values = tuple(record.value for record in records if record.name == setting_name)
-    if not values:
-        return None
-    if len(values) != 1:
-        raise ValueError(
-            f"Expected one compile-time setting row for {setting_name!r}, got {values!r}."
-        )
-    return values[0]
-
-
-def _canonical_compile_time_identity_records(
-    *,
-    source_schema: object,
-    input_setting: str,
-    input_name: str | None,
-    output_setting: str,
-    output_name: str | None,
-    canonical_output_name: str | None,
-) -> tuple[ModuleSetting, ...]:
-    """Keep only identity rows that public OpenHCS flow cannot reconstruct."""
-    records: list[ModuleSetting] = []
-    if input_name and not source_schema_declares_image_alias(
-        source_schema, input_name
-    ):
-        records.append(ModuleSetting(input_setting, input_name))
-    if output_name and output_name != canonical_output_name:
-        records.append(ModuleSetting(output_setting, output_name))
-    return tuple(records)
-
-
-@dataclass(frozen=True, slots=True)
-class CorrectedImageOutputPlaneStack:
-    """Detect corrected-image output stacks that represent one source plane."""
-
-    value: CellProfilerRuntimeValue
-
-    def plane_index(self) -> int | None:
-        data = np.asarray(image_payload_data(self.value))
-        if data.ndim < 3 or is_color_image_slice(data):
-            return None
-        if data.shape[0] == 1:
-            return 0
-        if self.has_duplicate_source_plane_identity(data.shape[0]):
-            return 0
-        return None
-
-    def has_duplicate_source_plane_identity(self, plane_count: int) -> bool:
-        identities = self.plane_identities(plane_count)
-        if not identities:
-            return False
-        return len(frozenset(identities)) == 1
-
-    def plane_identities(
-        self, plane_count: int
-    ) -> tuple[tuple[str | None, tuple[tuple[str, str], ...] | None], ...]:
-        provenance = image_payload_metadata(self.value).source_provenance
-        if provenance.source_plane_count != plane_count:
-            return ()
-        return tuple(
-            (
-                provenance.for_source_plane(plane_index).identity()
-                for plane_index in range(plane_count)
-            )
-        )
-
-
-class CorrectIlluminationApplyImageOutputValueMixin(
-    CellProfilerImageOutputValuePolicyMixin
-):
-    """Collapse duplicate grouped-plane stacks emitted for one corrected source."""
-
-    def output_value(
-        self, request: CellProfilerOutputRecordRequest
-    ) -> CellProfilerRuntimeValue:
-        plane_index = CorrectedImageOutputPlaneStack(request.output_value).plane_index()
-        if plane_index is None:
-            return request.output_value
-        output_data = np.asarray(image_payload_data(request.output_value))[plane_index]
-        return image_payload_slice_context(
-            request.output_value, output_data, plane_index
-        )
-
-
-class CorrectIlluminationApplyModule(
-    CorrectIlluminationApplyMainFlowReplacementMixin,
-    CorrectIlluminationApplyImageOutputSourcePayloadMixin,
-    CorrectIlluminationApplyImageOutputValueMixin,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
-    CellProfilerModule,
-):
-    module_name = "CorrectIlluminationApply"
-    function_name = "correct_illumination_apply"
-    validated = True
-    contract = ProcessingContract.PURE_2D
-    confidence = 1.0
-    input_image_setting = "Select the input image"
-    output_image_setting = "Name the output image"
-    illumination_function_setting = "Select the illumination function"
-    method_setting = "Select how the illumination function is applied"
-    truncate_low_setting = "Set output image values less than 0 equal to 0?"
-    truncate_high_setting = "Set output image values greater than 1 equal to 1?"
-    image_input_settings = (input_image_setting,)
-    image_output_settings = (output_image_setting,)
-    ignored_settings = (illumination_function_setting,)
-    setting_bindings = (
-        SettingToKeywordBinding(
-            method_setting,
-            "method",
-            cellprofiler_enum_value_setting_parser(IlluminationCorrectionMethod),
-        ),
-        SettingToKeywordBinding(
-            truncate_low_setting,
-            "truncate_low",
-            parse_cellprofiler_bool,
-        ),
-        SettingToKeywordBinding(
-            truncate_high_setting,
-            "truncate_high",
-            parse_cellprofiler_bool,
-        ),
-    )
-
-    @classmethod
-    def generated_module_blocks(cls, module: ModuleBlock) -> tuple[ModuleBlock, ...]:
-        """Expose repeated image/function/output pairs as grouped invocations."""
-        image_names = setting_values(module, cls.input_image_setting)
-        illumination_names = setting_values(module, cls.illumination_function_setting)
-        output_names = setting_values(module, cls.output_image_setting)
-        if not image_names or not illumination_names or not output_names:
-            return (module,)
-        pair_count = len(image_names)
-        if len({pair_count, len(illumination_names), len(output_names)}) != 1:
-            return (module,)
-        if pair_count <= 1:
-            return (module,)
-        return tuple(
-            cls._generated_pair_module(module, pair_index, pair_count)
-            for pair_index in range(pair_count)
-        )
-
-    @classmethod
-    def _generated_pair_module(
-        cls,
-        module: ModuleBlock,
-        pair_index: int,
-        pair_count: int,
-    ) -> ModuleBlock:
-        setting_records = cls._pair_setting_records(module, pair_index, pair_count)
-        return replace(
-            module,
-            module_num=module.module_num * 1000 + pair_index + 1,
-            setting_records=list(setting_records),
-            settings={record.name: record.value for record in setting_records},
-            metadata={
-                **module.metadata,
-                "module_num": str(module.module_num * 1000 + pair_index + 1),
-            },
-        )
-
-    @classmethod
-    def _pair_setting_records(
-        cls,
-        module: ModuleBlock,
-        pair_index: int,
-        pair_count: int,
-    ) -> tuple[ModuleSetting, ...]:
-        pair_setting_names = {
-            cls.input_image_setting,
-            cls.illumination_function_setting,
-            cls.output_image_setting,
-            cls.method_setting,
-            cls.truncate_low_setting,
-            cls.truncate_high_setting,
-        }
-        occurrences: dict[str, int] = {}
-        records: list[ModuleSetting] = []
-        for record in module.iter_settings():
-            if record.name not in pair_setting_names:
-                records.append(record)
-                continue
-            values = module.get_setting_values(record.name)
-            if len(values) == pair_count:
-                occurrence = occurrences.get(record.name, 0)
-                occurrences[record.name] = occurrence + 1
-                if occurrence == pair_index:
-                    records.append(record)
-                continue
-            records.append(record)
-        return tuple(records)
-
-    @classmethod
-    def preserve_duplicate_artifact_inputs(cls, module: "ModuleBlock") -> bool:
-        del module
-        return True
-
-    @classmethod
-    def source_image_types_by_alias(cls, module: "ModuleBlock") -> dict[str, str]:
-        from openhcs.core.pipeline_image_schema import (
-            IlluminationFunctionImageTypeSourceRole,
-        )
-
-        return {
-            name: IlluminationFunctionImageTypeSourceRole.image_type()
-            for value in setting_values(module, cls.illumination_function_setting)
-            for name in split_symbol_names(value)
-        }
-
-    @classmethod
-    def postprocess_bound_settings(
-        cls, module: "ModuleBlock", bound: "BoundModuleSettings"
-    ) -> "BoundModuleSettings":
-        repeated_kwargs: dict[str, Any] = {}
-        method_values = setting_values(
-            module, cls.method_setting
-        )
-        if len(method_values) > 1:
-            repeated_kwargs["method"] = tuple(
-                (
-                    coerce_cellprofiler_enum(IlluminationCorrectionMethod, value).value
-                    for value in method_values
-                )
-            )
-        repeated_kwargs.update(
-            cls._repeated_bool_setting(
-                module,
-                cls.truncate_low_setting,
-                "truncate_low",
-            )
-        )
-        repeated_kwargs.update(
-            cls._repeated_bool_setting(
-                module,
-                cls.truncate_high_setting,
-                "truncate_high",
-            )
-        )
-        return bound.with_kwargs(repeated_kwargs)
-
-    @staticmethod
-    def _repeated_bool_setting(
-        module: "ModuleBlock", setting_name: str, parameter_name: str
-    ) -> dict[str, tuple[bool, ...]]:
-        values = setting_values(module, setting_name)
-        if len(values) <= 1:
-            return {}
-        return {
-            parameter_name: tuple((parse_cellprofiler_bool(value) for value in values))
-        }
-
-    @classmethod
-    def compile_time_public_setting_names(cls):
-        return (
-            *super().compile_time_public_setting_names(),
-            cls.illumination_function_setting,
-        )
-
-    @classmethod
-    def compile_time_public_setting_records(cls, module, source_schema=None):
-        input_name = optional_setting_value(module, cls.input_image_setting)
-        output_name = optional_setting_value(module, cls.output_image_setting)
-        illumination_name = optional_setting_value(
-            module, cls.illumination_function_setting
-        )
-        records = list(
-            _canonical_compile_time_identity_records(
-                source_schema=source_schema,
-                input_setting=cls.input_image_setting,
-                input_name=input_name,
-                output_setting=cls.output_image_setting,
-                output_name=output_name,
-                canonical_output_name=(
-                    CorrectIlluminationCanonicalImageNames(
-                        input_name
-                    ).corrected_image_name()
-                    if input_name
-                    else None
-                ),
-            )
-        )
-        canonical_illumination_name = (
-            CorrectIlluminationCanonicalImageNames(
-                input_name
-            ).illumination_function_name()
-            if input_name
-            else None
-        )
-        if illumination_name and illumination_name != canonical_illumination_name:
-            records.append(
-                ModuleSetting(cls.illumination_function_setting, illumination_name)
-            )
-        return tuple(records)
-
-
-    @classmethod
-    def compile_time_setting_records_for_invocation(cls, request):
-        records = [
-            *cls.compile_time_setting_records_from_kwargs(request.kwargs),
-            *cls.compile_time_public_setting_records_from_kwargs(request.kwargs),
-        ]
-        records.extend(
-            cls.compile_time_source_binding_input_setting_records(
-                request,
-                existing_records=tuple(records),
-            )
-        )
-        records.extend(
-            cls.compile_time_main_flow_input_setting_records(
-                request,
-                existing_records=tuple(records),
-            )
-        )
-        records.extend(
-            cls.compile_time_illumination_function_setting_records(
-                existing_records=tuple(records),
-            )
-        )
-        records.extend(
-            cls.compile_time_canonical_output_setting_records(
-                request,
-                existing_records=tuple(records),
-            )
-        )
-        return tuple(records)
-
-    @classmethod
-    def compile_time_illumination_function_setting_records(
-        cls,
-        *,
-        existing_records: tuple[ModuleSetting, ...],
-    ) -> tuple[ModuleSetting, ...]:
-        if _single_compile_time_setting_value(
-            existing_records, cls.illumination_function_setting
-        ) is not None:
-            return ()
-        input_name = _single_compile_time_setting_value(
-            existing_records, cls.input_image_setting
-        )
-        if input_name is None:
-            return ()
-        return (
-            ModuleSetting(
-                cls.illumination_function_setting,
-                CorrectIlluminationCanonicalImageNames(
-                    input_name
-                ).illumination_function_name(),
-            ),
-        )
-
-    @classmethod
-    def compile_time_canonical_output_setting_records(
-        cls,
-        request,
-        *,
-        existing_records: tuple[ModuleSetting, ...],
-    ) -> tuple[ModuleSetting, ...]:
-        del request
-        if _single_compile_time_setting_value(
-            existing_records, cls.output_image_setting
-        ) is not None:
-            return ()
-        input_name = _single_compile_time_setting_value(
-            existing_records, cls.input_image_setting
-        )
-        if input_name is None:
-            return ()
-        return (
-            ModuleSetting(
-                cls.output_image_setting,
-                CorrectIlluminationCanonicalImageNames(input_name).corrected_image_name(),
-            ),
-        )
-
-    @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        image_names = setting_values(module, cls.input_image_setting)
-        illumination_names = setting_values(module, cls.illumination_function_setting)
-        output_names = setting_values(module, cls.output_image_setting)
-        if not image_names or not illumination_names or (not output_names):
-            raise ValueError(
-                f"Module {module.name}({module.module_num}) requires image, illumination-function, and output-image settings."
-            )
-        if len({len(image_names), len(illumination_names), len(output_names)}) != 1:
-            raise ValueError(
-                f"Module {module.name}({module.module_num}) has mismatched CorrectIlluminationApply pair settings."
-            )
-        inputs = []
-        outputs = []
-        for image_name, illumination_name, output_name in zip(
-            image_names, illumination_names, output_names, strict=True
-        ):
-            inputs.append(
-                ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(image_name))
-            )
-            inputs.append(
-                ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(illumination_name))
-            )
-            outputs.append(
-                ImageArtifactOutputCapability.bind_artifact(
-                    cls,
-                    builder,
-                    module,
-                    ArtifactSpec.output_preserving_source_stack_scope(
-                        output_name,
-                        ImageArtifactType,
-                        ArtifactSpec.input(image_name, ImageArtifactType),
-                        **cls.declared_output_artifact_spec_kwargs(
-                            builder,
-                            module,
-                            setting=cls.output_image_setting,
-                            capability_type=ImageArtifactOutputCapability,
-                            name=output_name,
-                        ),
-                    ),
-                )
-            )
-        return assembler.assemble_contract(
-            module, builder, inputs=inputs, outputs=outputs
-        )
-
-
-class IlluminationCalculationScopeExecutionModePolicy(
-    CellProfilerInvocationExecutionModePolicyMixin
-):
-    """Run all-image illumination calculation once over the full image stack."""
-
-    def execution_mode(
-        self,
-        default: ImagePayloadExecutionMode,
-        *,
-        image: CellProfilerRuntimeValue,
-        kwargs: CellProfilerKwargs,
-        invocation_options: RuntimeInvocationOptions | None = None,
-    ) -> ImagePayloadExecutionMode:
-        del image, invocation_options
-        scope = coerce_cellprofiler_enum(
-            IlluminationCalculationScope,
-            kwargs.get("calculation_scope", IlluminationCalculationScope.EACH),
-        )
-        if scope.requires_channel_grouping:
-            return ImagePayloadExecutionMode.FULL_STACK
-        return default
-
-
-class CorrectIlluminationCalculateModule(
-    CorrectIlluminationCalculateMainFlowReplacementMixin,
-    IlluminationCalculationScopeExecutionModePolicy,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
-    CellProfilerModule,
-):
-    module_name = "CorrectIlluminationCalculate"
-    function_name = "correct_illumination_calculate"
-    validated = True
-    contract = ProcessingContract.FLEXIBLE
-    confidence = 1.0
-    input_image_setting = "Select the input image"
-    output_image_setting = "Name the output image"
-    ignored_settings = (
-        "Retain the averaged image?",
-        "Name the averaged image",
-        "Retain the dilated image?",
-        "Name the dilated image",
-    )
-    image_input_settings = (input_image_setting,)
-    image_output_settings = (output_image_setting,)
-
-    @classmethod
-    def compile_time_public_setting_records(cls, module, source_schema=None):
-        input_name = optional_setting_value(module, cls.input_image_setting)
-        return _canonical_compile_time_identity_records(
-            source_schema=source_schema,
-            input_setting=cls.input_image_setting,
-            input_name=input_name,
-            output_setting=cls.output_image_setting,
-            output_name=optional_setting_value(module, cls.output_image_setting),
-            canonical_output_name=(
-                CorrectIlluminationCanonicalImageNames(
-                    input_name
-                ).illumination_function_name()
-                if input_name
-                else None
-            ),
-        )
-
-    @classmethod
-    def compile_time_canonical_output_setting_records(
-        cls,
-        request,
-        *,
-        existing_records: tuple[ModuleSetting, ...],
-    ) -> tuple[ModuleSetting, ...]:
-        del request
-        if _single_compile_time_setting_value(
-            existing_records, cls.output_image_setting
-        ) is not None:
-            return ()
-        input_name = _single_compile_time_setting_value(
-            existing_records, cls.input_image_setting
-        )
-        if input_name is None:
-            return ()
-        return (
-            ModuleSetting(
-                cls.output_image_setting,
-                CorrectIlluminationCanonicalImageNames(
-                    input_name
-                ).illumination_function_name(),
-            ),
-        )
-
-    def calculation_scope_literal(value: str) -> str:
-        cleaned = (
-            value.replace("\x00", "")
-            .replace("\ufeff", "")
-            .replace("ÿþ", "")
-            .replace("þÿ", "")
-        )
-        return coerce_cellprofiler_enum(IlluminationCalculationScope, cleaned).value
-
-    setting_bindings = (
-        SettingToKeywordBinding(
-            "Select how the illumination function is calculated",
-            "intensity_choice",
-            cellprofiler_enum_value_setting_parser(IlluminationIntensityChoice),
-        ),
-        SettingToKeywordBinding(
-            "Dilate objects in the final averaged image?",
-            "dilate_objects",
-            parse_cellprofiler_bool,
-        ),
-        SettingToKeywordBinding(
-            "Dilation radius", "object_dilation_radius", parse_cellprofiler_int
-        ),
-        SettingToKeywordBinding("Block size", "block_size", parse_cellprofiler_int),
-        SettingToKeywordBinding(
-            "Rescale the illumination function?",
-            "rescale_option",
-            cellprofiler_enum_value_setting_parser(IlluminationRescaleOption),
-        ),
-        SettingToKeywordBinding(
-            "Calculate function for each image individually, or based on all images?",
-            "calculation_scope",
-            calculation_scope_literal,
-        ),
-        SettingToKeywordBinding(
-            "Smoothing method",
-            "smoothing_method",
-            cellprofiler_enum_value_setting_parser(IlluminationSmoothingMethod),
-        ),
-        SettingToKeywordBinding(
-            "Method to calculate smoothing filter size",
-            "filter_size_method",
-            cellprofiler_enum_value_setting_parser(IlluminationFilterSizeMethod),
-        ),
-        SettingToKeywordBinding(
-            SettingNameFamily(
-                "Approximate object diameter", aliases=("Approximate object size",)
-            ),
-            "object_width",
-            parse_cellprofiler_int,
-        ),
-        SettingToKeywordBinding(
-            "Smoothing filter size", "manual_filter_size", parse_cellprofiler_int
-        ),
-        SettingToKeywordBinding(
-            "Automatically calculate spline parameters?",
-            "automatic_splines",
-            parse_cellprofiler_bool,
-        ),
-        SettingToKeywordBinding(
-            "Background mode",
-            "spline_bg_mode",
-            cellprofiler_enum_value_setting_parser(IlluminationSplineBackgroundMode),
-        ),
-        SettingToKeywordBinding(
-            "Number of spline points", "spline_points", parse_cellprofiler_int
-        ),
-        SettingToKeywordBinding(
-            "Background threshold", "spline_threshold", parse_cellprofiler_float
-        ),
-        SettingToKeywordBinding(
-            "Image resampling factor", "spline_rescale", parse_cellprofiler_float
-        ),
-        SettingToKeywordBinding(
-            "Maximum number of iterations",
-            "spline_max_iterations",
-            parse_cellprofiler_int,
-        ),
-        SettingToKeywordBinding(
-            "Residual value for convergence",
-            "spline_convergence",
-            parse_cellprofiler_float,
-        ),
-    )
-
-    @classmethod
-    def processing_components(
-        cls, request: "ModuleProcessingComponentRequest"
-    ) -> "ModuleProcessingComponents":
-        """Lower all-image illumination scope to a site stack per channel."""
-        from openhcs.interop.cellprofiler.module_processing_components import (
-            ModuleProcessingComponents,
-            SourceProcessingAxisRole,
-            SourceProcessingAxisRolePolicy,
-        )
-
-        raw_scope = request.bound_settings.value(
-            "calculation_scope", IlluminationCalculationScope.EACH
-        )
-        scope = coerce_cellprofiler_enum(IlluminationCalculationScope, raw_scope)
-        if not scope.requires_channel_grouping:
-            return super().processing_components(request)
-        axis_plan = request.axis_plan()
-        sample_group_components = SourceProcessingAxisRolePolicy.for_role(
-            SourceProcessingAxisRole.SAMPLE_GROUP
-        ).components(axis_plan)
-        group_by_component = axis_plan.optional_single_image_set_component(
-            f"CorrectIlluminationCalculate all-image scope cannot infer one group-by component from multiple image-set axes: {tuple((component.value for component in axis_plan.image_set_components))!r}."
-        )
-        if group_by_component is None:
-            return cls.with_generated_group_by(
-                ModuleProcessingComponents(sample_group_components)
-            )
-        return ModuleProcessingComponents(
-            sample_group_components,
-            group_by_component,
-        )
-
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from functools import lru_cache
 import logging
 import time
-from typing import ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
-from openhcs.constants.constants import MemoryType
+
+from openhcs.constants.constants import MemoryType, VariableComponents
+from openhcs.core.aligned_image_payload import (
+    AlignedImageStack,
+    ImagePayloadExecutionMode,
+)
+from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ArtifactSpecCollection,
+    GroupLineageSourceRelation,
+    ImageArtifactType,
+    InputStackBroadcastSourceRelation,
+    SourceStackLineageSourceRelation,
+)
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.registry_strategies import (
-    EnumKeyedStrategyMixin,
-    MostDerivedContextStrategyMixin,
-)
-from openhcs.core.runtime_values import (
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.runtime_array_values import RuntimeArrayData
+from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
-    ImagePayloadMetadataInput,
-    RuntimeArrayData,
-    RuntimeImagePayloadContext,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
     project_image_mask_to_data_domain,
 )
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.core.steps.function_runtime import (
+    RuntimeCallableArgument,
+    RuntimeCallableKwargs,
+)
+from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
+from openhcs.interop.cellprofiler.module_settings import BoundModuleSettings
+from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
+from openhcs.interop.cellprofiler.setting_names import (
+    SettingNameFamily,
+    optional_setting_value,
+    required_setting_value,
+    setting_values,
+)
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    cellprofiler_enum_value_setting_parser,
+    coerce_cellprofiler_enum,
+    parse_cellprofiler_bool,
+    parse_cellprofiler_float,
+    parse_cellprofiler_int,
+)
 from openhcs.processing.backends.cellprofiler._backend import (
-    BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    BackendProviderInput,
+    CellProfilerBackendAuthority,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    CellProfilerBackendAuthority,
-)
-from openhcs.processing.backends.cellprofiler.morphology import (
-    MorphologyBackendStrategy,
 )
 from openhcs.processing.backends.cellprofiler.granularity import (
     CellProfilerRuntimeProfiler,
+)
+from openhcs.processing.backends.cellprofiler.morphology import (
+    MorphologyBackendStrategy,
 )
 from openhcs.processing.backends.cellprofiler.perf_fixtures import (
     capture_array_fixture,
     capture_enabled,
 )
-from openhcs.processing.backends.cellprofiler.smoothing import MaskedLinearFilterRequest
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.materialization import csv_materializer
-from openhcs.processing.backends.cellprofiler.thresholding import (
-    ThresholdSettingsModule,
+from openhcs.processing.backends.cellprofiler.smoothing import (
+    MaskedLinearFilterRequest,
 )
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
-NDIMAGE_CONSTANT_MODE = "constant"
-ROBUST_FACTOR = 0.02
-CORRECT_ILLUMINATION_CALCULATE_NAME = "correct_illumination_calculate"
-logger = logging.getLogger(__name__)
-runtime_profiler = CellProfilerRuntimeProfiler(logger)
-
-
-class IlluminationMaskNormalizationStrategy(MostDerivedContextStrategyMixin, ABC):
-    """Nominal matcher for closed illumination mask shape normalization cases."""
-
-    __registry_key__ = "registry_key"
-    __skip_if_no_key__ = True
-    registry_key: ClassVar[str | None] = None
-    strategy_key_attr: ClassVar[str] = "registry_key"
-
-    @classmethod
-    def for_request(
-        cls, request: "IlluminationCalculationRequest"
-    ) -> "IlluminationMaskNormalizationStrategy":
-        strategy = cls.for_context(
-            request, error_subject="illumination mask normalization"
-        )
-        if strategy is None:
-            raise ValueError("Illumination mask normalization requires a strategy.")
-        return strategy
-
-    @abstractmethod
-    def matches(self, request: "IlluminationCalculationRequest") -> bool:
-        """Return whether this strategy owns the request shape."""
-
-    @abstractmethod
-    def normalize(self, request: "IlluminationCalculationRequest") -> np.ndarray:
-        """Return the normalized mask."""
-
-
-class IlluminationMaskAsProvidedNormalizationStrategy(
-    IlluminationMaskNormalizationStrategy
-):
-    """Fallback for legacy CellProfiler-compatible mask broadcasting behavior."""
-
-    registry_key = "as_provided"
-
-    def matches(self, request: "IlluminationCalculationRequest") -> bool:
-        return True
-
-    def normalize(self, request: "IlluminationCalculationRequest") -> np.ndarray:
-        if request.mask is None:
-            raise ValueError("Illumination mask normalization requires a mask.")
-        return request.mask
-
-
-class SpatialIlluminationMaskNormalizationStrategy(
-    IlluminationMaskAsProvidedNormalizationStrategy
-):
-    """Mask matches the trailing spatial domain of a stack-like image."""
-
-    registry_key = "spatial"
-
-    def matches(self, request: "IlluminationCalculationRequest") -> bool:
-        if request.mask is None:
-            return False
-        return request.mask.shape == request.image_data.shape[-request.mask.ndim :]
-
-
-class ExactIlluminationMaskNormalizationStrategy(
-    SpatialIlluminationMaskNormalizationStrategy
-):
-    """Mask already matches the illumination pixel data."""
-
-    registry_key = "exact"
-
-    def matches(self, request: "IlluminationCalculationRequest") -> bool:
-        return (
-            request.mask is not None and request.mask.shape == request.image_data.shape
-        )
-
-
-class SingletonPlaneIlluminationMaskNormalizationStrategy(
-    IlluminationMaskAsProvidedNormalizationStrategy
-):
-    """Single-plane stack mask used for a two-dimensional illumination image."""
-
-    registry_key = "singleton_plane"
-
-    def matches(self, request: "IlluminationCalculationRequest") -> bool:
-        if request.mask is None:
-            return False
-        return (
-            request.image_data.ndim == 2
-            and request.mask.ndim == 3
-            and (request.mask.shape[0] == 1)
-        )
-
-    def normalize(self, request: "IlluminationCalculationRequest") -> np.ndarray:
-        if request.mask is None:
-            raise ValueError("Illumination mask normalization requires a mask.")
-        return request.mask[0]
-
-
-def illumination_gaussian_filter(
-    pixel_data: np.ndarray, mask: np.ndarray | None, sigma: float
-) -> np.ndarray:
-    """Apply CellProfiler-compatible Gaussian filtering with optional masking."""
-    from scipy.ndimage import gaussian_filter
-
-    if mask is None:
-        return gaussian_filter(pixel_data, sigma, mode=NDIMAGE_CONSTANT_MODE, cval=0)
-    return MaskedLinearFilterRequest(
-        pixels=pixel_data,
-        mask=mask,
-        operation=lambda image: gaussian_filter(
-            image, sigma, mode=NDIMAGE_CONSTANT_MODE, cval=0
-        ),
-    ).apply()
+if TYPE_CHECKING:
+    from openhcs.core.function_patterns import FunctionInvocationKey
 
 
 class IntensityChoice(Enum):
@@ -1039,6 +104,9 @@ class SmoothingMethod(Enum):
     GAUSSIAN_FILTER = "gaussian_filter"
     TO_AVERAGE = "to_average"
     SPLINES = "splines"
+
+
+SmoothingMethod.NONE.cellprofiler_literals = ("No smoothing",)
 
 
 class FilterSizeMethod(Enum):
@@ -1078,21 +146,479 @@ class CalculationScope(Enum):
         return self is not CalculationScope.EACH
 
 
-@dataclass
-class IlluminationStats:
-    """Runtime measurements emitted by CorrectIlluminationCalculate."""
-
-    slice_index: int
-    min_value: float
-    max_value: float
-    mean_value: float
-    calculation_type: str
-    smoothing_method: str
+class IlluminationCorrectionMethod(Enum):
+    DIVIDE = "divide"
+    SUBTRACT = "subtract"
 
 
-IlluminationCalculationResult = tuple[
-    RuntimeArrayData, IlluminationStats | list[IlluminationStats]
-]
+class CorrectIlluminationApplyModule(
+    CellProfilerModule,
+):
+    module_name = "CorrectIlluminationApply"
+    function_name = "correct_illumination_apply"
+    validated = True
+    confidence = 1.0
+
+    input_image_setting = "Select the input image"
+    output_image_setting = "Name the output image"
+    illumination_function_setting = "Select the illumination function"
+    method_setting = "Select how the illumination function is applied"
+    truncate_low_setting = "Set output image values less than 0 equal to 0?"
+    truncate_high_setting = "Set output image values greater than 1 equal to 1?"
+    input_image_binding = SettingToKeywordBinding.input(
+        input_image_setting, ImageArtifactType
+    )
+    illumination_function_binding = SettingToKeywordBinding.input(
+        illumination_function_setting,
+        ImageArtifactType,
+        runtime_parameter_name="illumination_function",
+    )
+    output_image_binding = SettingToKeywordBinding.output(
+        output_image_setting, ImageArtifactType
+    )
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        input_image_binding,
+        illumination_function_binding,
+        output_image_binding,
+        SettingToKeywordBinding(
+            method_setting,
+            "method",
+            cellprofiler_enum_value_setting_parser(IlluminationCorrectionMethod),
+        ),
+        SettingToKeywordBinding(
+            truncate_low_setting,
+            "truncate_low",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            truncate_high_setting,
+            "truncate_high",
+            parse_cellprofiler_bool,
+        ),
+    )
+
+    @classmethod
+    def finalize_artifact_contract_inputs(
+        cls,
+        module,
+        *,
+        invocation_key,
+        step_context,
+        artifact_inputs: ArtifactSpecCollection,
+    ):
+        inputs = ArtifactSpecCollection(
+            super().finalize_artifact_contract_inputs(
+                module,
+                invocation_key=invocation_key,
+                step_context=step_context,
+                artifact_inputs=artifact_inputs,
+            )
+        )
+        image_names = setting_values(module, cls.input_image_setting)
+        illumination_names = setting_values(
+            module,
+            cls.illumination_function_setting,
+        )
+        if not illumination_names:
+            return inputs.specs
+        if len(image_names) != len(illumination_names):
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) requires one "
+                "illumination function for each input image."
+            )
+        related_inputs = ArtifactSpecCollection(
+            illumination.with_group_scope_relation(
+                InputStackBroadcastSourceRelation(source=image.ref()),
+            )
+            for image_name, illumination_name in zip(
+                image_names,
+                illumination_names,
+                strict=True,
+            )
+            for image in (
+                inputs.require_by_name_and_artifact_type(
+                    image_name,
+                    ImageArtifactType,
+                ),
+            )
+            for illumination in (
+                inputs.require_by_name_and_artifact_type(
+                    illumination_name,
+                    ImageArtifactType,
+                ),
+            )
+            if illumination.ref() != image.ref()
+        ).unique(conflict_context="illumination stack-broadcast input")
+        replacements = {spec.ref(): spec for spec in related_inputs}
+        return tuple(replacements.get(spec.ref(), spec) for spec in inputs.specs)
+
+    @classmethod
+    def artifact_output_relations(
+        cls,
+        module,
+        *,
+        invocation_key,
+        step_context,
+        binding,
+        name,
+        artifact_inputs: ArtifactSpecCollection,
+        output_position: int,
+    ):
+        del (
+            invocation_key,
+            step_context,
+            binding,
+        )
+        image_names = setting_values(module, cls.input_image_setting)
+        if not image_names or output_position >= len(image_names):
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) output {name!r} at "
+                f"position {output_position} has no corresponding input image."
+            )
+        source = artifact_inputs.require_by_name_and_artifact_type(
+            image_names[output_position],
+            ImageArtifactType,
+        )
+        return (SourceStackLineageSourceRelation(source=source.ref()),)
+
+    @classmethod
+    def invocation_module_blocks(cls, module: ModuleBlock) -> tuple[ModuleBlock, ...]:
+        """Keep each repeated image/function/output tuple as one invocation."""
+
+        image_names = setting_values(module, cls.input_image_setting)
+        illumination_names = setting_values(module, cls.illumination_function_setting)
+        output_names = setting_values(module, cls.output_image_setting)
+        pair_count = len(image_names)
+        if (
+            pair_count <= 1
+            or len(illumination_names) != pair_count
+            or len(output_names) != pair_count
+        ):
+            return super().invocation_module_blocks(module)
+
+        pair_setting_names = {
+            cls.input_image_setting,
+            cls.illumination_function_setting,
+            cls.output_image_setting,
+            cls.method_setting,
+            cls.truncate_low_setting,
+            cls.truncate_high_setting,
+        }
+        split_blocks: list[ModuleBlock] = []
+        for pair_index in range(pair_count):
+            occurrences: dict[str, int] = {}
+            records: list[ModuleSetting] = []
+            for record in module.iter_settings():
+                if record.name not in pair_setting_names:
+                    records.append(record)
+                    continue
+                values = module.get_setting_values(record.name)
+                if len(values) != pair_count:
+                    records.append(record)
+                    continue
+                occurrence = occurrences.get(record.name, 0)
+                occurrences[record.name] = occurrence + 1
+                if occurrence == pair_index:
+                    records.append(record)
+            module_num = module.module_num * 1000 + pair_index + 1
+            split_blocks.append(
+                replace(
+                    module,
+                    module_num=module_num,
+                    setting_records=records,
+                    metadata={**module.metadata, "module_num": str(module_num)},
+                )
+            )
+        return tuple(split_blocks)
+
+    @classmethod
+    def postprocess_bound_settings(
+        cls, module: "ModuleBlock", bound: "BoundModuleSettings"
+    ) -> "BoundModuleSettings":
+        repeated_kwargs: dict[str, Any] = {}
+        method_values = setting_values(module, cls.method_setting)
+        if len(method_values) > 1:
+            repeated_kwargs["method"] = tuple(
+                (
+                    coerce_cellprofiler_enum(IlluminationCorrectionMethod, value).value
+                    for value in method_values
+                )
+            )
+        repeated_kwargs.update(
+            cls._repeated_bool_setting(
+                module,
+                cls.truncate_low_setting,
+                "truncate_low",
+            )
+        )
+        repeated_kwargs.update(
+            cls._repeated_bool_setting(
+                module,
+                cls.truncate_high_setting,
+                "truncate_high",
+            )
+        )
+        return bound.with_kwargs(repeated_kwargs)
+
+    @staticmethod
+    def _repeated_bool_setting(
+        module: "ModuleBlock", setting_name: str, parameter_name: str
+    ) -> dict[str, tuple[bool, ...]]:
+        values = setting_values(module, setting_name)
+        if len(values) <= 1:
+            return {}
+        return {
+            parameter_name: tuple((parse_cellprofiler_bool(value) for value in values))
+        }
+
+
+class IlluminationCalculationScopeExecutionModePolicy:
+    """Run all-image illumination calculation once over the full image stack."""
+
+    @classmethod
+    def execution_mode(
+        cls,
+        default: ImagePayloadExecutionMode,
+        *,
+        image: RuntimeCallableArgument,
+        kwargs: RuntimeCallableKwargs,
+        variable_components: tuple[VariableComponents, ...],
+    ) -> ImagePayloadExecutionMode:
+        del cls, image, variable_components
+        scope = coerce_cellprofiler_enum(
+            CalculationScope,
+            kwargs.get("calculation_scope", CalculationScope.EACH),
+        )
+        if scope.uses_all_images:
+            return ImagePayloadExecutionMode.FULL_STACK
+        return default
+
+
+class CorrectIlluminationCalculateModule(
+    IlluminationCalculationScopeExecutionModePolicy,
+    CellProfilerModule,
+):
+    module_name = "CorrectIlluminationCalculate"
+    function_name = "correct_illumination_calculate"
+    validated = True
+    confidence = 1.0
+
+    @classmethod
+    def main_flow_output_specs(
+        cls,
+        main_flow_candidates: tuple[ArtifactSpec, ...],
+    ) -> tuple[ArtifactSpec, ...]:
+        """Record illumination images while preserving the incoming main flow."""
+
+        del cls, main_flow_candidates
+        return ()
+
+    input_image_setting = "Select the input image"
+    output_image_setting = "Name the output image"
+    retain_average_setting = "Retain the averaged image?"
+    average_image_setting = "Name the averaged image"
+    retain_dilated_setting = "Retain the dilated image?"
+    dilated_image_setting = "Name the dilated image"
+    calculation_scope_setting = (
+        "Calculate function for each image individually, or based on all images?"
+    )
+    input_image_binding = SettingToKeywordBinding.input(
+        input_image_setting, ImageArtifactType
+    )
+    output_image_binding = SettingToKeywordBinding.output(
+        output_image_setting, ImageArtifactType
+    )
+    average_image_binding = SettingToKeywordBinding.output(
+        average_image_setting,
+        ImageArtifactType,
+        "average_image_name",
+    )
+    dilated_image_binding = SettingToKeywordBinding.output(
+        dilated_image_setting,
+        ImageArtifactType,
+        "dilated_image_name",
+    )
+
+    @staticmethod
+    def calculation_scope_literal(value: str) -> str:
+        cleaned = (
+            value.replace("\x00", "")
+            .replace("\ufeff", "")
+            .replace("ÿþ", "")
+            .replace("þÿ", "")
+        )
+        return coerce_cellprofiler_enum(CalculationScope, cleaned).value
+
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        input_image_binding,
+        output_image_binding,
+        average_image_binding,
+        dilated_image_binding,
+        SettingToKeywordBinding(
+            retain_average_setting,
+            "retain_average",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            retain_dilated_setting,
+            "retain_dilated",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Select how the illumination function is calculated",
+            "intensity_choice",
+            cellprofiler_enum_value_setting_parser(IntensityChoice),
+        ),
+        SettingToKeywordBinding(
+            "Dilate objects in the final averaged image?",
+            "dilate_objects",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Dilation radius", "object_dilation_radius", parse_cellprofiler_int
+        ),
+        SettingToKeywordBinding("Block size", "block_size", parse_cellprofiler_int),
+        SettingToKeywordBinding(
+            "Rescale the illumination function?",
+            "rescale_option",
+            cellprofiler_enum_value_setting_parser(RescaleOption),
+        ),
+        SettingToKeywordBinding(
+            calculation_scope_setting,
+            "calculation_scope",
+            calculation_scope_literal,
+        ),
+        SettingToKeywordBinding(
+            "Smoothing method",
+            "smoothing_method",
+            cellprofiler_enum_value_setting_parser(SmoothingMethod),
+        ),
+        SettingToKeywordBinding(
+            "Method to calculate smoothing filter size",
+            "filter_size_method",
+            cellprofiler_enum_value_setting_parser(FilterSizeMethod),
+        ),
+        SettingToKeywordBinding(
+            SettingNameFamily(
+                "Approximate object diameter", aliases=("Approximate object size",)
+            ),
+            "object_width",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            "Smoothing filter size", "manual_filter_size", parse_cellprofiler_int
+        ),
+        SettingToKeywordBinding(
+            "Automatically calculate spline parameters?",
+            "automatic_splines",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Background mode",
+            "spline_bg_mode",
+            cellprofiler_enum_value_setting_parser(SplineBgMode),
+        ),
+        SettingToKeywordBinding(
+            "Number of spline points", "spline_points", parse_cellprofiler_int
+        ),
+        SettingToKeywordBinding(
+            "Background threshold", "spline_threshold", parse_cellprofiler_float
+        ),
+        SettingToKeywordBinding(
+            "Image resampling factor", "spline_rescale", parse_cellprofiler_float
+        ),
+        SettingToKeywordBinding(
+            "Maximum number of iterations",
+            "spline_max_iterations",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            "Residual value for convergence",
+            "spline_convergence",
+            parse_cellprofiler_float,
+        ),
+    )
+
+    @classmethod
+    def active_artifact_bindings(
+        cls,
+        module: ModuleBlock | None = None,
+        *,
+        invocation_key: "FunctionInvocationKey | None" = None,
+    ) -> tuple[SettingToKeywordBinding, ...]:
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
+        )
+        if module is None:
+            return bindings
+        retain_average = parse_cellprofiler_bool(
+            optional_setting_value(module, cls.retain_average_setting) or "No"
+        )
+        retain_dilated = parse_cellprofiler_bool(
+            optional_setting_value(module, cls.retain_dilated_setting) or "No"
+        )
+        return tuple(
+            binding
+            for binding in bindings
+            if retain_average or binding is not cls.average_image_binding
+            if retain_dilated or binding is not cls.dilated_image_binding
+        )
+
+    @classmethod
+    def artifact_output_relations(
+        cls,
+        module: ModuleBlock,
+        *,
+        invocation_key,
+        step_context,
+        binding,
+        name,
+        artifact_inputs: ArtifactSpecCollection,
+        output_position: int,
+    ):
+        del invocation_key, binding, name
+        del step_context, output_position
+        image_inputs = artifact_inputs.for_artifact_type(ImageArtifactType).specs
+        if not image_inputs:
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) requires an image input."
+            )
+        scope = coerce_cellprofiler_enum(
+            CalculationScope,
+            required_setting_value(module, cls.calculation_scope_setting),
+        )
+        relation_type = (
+            SourceStackLineageSourceRelation
+            if scope is CalculationScope.EACH
+            else GroupLineageSourceRelation
+        )
+        return (relation_type(source=image_inputs[0].ref()),)
+
+
+NDIMAGE_CONSTANT_MODE = "constant"
+ROBUST_FACTOR = 0.02
+CORRECT_ILLUMINATION_CALCULATE_NAME = "correct_illumination_calculate"
+logger = logging.getLogger(__name__)
+runtime_profiler = CellProfilerRuntimeProfiler(logger)
+
+
+def illumination_gaussian_filter(
+    pixel_data: np.ndarray, mask: np.ndarray | None, sigma: float
+) -> np.ndarray:
+    """Apply CellProfiler Gaussian filtering with an implicit all-valid mask."""
+    from scipy.ndimage import gaussian_filter
+
+    return MaskedLinearFilterRequest(
+        pixels=pixel_data,
+        mask=mask,
+        operation=lambda image: gaussian_filter(
+            image, sigma, mode=NDIMAGE_CONSTANT_MODE, cval=0
+        ),
+    ).apply()
+
+
+IlluminationCalculationResult = RuntimeArrayData | AlignedImageStack
 
 
 class IlluminationCorrectionStrategy(
@@ -1143,154 +669,6 @@ class SubtractIlluminationCorrectionStrategy(IlluminationCorrectionStrategy):
         return output
 
 
-@dataclass(frozen=True, slots=True)
-class IlluminationCorrectionSettingSequence:
-    """Settings expanded to match every image/function pair."""
-
-    methods: tuple[IlluminationCorrectionMethod, ...]
-    truncate_low: tuple[bool, ...]
-    truncate_high: tuple[bool, ...]
-
-    @classmethod
-    def from_settings(
-        cls,
-        method: (
-            IlluminationCorrectionMethod
-            | str
-            | tuple[IlluminationCorrectionMethod | str, ...]
-        ),
-        truncate_low: bool | tuple[bool, ...],
-        truncate_high: bool | tuple[bool, ...],
-        pair_count: int,
-    ) -> "IlluminationCorrectionSettingSequence":
-        return cls(
-            methods=cls.methods_for_pair_count(method, pair_count),
-            truncate_low=cls.bool_setting_for_pair_count(
-                truncate_low, pair_count, parameter_name="truncate_low"
-            ),
-            truncate_high=cls.bool_setting_for_pair_count(
-                truncate_high, pair_count, parameter_name="truncate_high"
-            ),
-        )
-
-    @staticmethod
-    def methods_for_pair_count(
-        value: (
-            IlluminationCorrectionMethod
-            | str
-            | tuple[IlluminationCorrectionMethod | str, ...]
-        ),
-        pair_count: int,
-    ) -> tuple[IlluminationCorrectionMethod, ...]:
-        if isinstance(value, tuple):
-            if len(value) != pair_count:
-                raise ValueError(
-                    f"CorrectIlluminationApply method count must match image/function pair count; got {len(value)} methods for {pair_count} pairs."
-                )
-            return tuple(
-                (
-                    coerce_cellprofiler_enum(IlluminationCorrectionMethod, method)
-                    for method in value
-                )
-            )
-        method = coerce_cellprofiler_enum(IlluminationCorrectionMethod, value)
-        return (method,) * pair_count
-
-    @staticmethod
-    def bool_setting_for_pair_count(
-        value: bool | tuple[bool, ...], pair_count: int, *, parameter_name: str
-    ) -> tuple[bool, ...]:
-        if isinstance(value, tuple):
-            if len(value) != pair_count:
-                raise ValueError(
-                    f"CorrectIlluminationApply {parameter_name} count must match image/function pair count; got {len(value)} values for {pair_count} pairs."
-                )
-            return tuple((bool(item) for item in value))
-        return (bool(value),) * pair_count
-
-
-@dataclass(frozen=True, slots=True)
-class IlluminationCorrectionInputStack:
-    """Stacked image/function pairs and source metadata for application."""
-
-    image: ImagePayloadMetadataInput
-    pixel_stack: np.ndarray
-
-    @classmethod
-    def from_image(
-        cls, image: ImagePayloadMetadataInput
-    ) -> "IlluminationCorrectionInputStack":
-        pixel_stack = np.asarray(image_payload_data(image))
-        if pixel_stack.ndim < 3 or pixel_stack.shape[0] % 2 != 0:
-            raise ValueError(
-                f"CorrectIlluminationApply requires stacked image/function pairs with shape (2*N, ...), got {pixel_stack.shape!r}."
-            )
-        return cls(image=image, pixel_stack=pixel_stack)
-
-    @property
-    def pair_count(self) -> int:
-        return int(self.pixel_stack.shape[0] // 2)
-
-    def image_pixels(self, pair_index: int) -> np.ndarray:
-        return self.pair_member_pixels(self.input_index(pair_index))
-
-    def illumination_function(self, pair_index: int) -> np.ndarray:
-        return self.pair_member_pixels(self.input_index(pair_index) + 1)
-
-    def pair_member_pixels(self, input_index: int) -> np.ndarray:
-        """Return one image/function member with a stable singleton plane axis."""
-        pixels = self.pixel_stack[input_index]
-        if pixels.ndim == 2:
-            return pixels[np.newaxis, ...]
-        return pixels
-
-    @staticmethod
-    def input_index(pair_index: int) -> int:
-        return pair_index * 2
-
-    def input_mask(self, pair_index: int) -> np.ndarray | None:
-        mask = image_payload_mask(self.image)
-        if mask is None:
-            return None
-        mask_array = np.asarray(mask, dtype=bool)
-        input_index = self.input_index(pair_index)
-        if mask_array.ndim >= 3 and mask_array.shape[0] > 0:
-            mask_plane = mask_array[input_index]
-            if mask_plane.ndim == 2:
-                return mask_plane[np.newaxis, ...]
-            return mask_plane
-        return mask_array
-
-    def apply_pair(
-        self,
-        pair_index: int,
-        *,
-        method: IlluminationCorrectionMethod,
-        truncate_low: bool,
-        truncate_high: bool,
-    ) -> RuntimeArrayData:
-        image_pixels = self.image_pixels(pair_index)
-        illumination_function = self.illumination_function(pair_index)
-        if image_pixels.shape != illumination_function.shape:
-            raise ValueError(
-                f"Input image shape {image_pixels.shape} and illumination function shape {illumination_function.shape} must be equal."
-            )
-        output_pixels = IlluminationCorrectionStrategy.for_enum_member(method).apply(
-            image_pixels, illumination_function
-        )
-        if truncate_low:
-            np.maximum(output_pixels, 0.0, out=output_pixels)
-        if truncate_high:
-            np.minimum(output_pixels, 1.0, out=output_pixels)
-        return RuntimeImagePayloadContext(
-            output_pixels,
-            mask=self.input_mask(pair_index),
-            metadata=image_payload_metadata(self.image)
-            .for_source_plane(self.input_index(pair_index))
-            .without_unit_interval_intensity_scale(),
-        ).payload()
-
-
 @dataclass(slots=True)
 class IlluminationCalculationRequest:
     """Complete semantic request for CorrectIlluminationCalculate."""
@@ -1317,52 +695,45 @@ class IlluminationCalculationRequest:
     morphology: MorphologyBackendStrategy
     convex_hull_backend_provider: CellProfilerBackendProvider | None
     rank_median_backend_provider: CellProfilerBackendProvider | None
+    retain_average: bool = False
+    retain_dilated: bool = False
     slice_index: int = 0
+    image_metadata: ImagePayloadMetadata = field(default_factory=ImagePayloadMetadata)
 
     def __post_init__(self) -> None:
         if self.mask is None:
             return
-        self.mask = np.asarray(self.mask, dtype=bool)
-        normalized_mask = IlluminationMaskNormalizationStrategy.for_request(
-            self
-        ).normalize(self)
-        self.mask = normalized_mask
-
-    @property
-    def is_multi_image_stack(self) -> bool:
-        return self.image_data.ndim >= 3
+        self.mask = project_image_mask_to_data_domain(
+            self.mask,
+            self.image_data,
+            metadata=self.image_metadata,
+        )
 
     @property
     def spatial_image_shape(self) -> tuple[int, ...]:
-        if self.calculation_scope.uses_all_images and self.is_multi_image_stack:
+        if self.calculation_scope.uses_all_images:
             return tuple(self.image_data.shape[1:])
         return tuple(self.image_data.shape)
 
     def mask_for_stack_slice(self, slice_index: int) -> np.ndarray | None:
         if self.mask is None:
             return None
-        if self.mask.ndim >= 3 and slice_index < self.mask.shape[0]:
-            return np.asarray(self.mask[slice_index], dtype=bool)
-        return self.mask
+        if not self.calculation_scope.uses_all_images:
+            raise ValueError(
+                "Illumination stack-mask projection requires an all-images "
+                "calculation scope."
+            )
+        return np.asarray(self.mask[slice_index], dtype=bool)
 
     def mask_for_output(self, illumination: np.ndarray) -> np.ndarray | None:
         if self.mask is None:
             return None
-        if self.mask.shape == illumination.shape:
-            return self.mask
-        if illumination.ndim == 2 and self.mask.ndim >= 3:
-            return np.any(self.mask, axis=0)
-        return self.mask
-
-    def stats_for_output(self, output_image: np.ndarray) -> IlluminationStats:
-        return IlluminationStats(
-            slice_index=self.slice_index,
-            min_value=float(np.min(output_image)),
-            max_value=float(np.max(output_image)),
-            mean_value=float(np.mean(output_image)),
-            calculation_type=self.intensity_choice.value,
-            smoothing_method=self.smoothing_method.value,
+        output_mask = (
+            np.any(self.mask, axis=0)
+            if self.calculation_scope.uses_all_images
+            else self.mask
         )
+        return project_image_mask_to_data_domain(output_mask, illumination)
 
     def for_stack_slice(self, slice_index: int) -> "IlluminationCalculationRequest":
         return replace(
@@ -1373,7 +744,9 @@ class IlluminationCalculationRequest:
             slice_index=slice_index,
         )
 
-    def calculate(self) -> tuple[np.ndarray, IlluminationStats]:
+    def calculate(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         total_started_at = time.perf_counter()
         filter_size = self.filter_size()
         avg_image = self.average_image()
@@ -1385,14 +758,7 @@ class IlluminationCalculationRequest:
             time.perf_counter() - total_started_at,
             function=CORRECT_ILLUMINATION_CALCULATE_NAME,
         )
-        stats_started_at = time.perf_counter()
-        stats = self.stats_for_output(output_image)
-        runtime_profiler.log(
-            "cic_stats",
-            time.perf_counter() - stats_started_at,
-            function=CORRECT_ILLUMINATION_CALCULATE_NAME,
-        )
-        return (output_image, stats)
+        return (output_image, avg_image, dilated_image)
 
     def filter_size(self) -> float:
         phase_started_at = time.perf_counter()
@@ -1410,7 +776,7 @@ class IlluminationCalculationRequest:
 
     def average_image(self) -> np.ndarray:
         phase_started_at = time.perf_counter()
-        if not (self.calculation_scope.uses_all_images and self.is_multi_image_stack):
+        if not self.calculation_scope.uses_all_images:
             average_image = self.preprocess_for_averaging()
         else:
             if self.image_data.shape[0] == 0:
@@ -1511,48 +877,49 @@ class IlluminationCalculationRequest:
     def calculate_payload(
         self, metadata: ImagePayloadMetadata
     ) -> IlluminationCalculationResult:
-        if self.is_multi_image_stack and (not self.calculation_scope.uses_all_images):
-            slice_results = [
-                self.for_stack_slice(slice_index).calculate()
-                for slice_index in range(self.image_data.shape[0])
-            ]
-            illumination_stack = np.stack(
-                [result[0] for result in slice_results], axis=0
-            ).astype(np.float32)
-            return (
-                RuntimeImagePayloadContext(
-                    illumination_stack,
-                    mask=self.mask_for_output(illumination_stack),
-                    metadata=metadata,
-                ).payload(),
-                [result[1] for result in slice_results],
-            )
-        illumination, stats = self.calculate()
-        return (
-            RuntimeImagePayloadContext(
-                illumination, mask=self.mask_for_output(illumination), metadata=metadata
-            ).payload(),
-            stats,
+        illumination, average, dilated = self.calculate()
+        output_metadata = (
+            metadata.collapse_leading_plane_axis()
+            if self.calculation_scope.uses_all_images
+            and metadata.plane_axis is not None
+            else metadata
         )
+        return self.payload_result(
+            illumination,
+            average,
+            dilated,
+            metadata=output_metadata,
+        )
+
+    def payload_result(
+        self,
+        illumination: np.ndarray,
+        average: np.ndarray,
+        dilated: np.ndarray,
+        *,
+        metadata: ImagePayloadMetadata,
+    ) -> IlluminationCalculationResult:
+        image_outputs = [self.image_payload(illumination, metadata)]
+        if self.retain_average:
+            image_outputs.append(self.image_payload(average, metadata))
+        if self.retain_dilated:
+            image_outputs.append(self.image_payload(dilated, metadata))
+        main_output = (
+            image_outputs[0]
+            if len(image_outputs) == 1
+            else AlignedImageStack(tuple(image_outputs))
+        )
+        return main_output
+
+    def image_payload(
+        self,
+        image: np.ndarray,
+        metadata: ImagePayloadMetadata,
+    ) -> RuntimeArrayData:
+        return metadata.payload_with(image, self.mask_for_output(image))
 
 
 @numpy(contract=ProcessingContract.FLEXIBLE)
-@special_outputs(
-    (
-        "illumination_stats",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "min_value",
-                "max_value",
-                "mean_value",
-                "calculation_type",
-                "smoothing_method",
-            ],
-            analysis_type="illumination_correction",
-        ),
-    )
-)
 def correct_illumination_calculate(
     image: np.ndarray,
     intensity_choice: IntensityChoice | str = IntensityChoice.REGULAR,
@@ -1572,6 +939,8 @@ def correct_illumination_calculate(
     spline_max_iterations: int = 40,
     spline_convergence: float = 0.001,
     calculation_scope: CalculationScope | str = CalculationScope.EACH,
+    retain_average: bool = False,
+    retain_dilated: bool = False,
     convex_hull_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     rank_median_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> IlluminationCalculationResult:
@@ -1606,9 +975,12 @@ def correct_illumination_calculate(
         spline_max_iterations=spline_max_iterations,
         spline_convergence=spline_convergence,
         calculation_scope=calculation_scope,
+        retain_average=retain_average,
+        retain_dilated=retain_dilated,
         morphology=morphology,
         convex_hull_backend_provider=convex_hull_backend_provider,
         rank_median_backend_provider=rank_median_backend_provider,
+        image_metadata=metadata,
     )
     return request.calculate_payload(metadata)
 
@@ -1659,52 +1031,44 @@ def _prepare_correct_illumination_calculate() -> None:
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
+@special_inputs("illumination_function")
 def correct_illumination_apply(
-    image: ImagePayloadMetadataInput,
-    method: (
-        IlluminationCorrectionMethod
-        | str
-        | tuple[IlluminationCorrectionMethod | str, ...]
-    ) = IlluminationCorrectionMethod.DIVIDE,
-    truncate_low: bool | tuple[bool, ...] = True,
-    truncate_high: bool | tuple[bool, ...] = True,
-) -> RuntimeArrayData | tuple[RuntimeArrayData, ...]:
-    """Apply illumination correction to stacked image/function pairs."""
-    source = IlluminationCorrectionInputStack.from_image(image)
-    settings = IlluminationCorrectionSettingSequence.from_settings(
-        method, truncate_low, truncate_high, source.pair_count
-    )
-    outputs = tuple(
-        (
-            source.apply_pair(
-                pair_index,
-                method=settings.methods[pair_index],
-                truncate_low=settings.truncate_low[pair_index],
-                truncate_high=settings.truncate_high[pair_index],
-            )
-            for pair_index in range(source.pair_count)
+    image: RuntimeArrayData,
+    *,
+    illumination_function: RuntimeArrayData,
+    method: IlluminationCorrectionMethod | str = IlluminationCorrectionMethod.DIVIDE,
+    truncate_low: bool = True,
+    truncate_high: bool = True,
+) -> RuntimeArrayData:
+    """Apply one illumination artifact to one runtime image slice.
+
+    Args:
+        illumination_function: Correction-function image with the same shape as
+            the input, divided into or subtracted from it according to ``method``.
+    """
+
+    image_pixels = np.asarray(image_payload_data(image))
+    illumination_pixels = np.asarray(image_payload_data(illumination_function))
+    if image_pixels.shape != illumination_pixels.shape:
+        raise ValueError(
+            f"Input image shape {image_pixels.shape} and illumination function "
+            f"shape {illumination_pixels.shape} must be equal."
         )
-    )
-    if source.pair_count == 1:
-        return outputs[0]
-    return outputs
-
-
-@processing_prepare(correct_illumination_apply)
-def _prepare_correct_illumination_apply() -> None:
-    """Materialize correction strategy registry before timed execution."""
-    pixels = np.stack(
-        (
-            np.full((16, 16), 0.5, dtype=np.float32),
-            np.full((16, 16), 0.25, dtype=np.float32),
-        ),
-        axis=0,
-    )
-    correct_illumination_apply.__wrapped__(
-        pixels, method=IlluminationCorrectionMethod.DIVIDE
-    )
-    correct_illumination_apply.__wrapped__(
-        pixels, method=IlluminationCorrectionMethod.SUBTRACT
+    resolved_method = coerce_cellprofiler_enum(IlluminationCorrectionMethod, method)
+    output_pixels = IlluminationCorrectionStrategy.for_enum_member(
+        resolved_method
+    ).apply(image_pixels, illumination_pixels)
+    if truncate_low:
+        np.maximum(output_pixels, 0.0, out=output_pixels)
+    if truncate_high:
+        np.minimum(output_pixels, 1.0, out=output_pixels)
+    mask = image_payload_mask(image)
+    return (
+        image_payload_metadata(image)
+        .without_unit_interval_intensity_scale()
+        .payload_with(
+            output_pixels, None if mask is None else np.asarray(mask, dtype=bool)
+        )
     )
 
 
@@ -2258,9 +1622,9 @@ class NativeNumpyRankMedianSmoothingBackendStrategy(RankMedianSmoothingBackendSt
                 minimum_count=int(counts[0]),
                 pixel_count=int(effective_scaled.size),
             )
-            return np.full(
-                effective_scaled.shape, values[0], dtype=np.float32
-            ) / 65535.0
+            return (
+                np.full(effective_scaled.shape, values[0], dtype=np.float32) / 65535.0
+            )
         code_dtype = (
             np.uint8 if values.size <= np.iinfo(np.uint8).max + 1 else np.uint16
         )
@@ -2367,7 +1731,10 @@ class CentrosomeNumpyConvexHullSmoothingBackendStrategy(
         mask_array = None if mask is None else np.asarray(mask, dtype=bool)
         eroded = centrosome.cpmorphology.grey_erosion(image, 2, mask_array)
         transformed = centrosome.filter.convex_hull_transform(eroded, mask=mask_array)
-        return centrosome.cpmorphology.grey_dilation(transformed, 2, mask_array)
+        return np.asarray(
+            centrosome.cpmorphology.grey_dilation(transformed, 2, mask_array),
+            dtype=image.dtype,
+        )
 
 
 class LegacyFastNumpyConvexHullSmoothingBackendStrategy(
@@ -3726,11 +3093,8 @@ __all__ = public_names_from_objects(
     FilterSizeMethod,
     FitPolynomialSmoothingPlaneStrategy,
     GaussianFilterSmoothingPlaneStrategy,
-    IlluminationCorrectionInputStack,
     IlluminationCorrectionMethod,
-    IlluminationCorrectionSettingSequence,
     IlluminationCorrectionStrategy,
-    IlluminationStats,
     IntensityChoice,
     LegacyFastNumpyConvexHullSmoothingBackendStrategy,
     ManualSmoothingFilterSizeStrategy,

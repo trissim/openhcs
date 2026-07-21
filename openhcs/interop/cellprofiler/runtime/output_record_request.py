@@ -2,448 +2,302 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
-from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
+    ArtifactOutputPlan,
     ArtifactSpec,
-    ArtifactSpecCollection,
-    ImageArtifactType,
-    GroupLineageSourceRelation,
+    ArtifactSpecRef,
     ObjectLabelsArtifactType,
-    RelationshipsArtifactType,
 )
-from openhcs.core.module_artifact_contract import ModuleArtifactContract
-from openhcs.core.runtime_semantics import FieldSpec, ObjectLabelDomainScope
-from openhcs.core.runtime_values import (
-    SourceImageObjectLabelDomainRequest,
-    image_payload_metadata,
+from openhcs.core.runtime_object_label_domains import ObjectLabelDomainScope
+from openhcs.core.source_matching import SourceImageSetIdentityPolicy
+from openhcs.core.source_plane_alignment import (
+    SourcePayloadPlaneIdentitySequence,
+    SourcePlaneIdentitySequenceAlignment,
 )
+from openhcs.core.runtime_array_values import RuntimeArrayData
+from openhcs.core.runtime_image_values import ImagePayloadMetadata, image_payload_metadata
 from openhcs.core.callable_contract import CallableContract
-from openhcs.interop.cellprofiler.runtime.current_image_context import (
-    CellProfilerOptionalCurrentImageContext,
-)
+from openhcs.core.function_patterns import InvocationArtifactInputEdgePlan
 from openhcs.interop.cellprofiler.runtime.invocation import (
     CellProfilerImageRequest,
     CellProfilerMeasurementImage,
 )
-from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-    CellProfilerMeasurementFieldSchema,
+from openhcs.interop.cellprofiler.runtime.artifact_binding import (
+    RuntimeArtifactInputRequest,
+    RuntimeArtifactTypeStrategy,
+    RuntimeInputBindingRequest,
 )
-from openhcs.interop.cellprofiler.runtime.payload_types import (
-    CellProfilerFunction,
-    CellProfilerKwargs,
-    CellProfilerRuntimeValue,
-    MeasurementRowsInput,
-)
-from openhcs.interop.cellprofiler.runtime.relationship_endpoints import (
-    RelationshipEndpointResolver,
-)
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.core.steps.function_runtime import RuntimeCallableArgument, RuntimeCallableKwargs
 
 if TYPE_CHECKING:
     from openhcs.interop.cellprofiler.runtime.adapter import CellProfilerRuntimeAdapter
-    from openhcs.interop.cellprofiler.runtime.module_execution import (
-        CellProfilerModuleRuntimePlan,
-    )
 
 
 @dataclass(frozen=True, slots=True)
-class CellProfilerOutputRecordContext(
-    CellProfilerOptionalCurrentImageContext,
-):
-    """Shared invocation context for one declared CellProfiler artifact output."""
-
-    runtime_plan: CellProfilerModuleRuntimePlan
-    adapter: CellProfilerRuntimeAdapter
-    spec: ArtifactSpec
-    output_value: CellProfilerRuntimeValue
-    output_values: CellProfilerKwargs
-    source: CellProfilerImageRequest | CellProfilerMeasurementImage
-    func: CellProfilerFunction
-    call_kwargs: CellProfilerKwargs
-    function_name: str = ""
-
-    @property
-    def contract(self) -> ModuleArtifactContract:
-        return self.runtime_plan.contract
-
-    @property
-    def module_name(self) -> str:
-        return self.contract.module_name
-
-    @property
-    def declared_input_specs(self) -> tuple[ArtifactSpec, ...]:
-        return self.contract.declared_input_specs()
-
-    @property
-    def declared_input_collection(self) -> ArtifactSpecCollection:
-        """Return the unique keyed view of declared runtime inputs."""
-        return self.runtime_plan.declared_input_collection
-
-    @property
-    def outputs(self) -> tuple[ArtifactSpec, ...]:
-        return self.contract.outputs
-
-    @property
-    def declared_outputs(self) -> tuple[ArtifactSpec, ...]:
-        return self.contract.declared_outputs
-
-    @property
-    def runtime_image_names(self) -> tuple[str, ...]:
-        return self.contract.runtime_input_names(ImageArtifactType)
-
-    @property
-    def runtime_image_name_set(self) -> frozenset[str]:
-        return self.contract.runtime_input_name_set(ImageArtifactType)
-
-    @property
-    def external_source_object_names(self) -> tuple[str, ...]:
-        return self.contract.external_input_names(ObjectLabelsArtifactType)
-
-    def fields_for_rows(self, rows: MeasurementRowsInput) -> tuple[FieldSpec, ...]:
-        """Return measurement field schema for rows emitted by this context."""
-        return CellProfilerMeasurementFieldSchema.for_record(
-            self.spec,
-            rows,
-            self.func,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerOutputRecordRequest(CellProfilerOutputRecordContext):
+class CellProfilerOutputRecordRequest:
     """Inputs and semantic authorities for recording one CellProfiler output."""
 
-    def input_image_source_payload(
-        self,
-        spec: ArtifactSpec,
-    ) -> CellProfilerRuntimeValue | None:
-        """Resolve one declared image input into a metadata-bearing payload."""
-        if spec.name in self.runtime_image_name_set:
-            return self.runtime_input_image_payload(spec)
-        return self.external_input_image_payload(spec)
+    callable_contract: CallableContract
+    active_input_edges: tuple[InvocationArtifactInputEdgePlan, ...]
+    adapter: CellProfilerRuntimeAdapter
+    spec: ArtifactSpec
+    output_plan: ArtifactOutputPlan
+    output_value: RuntimeCallableArgument
+    source: CellProfilerImageRequest | CellProfilerMeasurementImage
+    call_kwargs: RuntimeCallableKwargs
+    current_image: RuntimeArrayData
+    declared_only_outputs: Mapping[
+        ArtifactSpecRef,
+        RuntimeCallableArgument,
+    ] = field(default_factory=lambda: MappingProxyType({}))
 
-    def primary_image_output_source_payload(
-        self,
-    ) -> CellProfilerRuntimeValue | None:
-        """Resolve the declared primary-image source for this image output."""
-        relation_payload = self.group_lineage_source_payload()
-        if relation_payload is not None:
-            return relation_payload
-        ordinal_payload = self.ordinal_primary_image_output_source_payload()
-        if ordinal_payload is not None:
-            return ordinal_payload
-        unique_payload = self.unique_primary_image_source_payload()
-        if unique_payload is not None:
-            return unique_payload
-        return self.source.payload
-
-    def group_lineage_source_payload(self) -> CellProfilerRuntimeValue | None:
-        """Resolve source payload from this output's declared group-lineage source."""
-        source_specs = tuple(
-            self.declared_input_collection.by_ref(relation.source)
-            for relation in self.spec.relations
-            if (
-                isinstance(relation, GroupLineageSourceRelation)
-                and relation.source.plan_type is ArtifactInputPlan
-                and relation.source.artifact_type is ImageArtifactType
-            )
-        )
-        resolved_specs = tuple(spec for spec in source_specs if spec is not None)
-        if len(resolved_specs) != 1:
-            return None
-        source_spec = resolved_specs[0]
-        invocation_payload = self.invocation_primary_image_source_payload(source_spec)
-        if invocation_payload is not None:
-            return invocation_payload
-        return self.input_image_source_payload(source_spec)
-
-    def ordinal_primary_image_output_source_payload(
-        self,
-    ) -> CellProfilerRuntimeValue | None:
-        """Map image output ordinal to primary-image input ordinal when declared."""
-        output_index = self.image_output_index()
-        if output_index is None:
-            return None
-        if len(self.runtime_plan.primary_image_inputs) != len(self.image_outputs()):
-            return None
-        primary_input = self.runtime_plan.primary_image_inputs[output_index]
-        invocation_payload = self.invocation_primary_image_source_payload(primary_input)
-        if invocation_payload is not None:
-            return invocation_payload
-        return self.input_image_source_payload(primary_input)
-
-    def unique_primary_image_source_payload(
-        self,
-    ) -> CellProfilerRuntimeValue | None:
-        """Resolve the unique declared primary image input, when one exists."""
-        if len(self.runtime_plan.primary_image_inputs) != 1:
-            return None
-        primary_input = self.runtime_plan.primary_image_inputs[0]
-        invocation_payload = self.invocation_primary_image_source_payload(primary_input)
-        if invocation_payload is not None:
-            return invocation_payload
-        input_payload = self.input_image_source_payload(primary_input)
-        if input_payload is None:
-            return None
-        return input_payload
-
-    def invocation_primary_image_source_payload(
-        self,
-        spec: ArtifactSpec,
-    ) -> CellProfilerRuntimeValue | None:
-        """Return invocation payload when it already owns the primary input source."""
-        payload = self.source.source_payload_for_name(spec.name)
-        if payload is None:
-            return None
-        if image_payload_metadata(payload).has_values:
-            return payload
-        return None
-
-    def runtime_input_image_payload(
-        self,
-        spec: ArtifactSpec,
-    ) -> CellProfilerRuntimeValue | None:
-        """Return runtime image input data with the correct current-image scope."""
-        runtime_current_image = (
-            self.runtime_plan.primary_image_input_policy.runtime_image_current_image(
-                self.module_name,
-                spec,
-                self.current_image,
-            )
-        )
-        return self.adapter.get_image(
-            spec.name,
-            current_image=runtime_current_image,
-        ).data
-
-    def external_input_image_payload(
-        self,
-        spec: ArtifactSpec,
-    ) -> CellProfilerRuntimeValue | None:
-        """Return source image data for a declared external image input."""
-        if self.current_image is None:
-            return self.source.payload
-        return self.adapter.resolve_source_image(
-            spec.name,
-            self.current_image,
-        )
-
-    def image_outputs(self) -> tuple[ArtifactSpec, ...]:
-        """Return declared image outputs in contract order."""
-        return self.contract.output_collection().of_artifact_type(ImageArtifactType)
-
-    def image_output_index(self) -> int | None:
-        """Return this output's declared image-output ordinal, when unique."""
-        matches = tuple(
-            index
-            for index, spec in enumerate(self.image_outputs())
-            if spec.name == self.spec.name
-        )
-        if len(matches) != 1:
-            return None
-        return matches[0]
-
-    def metadata_bearing_primary_image_source_payload(
-        self,
-    ) -> CellProfilerRuntimeValue | None:
-        """Resolve the unique primary image input when it carries metadata."""
-        if len(self.runtime_plan.primary_image_inputs) != 1:
-            return None
-        primary_input = self.runtime_plan.primary_image_inputs[0]
-        input_payload = self.invocation_primary_image_source_payload(primary_input)
-        if input_payload is None:
-            input_payload = self.input_image_source_payload(primary_input)
-        if input_payload is None:
-            return None
-        if image_payload_metadata(input_payload).has_values:
-            return input_payload
-        return None
-
-    def default_object_label_output_source_payload(self) -> CellProfilerRuntimeValue:
-        """Resolve default source context for object-label outputs."""
-        object_inputs = self.declared_input_collection.of_artifact_type(
-            ObjectLabelsArtifactType
-        )
-        if object_inputs and not self.runtime_plan.primary_image_inputs:
-            relationship_source_spec = (
-                self.relationship_derived_object_label_source_spec(object_inputs)
-            )
-            if relationship_source_spec is None:
-                source_spec = object_inputs[0]
-            else:
-                source_spec = relationship_source_spec
-            return self.object_label_source_payload_for_spec(source_spec)
-        primary_image_source = self.unique_primary_image_source_payload()
-        if primary_image_source is not None:
-            return primary_image_source
-        return self.object_label_source_payload_for_current_invocation()
-
-    def input_object_label_output_source_payload(self) -> CellProfilerRuntimeValue:
-        """Resolve source context from the declared object-label input."""
-        object_inputs = self.declared_input_collection.of_artifact_type(
-            ObjectLabelsArtifactType
-        )
-        if not object_inputs:
+    def __post_init__(self) -> None:
+        if self.output_plan.ref() != self.spec.ref():
             raise ValueError(
-                f"{self.module_name} requested input-object source context for "
-                f"object-label output {self.spec.name!r}, but declares no object "
-                "inputs."
+                f"Output plan {self.output_plan.ref()!r} does not match active "
+                f"output {self.spec.ref()!r}."
             )
-        relationship_source_spec = self.relationship_derived_object_label_source_spec(
-            object_inputs
+        declared_inputs = self.callable_contract.artifact_inputs
+        previous_input_index = -1
+        for edge in self.active_input_edges:
+            input_index = edge.key.input_index
+            if input_index >= len(declared_inputs):
+                raise ValueError(
+                    f"Callable {self.callable_contract.function_name!r} input edge "
+                    f"{edge.key!r} is outside its declared occurrence range "
+                    f"[0, {len(declared_inputs)})."
+                )
+            if input_index <= previous_input_index:
+                raise ValueError(
+                    f"Callable {self.callable_contract.function_name!r} input edge "
+                    f"{edge.key!r} does not preserve strictly increasing declared "
+                    f"occurrence order after index {previous_input_index}."
+                )
+            declared = declared_inputs[input_index]
+            if (
+                edge.spec != declared
+                or edge.spec.parameter_name != declared.parameter_name
+            ):
+                raise ValueError(
+                    f"Callable {self.callable_contract.function_name!r} input edge "
+                    f"{edge.key!r} does not match its exact declared occurrence "
+                    f"{declared.ref()!r}."
+                )
+            previous_input_index = input_index
+
+    def artifact_output_value(
+        self,
+        spec: ArtifactSpec,
+    ) -> RuntimeCallableArgument:
+        """Return one output from its single declared runtime authority."""
+
+        ref = spec.ref()
+        output_plan = self.adapter.request.artifact_output_plan(ref)
+        runtime_adapter = self.callable_contract.runtime_adapter
+        recorded = bool(
+            output_plan is not None
+            and runtime_adapter is not None
+            and runtime_adapter.manages_artifact_outputs
         )
-        if relationship_source_spec is None:
-            source_spec = object_inputs[0]
-        else:
-            source_spec = relationship_source_spec
-        return self.object_label_source_payload_for_spec(source_spec)
+        transient = ref in self.declared_only_outputs
+        match recorded, transient:
+            case True, False:
+                return self.adapter.artifact_output_value(output_plan)
+            case False, True:
+                return self.declared_only_outputs[ref]
+            case True, True:
+                raise RuntimeError(
+                    f"Callable {self.callable_contract.function_name!r} output "
+                    f"{ref!r} has overlapping runtime "
+                    "authorities."
+                )
+            case False, False:
+                raise RuntimeError(
+                    f"Callable {self.callable_contract.function_name!r} output "
+                    f"{ref!r} is neither adapter-recorded "
+                    "nor present in the current declared-only return."
+                )
+
+    def artifact_value(
+        self,
+        spec: ArtifactSpec,
+    ) -> RuntimeCallableArgument:
+        """Return one artifact from its exact declared input/output role."""
+
+        if spec.require_plan_type() is ArtifactInputPlan:
+            return self.artifact_input_value(self.exact_input_edge(spec))
+        declared_output = self.callable_contract.artifact_outputs.by_ref(spec.ref())
+        if declared_output is not None:
+            if declared_output != spec:
+                raise ValueError(
+                    f"Callable {self.callable_contract.function_name!r} declared "
+                    f"output {spec.ref()!r} differs from its requested declaration."
+                )
+            return self.artifact_output_value(declared_output)
+        raise ValueError(
+            f"Callable {self.callable_contract.function_name!r} artifact "
+            f"{spec.ref()!r} is not declared by this compiled invocation."
+        )
+
+    def exact_input_edge(
+        self,
+        spec: ArtifactSpec,
+    ) -> InvocationArtifactInputEdgePlan:
+        """Return the compiled edge at this declaration's exact occurrence."""
+
+        resolved: InvocationArtifactInputEdgePlan | None = None
+        for edge in self.active_input_edges:
+            if self.callable_contract.artifact_inputs[edge.key.input_index] is spec:
+                if resolved is not None:
+                    raise RuntimeError(
+                        f"Callable {self.callable_contract.function_name!r} declaration "
+                        f"{spec.ref()!r} has multiple exact compiled input edges."
+                    )
+                resolved = edge
+        if resolved is not None:
+            return resolved
+        raise RuntimeError(
+            f"Callable {self.callable_contract.function_name!r} declaration "
+            f"{spec.ref()!r} has no exact compiled input edge."
+        )
+
+    def artifact_input_value(
+        self,
+        edge: InvocationArtifactInputEdgePlan,
+    ) -> RuntimeCallableArgument:
+        """Return one exact compiled input occurrence in invocation scope."""
+
+        return RuntimeInputBindingRequest(
+            adapter=self.adapter,
+            kwargs=self.call_kwargs,
+            current_image=self.current_image,
+        ).runtime_value(
+            edge,
+            parameter_name=edge.spec.parameter_name,
+        )
+
+    def measurement_source_metadata(
+        self,
+        specs: tuple[ArtifactSpec, ...],
+    ) -> ImagePayloadMetadata:
+        """Return the contract-ordered image-set axis of exact artifacts."""
+
+        if not specs:
+            raise ValueError(
+                "Measurement source context requires declared artifacts."
+            )
+        artifact_values = tuple(self.artifact_value(spec) for spec in specs)
+        metadata = tuple(image_payload_metadata(value) for value in artifact_values)
+        source_group_component = self.output_plan.group_component
+        identity_policy = SourceImageSetIdentityPolicy(
+            frozenset(
+                () if source_group_component is None else (source_group_component,)
+            )
+        )
+        image_set_axes = tuple(
+            SourcePayloadPlaneIdentitySequence(
+                value,
+                identity_policy,
+            ).runtime_axis_identities()
+            for value in artifact_values
+        )
+        unaligned_indexes = SourcePlaneIdentitySequenceAlignment.unaligned_axis_indexes(
+            image_set_axes
+        )
+        unaligned_specs = tuple(specs[index].ref() for index in unaligned_indexes)
+        if unaligned_specs:
+            raise ValueError(
+                f"Callable {self.callable_contract.function_name!r} measurement "
+                "artifacts do not share one "
+                "source image-set axis: "
+                f"reference={specs[0].ref()!r}; unaligned={unaligned_specs!r}."
+            )
+        return metadata[0]
+
+    def artifact_source_payload(
+        self,
+        edge: InvocationArtifactInputEdgePlan,
+    ) -> RuntimeCallableArgument:
+        """Resolve one declared input in the callable invocation's exact scope."""
+
+        spec = edge.spec
+        binding_request = RuntimeInputBindingRequest(
+            adapter=self.adapter,
+            kwargs=self.call_kwargs,
+            current_image=self.current_image,
+        )
+        payload = RuntimeArtifactTypeStrategy.for_artifact_type(
+            spec.artifact_type
+        ).source_image_payload(
+            RuntimeArtifactInputRequest(
+                spec=spec,
+                value=binding_request.runtime_value(
+                    edge,
+                    parameter_name=spec.parameter_name,
+                ),
+                image_payload_consumption=(
+                    self.callable_contract.image_payload_consumption
+                ),
+            )
+        )
+        if payload is None:
+            raise TypeError(
+                f"Callable {self.callable_contract.function_name!r} input "
+                f"{spec.ref()!r} does not carry source "
+                "image context."
+            )
+        return payload
+
+    def declared_source_payload(self) -> RuntimeCallableArgument:
+        """Resolve this output's exact compiled runtime-context source."""
+
+        source_ref = self.output_plan.source_context_source()
+        if source_ref is None:
+            raise RuntimeError(
+                f"Callable {self.callable_contract.function_name!r} output "
+                f"{self.spec.ref()!r} has no declared "
+                "runtime-context source."
+            )
+        return self.artifact_source_payload(
+            self.adapter.request.require_artifact_input_edge(source_ref)
+        )
+
+    def materialization_source_metadata(self) -> ImagePayloadMetadata | None:
+        """Return independent filename-source metadata declared by this output."""
+
+        source_ref = self.output_plan.materialization_source()
+        if source_ref is None or source_ref == self.output_plan.source_context_source():
+            return None
+        return image_payload_metadata(
+            self.artifact_source_payload(
+                self.adapter.request.require_artifact_input_edge(source_ref)
+            )
+        )
 
     def object_label_output_domain_scope(self) -> ObjectLabelDomainScope | None:
         """Return the declared object-label output domain for this invocation."""
         if (
-            self.runtime_plan.default_runtime_image_execution_mode
-            is ImagePayloadExecutionMode.FULL_STACK
+            self.spec.source_context_sources()
+            and not self.spec.preserves_source_stack_scope()
         ):
-            return ObjectLabelDomainScope.PAYLOAD
-        if self.runtime_plan.processing_contract is ProcessingContract.PURE_3D:
-            return ObjectLabelDomainScope.PAYLOAD
-        if self.source.execution_mode is ImagePayloadExecutionMode.FULL_STACK:
-            return ObjectLabelDomainScope.PAYLOAD
-        callable_contract = CallableContract.from_callable(self.func)
-        if (
-            callable_contract.runtime_image_execution_mode
-            is ImagePayloadExecutionMode.FULL_STACK
-        ):
-            return ObjectLabelDomainScope.PAYLOAD
-        if callable_contract.processing_contract is ProcessingContract.PURE_3D:
             return ObjectLabelDomainScope.PAYLOAD
         return None
 
-    def relationship_derived_object_label_source_spec(
-        self,
-        object_inputs: tuple[ArtifactSpec, ...],
-    ) -> ArtifactSpec | None:
-        """Return the object input owning this relationship-derived output."""
-        parent_specs = self.relationship_parent_specs_for_output_child()
-        match parent_specs:
-            case ():
-                return None
-            case (source_spec,):
-                return source_spec
-            case _:
-                return self.multi_parent_relationship_output_source_spec(
-                    object_inputs,
-                    parent_specs,
-                )
-
-    def relationship_parent_specs_for_output_child(self) -> tuple[ArtifactSpec, ...]:
-        """Return parent object specs from relationships that target this output."""
-        endpoint_resolver = RelationshipEndpointResolver.for_request(self)
-        relationship_outputs = self.contract.output_collection().of_artifact_type(
-            RelationshipsArtifactType
-        )
-        return tuple(
-            parent_spec
-            for relationship_spec in relationship_outputs
-            for parent_spec, child_spec in (
-                endpoint_resolver.endpoint_specs(relationship_spec),
-            )
-            if child_spec.name == self.spec.name
-        )
-
-    def multi_parent_relationship_output_source_spec(
-        self,
-        object_inputs: tuple[ArtifactSpec, ...],
-        parent_specs: tuple[ArtifactSpec, ...],
-    ) -> ArtifactSpec:
-        """Resolve multi-parent child outputs through declared primary input order."""
-        primary_input = object_inputs[0]
-        if primary_input.name in {spec.name for spec in parent_specs}:
-            return primary_input
-        raise ValueError(
-            f"{self.module_name} object-label output '{self.spec.name}' has "
-            f"multiple relationship parent candidates "
-            f"{[spec.name for spec in parent_specs]}, but declared primary "
-            f"object input '{primary_input.name}' is not one of them."
-        )
-
-    def object_label_source_payload_for_spec(
-        self,
-        spec: ArtifactSpec,
-    ) -> CellProfilerRuntimeValue:
-        """Resolve an object input spec to the payload that carries its source."""
-        if spec.name in self.external_source_object_names:
-            current_image = self.required_current_image(
-                f"External object input {spec.name!r} source-binding resolution"
-            )
-            return self.adapter.resolve_source_objects(
-                spec.name,
-                current_image,
-            )
-        return self.adapter.get_objects(
-            spec.name,
-            current_image=self.current_image,
-        )
-
-    def object_label_source_payload_for_current_invocation(
-        self,
-    ) -> CellProfilerRuntimeValue:
-        """Return metadata-bearing source context for array-lowered invocations."""
-        source_payload = self.source.payload
-        current_image = self.current_image
-        match current_image:
-            case None:
-                current_explains_planes = False
-                current_has_metadata = False
-            case _:
-                current_explains_planes = self.payload_explains_output_label_planes(
-                    current_image
-                )
-                current_has_metadata = image_payload_metadata(current_image).has_values
-        match (
-            self.payload_explains_output_label_planes(source_payload),
-            current_explains_planes,
-            current_image is None,
-            image_payload_metadata(source_payload).has_values,
-            current_has_metadata,
-        ):
-            case (True, _, _, _, _):
-                return source_payload
-            case (_, True, _, _, _):
-                return current_image
-            case (_, _, True, _, _):
-                return source_payload
-            case (_, _, _, True, _):
-                return source_payload
-            case (_, _, _, _, True):
-                return current_image
-            case _:
-                return source_payload
-
-    def payload_explains_output_label_planes(
-        self,
-        payload: CellProfilerRuntimeValue,
-    ) -> bool:
-        """Return whether a source payload defines the output label plane domain."""
-        return (
-            SourceImageObjectLabelDomainRequest(
-                image=payload,
-                labels=self.output_value,
-            ).plane_semantics()
-            is not None
-        )
-
     def single_output_object_name(self) -> str:
         """Return the unique object-label output owned by this record request."""
-        object_outputs = self.contract.output_collection().of_artifact_type(
+        object_outputs = self.callable_contract.artifact_outputs.of_artifact_type(
             ObjectLabelsArtifactType
         )
         if len(object_outputs) != 1:
             raise NotImplementedError(
-                f"{self.module_name} threshold measurement semantics "
+                f"Callable {self.callable_contract.function_name!r} threshold "
+                "measurement semantics "
                 f"require exactly one object-label output, got "
                 f"{[spec.name for spec in object_outputs]}."
             )

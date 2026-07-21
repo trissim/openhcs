@@ -1,1795 +1,849 @@
 """Execution bridge from generated CellProfiler modules to OpenHCS runtime state."""
 
 from __future__ import annotations
-from abc import ABC, abstractmethod
-from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+
+import logging
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import (
-    asdict,
     dataclass,
-    field,
-    fields as dataclass_fields,
-    is_dataclass,
     replace,
 )
-from enum import Enum
-from functools import lru_cache
-from inspect import Parameter, get_annotations, signature, unwrap
-import json
-import logging
-import os
-import time
-from types import MappingProxyType
-from typing import ClassVar, get_args, get_origin, get_type_hints
-import numpy as np
-from python_introspect import (
-    Enableable,
-    mark_enableable,
-    parameter_exclusions,
-    set_parameter_exclusions,
-    set_signature_analysis_target,
-)
+from typing import cast
+
 from openhcs.core.aligned_image_payload import (
-    AlignedImageStack,
     AlignedImageSliceContext,
-    ImageArrayShapeSemantics,
+    AlignedImageStack,
+    ImageOutputBundle,
     ImagePayloadExecutionMode,
-    ImagePayloadSliceProjector,
-    aligned_image_stack_kwargs,
     compose_aligned_image_payload,
-    payload_slice_count,
-    project_singleton_stack_image_domain,
 )
 from openhcs.core.artifacts import (
+    ArtifactOutputPlan,
     ArtifactSpec,
     ArtifactSpecCollection,
-    ArtifactType,
+    ArtifactSpecRef,
     ImageArtifactType,
-    ObjectLabelsArtifactType,
     MeasurementsArtifactType,
-    NoMainFlowOutput,
-    SpatialGridArtifactType,
+    ObjectLabelsArtifactType,
 )
 from openhcs.core.callable_contract import (
     CallableContract,
-    attach_callable_contract_metadata,
-    prepare_processing_callable,
-)
-from openhcs.core.config import DtypeConfig
-from openhcs.core.function_contract_metadata import FunctionContractAttribute
-from openhcs.core.function_reference_rehydration import (
-    FunctionReferenceRehydrationRequest,
-    FunctionReferenceRehydrator,
-)
-from openhcs.core.memory import (
-    MEMORY_TYPE_NUMPY,
-    convert_memory,
-    detect_memory_type,
-    stack_slices,
-    unstack_slices,
-)
-from openhcs.core.image_shapes import (
-    is_color_image_slice,
-    is_color_image_stack,
-    is_color_volume_slice,
-    is_color_volume_stack,
-    is_grayscale_volume_stack,
-    is_image_stack,
-)
-from openhcs.core.image_stack_layout import (
-    ImageStackLayout,
-    ImageStackLayoutUnstackRequest,
-)
-from openhcs.core.measurement_image_alignment import (
-    prepare_measurement_image_alignment_strategies,
-)
-from openhcs.core.module_artifact_contract import (
-    ModuleArtifactContract,
-    module_artifact_contract,
-)
-from openhcs.core.pipeline.function_contracts import special_input_names_from_callable
-from openhcs.core.pipeline.function_contracts import (
     ImagePayloadConsumption,
-    ObjectLabelMeasurementExecution,
-    Pure2DSliceBatchExecutor,
-    RuntimeBatchExecutionDomain,
-    RuntimePure2DSliceBatchRequest,
-    image_payload_consumption_from_callable,
-    object_label_measurement_execution_from_callable,
-    runtime_bound_parameter_names_from_callable,
 )
-from openhcs.core.runtime_adapters import RuntimeAdapterRequest, runtime_adapter
-from openhcs.core.runtime_invocation import RuntimeInvocationOptions
-from openhcs.core.runtime_profile import RuntimeProfileTimer
-from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
-from openhcs.core.runtime_output_matching import RuntimeReturnedOutputMatcher
-from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
-from openhcs.core.runtime_identifier import normalize_runtime_identifier
 from openhcs.core.measurement_row_materialization import (
+    ConcatenatedColumnarRows,
     MeasurementRowOwnership,
-    measurement_object_label,
-    measurement_row_object_name,
-    measurement_row_source_image_name,
+    MeasurementSparseColumnarRows,
 )
-from openhcs.core.measurement_feature_queries import (
-    MeasurementFeatureQuery,
-    measurement_values_for_feature,
+from openhcs.core.pipeline.function_contracts import (
+    object_label_input_execution_mode_from_callable,
 )
-from openhcs.core.measurement_lookup_dialect import runtime_measurement_lookup_dialect
-from openhcs.core.special_outputs import (
-    SpecialOutputKindClassifier,
-    special_output_name,
+from openhcs.core.runtime_adapters import (
+    RuntimeAdapterRequest,
+    RuntimeFunctionInvocationRequest,
 )
-from openhcs.core.source_bindings import SourceBindingOrigin
-from openhcs.core.runtime_semantics import (
-    DenseObjectLabelPairAligner,
-    FieldSpec,
-    MeasurementObjectRowIdentity,
-    MeasurementRowAxisField,
-    MeasurementRowAxisState,
-    MeasurementScope,
-    MeasurementScopeSelection,
-    ObjectLabelDomain,
-    ObjectLabelDomainMetadata,
-    ObjectLabelDomainMetadataStrategy,
-    ObjectLabelDomainScope,
-    ObjectLabelIdDomainStrategy,
-    ObjectLabelMeasurementValues,
-    ObjectLabelPlaneDomainStrategy,
-    ObjectLabelRepresentation,
-    ObjectLabelVariant,
-    ObjectMeasurementVectorDomain,
-    ParentChildRelationshipPayload,
-    RuntimePlaneAxis,
-    RuntimePlaneAxisProjector,
-    dense_object_label_id_domain,
-    measurement_row_axis_field_names,
-    measurement_row_mapping,
-    parent_child_relationship_artifact_endpoints,
-    parent_child_relationship_artifact_name,
-)
-from openhcs.core.runtime_values import (
-    ColumnarRows,
-    DenseObjectLabelPlaneDomainStack,
-    DenseObjectLabelSliceStack,
-    DenseObjectLabelSliceStackRequest,
-    DerivedImagePayloadContext,
-    ImagePayloadMetadataCarrier,
-    ImagePayloadMetadataInput,
-    MeasurementTable,
-    ObjectLabelData,
-    ObjectLabelDenseDataStrategy,
-    ObjectLabelMeasurementPayloadStrategy,
-    ObjectLabelPayload,
-    ObjectLabelPure2DSliceAggregator,
-    ObjectLabelReplacementRequest,
-    ObjectLabelRuntimeSliceStackContract,
-    ObjectLabelSet,
-    ObjectLabelSourcePlaneProjectionRequest,
-    ObjectLabelValue,
-    ObjectRelationship,
-    SingletonObjectLabelStackCollapseStrategy,
-    SourceImageObjectLabelBuildRequest,
-    SourceImageObjectLabelDomainRequest,
-    SourceImagePlaneAxisPolicy,
-    SourceImagePlaneAxisRequest,
-    SparseIJVLabelRows,
-    object_label_dense_array,
-)
-from openhcs.core.runtime_values import (
-    DerivedImagePayloadContext,
-    ImageMetadataPayload,
-    ImagePayloadMetadataCompositionMode,
-    ImagePayloadMetadataCompositionRequest,
-    MaskedImagePayload,
-    RuntimeArrayPayload,
-    SpatialGrid,
-    image_payload_data,
-    image_payload_mask,
+from openhcs.core.runtime_artifact_queries import MeasurementTableUnion
+from openhcs.core.runtime_batch_contracts import RuntimeBatchExecutionDomain
+from openhcs.core.runtime_image_values import (
     image_payload_metadata,
-    image_payload_slice_context,
-    normalize_image_payload_intensity,
+    preserved_image_plane_projection,
 )
-from openhcs.core.registry_strategies import (
-    EnumKeyedStrategyMixin,
-    NominalTypeKeyedStrategyMixin,
-    StrategyLabelRegistryMixin,
+from openhcs.core.runtime_measurements import MeasurementTable
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelValue,
 )
-from openhcs.processing.backends.lib_registry.unified_registry import (
-    ProcessingContract,
-    Pure2DAuxiliaryOutputAggregator,
-    Pure2DSliceResultBatch,
+from openhcs.core.runtime_output_matching import (
+    RuntimeMatchedOutput,
+    RuntimeReturnedOutputMatcher,
 )
-from openhcs.processing.materialization import tabular_field_names_from_materialization
-from openhcs.processing.backends.cellprofiler.texture import measure_texture_objects
-from openhcs.processing.backends.cellprofiler.library import (
-    canonical_module_name,
-    require_function,
+from openhcs.core.runtime_profile import RuntimeProfileTimer
+from openhcs.core.runtime_measurements import (
+    MeasurementRowAxisField,
+)
+from openhcs.core.runtime_plane_projection import (
+    RuntimePlaneAxis,
+    RuntimePlaneAxisValueProjection,
+)
+from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
+from openhcs.core.runtime_tabular_values import (
+    ColumnarRows,
+)
+from openhcs.interop.cellprofiler.image_normalization import (
+    normalize_cellprofiler_image_payload,
 )
 from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
-from openhcs.interop.cellprofiler.measurement_dialect import (
-    CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-)
-from openhcs.interop.cellprofiler.runtime.invocation import (
-    CellProfilerImageExecutionContext,
-    CellProfilerImageRequest,
-    CellProfilerInvocationRequest,
-    CellProfilerMeasurementImage,
-    CellProfilerMeasurementImageDomain,
-    CellProfilerResolvedInputRequest,
-    CellProfilerSliceAlignedValues,
-    CellProfilerSourceImagePair,
-    CellProfilerSourcePairFeature,
-    requested_image_execution_mode,
-)
-from openhcs.interop.cellprofiler.runtime.image_payload_collapse import (
-    SINGLETON_STACK_OUTPUT_COLLAPSE,
-)
-from openhcs.interop.cellprofiler.runtime.pure2d_output_aggregation import (
-    CellProfilerPure2DOutputAggregator,
-    ImagePayloadPure2DOutputAggregator,
-    _unstack_cellprofiler_image_slices,
-)
-from openhcs.interop.cellprofiler.runtime.image_execution_strategies import (
-    AlignedMultiImageStackExecutionStrategy,
-    CellProfilerImageExecutionStrategy,
-    FullStackImageExecutionStrategy,
-    NaturalImageExecutionStrategy,
+from openhcs.interop.cellprofiler.runtime.adapter import CellProfilerRuntimeAdapter
+from openhcs.interop.cellprofiler.runtime.artifact_binding import (
+    RuntimeInputBindingRequest,
+    RuntimeArtifactTypeStrategy,
 )
 from openhcs.interop.cellprofiler.runtime.function_contract_execution import (
-    CellProfilerFunctionContractExecutor,
-    CellProfilerFunctionOutputAggregationContract,
     _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR,
 )
-from openhcs.interop.cellprofiler.runtime.main_flow import (
-    CELLPROFILER_MEASUREMENT_MAIN_FLOW,
-    CELLPROFILER_SIDE_EFFECT_MAIN_FLOW,
-    CellProfilerMainFlowReplacementPolicy,
-    cellprofiler_recorded_image_main_flow_output,
-)
-from openhcs.interop.cellprofiler.runtime.measurement_source_names import (
-    measurement_source_name_for_specs,
-    measurement_row_source_names_required,
-    single_source_name,
-)
-from openhcs.interop.cellprofiler.runtime.measurement_image_sources import (
-    CellProfilerImageMeasurementSource,
-    ProducedArtifactImageMeasurementSource,
-    UnqualifiedRuntimeImageMeasurementSource,
-)
-from openhcs.interop.cellprofiler.runtime.measurement_image_resolver import (
-    CellProfilerMeasurementImageResolver,
-)
-from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
-    ObjectInputBindingRequest,
-)
-from openhcs.interop.cellprofiler.runtime.object_input_policies import (
-    CellProfilerObjectInputPolicy,
-)
-from openhcs.interop.cellprofiler.runtime.object_measurement_execution import (
-    CellProfilerObjectMeasurementExecutionDomainPolicy,
-    CellProfilerObjectMeasurementLabelArgumentPolicy,
-    CellProfilerObjectMeasurementLabelArgumentRequest,
-    CellProfilerPerObjectMeasurementPolicy,
-)
-from openhcs.interop.cellprofiler.runtime.object_only_reference_image import (
-    OBJECT_ONLY_REFERENCE_IMAGE,
-    ObjectOnlyReferenceImagePolicy,
-)
-from openhcs.interop.cellprofiler.runtime.object_measurement_row_policies import (
-    CellProfilerObjectMeasurementRowPolicy,
-    CompactMeasuredObjectMeasurementRowPolicy,
-    DefaultObjectMeasurementRowPolicy,
-    ObjectMeasurementInvocation,
-)
-from openhcs.interop.cellprofiler.runtime.object_label_source_projection import (
-    CurrentImageObjectLabelPlaneAlignment,
-)
-from openhcs.interop.cellprofiler.runtime.object_measurement_row_completion import (
-    ObjectMeasurementAxisKey,
-    ObjectMeasurementAxisOrder,
-    ObjectMeasurementConcreteRowKeys,
-    ObjectMeasurementIdSet,
-    ObjectMeasurementIdsByAxis,
-    ObjectMeasurementIdsByAxisView,
-    ObjectMeasurementRowsByName,
-    ObjectMeasurementSliceRowKeys,
-)
-from openhcs.interop.cellprofiler.runtime.measurement_rows import (
-    ConcatenatedMeasurementColumnarRows,
-    ObjectLabelCountAuthority,
-    ObjectLocationMeasurementRows,
-    _measurement_rows_from_output,
-    _measurement_object_name,
-    _split_cellprofiler_output,
-    measurement_table_rows,
+from openhcs.interop.cellprofiler.runtime.invocation import (
+    CellProfilerImageRequest,
+    CellProfilerMeasurementImage,
+    CellProfilerMeasurementImageDomain,
 )
 from openhcs.interop.cellprofiler.runtime.measurement_execution_support import (
     CellProfilerRuntimeProfiler,
     ObjectMeasurementOutputRecorder,
     ObjectMeasurementOutputTimings,
-    PerImageMeasurementProfile,
     PreparedObjectMeasurementInvocation,
     PreparedObjectMeasurementInvocationBatch,
     object_measurement_batch_group_key,
+    object_measurement_runtime_inputs,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    measurement_table_for_module,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_source_names import (
+    measurement_source_name_for_specs,
+    single_source_name,
 )
 from openhcs.interop.cellprofiler.runtime.output_record_request import (
     CellProfilerOutputRecordRequest,
 )
-from openhcs.interop.cellprofiler.runtime.measurement_recording import (
-    measurement_record_for_module,
-)
 from openhcs.interop.cellprofiler.runtime.output_recording import (
-    CellProfilerOutputRecordingPlan,
     CellProfilerOutputRecorder,
 )
-from openhcs.interop.cellprofiler.runtime.output_value_resolution import (
-    CellProfilerCallableOutputSpecs,
-    CellProfilerResolvedOutputValues,
-)
-from openhcs.interop.cellprofiler.runtime.output_contexts import (
-    CellProfilerImageOutputContextStrategy,
-    CellProfilerImageOutputSourcePayloadPolicy,
-    CellProfilerImageOutputValuePolicy,
-    CellProfilerObjectLabelOutputContextStrategy,
-    CellProfilerObjectLabelOutputSourceContextPolicy,
+from openhcs.core.steps.function_runtime import (
+    RuntimeCallableArgument,
+    RuntimeCallableKwargs,
+    RuntimeFunctionOutput,
 )
 from openhcs.interop.cellprofiler.runtime.profile_fields import (
     cellprofiler_profile_payload_fields,
-)
-from openhcs.interop.cellprofiler.runtime.relationship_measurement_rows import (
-    RelationshipEndpointResolver,
-    RelationshipMeasurementRows,
-)
-from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-    _MISSING_MEASUREMENT_OBJECT_NAME,
-    CellProfilerMeasurementFieldSchema,
-    CellProfilerMeasurementMaterializer,
-    CellProfilerMeasurementOutputValue,
-    CellProfilerMeasurementOutputValues,
-    CellProfilerMeasurementRecord,
-    CellProfilerMeasurementSourceContext,
-    CellProfilerMeasurementSourcePayload,
-    CellProfilerProjectedMeasurementRow,
-    MeasurementRowColumnarMaterialization,
-)
-from openhcs.interop.cellprofiler.runtime.payload_types import (
-    CellProfilerClassAttributeDict,
-    CellProfilerClassAttributes,
-    CellProfilerFunction,
-    CellProfilerKwargDict,
-    CellProfilerKwargs,
-    CellProfilerMutableClassNamespace,
-    CellProfilerOptionalFunction,
-    CellProfilerProfileFields,
-    CellProfilerRuntimeType,
-    CellProfilerRuntimeTypeOrNone,
-    CellProfilerRuntimeValue,
-    CellProfilerRuntimeValues,
-    CellProfilerRuntimeValueSequence,
-    MeasurementJsonRow,
-    MeasurementJsonRows,
-    MeasurementObjectName,
-    MeasurementRowsInput,
-    MissingObjectMeasurementCellValue,
-)
-from openhcs.interop.cellprofiler.runtime.processing_contracts import (
-    CellProfilerProcessingContractAuthority,
-    RuntimeShapeInspection,
 )
 from openhcs.interop.cellprofiler.runtime.runtime_profile import (
     CellProfilerRuntimeProfileEvent,
     CellProfilerRuntimeProfileLogger,
 )
-from openhcs.interop.cellprofiler.runtime.runtime_plane_kwargs import (
-    CurrentRuntimePlaneKwargProjection,
-    CurrentRuntimePlaneKwargProjectionContract,
-)
-from openhcs.interop.cellprofiler.runtime.runtime_special_values import (
-    CellProfilerSpecialInputKwargs,
-    CellProfilerSpecialInputValue,
-)
-from openhcs.interop.cellprofiler.measurement_lookup import (
-    CellProfilerMeasurementFeature,
-    count_feature_object_name,
-)
-from openhcs.interop.cellprofiler.runtime.adapter import CellProfilerRuntimeAdapter
-from openhcs.interop.cellprofiler.runtime.object_measurement_tables import (
-    object_measurement_tables_for_object,
-)
-from openhcs.interop.cellprofiler.runtime.source_candidates import (
-    CellProfilerImageNumberResolver,
-)
-from openhcs.interop.cellprofiler.runtime.source_binding_runtime import (
-    PipelineStartSourceFileLoader,
-    SourceBindingResolver,
-)
-from openhcs.interop.cellprofiler.runtime.artifact_binding import (
-    CallableObjectLabelInputContract,
-    ExternalImageArtifactInputOriginStrategy,
-    ImageArtifactInputOriginStrategy,
-    ImageArtifactTypeStrategy,
-    MeasurementsArtifactTypeStrategy,
-    NoSourceImageArtifactTypeStrategy,
-    ObjectLabelsArtifactTypeStrategy,
-    RelationshipsArtifactTypeStrategy,
-    RuntimeArtifactBindingScope,
-    RuntimeArtifactInputRequest,
-    RuntimeArtifactTypeStrategy,
-    RuntimeImageArtifactInputOriginStrategy,
-    RuntimeInputBindingRequestBase,
-    SpatialGridArtifactTypeStrategy,
-    StoredImageArtifactInputOriginStrategy,
-    _callable_parameters,
-    _callable_type_hints,
-    cellprofiler_image_payload,
-)
-from openhcs.interop.cellprofiler.runtime.binding_authorities import (
-    CellProfilerInvocationOverrideKwarg,
-)
-from openhcs.interop.cellprofiler.runtime.execution_mode_policies import (
-    CellProfilerInvocationExecutionModePolicy,
-)
-from openhcs.interop.cellprofiler.runtime.dual_scope_measurement_policies import (
-    CellProfilerDualScopeMeasurementPolicy,
-)
-from openhcs.interop.cellprofiler.runtime.primary_image_input_policies import (
-    CellProfilerPrimaryImageInputPolicy,
-    DefaultPrimaryImageInputPolicy,
-)
-from openhcs.interop.cellprofiler.runtime.special_input_policies import (
-    CellProfilerSpecialInputPolicy,
-    SpecialInputBindingRequest,
+from openhcs.processing.backends.lib_registry.unified_registry import (
+    ProcessingContract,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _enum_annotation_type(
-    parameter: Parameter, resolved_annotation: CellProfilerRuntimeValue = None
-) -> type[Enum] | None:
-    """Return the enum type accepted by one callable parameter, if any."""
-    annotation = (
-        resolved_annotation if resolved_annotation is not None else parameter.annotation
-    )
-    if isinstance(annotation, type) and issubclass(annotation, Enum):
-        return annotation
-    return None
 
 
 def cellprofiler_runtime_adapter_factory(
     request: RuntimeAdapterRequest,
 ) -> CellProfilerRuntimeAdapter:
     """Build a CellProfiler adapter for one FunctionStep invocation."""
-    return CellProfilerRuntimeAdapter(
-        runtime_value_store=request.context.runtime_value_store,
-        artifact_inputs=request.artifact_inputs,
-        artifact_outputs=request.artifact_outputs,
-        source_binding_plan=request.source_binding_plan,
-        source_binding_context=request.source_binding_context,
-        group_key=request.group_key,
-        axis_scope=request.axis_scope,
-        plane_projection=request.plane_projection,
-        variable_components=request.variable_components,
-        source_load_plan=request.source_load_plan,
-        processing_context=request.context,
-        filename_parser=request.context.microscope_handler.parser,
-        filemanager=request.context.filemanager,
-        output_identity_cache=request.context.runtime_function_output_identity_cache,
-    )
+    return CellProfilerRuntimeAdapter(request=request)
 
 
-def prepare_cellprofiler_runtime_adapter(request: RuntimeAdapterRequest) -> None:
-    """Prepare CellProfiler source resolution during compile preparation."""
-    cellprofiler_runtime_adapter_factory(request).prepare_source_resolution()
+def cellprofiler_runtime_callable_factory(
+    raw_func: Callable[..., RuntimeFunctionOutput],
+    callable_contract: CallableContract,
+) -> "CellProfilerModuleExecutor":
+    """Build the runtime adapter callable from one compiled contract."""
 
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerModuleContractResolution:
-    """Normalize callable construction contract inputs to artifact contracts."""
-
-    contract: ModuleArtifactContract
-
-    def resolve(self) -> ModuleArtifactContract:
-        if isinstance(self.contract, ModuleArtifactContract):
-            return self.contract
-        raise TypeError(
-            f"cellprofiler_module_callable contract must be ModuleArtifactContract, got {type(self.contract).__name__}."
-        )
-
-
-def _attach_runtime_processing_contract(
-    func: CellProfilerFunction, processing_contract: ProcessingContract
-) -> None:
-    """Attach the declaration-owned processing contract to a runtime callable."""
-    namespace = vars(func)
-    key = FunctionContractAttribute.processing_contract
-    existing = namespace.get(key)
-    if isinstance(existing, ProcessingContract) and existing is not processing_contract:
-        raise ValueError(
-            f"CellProfiler callable {func.__name__!r} declares {existing.name}, but runtime binding provided {processing_contract.name}."
-        )
-    namespace[key] = processing_contract
-
-
-class CellProfilerRuntimeCallable:
-    """Picklable callable wrapper for one artifact-managed CellProfiler module."""
-
-    def __init__(
-        self,
-        raw_func: CellProfilerFunction,
-        contract: ModuleArtifactContract,
-        *,
-        declared_processing_contract: str | None = None,
-        processing_contract: ProcessingContract,
-    ) -> None:
-        from openhcs.processing.backends.cellprofiler import CellProfilerFunctionCatalog
-
-        try:
-            raw_func = CellProfilerFunctionCatalog.get_function(raw_func.__name__)
-        except KeyError:
-            pass
-        _attach_runtime_processing_contract(raw_func, processing_contract)
-        self.raw_func = raw_func
-        self.contract = contract
-        self.executor = CellProfilerModuleExecutor(contract)
-        self.declared_processing_contract = declared_processing_contract
-        self.processing_contract = processing_contract
-        raw_contract = CallableContract.from_callable(raw_func)
-        self.__name__ = raw_func.__name__
-        self.__qualname__ = raw_func.__qualname__
-        self.__module__ = raw_func.__module__
-        self.__doc__ = raw_func.__doc__
-        self.__signature__ = _cellprofiler_runtime_callable_signature(raw_func)
-        self.__annotations__ = _cellprofiler_runtime_callable_annotations(raw_func)
-        if raw_contract.input_memory_type is not None:
-            self.input_memory_type = raw_contract.input_memory_type
-        if raw_contract.output_memory_type is not None:
-            self.output_memory_type = raw_contract.output_memory_type
-        vars(self)[FunctionContractAttribute.processing_contract] = processing_contract
-        module_artifact_contract(contract)(self)
-        analysis_func = raw_contract.raw_processing_function or raw_func
-        set_signature_analysis_target(self, analysis_func)
-        mark_enableable(self)
-        runtime_plan = self.executor.runtime_plan(raw_func)
-        runtime_adapter(
-            CellProfilerRuntimeAdapter.require_parameter_name(),
-            cellprofiler_runtime_adapter_factory,
-            manages_artifact_inputs=True,
-            prepare=prepare_cellprofiler_runtime_adapter,
-        )(self)
-        set_parameter_exclusions(
-            self,
-            (
-                *parameter_exclusions(raw_func),
-                CellProfilerRuntimeAdapter.require_parameter_name(),
-                RuntimeInvocationOptions.require_parameter_name(),
-                *runtime_plan.bound_parameter_names,
-            ),
-        )
-        attach_callable_contract_metadata(
-            self,
-            declared_processing_contract=declared_processing_contract,
-            raw_processing_function=raw_func,
-            prepare=self.prepare_runtime_callable,
-            runtime_image_execution_mode=raw_contract.runtime_image_execution_mode,
-        )
-
-    def __call__(
-        self,
-        image: CellProfilerRuntimeValue,
-        *,
-        cellprofiler_runtime: CellProfilerRuntimeAdapter,
-        runtime_invocation_options: CellProfilerRuntimeValue | None = None,
-        enabled: bool = True,
-        **kwargs: CellProfilerRuntimeValue,
-    ) -> CellProfilerRuntimeValue:
-        if not enabled:
-            return image
-        return self.executor.run(
-            self.raw_func,
-            image,
-            cellprofiler_runtime=cellprofiler_runtime,
-            invocation_options=runtime_invocation_options,
-            **kwargs,
-        )
-
-    def __reduce__(self) -> tuple[CellProfilerFunction, CellProfilerRuntimeValues]:
-        return (
-            rebuild_cellprofiler_runtime_callable,
-            (
-                self.raw_func,
-                self.contract,
-                self.declared_processing_contract,
-                self.processing_contract,
-            ),
-        )
-
-    def __eq__(self, other: CellProfilerRuntimeValue) -> bool:
-        """Compare runtime callables by their nominal CellProfiler module binding."""
-        if not isinstance(other, CellProfilerRuntimeCallable):
-            return NotImplemented
-        return (
-            self.raw_func == other.raw_func
-            and self.contract == other.contract
-            and (
-                self.declared_processing_contract == other.declared_processing_contract
-            )
-            and (self.processing_contract == other.processing_contract)
-        )
-
-    def __hash__(self) -> int:
-        return hash(
-            (
-                self.raw_func,
-                self.contract,
-                self.declared_processing_contract,
-                self.processing_contract,
-            )
-        )
-
-    def prepare_runtime_callable(self) -> None:
-        prepare_processing_callable(self.raw_func)
-        self.executor.prepare(self.raw_func)
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerGroupedModuleContracts:
-    """Runtime-selectable CellProfiler module contracts keyed by execution group."""
-
-    contracts_by_group_key: Mapping[str, ModuleArtifactContract]
-
-    def __post_init__(self) -> None:
-        contracts = {
-            str(group_key): CellProfilerModuleContractResolution(contract).resolve()
-            for group_key, contract in self.contracts_by_group_key.items()
-        }
-        if not contracts:
-            raise ValueError("Grouped CellProfiler callable requires at least one contract.")
-        module_names = {contract.module_name for contract in contracts.values()}
-        if len(module_names) != 1:
-            raise ValueError(
-                "Grouped CellProfiler callable contracts must describe one module, "
-                f"got {sorted(module_names)!r}."
-            )
-        object.__setattr__(self, "contracts_by_group_key", MappingProxyType(contracts))
-
-    @property
-    def module_name(self) -> str:
-        return next(iter(self.contracts_by_group_key.values())).module_name
-
-    @property
-    def ordered_contracts(self) -> tuple[ModuleArtifactContract, ...]:
-        return tuple(self.contracts_by_group_key.values())
-
-    def planning_contract(self) -> ModuleArtifactContract:
-        """Return the aggregate compile-time declaration for grouped execution."""
-
-        items = []
-        for contract in self.ordered_contracts:
-            for item in contract.items:
-                if item not in items:
-                    items.append(item)
-        required_components = []
-        for contract in self.ordered_contracts:
-            for component in contract.required_variable_components:
-                if component not in required_components:
-                    required_components.append(component)
-        return ModuleArtifactContract(
-            module_name=self.module_name,
-            items=tuple(items),
-            required_variable_components=tuple(required_components),
-        )
-
-    def contract_for_group_key(
-        self,
-        group_key: str | None,
-    ) -> ModuleArtifactContract:
-        return self.group_item_for_key(group_key)[1]
-
-    def group_item_for_key(
-        self,
-        group_key: str | None,
-    ) -> tuple[str, ModuleArtifactContract]:
-        if group_key is None:
-            if len(self.contracts_by_group_key) == 1:
-                return next(iter(self.contracts_by_group_key.items()))
-            raise ValueError(
-                "Grouped CellProfiler callable requires a runtime group key; "
-                f"available groups are {tuple(self.contracts_by_group_key)!r}."
-            )
-        normalized = str(group_key)
-        contract = self.contracts_by_group_key.get(normalized)
-        if contract is None:
-            raise ValueError(
-                f"Grouped CellProfiler callable has no contract for group {normalized!r}; "
-                f"available groups are {tuple(self.contracts_by_group_key)!r}."
-            )
-        return normalized, contract
-
-
-class CellProfilerGroupedRuntimeCallable:
-    """Picklable callable wrapper for source-grouped CellProfiler module instances."""
-
-    def __init__(
-        self,
-        raw_func: CellProfilerFunction,
-        contracts: CellProfilerGroupedModuleContracts,
-        *,
-        declared_processing_contract: str | None = None,
-        processing_contract: ProcessingContract,
-    ) -> None:
-        from openhcs.processing.backends.cellprofiler import CellProfilerFunctionCatalog
-
-        try:
-            raw_func = CellProfilerFunctionCatalog.get_function(raw_func.__name__)
-        except KeyError:
-            pass
-        _attach_runtime_processing_contract(raw_func, processing_contract)
-        self.raw_func = raw_func
-        self.grouped_contracts = contracts
-        self.contract = contracts.planning_contract()
-        self.executors = MappingProxyType(
-            {
-                group_key: CellProfilerModuleExecutor(contract)
-                for group_key, contract in contracts.contracts_by_group_key.items()
-            }
-        )
-        self.declared_processing_contract = declared_processing_contract
-        self.processing_contract = processing_contract
-        raw_contract = CallableContract.from_callable(raw_func)
-        self.__name__ = raw_func.__name__
-        self.__qualname__ = raw_func.__qualname__
-        self.__module__ = raw_func.__module__
-        self.__doc__ = raw_func.__doc__
-        self.__signature__ = _cellprofiler_runtime_callable_signature(raw_func)
-        self.__annotations__ = _cellprofiler_runtime_callable_annotations(raw_func)
-        if raw_contract.input_memory_type is not None:
-            self.input_memory_type = raw_contract.input_memory_type
-        if raw_contract.output_memory_type is not None:
-            self.output_memory_type = raw_contract.output_memory_type
-        vars(self)[FunctionContractAttribute.processing_contract] = processing_contract
-        module_artifact_contract(self.contract)(self)
-        analysis_func = raw_contract.raw_processing_function or raw_func
-        set_signature_analysis_target(self, analysis_func)
-        mark_enableable(self)
-        bound_parameter_names = tuple(
-            dict.fromkeys(
-                bound_parameter
-                for executor in self.executors.values()
-                for bound_parameter in executor.runtime_plan(raw_func).bound_parameter_names
-            )
-        )
-        runtime_adapter(
-            CellProfilerRuntimeAdapter.require_parameter_name(),
-            cellprofiler_runtime_adapter_factory,
-            manages_artifact_inputs=True,
-            prepare=prepare_cellprofiler_runtime_adapter,
-        )(self)
-        set_parameter_exclusions(
-            self,
-            (
-                *parameter_exclusions(raw_func),
-                CellProfilerRuntimeAdapter.require_parameter_name(),
-                RuntimeInvocationOptions.require_parameter_name(),
-                *bound_parameter_names,
-            ),
-        )
-        attach_callable_contract_metadata(
-            self,
-            declared_processing_contract=declared_processing_contract,
-            raw_processing_function=raw_func,
-            prepare=self.prepare_runtime_callable,
-            runtime_image_execution_mode=raw_contract.runtime_image_execution_mode,
-        )
-
-    def __call__(
-        self,
-        image: CellProfilerRuntimeValue,
-        *,
-        cellprofiler_runtime: CellProfilerRuntimeAdapter,
-        runtime_invocation_options: CellProfilerRuntimeValue | None = None,
-        enabled: bool = True,
-        **kwargs: CellProfilerRuntimeValue,
-    ) -> CellProfilerRuntimeValue:
-        if not enabled:
-            return image
-        original_group_key = cellprofiler_runtime.group_key
-        runtime_group_key = original_group_key
-        if runtime_group_key is None:
-            runtime_group_key = (
-                cellprofiler_runtime.runtime_input_group_key_from_current_sources(
-                    set(self.grouped_contracts.contracts_by_group_key)
-                )
-            )
-        group_key, contract = self.grouped_contracts.group_item_for_key(
-            runtime_group_key,
-        )
-        if cellprofiler_runtime.group_key is None:
-            cellprofiler_runtime.group_key = group_key
-        executor = self.executors[group_key]
-        if executor.contract != contract:
-            raise ValueError(
-                "Grouped CellProfiler callable executor contract drifted from "
-                f"group contract for {group_key!r}."
-            )
-        try:
-            return executor.run(
-                self.raw_func,
-                image,
-                cellprofiler_runtime=cellprofiler_runtime,
-                invocation_options=runtime_invocation_options,
-                **kwargs,
-            )
-        finally:
-            if original_group_key is None:
-                cellprofiler_runtime.group_key = None
-
-    def __reduce__(self) -> tuple[CellProfilerFunction, CellProfilerRuntimeValues]:
-        return (
-            rebuild_cellprofiler_grouped_runtime_callable,
-            (
-                self.raw_func,
-                dict(self.grouped_contracts.contracts_by_group_key),
-                self.declared_processing_contract,
-                self.processing_contract,
-            ),
-        )
-
-    def __eq__(self, other: CellProfilerRuntimeValue) -> bool:
-        if not isinstance(other, CellProfilerGroupedRuntimeCallable):
-            return NotImplemented
-        return (
-            self.raw_func == other.raw_func
-            and self.grouped_contracts == other.grouped_contracts
-            and self.declared_processing_contract == other.declared_processing_contract
-            and self.processing_contract == other.processing_contract
-        )
-
-    def __hash__(self) -> int:
-        return hash(
-            (
-                self.raw_func,
-                tuple(self.grouped_contracts.contracts_by_group_key.items()),
-                self.declared_processing_contract,
-                self.processing_contract,
-            )
-        )
-
-    def prepare_runtime_callable(self) -> None:
-        prepare_processing_callable(self.raw_func)
-        for executor in self.executors.values():
-            executor.prepare(self.raw_func)
-
-
-def _cellprofiler_callable_annotations(raw_func: CellProfilerFunction) -> dict[str, object]:
-    """Return evaluated callable annotations with a raw fallback for broken imports."""
-    try:
-        return dict(_callable_type_hints(raw_func))
-    except Exception:
-        return dict(get_annotations(raw_func, eval_str=False))
-
-
-def _cellprofiler_runtime_callable_annotations(
-    raw_func: CellProfilerFunction,
-) -> dict[str, object]:
-    """Return the runtime callable's public annotation map."""
-    return {
-        **_cellprofiler_callable_annotations(raw_func),
-        CellProfilerRuntimeAdapter.require_parameter_name(): CellProfilerRuntimeAdapter,
-        RuntimeInvocationOptions.require_parameter_name(): CellProfilerRuntimeValue | None,
-        "enabled": bool,
-    }
-
-
-def _signature_with_resolved_annotations(
-    raw_func: CellProfilerFunction,
-):
-    """Return raw callable signature with evaluated parameter annotations."""
-    raw_signature = signature(raw_func)
-    annotations = _cellprofiler_callable_annotations(raw_func)
-    parameters = [
-        parameter.replace(annotation=annotations[name])
-        if name in annotations
-        else parameter
-        for name, parameter in raw_signature.parameters.items()
-    ]
-    return raw_signature.replace(
-        parameters=parameters,
-        return_annotation=annotations.get("return", raw_signature.return_annotation),
-    )
-
-
-def _cellprofiler_runtime_callable_signature(raw_func: CellProfilerFunction):
-    """Return raw callable signature plus OpenHCS runtime injection parameters."""
-    runtime_parameters = (
-        Parameter(
-            CellProfilerRuntimeAdapter.require_parameter_name(),
-            Parameter.KEYWORD_ONLY,
-            annotation=CellProfilerRuntimeAdapter,
-        ),
-        Parameter(
-            RuntimeInvocationOptions.require_parameter_name(),
-            Parameter.KEYWORD_ONLY,
-            annotation=CellProfilerRuntimeValue | None,
-            default=None,
-        ),
-        Enableable.parameter().replace(annotation=bool),
-    )
-    raw_signature = _signature_with_resolved_annotations(raw_func)
-    existing_names = frozenset(raw_signature.parameters)
-    injected = [
-        parameter
-        for parameter in runtime_parameters
-        if parameter.name not in existing_names
-    ]
-    if not injected:
-        return raw_signature
-    parameters = list(raw_signature.parameters.values())
-    variadic_keyword_index = len(parameters)
-    for index, parameter in enumerate(parameters):
-        if parameter.kind is Parameter.VAR_KEYWORD:
-            variadic_keyword_index = index
-            break
-    parameters[variadic_keyword_index:variadic_keyword_index] = injected
-    return raw_signature.replace(parameters=parameters)
-
-
-def rebuild_cellprofiler_runtime_callable(
-    raw_func: CellProfilerFunction,
-    contract: ModuleArtifactContract,
-    declared_processing_contract: str | None,
-    processing_contract: ProcessingContract,
-) -> CellProfilerRuntimeCallable:
-    """Rebuild a pickled CellProfiler runtime callable."""
-    return CellProfilerRuntimeCallable(
-        raw_func,
-        contract,
-        declared_processing_contract=declared_processing_contract,
-        processing_contract=processing_contract,
-    )
-
-
-def rebuild_cellprofiler_grouped_runtime_callable(
-    raw_func: CellProfilerFunction,
-    contracts_by_group_key: Mapping[str, ModuleArtifactContract],
-    declared_processing_contract: str | None,
-    processing_contract: ProcessingContract,
-) -> CellProfilerGroupedRuntimeCallable:
-    """Rebuild a pickled grouped CellProfiler runtime callable."""
-    return CellProfilerGroupedRuntimeCallable(
-        raw_func,
-        CellProfilerGroupedModuleContracts(contracts_by_group_key),
-        declared_processing_contract=declared_processing_contract,
-        processing_contract=processing_contract,
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerRuntimeStepBinding:
-    """Runtime wrapper binding for an already-declared generated FunctionStep."""
-
-    raw_callable: CellProfilerFunction
-    contract: ModuleArtifactContract
-    processing_contract: ProcessingContract
-    declared_processing_contract: str | None
-
-    def load(self) -> CellProfilerFunction:
-        """Return the artifact-managed runtime callable for a generated step."""
-        return cellprofiler_module_callable(
-            self.raw_callable,
-            self.contract,
-            declared_processing_contract=self.declared_processing_contract,
-            processing_contract=self.processing_contract,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerGroupedRuntimeStepBinding:
-    """Runtime wrapper binding for grouped CellProfiler modules in one FunctionStep."""
-
-    raw_callable: CellProfilerFunction
-    contracts_by_group_key: Mapping[str, ModuleArtifactContract]
-    processing_contract: ProcessingContract
-    declared_processing_contract: str | None
-
-    def load(self) -> CellProfilerFunction:
-        """Return the artifact-managed grouped runtime callable."""
-        return cellprofiler_grouped_module_callable(
-            self.raw_callable,
-            self.contracts_by_group_key,
-            declared_processing_contract=self.declared_processing_contract,
-            processing_contract=self.processing_contract,
-        )
-
-
-def cellprofiler_module_callable(
-    raw_func: CellProfilerFunction,
-    contract: ModuleArtifactContract,
-    *,
-    declared_processing_contract: str | None = None,
-    processing_contract: ProcessingContract,
-) -> CellProfilerFunction:
-    """Build the product-owned runtime callable for one CellProfiler module."""
-    if not callable(raw_func):
-        raise TypeError(
-            f"cellprofiler_module_callable raw_func must be callable, got {type(raw_func).__name__}."
-        )
-    resolved_contract = CellProfilerModuleContractResolution(contract).resolve()
-    return CellProfilerRuntimeCallable(
-        raw_func,
-        resolved_contract,
-        declared_processing_contract=declared_processing_contract,
-        processing_contract=processing_contract,
-    )
-
-
-def cellprofiler_grouped_module_callable(
-    raw_func: CellProfilerFunction,
-    contracts_by_group_key: Mapping[str, ModuleArtifactContract],
-    *,
-    declared_processing_contract: str | None = None,
-    processing_contract: ProcessingContract,
-) -> CellProfilerFunction:
-    """Build the product-owned runtime callable for grouped CellProfiler modules."""
-    if not callable(raw_func):
-        raise TypeError(
-            f"cellprofiler_grouped_module_callable raw_func must be callable, got {type(raw_func).__name__}."
-        )
-    return CellProfilerGroupedRuntimeCallable(
-        raw_func,
-        CellProfilerGroupedModuleContracts(contracts_by_group_key),
-        declared_processing_contract=declared_processing_contract,
-        processing_contract=processing_contract,
-    )
-
-
-class CellProfilerFunctionReferenceRehydrator(FunctionReferenceRehydrator):
-    """Rebuild generated CellProfiler runtime callables from preserved contracts."""
-
-    rehydrator_key = "cellprofiler"
-
-    def supports(self, request: FunctionReferenceRehydrationRequest) -> bool:
-        contract = request.contract
-        return (
-            contract.module_artifact_contract is not None
-            and callable(contract.raw_processing_function)
-            and (contract.runtime_adapter is not None)
-            and (
-                contract.runtime_adapter.require_parameter_name()
-                == CellProfilerRuntimeAdapter.require_parameter_name()
-            )
-        )
-
-    def rehydrate(
-        self, request: FunctionReferenceRehydrationRequest
-    ) -> CellProfilerFunction:
-        contract = request.contract
-        processing_contract = contract.processing_contract
-        if not isinstance(processing_contract, ProcessingContract):
-            raise TypeError(
-                "CellProfiler function reference rehydration requires declared ProcessingContract metadata."
-            )
-        return cellprofiler_module_callable(
-            contract.raw_processing_function,
-            contract.module_artifact_contract,
-            declared_processing_contract=contract.declared_processing_contract,
-            processing_contract=processing_contract,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerModuleRuntimePlan:
-    """Static runtime decisions for one CellProfiler module callable."""
-
-    contract: ModuleArtifactContract
-    module_type: type[CellProfilerModule] | None
-    func: CellProfilerFunction
-    function_name: str
-    callable_contract: CallableContract
-    processing_contract: ProcessingContract
-    kwarg_spec: "CallableInvocationKwargSpec"
-    declared_input_specs: tuple[ArtifactSpec, ...]
-    declared_input_collection: ArtifactSpecCollection
-    primary_image_input_policy: "CellProfilerPrimaryImageInputPolicy"
-    primary_image_inputs: tuple[ArtifactSpec, ...]
-    primary_image_source_aliases: tuple[str, ...]
-    runtime_image_name_set: frozenset[str]
-    external_primary_image_names: tuple[str, ...]
-    runtime_inputs: tuple[ArtifactSpec, ...]
-    object_inputs: tuple[ArtifactSpec, ...]
-    object_label_inputs: tuple[ArtifactSpec, ...]
-    measurement_outputs: tuple[ArtifactSpec, ...]
-    image_outputs: tuple[ArtifactSpec, ...]
-    declared_output_specs: tuple[ArtifactSpec, ...]
-    binding_scope: RuntimeArtifactBindingScope
-    object_input_policy: CellProfilerObjectInputPolicy
-    special_input_policy: "CellProfilerSpecialInputPolicy"
-    invocation_execution_mode_policy: "CellProfilerInvocationExecutionModePolicy"
-    main_flow_replacement_policy: CellProfilerMainFlowReplacementPolicy
-    object_measurement_row_policy: CellProfilerObjectMeasurementRowPolicy
-    dual_scope_measurement_policy: "CellProfilerDualScopeMeasurementPolicy | None"
-    dual_scope_image_function: CellProfilerFunction | None
-    dual_scope_image_kwarg_spec: "CallableInvocationKwargSpec | None"
-    special_input_names: tuple[str, ...]
-    supported_non_object_input_kinds: frozenset[ArtifactType]
-    output_recording_plan: CellProfilerOutputRecordingPlan
-    image_output_value_policy: CellProfilerImageOutputValuePolicy
-    image_output_source_payload_policy: CellProfilerImageOutputSourcePayloadPolicy
-    object_label_output_source_context_policy: (
-        CellProfilerObjectLabelOutputSourceContextPolicy
-    )
-    runs_per_image_measurement: bool
-    runs_per_object_measurement: bool
-    replaces_main_flow: bool
-
-    @property
-    def bound_parameter_names(self) -> tuple[str, ...]:
-        """Return callable parameters supplied by runtime artifact declarations."""
-        return tuple(
-            dict.fromkeys(
-                (
-                    *self.special_input_policy.bound_parameter_names(self),
-                    *self.object_input_policy.bound_parameter_names(self),
-                    *self.callable_contract.runtime_bound_parameters,
-                    *runtime_bound_parameter_names_from_callable(self.func),
-                )
-            )
-        )
-
-    @property
-    def runtime_slice_sequence_parameter_names(self) -> frozenset[str]:
-        """Return bound tuple parameters projected item-wise during pure-2D slicing."""
-        return frozenset(
-            self.object_input_policy.runtime_slice_sequence_parameter_names(self)
-        )
-
-    @property
-    def measurement_table_parameter_names(self) -> frozenset[str]:
-        """Return bound parameters carrying measurement-table collections."""
-        return frozenset(
-            self.object_input_policy.measurement_table_parameter_names(self)
-        )
-
-    @property
-    def records_only_measurements(self) -> bool:
-        """Return whether every declared output is a measurement artifact."""
-        return bool(self.measurement_outputs) and len(self.declared_output_specs) == len(
-            self.measurement_outputs
-        )
-
-    @property
-    def records_measurements_without_image_outputs(self) -> bool:
-        """Return whether measurement artifact recording owns this module's output."""
-        return self.records_only_measurements and not self.image_outputs
-
-    @property
-    def publishes_side_effect_main_flow(self) -> bool:
-        """Return whether source-bound inputs may become the next main-flow image."""
-        return not self.records_measurements_without_image_outputs
-
-    @classmethod
-    def build(
-        cls,
-        *,
-        contract: ModuleArtifactContract,
-        canonical_module_name: str,
-        primary_image_input_policy: "CellProfilerPrimaryImageInputPolicy",
-        func: CellProfilerFunction,
-        processing_contract: ProcessingContract,
-    ) -> "CellProfilerModuleRuntimePlan":
-        declared_input_specs = contract.declared_input_specs()
-        declared_input_collection = ArtifactSpecCollection(
-            dict.fromkeys(declared_input_specs)
-        )
-        callable_contract = CallableContract.from_callable(func)
-        special_input_policy = CellProfilerSpecialInputPolicy.for_module(
-            canonical_module_name
-        )
-        primary_image_inputs = primary_image_input_policy.primary_image_inputs(
-            contract.module_name,
-            func,
-            declared_input_specs,
-            special_input_policy=special_input_policy,
-        )
-        runtime_image_name_set = contract.runtime_input_name_set(ImageArtifactType)
-        non_image_inputs = tuple(
-            (
-                spec
-                for spec in declared_input_specs
-                if spec.artifact_type is not ImageArtifactType
-            )
-        )
-        special_image_inputs = special_input_policy.special_image_inputs(
-            contract.module_name, func, declared_input_specs
-        )
-        runtime_inputs = (*non_image_inputs, *special_image_inputs)
-        special_input_names = special_input_names_from_callable(func)
-        object_input_policy = CellProfilerObjectInputPolicy.for_module(
-            canonical_module_name
-        )
-        object_label_inputs = declared_input_collection.of_artifact_type(
-            ObjectLabelsArtifactType
-        )
-        object_input_policy.validate_runtime_plan_object_inputs(
-            module_name=contract.module_name,
-            object_label_inputs=object_label_inputs,
-            special_input_names=special_input_names,
-        )
-        output_collection = contract.output_collection()
-        image_outputs = output_collection.of_artifact_type(ImageArtifactType)
-        measurement_outputs = output_collection.of_artifact_type(
-            MeasurementsArtifactType
-        )
-        module_type = CellProfilerModule.for_module(canonical_module_name)
-        object_measurement_row_policy = (
-            module_type.runtime_object_measurement_row_policy()
-            if module_type is not None
-            else DefaultObjectMeasurementRowPolicy()
-        )
-        dual_scope_policy = CellProfilerDualScopeMeasurementPolicy.for_module(
-            canonical_module_name
-        )
-        dual_scope_image_function = (
-            None
-            if dual_scope_policy is None
-            else dual_scope_policy.image_function(func)
-        )
-        dual_scope_image_kwarg_spec = (
-            None
-            if dual_scope_image_function is None
-            else CallableInvocationKwargSpec.from_callable_contract(
-                dual_scope_image_function, processing_contract
-            )
-        )
-        plan = cls(
-            contract=contract,
-            module_type=module_type,
-            func=func,
-            function_name=callable_contract.function_name,
-            callable_contract=callable_contract,
-            processing_contract=processing_contract,
-            kwarg_spec=CallableInvocationKwargSpec.from_callable_contract(
-                func, processing_contract
-            ),
-            declared_input_specs=declared_input_specs,
-            declared_input_collection=declared_input_collection,
-            primary_image_input_policy=primary_image_input_policy,
-            primary_image_inputs=primary_image_inputs,
-            primary_image_source_aliases=ArtifactSpecCollection(
-                primary_image_inputs
-            ).names(),
-            runtime_image_name_set=runtime_image_name_set,
-            external_primary_image_names=tuple(
-                (
-                    spec.name
-                    for spec in primary_image_inputs
-                    if spec.name not in runtime_image_name_set
-                )
-            ),
-            runtime_inputs=runtime_inputs,
-            object_inputs=ArtifactSpecCollection(runtime_inputs).of_artifact_type(
-                ObjectLabelsArtifactType
-            ),
-            object_label_inputs=object_label_inputs,
-            measurement_outputs=measurement_outputs,
-            image_outputs=image_outputs,
-            declared_output_specs=contract.declared_outputs,
-            binding_scope=RuntimeArtifactBindingScope.from_contract(contract),
-            object_input_policy=object_input_policy,
-            special_input_policy=special_input_policy,
-            invocation_execution_mode_policy=CellProfilerInvocationExecutionModePolicy.for_module(
-                canonical_module_name
-            ),
-            main_flow_replacement_policy=CellProfilerMainFlowReplacementPolicy.for_module(
-                canonical_module_name
-            ),
-            object_measurement_row_policy=object_measurement_row_policy,
-            dual_scope_measurement_policy=dual_scope_policy,
-            dual_scope_image_function=dual_scope_image_function,
-            dual_scope_image_kwarg_spec=dual_scope_image_kwarg_spec,
-            special_input_names=special_input_names,
-            supported_non_object_input_kinds=object_input_policy.supported_non_object_input_kinds,
-            output_recording_plan=CellProfilerOutputRecordingPlan.from_outputs(
-                contract.outputs
-            ),
-            image_output_value_policy=CellProfilerImageOutputValuePolicy.for_module(
-                canonical_module_name
-            ),
-            image_output_source_payload_policy=CellProfilerImageOutputSourcePayloadPolicy.for_module(
-                canonical_module_name
-            ),
-            object_label_output_source_context_policy=CellProfilerObjectLabelOutputSourceContextPolicy.for_module(
-                canonical_module_name
-            ),
-            runs_per_image_measurement=CellProfilerPerImageMeasurementPolicy.matches(
-                CellProfilerPerImageMeasurementRequest(
-                    module_name=contract.module_name,
-                    func=func,
-                    image_inputs=primary_image_inputs,
-                    object_inputs=object_label_inputs,
-                    outputs=contract.outputs,
-                )
-            ),
-            runs_per_object_measurement=CellProfilerPerObjectMeasurementPolicy.matches(
-                contract.module_name, object_label_inputs
-            ),
-            replaces_main_flow=CellProfilerMainFlowReplacementPolicy.for_module(
-                canonical_module_name
-            ).replaces_main_flow(image_outputs),
-        )
-        plan.validate_compile_time_binding_contracts()
-        return plan
-
-    def validate_compile_time_binding_contracts(self) -> None:
-        """Validate static runtime-input semantics while compiling the plan."""
-        self._validate_pure_3d_object_label_special_inputs()
-
-    def _validate_pure_3d_object_label_special_inputs(self) -> None:
-        if self.processing_contract is not ProcessingContract.PURE_3D:
-            return
-        if not self.special_input_names or not self.object_inputs:
-            return
-        default_execution_mode = (
-            self.default_runtime_image_execution_mode or ImagePayloadExecutionMode.NATURAL
-        )
-        if not CurrentRuntimePlaneKwargProjectionContract(
-            self.func,
-            default_execution_mode,
-        ).projects_runtime_slice_kwargs():
-            return
-        raise ValueError(
-            f"{self.contract.module_name} has ProcessingContract.PURE_3D and "
-            f"object-label special_inputs {list(self.special_input_names)} bound "
-            f"to runtime inputs {[spec.name for spec in self.object_inputs]}, "
-            "which must bind whole-stack labels at compile time. Runtime-slice "
-            "kwarg projection is only valid for plane-local execution."
-        )
-
-    @property
-    def default_runtime_image_execution_mode(self) -> ImagePayloadExecutionMode | None:
-        return self.callable_contract.runtime_image_execution_mode
-
-    def runtime_batch_executor(
-        self, domain: RuntimeBatchExecutionDomain
-    ) -> Callable | None:
-        return self.callable_contract.runtime_batch_executor(domain)
-
-    def function_output_aggregation_contract(
-        self,
-    ) -> CellProfilerFunctionOutputAggregationContract:
-        return CellProfilerFunctionOutputAggregationContract.from_main_flow_replacement(
-            self.replaces_main_flow, declared_output_specs=self.declared_output_specs
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerModuleRunRequest:
-    """Immutable execution-path request for one CellProfiler module call."""
-
-    executor: "CellProfilerModuleExecutor"
-    func: CellProfilerFunction
-    plan: CellProfilerModuleRuntimePlan
-    input_image: CellProfilerRuntimeValue
-    current_image: CellProfilerRuntimeValue
-    adapter: CellProfilerRuntimeAdapter
-    invocation_options: RuntimeInvocationOptions | None
-    kwargs: CellProfilerKwargDict
-
-    @property
-    def module_name(self) -> str:
-        return self.executor.module_name
-
-    @property
-    def function_name(self) -> str:
-        return self.plan.function_name
-
-
-@dataclass(slots=True)
-class CellProfilerModuleRunProfile:
-    """Run-level profile checkpoints for one CellProfiler module execution."""
-
-    module_name: str
-    function_name: str
-    enabled: bool
-    run_started_at: float
-    checkpoint_started_at: float
-
-    @classmethod
-    def start(
-        cls, *, module_name: str, function_name: str
-    ) -> "CellProfilerModuleRunProfile":
-        timer = RuntimeProfileTimer.start()
-        return cls(
-            module_name=module_name,
-            function_name=function_name,
-            enabled=timer.enabled,
-            run_started_at=timer.started_at,
-            checkpoint_started_at=timer.started_at,
-        )
-
-    def checkpoint(self, event: str) -> None:
-        """Record elapsed time since the previous checkpoint."""
-        if not self.enabled:
-            return
-        now = time.perf_counter()
-        CellProfilerRuntimeProfileLogger.log_module_profile(
-            event,
-            now - self.checkpoint_started_at,
-            module=self.module_name,
-            function=self.function_name,
-        )
-        self.checkpoint_started_at = now
-
-    def checkpoint_deferred(
-        self, event: str, fields: Callable[[], Mapping[str, CellProfilerRuntimeValue]]
-    ) -> None:
-        """Record a checkpoint whose fields are expensive to construct."""
-        if not self.enabled:
-            return
-        now = time.perf_counter()
-        CellProfilerRuntimeProfileLogger.log_module_profile_deferred(
-            event, now - self.checkpoint_started_at, fields
-        )
-        self.checkpoint_started_at = now
-
-    def total(self) -> None:
-        """Record total module runtime."""
-        if not self.enabled:
-            return
-        CellProfilerRuntimeProfileLogger.log_module_profile(
-            "cp_module_run_total",
-            time.perf_counter() - self.run_started_at,
-            module=self.module_name,
-            function=self.function_name,
-        )
-
-
-class CellProfilerModuleExecutionPath(ABC):
-    """Nominal strategy for one CellProfiler module execution path."""
-
-    @classmethod
-    def for_plan(
-        cls, plan: CellProfilerModuleRuntimePlan
-    ) -> "CellProfilerModuleExecutionPath":
-        for path_type in (
-            PerImageMeasurementExecutionPath,
-            PerObjectMeasurementExecutionPath,
-            StandardImageExecutionPath,
-        ):
-            path = path_type()
-            if path.matches(plan):
-                return path
-        raise RuntimeError(f"No CellProfiler execution path for {plan.function_name}.")
-
-    @abstractmethod
-    def matches(self, plan: CellProfilerModuleRuntimePlan) -> bool:
-        """Return whether this path owns execution for the runtime plan."""
-
-    @abstractmethod
-    def execute(
-        self,
-        request: CellProfilerModuleRunRequest,
-        profile: CellProfilerModuleRunProfile,
-    ) -> CellProfilerRuntimeValue:
-        """Execute the module through this path."""
-
-
-class PerImageMeasurementExecutionPath(CellProfilerModuleExecutionPath):
-    """Execute image-scoped measurement modules once per source image."""
-
-    def matches(self, plan: CellProfilerModuleRuntimePlan) -> bool:
-        return plan.runs_per_image_measurement
-
-    def execute(
-        self,
-        request: CellProfilerModuleRunRequest,
-        profile: CellProfilerModuleRunProfile,
-    ) -> CellProfilerRuntimeValue:
-        profile.checkpoint("cp_runs_per_image_check")
-        result = request.executor._run_per_image_measurement(request)
-        profile.checkpoint("cp_run_per_image_measurement")
-        profile.total()
-        return result
-
-
-class PerObjectMeasurementExecutionPath(CellProfilerModuleExecutionPath):
-    """Execute object-scoped measurement modules across object/image domains."""
-
-    def matches(self, plan: CellProfilerModuleRuntimePlan) -> bool:
-        return plan.runs_per_object_measurement
-
-    def execute(
-        self,
-        request: CellProfilerModuleRunRequest,
-        profile: CellProfilerModuleRunProfile,
-    ) -> CellProfilerRuntimeValue:
-        profile.checkpoint("cp_runs_per_image_check")
-        image_request = request.executor._runtime_image_request(
-            request.plan, request.current_image, request.adapter
-        )
-        profile.checkpoint("cp_image_request")
-        profile.checkpoint("cp_runs_per_object_check")
-        result = request.executor._run_per_object_measurement(
-            request, image_request=image_request
-        )
-        profile.checkpoint("cp_run_per_object_measurement")
-        profile.total()
-        return result
-
-
-class StandardImageExecutionPath(CellProfilerModuleExecutionPath):
-    """Execute ordinary image-transforming CellProfiler modules."""
-
-    def matches(self, plan: CellProfilerModuleRuntimePlan) -> bool:
-        del plan
-        return True
-
-    def execute(
-        self,
-        request: CellProfilerModuleRunRequest,
-        profile: CellProfilerModuleRunProfile,
-    ) -> CellProfilerRuntimeValue:
-        profile.checkpoint("cp_runs_per_image_check")
-        image_request = request.executor._runtime_image_request(
-            request.plan, request.current_image, request.adapter
-        )
-        profile.checkpoint("cp_image_request")
-        profile.checkpoint("cp_runs_per_object_check")
-        if image_request is None:
-            raise RuntimeError(
-                f"{request.module_name} image execution requires a resolved image request."
-            )
-        invocation = request.executor._invocation_request(
-            request.plan,
-            image_request=image_request,
-            adapter=request.adapter,
-            current_image=request.current_image,
-            kwargs=request.kwargs,
-            invocation_options=request.invocation_options,
-        )
-        profile.checkpoint("cp_invocation_request")
-        raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
-            request.func,
-            invocation.image,
-            invocation.kwargs,
-            invocation_options=request.invocation_options,
-            execution_mode=invocation.execution_mode,
-            output_aggregation_contract=request.plan.function_output_aggregation_contract(),
-            runtime_slice_sequence_parameter_names=request.plan.runtime_slice_sequence_parameter_names,
-            measurement_table_parameter_names=request.plan.measurement_table_parameter_names,
-        )
-        profile.checkpoint_deferred(
-            "cp_contract_execute",
-            lambda: {
-                "module": request.module_name,
-                "function": request.function_name,
-                **cellprofiler_profile_payload_fields("input", invocation.image),
-                **cellprofiler_profile_payload_fields("output", raw_output),
-            },
-        )
-        main_output, artifact_values = _split_cellprofiler_output(raw_output)
-        profile.checkpoint("cp_split_output")
-        CellProfilerOutputRecorder.record_module_outputs(
-            runtime_plan=request.plan,
-            adapter=request.adapter,
-            main_output=main_output,
-            artifact_values=artifact_values,
-            invocation=invocation,
-            image_request=image_request,
-            current_image=request.current_image,
-        )
-        profile.checkpoint("cp_record_outputs")
-        if not request.plan.replaces_main_flow:
-            profile.checkpoint("cp_replace_main_flow_check")
-            profile.total()
-            if not request.plan.publishes_side_effect_main_flow:
-                measurement_images = ()
-                if request.plan.primary_image_inputs:
-                    measurement_images = (
-                        CellProfilerMeasurementImageResolver(
-                            request.executor
-                        ).composed_measurement_image(
-                            image_request,
-                            request.plan.primary_image_inputs,
-                        ),
-                    )
-                return request.executor._measurement_only_main_flow_output(
-                    input_image=request.current_image,
-                    plan=request.plan,
-                    measurement_images=measurement_images,
-                    adapter=request.adapter,
-                )
-            return CELLPROFILER_SIDE_EFFECT_MAIN_FLOW.output_image(
-                current_image=request.current_image,
-                image_request=image_request,
-                variable_components=request.adapter.variable_components,
-                parser=request.adapter.filename_parser,
-                identity_cache=request.adapter.output_identity_cache,
-            )
-        result = request.executor._replacement_main_flow_output(
-            request.plan,
-            adapter=request.adapter,
-            current_image=request.current_image,
-            invocation_image=invocation.image,
-            output_image=main_output,
-        )
-        profile.checkpoint("cp_replace_main_flow_check")
-        profile.total()
-        return result
+    return CellProfilerModuleExecutor(raw_func, callable_contract)
 
 
 @dataclass(slots=True)
 class CellProfilerModuleExecutor:
     """Execute one generated CellProfiler module against a typed runtime adapter."""
 
-    contract: ModuleArtifactContract
-    _canonical_module_name: str = field(init=False, repr=False, compare=False)
-    _primary_image_input_policy: "CellProfilerPrimaryImageInputPolicy" = field(
-        init=False, repr=False, compare=False
-    )
-    _runtime_plans: dict[CellProfilerFunction, CellProfilerModuleRuntimePlan] = field(
-        init=False, default_factory=dict, repr=False, compare=False
-    )
+    raw_func: Callable[..., RuntimeFunctionOutput]
+    callable_contract: CallableContract
 
     def __post_init__(self) -> None:
-        if not isinstance(self.contract, ModuleArtifactContract):
+        if not callable(self.raw_func):
             raise TypeError(
-                f"CellProfilerModuleExecutor.contract must be ModuleArtifactContract, got {type(self.contract).__name__}."
+                "CellProfilerModuleExecutor.raw_func must be callable, got "
+                f"{type(self.raw_func).__name__}."
             )
-        self._canonical_module_name = canonical_module_name(self.contract.module_name)
-        self._primary_image_input_policy = (
-            CellProfilerPrimaryImageInputPolicy.for_module(self._canonical_module_name)
+        if not isinstance(self.callable_contract, CallableContract):
+            raise TypeError(
+                "CellProfilerModuleExecutor.callable_contract must be "
+                f"CallableContract, got {type(self.callable_contract).__name__}."
+            )
+        self.callable_contract.require_processing_contract()
+        runtime_adapter = self.callable_contract.runtime_adapter
+        if (
+            runtime_adapter is None
+            or not runtime_adapter.manages_artifact_inputs
+            or not runtime_adapter.manages_artifact_outputs
+        ):
+            raise TypeError(
+                "CellProfilerModuleExecutor requires a RuntimeAdapterSpec that "
+                "manages artifact inputs and outputs."
+            )
+        if self.raw_func is not self.callable_contract.resolve_canonical_raw_callable():
+            raise ValueError(
+                "Compiled CellProfiler callable identity "
+                f"{self.callable_contract.function_name!r} does not match resolved "
+                f"raw callable {self.raw_func.__name__!r}."
+            )
+        module_type = self.module_type()
+        if self.raw_func is not module_type.require_callable(
+            self.callable_contract.function_name
+        ):
+            raise ValueError(
+                f"CellProfiler callable {self.callable_contract.function_name!r} "
+                f"is not the declaration-owned callable for module "
+                f"{module_type.require_module_name()!r}."
+            )
+
+    def module_type(self) -> type[CellProfilerModule]:
+        """Return the nominal module declaration that owns this callable."""
+
+        module_type = CellProfilerModule.for_function_name(
+            self.callable_contract.function_name
         )
+        if module_type is None:
+            raise KeyError(
+                "No CellProfiler module declaration owns callable "
+                f"{self.callable_contract.function_name!r}."
+            )
+        return module_type
 
-    @property
-    def module_name(self) -> str:
-        return self.contract.module_name
+    def active_input_specs(
+        self,
+        adapter: CellProfilerRuntimeAdapter,
+    ) -> ArtifactSpecCollection:
+        """Return exact callable inputs and validate compiled producer edges."""
 
-    @property
-    def inputs(self) -> tuple[ArtifactSpec, ...]:
-        return self.contract.inputs
+        request_contract = adapter.request.require_callable_contract()
+        if request_contract != self.callable_contract:
+            raise ValueError(
+                "CellProfiler runtime adapter request does not carry this "
+                "executor's compiled CallableContract."
+            )
+        return adapter.request.selected_artifact_input_specs()
 
-    @property
-    def runtime_artifact_inputs(self) -> tuple[ArtifactSpec, ...]:
-        return self.contract.runtime_artifact_inputs
+    def active_output_plans(
+        self,
+        adapter: CellProfilerRuntimeAdapter,
+    ) -> tuple[ArtifactOutputPlan, ...]:
+        """Return the exact runtime output plans selected by the compiler."""
 
-    @property
-    def outputs(self) -> tuple[ArtifactSpec, ...]:
-        return self.contract.outputs
+        return tuple(adapter.request.artifact_outputs.values())
 
-    def prepare(self, func: CellProfilerFunction) -> None:
+    def measurement_output_plan(
+        self,
+        active_output_plans: tuple[ArtifactOutputPlan, ...],
+    ) -> ArtifactOutputPlan:
+        """Return the one selected measurement plan for a measurement execution."""
+
+        measurement_plans = tuple(
+            plan
+            for plan in active_output_plans
+            if plan.artifact_type is MeasurementsArtifactType
+        )
+        if len(measurement_plans) != 1:
+            raise ValueError(
+                f"Callable {self.callable_contract.function_name!r} measurement "
+                "execution requires exactly one selected Measurements output plan, "
+                f"got {tuple(plan.ref() for plan in measurement_plans)!r}."
+            )
+        return measurement_plans[0]
+
+    def prepare(self) -> None:
         """Resolve nominal policies used by this executor before timed execution."""
-        for origin in SourceBindingOrigin:
-            SourceBindingResolver.for_origin(origin)
-        tuple(PipelineStartSourceFileLoader.__registry__.values())
-        for mode in ImagePayloadExecutionMode:
-            CellProfilerImageExecutionStrategy.for_mode(mode)
         for strategy_type in RuntimeArtifactTypeStrategy.registered_strategy_types():
             RuntimeArtifactTypeStrategy.for_artifact_type(strategy_type.artifact_type)
-        prepare_measurement_image_alignment_strategies()
-        plan = self.runtime_plan(func)
-        for output in plan.output_recording_plan.ordered_outputs:
-            plan.output_recording_plan.recorders[output.artifact_type]
+        for artifact_type in frozenset(
+            output.artifact_type for output in self.callable_contract.artifact_outputs
+        ):
+            CellProfilerOutputRecorder.for_artifact_type(artifact_type)
 
-    def runtime_plan(self, func: CellProfilerFunction) -> CellProfilerModuleRuntimePlan:
-        """Return the prepared runtime plan for this callable and module contract."""
-        plan = self._runtime_plans.get(func)
-        if plan is not None:
-            return plan
-        plan = CellProfilerModuleRuntimePlan.build(
-            contract=self.contract,
-            canonical_module_name=self._canonical_module_name,
-            primary_image_input_policy=self._primary_image_input_policy,
-            func=func,
-            processing_contract=CellProfilerProcessingContractAuthority.for_callable(
-                func
-            ),
-        )
-        self._runtime_plans[func] = plan
-        return plan
-
-    def run(
+    def __call__(
         self,
-        func: CellProfilerFunction,
-        image: CellProfilerRuntimeValue,
+        image: RuntimeCallableArgument,
         *,
         cellprofiler_runtime: CellProfilerRuntimeAdapter,
-        invocation_options: RuntimeInvocationOptions | None = None,
-        **kwargs: CellProfilerRuntimeValue,
-    ) -> CellProfilerRuntimeValue:
+        **kwargs: RuntimeCallableArgument,
+    ) -> RuntimeCallableArgument:
         """Call the absorbed function and record declared outputs through the adapter."""
-        plan = self.runtime_plan(func)
-        request = CellProfilerModuleRunRequest(
-            executor=self,
-            func=func,
-            plan=plan,
-            input_image=image,
+        module_type = self.module_type()
+        module_name = module_type.require_module_name()
+        run_profile = RuntimeProfileTimer.start()
+        phase_profile = RuntimeProfileTimer.start()
+        active_inputs = self.active_input_specs(cellprofiler_runtime)
+        object_inputs = active_inputs.of_artifact_type(ObjectLabelsArtifactType)
+        active_outputs = self.active_output_plans(cellprofiler_runtime)
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "cp_runs_per_image_check",
+            phase_profile.elapsed(),
+            module=module_name,
+            function=self.callable_contract.function_name,
+        )
+        phase_profile = RuntimeProfileTimer.start()
+        if module_type.executes_per_image_measurements(
+            self.raw_func,
+            object_inputs,
+            callable_contract=self.callable_contract,
+        ):
+            result = self._run_per_image_measurement(
+                image=image,
+                adapter=cellprofiler_runtime,
+                kwargs=kwargs,
+                module_type=module_type,
+                active_input_specs=active_inputs.specs,
+                active_output_plans=active_outputs,
+            )
+            CellProfilerRuntimeProfileLogger.log_module_profile(
+                "cp_run_per_image_measurement",
+                phase_profile.elapsed(),
+                module=module_name,
+                function=self.callable_contract.function_name,
+            )
+        elif module_type.executes_per_object_measurements(object_inputs):
+            primary_image_inputs = self._primary_image_inputs(
+                image,
+                cellprofiler_runtime,
+                module_type=module_type,
+            )
+            image_request = None
+            if primary_image_inputs:
+                image_request = self._image_request(
+                    image,
+                    cellprofiler_runtime,
+                    module_type=module_type,
+                    active_input_specs=active_inputs.specs,
+                )
+            CellProfilerRuntimeProfileLogger.log_module_profile(
+                "cp_image_request",
+                phase_profile.elapsed(),
+                module=module_name,
+                function=self.callable_contract.function_name,
+            )
+            phase_profile = RuntimeProfileTimer.start()
+            CellProfilerRuntimeProfileLogger.log_module_profile(
+                "cp_runs_per_object_check",
+                phase_profile.elapsed(),
+                module=module_name,
+                function=self.callable_contract.function_name,
+            )
+            phase_profile = RuntimeProfileTimer.start()
+            result = self._run_per_object_measurement(
+                image=image,
+                adapter=cellprofiler_runtime,
+                kwargs=kwargs,
+                image_request=image_request,
+                module_type=module_type,
+                active_input_specs=active_inputs.specs,
+                active_output_plans=active_outputs,
+            )
+            CellProfilerRuntimeProfileLogger.log_module_profile(
+                "cp_run_per_object_measurement",
+                phase_profile.elapsed(),
+                module=module_name,
+                function=self.callable_contract.function_name,
+            )
+        else:
+            result = self._run_standard_image(
+                image=image,
+                adapter=cellprofiler_runtime,
+                kwargs=kwargs,
+                module_type=module_type,
+                active_input_specs=active_inputs.specs,
+            )
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "cp_module_run_total",
+            run_profile.elapsed(),
+            module=module_name,
+            function=self.callable_contract.function_name,
+        )
+        return result
+
+    def _run_standard_image(
+        self,
+        *,
+        image: RuntimeCallableArgument,
+        adapter: CellProfilerRuntimeAdapter,
+        kwargs: RuntimeCallableKwargs,
+        module_type: type[CellProfilerModule],
+        active_input_specs: tuple[ArtifactSpec, ...],
+    ) -> RuntimeCallableArgument:
+        module_name = module_type.require_module_name()
+        phase_profile = RuntimeProfileTimer.start()
+        image_request = self._image_request(
+            image,
+            adapter,
+            module_type=module_type,
+            active_input_specs=active_input_specs,
+        )
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "cp_image_request",
+            phase_profile.elapsed(),
+            module=module_name,
+            function=self.callable_contract.function_name,
+        )
+        phase_profile = RuntimeProfileTimer.start()
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "cp_runs_per_object_check",
+            phase_profile.elapsed(),
+            module=module_name,
+            function=self.callable_contract.function_name,
+        )
+        phase_profile = RuntimeProfileTimer.start()
+        invocation = self._invocation_request(
+            image_request=image_request,
+            adapter=adapter,
             current_image=image,
-            adapter=cellprofiler_runtime,
-            invocation_options=invocation_options,
-            kwargs=dict(kwargs),
+            kwargs=kwargs,
+            module_type=module_type,
         )
-        profile = CellProfilerModuleRunProfile.start(
-            module_name=self.module_name, function_name=plan.function_name
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "cp_invocation_request",
+            phase_profile.elapsed(),
+            module=module_name,
+            function=self.callable_contract.function_name,
         )
-        return CellProfilerModuleExecutionPath.for_plan(plan).execute(request, profile)
+        phase_profile = RuntimeProfileTimer.start()
+        raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
+            self.callable_contract,
+            self.raw_func,
+            invocation.image,
+            invocation.kwargs,
+            execution_mode=invocation.execution_mode,
+            plane_projection=invocation.plane_projection,
+        )
+        CellProfilerRuntimeProfileLogger.log_module_profile_deferred(
+            "cp_contract_execute",
+            phase_profile.elapsed(),
+            lambda: {
+                "module": module_name,
+                "function": self.callable_contract.function_name,
+                **cellprofiler_profile_payload_fields("input", invocation.image),
+                **cellprofiler_profile_payload_fields("output", raw_output),
+            },
+        )
+        phase_profile = RuntimeProfileTimer.start()
+        returned_values, matched_outputs = self._returned_output_values(
+            raw_output,
+            adapter,
+        )
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "cp_split_output",
+            phase_profile.elapsed(),
+            module=module_name,
+            function=self.callable_contract.function_name,
+        )
+        phase_profile = RuntimeProfileTimer.start()
+        declared_only_outputs = CellProfilerOutputRecorder.record_module_outputs(
+            callable_contract=self.callable_contract,
+            active_input_edges=tuple(adapter.request.artifact_inputs.values()),
+            adapter=adapter,
+            returned_values=returned_values,
+            matched_outputs=matched_outputs,
+            invocation=invocation,
+            image_request=image_request,
+            current_image=image,
+        )
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "cp_record_outputs",
+            phase_profile.elapsed(),
+            module=module_name,
+            function=self.callable_contract.function_name,
+        )
+        phase_profile = RuntimeProfileTimer.start()
+        result = self._published_active_main_flow_output(
+            matched_outputs=matched_outputs,
+            declared_only_outputs=declared_only_outputs,
+            adapter=adapter,
+            current_image=image,
+            invocation_image=invocation.image,
+            plane_projection=invocation.plane_projection,
+        )
+        CellProfilerRuntimeProfileLogger.log_module_profile(
+            "cp_replace_main_flow_check",
+            phase_profile.elapsed(),
+            module=module_name,
+            function=self.callable_contract.function_name,
+        )
+        return result
+
+    def _published_active_main_flow_output(
+        self,
+        *,
+        matched_outputs: tuple[RuntimeMatchedOutput, ...],
+        declared_only_outputs: Mapping[
+            ArtifactSpecRef,
+            RuntimeCallableArgument,
+        ],
+        adapter: CellProfilerRuntimeAdapter,
+        current_image: RuntimeCallableArgument,
+        invocation_image: RuntimeCallableArgument,
+        plane_projection: RuntimePlaneAxisValueProjection | None,
+    ) -> RuntimeCallableArgument:
+        """Publish only outputs selected by the active compiled contract."""
+
+        main_flow_refs = (
+            self.callable_contract.canonical_return_output_specs.ref_set()
+        )
+        main_flow_matches = tuple(
+            (plan, spec)
+            for plan, spec, _value in matched_outputs
+            if spec.ref() in main_flow_refs
+        )
+        if not main_flow_matches:
+            return current_image
+        return self._replacement_main_flow_output(
+            outputs=main_flow_matches,
+            declared_only_outputs=declared_only_outputs,
+            adapter=adapter,
+            current_image=current_image,
+            invocation_image=invocation_image,
+            plane_projection=plane_projection,
+        )
+
+    def _returned_output_values(
+        self,
+        raw_output: RuntimeFunctionOutput,
+        adapter: CellProfilerRuntimeAdapter,
+    ) -> tuple[
+        Mapping[ArtifactSpecRef, RuntimeCallableArgument],
+        tuple[RuntimeMatchedOutput, ...],
+    ]:
+        """Resolve the callable ABI against this invocation's selected plans."""
+
+        return RuntimeReturnedOutputMatcher(
+            callable_contract=self.callable_contract,
+            returned_output=raw_output,
+        ).resolve_plan_values(tuple(adapter.request.artifact_outputs.values()))
 
     def _replacement_main_flow_output(
         self,
-        plan: CellProfilerModuleRuntimePlan,
         *,
+        outputs: tuple[tuple[ArtifactOutputPlan, ArtifactSpec], ...],
+        declared_only_outputs: Mapping[
+            ArtifactSpecRef,
+            RuntimeCallableArgument,
+        ],
         adapter: CellProfilerRuntimeAdapter,
-        current_image: CellProfilerRuntimeValue,
-        invocation_image: CellProfilerRuntimeValue,
-        output_image: CellProfilerRuntimeValue,
-    ) -> CellProfilerRuntimeValue:
-        image_outputs = plan.image_outputs
-        if len(image_outputs) > 1:
-            composition = compose_aligned_image_payload(
-                self.module_name,
-                tuple(
-                    (
-                        adapter.get_image(
-                            output.name,
-                            group_key=adapter.artifact_outputs[
-                                output.name
-                            ].single_group_key,
-                        ).data
-                        for output in image_outputs
-                    )
-                ),
-                slice_contexts=tuple(
-                    (
-                        AlignedImageSliceContext.main_flow(
-                            output_key=output.name,
-                            artifact_kind=output.artifact_type.value,
-                        )
-                        for output in image_outputs
-                    )
+        current_image: RuntimeCallableArgument,
+        invocation_image: RuntimeCallableArgument,
+        plane_projection: RuntimePlaneAxisValueProjection | None,
+    ) -> RuntimeCallableArgument:
+        if not outputs:
+            raise ValueError("CellProfiler main-flow replacement requires an output.")
+        output_values = tuple(
+            (
+                spec,
+                (
+                    declared_only_outputs[spec.ref()]
+                    if spec.ref() in declared_only_outputs
+                    else adapter.artifact_output_value(output_plan)
                 ),
             )
-            payload = composition.payload
-            return payload
-        return cellprofiler_recorded_image_main_flow_output(
+            for output_plan, spec in outputs
+        )
+        replacement = RuntimeArtifactTypeStrategy.for_main_flow_outputs(
+            output_values
+        ).published_main_flow_output(
+            invocation_image,
+            output_values,
+            plane_projection,
+        )
+        return self._merge_named_image_outputs(
+            current_image,
+            replacement,
+            outputs,
+        )
+
+    @staticmethod
+    def _merge_named_image_outputs(
+        current_image: RuntimeCallableArgument,
+        replacement: RuntimeCallableArgument,
+        outputs: tuple[tuple[ArtifactOutputPlan, ArtifactSpec], ...],
+    ) -> RuntimeCallableArgument:
+        """Replace exact carried sources or append independent named outputs."""
+
+        if (
+            not isinstance(current_image, AlignedImageStack)
+            or not current_image.slice_contexts
+            or not isinstance(replacement, ImageOutputBundle)
+        ):
+            return replacement
+        if len(replacement.slices) != len(outputs):
+            raise ValueError(
+                "Recorded image main-flow output count must match its active "
+                f"compiled plans: {len(replacement.slices)} != {len(outputs)}."
+            )
+
+        slices = list(current_image.slices)
+        contexts = list(current_image.slice_contexts)
+        for (output_plan, _spec), output_slice, output_context in zip(
+            outputs,
+            replacement.slices,
+            replacement.slice_contexts,
+            strict=True,
+        ):
+            source_ref = output_plan.source_context_source()
+            if source_ref is None:
+                return replacement
+            source_indices = tuple(
+                index
+                for index, context in enumerate(contexts)
+                if context.matches_artifact_ref(source_ref)
+            )
+            if len(source_indices) > 1:
+                raise ValueError(
+                    "Named main-flow carrier has duplicate exact source context "
+                    f"for {source_ref!r}."
+                )
+            if source_indices:
+                index = source_indices[0]
+                slices[index] = output_slice
+                contexts[index] = output_context
+            else:
+                slices.append(output_slice)
+                contexts.append(output_context)
+        return ImageOutputBundle(tuple(slices), tuple(contexts))
+
+    def _primary_image_inputs(
+        self,
+        current_image: RuntimeCallableArgument,
+        adapter: CellProfilerRuntimeAdapter,
+        *,
+        module_type: type[CellProfilerModule],
+    ) -> tuple[ArtifactSpec, ...]:
+        """Apply nominal primary-image policy to exact non-parameter edges."""
+
+        request = RuntimeInputBindingRequest(
+            adapter=adapter,
+            kwargs={},
             current_image=current_image,
-            invocation_image=invocation_image,
-            recorded_image=output_image,
+        )
+        return module_type.primary_image_inputs(
+            self.raw_func,
+            request.primary_image_inputs,
+        )
+
+    def _measurement_image_inputs(
+        self,
+        adapter: CellProfilerRuntimeAdapter,
+        current_image: RuntimeCallableArgument,
+        image_request: CellProfilerImageRequest | None,
+        *,
+        module_type: type[CellProfilerModule],
+    ) -> tuple[CellProfilerMeasurementImage, ...]:
+        image_inputs = self._primary_image_inputs(
+            current_image,
+            adapter,
+            module_type=module_type,
+        )
+        if not image_inputs:
+            return ()
+        if (
+            self.callable_contract.image_payload_consumption
+            is ImagePayloadConsumption.COMPOSED
+        ):
+            if image_request is None:
+                raise ValueError(
+                    f"{module_type.require_module_name()} requires a composed "
+                    "measurement "
+                    "image request."
+                )
+            return (
+                CellProfilerMeasurementImage(
+                    source_image_name=measurement_source_name_for_specs(image_inputs),
+                    source_aliases=ArtifactSpecCollection(image_inputs).names(),
+                    payload=image_request.payload,
+                    align_to_labels=False,
+                    execution_mode=image_request.execution_mode,
+                    plane_projection=image_request.plane_projection,
+                ),
+            )
+        return self._resolved_measurement_images(
+            image_inputs,
+            adapter,
+            current_image,
+            reference_domain=CellProfilerMeasurementImageDomain.OBJECT_LABELS,
+        )
+
+    def _independent_measurement_image_inputs(
+        self,
+        adapter: CellProfilerRuntimeAdapter,
+        current_image: RuntimeCallableArgument,
+        *,
+        module_type: type[CellProfilerModule],
+    ) -> tuple[CellProfilerMeasurementImage, ...]:
+        image_inputs = self._primary_image_inputs(
+            current_image,
+            adapter,
+            module_type=module_type,
+        )
+        if image_inputs:
+            return self._resolved_measurement_images(
+                image_inputs,
+                adapter,
+                current_image,
+            )
+        return (
+            CellProfilerMeasurementImage(
+                source_image_name=None,
+                source_aliases=(),
+                payload=current_image,
+                reference_domain=CellProfilerMeasurementImageDomain.SOURCE_IMAGE,
+            ),
+        )
+
+    def _resolved_measurement_images(
+        self,
+        image_inputs: tuple[ArtifactSpec, ...],
+        adapter: CellProfilerRuntimeAdapter,
+        current_image: RuntimeCallableArgument,
+        *,
+        reference_domain: CellProfilerMeasurementImageDomain = (
+            CellProfilerMeasurementImageDomain.SOURCE_IMAGE
+        ),
+    ) -> tuple[CellProfilerMeasurementImage, ...]:
+        source_aliases = ArtifactSpecCollection(image_inputs).names()
+        return tuple(
+            self._resolved_measurement_image(
+                spec,
+                adapter,
+                current_image,
+                source_aliases,
+                reference_domain=reference_domain,
+            )
+            for spec in image_inputs
+        )
+
+    def _resolved_measurement_image(
+        self,
+        spec: ArtifactSpec,
+        adapter: CellProfilerRuntimeAdapter,
+        current_image: RuntimeCallableArgument,
+        source_aliases: tuple[str, ...],
+        *,
+        reference_domain: CellProfilerMeasurementImageDomain,
+    ) -> CellProfilerMeasurementImage:
+        request = RuntimeInputBindingRequest(
+            adapter=adapter,
+            kwargs={},
+            current_image=current_image,
+        ).artifact_request_for_spec(spec)
+        payload = normalize_cellprofiler_image_payload(
+            RuntimeArtifactTypeStrategy.for_artifact_type(
+                ImageArtifactType,
+            ).raw_runtime_input_value(request)
+        )
+        metadata = image_payload_metadata(payload)
+        plane_axis = metadata.plane_axis
+        return CellProfilerMeasurementImage(
+            source_image_name=spec.name,
+            source_aliases=source_aliases,
+            payload=payload,
+            plane_projection=(
+                replace(
+                    preserved_image_plane_projection(
+                        payload,
+                        adapter,
+                        source_aliases,
+                    ),
+                    source_aliases=source_aliases,
+                )
+                if plane_axis is not None
+                else None
+            ),
+            reference_domain=reference_domain,
+        )
+
+    def _object_label_measurement_image(
+        self,
+        spec: ArtifactSpec,
+        adapter: CellProfilerRuntimeAdapter,
+        current_image: RuntimeCallableArgument,
+    ) -> CellProfilerMeasurementImage:
+        payload = RuntimeInputBindingRequest(
+            adapter=adapter,
+            kwargs={},
+            current_image=current_image,
+        ).label_payload_for(spec)
+        if not isinstance(payload, ObjectLabelValue):
+            raise TypeError(
+                f"Object measurement input {spec.name!r} requires ObjectLabelValue, "
+                f"got {type(payload).__name__}."
+            )
+        reference_image = payload.measurement_reference_image()
+        return CellProfilerMeasurementImage(
+            source_image_name=None,
+            source_aliases=(),
+            payload=reference_image,
+            reference_domain=CellProfilerMeasurementImageDomain.OBJECT_LABELS,
+            plane_projection=preserved_image_plane_projection(
+                reference_image,
+                adapter,
+            ),
         )
 
     def _run_per_object_measurement(
         self,
-        request: CellProfilerModuleRunRequest,
         *,
+        image: RuntimeCallableArgument,
+        adapter: CellProfilerRuntimeAdapter,
+        kwargs: RuntimeCallableKwargs,
         image_request: "CellProfilerImageRequest | None",
-    ) -> CellProfilerRuntimeValue:
-        func = request.func
-        plan = request.plan
-        current_image = request.current_image
-        input_image = request.input_image
-        cellprofiler_runtime = request.adapter
-        source_image_name = self._source_image_name_for_measurement(image_request)
-        kwargs = request.kwargs.copy()
-        function_name = plan.function_name
-        profiler = CellProfilerRuntimeProfiler(self.module_name, function_name)
-        object_inputs = plan.object_label_inputs
-        measurement_outputs = plan.measurement_outputs
-        if len(measurement_outputs) != 1:
-            raise NotImplementedError(
-                f"{self.module_name} per-object execution requires exactly one measurement output."
-            )
-        measurement_target_scope = self.pop_measurement_target_scope(
-            kwargs, MeasurementScopeSelection.of(MeasurementScope.OBJECT)
+        module_type: type[CellProfilerModule],
+        active_input_specs: tuple[ArtifactSpec, ...],
+        active_output_plans: tuple[ArtifactOutputPlan, ...],
+    ) -> RuntimeCallableArgument:
+        func = self.raw_func
+        current_image = image
+        input_image = image
+        cellprofiler_runtime = adapter
+        source_image_name = (
+            None if image_request is None else image_request.source_image_name
         )
-        combined_rows: list[CellProfilerRuntimeValue] = []
+        kwargs = dict(kwargs)
+        function_name = self.callable_contract.function_name
+        profiler = CellProfilerRuntimeProfiler(
+            module_type.require_module_name(),
+            function_name,
+        )
+        object_inputs = ArtifactSpecCollection(active_input_specs).of_artifact_type(
+            ObjectLabelsArtifactType
+        )
+        measurement_output_plan = self.measurement_output_plan(active_output_plans)
+        image_measurement_rows: list[ColumnarRows] = []
         profile_enabled = CellProfilerRuntimeProfileLogger.enabled()
         if profile_enabled:
             measurement_images_started_at = time.perf_counter()
-        measurement_image_resolver = CellProfilerMeasurementImageResolver(self)
-        measurement_images = measurement_image_resolver.measurement_image_inputs(
-            func, cellprofiler_runtime, current_image, image_request
+        measurement_images = self._measurement_image_inputs(
+            cellprofiler_runtime,
+            current_image,
+            image_request,
+            module_type=module_type,
         )
+        if not measurement_images:
+            measurement_images = tuple(
+                self._object_label_measurement_image(
+                    object_spec,
+                    cellprofiler_runtime,
+                    current_image,
+                )
+                for object_spec in object_inputs
+            )
+            measurement_object_pairs = tuple(
+                (
+                    measurement_image,
+                    object_spec,
+                    True,
+                )
+                for measurement_image, object_spec in zip(
+                    measurement_images,
+                    object_inputs,
+                    strict=True,
+                )
+            )
+        else:
+            measurement_object_pairs = tuple(
+                (
+                    measurement_image,
+                    object_spec,
+                    object_index == 0,
+                )
+                for measurement_image in measurement_images
+                for object_index, object_spec in enumerate(object_inputs)
+            )
         profile_events: list[CellProfilerRuntimeProfileEvent] = []
         if profile_enabled:
             profile_events.append(
@@ -1802,105 +856,106 @@ class CellProfilerModuleExecutor:
                     ),
                 )
             )
-        if profile_enabled:
-            dual_scope_started_at = time.perf_counter()
-        image_measurement_rows = self._dual_scope_image_measurement_rows(
-            func,
-            plan,
-            measurement_images,
-            cellprofiler_runtime,
-            kwargs,
-            measurement_target_scope,
-            request.invocation_options,
-        )
-        if profile_enabled:
-            profile_events.append(
-                CellProfilerRuntimeProfileEvent(
-                    "cp_per_object_dual_scope_rows",
-                    time.perf_counter() - dual_scope_started_at,
-                    (("rows", len(image_measurement_rows)),),
-                )
-            )
-        combined_rows.extend(image_measurement_rows)
-        measurement_row_policy = plan.object_measurement_row_policy
+        measurement_row_policy = module_type.runtime_object_measurement_row_policy()
         label_payload_seconds = 0.0
         label_align_seconds = 0.0
         contract_execute_seconds = 0.0
         output_timings = ObjectMeasurementOutputTimings()
         columnar_rows: list[ColumnarRows] = []
-        batch_executor = plan.runtime_batch_executor(
+        batch_executor = self.callable_contract.runtime_batch_executor(
             RuntimeBatchExecutionDomain.MEASUREMENT_IMAGES
         )
-        processing_contract = CellProfilerProcessingContractAuthority.for_callable(func)
+        processing_contract = self.callable_contract.require_processing_contract()
         output_recorder = ObjectMeasurementOutputRecorder(
+            callable_contract=self.callable_contract,
+            measurement_output_plan=measurement_output_plan,
             row_policy=measurement_row_policy,
+            module_type=module_type,
             func=func,
             adapter=cellprofiler_runtime,
             measurement_images=measurement_images,
             object_inputs=object_inputs,
-            contains_image_measurement_rows=bool(image_measurement_rows),
-            combined_rows=combined_rows,
+            image_measurement_rows=image_measurement_rows,
             columnar_rows=columnar_rows,
             timings=output_timings,
         )
         measurement_invocations = tuple(
-            (
-                measurement_row_policy.invocations(measurement_image, kwargs)
-                for measurement_image in measurement_images
-            )
+            measurement_row_policy.invocations(measurement_image, kwargs)
+            for (
+                measurement_image,
+                _object_spec,
+                _include_image_measurements,
+            ) in measurement_object_pairs
         )
         total_measurement_batch_count = sum(
             (len(invocations) for invocations in measurement_invocations)
-        ) * len(object_inputs)
+        )
         prepared_invocations: list[PreparedObjectMeasurementInvocation] = []
-        for measurement_image, invocations in zip(
-            measurement_images, measurement_invocations, strict=True
+        for (
+            measurement_image,
+            object_spec,
+            include_image_measurements,
+        ), invocations in zip(
+            measurement_object_pairs, measurement_invocations, strict=True
         ):
-            for object_spec in object_inputs:
-                (
-                    aligned_image,
-                    executable_labels,
-                    completion_label_payload,
-                    execution_mode,
-                    preparation_profile_events,
-                    label_payload_elapsed,
-                    label_align_elapsed,
-                ) = measurement_image_resolver.object_measurement_runtime_inputs(
-                    func=func,
-                    measurement_image=measurement_image,
-                    object_spec=object_spec,
-                    adapter=cellprofiler_runtime,
+            label_payload = RuntimeInputBindingRequest(
+                adapter=cellprofiler_runtime,
+                kwargs=kwargs,
+                current_image=measurement_image.payload,
+            ).label_payload_for(object_spec)
+            (
+                aligned_measurement_image,
+                executable_labels,
+                completion_label_payload,
+                execution_mode,
+                preparation_profile_events,
+                label_payload_elapsed,
+                label_align_elapsed,
+            ) = object_measurement_runtime_inputs(
+                object_label_execution=object_label_input_execution_mode_from_callable(
+                    self.raw_func
+                ),
+                measurement_image=measurement_image,
+                object_spec=object_spec,
+                label_payload=label_payload,
+                adapter=cellprofiler_runtime,
+            )
+            profile_events.extend(preparation_profile_events)
+            label_payload_seconds += label_payload_elapsed
+            label_align_seconds += label_align_elapsed
+            for invocation in invocations:
+                invocation_kwargs = module_type.object_measurement_invocation_kwargs(
+                    invocation.lowered_kwargs(),
+                    include_image_measurements=include_image_measurements,
                 )
-                profile_events.extend(preparation_profile_events)
-                label_payload_seconds += label_payload_elapsed
-                label_align_seconds += label_align_elapsed
-                for invocation in invocations:
-                    prepared_invocations.append(
-                        PreparedObjectMeasurementInvocation(
-                            source_image_name=measurement_image.source_image_name,
-                            execution_mode=execution_mode,
-                            func=func,
-                            image=aligned_image,
-                            kwargs={
-                                **invocation.lowered_kwargs(),
-                                **_execution_mode_semantic_control_kwargs(
-                                    processing_contract,
-                                    execution_mode,
-                                ),
-                                "labels": executable_labels,
-                            },
-                            batch_index=len(prepared_invocations),
-                            batch_count=total_measurement_batch_count,
-                            semantic_group_key=object_measurement_batch_group_key(
-                                object_spec=object_spec, labels=completion_label_payload
+                prepared_invocations.append(
+                    PreparedObjectMeasurementInvocation(
+                        source_image_name=aligned_measurement_image.source_image_name,
+                        execution_mode=execution_mode,
+                        plane_projection=aligned_measurement_image.plane_projection,
+                        func=func,
+                        image=aligned_measurement_image.payload,
+                        kwargs={
+                            **invocation_kwargs,
+                            **_execution_mode_semantic_control_kwargs(
+                                processing_contract,
+                                execution_mode,
                             ),
-                            measurement_image=measurement_image,
-                            object_spec=object_spec,
-                            invocation=invocation,
-                            completion_label_payload=completion_label_payload,
-                        )
+                            "labels": executable_labels,
+                        },
+                        batch_index=len(prepared_invocations),
+                        batch_count=total_measurement_batch_count,
+                        semantic_group_key=object_measurement_batch_group_key(
+                            object_spec=object_spec, labels=completion_label_payload
+                        ),
+                        measurement_image=aligned_measurement_image,
+                        object_spec=object_spec,
+                        invocation=invocation,
+                        completion_label_payload=completion_label_payload,
                     )
+                )
         contract_execute_seconds = PreparedObjectMeasurementInvocationBatch(
+            callable_contract=self.callable_contract,
             func=func,
             function_name=function_name,
             invocations=tuple(prepared_invocations),
@@ -1928,15 +983,23 @@ class CellProfilerModuleExecutor:
                     CellProfilerRuntimeProfileEvent(
                         "cp_per_object_annotate_rows",
                         output_timings.annotate_seconds,
-                        (("rows", len(combined_rows)),),
+                        (
+                            (
+                                "rows",
+                                sum(
+                                    rows.row_count()
+                                    for rows in (
+                                        *image_measurement_rows,
+                                        *columnar_rows,
+                                    )
+                                ),
+                            ),
+                        ),
                     ),
                 )
             )
         combined_source_image_name = measurement_row_policy.table_source_image_name(
             measurement_images, source_image_name
-        )
-        combined_source_image_payload = (
-            CellProfilerMeasurementImage.shared_source_payload(measurement_images)
         )
         combined_source_metadata = (
             CellProfilerMeasurementImage.composed_source_metadata(
@@ -1946,23 +1009,51 @@ class CellProfilerModuleExecutor:
                 ),
             )
         )
+        if combined_source_metadata is None:
+            combined_source_metadata = image_payload_metadata(
+                CellProfilerMeasurementImage.shared_source_payload(measurement_images)
+            )
         if profile_enabled:
             record_started_at = time.perf_counter()
-        CellProfilerMeasurementMaterializer.record_per_object(
-            adapter=cellprofiler_runtime,
-            spec=measurement_outputs[0],
-            func=func,
-            measurement_row_policy=measurement_row_policy,
-            object_inputs=object_inputs,
-            image_measurement_rows=image_measurement_rows,
-            combined_rows=combined_rows,
-            columnar_rows=columnar_rows,
-            source_context=CellProfilerMeasurementSourceContext(
-                source_image_name=combined_source_image_name,
-                source_image_payload=combined_source_image_payload,
-                source_metadata=combined_source_metadata,
-            ),
+        table_groups = tuple(
+            (row_batches, object_name)
+            for row_batches, object_name in (
+                (
+                    tuple(image_measurement_rows),
+                    measurement_row_policy.table_object_owner(
+                        object_inputs,
+                        contains_image_measurement_rows=True,
+                    ),
+                ),
+                (
+                    tuple(columnar_rows),
+                    measurement_row_policy.table_object_owner(object_inputs),
+                ),
+            )
+            if row_batches
         )
+        if not table_groups:
+            table_groups = (
+                (
+                    (MeasurementSparseColumnarRows.from_rows((), fields=()),),
+                    measurement_row_policy.table_object_owner(object_inputs),
+                ),
+            )
+        for row_batches, object_name in table_groups:
+            rows = (
+                row_batches[0]
+                if len(row_batches) == 1
+                else ConcatenatedColumnarRows(row_batches)
+            )
+            table = module_type.build_measurement_table(
+                name=measurement_output_plan.name,
+                rows=rows,
+                object_name=object_name,
+                source_image_name=combined_source_image_name,
+                source_metadata=combined_source_metadata,
+            )
+            measurement_row_policy.validate_table_ownership(table)
+            cellprofiler_runtime.add_measurements(table)
         if profile_enabled:
             profile_events.append(
                 CellProfilerRuntimeProfileEvent(
@@ -1971,228 +1062,145 @@ class CellProfilerModuleExecutor:
                     (
                         (
                             "rows",
-                            sum((len(rows) for rows in columnar_rows))
-                            + len(combined_rows),
+                            sum(
+                                rows.row_count()
+                                for rows in (*image_measurement_rows, *columnar_rows)
+                            ),
                         ),
                     ),
                 )
             )
             profiler.record_events(tuple(profile_events))
-        if plan.records_measurements_without_image_outputs:
-            return self._measurement_only_main_flow_output(
-                input_image=input_image,
-                plan=plan,
-                measurement_images=measurement_images,
-                adapter=cellprofiler_runtime,
-            )
-        return CELLPROFILER_MEASUREMENT_MAIN_FLOW.output_image(
-            input_image=input_image,
-            measurement_images=measurement_images,
-            variable_components=cellprofiler_runtime.variable_components,
-            parser=cellprofiler_runtime.filename_parser,
-            identity_cache=cellprofiler_runtime.output_identity_cache,
-        )
-
-    def _dual_scope_image_measurement_rows(
-        self,
-        object_func: CellProfilerFunction,
-        plan: CellProfilerModuleRuntimePlan,
-        measurement_images: tuple["CellProfilerMeasurementImage", ...],
-        cellprofiler_runtime: CellProfilerRuntimeAdapter,
-        kwargs: CellProfilerKwargs,
-        target_scope: MeasurementScopeSelection,
-        invocation_options: RuntimeInvocationOptions | None,
-    ) -> list[CellProfilerRuntimeValue]:
-        function_name = plan.function_name
-        profiler = CellProfilerRuntimeProfiler(self.module_name, function_name)
-        if not target_scope.includes_all(
-            MeasurementScope.IMAGE, MeasurementScope.OBJECT
-        ):
-            return []
-        policy = plan.dual_scope_measurement_policy
-        if policy is None:
-            return []
-        image_func = plan.dual_scope_image_function
-        image_kwarg_spec = plan.dual_scope_image_kwarg_spec
-        if image_func is None or image_kwarg_spec is None:
-            raise TypeError(
-                f"{self.module_name} dual-scope policy did not prepare image function."
-            )
-        rows: list[CellProfilerRuntimeValue] = []
-        row_source_names_required = measurement_row_source_names_required(
-            measurement_images
-        )
-        image_kwargs = image_kwarg_spec.coerce_kwargs(kwargs)
-        measurement_row_policy = plan.object_measurement_row_policy
-        contract_execute_seconds = 0.0
-        split_rows_seconds = 0.0
-        for measurement_image in measurement_images:
-            contract_started_at = time.perf_counter()
-            raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
-                image_func,
-                _image_scope_measurement_payload(measurement_image.payload),
-                image_kwargs,
-                invocation_options=invocation_options,
-                execution_mode=measurement_image.execution_mode,
-                output_aggregation_contract=plan.function_output_aggregation_contract(),
-                runtime_slice_sequence_parameter_names=plan.runtime_slice_sequence_parameter_names,
-                measurement_table_parameter_names=plan.measurement_table_parameter_names,
-            )
-            contract_execute_seconds += time.perf_counter() - contract_started_at
-            split_rows_started_at = time.perf_counter()
-            _ignored_main_output, artifact_values = _split_cellprofiler_output(
-                raw_output
-            )
-            source_image_name = None
-            if row_source_names_required:
-                source_image_name = measurement_image.source_image_name
-            owned_rows = MeasurementRowOwnership(
-                source_image_name=source_image_name
-            ).annotate_rows(_measurement_rows_from_output(artifact_values))
-            source_pairs = measurement_image.source_image_pairs()
-            if len(source_pairs) == 1:
-                owned_rows = measurement_row_policy.project_rows(
-                    owned_rows,
-                    ObjectMeasurementInvocation(
-                        kwargs={},
-                        source_pair=source_pairs[0],
-                    ),
-                )
-            elif source_pairs:
-                raise ValueError(
-                    f"{self.module_name} emitted image-scope source-pair "
-                    "measurement rows for multiple source pairs; the dual-scope "
-                    "image path must execute one source-pair invocation at a time."
-                )
-            projected_rows, _projected_row_mappings = (
-                CellProfilerMeasurementRecord(
-                    rows=owned_rows,
-                    source_context=CellProfilerMeasurementSourceContext(
-                        source_image_name=source_image_name,
-                        source_image_payload=measurement_image.payload,
-                    ),
-                    object_name=None,
-                )
-                .projection_request(adapter=cellprofiler_runtime)
-                .project_rows()
-            )
-            rows.extend(projected_rows)
-            split_rows_seconds += time.perf_counter() - split_rows_started_at
-        profiler.record("cp_dual_scope_contract_execute", contract_execute_seconds)
-        profiler.record("cp_dual_scope_split_rows", split_rows_seconds, rows=len(rows))
-        return rows
+        return input_image
 
     def _run_per_image_measurement(
-        self, request: CellProfilerModuleRunRequest
-    ) -> CellProfilerRuntimeValue:
-        func = request.func
-        plan = request.plan
-        input_image = request.input_image
-        current_image = request.current_image
-        cellprofiler_runtime = request.adapter
-        kwargs = request.kwargs.copy()
-        function_name = plan.function_name
-        profiler = CellProfilerRuntimeProfiler(self.module_name, function_name)
-        profile = PerImageMeasurementProfile(profiler)
-        measurement_outputs = plan.measurement_outputs
-        if len(measurement_outputs) != 1:
-            raise NotImplementedError(
-                f"{self.module_name} per-image execution requires exactly one measurement output."
-            )
-        self.pop_measurement_target_scope(
-            kwargs, MeasurementScopeSelection.of(MeasurementScope.IMAGE)
+        self,
+        *,
+        image: RuntimeCallableArgument,
+        adapter: CellProfilerRuntimeAdapter,
+        kwargs: RuntimeCallableKwargs,
+        module_type: type[CellProfilerModule],
+        active_input_specs: tuple[ArtifactSpec, ...],
+        active_output_plans: tuple[ArtifactOutputPlan, ...],
+    ) -> RuntimeCallableArgument:
+        func = self.raw_func
+        input_image = image
+        current_image = image
+        cellprofiler_runtime = adapter
+        kwargs = dict(kwargs)
+        function_name = self.callable_contract.function_name
+        module_name = module_type.require_module_name()
+        profiler = CellProfilerRuntimeProfiler(
+            module_name,
+            function_name,
         )
-        combined_rows: list[CellProfilerRuntimeValue] = []
+        measurement_output_plan = self.measurement_output_plan(active_output_plans)
+        combined_rows: list[ColumnarRows] = []
         measurement_images_started_at = time.perf_counter()
-        measurement_images = CellProfilerMeasurementImageResolver(
-            self
-        ).independent_measurement_image_inputs(
-            func, cellprofiler_runtime, current_image
+        measurement_images = self._independent_measurement_image_inputs(
+            cellprofiler_runtime,
+            current_image,
+            module_type=module_type,
         )
-        profile.measurement_images(
-            time.perf_counter() - measurement_images_started_at, len(measurement_images)
+        profiler.record(
+            "cp_per_image_measurement_images",
+            time.perf_counter() - measurement_images_started_at,
+            images=len(measurement_images),
         )
         kwargs_started_at = time.perf_counter()
         runtime_kwargs = {
             **kwargs,
             **self._runtime_input_kwargs(
-                plan,
                 cellprofiler_runtime,
                 current_image,
                 kwargs,
-                invocation_options=request.invocation_options,
+                module_type=module_type,
             ),
         }
-        coerced_kwargs = plan.kwarg_spec.coerce_kwargs(runtime_kwargs)
-        profile.prepare_kwargs(time.perf_counter() - kwargs_started_at)
-        row_source_names_required = measurement_row_source_names_required(
-            measurement_images
+        invocation_kwargs = runtime_kwargs
+        profiler.record(
+            "cp_per_image_prepare_kwargs",
+            time.perf_counter() - kwargs_started_at,
         )
         contract_execute_seconds = 0.0
         split_rows_seconds = 0.0
-        combined_records: list[CellProfilerMeasurementRecord] = []
+        combined_tables: list[MeasurementTable] = []
         for measurement_image in measurement_images:
             contract_started_at = time.perf_counter()
             raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
+                self.callable_contract,
                 func,
-                _image_scope_measurement_payload(measurement_image.payload),
-                coerced_kwargs,
-                invocation_options=request.invocation_options,
+                measurement_image.payload,
+                invocation_kwargs,
                 execution_mode=measurement_image.execution_mode,
-                output_aggregation_contract=plan.function_output_aggregation_contract(),
-                runtime_slice_sequence_parameter_names=plan.runtime_slice_sequence_parameter_names,
-                measurement_table_parameter_names=plan.measurement_table_parameter_names,
+                plane_projection=measurement_image.plane_projection,
             )
             contract_execute_seconds += time.perf_counter() - contract_started_at
             split_rows_started_at = time.perf_counter()
-            main_output, artifact_values = _split_cellprofiler_output(raw_output)
-            source_image_name = None
-            if row_source_names_required:
-                source_image_name = measurement_image.source_image_name
-            resolved_values = CellProfilerResolvedOutputValues.from_returned_outputs(
-                recorded_specs=measurement_outputs,
-                context_specs=self.contract.declared_outputs or measurement_outputs,
-                main_output=main_output,
-                artifact_values=artifact_values,
-                func=func,
-                declared_output_specs=self.contract.declared_outputs,
+            returned_values, matched_outputs = self._returned_output_values(
+                raw_output,
+                cellprofiler_runtime,
             )
+            measurement_output = next(
+                matched_output
+                for matched_output in matched_outputs
+                if matched_output[0] is measurement_output_plan
+            )
+            matched_plan, matched_spec, matched_value = measurement_output
             measurement_record_request = CellProfilerOutputRecordRequest(
-                runtime_plan=plan,
+                callable_contract=self.callable_contract,
+                active_input_edges=tuple(
+                    cellprofiler_runtime.request.artifact_inputs.values()
+                ),
                 adapter=cellprofiler_runtime,
-                spec=measurement_outputs[0],
-                output_value=resolved_values.recorded_value(measurement_outputs[0]),
-                output_values=resolved_values.context_values,
-                func=plan.func,
-                function_name=plan.function_name,
-                source=replace(measurement_image, source_image_name=source_image_name),
-                call_kwargs=coerced_kwargs,
+                spec=matched_spec,
+                output_plan=matched_plan,
+                output_value=matched_value,
+                source=measurement_image,
+                call_kwargs=invocation_kwargs,
+                current_image=measurement_image.payload,
+                declared_only_outputs=CellProfilerOutputRecorder.transient_output_values(
+                    callable_contract=self.callable_contract,
+                    active_output_plans=active_output_plans,
+                    returned_values=returned_values,
+                ),
             )
-            measurement_record = measurement_record_for_module(
-                measurement_record_request
-            )
-            combined_records.append(measurement_record)
-            projected_rows, _projected_row_mappings = (
-                measurement_record.projection_request(
-                    adapter=cellprofiler_runtime
-                ).project_rows()
-            )
-            combined_rows.extend(
-                MeasurementRowOwnership(
-                    source_image_name=measurement_record.source_context.source_image_name
-                ).annotate_rows(projected_rows)
+            measurement_table = measurement_table_for_module(measurement_record_request)
+            combined_tables.append(measurement_table)
+            combined_rows.append(
+                cast(
+                    ColumnarRows,
+                    MeasurementRowOwnership(
+                        source_image_name=measurement_table.source_image_name
+                    ).annotate_rows(measurement_table.rows),
+                )
             )
             split_rows_seconds += time.perf_counter() - split_rows_started_at
-        profile.contract_execute(contract_execute_seconds)
-        profile.split_rows(split_rows_seconds, len(combined_rows))
-        rows_declare_object_name = (
-            CellProfilerMeasurementFieldSchema.rows_declare_object_name(combined_rows)
+        profiler.record("cp_per_image_contract_execute", contract_execute_seconds)
+        profiler.record(
+            "cp_per_image_split_rows",
+            split_rows_seconds,
+            rows=sum(rows.row_count() for rows in combined_rows),
         )
-        image_measurement_object_name = _MISSING_MEASUREMENT_OBJECT_NAME
-        image_measurement_source_name = (
-            CellProfilerMeasurementRecord.shared_source_image_name(
-                tuple(combined_records)
+        if not combined_rows:
+            raise ValueError(
+                f"{module_name} per-image measurement execution produced "
+                "no measurement tables."
             )
+        rows = (
+            combined_rows[0]
+            if len(combined_rows) == 1
+            else ConcatenatedColumnarRows(tuple(combined_rows))
+        )
+        object_name_field = MeasurementRowAxisField.OBJECT_NAME.value
+        rows_only_declare_object_name = rows.row_count() > 0 and all(
+            object_name_field in row for row in rows.iter_row_mappings()
+        )
+        table_source_names = tuple(
+            dict.fromkeys(table.source_image_name for table in combined_tables)
+        )
+        image_measurement_source_name = (
+            table_source_names[0] if len(table_source_names) == 1 else None
         )
         if image_measurement_source_name is None:
             image_measurement_source_name = (
@@ -2200,300 +1208,194 @@ class CellProfilerModuleExecutor:
                     measurement_images
                 )
             )
-        if rows_declare_object_name:
-            image_measurement_object_name = None
+        if rows_only_declare_object_name:
             image_measurement_source_name = None
+        source_metadata = MeasurementTableUnion(
+            measurement_output_plan.name,
+            tuple(combined_tables),
+        ).source_metadata()
         record_started_at = time.perf_counter()
-        CellProfilerMeasurementMaterializer.record(
-            CellProfilerMeasurementRecord(
-                rows=combined_rows,
-                fields=CellProfilerMeasurementFieldSchema.for_record(
-                    measurement_outputs[0], combined_rows, func
-                ),
-                object_name=image_measurement_object_name,
-                source_context=CellProfilerMeasurementSourceContext(
-                    source_image_name=image_measurement_source_name
-                ),
-            ).materialization_request(
-                adapter=cellprofiler_runtime,
-                name=measurement_outputs[0].name,
-                axis_state=MeasurementRowAxisState.IMAGE_NUMBER,
+        cellprofiler_runtime.add_measurements(
+            module_type.build_measurement_table(
+                name=measurement_output_plan.name,
+                rows=rows,
+                object_name=None,
+                source_image_name=image_measurement_source_name,
+                source_metadata=source_metadata,
             )
         )
-        profile.record_measurements(
-            time.perf_counter() - record_started_at, len(combined_rows)
+        profiler.record(
+            "cp_per_image_record_measurements",
+            time.perf_counter() - record_started_at,
+            rows=rows.row_count(),
         )
-        if plan.records_measurements_without_image_outputs:
-            return self._measurement_only_main_flow_output(
-                input_image=input_image,
-                plan=plan,
-                measurement_images=measurement_images,
-                adapter=cellprofiler_runtime,
-            )
-        return CELLPROFILER_MEASUREMENT_MAIN_FLOW.output_image(
-            input_image=input_image,
-            measurement_images=measurement_images,
-            variable_components=cellprofiler_runtime.variable_components,
-            parser=cellprofiler_runtime.filename_parser,
-            identity_cache=cellprofiler_runtime.output_identity_cache,
-        )
-
-    @staticmethod
-    def _measurement_only_main_flow_output(
-        *,
-        input_image: CellProfilerRuntimeValue,
-        plan: CellProfilerModuleRuntimePlan,
-        measurement_images: tuple["CellProfilerMeasurementImage", ...] = (),
-        adapter: CellProfilerRuntimeAdapter,
-    ) -> CellProfilerRuntimeValue:
-        """Return main flow for measurement-only modules without image outputs."""
-        del plan
-        return CELLPROFILER_MEASUREMENT_MAIN_FLOW.output_image(
-            input_image=input_image,
-            measurement_images=measurement_images,
-            variable_components=adapter.variable_components,
-            parser=adapter.filename_parser,
-            identity_cache=adapter.output_identity_cache,
-        )
-
-    def pop_measurement_target_scope(
-        self, kwargs: CellProfilerKwargDict, default_scope: MeasurementScopeSelection
-    ) -> MeasurementScopeSelection:
-        """Consume the generated target-scope kwarg as OpenHCS measurement scopes."""
-        from openhcs.interop.cellprofiler.measurement_scope import (
-            cellprofiler_measurement_scope_selection,
-        )
-
-        return cellprofiler_measurement_scope_selection(
-            kwargs.pop(
-                CellProfilerInvocationOverrideKwarg.measurement_target_scope, None
-            ),
-            default_scope,
-        )
+        return input_image
 
     def _runtime_input_kwargs(
         self,
-        plan: CellProfilerModuleRuntimePlan,
         adapter: CellProfilerRuntimeAdapter,
-        current_image: CellProfilerRuntimeValue,
-        kwargs: CellProfilerKwargs,
+        current_image: RuntimeCallableArgument,
+        kwargs: RuntimeCallableKwargs,
         *,
-        invocation_options: RuntimeInvocationOptions | None = None,
-        primary_image: CellProfilerRuntimeValue | None = None,
-        project_object_labels_to_current_plane: bool = True,
-    ) -> CellProfilerKwargDict:
-        runtime_inputs = plan.runtime_inputs
-        object_input_policy = plan.object_input_policy
-        binding_scope = plan.binding_scope
-        if not runtime_inputs:
-            if object_input_policy.binds_without_declared_inputs:
-                return object_input_policy.bind(
-                    ObjectInputBindingRequest(
-                        module_name=self.module_name,
-                        func=plan.func,
-                        object_inputs=(),
-                        primary_image_inputs=plan.primary_image_inputs,
-                        output_specs=plan.declared_output_specs,
-                        adapter=adapter,
-                        kwargs=kwargs,
-                        current_image=current_image,
-                        binding_scope=binding_scope,
-                        runtime_inputs=runtime_inputs,
-                        invocation_options=invocation_options,
-                        project_object_labels_to_current_plane=project_object_labels_to_current_plane,
-                    )
-                )
+        module_type: type[CellProfilerModule],
+        primary_image: RuntimeCallableArgument | None = None,
+    ) -> dict[str, RuntimeCallableArgument]:
+        if (
+            not self.callable_contract.artifact_inputs
+            and not module_type.binds_without_declared_inputs
+        ):
             return {}
-        special_input_names = plan.special_input_names
-        if special_input_names:
-            special_input_specs = runtime_inputs
-            special_input_policy = plan.special_input_policy
-            return special_input_policy.bind(
-                SpecialInputBindingRequest(
-                    module_name=self.module_name,
-                    func=plan.func,
-                    parameter_names=special_input_names,
-                    special_input_specs=special_input_specs,
-                    runtime_inputs=runtime_inputs,
-                    adapter=adapter,
-                    kwargs=kwargs,
-                    current_image=special_input_policy.binding_current_image(
-                        current_image=current_image, primary_image=primary_image
-                    ),
-                    binding_scope=binding_scope,
-                    project_object_labels_to_current_plane=project_object_labels_to_current_plane,
-                )
-            )
-        supported_non_object_kinds = plan.supported_non_object_input_kinds
-        unsupported_non_object_inputs = tuple(
-            (
-                spec
-                for spec in runtime_inputs
-                if spec.artifact_type is not ObjectLabelsArtifactType
-                and spec.artifact_type not in supported_non_object_kinds
-            )
-        )
-        if unsupported_non_object_inputs:
-            raise NotImplementedError(
-                f"{self.module_name} has runtime inputs {[spec.name for spec in unsupported_non_object_inputs]} with no declared special_inputs binding."
-            )
-        return object_input_policy.bind(
-            ObjectInputBindingRequest(
-                module_name=self.module_name,
-                func=plan.func,
-                object_inputs=plan.object_inputs,
-                primary_image_inputs=plan.primary_image_inputs,
-                output_specs=plan.declared_output_specs,
+        return module_type.bind_runtime_inputs(
+            RuntimeInputBindingRequest(
                 adapter=adapter,
                 kwargs=kwargs,
-                current_image=current_image,
-                binding_scope=binding_scope,
-                runtime_inputs=runtime_inputs,
-                invocation_options=invocation_options,
-                project_object_labels_to_current_plane=project_object_labels_to_current_plane,
+                current_image=module_type.binding_current_image(
+                    current_image=current_image,
+                    primary_image=primary_image,
+                ),
             )
         )
 
     def _image_request(
         self,
-        plan: CellProfilerModuleRuntimePlan,
-        current_image: CellProfilerRuntimeValue,
+        current_image: RuntimeCallableArgument,
         adapter: CellProfilerRuntimeAdapter,
+        *,
+        module_type: type[CellProfilerModule],
+        active_input_specs: tuple[ArtifactSpec, ...],
     ) -> "CellProfilerImageRequest":
-        image_inputs = plan.primary_image_inputs
+        input_binding = RuntimeInputBindingRequest(
+            adapter=adapter,
+            kwargs={},
+            current_image=current_image,
+        )
+        image_inputs = module_type.primary_image_inputs(
+            self.raw_func,
+            input_binding.primary_image_inputs,
+        )
+        runtime_projection = RuntimePlaneAxisValueProjection.from_projector(
+            adapter,
+            RuntimePlaneAxis.RUNTIME_SLICE,
+            (),
+        )
+        current_runtime_payload = current_image
+        if (
+            runtime_projection is not None
+            and runtime_projection.plane_index is not None
+        ):
+            current_runtime_payload = cast(
+                RuntimeCallableArgument,
+                RuntimeSliceProjection.value_for_slice(
+                    current_image,
+                    runtime_projection,
+                ),
+            )
         if not image_inputs:
-            current_image_payload = self._current_runtime_plane_image(
-                plan, current_image, adapter
+            current_image_payload = current_runtime_payload
+            current_image_payload = normalize_cellprofiler_image_payload(
+                current_image_payload
             )
-            payload = (
-                OBJECT_ONLY_REFERENCE_IMAGE.reference_image(current_image_payload)
-                if plan.object_label_inputs
-                or plan.declared_input_collection.of_artifact_type(
-                    SpatialGridArtifactType
+            if (
+                runtime_projection is not None
+                and runtime_projection.plane_index is not None
+                and image_payload_metadata(current_image_payload).plane_axis
+                is runtime_projection.axis
+            ):
+                current_image_payload = cast(
+                    RuntimeCallableArgument,
+                    RuntimeSliceProjection.value_for_slice(
+                        current_image_payload,
+                        runtime_projection,
+                    ),
                 )
-                else cellprofiler_image_payload(current_image_payload)
-            )
             return CellProfilerImageRequest(
-                payload=payload,
-                source_image_name=self._input_source_image_name(plan, adapter),
+                payload=current_image_payload,
+                source_image_name=self._input_source_image_name(
+                    adapter,
+                    current_image_payload,
+                    active_input_specs=active_input_specs,
+                ),
                 source_aliases=(),
                 image_count=1,
                 execution_mode=ImagePayloadExecutionMode.NATURAL,
-                projects_runtime_slice_kwargs=True,
-                publishes_side_effect_main_flow=(
-                    plan.publishes_side_effect_main_flow
-                    and not (
-                        plan.object_label_inputs
-                        or plan.declared_input_collection.of_artifact_type(
-                            SpatialGridArtifactType
-                        )
-                    )
+                plane_projection=preserved_image_plane_projection(
+                    current_image_payload,
+                    adapter,
                 ),
             )
-        adapter.require_resolvable_source_aliases(plan.external_primary_image_names)
-        default_execution_mode = (
-            plan.default_runtime_image_execution_mode
-            or ImagePayloadExecutionMode.NATURAL
-        )
-        projection_capabilities = CurrentRuntimePlaneKwargProjectionContract(
-            plan.func,
-            default_execution_mode,
-        ).projection_capabilities()
         payloads = []
         source_names: list[str | None] = []
+        image_strategy = RuntimeArtifactTypeStrategy.for_artifact_type(
+            ImageArtifactType
+        )
+        input_binding = replace(input_binding, current_image=current_runtime_payload)
         for spec in image_inputs:
-            if spec.name in plan.runtime_image_name_set:
-                runtime_image = adapter.get_image(
-                    spec.name,
-                    current_image=self._runtime_image_current_image(
-                        plan, adapter, spec, current_image
-                    ),
-                )
-                payloads.append(cellprofiler_image_payload(runtime_image.data))
-                source_names.append(runtime_image.source_image_name)
-                continue
-            source_names.append(spec.name)
-            payloads.append(
-                cellprofiler_image_payload(
-                    adapter.resolve_source_image(
-                        spec.name,
-                        current_image,
-                        projection_capabilities=projection_capabilities,
-                    )
-                )
-            )
+            request = input_binding.artifact_request_for_spec(spec)
+            payloads.append(image_strategy.runtime_input_value(request))
+            source_names.append(image_strategy.source_image_name(request))
+        parameter_image_inputs = input_binding.image_inputs
+        broadcast_sources = tuple(
+            sources[0]
+            for spec in parameter_image_inputs
+            for sources in (spec.stack_broadcast_sources(),)
+            if len(sources) == 1
+        )
+        align_primary_images = len(image_inputs) > 1 and broadcast_sources == tuple(
+            spec.ref() for spec in image_inputs
+        )
         composition = compose_aligned_image_payload(
-            f"{self.module_name} image inputs {tuple(spec.name for spec in image_inputs)!r}",
+            f"{module_type.require_module_name()} image inputs "
+            f"{tuple(spec.name for spec in image_inputs)!r}",
             tuple(payloads),
-            metadata_mode=ImagePayloadMetadataCompositionMode.STACK,
+            slice_contexts=(
+                tuple(
+                    AlignedImageSliceContext.main_flow(
+                        output_key=spec.name,
+                        artifact_kind=spec.artifact_type.value,
+                    )
+                    for spec in image_inputs
+                )
+                if align_primary_images
+                else ()
+            ),
+            stack_broadcast_source_indices=self._stack_broadcast_source_indices(
+                image_inputs
+            ),
         )
         return CellProfilerImageRequest(
             payload=composition.payload,
             source_image_name=self._primary_image_source_name_from_sources(
                 image_inputs, tuple(source_names)
             ),
-            source_aliases=plan.primary_image_source_aliases,
+            source_aliases=ArtifactSpecCollection(image_inputs).names(),
             image_count=len(payloads),
             execution_mode=composition.execution_mode,
-            publishes_side_effect_main_flow=plan.publishes_side_effect_main_flow,
-        )
-
-    def _requires_image_request(self, plan: CellProfilerModuleRuntimePlan) -> bool:
-        if not plan.runs_per_object_measurement:
-            return True
-        return not CellProfilerPerObjectMeasurementPolicy.measures_images_independently(
-            self.module_name
-        )
-
-    def _runtime_image_request(
-        self,
-        plan: CellProfilerModuleRuntimePlan,
-        image: CellProfilerRuntimeValue,
-        adapter: CellProfilerRuntimeAdapter,
-    ) -> CellProfilerImageRequest | None:
-        """Resolve the invocation image request when this execution path needs one."""
-        if self._requires_image_request(plan):
-            return self._image_request(plan, image, adapter)
-        return None
-
-    @staticmethod
-    def _source_image_name_for_measurement(
-        image_request: CellProfilerImageRequest | None,
-    ) -> str | None:
-        """Return the source image name carried by an optional image request."""
-        if image_request is None:
-            return None
-        return image_request.source_image_name
-
-    def _current_runtime_plane_image(
-        self,
-        plan: CellProfilerModuleRuntimePlan,
-        current_image: CellProfilerRuntimeValue,
-        adapter: CellProfilerRuntimeAdapter,
-    ) -> CellProfilerRuntimeValue:
-        default_execution_mode = (
-            plan.default_runtime_image_execution_mode
-            or ImagePayloadExecutionMode.NATURAL
-        )
-        if not CurrentRuntimePlaneKwargProjectionContract(
-            plan.func, default_execution_mode
-        ).projects_runtime_artifact_image_inputs():
-            return current_image
-        return adapter.image_payload_for_current_runtime_plane(
-            current_image, current_image=current_image
+            plane_projection=composition.preserved_plane_projection(
+                adapter,
+                source_aliases=ArtifactSpecCollection(image_inputs).names(),
+            ),
         )
 
     def _input_source_image_name(
-        self, plan: CellProfilerModuleRuntimePlan, adapter: CellProfilerRuntimeAdapter
+        self,
+        adapter: CellProfilerRuntimeAdapter,
+        current_image: RuntimeCallableArgument,
+        *,
+        active_input_specs: tuple[ArtifactSpec, ...],
     ) -> str | None:
+        input_binding = RuntimeInputBindingRequest(
+            adapter=adapter,
+            kwargs={},
+            current_image=current_image,
+        )
         source_names: list[str] = []
-        for spec in plan.declared_input_specs:
+        for spec in active_input_specs:
+            if not spec.artifact_type.carries_source_image_context:
+                continue
             source_name = RuntimeArtifactTypeStrategy.for_artifact_type(
                 spec.artifact_type
             ).source_image_name(
-                RuntimeArtifactInputRequest.from_spec(
-                    spec, adapter=adapter, binding_scope=plan.binding_scope
-                )
+                input_binding.artifact_request_for_spec(spec)
             )
             if source_name is not None:
                 source_names.append(source_name)
@@ -2509,305 +1411,154 @@ class CellProfilerModuleExecutor:
             return None
         return source_names[0]
 
-    def _runtime_image_current_image(
-        self,
-        plan: CellProfilerModuleRuntimePlan,
-        adapter: CellProfilerRuntimeAdapter,
-        spec: ArtifactSpec,
-        current_image: CellProfilerRuntimeValue,
-    ) -> CellProfilerRuntimeValue | None:
-        policy_current_image = (
-            plan.primary_image_input_policy.runtime_image_current_image(
-                self.module_name, spec, current_image
-            )
-        )
-        if policy_current_image is None:
-            return None
-        default_execution_mode = (
-            plan.default_runtime_image_execution_mode
-            or ImagePayloadExecutionMode.NATURAL
-        )
-        if CurrentRuntimePlaneKwargProjectionContract(
-            plan.func, default_execution_mode
-        ).projects_runtime_artifact_image_inputs():
-            return policy_current_image
-        return None
+    @staticmethod
+    def _stack_broadcast_source_indices(
+        input_specs: tuple[ArtifactSpec, ...],
+    ) -> tuple[int | None, ...]:
+        """Resolve exact stack-broadcast owners from declared input relations."""
+
+        indices_by_ref: dict[ArtifactSpecRef, list[int]] = {}
+        for input_index, spec in enumerate(input_specs):
+            indices_by_ref.setdefault(spec.ref(), []).append(input_index)
+
+        result: list[int | None] = []
+        for input_index, spec in enumerate(input_specs):
+            sources = spec.stack_broadcast_sources()
+            if len(sources) > 1:
+                raise ValueError(
+                    f"Input {spec.ref()!r} declares multiple stack-broadcast "
+                    f"owners: {sources!r}."
+                )
+            if not sources:
+                result.append(None)
+                continue
+            source_indices = tuple(indices_by_ref.get(sources[0], ()))
+            if len(source_indices) != 1:
+                raise ValueError(
+                    f"Input {spec.ref()!r} requires exactly one active occurrence "
+                    f"of stack-broadcast owner {sources[0]!r}, got "
+                    f"{source_indices!r}."
+                )
+            source_index = source_indices[0]
+            if source_index == input_index:
+                raise ValueError(
+                    f"Input {spec.ref()!r} cannot broadcast from itself."
+                )
+            result.append(source_index)
+        return tuple(result)
 
     def _invocation_request(
         self,
-        plan: CellProfilerModuleRuntimePlan,
         *,
         image_request: "CellProfilerImageRequest",
         adapter: CellProfilerRuntimeAdapter,
-        current_image: CellProfilerRuntimeValue,
-        kwargs: CellProfilerKwargs,
-        invocation_options: RuntimeInvocationOptions | None,
-    ) -> "CellProfilerInvocationRequest":
+        current_image: RuntimeCallableArgument,
+        kwargs: RuntimeCallableKwargs,
+        module_type: type[CellProfilerModule],
+    ) -> "RuntimeFunctionInvocationRequest":
         profile_enabled = CellProfilerRuntimeProfileLogger.enabled()
-        default_execution_mode = (
-            plan.default_runtime_image_execution_mode or image_request.execution_mode
-        )
-        projects_runtime_slice_kwargs = (
-            image_request.projects_runtime_slice_kwargs
-            and CurrentRuntimePlaneKwargProjectionContract(
-                plan.func, default_execution_mode
-            ).projects_runtime_slice_kwargs()
-        )
         if profile_enabled:
             phase_started_at = time.perf_counter()
         else:
             phase_started_at = 0.0
+        module_name = module_type.require_module_name()
         bound_runtime_kwargs = self._runtime_input_kwargs(
-            plan,
             adapter,
             current_image,
             kwargs,
-            invocation_options=invocation_options,
+            module_type=module_type,
             primary_image=image_request.payload,
-            project_object_labels_to_current_plane=projects_runtime_slice_kwargs,
         )
         if profile_enabled:
             CellProfilerRuntimeProfileLogger.log_module_profile(
                 "cp_invocation_bind_runtime_inputs",
                 time.perf_counter() - phase_started_at,
-                module=self.module_name,
+                module=module_name,
             )
-        runtime_kwargs = {
-            **_execution_mode_semantic_control_kwargs(
-                plan.processing_contract,
-                default_execution_mode,
-            ),
-            **kwargs,
-            **bound_runtime_kwargs,
-        }
-        image_override = runtime_kwargs.pop(
-            CellProfilerInvocationOverrideKwarg.image, None
-        )
-        execution_mode_override = runtime_kwargs.pop(
-            CellProfilerInvocationOverrideKwarg.execution_mode, None
-        )
+        runtime_kwargs = {**kwargs, **bound_runtime_kwargs}
         if profile_enabled:
             phase_started_at = time.perf_counter()
-        runtime_kwargs = plan.primary_image_input_policy.invocation_runtime_kwargs(
-            module_name=self._canonical_module_name,
-            plan=plan,
+        runtime_kwargs = module_type.invocation_runtime_kwargs(
             image_request=image_request,
-            adapter=adapter,
-            current_image=current_image,
             runtime_kwargs=runtime_kwargs,
-            object_input_source_image_name=lambda: self._object_input_source_image_name(
-                plan, adapter
-            ),
         )
         if profile_enabled:
             CellProfilerRuntimeProfileLogger.log_module_profile(
                 "cp_invocation_primary_policy_kwargs",
                 time.perf_counter() - phase_started_at,
-                module=self.module_name,
+                module=module_name,
             )
-        invocation_image = (
-            image_override if image_override is not None else image_request.payload
-        )
         if profile_enabled:
             phase_started_at = time.perf_counter()
-        runtime_kwargs = dict(
-            CurrentRuntimePlaneKwargProjection(
-                image=invocation_image,
-                kwargs=runtime_kwargs,
-                plane_projector=adapter,
-                project_runtime_slice_kwargs=projects_runtime_slice_kwargs,
-            ).kwargs_for_invocation()
+        runtime_projection = RuntimePlaneAxisValueProjection.from_projector(
+            adapter,
+            RuntimePlaneAxis.RUNTIME_SLICE,
+            (),
         )
+        if (
+            runtime_projection is not None
+            and runtime_projection.plane_index is not None
+        ):
+            runtime_kwargs = cast(
+                dict[str, RuntimeCallableArgument],
+                RuntimeSliceProjection.kwargs_for_slice(
+                    runtime_kwargs,
+                    runtime_projection,
+                ),
+            )
         if profile_enabled:
             CellProfilerRuntimeProfileLogger.log_module_profile(
                 "cp_invocation_project_runtime_kwargs",
                 time.perf_counter() - phase_started_at,
-                module=self.module_name,
+                module=module_name,
             )
-        if profile_enabled:
             phase_started_at = time.perf_counter()
-        coerced_kwargs = plan.kwarg_spec.coerce_kwargs(runtime_kwargs)
-        if profile_enabled:
-            CellProfilerRuntimeProfileLogger.log_module_profile(
-                "cp_invocation_coerce_kwargs",
-                time.perf_counter() - phase_started_at,
-                module=self.module_name,
-            )
-        if profile_enabled:
-            phase_started_at = time.perf_counter()
-        execution_mode = plan.invocation_execution_mode_policy.execution_mode(
+        image_request = module_type.project_invocation_image_request(
+            image_request=image_request,
+            runtime_kwargs=runtime_kwargs,
+        )
+        invocation_image = image_request.payload
+        default_execution_mode = (
+            self.callable_contract.runtime_image_execution_mode
+            or image_request.execution_mode
+        )
+        execution_mode = module_type.execution_mode(
             default_execution_mode,
             image=invocation_image,
-            kwargs=coerced_kwargs,
-            invocation_options=invocation_options,
+            kwargs=runtime_kwargs,
+            variable_components=adapter.request.variable_components,
         )
         if profile_enabled:
             CellProfilerRuntimeProfileLogger.log_module_profile(
                 "cp_invocation_execution_mode_policy",
                 time.perf_counter() - phase_started_at,
-                module=self.module_name,
+                module=module_name,
             )
-        return CellProfilerInvocationRequest(
+        invocation_kwargs = {
+            **runtime_kwargs,
+            **_execution_mode_semantic_control_kwargs(
+                self.callable_contract.require_processing_contract(),
+                execution_mode,
+            ),
+        }
+        return RuntimeFunctionInvocationRequest(
             image=invocation_image,
-            kwargs=coerced_kwargs,
+            kwargs=invocation_kwargs,
             source_image_name=image_request.source_image_name,
             image_count=image_request.image_count,
-            execution_mode=execution_mode_override or execution_mode,
+            execution_mode=execution_mode,
+            plane_projection=image_request.plane_projection,
         )
-
-    def _object_input_source_image_name(
-        self, plan: CellProfilerModuleRuntimePlan, adapter: CellProfilerRuntimeAdapter
-    ) -> str | None:
-        source_names = tuple(
-            (
-                adapter.get_objects(spec.name).source_image_name
-                for spec in plan.object_label_inputs
-            )
-        )
-        return single_source_name(
-            tuple((source_name for source_name in source_names if source_name))
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class CallableInvocationKwargSpec:
-    """Cached callable kwarg contract used before CellProfiler invocation."""
-
-    accepts_var_keyword: bool
-    accepted_names: frozenset[str]
-    contract_control_names: frozenset[str]
-    callable_defaults: tuple[tuple[str, CellProfilerRuntimeValue], ...]
-    enum_types: tuple[tuple[str, type[Enum]], ...]
-
-    @classmethod
-    @lru_cache(maxsize=256)
-    def from_callable(cls, func: CellProfilerFunction) -> "CallableInvocationKwargSpec":
-        return cls.from_callable_contract(
-            func, CellProfilerProcessingContractAuthority.for_callable(func)
-        )
-
-    @classmethod
-    @lru_cache(maxsize=256)
-    def from_callable_contract(
-        cls, func: CellProfilerFunction, processing_contract: ProcessingContract
-    ) -> "CallableInvocationKwargSpec":
-        parameters = _callable_parameters(func)
-        annotations = _callable_type_hints(func)
-        enum_types = tuple(
-            (
-                (name, enum_type)
-                for name, parameter in parameters.items()
-                if (
-                    enum_type := _enum_annotation_type(parameter, annotations.get(name))
-                )
-                is not None
-            )
-        )
-        contract = processing_contract
-        return cls(
-            accepts_var_keyword=any(
-                (
-                    parameter.kind is Parameter.VAR_KEYWORD
-                    for parameter in parameters.values()
-                )
-            ),
-            accepted_names=frozenset(parameters),
-            contract_control_names=contract.declaration.execution_parameter_names()
-            | contract.declaration.injected_semantic_control_parameter_names(),
-            callable_defaults=tuple(
-                (
-                    (name, parameter.default)
-                    for name, parameter in parameters.items()
-                    if parameter.default is not Parameter.empty
-                )
-            ),
-            enum_types=enum_types,
-        )
-
-    def coerce_kwargs(self, kwargs: CellProfilerKwargs) -> CellProfilerKwargDict:
-        """Filter unsupported kwargs and coerce enum-typed values."""
-        if self.accepts_var_keyword:
-            coerced_kwargs = dict(kwargs)
-        else:
-            accepted_names = self.accepted_names | self.contract_control_names
-            coerced_kwargs = {
-                name: value for name, value in kwargs.items() if name in accepted_names
-            }
-        for name, value in self.callable_defaults:
-            coerced_kwargs.setdefault(name, value)
-        for name, enum_type in self.enum_types:
-            if name not in coerced_kwargs:
-                continue
-            try:
-                coerced_kwargs[name] = coerce_cellprofiler_enum(
-                    enum_type, coerced_kwargs[name]
-                )
-            except ValueError as exc:
-                raise ValueError(
-                    f"{name} must be coercible to {enum_type.__name__}; got {coerced_kwargs[name]!r}."
-                ) from exc
-        return coerced_kwargs
-
-
-def _image_scope_measurement_payload(
-    image: CellProfilerRuntimeValue,
-) -> CellProfilerRuntimeValue:
-    """Return one image plane for image-scoped measurement functions."""
-    return SINGLETON_STACK_OUTPUT_COLLAPSE.collapse(image)
 
 
 def _execution_mode_semantic_control_kwargs(
     processing_contract: ProcessingContract,
     execution_mode: ImagePayloadExecutionMode,
-) -> CellProfilerKwargDict:
+) -> dict[str, RuntimeCallableArgument]:
     """Return semantic controls required by a resolved image execution mode."""
-    if execution_mode is not ImagePayloadExecutionMode.NATURAL:
-        return {}
     return {
-        name: True
+        name: execution_mode is ImagePayloadExecutionMode.NATURAL
         for name in (
             processing_contract.declaration.injected_semantic_control_parameter_names()
         )
     }
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerPerImageMeasurementRequest:
-    """Contract shape used to decide image-measurement invocation cardinality."""
-
-    module_name: str
-    func: CellProfilerFunction
-    image_inputs: tuple[ArtifactSpec, ...]
-    object_inputs: tuple[ArtifactSpec, ...]
-    outputs: tuple[ArtifactSpec, ...]
-
-
-class CellProfilerPerImageMeasurementPolicy:
-    """Predicate for image measurements that execute once per named image."""
-
-    @classmethod
-    def matches(cls, request: CellProfilerPerImageMeasurementRequest) -> bool:
-        if request.object_inputs or not request.image_inputs:
-            return False
-        if special_input_names_from_callable(request.func):
-            return False
-        if any(
-            (
-                spec.artifact_type is not MeasurementsArtifactType
-                for spec in CellProfilerCallableOutputSpecs(
-                    request.func
-                ).artifact_specs()
-            )
-        ):
-            return False
-        measurement_outputs = ArtifactSpecCollection(request.outputs).of_artifact_type(
-            MeasurementsArtifactType
-        )
-        if len(measurement_outputs) != 1:
-            return False
-        if len(request.outputs) != len(measurement_outputs):
-            return False
-        return (
-            image_payload_consumption_from_callable(request.func)
-            is not ImagePayloadConsumption.COMPOSED
-        )

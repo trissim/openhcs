@@ -20,13 +20,10 @@ from openhcs.agent.dto.common import (
 from openhcs.agent.ui_bridge_identities import (
     PlateManagerOrchestratorCodeDocumentIdentity,
 )
+from openhcs.core.debug_views import DebugViewModel
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 
-DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS = 5000
-DEFAULT_EXECUTION_STATUS_TIMEOUT_MS = 5000
-DEFAULT_EXECUTION_WAIT_TIMEOUT_MS = 5000
-DEFAULT_RUNTIME_SERVER_INFO_TIMEOUT_MS = 500
-DEFAULT_RUNTIME_SERVER_SCAN_TIMEOUT_MS = 200
 MAX_EXECUTION_STATUS_TRACEBACK_CHARS = 3000
 
 
@@ -174,7 +171,6 @@ class OrchestratorSessionCreationRequest(ExecutionConnectionProjection):
     execution_plate_path: str | None = None
     selected_pipeline_path: str | None = None
     global_config_id: str | None = None
-    pipeline_config_id: str | None = None
 
     @classmethod
     def from_fields(
@@ -185,7 +181,6 @@ class OrchestratorSessionCreationRequest(ExecutionConnectionProjection):
         execution_plate_path: str | None = None,
         selected_pipeline_path: str | None = None,
         global_config_id: str | None = None,
-        pipeline_config_id: str | None = None,
         host: str = "localhost",
         port: int | None = None,
         transport_mode: str | None = None,
@@ -197,7 +192,6 @@ class OrchestratorSessionCreationRequest(ExecutionConnectionProjection):
             execution_plate_path=execution_plate_path,
             selected_pipeline_path=selected_pipeline_path,
             global_config_id=global_config_id,
-            pipeline_config_id=pipeline_config_id,
             connection=ExecutionConnectionSpec.from_fields(
                 host=host,
                 port=port,
@@ -214,7 +208,6 @@ class PipelineSourceOrchestratorSessionRequest(ExecutionConnectionProjection):
     plate_path: str
     pipeline_source: str
     global_config_id: str | None = None
-    pipeline_config_id: str | None = None
 
     @classmethod
     def from_fields(
@@ -223,7 +216,6 @@ class PipelineSourceOrchestratorSessionRequest(ExecutionConnectionProjection):
         plate_path: str,
         pipeline_source: str,
         global_config_id: str | None = None,
-        pipeline_config_id: str | None = None,
         host: str = "localhost",
         port: int | None = None,
         transport_mode: str | None = None,
@@ -233,7 +225,6 @@ class PipelineSourceOrchestratorSessionRequest(ExecutionConnectionProjection):
             plate_path=plate_path,
             pipeline_source=pipeline_source,
             global_config_id=global_config_id,
-            pipeline_config_id=pipeline_config_id,
             connection=ExecutionConnectionSpec.from_fields(
                 host=host,
                 port=port,
@@ -251,7 +242,6 @@ class PipelineSourceArtifactPlanInspectionRequest:
     pipeline_source: str
     axis_filter: tuple[str, ...] = ()
     global_config_id: str | None = None
-    pipeline_config_id: str | None = None
 
     @classmethod
     def from_fields(
@@ -262,7 +252,6 @@ class PipelineSourceArtifactPlanInspectionRequest:
         axis_filter: list[str] | None = None,
         well_filter: list[str] | None = None,
         global_config_id: str | None = None,
-        pipeline_config_id: str | None = None,
     ) -> "PipelineSourceArtifactPlanInspectionRequest":
         selected_axis_filter = axis_filter if axis_filter is not None else well_filter
         return cls(
@@ -270,7 +259,6 @@ class PipelineSourceArtifactPlanInspectionRequest:
             pipeline_source=pipeline_source,
             axis_filter=tuple(selected_axis_filter or ()),
             global_config_id=global_config_id,
-            pipeline_config_id=pipeline_config_id,
         )
 
 
@@ -305,22 +293,22 @@ class ExecutionJobRef(ExecutionJobIdentity):
 @dataclass(frozen=True, slots=True)
 class CompileSubmissionRequest(OrchestratorSessionIdentity):
     wait: bool = False
-    submit_timeout_ms: int = DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS
-    wait_timeout_ms: int = DEFAULT_EXECUTION_WAIT_TIMEOUT_MS
+    submit_timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms
+    wait_timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms
 
 
 @dataclass(frozen=True, slots=True)
 class PipelineExecutionSubmissionRequest(OrchestratorSessionIdentity):
     compile_artifact_id: str | None = None
     wait: bool = False
-    submit_timeout_ms: int = DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS
-    wait_timeout_ms: int = DEFAULT_EXECUTION_WAIT_TIMEOUT_MS
+    submit_timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms
+    wait_timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms
 
 
 @dataclass(frozen=True, slots=True)
 class ExecutionStatusRequest:
     job_id: str
-    timeout_ms: int = DEFAULT_EXECUTION_STATUS_TIMEOUT_MS
+    timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms
 
 
 @dataclass(frozen=True, slots=True)
@@ -370,12 +358,35 @@ class ArtifactPlanSummary(ArtifactStoragePlanSummary):
 
 
 @dataclass(frozen=True, slots=True)
+class MainFlowMaterializationPlanSummary:
+    """Compiled persistent checkpoint for a step's ordinary main-flow result."""
+
+    output_dir: str
+    backend: str
+    plate_root: str
+    sub_dir: str
+    analysis_results_dir: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerStreamingPlanSummary:
+    """One enabled, compile-resolved viewer config attached to a step plan."""
+
+    config_key: str
+    viewer_type: str
+    backend: str
+    effective_config: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class CompiledStepPlanSummary:
     step_index: int
     step_name: str
     axis_id: str
     output_dir: str | None
     execution_groups: tuple[str | None, ...] = ()
+    main_flow_materialization: MainFlowMaterializationPlanSummary | None = None
+    viewer_streaming: tuple[ViewerStreamingPlanSummary, ...] = ()
     artifact_inputs: tuple[ArtifactInputPlanSummary, ...] = ()
     artifact_outputs: tuple[ArtifactPlanSummary, ...] = ()
     truncated_artifact_input_count: int = 0
@@ -414,7 +425,9 @@ class ArtifactPlanInspection(AgentResultEnvelope):
     steps: tuple[CompiledStepPlanSummary, ...] = ()
     truncated_step_count: int = 0
     worker_assignments: JsonObject = field(default_factory=dict)
-    source_workspace: SourceWorkspaceSummary = field(default_factory=SourceWorkspaceSummary)
+    source_workspace: SourceWorkspaceSummary = field(
+        default_factory=SourceWorkspaceSummary
+    )
     progress_event_count: int = 0
     errors: tuple[AgentError, ...] = ()
 
@@ -482,7 +495,7 @@ class RuntimeServerScanRequest(RuntimeServerToolRequest):
     ports: tuple[int, ...] | None = None
     host: str = "localhost"
     transport_mode: str | None = None
-    timeout_ms: int = DEFAULT_RUNTIME_SERVER_SCAN_TIMEOUT_MS
+    timeout_ms: int = OPENHCS_ZMQ_CONFIG.server_scan_timeout_ms
 
     @classmethod
     def agent_cli_factory(cls):
@@ -505,8 +518,7 @@ class RuntimeServerScanRequest(RuntimeServerToolRequest):
                 flags=("--ports",),
                 action="append",
                 help=(
-                    "Alias for positional ports; may be repeated or "
-                    "comma-separated."
+                    "Alias for positional ports; may be repeated or comma-separated."
                 ),
             ),
         )
@@ -519,7 +531,7 @@ class RuntimeServerScanRequest(RuntimeServerToolRequest):
         port_groups: Sequence[str] | None = None,
         host: str = "localhost",
         transport_mode: str | None = None,
-        timeout_ms: int = DEFAULT_RUNTIME_SERVER_SCAN_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.server_scan_timeout_ms,
     ) -> "RuntimeServerScanRequest":
         parsed_ports = cls.parse_port_values((*ports, *(port_groups or ())))
         return cls.from_fields(
@@ -536,7 +548,7 @@ class RuntimeServerScanRequest(RuntimeServerToolRequest):
         ports: list[int] | None = None,
         host: str = "localhost",
         transport_mode: str | None = None,
-        timeout_ms: int = DEFAULT_RUNTIME_SERVER_SCAN_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.server_scan_timeout_ms,
     ) -> "RuntimeServerScanRequest":
         return cls(
             ports=tuple(ports) if ports is not None else None,
@@ -578,7 +590,7 @@ class RuntimeServerInfoRequest(
 ):
     """Request a read-only runtime-server snapshot."""
 
-    timeout_ms: int = DEFAULT_RUNTIME_SERVER_INFO_TIMEOUT_MS
+    timeout_ms: int = OPENHCS_ZMQ_CONFIG.server_info_timeout_ms
 
     @classmethod
     def from_fields(
@@ -588,7 +600,7 @@ class RuntimeServerInfoRequest(
         port: int | None = None,
         transport_mode: str | None = None,
         persistent: bool = True,
-        timeout_ms: int | None = DEFAULT_RUNTIME_SERVER_INFO_TIMEOUT_MS,
+        timeout_ms: int | None = OPENHCS_ZMQ_CONFIG.server_info_timeout_ms,
     ) -> "RuntimeServerInfoRequest":
         return cls(
             connection=ExecutionConnectionSpec.from_fields(
@@ -598,7 +610,7 @@ class RuntimeServerInfoRequest(
                 persistent=persistent,
             ),
             timeout_ms=(
-                DEFAULT_RUNTIME_SERVER_INFO_TIMEOUT_MS
+                OPENHCS_ZMQ_CONFIG.server_info_timeout_ms
                 if timeout_ms is None
                 else timeout_ms
             ),
@@ -622,7 +634,7 @@ class RuntimeServerExecutionStatusRequest(
     """Request bounded execution status from a runtime server."""
 
     execution_id: str | None = None
-    timeout_ms: int = DEFAULT_EXECUTION_STATUS_TIMEOUT_MS
+    timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms
 
     @classmethod
     def agent_cli_factory(cls):
@@ -637,7 +649,7 @@ class RuntimeServerExecutionStatusRequest(
         port: int | None = None,
         transport_mode: str | None = None,
         persistent: bool = True,
-        timeout_ms: int | None = DEFAULT_RUNTIME_SERVER_INFO_TIMEOUT_MS,
+        timeout_ms: int | None = OPENHCS_ZMQ_CONFIG.server_info_timeout_ms,
     ) -> "RuntimeServerExecutionStatusRequest":
         return cls.from_fields(
             execution_id=execution_id,
@@ -646,7 +658,7 @@ class RuntimeServerExecutionStatusRequest(
             transport_mode=transport_mode,
             persistent=persistent,
             timeout_ms=(
-                DEFAULT_RUNTIME_SERVER_INFO_TIMEOUT_MS
+                OPENHCS_ZMQ_CONFIG.server_info_timeout_ms
                 if timeout_ms is None
                 else timeout_ms
             ),
@@ -661,7 +673,7 @@ class RuntimeServerExecutionStatusRequest(
         port: int | None = None,
         transport_mode: str | None = None,
         persistent: bool = True,
-        timeout_ms: int | None = DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        timeout_ms: int | None = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> "RuntimeServerExecutionStatusRequest":
         return cls(
             connection=ExecutionConnectionSpec.from_fields(
@@ -672,13 +684,77 @@ class RuntimeServerExecutionStatusRequest(
             ),
             execution_id=execution_id,
             timeout_ms=(
-                DEFAULT_EXECUTION_STATUS_TIMEOUT_MS if timeout_ms is None else timeout_ms
+                OPENHCS_ZMQ_CONFIG.control_timeout_ms
+                if timeout_ms is None
+                else timeout_ms
             ),
         )
 
     def as_tool_arguments(self) -> JsonObject:
         payload = dict(RuntimeServerConnectionToolRequest.as_tool_arguments(self))
         payload["execution_id"] = self.execution_id
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeDebugInspectionResult(ExecutionConnectionProjection):
+    """Renderer-independent values visible in one paused debug worker."""
+
+    schema_version: str
+    debug_session_id: str
+    view_model: DebugViewModel | None = None
+    errors: tuple[AgentError, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeDebugInspectionRequest(
+    RuntimeServerConnectionToolRequest,
+    ExecutionConnectionProjection,
+):
+    """Request the typed runtime-value view for one paused debug session."""
+
+    debug_session_id: str
+    timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms
+
+    @classmethod
+    def agent_cli_argument_specs(cls) -> tuple[AgentCliArgumentSpec, ...]:
+        return (
+            AgentCliArgumentSpec(
+                field_name="debug_session_id",
+                positional=True,
+                help="Exact debug session id reported by the execution server.",
+            ),
+        )
+
+    @classmethod
+    def from_fields(
+        cls,
+        *,
+        debug_session_id: str,
+        host: str = "localhost",
+        port: int | None = None,
+        transport_mode: str | None = None,
+        persistent: bool = True,
+        timeout_ms: int | None = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+    ) -> "RuntimeDebugInspectionRequest":
+        return cls(
+            connection=ExecutionConnectionSpec.from_fields(
+                host=host,
+                port=port,
+                transport_mode=transport_mode,
+                persistent=persistent,
+            ),
+            debug_session_id=debug_session_id,
+            timeout_ms=(
+                OPENHCS_ZMQ_CONFIG.control_timeout_ms
+                if timeout_ms is None
+                else timeout_ms
+            ),
+        )
+
+    def as_tool_arguments(self) -> JsonObject:
+        payload = dict(RuntimeServerConnectionToolRequest.as_tool_arguments(self))
+        payload["debug_session_id"] = self.debug_session_id
         return payload
 
 
@@ -698,7 +774,9 @@ class RuntimeServerPayload:
             return float(value)
         return None
 
-    def optional_int(self, name: str, *, protocol_default: int | None = None) -> int | None:
+    def optional_int(
+        self, name: str, *, protocol_default: int | None = None
+    ) -> int | None:
         value = self.response.get(name)
         if isinstance(value, bool):
             return protocol_default

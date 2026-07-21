@@ -46,12 +46,13 @@ from openhcs.agent.dto.ui_bridge import (
     UiWindowSnapshotResult,
     UiWidgetTreeResult,
 )
-from openhcs.agent.serialization import to_jsonable
+from openhcs.serialization.json import to_jsonable
 from openhcs.agent.services.ui_bridge_service import (
     UI_BRIDGE_PROTOCOL_VERSION,
     UiBridgeOperationContract,
     UiBridgeOperationContractABC,
 )
+from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
 from openhcs.agent.services.ui_bridge_transport import (
     AgentDtoJsonCodec,
 )
@@ -60,8 +61,7 @@ from openhcs.pyqt_gui.services.ui_agent_bridge import (
     InProcessUiBridgeGateway,
     UiAgentBridgeService,
 )
-from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 
 DEFAULT_UI_BRIDGE_HOST = "127.0.0.1"
 DEFAULT_UI_BRIDGE_TRANSPORT = "tcp"
@@ -88,6 +88,7 @@ class UiBridgeBrowserControlRequest:
         if not isinstance(raw_message_type, str):
             raise ValueError("UI bridge browser control request is missing a type.")
         return cls(message_type=UiBridgeBrowserControlMessageType(raw_message_type))
+
 
 UiBridgeOperationDispatchResult = (
     UiBridgeStatus
@@ -352,7 +353,9 @@ class UiBridgeRequestDispatcher:
 
     def _validate_protocol(self, request: UiBridgeRequestEnvelope) -> None:
         if request.schema_version != SCHEMA_VERSION:
-            raise ValueError(f"Unsupported agent schema version: {request.schema_version}")
+            raise ValueError(
+                f"Unsupported agent schema version: {request.schema_version}"
+            )
         if request.bridge_protocol_version != UI_BRIDGE_PROTOCOL_VERSION:
             raise ValueError(
                 f"Unsupported UI bridge protocol version: {request.bridge_protocol_version}"
@@ -394,7 +397,9 @@ class UiBridgeRequestDispatcher:
     def _response_payload(response: UiBridgeResponseEnvelope) -> JsonObject:
         payload = to_jsonable(response)
         if not isinstance(payload, dict):
-            raise TypeError("UI bridge response envelope did not serialize to a JSON object.")
+            raise TypeError(
+                "UI bridge response envelope did not serialize to a JSON object."
+            )
         return payload
 
     def _error_response(
@@ -430,9 +435,11 @@ class UiBridgeControlServer:
         self,
         bridge: UiAgentBridgeService,
         config: AgentUiBridgeConfig | None = None,
+        transport_config: OpenHCSZMQConfig = OPENHCS_ZMQ_CONFIG,
     ) -> None:
         self._bridge = bridge
         self._config = config or AgentUiBridgeConfig()
+        self._transport_config = transport_config
         self._bridge_instance_id = self._config.resolve_bridge_instance_id()
         self._auth_token = self._config.resolve_auth_token()
         self._stop_event = threading.Event()
@@ -472,7 +479,9 @@ class UiBridgeControlServer:
             self.stop()
             raise TimeoutError("Timed out waiting for UI bridge server to start.")
         if self._startup_error is not None:
-            raise RuntimeError("Failed to start UI bridge server.") from self._startup_error
+            raise RuntimeError(
+                "Failed to start UI bridge server."
+            ) from self._startup_error
         return self.binding
 
     def stop(self) -> None:
@@ -554,7 +563,9 @@ class UiBridgeControlServer:
             context.term()
 
     def _write_descriptor_file(self, descriptor: UiBridgeDescriptorFile) -> Path:
-        path = Path(descriptor.descriptor_file_path).expanduser()
+        path = AgentRuntimePlatformAuthority.resolved_path(
+            descriptor.descriptor_file_path
+        )
         path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
         path.write_text(
             json.dumps(
@@ -564,7 +575,8 @@ class UiBridgeControlServer:
             + "\n",
             encoding="utf-8",
         )
-        path.chmod(0o600)
+        if AgentRuntimePlatformAuthority.current().supports_posix_permissions():
+            path.chmod(0o600)
         return path
 
     @staticmethod
@@ -583,7 +595,7 @@ class UiBridgeControlServer:
             return self._bind_tcp(socket)
         if requested_connection.port is None:
             raise ValueError("Non-TCP UI bridge transport requires an explicit port.")
-        socket.bind(requested_connection.zmq_data_url(OPENHCS_ZMQ_CONFIG))
+        socket.bind(requested_connection.zmq_data_url(self._transport_config))
         return ExecutionConnectionSpec(
             host=requested_connection.host,
             port=requested_connection.port,
@@ -610,7 +622,7 @@ class UiBridgeControlServer:
         socket,
         connection: ExecutionConnectionSpec,
     ) -> None:
-        socket.bind(connection.zmq_control_url(OPENHCS_ZMQ_CONFIG))
+        socket.bind(connection.zmq_control_url(self._transport_config))
 
     def _browser_control_response_payload(
         self,
@@ -621,7 +633,9 @@ class UiBridgeControlServer:
             request = UiBridgeBrowserControlRequest.from_wire_payload(request_payload)
             if request.message_type is UiBridgeBrowserControlMessageType.PING:
                 return pickle.dumps(self._browser_pong(connection))
-            raise ValueError(f"Unsupported UI bridge browser control message: {request.message_type}")
+            raise ValueError(
+                f"Unsupported UI bridge browser control message: {request.message_type}"
+            )
         except Exception as exc:
             return pickle.dumps(
                 {
@@ -632,7 +646,7 @@ class UiBridgeControlServer:
             )
 
     def _browser_pong(self, connection: ExecutionConnectionSpec) -> JsonObject:
-        control_port = connection.zmq_control_port(OPENHCS_ZMQ_CONFIG)
+        control_port = connection.zmq_control_port(self._transport_config)
         return {
             "type": UI_BRIDGE_BROWSER_PONG_TYPE,
             "port": connection.port,

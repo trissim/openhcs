@@ -38,7 +38,7 @@ from openhcs.agent.ui_bridge_identities import (
     PlateManagerStateSurfaceIdentityDeclaration,
     PlateManagerWidgetIdentity,
 )
-from openhcs.agent.serialization import to_jsonable
+from openhcs.serialization.json import to_jsonable
 from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.pyqt_gui.services.plate_manager_state_projection import (
     PlateManagerStateProjectionService,
@@ -78,7 +78,6 @@ from openhcs.pyqt_gui.widgets.shared.services.qt_widget_edit_commit import (
     commit_focused_widget_edits,
 )
 
-
 ORCHESTRATOR_DOCUMENT_TITLE = "Plate manager orchestrator config"
 PLATE_MANAGER_STATE_TITLE = "Plate manager state"
 PLATE_MANAGER_ACTIONS_TITLE = "Plate manager actions"
@@ -93,14 +92,16 @@ PLATE_MANAGER_STATE_IDENTITY = UiStateSurfaceProviderIdentity.from_declaration(
     PlateManagerStateSurfaceIdentityDeclaration,
     title=PLATE_MANAGER_STATE_TITLE,
 )
-PLATE_MANAGER_ACTION_PROVIDER_IDENTITY = UiActionProviderIdentity.from_widget_declaration(
-    PlateManagerWidgetIdentity,
-    title=PLATE_MANAGER_ACTIONS_TITLE,
+PLATE_MANAGER_ACTION_PROVIDER_IDENTITY = (
+    UiActionProviderIdentity.from_widget_declaration(
+        PlateManagerWidgetIdentity,
+        title=PLATE_MANAGER_ACTIONS_TITLE,
+    )
 )
-PLATE_MANAGER_STATE_SURFACE_ID = PlateManagerStateSurfaceIdentityDeclaration.require_value()
-PLATE_MANAGER_ACTION_STATE_SURFACES = (
-    PLATE_MANAGER_STATE_SURFACE_ID,
+PLATE_MANAGER_STATE_SURFACE_ID = (
+    PlateManagerStateSurfaceIdentityDeclaration.require_value()
 )
+PLATE_MANAGER_ACTION_STATE_SURFACES = (PLATE_MANAGER_STATE_SURFACE_ID,)
 PLATE_MANAGER_CODE_DOCUMENT_ID = (
     PlateManagerOrchestratorCodeDocumentIdentity.require_value()
 )
@@ -130,6 +131,10 @@ class PlateManagerBridgeProviderSet(UiBridgeProviderSetABC):
 
     def __init__(self, manager) -> None:
         self._manager = manager
+
+    @classmethod
+    def for_main_window(cls, main_window) -> "PlateManagerBridgeProviderSet":
+        return cls(main_window.plate_manager_widget)
 
     def register(self, context: UiBridgeRegistrationContext) -> None:
         context.registry.register_code_document_provider(
@@ -202,10 +207,27 @@ class PlateManagerOrchestratorCodeDocumentProvider(
         selection_mode = request.resolved_selection_mode(
             UiCodeDocumentSelectionMode.SELECTED
         )
+        if (
+            selection_mode == UiCodeDocumentSelectionMode.SELECTED.value
+            and not self._manager.get_selected_items()
+        ):
+            return self._document_error(
+                request,
+                (
+                    AgentError(
+                        code="no_selection",
+                        message="No PlateManager rows are selected.",
+                        hint=(
+                            "Select a plate in the UI or request "
+                            "selection_mode='all' explicitly."
+                        ),
+                    ),
+                ),
+            )
         try:
             context = self._manager.orchestrator_code_document_context(
                 selection_mode=selection_mode,
-                empty_selection_policy=EmptyPlateSelectionPolicy.FALL_BACK_TO_ALL,
+                empty_selection_policy=EmptyPlateSelectionPolicy.ERROR,
             )
         except Exception as exc:
             return self._document_error(
@@ -250,7 +272,11 @@ class PlateManagerOrchestratorCodeDocumentProvider(
                 schema_version=SCHEMA_VERSION,
                 document_id=request.document_id,
                 valid=False,
-                errors=(AgentError.from_exception("ui_code_document_validation_failed", exc),),
+                errors=(
+                    AgentError.from_exception(
+                        "ui_code_document_validation_failed", exc
+                    ),
+                ),
             )
 
         return UiCodeDocumentValidationResult(
@@ -369,6 +395,7 @@ class PlateManagerOrchestratorCodeDocumentProvider(
             )
         )
 
+
 class PlateManagerStateSurfaceProvider(
     UiStateSurfaceProviderABC,
 ):
@@ -405,7 +432,9 @@ class PlateManagerStateSurfaceProvider(
         )
 
     def read(self, request: UiStateSurfaceRequest) -> UiStateSurfaceDocument:
-        selection_mode = request.resolved_selection_mode(UiCodeDocumentSelectionMode.ALL)
+        selection_mode = request.resolved_selection_mode(
+            UiCodeDocumentSelectionMode.ALL
+        )
         try:
             state = self._projection_service.project(
                 self._manager,
@@ -460,7 +489,9 @@ class PlateManagerStateSurfaceProvider(
                     UiLiveOverviewMetric(
                         key="queued",
                         label="queued",
-                        value=str(sum(1 for row in rows if row.queue_position is not None)),
+                        value=str(
+                            sum(1 for row in rows if row.queue_position is not None)
+                        ),
                     ),
                 ),
                 items=tuple(self._overview_row_item(row) for row in rows),
@@ -506,7 +537,9 @@ class PlateManagerStateSurfaceProvider(
         request: UiStateSurfaceRequest,
         errors: tuple[AgentError, ...],
     ) -> UiStateSurfaceDocument:
-        selection_mode = request.resolved_selection_mode(UiCodeDocumentSelectionMode.ALL)
+        selection_mode = request.resolved_selection_mode(
+            UiCodeDocumentSelectionMode.ALL
+        )
         state = UiPlateManagerState(
             schema_version=SCHEMA_VERSION,
             summary=self.summary(),
@@ -527,7 +560,9 @@ class PlateManagerStateSurfaceProvider(
     def _document_from_state(state: UiPlateManagerState) -> UiStateSurfaceDocument:
         payload = to_jsonable(state)
         if not isinstance(payload, dict):
-            raise TypeError("PlateManager state payload did not serialize to an object.")
+            raise TypeError(
+                "PlateManager state payload did not serialize to an object."
+            )
         return UiStateSurfaceDocument(
             schema_version=state.schema_version,
             summary=state.summary,
@@ -543,10 +578,7 @@ class PlateManagerStateSurfaceProvider(
         )
 
     def _revision_token(self, state: UiPlateManagerState) -> str:
-        row_parts = tuple(
-            self._row_revision_part(row)
-            for row in state.rows
-        )
+        row_parts = tuple(self._row_revision_part(row) for row in state.rows)
         parts = (
             self.identity.revision_key,
             str(state.object_state_token),
@@ -593,8 +625,7 @@ class PlateManagerActionProvider(
         return UiActionCatalog(
             schema_version=SCHEMA_VERSION,
             actions=tuple(
-                self.summary(action.value)
-                for action in self._manager.ACTION_ROUTES
+                self.summary(action.value) for action in self._manager.ACTION_ROUTES
             ),
             warnings=(
                 AgentWarning(
@@ -684,7 +715,10 @@ class PlateManagerActionProvider(
         request: UiActionInvokeRequest,
     ) -> AgentError | None:
         selected_scope_ids = self._selected_scope_ids()
-        if request.selected_scope_ids and request.selected_scope_ids != selected_scope_ids:
+        if (
+            request.selected_scope_ids
+            and request.selected_scope_ids != selected_scope_ids
+        ):
             return AgentError(
                 code="stale_ui_action_selection",
                 message="Requested target scopes do not match current PlateManager selection.",
@@ -709,7 +743,9 @@ class PlateManagerActionProvider(
             )
         return None
 
-    def _action_availability_error(self, action: PlateManagerAction) -> AgentError | None:
+    def _action_availability_error(
+        self, action: PlateManagerAction
+    ) -> AgentError | None:
         operation_error = self._operation_validation_error(action)
         if operation_error is not None:
             return operation_error
@@ -721,7 +757,9 @@ class PlateManagerActionProvider(
             )
         return None
 
-    def _operation_validation_error(self, action: PlateManagerAction) -> AgentError | None:
+    def _operation_validation_error(
+        self, action: PlateManagerAction
+    ) -> AgentError | None:
         selected_rows = tuple(self._manager.get_selected_items())
         if action.plate_operation is not None:
             if not selected_rows:
@@ -733,9 +771,7 @@ class PlateManagerActionProvider(
                     hint=PLATE_SELECTION_REQUIRED_HINT,
                 )
 
-            validator = PlateOperationValidator.for_operation(
-                action.plate_operation
-            )
+            validator = PlateOperationValidator.for_operation(action.plate_operation)
             invalid_results = []
             for row in selected_rows:
                 result = validator.validate(self._manager, row)

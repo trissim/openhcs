@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from types import ModuleType
-from typing import Any, Mapping
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.function_patterns import (
@@ -14,8 +15,8 @@ from openhcs.core.function_patterns import (
 )
 from openhcs.core.function_reference import (
     FunctionReference,
-    FunctionReferenceTransportStrategy,
 )
+from openhcs.core.pipeline_document_fields import PipelineDocumentField
 from openhcs.core.steps.function_step import FunctionStep
 
 
@@ -23,9 +24,54 @@ class FunctionStepTransportAuthority:
     """Canonicalize FunctionStep callables before process or ZMQ transport."""
 
     @classmethod
-    def approved_code_document_factory_names(cls) -> frozenset[str]:
-        """Return function-step factory helpers allowed in code documents."""
-        return frozenset(("cellprofiler_module_callable",))
+    def source_from_pipeline(
+        cls,
+        pipeline_steps: Sequence[FunctionStep],
+        *,
+        clean_mode: bool = True,
+    ) -> str:
+        """Normalize and pycodify one public FunctionStep list."""
+        import openhcs.serialization.pycodify_formatters  # noqa: F401
+        from pycodify import Assignment
+        from openhcs.serialization.source_path_factoring import (
+            OpenHCSPythonSourceDocument,
+        )
+
+        steps = list(pipeline_steps)
+        cls._require_function_steps(steps)
+        normalized = cls.normalize_pipeline(steps)
+        return OpenHCSPythonSourceDocument(
+            Assignment(PipelineDocumentField.PIPELINE_STEPS.value, normalized),
+            header="# Edit this pipeline and save to apply changes",
+            clean_mode=clean_mode,
+        ).render()
+
+    @classmethod
+    def pipeline_steps_from_namespace(
+        cls,
+        namespace: Mapping[str, object],
+    ) -> list[FunctionStep]:
+        """Require and normalize the public FunctionStep export."""
+        field_name = PipelineDocumentField.PIPELINE_STEPS.value
+        if field_name not in namespace:
+            raise ValueError(f"Pipeline source must define {field_name!r}.")
+        pipeline_steps = namespace[field_name]
+        if type(pipeline_steps) is not list:
+            raise TypeError(
+                f"{field_name} must be a list[FunctionStep], "
+                f"got {type(pipeline_steps).__name__}."
+            )
+        cls._require_function_steps(pipeline_steps)
+        return cls.normalize_pipeline(pipeline_steps)
+
+    @classmethod
+    def _require_function_steps(cls, pipeline_steps: Sequence[object]) -> None:
+        for index, step in enumerate(pipeline_steps):
+            if not isinstance(step, FunctionStep):
+                raise TypeError(
+                    f"Pipeline member {index} must be FunctionStep, "
+                    f"got {type(step).__name__}."
+                )
 
     @classmethod
     def normalize_pipeline(cls, definition_pipeline: list[Any]) -> list[Any]:
@@ -66,10 +112,7 @@ class FunctionStepTransportAuthority:
         if isinstance(func_spec, FunctionReference):
             return cls.normalize_function_reference(func_spec)
         if isinstance(func_spec, list):
-            normalized_items = [
-                cls.normalize_function_spec(item)
-                for item in func_spec
-            ]
+            normalized_items = [cls.normalize_function_spec(item) for item in func_spec]
             if all(
                 normalized is original
                 for normalized, original in zip(normalized_items, func_spec)
@@ -82,27 +125,10 @@ class FunctionStepTransportAuthority:
                 return func_spec
             return (normalized_func, *func_spec[1:])
         if isinstance(func_spec, ModuleType):
-            resolved = FunctionReferenceTransportStrategy.normalized_registered_module(
-                func_spec
-            )
-            if resolved is not None:
-                return resolved
             raise TypeError(
                 "Pipeline contains a module object where a callable is required: "
                 f"{func_spec.__name__}. Reload or edit the step to select a function."
             )
-        if callable(func_spec):
-            contract = CallableContract.from_callable(func_spec)
-            if (
-                contract.module_artifact_contract is not None
-                or contract.runtime_adapter is not None
-            ):
-                return func_spec
-            resolved = FunctionReferenceTransportStrategy.normalized_registered_callable(
-                func_spec
-            )
-            if resolved is not None:
-                return resolved
         return func_spec
 
     @classmethod
@@ -116,10 +142,7 @@ class FunctionStepTransportAuthority:
         else:
             normalized_raw = cls.normalize_function_spec(raw_processing_function)
         raw_is_normalized = normalized_raw is raw_processing_function
-        if (
-            reference.metadata.prepare is None
-            and raw_is_normalized
-        ):
+        if reference.metadata.prepare is None and raw_is_normalized:
             return reference
         metadata = reference.metadata.without_prepare()
         if not raw_is_normalized:
@@ -133,10 +156,7 @@ class FunctionStepTransportAuthority:
     ) -> CompiledFunctionPattern | None:
         if pattern is None:
             return None
-        groups = tuple(
-            cls.normalize_compiled_group(group)
-            for group in pattern.groups
-        )
+        groups = tuple(cls.normalize_compiled_group(group) for group in pattern.groups)
         if all(
             normalized is original
             for normalized, original in zip(groups, pattern.groups)

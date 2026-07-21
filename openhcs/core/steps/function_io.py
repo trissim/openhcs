@@ -4,17 +4,15 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, replace
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Callable, Mapping, Sequence, TypeAlias
 
 from openhcs.constants.constants import Backend, LOADABLE_IMAGE_EXTENSIONS
 from openhcs.core.image_file_serialization import prepare_disk_image_payloads
-from openhcs.core.runtime_values import (
-    ImagePayloadMetadataInput,
-    ImagePayloadSourceMetadataContext,
-    RuntimeImagePayloadContext,
-)
+from openhcs.core.runtime_image_loading import ImagePayloadSourceMetadataContext
+from openhcs.core.runtime_array_values import RuntimeArrayData
+from openhcs.core.runtime_image_values import image_payload_data, image_payload_mask, image_payload_metadata
 from openhcs.core.source_image_provenance import SourceImageIdentity
 
 if TYPE_CHECKING:
@@ -57,7 +55,7 @@ class StepPreloadFileSet:
         filemanager: FileManager,
         read_backend: str,
         zarr_config: ZarrBackendConfig | None,
-    ) -> tuple[tuple[str, ...], list[ImagePayloadMetadataInput]]:
+    ) -> tuple[tuple[str, ...], list[RuntimeArrayData]]:
         """Load missing source payloads and wrap them with source metadata."""
         missing_paths = self.missing_memory_paths(filemanager)
         if not missing_paths:
@@ -71,17 +69,35 @@ class StepPreloadFileSet:
         else:
             raw_images = filemanager.load_batch(list(missing_paths), read_backend)
         return missing_paths, [
-            RuntimeImagePayloadContext(
+            _preloaded_image_payload(
                 image,
-                mask=None,
-                metadata=ImagePayloadSourceMetadataContext(
-                    SourceImageIdentity(file_path),
-                    read_backend=read_backend,
-                    filemanager=filemanager,
-                ).metadata_request(image).metadata(),
-            ).payload()
+                source_path=file_path,
+                read_backend=read_backend,
+                filemanager=filemanager,
+            )
             for image, file_path in zip(raw_images, missing_paths, strict=True)
         ]
+
+
+def _preloaded_image_payload(
+    image: RuntimeArrayData,
+    *,
+    source_path: str,
+    read_backend: str,
+    filemanager: FileManager,
+) -> RuntimeArrayData:
+    """Preserve loader-owned metadata or derive it through the source backend."""
+    metadata = image_payload_metadata(image)
+    if not metadata.has_values:
+        metadata = ImagePayloadSourceMetadataContext(
+            SourceImageIdentity(source_path),
+            read_backend=read_backend,
+            filemanager=filemanager,
+        ).metadata(image)
+    return metadata.payload_with(
+        image_payload_data(image),
+        image_payload_mask(image),
+    )
 
 def generate_materialized_paths(
     memory_paths: Sequence[str],
@@ -130,7 +146,7 @@ def calculate_zarr_dimensions(
 
 def save_materialized_data(
     filemanager: FileManager,
-    memory_data: Sequence[ImagePayloadMetadataInput],
+    memory_data: Sequence[RuntimeArrayData],
     materialized_paths: Sequence[str],
     materialized_backend: str,
     zarr_config: ZarrBackendConfig | None,
@@ -185,6 +201,7 @@ def get_all_image_paths(
         str(input_dir),
         backend,
         extensions=LOADABLE_IMAGE_EXTENSIONS,
+        recursive=True,
     )
     axis_key = MULTIPROCESSING_AXIS.value
     parser = microscope_handler.parser
@@ -196,11 +213,7 @@ def get_all_image_paths(
         if metadata and metadata.get(axis_key) == axis_id:
             axis_files.append(str(file_path))
 
-    input_dir_path = Path(input_dir)
-    full_file_paths = [
-        str(input_dir_path / Path(file_path).name)
-        for file_path in sorted(set(axis_files))
-    ]
+    full_file_paths = sorted(set(axis_files))
 
     logger.debug(
         "Found %s total files, %s for axis %s",
@@ -272,6 +285,10 @@ def bulk_preload_step_images(
         )
 
     filemanager.ensure_directory(str(step_input_dir), Backend.MEMORY.value)
+    for parent in dict.fromkeys(
+        str(Path(path).parent) for path in preload_file_set.paths
+    ):
+        filemanager.ensure_directory(parent, Backend.MEMORY.value)
     missing_paths, raw_images = preload_file_set.load_missing_payloads(
         filemanager=filemanager,
         read_backend=read_backend,
@@ -299,10 +316,15 @@ def update_metadata_for_zarr_conversion(
     context: ProcessingContext,
 ) -> None:
     """Update OpenHCS metadata after a Zarr input conversion."""
-    from openhcs.microscopes.openhcs import (
+    from openhcs.core.virtual_workspace_metadata import (
         AtomicMetadataWriter,
-        OpenHCSMetadataGenerator,
+        OpenHCSMetadataSubdirectories,
+        VirtualWorkspaceSourceProjectionEntries,
         get_metadata_path,
+    )
+    from openhcs.microscopes.openhcs import (
+        OpenHCSMetadataGenerator,
+        OpenHCSMetadataHandler,
     )
 
     metadata_path = get_metadata_path(plate_root)
@@ -310,19 +332,96 @@ def update_metadata_for_zarr_conversion(
 
     if zarr_subdir:
         zarr_dir = plate_root / zarr_subdir
-        metadata_generator = OpenHCSMetadataGenerator(context.filemanager)
-        metadata_generator.create_metadata(
-            context,
-            str(zarr_dir),
-            Backend.ZARR.value,
-            is_main=True,
-            plate_root=str(plate_root),
-            sub_dir=zarr_subdir,
-            skip_if_complete=True,
+        metadata_handler = OpenHCSMetadataHandler(context.filemanager)
+        metadata_document = metadata_handler.load_metadata_document(plate_root)
+        grid_dimensions = metadata_handler.get_grid_dimensions(plate_root)
+        pixel_size = metadata_handler.get_pixel_size(plate_root)
+        subdirectories = dict(
+            OpenHCSMetadataSubdirectories(metadata_document).items()
         )
-        writer.merge_subdirectory_metadata(
-            metadata_path, {original_subdir: {"main": False}}
+        if original_subdir not in subdirectories:
+            raise ValueError(
+                "Zarr conversion metadata is missing original subdirectory "
+                f"{original_subdir!r}."
+            )
+        source_projections = VirtualWorkspaceSourceProjectionEntries.from_subdirectory(
+            subdirectories[original_subdir]
         )
+        if source_projections.entries:
+            from openhcs.core.source_projection import (
+                SourceProjectionMetadataSerializer,
+                SourceProjectionSet,
+            )
+            from polystore.virtual_workspace import SourcePixelRef
+
+            materialized_projections = []
+            for output_path in context.filemanager.list_image_files(
+                str(zarr_dir), Backend.ZARR.value
+            ):
+                try:
+                    source_virtual_path = Path(output_path).relative_to(zarr_dir)
+                except ValueError as exc:
+                    raise ValueError(
+                        "Zarr conversion output lies outside its declared store: "
+                        f"{output_path!r}."
+                    ) from exc
+                source_virtual_text = source_virtual_path.as_posix()
+                if source_virtual_text not in source_projections.entries:
+                    raise ValueError(
+                        "Zarr conversion output has no declared source projection: "
+                        f"{source_virtual_text!r}."
+                    )
+                materialized_path = str(
+                    PurePosixPath(zarr_subdir) / source_virtual_path
+                )
+                materialized_projections.append(
+                    replace(
+                        source_projections.entries[source_virtual_text],
+                        ref=SourcePixelRef(
+                            backend=Backend.ZARR.value,
+                            backend_address=materialized_path,
+                        ),
+                    )
+                )
+            if not materialized_projections:
+                raise ValueError(
+                    f"Zarr conversion produced no image planes in {zarr_dir}."
+                )
+            zarr_metadata = SourceProjectionMetadataSerializer(
+                parser=context.microscope_handler.parser,
+                path_prefix=zarr_subdir,
+            ).metadata_dict(
+                SourceProjectionSet(tuple(materialized_projections)),
+                microscope_handler_name=context.microscope_handler.microscope_type,
+                source_filename_parser_name=type(
+                    context.microscope_handler.parser
+                ).__name__,
+                grid_dimensions=list(grid_dimensions),
+                pixel_size=pixel_size,
+                available_backends={Backend.ZARR.value: True},
+                main=True,
+            )
+            writer.merge_subdirectory_metadata(
+                metadata_path,
+                {
+                    zarr_subdir: zarr_metadata,
+                    original_subdir: {"main": False},
+                },
+            )
+        else:
+            OpenHCSMetadataGenerator(context.filemanager).create_metadata(
+                context,
+                str(zarr_dir),
+                Backend.ZARR.value,
+                is_main=True,
+                plate_root=str(plate_root),
+                sub_dir=zarr_subdir,
+                grid_dimensions=grid_dimensions,
+                pixel_size=pixel_size,
+            )
+            writer.merge_subdirectory_metadata(
+                metadata_path, {original_subdir: {"main": False}}
+            )
         logger.info(
             "Ensured complete metadata for %s, set %s main=false",
             zarr_subdir,

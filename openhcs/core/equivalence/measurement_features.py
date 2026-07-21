@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from metaclass_registry import RegistryFamily, RegistryKeyAttribute
 
@@ -22,7 +22,7 @@ from openhcs.core.equivalence.policy import (
     runtime_measurement_dialect_for_cache_id,
 )
 from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
-from openhcs.core.runtime_semantics import (
+from openhcs.core.runtime_measurements import (
     MeasurementScope,
     MeasurementStatistic,
     ObjectCoreMeasurementFeature,
@@ -36,16 +36,8 @@ from openhcs.core.runtime_semantics import (
     RuntimeMeasurementFeature,
 )
 
-
-MeasurementRowIdentity = tuple[tuple[str, object], ...]
-MeasurementFeatureRowIdentity = tuple[
-    RuntimeMeasurementFeatureKey,
-    MeasurementRowIdentity,
-]
-MeasurementSubjectRowIdentity = tuple[
-    RuntimeMeasurementSubjectKey,
-    MeasurementRowIdentity,
-]
+if TYPE_CHECKING:
+    from openhcs.core.equivalence.measurement_rows import RuntimeMeasurementRowIdentity
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,7 +111,7 @@ class RuntimeMeasurementFeatureSemanticProfile(
     def row_identity_stable(
         self,
         key: RuntimeMeasurementFeatureKey,
-        row_identity: MeasurementRowIdentity,
+        row_identity: RuntimeMeasurementRowIdentity,
         policy: RuntimeEquivalencePolicy,
     ) -> bool:
         """Return whether this feature's row identity is stable under policy."""
@@ -285,7 +277,7 @@ class RuntimeMeasurementIndexedDescriptorEquivalence(ABC):
         cls,
         descriptor: object,
         key: RuntimeMeasurementFeatureKey,
-        row_identity: MeasurementRowIdentity,
+        row_identity: RuntimeMeasurementRowIdentity,
         policy: RuntimeEquivalencePolicy,
     ) -> bool:
         """Return whether descriptor row identity is stable under policy."""
@@ -524,18 +516,5 @@ def object_measurement_subjects_matching_marker(
     return frozenset(
         key.subject
         for key in measurement_feature_map
-        if object_measurement_feature_matches_marker(key, marker_type, policy)
-    )
-
-
-def object_measurement_subject_row_identities_matching_marker(
-    row_identities_by_feature: Mapping[MeasurementFeatureRowIdentity, object],
-    marker_type: type[RuntimeMeasurementFeatureSemanticMarker],
-    policy: RuntimeEquivalencePolicy,
-) -> frozenset[MeasurementSubjectRowIdentity]:
-    """Return subject-row identities whose feature key carries ``marker_type``."""
-    return frozenset(
-        (key.subject, row_identity)
-        for key, row_identity in row_identities_by_feature
         if object_measurement_feature_matches_marker(key, marker_type, policy)
     )

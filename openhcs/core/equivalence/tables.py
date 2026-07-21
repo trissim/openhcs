@@ -3,19 +3,17 @@
 from __future__ import annotations
 
 import csv
-import hashlib
-import pickle
-from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from types import MappingProxyType
 
 from openhcs.core.equivalence.cells import (
+    RuntimeCellSignature,
     measurement_table_cell_payload,
     runtime_cell_signature,
-    update_measurement_table_cell_hash,
+    runtime_measurement_value_is_present,
 )
 from openhcs.core.equivalence.policy import (
     DEFAULT_RUNTIME_MEASUREMENT_DIALECT,
@@ -23,40 +21,28 @@ from openhcs.core.equivalence.policy import (
     normalize_runtime_identifier,
 )
 from openhcs.core.measurement_row_materialization import (
-    is_structural_missing_measurement_cell,
-    iter_measurement_rows,
-    measurement_row_has_long_form_measurement_fields,
-    measurement_row_has_object_identity,
-    measurement_row_identity_role,
+    MEASUREMENT_SPARSE_CELL,
+    MeasurementSparseColumnarRows,
 )
-from openhcs.core.measurement_row_materialization import measurement_table_axis_values
-from openhcs.core.process_local_cache import IdentityBoundProcessCache
-from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
-from openhcs.core.runtime_semantics import (
-    MeasurementRowValueField,
+from openhcs.core.runtime_tabular_values import (
     FieldSpec,
     MeasurementObjectRowIdentity,
+)
+from openhcs.core.runtime_measurements import (
+    MeasurementRowValueField,
     MeasurementRowAxisField,
     MeasurementScope,
-    measurement_row_mapping,
+    MeasurementSubject,
 )
-from openhcs.core.runtime_values import ColumnarRows, MeasurementTable
-
-
-def runtime_measurement_table_field_is_present(value: object) -> bool:
-    """Return whether a table field value is present without formatting payloads."""
-    if value is None:
-        return False
-    if isinstance(value, str):
-        return bool(value.strip())
-    return True
+from openhcs.core.runtime_measurements import (
+    MeasurementTable,
+)
 
 
 MEASUREMENT_IDENTITY_FIELDS = frozenset(
     {
-        "image_number",
         "image_id",
-        "slice_index",
+        *DEFAULT_RUNTIME_MEASUREMENT_DIALECT.row_identity_contract.image_identity_fields,
         *MeasurementRowAxisField.object_id_field_names(),
         MeasurementRowAxisField.OBJECT_NAME.value,
         MeasurementRowAxisField.OBJECT_ROW_IDENTITY.value,
@@ -73,9 +59,6 @@ CSV_HEADER_CONTEXT_STOPWORDS = frozenset(
         "measurements",
     }
 )
-RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS = frozenset(
-    {"image_id", "image_number", "slice_index"}
-)
 DEFAULT_MEASUREMENT_TABLE_PADDING_GROUP = "measurements"
 
 
@@ -85,161 +68,6 @@ def measurement_table_padding_group(table_name: str) -> str:
     if normalized_name:
         return normalized_name
     return DEFAULT_MEASUREMENT_TABLE_PADDING_GROUP
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeMeasurementRowFingerprint:
-    """Exact canonical fingerprint for measurement rows without retaining rows."""
-
-    row_count: int
-    digest: bytes
-
-
-class RuntimeColumnarMeasurementRowFingerprintCache(IdentityBoundProcessCache):
-    """Process-local exact row fingerprint cache keyed by columnar row identity."""
-
-    registry_key = "runtime_columnar_measurement_row_fingerprint"
-
-
-class RuntimeMeasurementTableIdentityCache(IdentityBoundProcessCache):
-    """Process-local exact table identity cache keyed by measurement-table identity."""
-
-    registry_key = "runtime_measurement_table_identity"
-
-
-class RuntimeMeasurementTableTransportIdentitiesCache(IdentityBoundProcessCache):
-    """Process-local transport identity cache keyed by measurement-table identity."""
-
-    registry_key = "runtime_measurement_table_transport_identities"
-
-
-@dataclass(slots=True)
-class RuntimeMeasurementRowFingerprintBuilder:
-    """Incrementally fingerprint canonical row payloads."""
-
-    digest_size: int = 32
-    _hash: Any = field(init=False, repr=False)
-    _row_count: int = field(init=False, repr=False)
-    _normalized_field_cache: dict[str, str] = field(init=False, repr=False)
-    _field_payload_cache: dict[str, bytes] = field(init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        self._hash = hashlib.blake2b(digest_size=self.digest_size)
-        self._row_count = 0
-        self._normalized_field_cache = {}
-        self._field_payload_cache = {}
-
-    def add_row_mapping(self, row_mapping: Mapping[str, object]) -> None:
-        self._hash.update(b"row:")
-        for field_name, value in row_mapping.items():
-            self.add_field_value(str(field_name), value)
-        self._hash.update(b":row")
-        self._row_count += 1
-
-    def add_columnar_rows(self, rows: ColumnarRows) -> None:
-        columns = tuple(str(column) for column in rows.columns)
-        column_values = tuple(rows.column_values(column) for column in columns)
-        row_count = rows.row_count()
-        for row_index in range(row_count):
-            self._hash.update(b"row:")
-            for field_name, values in zip(columns, column_values, strict=True):
-                value = values[row_index]
-                if is_structural_missing_measurement_cell(value):
-                    continue
-                self.add_field_value(field_name, value)
-            self._hash.update(b":row")
-            self._row_count += 1
-
-    def add_field_value(self, field_name: str, value: object) -> None:
-        self._hash.update(self._field_payload(field_name))
-        update_measurement_table_cell_hash(self._hash, value)
-
-    def _field_payload(self, field_name: str) -> bytes:
-        cached = self._field_payload_cache.get(field_name)
-        if cached is None:
-            cached = pickle.dumps(
-                ("field", self._normalized_field(field_name)),
-                protocol=pickle.HIGHEST_PROTOCOL,
-            )
-            self._field_payload_cache[field_name] = cached
-        return cached
-
-    def _normalized_field(self, field_name: str) -> str:
-        cached = self._normalized_field_cache.get(field_name)
-        if cached is None:
-            cached = normalize_runtime_identifier(field_name)
-            self._normalized_field_cache[field_name] = cached
-        return cached
-
-    def finish(self) -> RuntimeMeasurementRowFingerprint:
-        return RuntimeMeasurementRowFingerprint(
-            row_count=self._row_count,
-            digest=self._hash.digest(),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeMeasurementTableIdentity:
-    """Compact exact identity for runtime measurement table dedupe."""
-
-    name: str | None
-    subject: str
-    object_name: str | None
-    object_id_field: str | None
-    source_image_name: str | None
-    fields: tuple[FieldSpec, ...]
-    rows: RuntimeMeasurementRowFingerprint
-
-    @classmethod
-    def from_table_rows(
-        cls,
-        table: MeasurementTable,
-        rows: Iterable[object],
-    ) -> "RuntimeMeasurementTableIdentity":
-        builder = RuntimeMeasurementRowFingerprintBuilder()
-        for row in rows:
-            builder.add_row_mapping(measurement_row_mapping(row))
-        return cls.from_table_row_fingerprint(table, builder.finish())
-
-    @classmethod
-    def from_table_columnar_rows(
-        cls,
-        table: MeasurementTable,
-        rows: ColumnarRows,
-    ) -> "RuntimeMeasurementTableIdentity":
-        return cls.from_table_row_fingerprint(
-            table,
-            runtime_columnar_measurement_row_fingerprint(rows),
-        )
-
-    @classmethod
-    def from_table_row_fingerprint(
-        cls,
-        table: MeasurementTable,
-        rows: RuntimeMeasurementRowFingerprint,
-    ) -> "RuntimeMeasurementTableIdentity":
-        return cls(
-            table.name,
-            repr(table.subject),
-            table.object_name,
-            table.object_id_field,
-            table.source_image_name,
-            tuple(table.fields),
-            rows,
-        )
-
-
-def runtime_columnar_measurement_row_fingerprint(
-    rows: ColumnarRows,
-) -> RuntimeMeasurementRowFingerprint:
-    """Return the exact row fingerprint for one immutable columnar row owner."""
-    cache = RuntimeColumnarMeasurementRowFingerprintCache.process_cache()
-    cached = cache.get_bound(rows)
-    if cached is not None:
-        return cached
-    builder = RuntimeMeasurementRowFingerprintBuilder()
-    builder.add_columnar_rows(rows)
-    return cache.put_bound(rows, builder.finish())
 
 
 @dataclass(slots=True)
@@ -277,11 +105,6 @@ class RuntimeTableSnapshot:
                 f"Runtime table {path} column context width "
                 f"{len(column_context)} does not match header width {len(header)}."
             )
-        duplicate_headers = duplicate_values(header)
-        if duplicate_headers:
-            raise ValueError(
-                f"Runtime table {path} has duplicate headers " f"{duplicate_headers!r}."
-            )
         rows = tuple(tuple(str(value).strip() for value in row) for row in self.rows)
         malformed_rows = tuple(
             index for index, row in enumerate(rows, start=1) if len(row) != len(header)
@@ -291,6 +114,35 @@ class RuntimeTableSnapshot:
                 f"Runtime table {path} rows do not match header width at "
                 f"data rows {malformed_rows!r}."
             )
+        semantic_columns = tuple(
+            zip(
+                column_context or (None,) * len(header),
+                header,
+                strict=True,
+            )
+        )
+        retained_indexes: list[int] = []
+        first_index_by_column: dict[tuple[str | None, str], int] = {}
+        conflicting_columns: set[tuple[str | None, str]] = set()
+        for index, semantic_column in enumerate(semantic_columns):
+            first_index = first_index_by_column.get(semantic_column)
+            if first_index is None:
+                first_index_by_column[semantic_column] = index
+                retained_indexes.append(index)
+                continue
+            if any(row[first_index] != row[index] for row in rows):
+                conflicting_columns.add(semantic_column)
+        if conflicting_columns:
+            raise ValueError(
+                f"Runtime table {path} has conflicting duplicate semantic columns "
+                f"{tuple(sorted(conflicting_columns, key=repr))!r}."
+            )
+        retained = tuple(retained_indexes)
+        if len(retained) != len(header):
+            header = tuple(header[index] for index in retained)
+            rows = tuple(tuple(row[index] for index in retained) for row in rows)
+            if column_context:
+                column_context = tuple(column_context[index] for index in retained)
         self.path = path
         self.header = header
         self.rows = rows
@@ -299,544 +151,281 @@ class RuntimeTableSnapshot:
     @property
     def schema_key(self) -> tuple[str, ...]:
         """File-order-independent schema identity for this table."""
-        return tuple(sorted(self.header))
+        return tuple(
+            sorted(
+                (field_name if context is None else f"{context}:{field_name}")
+                for context, field_name in zip(
+                    self.column_context or (None,) * len(self.header),
+                    self.header,
+                    strict=True,
+                )
+            )
+        )
 
     def content_key(
         self,
         policy: RuntimeEquivalencePolicy,
     ) -> tuple[tuple[tuple[str, str], ...], ...]:
         """File-order-independent row identity for this table."""
-        columns = self.schema_key
-        indexes = {column: self.header.index(column) for column in self.header}
         return tuple(
             sorted(
-                tuple(
-                    runtime_cell_signature(row[indexes[column]], policy).sort_key
-                    for column in columns
-                )
-                for row in self.rows
+                tuple(signature.sort_key for signature in row)
+                for row in self.row_signatures(policy)
             )
         )
 
-
-def aggregate_measurement_table_key(
-    table: MeasurementTable,
-) -> RuntimeMeasurementTableIdentity | None:
-    """Return a nominal key for duplicate full-axis measurement tables.
-
-    Grouped execution can materialize an already-aggregated measurement table
-    once per group key. Row-local image identity fields carry the actual
-    measurement scope, so repeated materializations of the same semantic table
-    should only contribute once when one table spans multiple row identities.
-    Plane-local aggregate rows remain count-preserving when each runtime record
-    carries only one row identity.
-    """
-    if measurement_table_schema_has_object_identity(
-        table
-    ) and not measurement_table_schema_has_long_form_measurement_fields(table):
-        return None
-
-    if len(measurement_table_transport_identities(table)) <= 1:
-        return None
-    return exact_measurement_table_key(table)
-
-
-def measurement_table_spans_multiple_transport_identities(
-    table: MeasurementTable,
-) -> bool:
-    """Return whether row-local transport identity makes group identity redundant."""
-    return len(measurement_table_transport_identities(table)) > 1
-
-
-def measurement_table_transport_identities(
-    table: MeasurementTable,
-) -> frozenset[tuple[tuple[str, object], ...]]:
-    """Return row-local transport identities carried by a measurement table."""
-    cache = RuntimeMeasurementTableTransportIdentitiesCache.process_cache()
-    cached = cache.get_bound(table)
-    if cached is not None:
-        return cached
-    transport_identity = RuntimeAggregateMeasurementTableTransportIdentity(table)
-    normalized_field_cache: dict[str, str] = {}
-    row_identities: set[tuple[tuple[str, object], ...]] = set()
-    for row in iter_measurement_rows((table,)):
-        row_mapping = measurement_row_mapping(row)
-        transport_axis_fields = transport_identity.multi_value_axis_fields(row_mapping)
-        row_identity_values: list[tuple[str, object]] = []
-        for field_name, value in row_mapping.items():
-            normalized_field_name = normalized_field_cache.get(str(field_name))
-            if normalized_field_name is None:
-                normalized_field_name = normalize_runtime_identifier(str(field_name))
-                normalized_field_cache[str(field_name)] = normalized_field_name
-            if normalized_field_name in transport_axis_fields:
-                row_identity_values.append(
-                    (
-                        normalized_field_name,
-                        measurement_table_cell_payload(value),
+    def row_signatures(
+        self,
+        policy: RuntimeEquivalencePolicy,
+    ) -> tuple[tuple[RuntimeCellSignature, ...], ...]:
+        """Return rows projected into semantic column order."""
+        columns = tuple(
+            sorted(
+                (
+                    (field_name if context is None else f"{context}:{field_name}"),
+                    index,
+                )
+                for index, (context, field_name) in enumerate(
+                    zip(
+                        self.column_context or (None,) * len(self.header),
+                        self.header,
+                        strict=True,
                     )
                 )
-        if row_identity_values:
-            row_identities.add(tuple(sorted(row_identity_values)))
-    return cache.put_bound(table, frozenset(row_identities))
-
-
-def measurement_table_schema_has_object_identity(table: MeasurementTable) -> bool:
-    """Return whether table schema declares object-row identity."""
-    if table.object_id_field is not None:
-        return True
-    if table.subject is not None and table.subject.scope is MeasurementScope.OBJECT:
-        return True
-    normalized_fields = frozenset(
-        normalize_runtime_identifier(field)
-        for field in measurement_table_field_names(table)
-    )
-    return bool(
-        normalized_fields & MeasurementRowAxisField.normalized_object_id_field_names()
-    )
-
-
-def measurement_table_schema_has_long_form_measurement_fields(
-    table: MeasurementTable,
-) -> bool:
-    """Return whether table schema declares long-form feature/value columns."""
-    normalized_fields = frozenset(
-        normalize_runtime_identifier(field)
-        for field in measurement_table_field_names(table)
-    )
-    return bool(
-        normalized_fields & MeasurementRowAxisField.normalized_feature_name_field_names()
-    ) and bool(normalized_fields & MeasurementRowValueField.normalized_field_names())
-
-
-def measurement_table_field_names(table: MeasurementTable) -> tuple[str, ...]:
-    """Return declared field names without materializing all table rows."""
-    column_names = table.column_names()
-    if column_names is not None:
-        return column_names
-    if table.fields:
-        return tuple(field.name for field in table.fields)
-    rows = table.rows
-    if isinstance(rows, ColumnarRows):
-        return tuple(str(column) for column in rows.columns)
-    if isinstance(rows, Mapping):
-        return tuple(str(field) for field in rows)
-    if isinstance(rows, list | tuple) and rows:
-        return tuple(str(field) for field in measurement_row_mapping(rows[0]))
-    return ()
-
-
-def exact_measurement_table_key(
-    table: MeasurementTable,
-) -> RuntimeMeasurementTableIdentity:
-    """Return an exact semantic key for duplicate runtime measurement tables."""
-    cache = RuntimeMeasurementTableIdentityCache.process_cache()
-    cached = cache.get_bound(table)
-    if cached is not None:
-        return cached
-    if isinstance(table.rows, ColumnarRows):
-        return cache.put_bound(
-            table,
-            RuntimeMeasurementTableIdentity.from_table_columnar_rows(
-                table,
-                table.rows,
-            ),
-        )
-    return cache.put_bound(
-        table,
-        RuntimeMeasurementTableIdentity.from_table_rows(
-            table,
-            iter_measurement_rows((table,)),
-        ),
-    )
-
-
-def complete_object_domain_measurement_table_key(
-    table: MeasurementTable,
-) -> RuntimeMeasurementTableIdentity:
-    """Return duplicate identity for complete object-domain measurement tables."""
-    builder = RuntimeMeasurementRowFingerprintBuilder()
-    for row in iter_measurement_rows((table,)):
-        builder.add_row_mapping(
-            runtime_aggregate_measurement_row_semantic_mapping(
-                measurement_row_mapping(row),
-                table=table,
             )
         )
-    return RuntimeMeasurementTableIdentity.from_table_row_fingerprint(
-        table,
-        builder.finish(),
-    )
-
-
-RuntimeMeasurementObjectSubtableSet = set[RuntimeMeasurementTableIdentity]
-
-
-def dedupe_runtime_measurement_table_object_subtable(
-    table: MeasurementTable,
-    seen_object_subtables: RuntimeMeasurementObjectSubtableSet,
-) -> MeasurementTable:
-    """Drop duplicate object-identity subtable rows while preserving non-object rows."""
-    non_object_rows: list[object] = []
-    object_row_fingerprint = RuntimeMeasurementRowFingerprintBuilder()
-    object_row_count = 0
-    total_row_count = 0
-    for row in iter_measurement_rows((table,)):
-        total_row_count += 1
-        row_mapping = measurement_row_mapping(row)
-        if measurement_row_has_object_identity(row_mapping):
-            object_row_fingerprint.add_row_mapping(row_mapping)
-            object_row_count += 1
-        else:
-            non_object_rows.append(row)
-    if total_row_count == 0 or object_row_count == 0:
-        return table
-
-    subtable_key = RuntimeMeasurementTableIdentity.from_table_row_fingerprint(
-        table,
-        object_row_fingerprint.finish(),
-    )
-    if subtable_key not in seen_object_subtables:
-        seen_object_subtables.add(subtable_key)
-        return table
-    if not non_object_rows:
-        return MeasurementTable(
-            name=table.name,
-            rows=(),
-            object_name=table.object_name,
-            fields=table.fields,
-            object_id_field=table.object_id_field,
-            source_image_name=table.source_image_name,
-            subject=table.subject,
-            source_provenance=table.source_provenance,
-        )
-    return MeasurementTable(
-        name=table.name,
-        rows=tuple(non_object_rows),
-        object_name=table.object_name,
-        fields=table.fields,
-        object_id_field=table.object_id_field,
-        source_image_name=table.source_image_name,
-        subject=table.subject,
-        source_provenance=table.source_provenance,
-    )
-
-
-def aggregate_measurement_table_semantic_key(
-    table: MeasurementTable,
-) -> RuntimeMeasurementTableIdentity | None:
-    """Return duplicate identity after removing aggregate-table transport fields."""
-    if aggregate_measurement_table_key(table) is None:
-        return None
-    builder = RuntimeMeasurementRowFingerprintBuilder()
-    for row in iter_measurement_rows((table,)):
-        builder.add_row_mapping(
-            runtime_aggregate_measurement_row_semantic_mapping(
-                measurement_row_mapping(row)
+        return tuple(
+            tuple(
+                runtime_cell_signature(row[index], policy) for _column, index in columns
             )
-        )
-    return RuntimeMeasurementTableIdentity.from_table_row_fingerprint(
-        table,
-        builder.finish(),
-    )
-
-
-def dedupe_runtime_measurement_table_aggregate_rows(
-    table: MeasurementTable,
-) -> MeasurementTable:
-    """Remove duplicate aggregate rows after transport identity fields are ignored."""
-    if aggregate_measurement_table_key(table) is None:
-        return table
-    rows = tuple(iter_measurement_rows((table,)))
-    seen_rows: set[tuple[tuple[str, object], ...]] = set()
-    deduped_rows: list[object] = []
-    semantic_rows: list[tuple[tuple[str, object], ...]] = []
-    for row in rows:
-        row_mapping = measurement_row_mapping(row)
-        if measurement_row_has_object_identity(row_mapping):
-            deduped_rows.append(row)
-            continue
-        semantic_row = aggregate_measurement_row_semantic_key(
-            runtime_aggregate_measurement_row_semantic_mapping(
-                row_mapping,
-                table=table,
-            )
-        )
-        semantic_rows.append(semantic_row)
-        if semantic_row in seen_rows:
-            continue
-        seen_rows.add(semantic_row)
-        deduped_rows.append(row)
-    if len(set(semantic_rows)) <= 1:
-        return table
-    if len(deduped_rows) == len(rows):
-        return table
-    return MeasurementTable(
-        name=table.name,
-        rows=tuple(deduped_rows),
-        object_name=table.object_name,
-        fields=table.fields,
-        object_id_field=table.object_id_field,
-        source_image_name=table.source_image_name,
-        subject=table.subject,
-        source_provenance=table.source_provenance,
-    )
-
-
-def aggregate_measurement_row_semantic_key(
-    row_mapping: Mapping[str, object],
-) -> tuple[tuple[str, object], ...]:
-    """Return a hashable aggregate-row key using table cell semantics."""
-    return tuple(
-        sorted(
-            (
-                field_name,
-                measurement_table_cell_payload(value),
-            )
-            for field_name, value in row_mapping.items()
-        )
-    )
-
-
-def runtime_aggregate_measurement_row_semantic_mapping(
-    row_mapping: Mapping[str, object],
-    *,
-    table: MeasurementTable | None = None,
-    preserve_multi_value_axes: bool = False,
-) -> dict[str, object]:
-    """Return aggregate-row identity after removing transport-only fields."""
-    excluded_fields = RuntimeAggregateMeasurementRowIdentityFields(
-        row_mapping,
-        table=table,
-        preserve_multi_value_axes=preserve_multi_value_axes,
-    ).transport_identity_fields()
-    return {
-        field_name: value
-        for field_name, value in row_mapping.items()
-        if normalize_runtime_identifier(str(field_name)) not in excluded_fields
-    }
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeAggregateMeasurementRowIdentityFields:
-    """Fields excluded from duplicate aggregate-table row identity."""
-
-    row: Mapping[str, object]
-    table: MeasurementTable | None = None
-    preserve_multi_value_axes: bool = False
-
-    def transport_identity_fields(self) -> frozenset[str]:
-        if measurement_row_has_long_form_measurement_fields(self.row):
-            return frozenset()
-        if (
-            measurement_row_identity_role(self.row)
-            is MeasurementObjectRowIdentity.ROW_SEQUENCE
-        ):
-            return self.row_sequence_transport_identity_fields()
-        if self.preserve_multi_value_axes and self.table is not None:
-            return self.table_transport_identity_fields()
-        return RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS
-
-    def table_transport_identity_fields(self) -> frozenset[str]:
-        if self.table is None:
-            return RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS
-        row_axes = RuntimeAggregateMeasurementTableRowAxes(
-            self.table,
-            self.row,
-        ).multi_value_axis_fields()
-        return RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS - row_axes
-
-    @staticmethod
-    def row_sequence_transport_identity_fields() -> frozenset[str]:
-        return {
-            field_name
-            for field_name in RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS
-            if field_name != MeasurementRowAxisField.SLICE_INDEX.value
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeAggregateMeasurementTableRowAxes:
-    """Row-axis fields that identify distinct rows within one aggregate table."""
-
-    table: MeasurementTable
-    row: Mapping[str, object]
-
-    @classmethod
-    def multi_value_axis_fields_for_table(
-        cls,
-        table: MeasurementTable,
-    ) -> frozenset[str]:
-        return frozenset(
-            axis.value
-            for axis in cls.identity_axes()
-            if len(measurement_table_axis_values(table, axis)) > 1
+            for row in self.rows
         )
 
-    @staticmethod
-    def identity_axes() -> tuple[MeasurementRowAxisField, ...]:
-        return (
-            MeasurementRowAxisField.IMAGE_NUMBER,
-            MeasurementRowAxisField.SLICE_INDEX,
-        )
-
-    def multi_value_axis_fields(self) -> frozenset[str]:
-        return RuntimeMeasurementTableTransportIdentityStrategy.axis_fields(
-            RuntimeMeasurementTableTransportIdentityContext(
-                row=self.row,
-                multi_value_axis_fields=self.multi_value_axis_fields_for_table(
-                    self.table,
+    def measurement_tables(
+        self,
+        dialect=DEFAULT_RUNTIME_MEASUREMENT_DIALECT,
+    ) -> tuple[MeasurementTable, ...]:
+        """Expose exported columns as ordinary subject-owned measurement tables."""
+        if not self.column_context:
+            subject = self._subject_for_columns(self.header)
+            return (
+                MeasurementTable(
+                    name=self.path.stem,
+                    rows=self._columnar_rows(
+                        tuple(range(len(self.header))),
+                        subject,
+                        dialect,
+                    ),
+                    subject=subject,
                 ),
             )
+
+        image_identity_fields = (
+            dialect.row_identity_contract.selected_image_identity_fields(
+                frozenset(normalize_runtime_identifier(field) for field in self.header)
+            )
         )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeMeasurementTableTransportIdentityContext:
-    """Facts used to select row-local transport identity projection."""
-
-    row: Mapping[str, object]
-    multi_value_axis_fields: frozenset[str]
-
-    @property
-    def normalized_present_fields(self) -> frozenset[str]:
-        return frozenset(
-            normalize_runtime_identifier(str(field_name))
-            for field_name, value in self.row.items()
-            if runtime_measurement_table_field_is_present(value)
+        image_identity_indexes = tuple(
+            index
+            for index, field_name in enumerate(self.header)
+            if normalize_runtime_identifier(field_name) in image_identity_fields
         )
-
-    @property
-    def has_image_identity(self) -> bool:
-        contract = DEFAULT_RUNTIME_MEASUREMENT_DIALECT.row_identity_contract
-        return bool(
-            contract.selected_image_identity_fields(self.normalized_present_fields)
+        contexts = tuple(
+            dict.fromkeys(
+                context for context in self.column_context if context is not None
+            )
         )
+        tables: list[MeasurementTable] = []
+        for context in contexts:
+            context_indexes = tuple(
+                index
+                for index, column_context in enumerate(self.column_context)
+                if column_context == context
+            )
+            normalized_context = normalize_runtime_identifier(context)
+            if normalized_context == MeasurementScope.IMAGE.value:
+                indexes = context_indexes
+                subject = MeasurementSubject(MeasurementScope.IMAGE, "Image")
+            elif normalized_context == MeasurementScope.EXPERIMENT.value:
+                indexes = context_indexes
+                subject = MeasurementSubject(MeasurementScope.EXPERIMENT)
+            elif normalized_context in CSV_HEADER_CONTEXT_STOPWORDS:
+                continue
+            else:
+                indexes = tuple(
+                    dict.fromkeys((*image_identity_indexes, *context_indexes))
+                )
+                subject = self._object_subject(context, indexes, dialect)
+            tables.append(
+                MeasurementTable(
+                    name=f"{self.path.stem}:{context}",
+                    rows=self._columnar_rows(indexes, subject, dialect),
+                    subject=subject,
+                )
+            )
+        return tuple(tables)
 
-    @property
-    def has_object_identity(self) -> bool:
-        return measurement_row_has_object_identity(self.row)
-
-
-class RuntimeMeasurementTableTransportIdentityStrategy(
-    MostDerivedContextStrategyMixin[RuntimeMeasurementTableTransportIdentityContext],
-    ABC,
-):
-    """Registered projection of row-local table transport identity fields."""
-
-    strategy_key: ClassVar[str | None] = None
-
-    @classmethod
-    def axis_fields(
-        cls,
-        context: RuntimeMeasurementTableTransportIdentityContext,
-    ) -> frozenset[str]:
-        strategy = cls.for_context(
-            context,
-            error_subject="Runtime measurement table transport identity",
+    def _subject_for_columns(
+        self,
+        header: tuple[str, ...],
+    ) -> MeasurementSubject:
+        normalized_header = frozenset(
+            normalize_runtime_identifier(field_name) for field_name in header
         )
-        if strategy is None:
-            return frozenset()
-        return strategy.transport_axis_fields(context)
+        normalized_name = normalize_runtime_identifier(self.path.stem)
+        if normalized_name == MeasurementScope.EXPERIMENT.value:
+            return MeasurementSubject(MeasurementScope.EXPERIMENT)
+        if (
+            normalized_name != MeasurementScope.IMAGE.value
+            and normalized_header
+            & frozenset(MeasurementRowAxisField.object_id_field_names())
+        ):
+            return self._object_subject(
+                self.path.stem,
+                tuple(range(len(header))),
+            )
+        return MeasurementSubject(MeasurementScope.IMAGE, "Image")
 
-    @abstractmethod
-    def transport_axis_fields(
+    def _object_subject(
         self,
-        context: RuntimeMeasurementTableTransportIdentityContext,
-    ) -> frozenset[str]:
-        """Return normalized row fields that preserve table transport identity."""
-
-
-class NoMeasurementTableTransportIdentityStrategy(
-    RuntimeMeasurementTableTransportIdentityStrategy
-):
-    """Rows without row-local image identity do not own transport axes."""
-
-    strategy_key = "none"
-
-    def matches(
-        self,
-        context: RuntimeMeasurementTableTransportIdentityContext,
-    ) -> bool:
-        return True
-
-    def transport_axis_fields(
-        self,
-        context: RuntimeMeasurementTableTransportIdentityContext,
-    ) -> frozenset[str]:
-        del context
-        return frozenset()
-
-
-class ImageMeasurementTableTransportIdentityStrategy(
-    NoMeasurementTableTransportIdentityStrategy
-):
-    """Image-identifiable rows preserve multi-value image transport axes."""
-
-    strategy_key = "image"
-
-    def matches(
-        self,
-        context: RuntimeMeasurementTableTransportIdentityContext,
-    ) -> bool:
-        return context.has_image_identity
-
-    def transport_axis_fields(
-        self,
-        context: RuntimeMeasurementTableTransportIdentityContext,
-    ) -> frozenset[str]:
-        return context.multi_value_axis_fields & context.normalized_present_fields
-
-
-class ObjectMeasurementTableTransportIdentityStrategy(
-    ImageMeasurementTableTransportIdentityStrategy
-):
-    """Object-identifiable rows specialize image transport through MRO."""
-
-    strategy_key = "object"
-
-    def matches(
-        self,
-        context: RuntimeMeasurementTableTransportIdentityContext,
-    ) -> bool:
-        return context.has_image_identity and context.has_object_identity
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeAggregateMeasurementTableTransportIdentity:
-    """Table-scoped row-axis identity contract for runtime measurement tables."""
-
-    table: MeasurementTable
-    _multi_value_axis_fields: frozenset[str] = field(
-        init=False,
-        repr=False,
-        compare=False,
-    )
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "_multi_value_axis_fields",
-            RuntimeAggregateMeasurementTableRowAxes.multi_value_axis_fields_for_table(
-                self.table,
+        name: str,
+        indexes: tuple[int, ...],
+        dialect=DEFAULT_RUNTIME_MEASUREMENT_DIALECT,
+    ) -> MeasurementSubject:
+        normalized_fields = {
+            normalize_runtime_identifier(self.header[index]): self.header[index]
+            for index in indexes
+        }
+        selected_object_id = (
+            dialect.row_identity_contract.selected_object_identity_field(
+                frozenset(normalized_fields)
+            )
+        )
+        return MeasurementSubject(
+            MeasurementScope.OBJECT,
+            name,
+            id_field=(
+                None
+                if selected_object_id is None
+                else normalized_fields[selected_object_id]
             ),
         )
 
-    def multi_value_axis_fields(
+    def _columnar_rows(
         self,
-        row: Mapping[str, object],
-    ) -> frozenset[str]:
-        return RuntimeMeasurementTableTransportIdentityStrategy.axis_fields(
-            RuntimeMeasurementTableTransportIdentityContext(
-                row=row,
-                multi_value_axis_fields=self._multi_value_axis_fields,
+        indexes: tuple[int, ...],
+        subject: MeasurementSubject,
+        dialect=DEFAULT_RUNTIME_MEASUREMENT_DIALECT,
+    ) -> MeasurementSparseColumnarRows:
+        selected_header = tuple(self.header[index] for index in indexes)
+        duplicate_headers = duplicate_values(selected_header)
+        if duplicate_headers:
+            raise ValueError(
+                f"Runtime table {self.path} subject {subject.name!r} has duplicate "
+                f"columns {duplicate_headers!r}."
             )
+        normalized_fields = {
+            normalize_runtime_identifier(field_name): field_name
+            for field_name in selected_header
+        }
+        image_identity_fields = (
+            dialect.row_identity_contract.selected_image_identity_fields(
+                frozenset(normalized_fields)
+            )
+        )
+        identity_fields = tuple(
+            field_name
+            for field_name in selected_header
+            if normalize_runtime_identifier(field_name) in image_identity_fields
+            or field_name == subject.id_field
+        )
+        superseded_object_identity_fields = frozenset(
+            field_name
+            for field_name in selected_header
+            if subject.id_field is not None
+            and field_name != subject.id_field
+            and normalize_runtime_identifier(field_name)
+            in dialect.row_identity_contract.object_identity_fields
+        )
+        projected_header = tuple(
+            field_name
+            for field_name in selected_header
+            if field_name not in superseded_object_identity_fields
+        )
+        identity_is_complete = (
+            subject.scope is not MeasurementScope.OBJECT or subject.id_field is not None
+        )
+        coalesced_rows: dict[object, dict[str, str]] = {}
+        for row_index, row in enumerate(self.rows):
+            selected_values = {
+                field_name: row[index]
+                for field_name, index in zip(
+                    selected_header,
+                    indexes,
+                    strict=True,
+                )
+            }
+            if (
+                identity_is_complete
+                and identity_fields
+                and all(
+                    runtime_measurement_value_is_present(selected_values[field_name])
+                    for field_name in identity_fields
+                )
+            ):
+                identity: object = tuple(
+                    (
+                        field_name,
+                        measurement_table_cell_payload(selected_values[field_name]),
+                    )
+                    for field_name in identity_fields
+                )
+            else:
+                identity = row_index
+            target = coalesced_rows.setdefault(identity, {})
+            for field_name, value in selected_values.items():
+                if field_name in superseded_object_identity_fields:
+                    continue
+                if not runtime_measurement_value_is_present(value):
+                    continue
+                existing = target.get(field_name)
+                if existing is not None and existing != value:
+                    raise ValueError(
+                        f"Runtime table {self.path} subject {subject.name!r} has "
+                        "conflicting observed values for row identity "
+                        f"{identity!r}, field {field_name!r}: "
+                        f"{existing!r} vs {value!r}."
+                    )
+                target[field_name] = value
+        return MeasurementSparseColumnarRows(
+            MappingProxyType(
+                {
+                    field_name: tuple(
+                        row.get(field_name, MEASUREMENT_SPARSE_CELL)
+                        for row in coalesced_rows.values()
+                    )
+                    for field_name in projected_header
+                }
+            ),
+            fields=tuple(
+                FieldSpec(field_name, str, required=False)
+                for field_name in projected_header
+            ),
+            object_row_identity=(
+                MeasurementObjectRowIdentity.LABEL_ID
+                if subject.scope is MeasurementScope.OBJECT
+                and subject.id_field is not None
+                else None
+            ),
         )
 
 
 def is_wide_measurement_table(row: Mapping[str, object]) -> bool:
     """Return whether a table encodes measurements as feature columns."""
     normalized_fields = {normalize_runtime_identifier(field_name) for field_name in row}
-    if normalized_fields & frozenset(MeasurementRowAxisField.feature_name_field_names()):
+    if normalized_fields & frozenset(
+        MeasurementRowAxisField.feature_name_field_names()
+    ):
         return False
     if normalized_fields & frozenset(MeasurementRowValueField.field_names()):
         return False
@@ -855,7 +444,7 @@ def read_semantic_csv_table(
                 header
             ) == len(next_header):
                 return (
-                    _disambiguate_contextual_csv_header(next_header, header),
+                    next_header,
                     all_rows[index + 2 :],
                     _semantic_csv_column_context(header),
                 )
@@ -865,12 +454,12 @@ def read_semantic_csv_table(
             context = tuple(str(column).strip() for column in all_rows[index - 1])
             if len(context) == len(header):
                 return (
-                    _disambiguate_contextual_csv_header(header, context),
+                    header,
                     all_rows[index + 1 :],
                     _semantic_csv_column_context(context),
                 )
         if _is_contextual_semantic_csv_header(header):
-            return _ensure_unique_header(header), all_rows[index + 1 :], ()
+            return header, all_rows[index + 1 :], ()
     return (), (), ()
 
 
@@ -927,43 +516,3 @@ def _is_contextual_semantic_csv_table_header(
     if duplicate_values(normalized_context):
         return True
     return bool(frozenset(normalized_context) & CSV_HEADER_CONTEXT_STOPWORDS)
-
-
-def _disambiguate_contextual_csv_header(
-    header: tuple[str, ...],
-    context: tuple[str, ...],
-) -> tuple[str, ...]:
-    duplicates = frozenset(duplicate_values(header))
-    disambiguated = tuple(
-        _contextual_csv_header_name(column, context_value, index, duplicates)
-        for index, (column, context_value) in enumerate(
-            zip(header, context, strict=True)
-        )
-    )
-    return _ensure_unique_header(disambiguated)
-
-
-def _contextual_csv_header_name(
-    column: str,
-    context_value: str,
-    index: int,
-    duplicates: frozenset[str],
-) -> str:
-    if column not in duplicates:
-        return column
-    normalized_context = normalize_runtime_identifier(context_value)
-    if normalized_context and normalized_context not in CSV_HEADER_CONTEXT_STOPWORDS:
-        return f"{column}_{normalized_context}"
-    return f"{column}_{index + 1}"
-
-
-def _ensure_unique_header(header: tuple[str, ...]) -> tuple[str, ...]:
-    counts: Counter[str] = Counter()
-    unique: list[str] = []
-    for index, column in enumerate(header, start=1):
-        counts[column] += 1
-        if counts[column] == 1:
-            unique.append(column)
-            continue
-        unique.append(f"{column}_{index}")
-    return tuple(unique)

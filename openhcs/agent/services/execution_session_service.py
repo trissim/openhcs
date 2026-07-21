@@ -10,11 +10,7 @@ import os
 from pathlib import Path
 import queue
 import threading
-from types import ModuleType
-import sys
 import time
-
-from metaclass_registry import AutoRegisterMeta
 
 from openhcs.agent.dto.common import (
     AgentError,
@@ -29,12 +25,10 @@ from openhcs.agent.dto.execution import (
     ArtifactPlanInspection,
     ArtifactPlanSummary,
     CompiledStepPlanSummary,
-    DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS,
-    DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
-    DEFAULT_EXECUTION_WAIT_TIMEOUT_MS,
     ExecutionConnectionSpec,
     ExecutionJobRef,
     ExecutionJobStatus,
+    MainFlowMaterializationPlanSummary,
     OrchestratorSession,
     OrchestratorSessionCreationRequest,
     OrchestratorSessionRequest,
@@ -43,6 +37,7 @@ from openhcs.agent.dto.execution import (
     PipelineSourceOrchestratorSessionRequest,
     SourceWorkspaceFileRecord,
     SourceWorkspaceSummary,
+    ViewerStreamingPlanSummary,
     bounded_execution_status_response,
     execution_status_errors,
     execution_status_from_response,
@@ -50,14 +45,13 @@ from openhcs.agent.dto.execution import (
 )
 from openhcs.agent.exceptions import AgentFacingErrorMixin
 from openhcs.agent.path_policy import AgentPathPolicy
-from openhcs.agent.serialization import to_jsonable
+from openhcs.serialization.json import to_jsonable
 from openhcs.agent.services.config_service import ConfigService
 from openhcs.agent.services.pipeline_authoring_service import PipelineAuthoringService
-from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
-from openhcs.core.artifacts import SpecialArtifactType
 from openhcs.core.compiled_step_plan import CompiledStepPlan
-from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.pipeline.path_planner import MissingArtifactInputError
+from openhcs.core.pipeline_document import PipelineDocument, PipelineDocumentAuthority
 from openhcs.core.source_workspace_projection import (
     VirtualWorkspacePathLookup,
     VirtualWorkspaceSourceProjection,
@@ -65,21 +59,14 @@ from openhcs.core.source_workspace_projection import (
 from openhcs.core.steps.function_artifact_materialization import (
     planned_materialization_preview,
 )
-from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 from openhcs.microscopes.exceptions import MicroscopePixelSizeUnavailableError
 from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
 from openhcs.runtime.zmq_execution_client import (
     OpenHCSExecutionSubmission,
     ZMQExecutionClient,
 )
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
-from openhcs.runtime.zmq_pipeline_transport import (
-    PipelineSourceExport,
-    PipelineStepsNamespaceProjection,
-    PipelineStepsBoundary,
-    PipelineStepsCarrier,
-)
-
 
 MAX_INSPECTION_AXES = 8
 MAX_INSPECTION_STEPS = 24
@@ -124,38 +111,6 @@ class UnknownExecutionJobIdError(ExecutionSessionError):
         super().__init__(f"Unknown OpenHCS execution job_id: {job_id}")
 
 
-class PipelineSourceSyntaxError(ExecutionSessionError):
-    """Raised when pycodified pipeline source is not valid Python."""
-
-    agent_error_code = "pipeline_source_syntax_error"
-    agent_error_hint = (
-        "Fix pipeline_source Python syntax. A valid source document should define "
-        "pipeline_steps, usually by rendering an MCP pipeline draft with "
-        "openhcs_render_pipeline_source."
-    )
-
-    def __init__(self, syntax_error: SyntaxError) -> None:
-        self.syntax_error = syntax_error
-        super().__init__(str(syntax_error))
-
-
-class PipelineSourceMissingStepsError(ExecutionSessionError):
-    """Raised when pycodified source does not define pipeline_steps."""
-
-    agent_error_code = "pipeline_source_missing_steps"
-    agent_error_hint = (
-        "Define pipeline_steps in pipeline_source, or use "
-        "openhcs_render_pipeline_source to generate a valid source document. "
-        "This artifact-plan tool expects pipeline-only source, not a Plate "
-        "Manager orchestrator config document that defines pipeline_data."
-    )
-
-    def __init__(self) -> None:
-        super().__init__(
-            f"Code must define {PipelineSourceExport.PIPELINE_STEPS.value!r}"
-        )
-
-
 class ExecutionJobKind(Enum):
     COMPILE = "compile"
     EXECUTE = "execute"
@@ -173,9 +128,9 @@ class AgentProgressQueue:
 @dataclass(frozen=True, slots=True)
 class CompileInspectionInput:
     plate: Path
-    pipeline_source: str
+    pipeline_document: PipelineDocument
     axis_filter: tuple[str, ...]
-    configs: ExecutionConfigBundle
+    global_pipeline_config: GlobalPipelineConfig
     progress_queue: AgentProgressQueue
 
 
@@ -187,13 +142,6 @@ class CompileInspectionGatewayABC(ABC):
 
 class InProcessCompileInspectionGateway(CompileInspectionGatewayABC):
     def compile(self, request: CompileInspectionInput) -> JsonObject:
-        module_name = "openhcs_agent_compile_inspection"
-        module_file = f"<{module_name}>"
-        try:
-            code = compile(request.pipeline_source, module_file, "exec")
-        except SyntaxError as exc:
-            raise PipelineSourceSyntaxError(exc) from exc
-
         from openhcs.config_framework.lazy_factory import ensure_global_config_context
         from openhcs.core.config import GlobalPipelineConfig
         import openhcs.processing.func_registry as func_registry_module
@@ -202,29 +150,15 @@ class InProcessCompileInspectionGateway(CompileInspectionGatewayABC):
 
         ensure_global_config_context(
             GlobalPipelineConfig,
-            request.configs.global_pipeline,
+            request.global_pipeline_config,
         )
         with func_registry_module._registry_lock:
             if not func_registry_module._registry_initialized:
                 func_registry_module._auto_initialize_registry()
 
-        module = ModuleType(module_name)
-        module.__file__ = module_file
-        sys.modules[module_name] = module
-        try:
-            exec(code, module.__dict__)
-        finally:
-            sys.modules.pop(module_name, None)
-
-        pipeline_boundary = PipelineStepsNamespaceProjection(
-            module.__dict__
-        ).boundary_or_none()
-        if pipeline_boundary is None:
-            raise PipelineSourceMissingStepsError()
-
         orchestrator = PipelineOrchestrator(
             plate_path=request.plate,
-            pipeline_config=request.configs.plate_pipeline,
+            pipeline_config=request.pipeline_document.pipeline_config,
             progress_callback=None,
         )
         orchestrator.initialize()
@@ -232,7 +166,7 @@ class InProcessCompileInspectionGateway(CompileInspectionGatewayABC):
         try:
             compilation = dict(
                 orchestrator.compile_pipelines(
-                    pipeline_definition=pipeline_boundary.steps,
+                    pipeline_definition=request.pipeline_document.pipeline_steps,
                     well_filter=list(request.axis_filter) or None,
                     is_zmq_execution=True,
                 )
@@ -258,26 +192,13 @@ class GlobalConfigSelection:
         return config
 
 
-@dataclass(frozen=True, slots=True)
-class PipelineConfigSelection:
-    config_id: str | None
-
-    def resolve(self, config_service: ConfigService) -> PipelineConfig | None:
-        if self.config_id is None:
-            return None
-        config = config_service.resolve_ref(self.config_id)
-        if not isinstance(config, PipelineConfig):
-            raise TypeError("pipeline_config_id must resolve to PipelineConfig")
-        return config
-
-
 class ExecutionClientABC(ABC):
     @abstractmethod
     def submit_compile(
         self,
         submission: OpenHCSExecutionSubmission,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> JsonObject:
         raise NotImplementedError
 
@@ -286,7 +207,7 @@ class ExecutionClientABC(ABC):
         self,
         submission: OpenHCSExecutionSubmission,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> JsonObject:
         raise NotImplementedError
 
@@ -295,7 +216,7 @@ class ExecutionClientABC(ABC):
         self,
         execution_id=None,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> JsonObject:
         raise NotImplementedError
 
@@ -321,7 +242,7 @@ class ZMQExecutionClientAdapter(ExecutionClientABC):
         self,
         submission: OpenHCSExecutionSubmission,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> JsonObject:
         return dict(self.client.submit_compile(submission, timeout_ms=timeout_ms))
 
@@ -329,7 +250,7 @@ class ZMQExecutionClientAdapter(ExecutionClientABC):
         self,
         submission: OpenHCSExecutionSubmission,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> JsonObject:
         return dict(self.client.submit_pipeline(submission, timeout_ms=timeout_ms))
 
@@ -337,7 +258,7 @@ class ZMQExecutionClientAdapter(ExecutionClientABC):
         self,
         execution_id=None,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> JsonObject:
         return dict(self.client.get_status(execution_id, timeout_ms=timeout_ms))
 
@@ -346,45 +267,42 @@ class ZMQExecutionClientAdapter(ExecutionClientABC):
 
 
 class ZMQExecutionClientFactory(ExecutionClientFactoryABC):
+    def __init__(
+        self,
+        config: OpenHCSZMQConfig = OPENHCS_ZMQ_CONFIG,
+    ) -> None:
+        self._config = config
+
     def create_client(
         self,
         connection: ExecutionConnectionSpec,
     ) -> ZMQExecutionClientAdapter:
         return ZMQExecutionClientAdapter(
-            ZMQExecutionClient(**connection.zmq_client_kwargs())
+            ZMQExecutionClient(
+                config=self._config,
+                **connection.zmq_client_kwargs(),
+            )
         )
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutionConfigBundle:
-    global_pipeline: GlobalPipelineConfig
-    plate_pipeline: PipelineConfig | None
-
-
-@dataclass(frozen=True, slots=True)
-class PipelineIdBoundary:
-    value: str
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ExecutionSessionCommonRequest:
     identity: ZMQExecutionIdentity
     global_config_id: str | None = None
-    pipeline_config_id: str | None = None
     connection: ExecutionConnectionSpec = ExecutionConnectionSpec()
 
 
 class ExecutionPipelineSessionRequest(
     ExecutionSessionCommonRequest,
     ABC,
-    metaclass=AutoRegisterMeta,
 ):
-    __registry_key__ = "registry_key"
-    __skip_if_no_key__ = True
-    registry_key = None
-
     @abstractmethod
-    def pipeline_provider(self) -> ExecutionPipelineDefinitionProvider:
+    def build_pipeline_definition(
+        self,
+        *,
+        session_id: str,
+        pipeline_service: PipelineAuthoringService,
+    ) -> "ExecutionPipelineDefinition":
         raise NotImplementedError
 
 
@@ -393,7 +311,7 @@ class ResolvedExecutionSessionInputs:
     plate: Path
     execution_plate: Path
     selected_pipeline: Path | None
-    configs: ExecutionConfigBundle
+    global_pipeline_config: GlobalPipelineConfig
     connection: ExecutionConnectionSpec
 
     @classmethod
@@ -421,145 +339,87 @@ class ResolvedExecutionSessionInputs:
             plate=plate,
             execution_plate=execution_plate,
             selected_pipeline=selected_pipeline,
-            configs=ExecutionConfigBundle(
-                global_pipeline=GlobalConfigSelection(
-                    request.global_config_id
-                ).resolve(config_service),
-                plate_pipeline=PipelineConfigSelection(
-                    request.pipeline_config_id
-                ).resolve(config_service),
-            ),
+            global_pipeline_config=GlobalConfigSelection(
+                request.global_config_id
+            ).resolve(config_service),
             connection=request.connection,
         )
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutionPipelinePayload(PipelineStepsCarrier):
-    registry_key = "execution_pipeline_payload"
-
-    definition_pipeline: PipelineStepsBoundary
-    pipeline_source: str | None
-
-    @property
-    def pipeline_steps_boundary(self) -> PipelineStepsBoundary:
-        return self.definition_pipeline
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutionPipelineDefinition(ExecutionPipelinePayload):
-    registry_key = "execution_pipeline_definition"
-
-    pipeline_identity: PipelineIdBoundary
-
-    @property
-    def pipeline_id(self) -> str:
-        return self.pipeline_identity.value
-
-
-class ExecutionPipelineDefinitionProvider(ABC, metaclass=AutoRegisterMeta):
-    __registry_key__ = "registry_key"
-    __skip_if_no_key__ = True
-    registry_key = None
-
-    @abstractmethod
-    def build(
-        self,
-        *,
-        session_id: str,
-        pipeline_service: PipelineAuthoringService,
-    ) -> ExecutionPipelineDefinition:
-        raise NotImplementedError
-
-
-@dataclass(frozen=True, slots=True)
-class DraftPipelineDefinitionProvider(ExecutionPipelineDefinitionProvider):
-    registry_key = "draft"
-    request: DraftPipelineSessionRequest
-
-    def build(
-        self,
-        *,
-        session_id: str,
-        pipeline_service: PipelineAuthoringService,
-    ) -> ExecutionPipelineDefinition:
-        return ExecutionPipelineDefinition(
-            pipeline_identity=self.request.pipeline_identity,
-            definition_pipeline=PipelineStepsBoundary(
-                pipeline_service.to_function_steps(self.request.pipeline_id)
-            ),
-            pipeline_source=None,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class PycodifiedSourcePipelineDefinitionProvider(ExecutionPipelineDefinitionProvider):
-    registry_key = "pycodified_source"
-    pipeline_source: str
-
-    def build(
-        self,
-        *,
-        session_id: str,
-        pipeline_service: PipelineAuthoringService,
-    ) -> ExecutionPipelineDefinition:
-        return ExecutionPipelineDefinition(
-            pipeline_identity=PipelineIdBoundary(f"pycodified-source:{session_id}"),
-            definition_pipeline=PipelineStepsBoundary([]),
-            pipeline_source=self.pipeline_source,
-        )
+class ExecutionPipelineDefinition:
+    pipeline_id: str
+    pipeline_document: PipelineDocument
+    pipeline_config_id: str | None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DraftPipelineSessionRequest(ExecutionPipelineSessionRequest):
-    registry_key = "draft"
-    pipeline_identity: PipelineIdBoundary
+    pipeline_id: str
 
-    @property
-    def pipeline_id(self) -> str:
-        return self.pipeline_identity.value
-
-    def pipeline_provider(self) -> DraftPipelineDefinitionProvider:
-        return DraftPipelineDefinitionProvider(request=self)
+    def build_pipeline_definition(
+        self,
+        *,
+        session_id: str,
+        pipeline_service: PipelineAuthoringService,
+    ) -> ExecutionPipelineDefinition:
+        del session_id
+        document = pipeline_service.to_pipeline_document(self.pipeline_id)
+        spec = pipeline_service.get_pipeline(self.pipeline_id)
+        return ExecutionPipelineDefinition(
+            pipeline_id=self.pipeline_id,
+            pipeline_document=document,
+            pipeline_config_id=spec.pipeline_config_id,
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class PycodifiedPipelineSessionRequest(ExecutionPipelineSessionRequest):
-    registry_key = "pycodified_source"
+class PipelineSourceSessionRequest(ExecutionPipelineSessionRequest):
     pipeline_source: str
 
     def __post_init__(self) -> None:
         if self.identity.execution_plate_id is not None:
             raise ValueError(
-                "Pycodified source sessions execute plate_id directly; "
+                "Pipeline source sessions execute plate_id directly; "
                 "execution_plate_id must be None."
             )
         if self.identity.selected_pipeline_path is not None:
             raise ValueError(
-                "Pycodified source sessions use pipeline_source as the selected "
+                "Pipeline source sessions use pipeline_source as the selected "
                 "pipeline authority; selected_pipeline_path must be None."
             )
 
-    def pipeline_provider(self) -> PycodifiedSourcePipelineDefinitionProvider:
-        return PycodifiedSourcePipelineDefinitionProvider(self.pipeline_source)
+    def build_pipeline_definition(
+        self,
+        *,
+        session_id: str,
+        pipeline_service: PipelineAuthoringService,
+    ) -> ExecutionPipelineDefinition:
+        del pipeline_service
+        document = PipelineDocumentAuthority.from_source(self.pipeline_source)
+        return ExecutionPipelineDefinition(
+            pipeline_id=f"pipeline-source:{session_id}",
+            pipeline_document=document,
+            pipeline_config_id=None,
+        )
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutionSessionRecord(ExecutionPipelinePayload):
-    registry_key = "execution_session_record"
-
+class ExecutionSessionRecord:
     session: OrchestratorSession
-    configs: ExecutionConfigBundle
+    pipeline_document: PipelineDocument
+    global_pipeline_config: GlobalPipelineConfig
 
-    def submission(self, compile_artifact_id: str | None = None) -> OpenHCSExecutionSubmission:
+    def submission(
+        self, compile_artifact_id: str | None = None
+    ) -> OpenHCSExecutionSubmission:
         return OpenHCSExecutionSubmission(
             plate_id=self.session.plate_path,
             execution_plate_id=self.session.execution_plate_path,
             selected_pipeline_path=self.session.selected_pipeline_path,
-            pipeline_steps=self.pipeline_steps,
-            global_config=self.configs.global_pipeline,
-            pipeline_config=self.configs.plate_pipeline,
+            pipeline_document=self.pipeline_document,
+            global_config=self.global_pipeline_config,
             compile_artifact_id=compile_artifact_id,
-            pipeline_source=self.pipeline_source,
         )
 
 
@@ -670,7 +530,7 @@ class ExecutionClientGateway:
         kind: ExecutionJobKind,
         compile_artifact_id: str | None = None,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> JsonObject:
         return _call_zmq_control_with_timeout(
             lambda: self._submit_without_boundary_timeout(
@@ -702,7 +562,7 @@ class ExecutionClientGateway:
         session: OrchestratorSession,
         server_execution_id: str,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> JsonObject:
         return _call_zmq_control_with_timeout(
             lambda: self._status_without_boundary_timeout(
@@ -729,7 +589,7 @@ class ExecutionClientGateway:
         session: OrchestratorSession,
         server_execution_id: str,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_WAIT_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> JsonObject:
         deadline = time.monotonic() + (max(0, timeout_ms) / 1000)
         last_response: JsonObject | None = None
@@ -740,7 +600,10 @@ class ExecutionClientGateway:
                 response = self.status(
                     session,
                     server_execution_id,
-                    timeout_ms=min(DEFAULT_EXECUTION_STATUS_TIMEOUT_MS, remaining_ms),
+                    timeout_ms=min(
+                        OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+                        remaining_ms,
+                    ),
                 )
             except Exception as exc:
                 last_error = exc
@@ -800,7 +663,6 @@ class ExecutionSessionService:
         execution_plate_path: str | None = None,
         selected_pipeline_path: str | None = None,
         global_config_id: str | None = None,
-        pipeline_config_id: str | None = None,
         connection: ExecutionConnectionSpec = _DEFAULT_CONNECTION,
     ) -> OrchestratorSessionRef:
         return self._create_session(
@@ -810,9 +672,8 @@ class ExecutionSessionService:
                     execution_plate_id=execution_plate_path,
                     selected_pipeline_path=selected_pipeline_path,
                 ),
-                pipeline_identity=PipelineIdBoundary(pipeline_id),
+                pipeline_id=pipeline_id,
                 global_config_id=global_config_id,
-                pipeline_config_id=pipeline_config_id,
                 connection=connection,
             )
         )
@@ -828,16 +689,15 @@ class ExecutionSessionService:
                     execution_plate_id=request.execution_plate_path,
                     selected_pipeline_path=request.selected_pipeline_path,
                 ),
-                pipeline_identity=PipelineIdBoundary(request.pipeline_id),
+                pipeline_id=request.pipeline_id,
                 global_config_id=request.global_config_id,
-                pipeline_config_id=request.pipeline_config_id,
                 connection=request.connection,
             )
         )
 
     def create_session_from_pipeline_source(
         self,
-        request: PycodifiedPipelineSessionRequest,
+        request: PipelineSourceSessionRequest,
     ) -> OrchestratorSessionRef:
         return self._create_session(request)
 
@@ -846,18 +706,17 @@ class ExecutionSessionService:
         request: PipelineSourceOrchestratorSessionRequest,
     ) -> OrchestratorSessionRef:
         return self.create_session_from_pipeline_source(
-            PycodifiedPipelineSessionRequest(
+            PipelineSourceSessionRequest(
                 identity=ZMQExecutionIdentity(plate_id=request.plate_path),
                 pipeline_source=request.pipeline_source,
                 global_config_id=request.global_config_id,
-                pipeline_config_id=request.pipeline_config_id,
                 connection=request.connection,
             )
         )
 
     def inspect_pipeline_source_artifact_plan(
         self,
-        request: PycodifiedPipelineSessionRequest,
+        request: PipelineSourceSessionRequest,
         *,
         axis_filter: tuple[str, ...] = (),
     ) -> ArtifactPlanInspection:
@@ -866,19 +725,29 @@ class ExecutionSessionService:
         metadata_path = _openhcs_metadata_path(plate)
         metadata_existed_before = metadata_path.exists()
         try:
+            document = PipelineDocumentAuthority.from_source(request.pipeline_source)
+        except Exception as exc:
+            return ArtifactPlanInspection(
+                schema_version=SCHEMA_VERSION,
+                plate_path=str(plate),
+                axis_filter=axis_filter,
+                progress_event_count=0,
+                warnings=_compile_inspection_workspace_warnings(
+                    metadata_path,
+                    metadata_existed_before,
+                ),
+                errors=(_pipeline_document_error(exc),),
+            )
+
+        try:
             compilation = self._compile_inspection_gateway.compile(
                 CompileInspectionInput(
                     plate=plate,
-                    pipeline_source=request.pipeline_source,
+                    pipeline_document=document,
                     axis_filter=axis_filter,
-                    configs=ExecutionConfigBundle(
-                        global_pipeline=GlobalConfigSelection(
-                            request.global_config_id
-                        ).resolve(self._config_service),
-                        plate_pipeline=PipelineConfigSelection(
-                            request.pipeline_config_id
-                        ).resolve(self._config_service),
-                    ),
+                    global_pipeline_config=GlobalConfigSelection(
+                        request.global_config_id
+                    ).resolve(self._config_service),
                     progress_queue=progress_queue,
                 )
             )
@@ -911,11 +780,10 @@ class ExecutionSessionService:
         request: PipelineSourceArtifactPlanInspectionRequest,
     ) -> ArtifactPlanInspection:
         return self.inspect_pipeline_source_artifact_plan(
-            PycodifiedPipelineSessionRequest(
+            PipelineSourceSessionRequest(
                 identity=ZMQExecutionIdentity(plate_id=request.plate_path),
                 pipeline_source=request.pipeline_source,
                 global_config_id=request.global_config_id,
-                pipeline_config_id=request.pipeline_config_id,
                 connection=ExecutionConnectionSpec(),
             ),
             axis_filter=request.axis_filter,
@@ -931,7 +799,7 @@ class ExecutionSessionService:
             path_policy=self._path_policy,
             config_service=self._config_service,
         )
-        pipeline_definition = request.pipeline_provider().build(
+        pipeline_definition = request.build_pipeline_definition(
             session_id=session_id,
             pipeline_service=self._pipeline_service,
         )
@@ -944,15 +812,14 @@ class ExecutionSessionService:
             selected_pipeline_path=_optional_path_text(resolved.selected_pipeline),
             pipeline_id=pipeline_definition.pipeline_id,
             global_config_id=request.global_config_id,
-            pipeline_config_id=request.pipeline_config_id,
+            pipeline_config_id=pipeline_definition.pipeline_config_id,
             connection=resolved.connection,
         )
         return self._session_store.store(
             ExecutionSessionRecord(
                 session=session,
-                definition_pipeline=pipeline_definition.definition_pipeline,
-                pipeline_source=pipeline_definition.pipeline_source,
-                configs=resolved.configs,
+                pipeline_document=pipeline_definition.pipeline_document,
+                global_pipeline_config=resolved.global_pipeline_config,
             )
         )
 
@@ -970,8 +837,8 @@ class ExecutionSessionService:
         session_id: str,
         *,
         wait: bool = False,
-        submit_timeout_ms: int = DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS,
-        wait_timeout_ms: int = DEFAULT_EXECUTION_WAIT_TIMEOUT_MS,
+        submit_timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+        wait_timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> ExecutionJobRef | ExecutionJobStatus:
         return self._submit_job(
             session_id,
@@ -987,8 +854,8 @@ class ExecutionSessionService:
         *,
         compile_artifact_id: str | None = None,
         wait: bool = False,
-        submit_timeout_ms: int = DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS,
-        wait_timeout_ms: int = DEFAULT_EXECUTION_WAIT_TIMEOUT_MS,
+        submit_timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
+        wait_timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> ExecutionJobRef | ExecutionJobStatus:
         return self._submit_job(
             session_id,
@@ -1003,7 +870,7 @@ class ExecutionSessionService:
         self,
         job_id: str,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ) -> ExecutionJobStatus:
         job = self._job_store.job_record(job_id)
         if job.ref.server_execution_id is None:
@@ -1065,6 +932,7 @@ class ExecutionSessionService:
             return updated.status()
         return ref
 
+
 def _server_execution_id(response: JsonObject) -> str | None:
     if "execution_id" not in response:
         return None
@@ -1080,7 +948,9 @@ def _call_zmq_control_with_timeout(
     timeout_ms: int,
     operation: str,
 ) -> JsonObject:
-    result_queue: queue.Queue[tuple[bool, JsonObject | Exception]] = queue.Queue(maxsize=1)
+    result_queue: queue.Queue[tuple[bool, JsonObject | Exception]] = queue.Queue(
+        maxsize=1
+    )
 
     def run_operation() -> None:
         try:
@@ -1185,7 +1055,9 @@ def artifact_plan_inspection_from_compilation(
         axis_count=len(axes),
         axes=axes[:MAX_INSPECTION_AXES],
         truncated_axis_count=max(0, len(axes) - MAX_INSPECTION_AXES),
-        step_count=sum(len(context.step_plans) for context in compiled_contexts.values()),
+        step_count=sum(
+            len(context.step_plans) for context in compiled_contexts.values()
+        ),
         steps=step_summaries,
         truncated_step_count=max(
             0,
@@ -1247,7 +1119,7 @@ def _compile_inspection_error(exception: Exception) -> AgentError:
                 "declares that artifact output, configure source bindings that "
                 "provide it from the plate workspace, or inspect "
                 "openhcs_function_patterns and "
-                "openhcs_agent_mcp_overview#pipeline-input-routing before "
+                "openhcs_architecture_quick_start#compile-before-execution before "
                 "retrying artifact-plan."
             ),
         )
@@ -1267,8 +1139,25 @@ def _compile_inspection_error(exception: Exception) -> AgentError:
         "compile_inspection_failed",
         exception,
         hint=(
-            "Check plate inspection, pipeline_source, and config IDs before retrying "
-            "compile inspection."
+            "Check plate inspection, the embedded pipeline config, and the external "
+            "global config before retrying compile inspection."
+        ),
+    )
+
+
+def _pipeline_document_error(exception: Exception) -> AgentError:
+    code = (
+        "pipeline_source_syntax_error"
+        if isinstance(exception, SyntaxError)
+        else "pipeline_source_invalid_document"
+    )
+    return AgentError.from_exception(
+        code,
+        exception,
+        hint=(
+            "Provide a complete pipeline document defining typed pipeline_config "
+            "and pipeline_steps assignments, usually by rendering an MCP pipeline "
+            "draft with openhcs_render_pipeline_source."
         ),
     )
 
@@ -1288,8 +1177,8 @@ def _bounded_step_summaries(compiled_contexts, axes: tuple[str, ...]):
                 ]
             )
             artifact_outputs = tuple(
-                _artifact_summary(context, step_plan, output_key, plan)
-                for output_key, plan in tuple(step_plan.artifact_outputs.items())[
+                _artifact_summary(context, step_plan, plan.name, plan)
+                for plan in tuple(step_plan.artifact_outputs.values())[
                     :MAX_INSPECTION_ARTIFACT_OUTPUTS_PER_STEP
                 ]
             )
@@ -1298,7 +1187,11 @@ def _bounded_step_summaries(compiled_contexts, axes: tuple[str, ...]):
                 step_name=str(step_plan.step_name),
                 axis_id=str(step_plan.axis_id),
                 output_dir=_optional_path_text(step_plan.output_dir),
-                execution_groups=tuple(step_plan.execution_groups),
+                execution_groups=step_plan.execution_group_scope.keys,
+                main_flow_materialization=(
+                    _main_flow_materialization_summary(step_plan)
+                ),
+                viewer_streaming=_viewer_streaming_summaries(step_plan),
                 artifact_inputs=artifact_inputs,
                 artifact_outputs=artifact_outputs,
                 truncated_artifact_input_count=max(
@@ -1312,6 +1205,47 @@ def _bounded_step_summaries(compiled_contexts, axes: tuple[str, ...]):
                     - MAX_INSPECTION_ARTIFACT_OUTPUTS_PER_STEP,
                 ),
             )
+
+
+def _main_flow_materialization_summary(
+    step_plan: CompiledStepPlan,
+) -> MainFlowMaterializationPlanSummary | None:
+    plan = step_plan.materialized_output
+    if plan is None:
+        return None
+    return MainFlowMaterializationPlanSummary(
+        output_dir=str(plan.output_dir),
+        backend=str(plan.backend),
+        plate_root=str(plan.plate_root),
+        sub_dir=str(plan.sub_dir),
+        analysis_results_dir=(
+            None
+            if plan.analysis_results_dir is None
+            else str(plan.analysis_results_dir)
+        ),
+    )
+
+
+def _viewer_streaming_summaries(
+    step_plan: CompiledStepPlan,
+) -> tuple[ViewerStreamingPlanSummary, ...]:
+    summaries = []
+    for config_key, config in step_plan.streaming_configs.items():
+        effective_config = to_jsonable(config)
+        if not isinstance(effective_config, dict):
+            raise TypeError(
+                "Compiled streaming config projection must be a JSON object; "
+                f"got {type(effective_config).__name__}."
+            )
+        summaries.append(
+            ViewerStreamingPlanSummary(
+                config_key=str(config_key),
+                viewer_type=str(config.viewer_type),
+                backend=str(config.backend.value),
+                effective_config=effective_config,
+            )
+        )
+    return tuple(summaries)
 
 
 def _artifact_input_summary(plan) -> ArtifactInputPlanSummary:
@@ -1362,47 +1296,18 @@ def _artifact_materialization_summary(
     output_key: str,
     output_plan,
 ) -> ArtifactMaterializationPlanSummary | None:
-    if (
-        output_plan.materialization is None
-        and output_plan.artifact_type is SpecialArtifactType
-    ):
+    persistent_plan = step_plan.runtime_artifact_materialization
+    if output_plan.materialization is None:
         return None
 
-    persistent_plan = step_plan.runtime_artifact_materialization
-    analysis_output_dir = _analysis_output_dir(step_plan)
-    if output_plan.materialization is NO_ARTIFACT_MATERIALIZATION:
-        return ArtifactMaterializationPlanSummary(
-            persistent_enabled=persistent_plan.persistent_enabled,
-            persistent_backend=persistent_plan.persistent_backend,
-            analysis_output_dir=analysis_output_dir,
-            disabled=True,
-            note="Artifact materialization is explicitly disabled.",
-        )
-
-    execution_plan = _function_step_execution_plan(context, step_plan)
-    if execution_plan is None:
-        runtime_resolved = output_plan.materialization is None
-        return ArtifactMaterializationPlanSummary(
-            persistent_enabled=persistent_plan.persistent_enabled,
-            persistent_backend=persistent_plan.persistent_backend,
-            analysis_output_dir=analysis_output_dir,
-            runtime_resolved=runtime_resolved,
-            filename_uses_source_identity=(
-                output_plan.materialization_uses_source_identity_filename()
-            ),
-            note=(
-                "Materialized path preview requires the compiled FunctionStep "
-                "runtime plan."
-            ),
-        )
+    step_plan.require_function_execution_ready()
 
     preview = planned_materialization_preview(
         context=context,
-        plan=execution_plan,
+        plan=step_plan,
         output_key=output_key,
         output_plan=output_plan,
     )
-    runtime_resolved = output_plan.materialization is None
     paths = ()
     filename_uses_source_identity = (
         output_plan.materialization_uses_source_identity_filename()
@@ -1421,43 +1326,19 @@ def _artifact_materialization_summary(
         runtime_metadata_can_refine_paths = preview.runtime_metadata_can_refine_paths
 
     note = None
-    if runtime_resolved:
-        note = (
-            "Materialization spec is resolved from the runtime value schema "
-            "during execution."
-        )
-    elif runtime_metadata_can_refine_paths:
+    if runtime_metadata_can_refine_paths:
         note = "Runtime payload metadata can split or refine candidate filenames."
 
     return ArtifactMaterializationPlanSummary(
         persistent_enabled=persistent_plan.persistent_enabled,
         persistent_backend=persistent_plan.persistent_backend,
-        analysis_output_dir=str(execution_plan.artifact_analysis_output_dir),
+        analysis_output_dir=str(step_plan.artifact_analysis_output_dir),
         paths=paths,
-        runtime_resolved=runtime_resolved,
+        runtime_resolved=False,
         filename_uses_source_identity=filename_uses_source_identity,
         runtime_metadata_can_refine_paths=runtime_metadata_can_refine_paths,
         note=note,
     )
-
-
-def _function_step_execution_plan(
-    context,
-    step_plan: CompiledStepPlan,
-) -> FunctionStepExecutionPlan | None:
-    try:
-        return FunctionStepExecutionPlan.from_context(
-            context,
-            int(step_plan.step_index),
-        )
-    except (RuntimeError, ValueError):
-        return None
-
-
-def _analysis_output_dir(step_plan: CompiledStepPlan) -> str | None:
-    if step_plan.materialized_output is not None:
-        return step_plan.materialized_output.analysis_results_dir
-    return step_plan.analysis_results_dir
 
 
 def _source_workspace_summary(
@@ -1471,7 +1352,9 @@ def _source_workspace_summary(
     full_virtual_paths = projection.pipeline_start_files()
     records = tuple(
         _source_workspace_record(projection, full_virtual_path)
-        for full_virtual_path in full_virtual_paths[:MAX_INSPECTION_SOURCE_WORKSPACE_FILES]
+        for full_virtual_path in full_virtual_paths[
+            :MAX_INSPECTION_SOURCE_WORKSPACE_FILES
+        ]
     )
     return SourceWorkspaceSummary(
         file_count=len(full_virtual_paths),

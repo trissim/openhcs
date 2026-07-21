@@ -6,31 +6,32 @@ import argparse
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import inspect
 import json
 import os
 from pathlib import Path
 import sys
-import tempfile
-from typing import ClassVar, Self, TextIO, cast
+from typing import ClassVar, Self, TextIO, TypeVar, cast
 
 from metaclass_registry import AutoRegisterMeta
 
-from openhcs.agent.capabilities import AgentCapabilitySpec, agent_capabilities
+from openhcs.agent.capabilities import (
+    AgentCapabilitySpec,
+    FullLocalCapabilitySurfaceProfile,
+    LocalCapabilitySurfaceProfile,
+)
 from openhcs.agent.dto.common import JsonObject, JsonValue
 from openhcs.agent.dto.execution import PipelineExecutionSubmissionRequest
-from openhcs.agent.dto.pipeline import (
-    PipelineSourceRenderRequest,
-    PipelineValidationRequest,
-)
 from openhcs.agent.dto.ui_bridge import (
     UiObjectStateFieldFilter,
     UiSelectedPlateWorkflowKind,
 )
-from openhcs.agent.ui_bridge_identities import PlateManagerStateSurfaceIdentityDeclaration
-from openhcs.agent.serialization import to_jsonable
+from openhcs.agent.ui_bridge_identities import (
+    PlateManagerStateSurfaceIdentityDeclaration,
+)
+from openhcs.serialization.json import to_jsonable
 from openhcs.constants.constants import AllComponents, OrchestratorState
 from openhcs.core.execution_state import TerminalExecutionStatus
 from openhcs.core.plate_file_inventory import PlateFileInventoryQuery
@@ -44,6 +45,7 @@ DEFAULT_CALL_TIMEOUT_SECONDS = 5.0
 DEFAULT_REGISTRY_DISCOVERY_TIMEOUT_SECONDS = 30.0
 DEFAULT_WORKFLOW_POLL_INTERVAL_SECONDS = 0.5
 DEFAULT_WORKFLOW_POLL_TIMEOUT_SECONDS = 30.0
+AliasValueT = TypeVar("AliasValueT")
 MCP_DEV_TRANSPORT_FAILURE_HINT = (
     "The fresh OpenHCS MCP subprocess did not complete the requested stdio "
     "exchange. The dev client captures a bounded server stderr tail on "
@@ -54,6 +56,31 @@ MCP_DEV_TRANSPORT_FAILURE_HINT = (
 
 class McpDevCliUsageError(ValueError):
     """Local command-line validation failure before an MCP call is made."""
+
+
+def resolve_positional_option_alias(
+    positional_value: AliasValueT | None,
+    option_value: AliasValueT | None,
+    *,
+    default: AliasValueT | None,
+    value_name: str,
+    option_name: str,
+) -> AliasValueT | None:
+    """Resolve one CLI convenience pair without duplicating request semantics."""
+    if (
+        positional_value is not None
+        and option_value is not None
+        and positional_value != option_value
+    ):
+        raise McpDevCliUsageError(
+            f"Cannot pass both positional {value_name} and {option_name} "
+            "with different values."
+        )
+    if option_value is not None:
+        return option_value
+    if positional_value is not None:
+        return positional_value
+    return default
 
 
 class McpDevClientPhase(str, Enum):
@@ -107,9 +134,6 @@ class McpDevJsonRpcError(RuntimeError):
 
 class McpDevProtocolError(RuntimeError):
     """Malformed or unsupported MCP wire response."""
-
-
-
 
 
 class WorkflowPollSummaryStatus(str, Enum):
@@ -174,9 +198,7 @@ class McpTimeoutValidatedArguments:
         try:
             return cls.timeout_policy.resolve(timeout_ms)
         except ValueError as exc:
-            raise McpDevCliUsageError(
-                f"{cls.timeout_option_name}: {exc}"
-            ) from exc
+            raise McpDevCliUsageError(f"{cls.timeout_option_name}: {exc}") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +207,9 @@ class McpDevServerSpec:
 
     python_executable: str
     module_name: str = "openhcs.mcp"
+    surface_profile: LocalCapabilitySurfaceProfile = field(
+        default_factory=FullLocalCapabilitySurfaceProfile
+    )
     default_environment_keys: ClassVar[tuple[str, ...]] = (
         "HOME",
         "LOGNAME",
@@ -223,7 +248,12 @@ class McpDevServerSpec:
         }
 
     def process_args(self) -> tuple[str, ...]:
-        return ("-m", self.module_name)
+        return (
+            "-m",
+            self.module_name,
+            "--surface",
+            self.surface_profile.name,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,6 +339,12 @@ class McpDevToolResult:
             tool=tool_name,
             mcp_error=result.get("isError") is True,
             payloads=_content_payloads(result),
+        )
+
+    def has_errors(self) -> bool:
+        """Return whether the tool or any structured agent payload failed."""
+        return self.mcp_error or any(
+            _contains_agent_error(payload) for payload in self.payloads
         )
 
 
@@ -487,14 +523,12 @@ class WorkflowPollBaseline:
         state_payload = state_surface_payload(result)
         if not state_payload:
             return False
-        revision_token = (
-            optional_str(first_payload_mapping(result).get("current_revision_token"))
-            or optional_str(state_payload.get("current_revision_token"))
-        )
+        revision_token = optional_str(
+            first_payload_mapping(result).get("current_revision_token")
+        ) or optional_str(state_payload.get("current_revision_token"))
         object_state_token = optional_int(state_payload.get("object_state_token"))
         return (
-            revision_token is not None
-            and revision_token != self.revision_token
+            revision_token is not None and revision_token != self.revision_token
         ) or (
             object_state_token is not None
             and object_state_token != self.object_state_token
@@ -554,6 +588,10 @@ class McpDevToolMetadata:
     name: str
     description: str | None
     input_schema: JsonValue
+    title: str | None = None
+    annotations: JsonValue | None = None
+    output_schema: JsonValue | None = None
+    meta: JsonValue | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -792,11 +830,7 @@ def add_request_factory_option(
 ) -> None:
     """Add a CLI option whose default/type comes from a request factory field."""
     parameter = request_factory_parameter(request_factory, field_name)
-    if (
-        "dest" not in kwargs
-        and flags
-        and all(flag.startswith("-") for flag in flags)
-    ):
+    if "dest" not in kwargs and flags and all(flag.startswith("-") for flag in flags):
         kwargs["dest"] = field_name
     if "default" not in kwargs and parameter.default is not inspect.Parameter.empty:
         kwargs["default"] = parameter.default
@@ -815,7 +849,9 @@ def parse_cli_json_value(argument_text: str) -> JsonValue:
         return argument_text
 
 
-def parse_optional_json_object(argument_text: str | None) -> dict[str, JsonValue] | None:
+def parse_optional_json_object(
+    argument_text: str | None,
+) -> dict[str, JsonValue] | None:
     if argument_text is None:
         return None
     return parse_json_object(argument_text)
@@ -847,6 +883,9 @@ def _payload_from_text(text: str) -> JsonValue:
 
 
 def _content_payloads(result: Mapping[str, JsonValue]) -> tuple[JsonValue, ...]:
+    structured_content = result.get("structuredContent")
+    if isinstance(structured_content, Mapping):
+        return (cast(JsonValue, structured_content),)
     payloads: list[JsonValue] = []
     content_blocks = result.get("content")
     if not isinstance(content_blocks, list):
@@ -869,7 +908,7 @@ def _content_payloads(result: Mapping[str, JsonValue]) -> tuple[JsonValue, ...]:
     return tuple(payloads)
 
 
-async def _call_tool(
+async def call_mcp_tool(
     session: "McpDevStdioSession",
     call: McpDevToolCall,
     timeout_seconds: float,
@@ -916,7 +955,10 @@ def _command_failed(payload: JsonObject) -> bool:
                     return True
     return False
 
-def _transport_failure_leaf_causes(exception: BaseException) -> tuple[BaseException, ...]:
+
+def _transport_failure_leaf_causes(
+    exception: BaseException,
+) -> tuple[BaseException, ...]:
     if isinstance(exception, BaseExceptionGroup):
         return tuple(
             leaf
@@ -927,7 +969,7 @@ def _transport_failure_leaf_causes(exception: BaseException) -> tuple[BaseExcept
 
 
 class McpDevStdioSession:
-    """Minimal MCP JSON-RPC stdio session for fresh-process dev-client calls."""
+    """Minimal MCP JSON-RPC stdio transport reusable across dev-client commands."""
 
     stdout_buffer_limit_bytes: ClassVar[int] = 8 * 1024 * 1024
 
@@ -1143,165 +1185,43 @@ def mcp_tool_metadata_from_wire(
         raise McpDevProtocolError(
             "MCP tool metadata did not contain an object inputSchema."
         )
+    title = tool.get("title")
+    if title is not None and not isinstance(title, str):
+        raise McpDevProtocolError("MCP tool metadata title was not a string or null.")
+    annotations = tool.get("annotations")
+    if annotations is not None and not isinstance(annotations, Mapping):
+        raise McpDevProtocolError("MCP tool annotations were not an object or null.")
+    output_schema = tool.get("outputSchema")
+    if output_schema is not None and not isinstance(output_schema, Mapping):
+        raise McpDevProtocolError("MCP tool outputSchema was not an object or null.")
+    meta = tool.get("_meta")
+    if meta is not None and not isinstance(meta, Mapping):
+        raise McpDevProtocolError("MCP tool _meta was not an object or null.")
     return McpDevToolMetadata(
         name=name,
         description=description,
         input_schema=cast(JsonValue, input_schema),
+        title=title,
+        annotations=cast(JsonValue, annotations),
+        output_schema=cast(JsonValue, output_schema),
+        meta=cast(JsonValue, meta),
     )
 
 
-async def call_fresh_mcp_server(
-    server_spec: McpDevServerSpec,
+async def call_mcp_session(
+    session: McpDevStdioSession,
     calls: Sequence[McpDevToolCall],
-    timeout_seconds: float,
-) -> McpDevToolBatchResponse:
-    """Start a fresh MCP server, issue calls, and return JSON-ready results."""
-    phase = McpDevClientPhase.START_SERVER
-    payload: McpDevToolBatchResponse | None = None
-    with tempfile.TemporaryFile(
-        mode="w+",
-        encoding="utf-8",
-        errors="replace",
-    ) as server_stderr:
-        try:
-            async with McpDevStdioSession(server_spec, server_stderr) as session:
-                phase = McpDevClientPhase.INITIALIZE
-                await session.initialize(timeout_seconds=timeout_seconds)
-                results: list[McpDevToolResult] = []
-                for call in calls:
-                    phase = McpDevClientPhase.CALL_TOOL
-                    results.append(await _call_tool(session, call, timeout_seconds))
-                phase = McpDevClientPhase.TEARDOWN
-                payload = McpDevToolBatchResponse.from_results(
-                    server_spec,
-                    tuple(results),
-                )
-                return payload
-        except Exception as exc:
-            return McpDevToolBatchResponse.from_transport_failure(
-                server_spec,
-                phase,
-                exc,
-                server_stderr_tail=captured_server_stderr_tail(server_stderr),
-            )
-
-
-async def call_selected_workflow_with_state_poll(
-    server_spec: McpDevServerSpec,
-    args: argparse.Namespace,
     *,
     timeout_seconds: float,
 ) -> McpDevToolBatchResponse:
-    """Dispatch a selected workflow and poll PlateManager state in one session."""
-    phase = McpDevClientPhase.START_SERVER
-    payload: McpDevToolBatchResponse | None = None
-    with tempfile.TemporaryFile(
-        mode="w+",
-        encoding="utf-8",
-        errors="replace",
-    ) as server_stderr:
-        try:
-            async with McpDevStdioSession(server_spec, server_stderr) as session:
-                phase = McpDevClientPhase.INITIALIZE
-                await session.initialize(timeout_seconds=timeout_seconds)
-                phase = McpDevClientPhase.CALL_TOOL
-                state_call = McpDevToolCall(
-                    agent_capabilities.ui_get_state_surface.name,
-                    plate_manager_state_surface_tool_arguments(
-                        args,
-                        selection_mode=args.poll_selection_mode,
-                    ),
-                )
-                baseline_result = await _call_tool(
-                    session,
-                    state_call,
-                    timeout_seconds,
-                )
-                workflow_result = await _call_tool(
-                    session,
-                    McpDevToolCall(
-                        agent_capabilities.ui_selected_plate_workflow.name,
-                        selected_workflow_tool_arguments(args),
-                    ),
-                    timeout_seconds,
-                )
-                results = [baseline_result, workflow_result]
-                baseline = WorkflowPollBaseline.from_result(baseline_result)
-                poll_completed = False
-                poll_count = 0
-                target_scope_ids = workflow_result_target_scope_ids(workflow_result)
-                poll_status = WorkflowPollSummaryStatus.SKIPPED
-                poll_terminal_status: WorkflowPollSummaryStatus | None = None
-                skip_reason: WorkflowPollSkipReason | None = None
-                action_status = workflow_result_action_status(workflow_result)
-
-                if workflow_result_was_accepted(workflow_result):
-                    policy = WorkflowStatePollPolicy.from_workflow_text(args.workflow)
-                    poll_deadline = (
-                        asyncio.get_running_loop().time()
-                        + args.poll_timeout_seconds
-                    )
-
-                    while True:
-                        poll_result = await _call_tool(
-                            session,
-                            state_call,
-                            timeout_seconds,
-                        )
-                        results.append(poll_result)
-                        poll_count += 1
-                        if (
-                            baseline is None
-                            or baseline.changed_by(poll_result)
-                            or poll_count > 1
-                        ):
-                            poll_terminal_status = workflow_poll_terminal_status(
-                                poll_result,
-                                target_scope_ids=target_scope_ids,
-                                policy=policy,
-                            )
-                            if poll_terminal_status is not None:
-                                poll_completed = (
-                                    poll_terminal_status
-                                    is WorkflowPollSummaryStatus.COMPLETED
-                                )
-                                break
-                        if asyncio.get_running_loop().time() >= poll_deadline:
-                            break
-                        await asyncio.sleep(args.poll_interval_seconds)
-                    poll_status = (
-                        poll_terminal_status
-                        if poll_terminal_status is not None
-                        else WorkflowPollSummaryStatus.TIMEOUT
-                    )
-                else:
-                    skip_reason = workflow_poll_skip_reason(workflow_result)
-
-                results.append(
-                    workflow_poll_summary_result(
-                        workflow=args.workflow,
-                        status=poll_status,
-                        poll_requested=True,
-                        poll_completed=poll_completed,
-                        poll_count=poll_count,
-                        target_scope_ids=target_scope_ids,
-                        skip_reason=skip_reason,
-                        action_status=action_status,
-                    )
-                )
-                phase = McpDevClientPhase.TEARDOWN
-                payload = McpDevToolBatchResponse.from_results(
-                    server_spec,
-                    tuple(results),
-                )
-                return payload
-        except Exception as exc:
-            return McpDevToolBatchResponse.from_transport_failure(
-                server_spec,
-                phase,
-                exc,
-                server_stderr_tail=captured_server_stderr_tail(server_stderr),
-            )
+    """Issue tool calls through an initialized MCP session."""
+    results: list[McpDevToolResult] = []
+    for call in calls:
+        results.append(await call_mcp_tool(session, call, timeout_seconds))
+    return McpDevToolBatchResponse.from_results(
+        session.server_spec,
+        tuple(results),
+    )
 
 
 def first_mapping_payload(result: McpDevToolResult) -> Mapping[str, JsonValue] | None:
@@ -1321,7 +1241,6 @@ def execute_source_session_tool_arguments(
             "plate_path": args.plate_path,
             "pipeline_source": pipeline_source_from_args(args),
             "global_config_id": args.global_config_id,
-            "pipeline_config_id": args.pipeline_config_id,
             "host": args.host,
             "port": args.port,
             "transport_mode": args.transport_mode,
@@ -1358,203 +1277,17 @@ def execute_source_submit_timeout_seconds(
     return max(timeout_seconds, tool_timeout + 5.0)
 
 
-async def call_execute_source_with_submission(
-    server_spec: McpDevServerSpec,
-    args: argparse.Namespace,
+async def list_mcp_session_tools(
+    session: McpDevStdioSession,
     *,
-    timeout_seconds: float,
-) -> McpDevToolBatchResponse:
-    """Create a source-backed execution session and submit it in one MCP process."""
-    phase = McpDevClientPhase.START_SERVER
-    payload: McpDevToolBatchResponse | None = None
-    with tempfile.TemporaryFile(
-        mode="w+",
-        encoding="utf-8",
-        errors="replace",
-    ) as server_stderr:
-        try:
-            async with McpDevStdioSession(server_spec, server_stderr) as session:
-                phase = McpDevClientPhase.INITIALIZE
-                await session.initialize(timeout_seconds=timeout_seconds)
-                phase = McpDevClientPhase.CALL_TOOL
-                create_result = await _call_tool(
-                    session,
-                    McpDevToolCall(
-                        agent_capabilities.create_orchestrator_session_from_pipeline_source.name,
-                        execute_source_session_tool_arguments(args),
-                    ),
-                    timeout_seconds,
-                )
-                results = [create_result]
-                create_payload = first_mapping_payload(create_result)
-                session_id = (
-                    optional_str(create_payload.get("session_id"))
-                    if create_payload is not None
-                    else None
-                )
-                if session_id is not None:
-                    results.append(
-                        await _call_tool(
-                            session,
-                            McpDevToolCall(
-                                agent_capabilities.submit_pipeline_execution.name,
-                                execute_source_submit_tool_arguments(
-                                    args,
-                                    session_id=session_id,
-                                ),
-                            ),
-                            execute_source_submit_timeout_seconds(
-                                args,
-                                timeout_seconds=timeout_seconds,
-                            ),
-                        )
-                    )
-                phase = McpDevClientPhase.TEARDOWN
-                payload = McpDevToolBatchResponse.from_results(
-                    server_spec,
-                    tuple(results),
-                )
-                return payload
-        except Exception as exc:
-            return McpDevToolBatchResponse.from_transport_failure(
-                server_spec,
-                phase,
-                exc,
-                server_stderr_tail=captured_server_stderr_tail(server_stderr),
-            )
-
-
-async def call_pipeline_draft_step(
-    server_spec: McpDevServerSpec,
-    args: argparse.Namespace,
-    *,
-    timeout_seconds: float,
-) -> McpDevToolBatchResponse:
-    """Create, populate, validate, and render one pipeline draft in one session."""
-    phase = McpDevClientPhase.START_SERVER
-    payload: McpDevToolBatchResponse | None = None
-    with tempfile.TemporaryFile(
-        mode="w+",
-        encoding="utf-8",
-        errors="replace",
-    ) as server_stderr:
-        try:
-            async with McpDevStdioSession(server_spec, server_stderr) as session:
-                phase = McpDevClientPhase.INITIALIZE
-                await session.initialize(timeout_seconds=timeout_seconds)
-                phase = McpDevClientPhase.CALL_TOOL
-                results: list[McpDevToolResult] = []
-                create_result = await _call_tool(
-                    session,
-                    McpDevToolCall(agent_capabilities.create_pipeline.name, {}),
-                    timeout_seconds,
-                )
-                results.append(create_result)
-                create_payload = first_mapping_payload(create_result)
-                pipeline_id = (
-                    None
-                    if create_payload is None
-                    else create_payload.get("pipeline_id")
-                )
-                if isinstance(pipeline_id, str):
-                    add_arguments: dict[str, JsonValue] = {
-                        "pipeline_id": pipeline_id,
-                        "function_id": args.function_id,
-                        "name": args.name,
-                        "kwargs": parse_optional_json_object(args.kwargs),
-                        "step_config_overrides": parse_optional_json_object(
-                            args.step_config_overrides
-                        ),
-                        "step_id": args.step_id,
-                        "description": args.description,
-                        "enabled": not args.disabled,
-                        "debug_pause": args.debug_pause,
-                        "index": args.index,
-                    }
-                    results.append(
-                        await _call_tool(
-                            session,
-                            McpDevToolCall(
-                                agent_capabilities.add_function_step.name,
-                                add_arguments,
-                            ),
-                            timeout_seconds,
-                        )
-                    )
-                    results.append(
-                        await _call_tool(
-                            session,
-                            McpDevToolCall(
-                                agent_capabilities.validate_pipeline.name,
-                                to_jsonable(
-                                    PipelineValidationRequest(
-                                        pipeline_id=pipeline_id,
-                                    )
-                                ),
-                            ),
-                            timeout_seconds,
-                        )
-                    )
-                    if not args.no_source:
-                        results.append(
-                            await _call_tool(
-                                session,
-                                McpDevToolCall(
-                                    agent_capabilities.render_pipeline_source.name,
-                                    to_jsonable(
-                                        PipelineSourceRenderRequest(
-                                            pipeline_id=pipeline_id,
-                                            clean=args.clean,
-                                        )
-                                    ),
-                                ),
-                                timeout_seconds,
-                            )
-                        )
-                phase = McpDevClientPhase.TEARDOWN
-                payload = McpDevToolBatchResponse.from_results(
-                    server_spec,
-                    tuple(results),
-                )
-                return payload
-        except Exception as exc:
-            return McpDevToolBatchResponse.from_transport_failure(
-                server_spec,
-                phase,
-                exc,
-                server_stderr_tail=captured_server_stderr_tail(server_stderr),
-            )
-
-
-async def list_fresh_mcp_tools(
-    server_spec: McpDevServerSpec,
     timeout_seconds: float,
 ) -> McpDevToolListResponse:
-    """Start a fresh MCP server and return registered tool metadata."""
-    phase = McpDevClientPhase.START_SERVER
-    payload: McpDevToolListResponse | None = None
-    with tempfile.TemporaryFile(
-        mode="w+",
-        encoding="utf-8",
-        errors="replace",
-    ) as server_stderr:
-        try:
-            async with McpDevStdioSession(server_spec, server_stderr) as session:
-                phase = McpDevClientPhase.INITIALIZE
-                await session.initialize(timeout_seconds=timeout_seconds)
-                phase = McpDevClientPhase.LIST_TOOLS
-                result = await session.list_tools(timeout_seconds=timeout_seconds)
-                tools = tuple(mcp_tool_metadata_from_wire(tool) for tool in result)
-                phase = McpDevClientPhase.TEARDOWN
-                payload = McpDevToolListResponse.from_tools(server_spec, tools)
-                return payload
-        except Exception as exc:
-            return McpDevToolListResponse.from_transport_failure(
-                server_spec,
-                phase,
-                exc,
-                server_stderr_tail=captured_server_stderr_tail(server_stderr),
-            )
+    """Return registered tools from an initialized MCP session."""
+    result = await session.list_tools(timeout_seconds=timeout_seconds)
+    return McpDevToolListResponse.from_tools(
+        session.server_spec,
+        tuple(mcp_tool_metadata_from_wire(tool) for tool in result),
+    )
 
 
 def viewer_connection_arguments(
@@ -1577,7 +1310,9 @@ def parse_axis_indices(value: str | None) -> tuple[int, ...] | dict[str, int] | 
         return None
     if not value.strip():
         return ()
-    parts = tuple(part.strip() for part in value.replace("/", ",").split(",") if part.strip())
+    parts = tuple(
+        part.strip() for part in value.replace("/", ",").split(",") if part.strip()
+    )
     if any("=" in part for part in parts):
         if not all("=" in part for part in parts):
             raise McpDevCliUsageError(
@@ -1634,7 +1369,11 @@ def optional_route_key_argument(
     positional_route_key: str | None,
     option_route_key: str | None,
 ) -> str | None:
-    if positional_route_key and option_route_key and positional_route_key != option_route_key:
+    if (
+        positional_route_key
+        and option_route_key
+        and positional_route_key != option_route_key
+    ):
         raise McpDevCliUsageError(
             "Cannot pass both positional route_key and --route-key with different values."
         )
@@ -2076,11 +1815,7 @@ def workflow_poll_target_rows(
         return ()
     if not target_scope_ids:
         return rows
-    return tuple(
-        row
-        for row in rows
-        if row.plate_scope_id in target_scope_ids
-    )
+    return tuple(row for row in rows if row.plate_scope_id in target_scope_ids)
 
 
 def terminal_execution_status(

@@ -61,7 +61,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiWidgetTreeRequest,
     UiWidgetTreeResult,
 )
-from openhcs.agent.serialization import to_jsonable
+from openhcs.serialization.json import to_jsonable
 import openhcs.agent.services.ui_bridge_service as ui_bridge_service
 from openhcs.agent.services.ui_bridge_service import (
     DEFAULT_UI_BRIDGE_TIMEOUT_MS,
@@ -73,7 +73,6 @@ from openhcs.agent.services.ui_bridge_service import (
     UiBridgeOperationContract,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-
 
 DtoT = TypeVar("DtoT")
 UI_BRIDGE_CONTROL_TIMEOUT_MAX_MS = DEFAULT_UI_BRIDGE_TIMEOUT_MS
@@ -111,7 +110,9 @@ class AgentDtoJsonCodec:
                 continue
             if field.default is not MISSING or field.default_factory is not MISSING:
                 continue
-            raise KeyError(f"Missing required field {field.name!r} for {target_type.__name__}")
+            raise KeyError(
+                f"Missing required field {field.name!r} for {target_type.__name__}"
+            )
         return target_type(**kwargs)
 
     @classmethod
@@ -171,9 +172,12 @@ class AgentDtoJsonCodec:
 
     @staticmethod
     def _sequence(value: JsonValue) -> Sequence[JsonValue]:
-        if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+        if isinstance(value, (str, bytes, bytearray)) or not isinstance(
+            value, Sequence
+        ):
             raise TypeError(f"Expected JSON array, got {type(value).__name__}")
         return value
+
 
 class UiBridgeControlClient:
     """Small JSON/ZMQ client for the UI bridge control socket."""
@@ -232,7 +236,9 @@ class UiBridgeControlClient:
         finally:
             socket.close(linger=0)
         if not isinstance(response, Mapping):
-            raise TypeError(f"UI bridge response must be a JSON object, got {type(response).__name__}")
+            raise TypeError(
+                f"UI bridge response must be a JSON object, got {type(response).__name__}"
+            )
         return dict(response)
 
     @staticmethod
@@ -245,10 +251,14 @@ class UiBridgeControlClient:
     @staticmethod
     def _request_operation(request_payload: JsonObject) -> str:
         if "operation" not in request_payload:
-            raise ValueError("UI bridge request payload missing required field 'operation'.")
+            raise ValueError(
+                "UI bridge request payload missing required field 'operation'."
+            )
         operation = request_payload["operation"]
         if not isinstance(operation, str):
-            raise TypeError("UI bridge request payload field 'operation' must be a string.")
+            raise TypeError(
+                "UI bridge request payload field 'operation' must be a string."
+            )
         return operation
 
     @staticmethod
@@ -269,7 +279,9 @@ class UiBridgeControlClient:
         response: UiBridgeResponseEnvelope,
     ) -> None:
         if response.schema_version != SCHEMA_VERSION:
-            raise ValueError(f"Unsupported agent schema version: {response.schema_version}")
+            raise ValueError(
+                f"Unsupported agent schema version: {response.schema_version}"
+            )
         if response.bridge_protocol_version != UI_BRIDGE_PROTOCOL_VERSION:
             raise ValueError(
                 f"Unsupported UI bridge protocol version: {response.bridge_protocol_version}"
@@ -304,28 +316,36 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
         self,
         connection: UiBridgeConnectionSpec,
     ) -> UiCodeDocumentCatalog:
-        payload = self._request(connection, ui_bridge_service.UiBridgeListDocumentsOperation)
+        payload = self._request(
+            connection, ui_bridge_service.UiBridgeListDocumentsOperation
+        )
         return AgentDtoJsonCodec.dataclass_from_json(UiCodeDocumentCatalog, payload)
 
     def list_state_surfaces(
         self,
         connection: UiBridgeConnectionSpec,
     ) -> UiStateSurfaceCatalog:
-        payload = self._request(connection, ui_bridge_service.UiBridgeListStateSurfacesOperation)
+        payload = self._request(
+            connection, ui_bridge_service.UiBridgeListStateSurfacesOperation
+        )
         return AgentDtoJsonCodec.dataclass_from_json(UiStateSurfaceCatalog, payload)
 
     def list_actions(
         self,
         connection: UiBridgeConnectionSpec,
     ) -> UiActionCatalog:
-        payload = self._request(connection, ui_bridge_service.UiBridgeListActionsOperation)
+        payload = self._request(
+            connection, ui_bridge_service.UiBridgeListActionsOperation
+        )
         return AgentDtoJsonCodec.dataclass_from_json(UiActionCatalog, payload)
 
     def list_windows(
         self,
         connection: UiBridgeConnectionSpec,
     ) -> UiWindowCatalog:
-        payload = self._request(connection, ui_bridge_service.UiBridgeListWindowsOperation)
+        payload = self._request(
+            connection, ui_bridge_service.UiBridgeListWindowsOperation
+        )
         return AgentDtoJsonCodec.dataclass_from_json(UiWindowCatalog, payload)
 
     def list_object_state_scopes(
@@ -375,7 +395,9 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
         connection: UiBridgeConnectionSpec,
         request: UiCodeDocumentRequest,
     ) -> UiCodeDocument:
-        payload = self._request(connection, ui_bridge_service.UiBridgeGetDocumentOperation, request)
+        payload = self._request(
+            connection, ui_bridge_service.UiBridgeGetDocumentOperation, request
+        )
         return AgentDtoJsonCodec.dataclass_from_json(UiCodeDocument, payload)
 
     def get_state_surface(
@@ -556,7 +578,9 @@ class ZMQUiBridgeGateway(UiBridgeGatewayABC):
         return AgentDtoJsonCodec.dataclass_from_json(UiSnapshotRestoreResult, payload)
 
     def list_branches(self, connection: UiBridgeConnectionSpec) -> UiBranchCatalog:
-        payload = self._request(connection, ui_bridge_service.UiBridgeListBranchesOperation)
+        payload = self._request(
+            connection, ui_bridge_service.UiBridgeListBranchesOperation
+        )
         return AgentDtoJsonCodec.dataclass_from_json(UiBranchCatalog, payload)
 
     def switch_branch(

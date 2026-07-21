@@ -40,11 +40,11 @@ from openhcs.agent.ui_bridge_identities import (
     PipelineEditorWidgetIdentity,
     PlateManagerStateSurfaceIdentityDeclaration,
 )
-from openhcs.agent.serialization import to_jsonable
+from openhcs.serialization.json import to_jsonable
 from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.core.function_reference import FunctionReferenceTransportAuthority
 from openhcs.core.progress.debug_projection import DebugRuntimeFrame
-from openhcs.pyqt_gui.services.plate_scope_identity import PipelineScopeIdentity
+from openhcs.ui.shared.plate_scope_identity import PipelineScopeIdentity
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiActionProviderABC,
     UiActionProviderIdentity,
@@ -74,7 +74,6 @@ from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
     dispatch_widget_action,
 )
 
-
 PIPELINE_EDITOR_STATE_TITLE = "Pipeline editor state"
 PIPELINE_EDITOR_ACTIONS_TITLE = "Pipeline editor actions"
 PIPELINE_DEBUG_TOOLBAR_ACTIONS_TITLE = "Pipeline debug toolbar actions"
@@ -83,7 +82,9 @@ PIPELINE_EDITOR_STATE_PAYLOAD_SCHEMA = "openhcs.ui.pipeline_editor_state.v1"
 PIPELINE_DEBUG_SESSION_STATE_PAYLOAD_SCHEMA = (
     "openhcs.ui.pipeline_debug_session_state.v1"
 )
-PLATE_MANAGER_STATE_SURFACE_ID = PlateManagerStateSurfaceIdentityDeclaration.require_value()
+PLATE_MANAGER_STATE_SURFACE_ID = (
+    PlateManagerStateSurfaceIdentityDeclaration.require_value()
+)
 PIPELINE_EDITOR_WIDGET_ID = PipelineEditorWidgetIdentity.require_value()
 PIPELINE_DEBUG_TOOLBAR_WIDGET_ID = PipelineDebugToolbarWidgetIdentity.require_value()
 PIPELINE_EDITOR_STATE_IDENTITY = UiStateSurfaceProviderIdentity.from_declaration(
@@ -179,7 +180,10 @@ class ManagerWidgetActionProviderABC(UiActionProviderABC, ABC):
         request: UiActionInvokeRequest,
     ) -> AgentError | None:
         target_scope_ids = self._target_scope_ids(action)
-        if request.selected_scope_ids and request.selected_scope_ids != target_scope_ids:
+        if (
+            request.selected_scope_ids
+            and request.selected_scope_ids != target_scope_ids
+        ):
             return AgentError(
                 code="stale_ui_action_selection",
                 message=(
@@ -216,9 +220,7 @@ class ManagerWidgetActionProviderABC(UiActionProviderABC, ABC):
             return None
         return AgentError(
             code="ui_action_disabled",
-            message=(
-                f"{self.identity.widget_id} action {action.value!r} is disabled."
-            ),
+            message=(f"{self.identity.widget_id} action {action.value!r} is disabled."),
             hint=self._disabled_hint(action),
         )
 
@@ -342,7 +344,9 @@ class PipelineEditorActionProvider(ManagerWidgetActionProviderABC):
             )
         if action.target_mode is PipelineEditorActionTargetMode.SELECTED_STEPS:
             return self._selected_step_scope_ids()
-        raise ValueError(f"Unsupported PipelineEditor target mode: {action.target_mode}")
+        raise ValueError(
+            f"Unsupported PipelineEditor target mode: {action.target_mode}"
+        )
 
     def _side_effects(self, action: PipelineEditorAction) -> tuple[str, ...]:
         return action.side_effects
@@ -467,7 +471,10 @@ class PipelineDebugToolbarActionProvider(UiActionProviderABC):
             return AgentError.from_exception("unknown_ui_action", exc)
 
         target_scope_ids = model.target_scope_ids
-        if request.selected_scope_ids and request.selected_scope_ids != target_scope_ids:
+        if (
+            request.selected_scope_ids
+            and request.selected_scope_ids != target_scope_ids
+        ):
             return AgentError(
                 code="stale_ui_action_selection",
                 message=(
@@ -537,9 +544,11 @@ class PipelineDebugToolbarActionProvider(UiActionProviderABC):
                 (
                     model.action_id,
                     model.enabled,
-                    None
-                    if model.disabled_reason is None
-                    else model.disabled_reason.code,
+                    (
+                        None
+                        if model.disabled_reason is None
+                        else model.disabled_reason.code
+                    ),
                     model.target_scope_ids,
                 )
                 for model in models
@@ -577,7 +586,9 @@ class PipelineDebugSessionStateSurfaceProvider(UiStateSurfaceProviderABC):
         )
 
     def read(self, request: UiStateSurfaceRequest) -> UiStateSurfaceDocument:
-        selection_mode = request.resolved_selection_mode(UiCodeDocumentSelectionMode.ALL)
+        selection_mode = request.resolved_selection_mode(
+            UiCodeDocumentSelectionMode.ALL
+        )
         try:
             state = self._state()
         except Exception as exc:
@@ -612,10 +623,7 @@ class PipelineDebugSessionStateSurfaceProvider(UiStateSurfaceProviderABC):
                     source_widget_id=PipelineDebugToolbarWidgetIdentity.require_value(),
                 )
             )
-        items.extend(
-            self._disabled_action_item(action)
-            for action in disabled_actions
-        )
+        items.extend(self._disabled_action_item(action) for action in disabled_actions)
         return (
             UiLiveOverviewSection(
                 section_id=self.identity.surface_id,
@@ -768,7 +776,9 @@ class PipelineDebugSessionStateSurfaceProvider(UiStateSurfaceProviderABC):
             debug_session_id=summary.debug_session_id,
             plate_scope_id=summary.plate_id,
             terminal_status=summary.terminal_status,
-            command_type=None if summary.command_type is None else summary.command_type.value,
+            command_type=(
+                None if summary.command_type is None else summary.command_type.value
+            ),
             axis_id=summary.axis_id,
             snapshot_id=summary.snapshot_id,
             snapshot_store_ref=summary.snapshot_store_ref,
@@ -824,9 +834,7 @@ class PipelineDebugSessionStateSurfaceProvider(UiStateSurfaceProviderABC):
             (
                 action.action_id,
                 action.enabled,
-                None
-                if action.disabled_error is None
-                else action.disabled_error.code,
+                None if action.disabled_error is None else action.disabled_error.code,
                 action.selected_scope_ids,
             )
             for action in state.actions
@@ -861,19 +869,21 @@ class PipelineDebugSessionStateSurfaceProvider(UiStateSurfaceProviderABC):
             state.snapshot_store_backend,
             state.terminal_status,
             cursor_parts,
-            None
-            if state.terminal_summary is None
-            else (
-                state.terminal_summary.debug_session_id,
-                state.terminal_summary.terminal_status,
-                state.terminal_summary.command_type,
-                state.terminal_summary.axis_id,
-                state.terminal_summary.snapshot_id,
-                state.terminal_summary.snapshot_store_ref,
-                state.terminal_summary.snapshot_store_backend,
-                state.terminal_summary.step_name,
-                state.terminal_summary.callable_name,
-                state.terminal_summary.completed_at_unix,
+            (
+                None
+                if state.terminal_summary is None
+                else (
+                    state.terminal_summary.debug_session_id,
+                    state.terminal_summary.terminal_status,
+                    state.terminal_summary.command_type,
+                    state.terminal_summary.axis_id,
+                    state.terminal_summary.snapshot_id,
+                    state.terminal_summary.snapshot_store_ref,
+                    state.terminal_summary.snapshot_store_backend,
+                    state.terminal_summary.step_name,
+                    state.terminal_summary.callable_name,
+                    state.terminal_summary.completed_at_unix,
+                )
             ),
             self._frame_revision_parts(state.current_frame),
             self._frame_revision_parts(state.last_frame),
@@ -912,7 +922,9 @@ class PipelineDebugSessionStateSurfaceProvider(UiStateSurfaceProviderABC):
         request: UiStateSurfaceRequest,
         errors: tuple[AgentError, ...],
     ) -> UiStateSurfaceDocument:
-        selection_mode = request.resolved_selection_mode(UiCodeDocumentSelectionMode.ALL)
+        selection_mode = request.resolved_selection_mode(
+            UiCodeDocumentSelectionMode.ALL
+        )
         state = UiPipelineDebugSessionState(
             schema_version=SCHEMA_VERSION,
             summary=self.summary(),
@@ -950,7 +962,9 @@ class PipelineDebugSessionStateSurfaceProvider(UiStateSurfaceProviderABC):
     ) -> UiStateSurfaceDocument:
         payload = to_jsonable(state)
         if not isinstance(payload, dict):
-            raise TypeError("Debug session state payload did not serialize to an object.")
+            raise TypeError(
+                "Debug session state payload did not serialize to an object."
+            )
         return UiStateSurfaceDocument(
             schema_version=state.schema_version,
             summary=state.summary,
@@ -993,7 +1007,9 @@ class PipelineEditorStateSurfaceProvider(UiStateSurfaceProviderABC):
         )
 
     def read(self, request: UiStateSurfaceRequest) -> UiStateSurfaceDocument:
-        selection_mode = request.resolved_selection_mode(UiCodeDocumentSelectionMode.ALL)
+        selection_mode = request.resolved_selection_mode(
+            UiCodeDocumentSelectionMode.ALL
+        )
         try:
             state = self._state(selection_mode=selection_mode)
         except Exception as exc:
@@ -1060,9 +1076,7 @@ class PipelineEditorStateSurfaceProvider(UiStateSurfaceProviderABC):
     ) -> UiPipelineEditorStepState:
         scope_id = self._manager._get_item_scope_id(step, index)
         object_state = (
-            ObjectStateRegistry.get_by_scope(scope_id)
-            if scope_id is not None
-            else None
+            ObjectStateRegistry.get_by_scope(scope_id) if scope_id is not None else None
         )
         return UiPipelineEditorStepState(
             step_scope_id=scope_id,
@@ -1070,7 +1084,9 @@ class PipelineEditorStateSurfaceProvider(UiStateSurfaceProviderABC):
             name=step.name,
             enabled=step.enabled,
             selected=selected,
-            dirty=bool(object_state.dirty_fields) if object_state is not None else False,
+            dirty=(
+                bool(object_state.dirty_fields) if object_state is not None else False
+            ),
             default_diff=(
                 bool(object_state.signature_diff_fields)
                 if object_state is not None
@@ -1185,7 +1201,9 @@ class PipelineEditorStateSurfaceProvider(UiStateSurfaceProviderABC):
         request: UiStateSurfaceRequest,
         errors: tuple[AgentError, ...],
     ) -> UiStateSurfaceDocument:
-        selection_mode = request.resolved_selection_mode(UiCodeDocumentSelectionMode.ALL)
+        selection_mode = request.resolved_selection_mode(
+            UiCodeDocumentSelectionMode.ALL
+        )
         state = UiPipelineEditorState(
             schema_version=SCHEMA_VERSION,
             summary=self.summary(),
@@ -1210,7 +1228,9 @@ class PipelineEditorStateSurfaceProvider(UiStateSurfaceProviderABC):
     ) -> UiStateSurfaceDocument:
         payload = to_jsonable(state)
         if not isinstance(payload, dict):
-            raise TypeError("PipelineEditor state payload did not serialize to an object.")
+            raise TypeError(
+                "PipelineEditor state payload did not serialize to an object."
+            )
         return UiStateSurfaceDocument(
             schema_version=state.schema_version,
             summary=state.summary,
@@ -1233,6 +1253,10 @@ class PipelineEditorBridgeProviderSet(UiBridgeProviderSetABC):
 
     def __init__(self, manager) -> None:
         self._manager = manager
+
+    @classmethod
+    def for_main_window(cls, main_window) -> "PipelineEditorBridgeProviderSet":
+        return cls(main_window.pipeline_editor_widget)
 
     def register(self, context: UiBridgeRegistrationContext) -> None:
         context.registry.register_state_surface_provider(

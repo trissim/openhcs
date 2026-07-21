@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Generic, Self, TypeVar
 
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
-from openhcs.core.alias_property import AliasProperty
+import numpy as np
 
 from zmqruntime.viewer_protocol import (
     ViewerSourceSpatialDomainPayload,
@@ -16,10 +16,47 @@ from zmqruntime.viewer_protocol import (
     ViewerWireValue,
 )
 
-from openhcs.core.image_shapes import image_spatial_axis_indices
 from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
 
 SourceSpatialAliasValueT = TypeVar("SourceSpatialAliasValueT")
+
+
+def _spatial_shape_pair(value: Sequence[int], field_name: str) -> tuple[int, int]:
+    """Return the leading Y/X dimensions from a spatial shape value."""
+    if len(value) < 2:
+        raise ValueError(f"{field_name} must have at least two spatial dimensions.")
+    return int(value[0]), int(value[1])
+
+
+@dataclass(frozen=True, slots=True)
+class SpatialShapeYX:
+    """Nominal two-dimensional spatial shape in row/column order."""
+
+    height: int
+    width: int
+
+    @classmethod
+    def from_sequence(
+        cls,
+        value: Sequence[int],
+        *,
+        field_name: str,
+    ) -> "SpatialShapeYX":
+        height, width = _spatial_shape_pair(value, field_name)
+        return cls(height=height, width=width)
+
+    @classmethod
+    def optional_from_mapping(
+        cls,
+        data: Mapping[str, Any],
+        field_name: str,
+    ) -> "SpatialShapeYX | None":
+        if field_name not in data or data[field_name] is None:
+            return None
+        return cls.from_sequence(data[field_name], field_name=field_name)
+
+    def as_tuple(self) -> tuple[int, int]:
+        return self.height, self.width
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,8 +159,7 @@ class SourceSpatialDomain:
         if len(domains) <= 1:
             return False
         identities = tuple(
-            (domain.origin_yx, domain.source_shape_yx)
-            for domain in domains
+            (domain.origin_yx, domain.source_shape_yx) for domain in domains
         )
         if any(origin is None or shape is None for origin, shape in identities):
             return False
@@ -220,9 +256,7 @@ class SourceSpatialDomain:
         self._shape_yx(output_shape_yx, "output_shape_yx")
         parent_origin = self.origin_yx if self.origin_yx is not None else (0, 0)
         source_shape = (
-            self.source_shape_yx
-            if self.source_shape_yx is not None
-            else input_shape
+            self.source_shape_yx if self.source_shape_yx is not None else input_shape
         )
         return type(self)(
             origin_yx=(
@@ -230,6 +264,20 @@ class SourceSpatialDomain:
                 int(parent_origin[1]) + int(offset_yx[1]),
             ),
             source_shape_yx=source_shape,
+            fill_value=self.fill_value,
+            value_name=self.value_name,
+        )
+
+    def with_spatial_resize(
+        self,
+        output_shape_yx: Sequence[int],
+    ) -> Self:
+        """Return the local coordinate domain established by a spatial resize."""
+
+        output_shape = self._shape_yx(output_shape_yx, "output_shape_yx")
+        return type(self)(
+            origin_yx=(0, 0),
+            source_shape_yx=output_shape,
             fill_value=self.fill_value,
             value_name=self.value_name,
         )
@@ -253,34 +301,23 @@ class SourceSpatialDomain:
 
     @staticmethod
     def _shape_yx(value: Sequence[int], field_name: str) -> tuple[int, int]:
-        if len(value) < 2:
-            raise ValueError(f"{field_name} must have at least two spatial dimensions.")
-        return int(value[0]), int(value[1])
+        return _spatial_shape_pair(value, field_name)
 
-    def materialize(self, value: Any) -> Any:
+    def materialize(
+        self,
+        value: Any,
+        *,
+        spatial_axes_yx: tuple[int, int],
+    ) -> Any:
         """Place an array-like value into this source spatial domain."""
         return dense_array_in_source_spatial_domain(
             value,
+            spatial_axes_yx=spatial_axes_yx,
             spatial_origin_yx=self.origin_yx,
             source_spatial_shape_yx=self.source_shape_yx,
             fill_value=self.fill_value,
             value_name=self.value_name,
         )
-
-    def materialize_for_slice(
-        self,
-        value: Any,
-        slice_index: int,
-        slice_count: int,
-    ) -> Any:
-        """Place an array-like value and return one aligned execution slice."""
-        import numpy as np
-
-        materialized = self.materialize(value)
-        array = np.asarray(materialized)
-        if array.ndim >= 3 and array.shape[0] == slice_count:
-            return array[slice_index]
-        return materialized
 
 
 @dataclass(frozen=True, slots=True)
@@ -391,37 +428,40 @@ class SourceSpatialDomainAdapter(
         *,
         source_shape_override_yx: tuple[int, int] | None = None,
     ) -> "SourceSpatialDomainAdapter | None":
-        for adapter_type in cls.registered_strategy_types():
-            adapter = adapter_type.for_value(
-                value,
-                source_shape_override_yx=source_shape_override_yx,
-            )
-            if adapter is not None:
-                return adapter
-        return None
+        strategy_types = cls.strategy_types_for_nominal_value(value)
+        if not strategy_types:
+            return None
+        return strategy_types[0].for_value(
+            value,
+            source_shape_override_yx=source_shape_override_yx,
+        )
 
     @property
     @abstractmethod
-    def array(self) -> Any:
-        ...
+    def array(self) -> Any: ...
 
     @property
     @abstractmethod
-    def domain(self) -> SourceSpatialDomain:
-        ...
+    def domain(self) -> SourceSpatialDomain: ...
+
+    @property
+    @abstractmethod
+    def spatial_axes_yx(self) -> tuple[int, int]:
+        """Return the payload axes declared to carry Y/X coordinates."""
+
+    @abstractmethod
+    def value_in_payload_domain(
+        self,
+        target: "SourceSpatialDomainAdapter",
+    ) -> Any:
+        """Project this value into ``target`` while preserving its carrier type."""
 
     @property
     def spatial_shape_yx(self) -> tuple[int, int]:
         """Return the payload's native XY shape before source-domain expansion."""
-        import numpy as np
-
         array = np.asarray(self.array)
-        if array.ndim < 2:
-            raise ValueError(
-                "Source-spatial payloads require at least two dimensions, "
-                f"got {array.ndim}."
-            )
-        return tuple(int(axis) for axis in array.shape[-2:])
+        y_axis, x_axis = self.spatial_axes_yx
+        return int(array.shape[y_axis]), int(array.shape[x_axis])
 
     @property
     def payload_domain(self) -> SourceSpatialPayloadDomain:
@@ -487,17 +527,60 @@ class SourceSpatialDomainAdapter(
 
     def materialize(self) -> Any:
         """Return the payload array in source-image XY coordinates."""
-        return self.domain.materialize(self.array)
-
-    def materialize_for_slice(self, slice_index: int, slice_count: int) -> Any:
-        """Return one aligned execution slice from the materialized payload."""
-        return self.domain.materialize_for_slice(
+        return self.domain.materialize(
             self.array,
-            slice_index,
-            slice_count,
+            spatial_axes_yx=self.spatial_axes_yx,
         )
 
-    def extract_source_array(self, value: Any) -> Any:
+    @classmethod
+    def aligned_values(
+        cls,
+        values: tuple[Any, ...],
+    ) -> tuple[tuple[Any, ...], tuple["SourceSpatialDomainAdapter", ...]]:
+        """Materialize nominal values into one exact source-spatial geometry."""
+
+        adapters: list[SourceSpatialDomainAdapter] = []
+        for value in values:
+            adapter = cls.for_value(value)
+            if adapter is None:
+                raise TypeError(
+                    "Source-spatial alignment requires a registered nominal adapter "
+                    f"for {type(value).__name__}."
+                )
+            adapters.append(adapter)
+        resolved_adapters = tuple(adapters)
+        declared_source_domains = tuple(
+            adapter.domain.source_shape_yx is not None for adapter in resolved_adapters
+        )
+        if any(declared_source_domains) and not all(declared_source_domains):
+            raise ValueError(
+                "Source-spatial alignment requires every value to declare a source "
+                "domain or no value to declare one."
+            )
+        if declared_source_domains and declared_source_domains[0]:
+            source_shape = cls.common_source_shape_yx(resolved_adapters)
+            if source_shape is None:
+                raise ValueError(
+                    "Source-spatial alignment requires one compatible declared "
+                    "source shape for every value."
+                )
+        arrays = tuple(
+            np.asarray(adapter.materialize()) for adapter in resolved_adapters
+        )
+        shapes = tuple(array.shape for array in arrays)
+        if shapes and any(shape != shapes[0] for shape in shapes[1:]):
+            raise ValueError(
+                "Source-spatial values must share a common geometry after alignment; "
+                f"got {shapes!r}."
+            )
+        return arrays, resolved_adapters
+
+    def extract_source_array(
+        self,
+        value: Any,
+        *,
+        spatial_axes_yx: tuple[int, int],
+    ) -> Any:
         """Project a source-domain dense array into this payload's native domain."""
         import numpy as np
 
@@ -506,37 +589,24 @@ class SourceSpatialDomainAdapter(
         source_shape_yx = payload_domain.source_shape_yx
         if source_shape_yx is None:
             return value
-        if array.ndim < 2 or tuple(array.shape[-2:]) != tuple(source_shape_yx):
+        y_axis, x_axis = spatial_axes_yx
+        spatial_shape_yx = int(array.shape[y_axis]), int(array.shape[x_axis])
+        if spatial_shape_yx != tuple(source_shape_yx):
             return value
-        if tuple(array.shape[-2:]) == payload_domain.spatial_shape_yx:
+        if spatial_shape_yx == payload_domain.spatial_shape_yx:
             return value
         origin_y, origin_x = payload_domain.origin_yx
         height, width = payload_domain.spatial_shape_yx
-        return array[..., origin_y : origin_y + height, origin_x : origin_x + width]
-
-
-@dataclass(frozen=True, slots=True)
-class DenseArraySourceSpatialDomainAdapter(SourceSpatialDomainAdapter):
-    """Source-domain adapter for dense array-like payloads."""
-
-    value: Any
-    source_domain: SourceSpatialDomain = SourceSpatialDomain()
-    array = AliasProperty[Any]("value")
-    domain = AliasProperty[SourceSpatialDomain]("source_domain")
-
-    @classmethod
-    def for_value(
-        cls,
-        value: Any,
-        *,
-        source_shape_override_yx: tuple[int, int] | None = None,
-    ) -> "DenseArraySourceSpatialDomainAdapter | None":
-        return None
+        slices = [slice(None)] * array.ndim
+        slices[y_axis] = slice(origin_y, origin_y + height)
+        slices[x_axis] = slice(origin_x, origin_x + width)
+        return array[tuple(slices)]
 
 
 def dense_array_in_source_spatial_domain(
     value: Any,
     *,
+    spatial_axes_yx: tuple[int, int],
     spatial_origin_yx: tuple[int, int] | None,
     source_spatial_shape_yx: tuple[int, int] | None,
     fill_value: Any = 0,
@@ -563,22 +633,24 @@ def dense_array_in_source_spatial_domain(
             f"{value_name} spatial domains require at least 2D arrays; got "
             f"shape {label_array.shape!r}."
         )
-    spatial_axes = image_spatial_axis_indices(label_array)
-    if spatial_axes is None:
+    y_axis, x_axis = (int(axis) for axis in spatial_axes_yx)
+    if (
+        y_axis == x_axis
+        or y_axis < 0
+        or x_axis < 0
+        or y_axis >= label_array.ndim
+        or x_axis >= label_array.ndim
+    ):
         raise ValueError(
-            f"{value_name} spatial domains require image-like arrays; got "
+            f"{value_name} spatial axes {spatial_axes_yx!r} are invalid for "
             f"shape {label_array.shape!r}."
         )
-    y_axis, x_axis = spatial_axes
     payload_y = int(label_array.shape[y_axis])
     payload_x = int(label_array.shape[x_axis])
     if (payload_y, payload_x) == (source_y, source_x) and origin == (0, 0):
         return label_array
 
-    if (
-        origin_y + payload_y > source_y
-        or origin_x + payload_x > source_x
-    ):
+    if origin_y + payload_y > source_y or origin_x + payload_x > source_x:
         raise ValueError(
             f"{value_name} crop exceeds its declared source domain; got array "
             f"{label_array.shape!r}, source={source_shape!r}, origin={origin!r}."

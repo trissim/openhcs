@@ -66,6 +66,8 @@ class PlateInspectionIssueCode(str, Enum):
     PARSE_LIMIT_REACHED = "plate_parse_limit_reached"
     PARSE_FAILURES = "plate_parse_failures"
     LOW_PARSE_COVERAGE = "plate_low_parse_coverage"
+    SOURCE_DIAGNOSTICS_UNAVAILABLE = "plate_source_diagnostics_unavailable"
+    PROBABLE_NATIVE_HANDLER = "plate_probable_native_handler"
 
 
 class SelectedPlateFileQueryTarget(str, Enum):
@@ -83,6 +85,29 @@ class PlateWorkspacePreparationOperation(str, Enum):
     INITIALIZE_WORKSPACE = "initialize_workspace"
 
 
+class PlateInspectionWorkflowScope(str, Enum):
+    """Operational scope of a plate-inspection response."""
+
+    DIAGNOSTIC = "diagnostic"
+
+
+class PlateInspectionIngestionRoute(str, Enum):
+    """Owner selected, or still needed, for source ingestion."""
+
+    DETECTED_HANDLER = "detected_handler"
+    SOURCE_BINDINGS_HANDLER = "source_bindings_handler"
+    UNRESOLVED = "unresolved"
+
+
+class PlateInspectionSourceBindingRole(str, Enum):
+    """Role source bindings play relative to the ingestion owner."""
+
+    SEMANTIC_SELECTION = "semantic_selection"
+    INGESTION_OWNER = "ingestion_owner"
+    NOT_PROJECTED_BY_HANDLER = "not_projected_by_handler"
+    UNRESOLVED = "unresolved"
+
+
 class PlateInspectionDefaults:
     """Default and bounded plate-inspection limits."""
 
@@ -91,6 +116,7 @@ class PlateInspectionDefaults:
     DEFAULT_MAX_COMPONENT_VALUES = 25
     DEFAULT_MAX_PARSE_FAILURE_SAMPLES = 10
     DEFAULT_MAX_FILES_TO_PARSE = 50_000
+    DEFAULT_MAX_AUTO_RESOLUTION_SIZE = 1024
     MIN_BOUND = 0
     MAX_SAMPLE_FILES = 200
     MAX_COMPONENT_VALUES = 500
@@ -224,6 +250,10 @@ class PlateImageSampleRequest:
     x: int = 0
     height: int = 32
     width: int = 32
+    resolution_index: int | None = None
+    max_auto_resolution_size: int = (
+        PlateInspectionDefaults.DEFAULT_MAX_AUTO_RESOLUTION_SIZE
+    )
     include_array_values: bool = True
     max_array_elements: int = 4096
 
@@ -239,6 +269,10 @@ class PlateImageSampleRequest:
         x: int = 0,
         height: int = 32,
         width: int = 32,
+        resolution_index: int | None = None,
+        max_auto_resolution_size: int = (
+            PlateInspectionDefaults.DEFAULT_MAX_AUTO_RESOLUTION_SIZE
+        ),
         include_array_values: bool = True,
         max_array_elements: int = 4096,
     ) -> "PlateImageSampleRequest":
@@ -251,6 +285,8 @@ class PlateImageSampleRequest:
             x=x,
             height=height,
             width=width,
+            resolution_index=resolution_index,
+            max_auto_resolution_size=max_auto_resolution_size,
             include_array_values=include_array_values,
             max_array_elements=max_array_elements,
         )
@@ -265,6 +301,8 @@ class PlateImageSampleRequest:
             "x": self.x,
             "height": self.height,
             "width": self.width,
+            "resolution_index": self.resolution_index,
+            "max_auto_resolution_size": self.max_auto_resolution_size,
             "include_array_values": self.include_array_values,
             "max_array_elements": self.max_array_elements,
         }
@@ -566,6 +604,10 @@ class SelectedPlateImageSampleRequest(SelectedPlateTargetOptions):
     x: int = 0
     height: int = 32
     width: int = 32
+    resolution_index: int | None = None
+    max_auto_resolution_size: int = (
+        PlateInspectionDefaults.DEFAULT_MAX_AUTO_RESOLUTION_SIZE
+    )
     include_array_values: bool = True
     max_array_elements: int = 4096
 
@@ -581,6 +623,10 @@ class SelectedPlateImageSampleRequest(SelectedPlateTargetOptions):
         x: int = 0,
         height: int = 32,
         width: int = 32,
+        resolution_index: int | None = None,
+        max_auto_resolution_size: int = (
+            PlateInspectionDefaults.DEFAULT_MAX_AUTO_RESOLUTION_SIZE
+        ),
         include_array_values: bool = True,
         max_array_elements: int = 4096,
     ) -> "SelectedPlateImageSampleRequest":
@@ -593,6 +639,8 @@ class SelectedPlateImageSampleRequest(SelectedPlateTargetOptions):
             x=x,
             height=height,
             width=width,
+            resolution_index=resolution_index,
+            max_auto_resolution_size=max_auto_resolution_size,
             include_array_values=include_array_values,
             max_array_elements=max_array_elements,
         )
@@ -607,6 +655,8 @@ class SelectedPlateImageSampleRequest(SelectedPlateTargetOptions):
             "x": self.x,
             "height": self.height,
             "width": self.width,
+            "resolution_index": self.resolution_index,
+            "max_auto_resolution_size": self.max_auto_resolution_size,
             "include_array_values": self.include_array_values,
             "max_array_elements": self.max_array_elements,
         }
@@ -627,6 +677,8 @@ class SelectedPlateImageSampleRequest(SelectedPlateTargetOptions):
             x=self.x,
             height=self.height,
             width=self.width,
+            resolution_index=self.resolution_index,
+            max_auto_resolution_size=self.max_auto_resolution_size,
             include_array_values=self.include_array_values,
             max_array_elements=self.max_array_elements,
         )
@@ -1036,6 +1088,44 @@ class PlateInspectionWorkspacePreparation:
     reason: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PlateInspectionHandlerCandidate:
+    """Format-specific handler evidence recovered from authoritative parsers."""
+
+    microscope_type: str
+    handler_class: str
+    parser_class: str
+    root_dir: str
+    tested_file_count: int
+    recognized_file_count: int
+    recognizes_all_tested_files: bool
+    files_under_expected_root: bool
+    metadata_detected: bool
+    metadata_file_path: str | None = None
+    metadata_diagnostic: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PlateInspectionWorkflowAdvice:
+    """Structured routing advice kept separate from decoder evidence."""
+
+    workflow_scope: PlateInspectionWorkflowScope = (
+        PlateInspectionWorkflowScope.DIAGNOSTIC
+    )
+    ingestion_route: PlateInspectionIngestionRoute = (
+        PlateInspectionIngestionRoute.UNRESOLVED
+    )
+    ingestion_owner: str | None = None
+    source_binding_role: PlateInspectionSourceBindingRole = (
+        PlateInspectionSourceBindingRole.UNRESOLVED
+    )
+    ui_code_document_id: str | None = None
+    ui_operation: str | None = None
+    knowledge_query: str = "source model image sources"
+    probable_native_ingestion_owners: tuple[str, ...] = ()
+    message: str = ""
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class PlatePathInspectionResult(AgentResultEnvelope):
     """Read-only plate-folder inspection result."""
@@ -1065,8 +1155,15 @@ class PlatePathInspectionResult(AgentResultEnvelope):
         default_factory=PlateInspectionParseSummary
     )
     components: tuple[PlateInspectionComponentSummary, ...] = ()
+    source_diagnostics: tuple[JsonObject, ...] = ()
+    format_specific_handler_candidates: tuple[
+        PlateInspectionHandlerCandidate, ...
+    ] = ()
     workspace_preparation: PlateInspectionWorkspacePreparation = field(
         default_factory=PlateInspectionWorkspacePreparation
+    )
+    workflow_advice: PlateInspectionWorkflowAdvice = field(
+        default_factory=PlateInspectionWorkflowAdvice
     )
     errors: tuple[AgentError, ...] = ()
     warnings: tuple[AgentWarning, ...] = ()
@@ -1083,10 +1180,16 @@ class PlateImageSampleResult(AgentResultEnvelope):
     source_path: str | None = None
     source_metadata: JsonObject = field(default_factory=dict)
     shape: tuple[int, ...] = ()
+    resolution_shape: tuple[int, ...] = ()
     dtype: str | None = None
     minimum: JsonValue = None
     maximum: JsonValue = None
     mean: float | None = None
+    requested_resolution_index: int | None = None
+    selected_resolution_index: int | None = None
+    resolution_count: int | None = None
+    downsample_yx: tuple[float, float] | None = None
+    statistics_scope: str | None = None
     sample_origin_yx: tuple[int, int] = (0, 0)
     sample_shape: tuple[int, ...] = ()
     sample_included: bool = False

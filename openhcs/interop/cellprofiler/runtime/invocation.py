@@ -2,72 +2,46 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections.abc import Callable
-from functools import lru_cache
 from dataclasses import dataclass, replace
-from enum import Enum
-from collections.abc import Mapping
-from types import MappingProxyType
 from typing import ClassVar
 
-from metaclass_registry import AutoRegisterMeta
-
 from openhcs.core.alias_property import AliasProperty
-import numpy as np
-
 from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
-    ImagePayloadExecutionMode,
-    compose_aligned_image_payload,
+    payload_slices_for_alignment,
 )
+import numpy as np
+
 from openhcs.core.equivalence.keys import RuntimeMeasurementSourcePair
 from openhcs.core.measurement_image_alignment import (
     MeasurementImageAlignmentSource,
     MeasurementImageLabelAlignmentStrategy,
-    MeasurementLabelSourceAlignmentStrategy,
     PreparedMeasurementObjectLabels,
 )
-from openhcs.core.measurement_row_materialization import (
-    MeasurementProjectedColumnarRows,
-)
-from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
-from openhcs.core.registry_strategies import NominalTypeStrategyFamilyMixin
-from openhcs.core.runtime_semantics import (
+from openhcs.core.measurement_image_alignment import (
     MeasurementImageReferenceDomain,
+)
+from openhcs.core.runtime_plane_projection import (
     RuntimePlaneAxisProjector,
 )
+from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 from openhcs.core.source_spatial_domain import CommonRuntimeValue
-from openhcs.core.runtime_invocation import (
-    ResolvedRuntimeInputRequest,
-    RuntimeFunctionInvocationRequest,
+from openhcs.core.runtime_adapters import (
     RuntimeImageExecutionContext,
     RuntimeImageRequest,
-    RuntimeSliceAlignedValues,
-    requested_image_execution_mode,
 )
-from openhcs.core.runtime_values import (
-    ColumnarRows,
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
+from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
     ImagePayloadMetadataCompositionMode,
-    ImagePayloadMetadataCompositionRequest,
-    ImageMetadataPayload,
-    MaskedImagePayload,
-    ObjectLabelMeasurementSource,
-    ObjectLabelValue,
     image_payload_data,
     image_payload_metadata,
-    image_payload_slice_context,
-    object_label_dense_array,
 )
-from openhcs.interop.cellprofiler.runtime.payload_types import (
-    CellProfilerRuntimeValue,
-    MeasurementRowMapping,
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelMeasurementSource,
+    ObjectLabelValue,
 )
-
-
-CellProfilerImageExecutionContext = RuntimeImageExecutionContext
-CellProfilerResolvedInputRequest = ResolvedRuntimeInputRequest
+from openhcs.core.steps.function_runtime import RuntimeCallableArgument
 
 
 class CellProfilerSourceIdentityMixin:
@@ -77,19 +51,12 @@ class CellProfilerSourceIdentityMixin:
 
     source_image_name: str | None
     source_aliases: tuple[str, ...]
-    payload: CellProfilerRuntimeValue
+    payload: RuntimeCallableArgument
 
     @property
     def has_source_identity(self) -> bool:
         """Return whether this record names a CellProfiler source-image surface."""
         return self.source_image_name is not None or bool(self.source_aliases)
-
-    def primary_source_image_pair(self) -> "CellProfilerSourceImagePair | None":
-        """Return the source pair represented by this record, when unambiguous."""
-        return CellProfilerSourceImagePair.from_source_identity(
-            self.source_image_name,
-            self.source_aliases,
-        )
 
     def source_image_pairs(self) -> tuple["CellProfilerSourceImagePair", ...]:
         """Return ordered pairwise source invocations for composed image payloads."""
@@ -104,40 +71,6 @@ class CellProfilerSourceIdentityMixin:
             for second_index, second_name in enumerate(self.source_aliases)
             if first_index < second_index
         )
-
-    def matches_single_source_name(self, name: str) -> bool:
-        """Return whether this source identity is exactly one named image."""
-        return name in self.single_source_names()
-
-    def source_payload_for_name(
-        self,
-        name: str,
-    ) -> CellProfilerRuntimeValue | None:
-        """Return this payload when it already carries the requested source."""
-        if self.matches_single_source_name(name):
-            return self.payload
-        return self.composed_source_payload_for_name(name)
-
-    def composed_source_payload_for_name(
-        self,
-        name: str,
-    ) -> CellProfilerRuntimeValue | None:
-        """Return a payload projected from a composed source axis, when declared."""
-        return None
-
-    def single_source_names(self) -> frozenset[str]:
-        """Return source names that identify this payload as one image."""
-        names: list[str] = []
-        if self.source_image_name is not None:
-            names.append(self.source_image_name)
-        match self.source_aliases:
-            case (single_alias,):
-                names.append(single_alias)
-            case ():
-                pass
-            case _:
-                pass
-        return frozenset(names)
 
     @property
     def source_surface_count(self) -> int:
@@ -166,218 +99,81 @@ class CellProfilerSourceIdentityMixin:
                 f"got {invalid!r}."
             )
 
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerSourceAxisProjectionScope:
-    """Declared source-axis projection facts for one CellProfiler image alias."""
-
-    axis_index: int
-    source_axis_size: int
-    source_alias: str
+    @classmethod
+    def shared_source_image_name(
+        cls,
+        sources: tuple["CellProfilerSourceIdentityMixin", ...],
+    ) -> str | None:
+        """Return table-level source identity only when all sources share one."""
+        return CommonRuntimeValue.from_values(
+            source.source_image_name for source in sources
+        ).single
 
     @classmethod
-    def from_aliases(
+    def shared_source_payload(
         cls,
-        source_aliases: tuple[str, ...],
-        source_alias: str,
-    ) -> "CellProfilerSourceAxisProjectionScope":
-        """Build a validated projection scope from an ordered source axis."""
-        try:
-            axis_index = source_aliases.index(source_alias)
-        except ValueError as exc:
-            raise ValueError(
-                f"CellProfiler image request cannot project source alias "
-                f"{source_alias!r} from composed source aliases {source_aliases!r}."
-            ) from exc
-        return cls(
-            axis_index=axis_index,
-            source_axis_size=len(source_aliases),
-            source_alias=source_alias,
+        sources: tuple["CellProfilerSourceIdentityMixin", ...],
+    ) -> RuntimeCallableArgument | None:
+        """Return a table-level source payload only for one shared provenance."""
+        if not sources:
+            return None
+        provenances = tuple(
+            image_payload_metadata(source.payload).source_provenance.equality_identity
+            for source in sources
         )
-
-    def __post_init__(self) -> None:
-        if self.source_axis_size < 1:
-            raise ValueError("CellProfiler source-axis size must be positive.")
-        if self.axis_index < 0 or self.axis_index >= self.source_axis_size:
-            raise ValueError(
-                "CellProfiler source-axis projection index must be within the "
-                f"declared axis size; got index {self.axis_index} for size "
-                f"{self.source_axis_size}."
-            )
-        if not self.source_alias:
-            raise ValueError("CellProfiler source-axis projection requires an alias.")
-
-    @property
-    def is_single_source_axis(self) -> bool:
-        """Return whether no material source stack is needed."""
-        return self.source_axis_size == 1
-
-    @property
-    def is_composed_source_axis(self) -> bool:
-        """Return whether payload data must carry a source-binding axis."""
-        return self.source_axis_size > 1
-
-    def project_image_payload(self, payload: CellProfilerRuntimeValue) -> CellProfilerRuntimeValue:
-        """Project this source-axis plane from an image payload."""
-        data = image_payload_data(payload)
-        if not isinstance(data, np.ndarray):
-            raise TypeError(
-                "CellProfiler source-axis projection requires ndarray image data, "
-                f"got {type(data).__name__} for source alias {self.source_alias!r}."
-            )
-        if data.ndim < 3 or data.shape[0] != self.source_axis_size:
-            raise ValueError(
-                "CellProfiler source-axis projection requires a leading source axis "
-                f"of size {self.source_axis_size}, got shape {data.shape!r} "
-                f"for source alias {self.source_alias!r}."
-            )
-        return image_payload_slice_context(payload, data[self.axis_index], self.axis_index)
-
-
-class CellProfilerSourceAxisCardinalityProjection(
-    MostDerivedContextStrategyMixin[CellProfilerSourceAxisProjectionScope],
-    ABC,
-):
-    """Projection behavior for singleton versus composed source axes."""
-
-    __registry_key__ = "strategy_key"
-    __skip_if_no_key__ = True
-    stable_key_axis: ClassVar[str] = "source_axis_cardinality"
-    strategy_key: ClassVar[str | None] = None
+        if CommonRuntimeValue.from_values(provenances).single is None:
+            return None
+        return sources[0].payload
 
     @classmethod
-    def project(
+    def composed_source_metadata(
         cls,
-        payload: CellProfilerRuntimeValue,
-        scope: CellProfilerSourceAxisProjectionScope,
-    ) -> CellProfilerRuntimeValue:
-        """Project ``payload`` according to the declared source-axis cardinality."""
-        strategy = cls.for_context(
-            scope,
-            error_subject="CellProfiler source-axis cardinality projection",
+        sources: tuple["CellProfilerSourceIdentityMixin", ...],
+        *,
+        mode: ImagePayloadMetadataCompositionMode | None = None,
+    ) -> ImagePayloadMetadata | None:
+        """Return source metadata composed in runtime source order."""
+        if not sources:
+            return None
+        if mode is None:
+            mode = cls.source_metadata_composition_mode(sources)
+        source_payloads = tuple(
+            source_payload
+            for source in sources
+            for source_payload in payload_slices_for_alignment(source.payload)
         )
-        if strategy is None:
-            raise ValueError("CellProfiler source-axis cardinality requires a strategy.")
-        return strategy.project_payload(payload, scope)
-
-    @abstractmethod
-    def project_payload(
-        self,
-        payload: CellProfilerRuntimeValue,
-        scope: CellProfilerSourceAxisProjectionScope,
-    ) -> CellProfilerRuntimeValue:
-        """Return the source-axis payload for this cardinality."""
-
-
-class SingletonCellProfilerSourceAxisCardinalityProjection(
-    CellProfilerSourceAxisCardinalityProjection
-):
-    """A single source alias already is the requested measurement image."""
-
-    strategy_key = "single_source_axis"
-
-    def matches(self, scope: CellProfilerSourceAxisProjectionScope) -> bool:
-        return scope.is_single_source_axis
-
-    def project_payload(
-        self,
-        payload: CellProfilerRuntimeValue,
-        scope: CellProfilerSourceAxisProjectionScope,
-    ) -> CellProfilerRuntimeValue:
-        del scope
-        return payload
-
-
-class ComposedCellProfilerSourceAxisCardinalityProjection(
-    CellProfilerSourceAxisCardinalityProjection
-):
-    """A composed source axis must be projected from payload data."""
-
-    strategy_key = "composed_source_axis"
-
-    def matches(self, scope: CellProfilerSourceAxisProjectionScope) -> bool:
-        return scope.is_composed_source_axis
-
-    def project_payload(
-        self,
-        payload: CellProfilerRuntimeValue,
-        scope: CellProfilerSourceAxisProjectionScope,
-    ) -> CellProfilerRuntimeValue:
-        return CellProfilerSourceAxisPayloadProjection.project(payload, scope)
-
-
-class CellProfilerSourceAxisPayloadProjection(
-    NominalTypeStrategyFamilyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Project one source-binding plane from a composed image payload."""
-
-    stable_key_axis: ClassVar[str] = "value_type_label"
+        source_metadata = tuple(
+            ImagePayloadMetadata(
+                source_provenance=(
+                    ImagePayloadMetadata.compose(
+                        payload_slices_for_alignment(payload),
+                        mode=ImagePayloadMetadataCompositionMode.BUNDLE,
+                    )
+                    .collapse_leading_plane_axis()
+                    .source_provenance
+                    if isinstance(payload, AlignedImageStack)
+                    else image_payload_metadata(payload).source_provenance
+                )
+            )
+            for payload in source_payloads
+        )
+        metadata = ImagePayloadMetadata.compose(
+            source_payloads,
+            mode=mode,
+            source_metadata=source_metadata,
+        )
+        if not metadata.has_values:
+            return None
+        return metadata
 
     @classmethod
-    def project(
+    def source_metadata_composition_mode(
         cls,
-        payload: CellProfilerRuntimeValue,
-        scope: CellProfilerSourceAxisProjectionScope,
-    ) -> CellProfilerRuntimeValue:
-        """Return one source-axis image while preserving payload context."""
-        strategy = cls.for_nominal_value(payload)
-        if strategy is None:
-            raise TypeError(
-                "CellProfiler source-axis projection has no registered strategy for "
-                f"{type(payload).__name__}."
-            )
-        return strategy.project_payload(payload, scope)
-
-    @abstractmethod
-    def project_payload(
-        self,
-        payload: CellProfilerRuntimeValue,
-        scope: CellProfilerSourceAxisProjectionScope,
-    ) -> CellProfilerRuntimeValue:
-        """Return one source-axis image from a supported payload value."""
-
-
-class ImagePayloadSourceAxisProjection(CellProfilerSourceAxisPayloadProjection):
-    """Project raw/contextual image payloads with a leading source axis."""
-
-    value_type = (np.ndarray, ImageMetadataPayload, MaskedImagePayload)
-
-    def project_payload(
-        self,
-        payload: CellProfilerRuntimeValue,
-        scope: CellProfilerSourceAxisProjectionScope,
-    ) -> CellProfilerRuntimeValue:
-        return scope.project_image_payload(payload)
-
-
-class AlignedImageStackSourceAxisProjection(CellProfilerSourceAxisPayloadProjection):
-    """Project each aligned slice, then re-compose the aligned payload."""
-
-    value_type = AlignedImageStack
-
-    def project_payload(
-        self,
-        payload: CellProfilerRuntimeValue,
-        scope: CellProfilerSourceAxisProjectionScope,
-    ) -> CellProfilerRuntimeValue:
-        if not isinstance(payload, AlignedImageStack):
-            raise TypeError(
-                "Aligned source-axis projection requires AlignedImageStack, "
-                f"got {type(payload).__name__}."
-            )
-        projected_slices = tuple(
-            CellProfilerSourceAxisPayloadProjection.project(
-                slice_payload,
-                scope,
-            )
-            for slice_payload in payload.slices
-        )
-        return compose_aligned_image_payload(
-            f"{scope.source_alias} measurement source-axis projection",
-            projected_slices,
-        ).payload
+        sources: tuple["CellProfilerSourceIdentityMixin", ...],
+    ) -> ImagePayloadMetadataCompositionMode:
+        """Return the source-axis topology owned by this source class."""
+        del sources
+        return ImagePayloadMetadataCompositionMode.STACK
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -390,57 +186,9 @@ class CellProfilerImageRequest(
     SOURCE_ALIASES_FIELD_NAME: ClassVar[str] = "CellProfilerImageRequest.source_aliases"
 
     source_aliases: tuple[str, ...] = ()
-    projects_runtime_slice_kwargs: bool = True
-    publishes_side_effect_main_flow: bool = True
 
     def __post_init__(self) -> None:
         self.validate_source_identity()
-        if not isinstance(self.publishes_side_effect_main_flow, bool):
-            raise TypeError(
-                "CellProfilerImageRequest.publishes_side_effect_main_flow must be "
-                f"bool, got {type(self.publishes_side_effect_main_flow).__name__}."
-            )
-
-    def owns_source_axis(self, source_aliases: tuple[str, ...]) -> bool:
-        """Return whether this request declares exactly the requested source axis."""
-        return bool(source_aliases) and tuple(source_aliases) == self.source_aliases
-
-    def source_axis_payload(self, source_alias: str) -> CellProfilerRuntimeValue:
-        """Return one source image projected from this request's source axis."""
-        return CellProfilerSourceAxisCardinalityProjection.project(
-            self.payload,
-            CellProfilerSourceAxisProjectionScope.from_aliases(
-                self.source_aliases,
-                source_alias,
-            ),
-        )
-
-    def composed_source_payload_for_name(
-        self,
-        name: str,
-    ) -> CellProfilerRuntimeValue | None:
-        """Return this invocation payload projected to a declared source name."""
-        if name in self.source_aliases:
-            return self.source_axis_payload(name)
-        return None
-
-    def source_payloads_for_names(
-        self,
-        names: tuple[str, ...],
-    ) -> Mapping[str, CellProfilerRuntimeValue] | None:
-        """Return source-axis payloads for an exact declared source-name axis."""
-        if not self.owns_source_axis(names):
-            return None
-        payloads: dict[str, CellProfilerRuntimeValue] = {}
-        for name in names:
-            payload = self.source_payload_for_name(name)
-            if payload is None:
-                raise ValueError(
-                    "CellProfiler source-axis request declared source name "
-                    f"{name!r} but could not project its payload."
-                )
-            payloads[name] = payload
-        return MappingProxyType(payloads)
 
 
 @dataclass(frozen=True, slots=True)
@@ -451,10 +199,6 @@ class CellProfilerSourceImageEndpoint:
     display_name: str
 
     name = AliasProperty("display_name")
-
-    def invocation_kwarg(self) -> int:
-        """Return this endpoint's CellProfiler channel index."""
-        return self.index
 
 
 @dataclass(frozen=True, slots=True)
@@ -472,6 +216,7 @@ class CellProfilerSourceImagePair:
         source_aliases: tuple[str, ...],
     ) -> "CellProfilerSourceImagePair | None":
         """Return the primary source pair implied by source identity fields."""
+        del source_image_name
         match source_aliases:
             case (first_name, second_name):
                 return cls.from_parts(
@@ -481,7 +226,7 @@ class CellProfilerSourceImagePair:
                     second_name=second_name,
                 )
             case _:
-                return cls.from_source_image_name(source_image_name)
+                return None
 
     @classmethod
     def from_parts(
@@ -497,25 +242,6 @@ class CellProfilerSourceImagePair:
             first=CellProfilerSourceImageEndpoint(first_index, first_name),
             second=CellProfilerSourceImageEndpoint(second_index, second_name),
             runtime_pair=RuntimeMeasurementSourcePair(first_name, second_name),
-        )
-
-    @classmethod
-    def from_source_image_name(
-        cls,
-        source_image_name: str | None,
-    ) -> "CellProfilerSourceImagePair | None":
-        """Decode a composed source-image name into a pair invocation identity."""
-        if source_image_name is None:
-            return None
-        source_parts = tuple(part for part in source_image_name.split("__") if part)
-        if len(source_parts) != 2:
-            return None
-        first_name, second_name = source_parts
-        return cls.from_parts(
-            first_index=0,
-            second_index=1,
-            first_name=first_name,
-            second_name=second_name,
         )
 
     @property
@@ -534,212 +260,9 @@ class CellProfilerSourceImagePair:
     ) -> dict[str, int]:
         """Lower this source-pair invocation to CellProfiler channel kwargs."""
         return {
-            first_channel_kwarg: self.first.invocation_kwarg(),
-            second_channel_kwarg: self.second.invocation_kwarg(),
+            first_channel_kwarg: self.first.index,
+            second_channel_kwarg: self.second.index,
         }
-
-
-class CellProfilerSourcePairFeature(ABC, metaclass=AutoRegisterMeta):
-    """CellProfiler feature naming semantics for ordered source-image pairs."""
-
-    __registry_key__ = "source_field"
-    __skip_if_no_key__ = True
-
-    source_field: ClassVar[str | None] = None
-    feature_family: ClassVar[str | None] = None
-
-    @classmethod
-    @lru_cache(maxsize=None)
-    def all(cls) -> tuple["CellProfilerSourcePairFeature", ...]:
-        """Return registered source-pair feature policies in declaration order."""
-        return tuple(
-            feature_type()
-            for feature_type in cls.__registry__.values()
-            if feature_type.source_field is not None
-        )
-
-    @classmethod
-    @lru_cache(maxsize=None)
-    def source_field_names(cls) -> frozenset[str]:
-        """Return raw result fields owned by source-pair feature policies."""
-        return frozenset(feature.source_field_name for feature in cls.all())
-
-    @classmethod
-    @lru_cache(maxsize=None)
-    def runtime_feature_names_for_pair(
-        cls,
-        source_pair: CellProfilerSourceImagePair,
-    ) -> Mapping[str, str]:
-        """Return raw-field to runtime-feature names for one source pair."""
-        return {
-            feature.source_field_name: feature.runtime_feature_name(source_pair)
-            for feature in cls.all()
-        }
-
-    @classmethod
-    def project_row_for_pair(
-        cls,
-        row_mapping: MeasurementRowMapping,
-        source_pair: CellProfilerSourceImagePair,
-        *,
-        retain_field: Callable[[str], bool],
-    ) -> dict[str, CellProfilerRuntimeValue]:
-        """Return one row with source-pair fields projected to runtime names."""
-        source_field_names = cls.source_field_names()
-        if not (source_field_names & row_mapping.keys()):
-            return dict(row_mapping)
-        projected = {
-            field_name: value
-            for field_name, value in row_mapping.items()
-            if retain_field(field_name)
-        }
-        for source_field_name, runtime_feature_name in (
-            cls.runtime_feature_names_for_pair(source_pair).items()
-        ):
-            if source_field_name not in row_mapping:
-                continue
-            projected[runtime_feature_name] = row_mapping[source_field_name]
-        return projected
-
-    @classmethod
-    def project_columnar_rows_for_pair(
-        cls,
-        rows: ColumnarRows,
-        source_pair: CellProfilerSourceImagePair,
-        *,
-        retain_field: Callable[[str], bool],
-    ) -> ColumnarRows:
-        """Return columnar rows with source-pair fields projected once."""
-        columns_by_name = {str(column): column for column in rows.columns}
-        if not (cls.source_field_names() & columns_by_name.keys()):
-            return rows
-
-        projected = {
-            field_name: rows.column_values(column)
-            for field_name, column in columns_by_name.items()
-            if retain_field(field_name)
-        }
-        for source_field_name, runtime_feature_name in (
-            cls.runtime_feature_names_for_pair(source_pair).items()
-        ):
-            column = columns_by_name.get(source_field_name)
-            if column is None:
-                continue
-            projected[runtime_feature_name] = rows.column_values(column)
-        return MeasurementProjectedColumnarRows(
-            MappingProxyType(projected),
-            declared_object_measurement_domain_covered=(
-                rows.covers_declared_object_measurement_domain
-            ),
-        )
-
-    @property
-    def source_field_name(self) -> str:
-        """Return the raw absorbed-function field represented by this feature."""
-        if self.source_field is None:
-            raise TypeError(f"{type(self).__name__} does not declare source_field.")
-        return self.source_field
-
-    @property
-    def feature_family_name(self) -> str:
-        """Return the CellProfiler measurement feature family."""
-        if self.feature_family is None:
-            raise TypeError(f"{type(self).__name__} does not declare feature_family.")
-        return self.feature_family
-
-    def runtime_feature_name(self, source_pair: CellProfilerSourceImagePair) -> str:
-        """Return the CellProfiler measurement column for this source pair."""
-        first_name, second_name = self.source_names(source_pair)
-        return f"Correlation_{self.feature_family_name}_{first_name}_{second_name}"
-
-    @abstractmethod
-    def source_names(
-        self,
-        source_pair: CellProfilerSourceImagePair,
-    ) -> tuple[str, str]:
-        """Return source display names in CellProfiler's feature orientation."""
-
-
-class FirstSecondCellProfilerSourcePairFeature(CellProfilerSourcePairFeature):
-    """Feature policy whose CellProfiler column uses first, then second source."""
-
-    source_field = None
-
-    def source_names(
-        self,
-        source_pair: CellProfilerSourceImagePair,
-    ) -> tuple[str, str]:
-        return source_pair.first.name, source_pair.second.name
-
-
-class SecondFirstCellProfilerSourcePairFeature(CellProfilerSourcePairFeature):
-    """Feature policy whose CellProfiler column uses second, then first source."""
-
-    source_field = None
-
-    def source_names(
-        self,
-        source_pair: CellProfilerSourceImagePair,
-    ) -> tuple[str, str]:
-        return source_pair.second.name, source_pair.first.name
-
-
-class CellProfilerCorrelationFeature(FirstSecondCellProfilerSourcePairFeature):
-    source_field = "correlation"
-    feature_family = "Correlation"
-
-
-class CellProfilerSlopeFeature(FirstSecondCellProfilerSourcePairFeature):
-    source_field = "slope"
-    feature_family = "Slope"
-
-
-class CellProfilerOverlapFeature(FirstSecondCellProfilerSourcePairFeature):
-    source_field = "overlap"
-    feature_family = "Overlap"
-
-
-class CellProfilerK1Feature(FirstSecondCellProfilerSourcePairFeature):
-    source_field = "k1"
-    feature_family = "K"
-
-
-class CellProfilerK2Feature(SecondFirstCellProfilerSourcePairFeature):
-    source_field = "k2"
-    feature_family = "K"
-
-
-class CellProfilerMandersM1Feature(FirstSecondCellProfilerSourcePairFeature):
-    source_field = "manders_m1"
-    feature_family = "Manders"
-
-
-class CellProfilerMandersM2Feature(SecondFirstCellProfilerSourcePairFeature):
-    source_field = "manders_m2"
-    feature_family = "Manders"
-
-
-class CellProfilerRWC1Feature(FirstSecondCellProfilerSourcePairFeature):
-    source_field = "rwc1"
-    feature_family = "RWC"
-
-
-class CellProfilerRWC2Feature(SecondFirstCellProfilerSourcePairFeature):
-    source_field = "rwc2"
-    feature_family = "RWC"
-
-
-class CellProfilerCostesM1Feature(FirstSecondCellProfilerSourcePairFeature):
-    source_field = "costes_m1"
-    feature_family = "Costes"
-
-
-class CellProfilerCostesM2Feature(SecondFirstCellProfilerSourcePairFeature):
-    source_field = "costes_m2"
-    feature_family = "Costes"
-
-
-CellProfilerInvocationRequest = RuntimeFunctionInvocationRequest
 
 
 CellProfilerMeasurementImageDomain = MeasurementImageReferenceDomain
@@ -758,7 +281,7 @@ class CellProfilerMeasurementImage(
         "CellProfilerMeasurementImage.source_aliases"
     )
 
-    payload: CellProfilerRuntimeValue
+    payload: RuntimeCallableArgument
     source_aliases: tuple[str, ...] = ()
     align_to_labels: bool = True
     reference_domain: CellProfilerMeasurementImageDomain = (
@@ -775,66 +298,20 @@ class CellProfilerMeasurementImage(
             )
 
     @classmethod
-    def shared_source_image_name(
-        cls,
-        measurement_images: tuple["CellProfilerMeasurementImage", ...],
-    ) -> str | None:
-        """Return table-level source identity only when all images share one source."""
-        return CommonRuntimeValue.from_values(
-            image.source_image_name for image in measurement_images
-        ).single
-
-    @classmethod
-    def shared_source_payload(
-        cls,
-        measurement_images: tuple["CellProfilerMeasurementImage", ...],
-    ) -> CellProfilerRuntimeValue | None:
-        """Return a table-level source payload only for one shared provenance."""
-        if not measurement_images:
-            return None
-        provenances = tuple(
-            image_payload_metadata(image.payload).source_provenance.equality_identity
-            for image in measurement_images
-        )
-        if CommonRuntimeValue.from_values(provenances).single is None:
-            return None
-        return measurement_images[0].payload
-
-    @classmethod
-    def composed_source_metadata(
-        cls,
-        measurement_images: tuple["CellProfilerMeasurementImage", ...],
-        *,
-        mode: ImagePayloadMetadataCompositionMode | None = None,
-    ) -> ImagePayloadMetadata | None:
-        """Return source metadata composed in runtime measurement-image order."""
-        if not measurement_images:
-            return None
-        if mode is None:
-            mode = cls.source_metadata_composition_mode(measurement_images)
-        metadata = ImagePayloadMetadataCompositionRequest(
-            tuple(image.payload for image in measurement_images),
-            mode=mode,
-        ).metadata()
-        if not metadata.has_values:
-            return None
-        return metadata
-
-    @classmethod
     def source_metadata_composition_mode(
         cls,
-        measurement_images: tuple["CellProfilerMeasurementImage", ...],
+        sources: tuple["CellProfilerMeasurementImage", ...],
     ) -> ImagePayloadMetadataCompositionMode:
         """Return source metadata topology declared by measurement reference domains."""
         if all(
-            image.reference_domain is CellProfilerMeasurementImageDomain.OBJECT_LABELS
-            for image in measurement_images
+            source.reference_domain is CellProfilerMeasurementImageDomain.OBJECT_LABELS
+            for source in sources
         ):
             return ImagePayloadMetadataCompositionMode.BUNDLE
         return ImagePayloadMetadataCompositionMode.STACK
 
     @property
-    def alignment_image(self) -> CellProfilerRuntimeValue:
+    def alignment_image(self) -> RuntimeCallableArgument:
         """Return this measurement image payload for alignment."""
         return self.payload
 
@@ -858,10 +335,47 @@ class CellProfilerMeasurementImage(
 
     def with_alignment_image(
         self,
-        image: CellProfilerRuntimeValue,
+        image: RuntimeCallableArgument,
     ) -> "CellProfilerMeasurementImage":
-        """Return this source with projected image data and identical provenance."""
-        return replace(self, payload=image)
+        """Return this source with image data and plane proof projected together."""
+
+        plane_projection = self.plane_projection
+        if plane_projection is not None:
+            if isinstance(image, AlignedImageStack):
+                aligned_projection = RuntimeSliceProjection.preserved_context_for_value(
+                    image
+                )
+                if (
+                    aligned_projection is None
+                    or aligned_projection.axis is not plane_projection.axis
+                    or aligned_projection.plane_index != plane_projection.plane_index
+                    or aligned_projection.axis_size != plane_projection.axis_size
+                ):
+                    raise ValueError(
+                        "Aligned measurement image runtime plane projection changed "
+                        f"during alignment: {aligned_projection!r} != "
+                        f"{plane_projection!r}."
+                    )
+            else:
+                image_plane_axis = image_payload_metadata(image).plane_axis
+                if image_plane_axis is None:
+                    plane_projection = None
+                elif image_plane_axis is not plane_projection.axis:
+                    raise ValueError(
+                        "Aligned measurement image plane axis conflicts with its "
+                        f"execution projection: {image_plane_axis.value!r} != "
+                        f"{plane_projection.axis.value!r}."
+                    )
+                else:
+                    plane_projection.validate_shape(
+                        np.asarray(image_payload_data(image)).shape,
+                        value_name="Aligned measurement image",
+                    )
+        return replace(
+            self,
+            payload=image,
+            plane_projection=plane_projection,
+        )
 
     def prepare_object_labels(
         self,
@@ -878,32 +392,13 @@ class CellProfilerMeasurementImage(
             ),
         )
 
-    def align_labels_to_source(
-        self,
-        label_payload: ObjectLabelValue,
-        labels: ObjectLabelMeasurementSource | None = None,
-        *,
-        plane_projector: RuntimePlaneAxisProjector | None = None,
-    ) -> CellProfilerRuntimeValue:
-        """Project labels into this measurement image's source domain."""
-        label_data = labels
-        if label_data is None:
-            label_data = object_label_dense_array(label_payload)
-        return MeasurementLabelSourceAlignmentStrategy.align_request_labels_to_image_source(
-            self.alignment_request(
-                labels=label_data,
-                label_payload=label_payload,
-                plane_projector=plane_projector,
-            )
-        )
-
     def align_image_to_labels(
         self,
         label_payload: ObjectLabelValue,
         labels: ObjectLabelMeasurementSource,
         *,
         plane_projector: RuntimePlaneAxisProjector | None = None,
-    ) -> CellProfilerRuntimeValue:
+    ) -> RuntimeCallableArgument:
         """Project this measurement image payload into the supplied label domain."""
         return MeasurementImageLabelAlignmentStrategy.align(
             self.alignment_request(

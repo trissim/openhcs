@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import replace
 
 from openhcs.agent.dto.common import AgentError, JsonObject, SCHEMA_VERSION
 from openhcs.agent.dto.execution import (
-    DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
-    DEFAULT_RUNTIME_SERVER_INFO_TIMEOUT_MS,
-    DEFAULT_RUNTIME_SERVER_SCAN_TIMEOUT_MS,
     ExecutionConnectionSpec,
+    RuntimeDebugInspectionRequest,
+    RuntimeDebugInspectionResult,
     RuntimeServerExecutionStatusRequest,
     RuntimeServerInfoRequest,
     RuntimeExecutionStatus,
@@ -21,7 +21,8 @@ from openhcs.agent.dto.execution import (
     runtime_execution_status_from_response,
     unreachable_runtime_server_info,
 )
-from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+from openhcs.core.debug_views import DebugViewModel
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
 from zmqruntime.execution.server import ExecutionServer
 from zmqruntime.messages import MessageFields
@@ -110,6 +111,16 @@ class RuntimeServerGatewayABC(ABC):
     ) -> JsonObject:
         raise NotImplementedError
 
+    def runtime_debug_inspection(
+        self,
+        connection: ExecutionConnectionSpec,
+        debug_session_id: str,
+        *,
+        timeout_ms: int,
+    ) -> DebugViewModel:
+        """Return the exact paused-worker runtime view when supported."""
+        raise NotImplementedError
+
     @abstractmethod
     def scan(
         self,
@@ -124,6 +135,12 @@ class RuntimeServerGatewayABC(ABC):
 
 class ZMQRuntimeServerGateway(RuntimeServerGatewayABC):
     """Runtime server gateway backed by the existing ZMQ execution client."""
+
+    def __init__(
+        self,
+        config: OpenHCSZMQConfig = OPENHCS_ZMQ_CONFIG,
+    ) -> None:
+        self._config = config
 
     def server_info(
         self,
@@ -158,6 +175,18 @@ class ZMQRuntimeServerGateway(RuntimeServerGatewayABC):
             )
         )
 
+    def runtime_debug_inspection(
+        self,
+        connection: ExecutionConnectionSpec,
+        debug_session_id: str,
+        *,
+        timeout_ms: int,
+    ) -> DebugViewModel:
+        return self._client(
+            connection,
+            timeout_ms=timeout_ms,
+        ).get_debug_runtime_inspection(debug_session_id=debug_session_id)
+
     def scan(
         self,
         *,
@@ -173,13 +202,25 @@ class ZMQRuntimeServerGateway(RuntimeServerGatewayABC):
                 host=host,
                 timeout_ms=timeout_ms,
                 transport_mode=transport_mode,
-                config=OPENHCS_ZMQ_CONFIG,
+                config=self._config,
             )
         )
 
-    @staticmethod
-    def _client(connection: ExecutionConnectionSpec) -> ZMQExecutionClient:
-        return ZMQExecutionClient(**connection.zmq_client_kwargs())
+    def _client(
+        self,
+        connection: ExecutionConnectionSpec,
+        *,
+        timeout_ms: int | None = None,
+    ) -> ZMQExecutionClient:
+        config = (
+            self._config
+            if timeout_ms is None
+            else replace(self._config, control_timeout_ms=timeout_ms)
+        )
+        return ZMQExecutionClient(
+            config=config,
+            **connection.zmq_client_kwargs(),
+        )
 
 
 class RuntimeServerService:
@@ -188,8 +229,10 @@ class RuntimeServerService:
     def __init__(
         self,
         gateway: RuntimeServerGatewayABC | None = None,
+        config: OpenHCSZMQConfig = OPENHCS_ZMQ_CONFIG,
     ) -> None:
-        self._gateway = gateway or ZMQRuntimeServerGateway()
+        self._config = config
+        self._gateway = gateway or ZMQRuntimeServerGateway(config)
 
     def server_info(
         self,
@@ -198,8 +241,13 @@ class RuntimeServerService:
         port: int | None = None,
         transport_mode: str | None = None,
         persistent: bool = True,
-        timeout_ms: int = DEFAULT_RUNTIME_SERVER_INFO_TIMEOUT_MS,
+        timeout_ms: int | None = None,
     ) -> RuntimeServerInfo:
+        timeout_ms = (
+            self._config.server_info_timeout_ms
+            if timeout_ms is None
+            else timeout_ms
+        )
         connection = ExecutionConnectionSpec(host, port, transport_mode, persistent)
         try:
             response = self._gateway.server_info(
@@ -254,8 +302,13 @@ class RuntimeServerService:
         ports: tuple[int, ...] | None = None,
         host: str = "localhost",
         transport_mode: str | None = None,
-        timeout_ms: int = DEFAULT_RUNTIME_SERVER_SCAN_TIMEOUT_MS,
+        timeout_ms: int | None = None,
     ) -> RuntimeServerScanResult:
+        timeout_ms = (
+            self._config.server_scan_timeout_ms
+            if timeout_ms is None
+            else timeout_ms
+        )
         scanned_ports = self._scan_ports(ports)
         servers = tuple(
             RuntimeServerInfo.from_response(
@@ -302,8 +355,13 @@ class RuntimeServerService:
         port: int | None = None,
         transport_mode: str | None = None,
         persistent: bool = True,
-        timeout_ms: int = DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        timeout_ms: int | None = None,
     ) -> RuntimeExecutionStatus:
+        timeout_ms = (
+            self._config.control_timeout_ms
+            if timeout_ms is None
+            else timeout_ms
+        )
         connection = ExecutionConnectionSpec(host, port, transport_mode, persistent)
         try:
             response = self._gateway.execution_status(
@@ -343,8 +401,66 @@ class RuntimeServerService:
             timeout_ms=request.timeout_ms,
         )
 
-    @staticmethod
-    def _scan_ports(ports: tuple[int, ...] | None) -> tuple[int, ...]:
+    def runtime_debug_inspection(
+        self,
+        *,
+        debug_session_id: str,
+        host: str = "localhost",
+        port: int | None = None,
+        transport_mode: str | None = None,
+        persistent: bool = True,
+        timeout_ms: int | None = None,
+    ) -> RuntimeDebugInspectionResult:
+        timeout_ms = (
+            self._config.control_timeout_ms
+            if timeout_ms is None
+            else timeout_ms
+        )
+        connection = ExecutionConnectionSpec(host, port, transport_mode, persistent)
+        try:
+            view_model = self._gateway.runtime_debug_inspection(
+                connection,
+                debug_session_id,
+                timeout_ms=timeout_ms,
+            )
+        except Exception as exc:
+            return RuntimeDebugInspectionResult(
+                schema_version=SCHEMA_VERSION,
+                connection=connection,
+                debug_session_id=debug_session_id,
+                errors=(
+                    AgentError.from_exception(
+                        "runtime_debug_inspection_error",
+                        exc,
+                        hint=(
+                            "Inspect execution status for the exact paused "
+                            "debug_session_id, and confirm the port is the "
+                            "OpenHCS execution server that owns that session."
+                        ),
+                    ),
+                ),
+            )
+        return RuntimeDebugInspectionResult(
+            schema_version=SCHEMA_VERSION,
+            connection=connection,
+            debug_session_id=debug_session_id,
+            view_model=view_model,
+        )
+
+    def runtime_debug_inspection_from_request(
+        self,
+        request: RuntimeDebugInspectionRequest,
+    ) -> RuntimeDebugInspectionResult:
+        return self.runtime_debug_inspection(
+            debug_session_id=request.debug_session_id,
+            host=request.connection.host,
+            port=request.connection.port,
+            transport_mode=request.connection.transport_mode,
+            persistent=request.connection.persistent,
+            timeout_ms=request.timeout_ms,
+        )
+
+    def _scan_ports(self, ports: tuple[int, ...] | None) -> tuple[int, ...]:
         if ports is None:
-            return (OPENHCS_ZMQ_CONFIG.default_port,)
+            return (self._config.default_port,)
         return tuple(dict.fromkeys(int(port) for port in ports))

@@ -1,42 +1,54 @@
 """Shared CellProfiler color literal semantics."""
 
 from __future__ import annotations
+from openhcs.core.artifacts import ArtifactInputPlan
+
+import re
+
 from openhcs.interop.cellprofiler.setting_names import normalized_symbol_name
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
-from openhcs.constants.constants import VariableComponents
-from openhcs.core.image_shapes import (
-    is_channel_last_image_slice,
-    is_channel_last_image_stack,
+from matplotlib.colors import CSS4_COLORS, to_rgb
+from openhcs.constants.constants import GroupBy, VariableComponents
+from openhcs.core.aligned_image_payload import (
+    AlignedImageSliceContext,
+    AlignedImageStack,
+    pack_aligned_image_outputs,
+)
+from openhcs.core.artifacts import (
+    ArtifactSpecCollection,
+    ArtifactSpecRelation,
+    GroupLineageSourceRelation,
+    ImageArtifactType,
 )
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.runtime_values import (
-    ImagePayloadChannelProjection,
-    SourceImageProvenance,
+from openhcs.core.runtime_array_values import RuntimeArrayData
+from openhcs.core.pipeline.function_contracts import (
+    composed_image_payload,
+    required_variable_components,
+)
+from openhcs.core.runtime_plane_projection import (
+    RuntimePlaneAxis,
+    RuntimePlaneAxisValueProjection,
+)
+from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
+from openhcs.core.runtime_image_values import (
     image_payload_data,
+    image_payload_mask,
     image_payload_metadata,
     with_image_payload_data,
 )
-from openhcs.core.pipeline_image_schema import (
-    GrayscaleImageTypeSourceRole,
-    SOURCE_IMAGE_TYPE_METADATA_FIELD,
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.interop.cellprofiler.module_settings import (
+    BoundModuleSettings,
 )
-from openhcs.core.source_image_semantics import source_image_payload_role
 from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
-    ArtifactContractModule,
-    BinderSettingsSourceModule,
     CellProfilerModule,
-    ImageArtifactInputCapability,
-    ImageArtifactInputModule,
-    ImageArtifactOutputCapability,
-    ImageArtifactOutputModule,
-    ModuleSettingsSourceModule,
 )
 from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
@@ -44,27 +56,31 @@ from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
     repeating_setting_blocks,
     required_setting_value,
+    setting_names,
     setting_values,
 )
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     cellprofiler_enum_value_setting_parser,
     coerce_cellprofiler_enum,
+    normalize_cellprofiler_setting_name,
     parse_cellprofiler_bool,
 )
 
+if TYPE_CHECKING:
+    from openhcs.core.function_patterns import FunctionInvocationKey
+    from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
+    from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
+    from openhcs.core.steps.function_runtime import RuntimeCallableKwargs
+    from openhcs.interop.cellprofiler.settings_binder import SettingsBinder
+
 
 class ColorToGrayModule(
-    BinderSettingsSourceModule,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
     CellProfilerModule,
 ):
     module_name = "ColorToGray"
     function_name = "color_to_gray"
     validated = True
-    contract = ProcessingContract.FLEXIBLE
-    default_variable_components = (VariableComponents.CHANNEL,)
     confidence = 1.0
     input_image_setting = SettingNameFamily("Select the input image")
     output_image_setting = SettingNameFamily("Name the output image")
@@ -73,23 +89,7 @@ class ColorToGrayModule(
     image_type_setting = "Image type"
     channel_number_setting = "Channel number"
     channel_weight_setting = "Relative weight of the channel"
-    rgb_weight_settings = (
-        "Relative weight of the red channel",
-        "Relative weight of the green channel",
-        "Relative weight of the blue channel",
-    )
-    rgb_output_offset = 1
-    rgb_output_flags = (
-        "Convert red to gray?",
-        "Convert green to gray?",
-        "Convert blue to gray?",
-    )
-    hsv_output_offset = 4
-    hsv_output_flags = (
-        "Convert hue to gray?",
-        "Convert saturation to gray?",
-        "Convert value to gray?",
-    )
+    channel_count_setting = "Channel count"
 
     class ConversionMethod(str, Enum):
         COMBINE = "combine"
@@ -100,8 +100,60 @@ class ColorToGrayModule(
         HSV = "hsv"
         CHANNELS = "channels"
 
-    setting_bindings = (
-        SettingToKeywordBinding(
+    @dataclass(frozen=True, slots=True)
+    class FixedChannel:
+        output_flag: str
+        output_suffix: str
+        weight_setting: str | None = None
+
+    @dataclass(frozen=True, slots=True)
+    class FixedImageType:
+        output_offset: int
+        channels: tuple["ColorToGrayModule.FixedChannel", ...]
+
+    rgb_fixed_image_type = FixedImageType(
+        output_offset=1,
+        channels=(
+            FixedChannel(
+                "Convert red to gray?",
+                "Red",
+                "Relative weight of the red channel",
+            ),
+            FixedChannel(
+                "Convert green to gray?",
+                "Green",
+                "Relative weight of the green channel",
+            ),
+            FixedChannel(
+                "Convert blue to gray?",
+                "Blue",
+                "Relative weight of the blue channel",
+            ),
+        ),
+    )
+    hsv_fixed_image_type = FixedImageType(
+        output_offset=4,
+        channels=(
+            FixedChannel("Convert hue to gray?", "Hue"),
+            FixedChannel("Convert saturation to gray?", "Saturation"),
+            FixedChannel("Convert value to gray?", "Value"),
+        ),
+    )
+    default_channel_indices = tuple(range(len(rgb_fixed_image_type.channels)))
+
+    input_image_binding = SettingToKeywordBinding.input(
+        input_image_setting, ImageArtifactType
+    )
+    output_image_binding = SettingToKeywordBinding.output(
+        output_image_setting, ImageArtifactType
+    )
+    channel_output_image_binding = SettingToKeywordBinding.output(
+        channel_output_image_setting,
+        ImageArtifactType,
+        repeated=True,
+    )
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (input_image_binding,output_image_binding,
+        channel_output_image_binding,SettingToKeywordBinding(
             conversion_method_setting,
             "mode",
             cellprofiler_enum_value_setting_parser(ConversionMethod),
@@ -110,15 +162,37 @@ class ColorToGrayModule(
             image_type_setting,
             "image_type",
             cellprofiler_enum_value_setting_parser(ImageType),
-        ),
-    )
+        ),)
 
     @classmethod
-    def declared_artifact_input_settings(cls):
-        return (
-            *super().declared_artifact_input_settings(),
-            (cls.input_image_setting, ImageArtifactInputCapability),
+    def active_artifact_bindings(cls, module=None, *, invocation_key=None):
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
         )
+        if module is None:
+            return bindings
+        split_channels = (
+            cls.conversion_method(module) is cls.ConversionMethod.SPLIT
+            and cls.image_type(module) is cls.ImageType.CHANNELS
+        )
+        inactive = (
+            cls.output_image_binding
+            if split_channels
+            else cls.channel_output_image_binding
+        )
+        return tuple(binding for binding in bindings if binding is not inactive)
+
+    @classmethod
+    def artifact_names_for_binding(cls, module, binding):
+        """Project only output rows active under the selected conversion mode."""
+
+        if binding in (
+            cls.output_image_binding,
+            cls.channel_output_image_binding,
+        ):
+            return cls.output_image_names(module)
+        return super().artifact_names_for_binding(module, binding)
 
     @dataclass(frozen=True, slots=True)
     class Plan:
@@ -139,150 +213,152 @@ class ColorToGrayModule(
             }
 
     @classmethod
-    def settings_source(
-        cls, module: "ModuleBlock", binder: "SettingsBinder"
-    ) -> "CellProfilerKwargs":
-        return cls.plan(module, binder).kwargs
-
-    @classmethod
-    def compile_time_public_setting_records(cls, module, source_schema=None):
-        del source_schema
-        from openhcs.interop.cellprofiler.parser import ModuleSetting
-        from openhcs.interop.cellprofiler.setting_names import (
-            setting_name_matches,
-            setting_names,
-        )
-
-        preserved_settings = (
-            *cls.rgb_output_flags,
-            *cls.hsv_output_flags,
-        )
-        records = [
-            ModuleSetting(setting.name, setting.value)
-            for setting in module.iter_settings()
-            if any(
-                setting_name_matches(setting.name, preserved)
-                for preserved in preserved_settings
-            )
-        ]
-        input_name = optional_setting_value(module, cls.input_image_setting)
-        mode = cls.conversion_method(module)
-        image_type = cls.image_type(module)
-        output_names = cls.output_image_names(
-            module,
-            mode=mode,
-            image_type=image_type,
-        )
-        canonical_output_names = (
-            cls.compile_time_canonical_output_names(
-                input_name,
-                mode=mode,
-                image_type=image_type,
-                existing_records=tuple(module.iter_settings()),
-            )
-            if input_name is not None
-            else ()
-        )
-        if output_names != canonical_output_names:
-            output_setting = (
-                cls.channel_output_image_setting
-                if image_type is cls.ImageType.CHANNELS
-                and mode is cls.ConversionMethod.SPLIT
-                else cls.output_image_setting
-            )
-            output_setting_name = setting_names(output_setting)[0]
-            records.extend(
-                ModuleSetting(output_setting_name, output_name)
-                for output_name in output_names
-            )
-        return tuple(records)
-
-    @classmethod
-    def compile_time_public_setting_names(cls):
-        return (
-            *super().compile_time_public_setting_names(),
-            cls.output_image_setting,
-            cls.channel_output_image_setting,
-            *cls.rgb_output_flags,
-            *cls.hsv_output_flags,
-        )
-
-    @classmethod
-    def compile_time_canonical_output_setting_records(
+    def bind_settings(
         cls,
-        request,
+        module: "ModuleBlock",
         *,
+        binder: "SettingsBinder",
+    ) -> "BoundModuleSettings":
+        """Bind behavior and artifact identities from the same module rows."""
+
+        bound = cls._bind_declared_settings(module, binder=binder)
+        plan = cls.plan(module, binder)
+        kwargs = {**dict(bound.kwargs), **plan.kwargs}
+        output_binding = (
+            cls.channel_output_image_binding
+            if plan.mode is cls.ConversionMethod.SPLIT
+            and plan.image_type is cls.ImageType.CHANNELS
+            else cls.output_image_binding
+        )
+        kwargs[output_binding.require_parameter_name()] = (
+            plan.output_image_names[0]
+            if len(plan.output_image_names) == 1
+            else plan.output_image_names
+        )
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+        for setting in cls._compound_setting_names():
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting), None)
+        return cls._finalize_bound_settings(
+            module,
+            binder=binder,
+            bound=BoundModuleSettings(kwargs, unmapped_kwargs),
+        )
+
+    @classmethod
+    def _derived_identity_setting_records(
+        cls,
+        *,
+        invocation,
+        block_position,
         existing_records,
+        step_context,
     ):
         """Rebuild sparse ColorToGray image-output rows from public settings."""
         from openhcs.interop.cellprofiler.parser import ModuleSetting
 
-        del request
-        if cls.compile_time_setting_values(
+        if cls._setting_values(
             existing_records, cls.output_image_setting
-        ) or cls.compile_time_setting_values(
-            existing_records, cls.channel_output_image_setting
-        ):
-            return ()
-        input_name = cls.compile_time_single_setting_value(
-            existing_records, cls.input_image_setting
-        )
-        mode_literal = cls.compile_time_single_setting_value(
-            existing_records, cls.conversion_method_setting
-        )
-        image_type_literal = cls.compile_time_single_setting_value(
-            existing_records, cls.image_type_setting
-        )
-        if input_name is None or mode_literal is None or image_type_literal is None:
-            return ()
-
-        mode = coerce_cellprofiler_enum(cls.ConversionMethod, mode_literal)
-        image_type = coerce_cellprofiler_enum(cls.ImageType, image_type_literal)
-        output_names = cls.compile_time_canonical_output_names(
-            input_name,
-            mode=mode,
-            image_type=image_type,
-            existing_records=existing_records,
-        )
-        if image_type is cls.ImageType.CHANNELS and mode is cls.ConversionMethod.SPLIT:
-            setting_name = cls.channel_output_image_setting.canonical
+        ) or cls._setting_values(existing_records, cls.channel_output_image_setting):
+            own_records = ()
         else:
-            setting_name = cls.output_image_setting.canonical
-        return tuple(ModuleSetting(setting_name, name) for name in output_names)
+            input_name = cls._single_setting_value(
+                existing_records, cls.input_image_setting
+            )
+            mode_literal = cls._single_setting_value(
+                existing_records, cls.conversion_method_setting
+            )
+            image_type_literal = cls._single_setting_value(
+                existing_records, cls.image_type_setting
+            )
+            if input_name is None or mode_literal is None or image_type_literal is None:
+                own_records = ()
+            else:
+                mode = coerce_cellprofiler_enum(cls.ConversionMethod, mode_literal)
+                image_type = coerce_cellprofiler_enum(cls.ImageType, image_type_literal)
+                channel_indices = tuple(
+                    int(index)
+                    for index in invocation.kwargs_dict.get(
+                        "channel_indices",
+                        cls.default_channel_indices,
+                    )
+                )
+                output_names = cls._canonical_output_names(
+                    input_name,
+                    mode=mode,
+                    image_type=image_type,
+                    channel_indices=channel_indices,
+                )
+                setting_name = (
+                    cls.channel_output_image_setting.canonical
+                    if image_type is cls.ImageType.CHANNELS
+                    and mode is cls.ConversionMethod.SPLIT
+                    else cls.output_image_setting.canonical
+                )
+                own_records = tuple(
+                    ModuleSetting(setting_name, name) for name in output_names
+                )
+        return (
+            *own_records,
+            *super()._derived_identity_setting_records(
+                invocation=invocation,
+                block_position=block_position,
+                existing_records=(*existing_records, *own_records),
+                step_context=step_context,
+            ),
+        )
 
     @classmethod
-    def compile_time_canonical_output_names(
+    def _canonical_output_names(
         cls,
         input_name: str,
         *,
         mode: "ColorToGrayModule.ConversionMethod",
         image_type: "ColorToGrayModule.ImageType",
-        existing_records,
+        channel_indices: tuple[int, ...],
     ) -> tuple[str, ...]:
         """Return declaration-owned ColorToGray output names for sparse source."""
-        base_name = cls.compile_time_grayscale_base_name(input_name)
+        base_name = cls._grayscale_base_name(input_name)
         if mode is cls.ConversionMethod.COMBINE:
             return (f"{base_name}Gray",)
         if image_type is cls.ImageType.CHANNELS:
-            channel_indices = cls.compile_time_channel_indices(existing_records)
-            if not channel_indices:
-                channel_indices = (0,)
             return tuple(f"{base_name}Channel{index + 1}" for index in channel_indices)
-        _output_offset, output_flags = cls.fixed_channel_output_settings(image_type)
-        output_suffixes = (
-            ("Red", "Green", "Blue")
-            if image_type is cls.ImageType.RGB
-            else ("Hue", "Saturation", "Value")
-        )
+        declaration = cls.fixed_image_type(image_type)
+        if any(
+            index < 0 or index >= len(declaration.channels) for index in channel_indices
+        ):
+            raise ValueError(
+                f"ColorToGray channel indices must address {image_type.value} "
+                f"channels, got {channel_indices!r}."
+            )
         return tuple(
-            f"{base_name}{suffix}"
-            for suffix, flag in zip(output_suffixes, output_flags, strict=True)
-            if cls.compile_time_flag_enabled(existing_records, flag)
+            f"{base_name}{declaration.channels[index].output_suffix}"
+            for index in channel_indices
         )
 
     @classmethod
-    def compile_time_setting_values(cls, records, setting_name) -> tuple[str, ...]:
-        """Return sparse compile-time setting values owned by this module."""
+    def _compound_setting_names(cls) -> tuple[str, ...]:
+        return (
+            cls.channel_count_setting,
+            cls.channel_number_setting,
+            cls.channel_weight_setting,
+            *(
+                channel.weight_setting
+                for channel in cls.rgb_fixed_image_type.channels
+                if channel.weight_setting is not None
+            ),
+            *(
+                channel.output_flag
+                for declaration in (
+                    cls.rgb_fixed_image_type,
+                    cls.hsv_fixed_image_type,
+                )
+                for channel in declaration.channels
+            ),
+        )
+
+    @classmethod
+    def _setting_values(cls, records, setting_name) -> tuple[str, ...]:
+        """Return sparse transient setting values owned by this module."""
         from openhcs.interop.cellprofiler.setting_names import setting_name_matches
 
         return tuple(
@@ -292,46 +368,25 @@ class ColorToGrayModule(
         )
 
     @classmethod
-    def compile_time_single_setting_value(cls, records, setting_name) -> str | None:
+    def _single_setting_value(cls, records, setting_name) -> str | None:
         """Return one sparse compile-time setting value for this module."""
-        values = cls.compile_time_setting_values(records, setting_name)
+        values = cls._setting_values(records, setting_name)
         if not values:
             return None
         if len(values) != 1:
             raise ValueError(
-                "Expected one ColorToGray compile-time setting row for "
+                "Expected one ColorToGray transient setting row for "
                 f"{setting_name!r}, got {values!r}."
             )
         return values[0]
 
-    @classmethod
-    def compile_time_flag_enabled(cls, records, setting_name: str) -> bool:
-        """Return whether a sparse compile-time output flag is enabled."""
-        value = cls.compile_time_single_setting_value(records, setting_name)
-        if value is None:
-            return False
-        return parse_cellprofiler_bool(value)
-
-    @classmethod
-    def compile_time_channel_indices(cls, records) -> tuple[int, ...]:
-        """Return sparse compile-time channel indices for channel splitting."""
-        values = cls.compile_time_setting_values(records, cls.channel_number_setting)
-        if not values:
-            return ()
-        return tuple(cls.channel_number_index(value) for value in values)
-
     @staticmethod
-    def compile_time_grayscale_base_name(input_name: str) -> str:
+    def _grayscale_base_name(input_name: str) -> str:
         """Return the source-name stem used for canonical grayscale outputs."""
         for suffix in ("Color", "Colour"):
             if input_name.endswith(suffix) and len(input_name) > len(suffix):
                 return input_name[: -len(suffix)]
         return input_name
-
-    @classmethod
-    def compile_time_image_output_names(cls, module: "ModuleBlock") -> tuple[str, ...]:
-        """Return image outputs using ColorToGray's mode-dependent declaration."""
-        return cls.output_image_names(module)
 
     @classmethod
     def plan(
@@ -373,21 +428,38 @@ class ColorToGrayModule(
             return (required_setting_value(module, cls.output_image_setting),)
         if image_type is cls.ImageType.CHANNELS:
             return setting_values(module, cls.channel_output_image_setting)
-        output_offset, output_flags = cls.fixed_channel_output_settings(image_type)
+        declaration = cls.fixed_image_type(image_type)
         output_names = setting_values(module, cls.output_image_setting)
+        output_flag_values = tuple(
+            optional_setting_value(module, channel.output_flag)
+            for channel in declaration.channels
+        )
+        if all(value is None for value in output_flag_values):
+            if not output_names:
+                raise ValueError(
+                    f"ColorToGray({module.module_num}) sparse split mode declares "
+                    "no output images."
+                )
+            return output_names
         enabled_indices = tuple(
             index
-            for index, flag in enumerate(output_flags)
-            if cls.flag_enabled(module, binder, flag)
+            for index, (channel, value) in enumerate(
+                zip(declaration.channels, output_flag_values, strict=True)
+            )
+            if value is not None
+            and cls.flag_enabled(module, binder, channel.output_flag)
         )
         if not enabled_indices:
             raise ValueError(
                 f"ColorToGray({module.module_num}) split mode must declare at least one enabled output channel."
             )
-        full_cellprofiler_row_count = output_offset + len(output_flags)
+        full_cellprofiler_row_count = declaration.output_offset + len(
+            declaration.channels
+        )
         if len(output_names) >= full_cellprofiler_row_count:
             return tuple(
-                output_names[output_offset + index] for index in enabled_indices
+                output_names[declaration.output_offset + index]
+                for index in enabled_indices
             )
         if len(output_names) == len(enabled_indices):
             return output_names
@@ -436,13 +508,11 @@ class ColorToGrayModule(
             return indices
         if mode is cls.ConversionMethod.COMBINE:
             return (0, 1, 2)
-        _output_offset, output_flags = cls.fixed_channel_output_settings(image_type)
+        declaration = cls.fixed_image_type(image_type)
         return tuple(
-            (
-                index
-                for index, flag in enumerate(output_flags)
-                if cls.flag_enabled(module, binder, flag)
-            )
+            index
+            for index, channel in enumerate(declaration.channels)
+            if cls.flag_enabled(module, binder, channel.output_flag)
         )
 
     @classmethod
@@ -463,7 +533,8 @@ class ColorToGrayModule(
                             setting, required_setting_value(module, setting)
                         )
                     )
-                    for setting in cls.rgb_weight_settings
+                    for channel in cls.rgb_fixed_image_type.channels
+                    if (setting := channel.weight_setting) is not None
                 )
             )
         return tuple(
@@ -474,13 +545,13 @@ class ColorToGrayModule(
         )
 
     @classmethod
-    def fixed_channel_output_settings(
+    def fixed_image_type(
         cls, image_type: "ColorToGrayModule.ImageType"
-    ) -> tuple[int, tuple[str, ...]]:
+    ) -> "ColorToGrayModule.FixedImageType":
         if image_type is cls.ImageType.RGB:
-            return (cls.rgb_output_offset, cls.rgb_output_flags)
+            return cls.rgb_fixed_image_type
         if image_type is cls.ImageType.HSV:
-            return (cls.hsv_output_offset, cls.hsv_output_flags)
+            return cls.hsv_fixed_image_type
         raise ValueError(f"{image_type.value!r} is not a fixed-channel image type.")
 
     @classmethod
@@ -502,39 +573,21 @@ class ColorToGrayModule(
             )
         return int(match.group(1)) - 1
 
-    @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        image = ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(cls.input_name(module)))
-        outputs = [
-            cls.image_output_artifact(builder, module, output_name)
-            for output_name in cls.output_image_names(module)
-        ]
-        return assembler.assemble_contract(
-            module, builder, inputs=[image], outputs=outputs
-        )
 
 class GrayToColorModule(
-    BinderSettingsSourceModule,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
     CellProfilerModule,
 ):
     module_name = "GrayToColor"
     function_name = "gray_to_color"
     validated = True
-    contract = ProcessingContract.PURE_3D
-    default_variable_components = (VariableComponents.CHANNEL,)
+    group_by = GroupBy.SITE
     confidence = 1.0
     color_scheme_setting = SettingNameFamily("Select a color scheme")
     rescale_setting = SettingNameFamily("Rescale intensity")
     current_rescale_default = "Yes"
     revision_3_upgraded_rescale_default = "No"
-    stack_image_setting = "Image name"
-    stack_color_setting = "Color"
-    stack_weight_setting = "Weight"
     output_image_setting = "Name the output image"
-    stack_default_color = "#ff0000"
-    stack_default_weight = "1.0"
+    ignored_settings = ("Hidden",)
 
     class Scheme(str, Enum):
         RGB = "RGB"
@@ -542,42 +595,210 @@ class GrayToColorModule(
         STACK = "Stack"
         COMPOSITE = "Composite"
 
-    rgb_image_settings = (
-        "Select the image to be colored red",
-        "Select the image to be colored green",
-        "Select the image to be colored blue",
+    @dataclass(frozen=True, slots=True)
+    class IndexedChannel:
+        image_binding: SettingToKeywordBinding
+        channel_parameter: str
+        weight_binding: SettingToKeywordBinding
+
+    @dataclass(frozen=True, slots=True)
+    class StackRows:
+        image_binding: SettingToKeywordBinding
+        color_setting: str
+        weight_setting: str
+        default_color: str
+        default_weight: str
+
+    rgb_channels = (
+        IndexedChannel(
+            SettingToKeywordBinding.input(
+                "Select the image to be colored red", ImageArtifactType
+            ),
+            "red_channel",
+            SettingToKeywordBinding(
+                "Relative weight for the red image",
+                "red_weight",
+                float,
+            ),
+        ),
+        IndexedChannel(
+            SettingToKeywordBinding.input(
+                "Select the image to be colored green", ImageArtifactType
+            ),
+            "green_channel",
+            SettingToKeywordBinding(
+                "Relative weight for the green image",
+                "green_weight",
+                float,
+            ),
+        ),
+        IndexedChannel(
+            SettingToKeywordBinding.input(
+                "Select the image to be colored blue", ImageArtifactType
+            ),
+            "blue_channel",
+            SettingToKeywordBinding(
+                "Relative weight for the blue image",
+                "blue_weight",
+                float,
+            ),
+        ),
     )
-    rgb_weight_settings = (
-        "Relative weight for the red image",
-        "Relative weight for the green image",
-        "Relative weight for the blue image",
+    cmyk_channels = (
+        IndexedChannel(
+            SettingToKeywordBinding.input(
+                "Select the image to be colored cyan", ImageArtifactType
+            ),
+            "cyan_channel",
+            SettingToKeywordBinding(
+                "Relative weight for the cyan image",
+                "cyan_weight",
+                float,
+            ),
+        ),
+        IndexedChannel(
+            SettingToKeywordBinding.input(
+                "Select the image to be colored magenta", ImageArtifactType
+            ),
+            "magenta_channel",
+            SettingToKeywordBinding(
+                "Relative weight for the magenta image",
+                "magenta_weight",
+                float,
+            ),
+        ),
+        IndexedChannel(
+            SettingToKeywordBinding.input(
+                "Select the image to be colored yellow", ImageArtifactType
+            ),
+            "yellow_channel",
+            SettingToKeywordBinding(
+                "Relative weight for the yellow image",
+                "yellow_weight",
+                float,
+            ),
+        ),
+        IndexedChannel(
+            SettingToKeywordBinding.input(
+                "Select the image that determines brightness", ImageArtifactType
+            ),
+            "gray_channel",
+            SettingToKeywordBinding(
+                "Relative weight for the brightness image",
+                "gray_weight",
+                float,
+            ),
+        ),
     )
-    rgb_channel_parameters = ("red_channel", "green_channel", "blue_channel")
-    rgb_weight_parameters = ("red_weight", "green_weight", "blue_weight")
-    cmyk_image_settings = (
-        "Select the image to be colored cyan",
-        "Select the image to be colored magenta",
-        "Select the image to be colored yellow",
-        "Select the image that determines brightness",
+    stack_rows = StackRows(
+        image_binding=SettingToKeywordBinding.input(
+            "Image name", ImageArtifactType, repeated=True
+        ),
+        color_setting="Color",
+        weight_setting="Weight",
+        default_color="#ff0000",
+        default_weight="1.0",
     )
-    cmyk_weight_settings = (
-        "Relative weight for the cyan image",
-        "Relative weight for the magenta image",
-        "Relative weight for the yellow image",
-        "Relative weight for the brightness image",
+    output_image_binding = SettingToKeywordBinding.output(
+        output_image_setting, ImageArtifactType
     )
-    cmyk_channel_parameters = (
-        "cyan_channel",
-        "magenta_channel",
-        "yellow_channel",
-        "gray_channel",
-    )
-    cmyk_weight_parameters = (
-        "cyan_weight",
-        "magenta_weight",
-        "yellow_weight",
-        "gray_weight",
-    )
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (*(channel.image_binding for channel in (*rgb_channels, *cmyk_channels)),
+        stack_rows.image_binding,output_image_binding,SettingToKeywordBinding(
+            color_scheme_setting,
+            "color_scheme",
+            cellprofiler_enum_value_setting_parser(Scheme),
+        ),
+        SettingToKeywordBinding(
+            rescale_setting,
+            "rescale_intensity",
+            parse_cellprofiler_bool,
+        ),
+        *(channel.weight_binding for channel in (*rgb_channels, *cmyk_channels)),)
+
+    @classmethod
+    def artifact_output_relations(
+        cls,
+        module: "ModuleBlock",
+        *,
+        invocation_key: "FunctionInvocationKey",
+        step_context: "ArtifactDeclarationStepContext",
+        binding: SettingToKeywordBinding,
+        name: str,
+        artifact_inputs: ArtifactSpecCollection,
+        output_position: int,
+    ) -> tuple[ArtifactSpecRelation, ...]:
+        """Use the first composed channel as the RGB image's parent context."""
+
+        del cls, module, invocation_key, step_context, binding, name, output_position
+        image_inputs = artifact_inputs.for_artifact_type(ImageArtifactType).specs
+        if not image_inputs:
+            raise ValueError("GrayToColor requires at least one image input.")
+        return (GroupLineageSourceRelation(source=image_inputs[0].ref()),)
+
+    @classmethod
+    def active_artifact_bindings(cls, module=None, *, invocation_key=None):
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
+        )
+        if module is None:
+            return bindings
+        scheme = cls.scheme(module)
+        if scheme in (cls.Scheme.RGB, cls.Scheme.CMYK):
+            active_inputs = tuple(
+                channel.image_binding for channel in cls.indexed_channels(scheme)
+            )
+        else:
+            active_inputs = (cls.stack_rows.image_binding,)
+        declared_inputs = frozenset(
+            cls.declared_artifact_bindings(
+                plan_type=ArtifactInputPlan,
+                artifact_type=ImageArtifactType,
+            )
+        )
+        return tuple(
+            binding
+            for binding in bindings
+            if binding not in declared_inputs or binding in active_inputs
+        )
+
+    @classmethod
+    def module_blocks_for_invocation(cls, *, invocation, step_context):
+        """Project explicit callable channel choices into CellProfiler rows."""
+
+        explicit_kwargs = invocation.kwargs_dict
+        scheme = cls.coerce_scheme(
+            explicit_kwargs.get("color_scheme", cls.Scheme.RGB.value)
+        )
+        if scheme not in (cls.Scheme.RGB, cls.Scheme.CMYK):
+            return super().module_blocks_for_invocation(
+                invocation=invocation,
+                step_context=step_context,
+            )
+        channels = cls.indexed_channels(scheme)
+        if not any(
+            channel.channel_parameter in explicit_kwargs for channel in channels
+        ):
+            return super().module_blocks_for_invocation(
+                invocation=invocation,
+                step_context=step_context,
+            )
+
+        reconstructed_kwargs = dict(explicit_kwargs)
+        for channel in channels:
+            if explicit_kwargs.get(channel.channel_parameter, -1) < 0:
+                reconstructed_kwargs[
+                    channel.image_binding.require_parameter_name()
+                ] = None
+        blocks, consumed = super().module_blocks_for_invocation(
+            invocation=replace(
+                invocation,
+                kwargs=tuple(reconstructed_kwargs.items()),
+            ),
+            step_context=step_context,
+        )
+        explicit_names = frozenset(explicit_kwargs)
+        return blocks, tuple(name for name in consumed if name in explicit_names)
 
     @dataclass(frozen=True, slots=True)
     class StackChannel:
@@ -588,70 +809,47 @@ class GrayToColorModule(
         weight: str
 
     @classmethod
-    def compile_time_public_setting_names(cls):
-        return (
-            *super().compile_time_public_setting_names(),
-            *cls.rgb_image_settings,
-            *cls.cmyk_image_settings,
-            cls.stack_image_setting,
-            cls.output_image_setting,
+    def bind_settings(
+        cls,
+        module: "ModuleBlock",
+        *,
+        binder: "SettingsBinder",
+    ) -> "BoundModuleSettings":
+        """Bind indexed and repeated channel rows through this declaration."""
+
+        bound = cls._bind_declared_settings(module, binder=binder)
+        kwargs = {**dict(bound.kwargs), **cls._gray_to_color_kwargs(module, binder)}
+        stack_images = tuple(
+            channel.image_name for channel in cls.stack_channels(module)
+        )
+        if stack_images:
+            kwargs[cls.stack_rows.image_binding.require_parameter_name()] = stack_images
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+        for setting in (
+            cls.stack_rows.color_setting,
+            cls.stack_rows.weight_setting,
+        ):
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting), None)
+        return cls._finalize_bound_settings(
+            module,
+            binder=binder,
+            bound=BoundModuleSettings(kwargs, unmapped_kwargs),
         )
 
     @classmethod
-    def compile_time_public_setting_records(cls, module, source_schema=None):
-        del source_schema
-        from openhcs.interop.cellprofiler.parser import ModuleSetting
-        from openhcs.interop.cellprofiler.setting_names import (
-            setting_name_matches,
-            setting_names,
-        )
-
-        preserved_settings = (
-            *cls.rgb_image_settings,
-            *cls.cmyk_image_settings,
-            cls.stack_image_setting,
-            cls.output_image_setting,
-        )
-        setting_records = module.iter_settings()
-        if setting_records:
-            return tuple(
-                setting
-                for setting in setting_records
-                if any(
-                    setting_name_matches(setting.name, preserved)
-                    for preserved in preserved_settings
-                )
-            )
-        return tuple(
-            ModuleSetting(setting_names(setting_name)[0], value)
-            for setting_name in preserved_settings
-            for value in setting_values(module, setting_name)
-        )
-
-    @classmethod
-    def settings_source(
+    def _gray_to_color_kwargs(
         cls, module: "ModuleBlock", binder: "SettingsBinder"
-    ) -> "CellProfilerKwargs":
+    ) -> 'RuntimeCallableKwargs':
         scheme = cls.scheme(module)
-        if scheme is GrayToColorModule.Scheme.RGB:
+        if scheme in (
+            GrayToColorModule.Scheme.RGB,
+            GrayToColorModule.Scheme.CMYK,
+        ):
             return cls.indexed_scheme_kwargs(
                 module,
                 binder,
                 scheme=scheme,
-                image_settings=cls.rgb_image_settings,
-                channel_parameters=cls.rgb_channel_parameters,
-                weight_settings=cls.rgb_weight_settings,
-                weight_parameters=cls.rgb_weight_parameters,
-            )
-        if scheme is GrayToColorModule.Scheme.CMYK:
-            return cls.indexed_scheme_kwargs(
-                module,
-                binder,
-                scheme=scheme,
-                image_settings=cls.cmyk_image_settings,
-                channel_parameters=cls.cmyk_channel_parameters,
-                weight_settings=cls.cmyk_weight_settings,
-                weight_parameters=cls.cmyk_weight_parameters,
+                channels=cls.indexed_channels(scheme),
             )
         if scheme in {
             GrayToColorModule.Scheme.STACK,
@@ -679,68 +877,43 @@ class GrayToColorModule(
         raise ValueError(f"Unsupported GrayToColor scheme: {value!r}.")
 
     @classmethod
-    def image_input_names(cls, module: "ModuleBlock") -> tuple[str, ...]:
-        scheme = cls.scheme(module)
-        if scheme is GrayToColorModule.Scheme.RGB:
-            return cls.indexed_input_names(module, cls.rgb_image_settings)
-        if scheme is GrayToColorModule.Scheme.CMYK:
-            return cls.indexed_input_names(module, cls.cmyk_image_settings)
-        if scheme in {
-            GrayToColorModule.Scheme.STACK,
-            GrayToColorModule.Scheme.COMPOSITE,
-        }:
-            return tuple((channel.image_name for channel in cls.stack_channels(module)))
-        raise ValueError(f"Unsupported GrayToColor scheme: {scheme.value!r}")
-
-    @staticmethod
-    def indexed_input_names(
-        module: "ModuleBlock", image_settings: tuple[str, ...]
-    ) -> tuple[str, ...]:
-        return tuple(
-            (
-                image_name
-                for setting_name in image_settings
-                if (
-                    image_name := normalized_symbol_name(
-                        module.get_setting(setting_name, "")
-                    )
-                )
-                is not None
-            )
-        )
-
-    @classmethod
     def indexed_scheme_kwargs(
         cls,
         module: "ModuleBlock",
         binder: "SettingsBinder",
         *,
         scheme: GrayToColorModule.Scheme,
-        image_settings: tuple[str, ...],
-        channel_parameters: tuple[str, ...],
-        weight_settings: tuple[str, ...],
-        weight_parameters: tuple[str, ...],
-    ) -> "CellProfilerKwargs":
+        channels: tuple["GrayToColorModule.IndexedChannel", ...],
+    ) -> 'RuntimeCallableKwargs':
         kwargs: dict[str, Any] = cls.base_kwargs(module, binder, scheme)
         channel_index = 0
-        for setting_name, parameter_name in zip(
-            image_settings, channel_parameters, strict=True
-        ):
-            kwargs[parameter_name] = -1
+        for channel in channels:
+            setting_name = setting_names(channel.image_binding.setting_name)[0]
+            kwargs[channel.channel_parameter] = -1
             image_name = normalized_symbol_name(module.get_setting(setting_name, ""))
             if image_name is None:
                 continue
-            kwargs[parameter_name] = channel_index
+            kwargs[channel.channel_parameter] = channel_index
             channel_index += 1
-        for setting_name, parameter_name in zip(
-            weight_settings, weight_parameters, strict=True
-        ):
-            kwargs[parameter_name] = float(
+        for channel in channels:
+            setting_name = setting_names(channel.weight_binding.setting_name)[0]
+            kwargs[channel.weight_binding.require_parameter_name()] = float(
                 binder.parse_value(
                     setting_name, module.get_setting(setting_name, "1.0")
                 )
             )
         return kwargs
+
+    @classmethod
+    def indexed_channels(
+        cls,
+        scheme: "GrayToColorModule.Scheme",
+    ) -> tuple["GrayToColorModule.IndexedChannel", ...]:
+        if scheme is cls.Scheme.RGB:
+            return cls.rgb_channels
+        if scheme is cls.Scheme.CMYK:
+            return cls.cmyk_channels
+        raise ValueError(f"{scheme.value!r} is not an indexed color scheme.")
 
     @classmethod
     def stack_scheme_kwargs(
@@ -749,14 +922,12 @@ class GrayToColorModule(
         binder: "SettingsBinder",
         *,
         scheme: GrayToColorModule.Scheme,
-    ) -> "CellProfilerKwargs":
+    ) -> 'RuntimeCallableKwargs':
         channels = cls.stack_channels(module)
         kwargs: dict[str, Any] = cls.base_kwargs(module, binder, scheme)
         kwargs["channel_weights"] = tuple(
-            (
-                float(binder.parse_value(cls.stack_weight_setting, channel.weight))
-                for channel in channels
-            )
+            float(binder.parse_value(cls.stack_rows.weight_setting, channel.weight))
+            for channel in channels
         )
         if scheme is GrayToColorModule.Scheme.COMPOSITE:
             kwargs["channel_colors"] = tuple((channel.color for channel in channels))
@@ -794,23 +965,24 @@ class GrayToColorModule(
     ) -> tuple["GrayToColorModule.StackChannel", ...]:
         channels: list[GrayToColorModule.StackChannel] = []
         image_name: str | None = None
-        color = cls.stack_default_color
-        weight = cls.stack_default_weight
+        color = cls.stack_rows.default_color
+        weight = cls.stack_rows.default_weight
+        image_setting = setting_names(cls.stack_rows.image_binding.setting_name)[0]
         for setting in module.iter_settings():
-            if setting.name == cls.stack_image_setting:
+            if setting.name == image_setting:
                 cls.append_stack_channel(
                     channels, image_name=image_name, color=color, weight=weight
                 )
                 image_name = setting.value.strip()
-                color = cls.stack_default_color
-                weight = cls.stack_default_weight
+                color = cls.stack_rows.default_color
+                weight = cls.stack_rows.default_weight
                 continue
             if image_name is None:
                 continue
-            if setting.name == cls.stack_color_setting:
+            if setting.name == cls.stack_rows.color_setting:
                 color = setting.value.strip()
                 continue
-            if setting.name == cls.stack_weight_setting:
+            if setting.name == cls.stack_rows.weight_setting:
                 weight = setting.value.strip()
         cls.append_stack_channel(
             channels, image_name=image_name, color=color, weight=weight
@@ -835,33 +1007,13 @@ class GrayToColorModule(
             )
         )
 
-    @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        inputs = [
-            ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(name))
-            for name in cls.image_input_names(module)
-        ]
-        output = cls.image_output_artifact(
-            builder,
-            module,
-            required_setting_value(module, cls.output_image_setting),
-            setting=cls.output_image_setting,
-        )
-        return assembler.assemble_contract(
-            module, builder, inputs=inputs, outputs=[output]
-        )
-
 
 class UnmixColorsModule(
-    ModuleSettingsSourceModule,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
     CellProfilerModule,
 ):
     module_name = "UnmixColors"
     function_name = "unmix_colors"
     validated = True
-    contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
     input_image_setting = SettingNameFamily(
         "Select the input color image", aliases=("Color image",)
@@ -874,6 +1026,13 @@ class UnmixColorsModule(
     green_absorbance_setting = "Green absorbance"
     blue_absorbance_setting = "Blue absorbance"
     stain_count_setting = "Stain count"
+    input_image_binding = SettingToKeywordBinding.input(
+        input_image_setting, ImageArtifactType
+    )
+    output_image_binding = SettingToKeywordBinding.output(
+        output_image_setting, ImageArtifactType
+    )
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (input_image_binding,output_image_binding,)
 
     @dataclass(frozen=True, slots=True)
     class OutputRow:
@@ -882,16 +1041,24 @@ class UnmixColorsModule(
         custom_absorbance: tuple[float, float, float]
 
     @classmethod
-    def settings_source(cls, module: "ModuleBlock") -> "CellProfilerKwargs":
+    def postprocess_bound_settings(
+        cls,
+        module: "ModuleBlock",
+        bound: BoundModuleSettings,
+    ) -> BoundModuleSettings:
         rows = cls.output_rows(module)
-        return {
-            "stain_names": tuple((row.stain_name for row in rows)),
-            "custom_absorbances": tuple((row.custom_absorbance for row in rows)),
-        }
-
-    @classmethod
-    def input_name(cls, module: "ModuleBlock") -> str:
-        return required_setting_value(module, cls.input_image_setting)
+        return bound.with_kwargs(
+            {
+                "stain_names": tuple((row.stain_name for row in rows)),
+                "custom_absorbances": tuple((row.custom_absorbance for row in rows)),
+            }
+        ).with_consumed_settings(
+            cls.stain_count_setting,
+            cls.stain_setting,
+            cls.red_absorbance_setting,
+            cls.green_absorbance_setting,
+            cls.blue_absorbance_setting,
+        )
 
     @classmethod
     def output_rows(
@@ -970,17 +1137,6 @@ class UnmixColorsModule(
             raise ValueError("CellProfiler symbol names cannot be empty.")
         return normalized
 
-    @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        image = ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(cls.input_name(module)))
-        outputs = [
-            cls.image_output_artifact(builder, module, row.image_name)
-            for row in cls.output_rows(module)
-        ]
-        return assembler.assemble_contract(
-            module, builder, inputs=[image], outputs=outputs
-        )
-
 
 class CellProfilerColorFormat(ABC, metaclass=AutoRegisterMeta):
     """Nominal parser family for CellProfiler RGB color literals."""
@@ -1012,10 +1168,10 @@ class NamedCellProfilerColorFormat(CellProfilerColorFormat):
     format_key = "named"
 
     def matches(self, value: str | Sequence[float]) -> bool:
-        return isinstance(value, str) and value.strip().lower() in _COLOR_BY_NAME
+        return isinstance(value, str) and value.strip().lower() in CSS4_COLORS
 
     def color_parts(self, value: str | Sequence[float]) -> tuple[float, float, float]:
-        return _COLOR_BY_NAME[str(value).strip().lower()]
+        return to_rgb(str(value).strip().lower())
 
 
 class HexCellProfilerColorFormat(CellProfilerColorFormat):
@@ -1139,16 +1295,11 @@ class OutputMode(Enum):
     GRAYSCALE = "grayscale"
 
 
-_COLOR_BY_NAME: dict[str, tuple[float, float, float]] = {
-    "white": (1.0, 1.0, 1.0),
-    "black": (0.0, 0.0, 0.0),
-    "red": (1.0, 0.0, 0.0),
-    "green": (0.0, 1.0, 0.0),
-    "blue": (0.0, 0.0, 1.0),
-    "cyan": (0.0, 1.0, 1.0),
-    "magenta": (1.0, 0.0, 1.0),
-    "yellow": (1.0, 1.0, 0.0),
-}
+class InvertInputMode(Enum):
+    """InvertForPrinting input layout."""
+
+    COLOR = "color"
+    GRAYSCALE = "grayscale"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1310,6 +1461,8 @@ class CompositeGrayToColorRunner(GrayToColorSchemeRunner):
         return self.final_rgb(rgb_image, request)
 
 
+@required_variable_components(VariableComponents.CHANNEL)
+@composed_image_payload
 @numpy(contract=ProcessingContract.PURE_3D)
 def gray_to_color(
     image: np.ndarray,
@@ -1332,7 +1485,24 @@ def gray_to_color(
     channel_colors: Sequence[str] = (),
     channel_weights: Sequence[float] = (),
 ) -> np.ndarray:
-    """Dispatch GrayToColor across its RGB, CMYK, Stack, and Composite variants."""
+    """Dispatch GrayToColor across its RGB, CMYK, Stack, and Composite variants.
+
+    Args:
+        red_channel: Zero-based source channel mapped to red; ``-1`` omits it.
+        green_channel: Zero-based source channel mapped to green; ``-1`` omits it.
+        blue_channel: Zero-based source channel mapped to blue; ``-1`` omits it.
+        cyan_channel: Zero-based source channel mapped to cyan; ``-1`` omits it.
+        magenta_channel: Zero-based source channel mapped to magenta; ``-1`` omits
+            it.
+        yellow_channel: Zero-based source channel mapped to yellow; ``-1`` omits
+            it.
+        gray_channel: Zero-based source channel added equally to RGB; ``-1`` omits
+            it.
+        channel_colors: Per-channel color names or RGB specifications for composite
+            mode; the sequence must cover each input channel.
+        channel_weights: Per-channel intensity multipliers for composite mode; an
+            empty sequence uses unit weights.
+    """
     scheme = GrayToColorModule.coerce_scheme(color_scheme)
     request = GrayToColorRequest(
         image=image,
@@ -1354,7 +1524,39 @@ def gray_to_color(
         channel_colors=channel_colors,
         channel_weights=channel_weights,
     )
-    return GrayToColorSchemeRunner.for_scheme(scheme).run(request)
+    output = GrayToColorSchemeRunner.for_scheme(scheme).run(request)
+    metadata = image_payload_metadata(image)
+    if metadata.plane_axis is not None:
+        if metadata.plane_axis is not RuntimePlaneAxis.SOURCE_BINDING:
+            raise ValueError(
+                "GrayToColor image metadata requires a source-binding plane "
+                f"axis, got {metadata.plane_axis!r}."
+            )
+        source_plane_count = metadata.source_provenance.source_plane_count
+        if source_plane_count < 1:
+            raise ValueError(
+                "GrayToColor source-binding payload has no declared source planes."
+            )
+        parent_image = RuntimeSliceProjection.value_for_slice(
+            image,
+            RuntimePlaneAxisValueProjection.from_selected_plane(
+                axis=RuntimePlaneAxis.SOURCE_BINDING,
+                plane_index=0,
+                axis_size=source_plane_count,
+                source_aliases=metadata.source_image_names,
+            ),
+        )
+    else:
+        parent_image = image
+    output_metadata = (
+        metadata.without_leading_plane_axis()
+        if metadata.plane_axis is not None
+        else metadata
+    )
+    return replace(output_metadata, source_channel_axis=-1).payload_with(
+        output,
+        image_payload_mask(parent_image),
+    )
 
 
 @numpy(contract=ProcessingContract.FLEXIBLE)
@@ -1362,10 +1564,16 @@ def color_to_gray(
     image: np.ndarray,
     mode: ColorToGrayMode | str = ColorToGrayMode.SPLIT,
     image_type: ImageChannelType | str = ImageChannelType.RGB,
-    channel_indices: tuple[int, ...] = (0, 1, 2),
+    channel_indices: tuple[int, ...] = ColorToGrayModule.default_channel_indices,
     contributions: tuple[float, ...] = (1.0, 1.0, 1.0),
-) -> np.ndarray | tuple[np.ndarray, ...]:
-    """Convert a CellProfiler channel-last color payload to grayscale outputs."""
+) -> np.ndarray | AlignedImageStack:
+    """Convert a channel-last color image to selected grayscale outputs.
+
+    Args:
+        channel_indices: Zero-based color-channel positions to split or combine.
+        contributions: Relative weights for the selected channels in combine mode;
+            values cannot all be zero.
+    """
     resolved_mode = coerce_cellprofiler_enum(ColorToGrayMode, mode)
     resolved_image_type = coerce_cellprofiler_enum(ImageChannelType, image_type)
     if resolved_mode is ColorToGrayMode.COMBINE:
@@ -1378,68 +1586,265 @@ def color_to_gray(
     image_data = image_payload_data(image)
     outputs = split_color_to_gray(image, resolved_image_type, channel_indices)
     if resolved_image_type is ImageChannelType.RGB:
-        return tuple(
-            (
-                ImagePayloadChannelProjection(
+        return pack_aligned_image_outputs(
+            tuple(
+                image_payload_metadata(image).project_channel_payload(
                     source_payload=image,
                     source_data=image_data,
                     channel_index=channel_index,
                     channel_data=output,
                     channel_axis=-1,
-                ).payload()
+                )
                 for channel_index, output in zip(channel_indices, outputs, strict=True)
             )
         )
-    return tuple((with_image_payload_data(image, output) for output in outputs))
+    return pack_aligned_image_outputs(
+        tuple(with_image_payload_data(image, output) for output in outputs)
+    )
 
 
+def _invert_for_printing_channels(
+    image: np.ndarray,
+    *,
+    input_mode: InvertInputMode | str,
+    use_red_input: bool,
+    use_green_input: bool,
+    use_blue_input: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return CellProfiler red, green, and blue input planes."""
+
+    resolved_mode = coerce_cellprofiler_enum(InvertInputMode, input_mode)
+    image_data = np.asarray(image_payload_data(image))
+    if resolved_mode is InvertInputMode.COLOR:
+        if image_data.ndim != 3 or image_data.shape[-1] != 3:
+            raise ValueError(
+                "InvertForPrinting color input requires an HxWx3 image, got "
+                f"shape {image_data.shape!r}."
+            )
+        return tuple(image_data[..., index] for index in range(3))
+
+    enabled_inputs = (use_red_input, use_green_input, use_blue_input)
+    enabled_count = sum(enabled_inputs)
+    if enabled_count == 0:
+        raise ValueError(
+            "InvertForPrinting grayscale input requires at least one enabled image."
+        )
+    grayscale_stack = (
+        image_data[np.newaxis, ...]
+        if enabled_count == 1 and image_data.ndim == 2
+        else image_data
+    )
+    if grayscale_stack.ndim != 3 or grayscale_stack.shape[0] != enabled_count:
+        raise ValueError(
+            "InvertForPrinting grayscale input requires one leading plane per "
+            f"enabled channel; expected {enabled_count}, got shape "
+            f"{grayscale_stack.shape!r}."
+        )
+    height, width = grayscale_stack.shape[1:]
+    zero = np.zeros((height, width), dtype=grayscale_stack.dtype)
+    planes = iter(grayscale_stack)
+    return tuple(next(planes) if enabled else zero for enabled in enabled_inputs)
+
+
+def _invert_for_printing_result(
+    image: np.ndarray,
+    *,
+    input_mode: InvertInputMode | str,
+    use_red_input: bool,
+    use_green_input: bool,
+    use_blue_input: bool,
+    output_mode: OutputMode | str,
+    output_red: bool,
+    output_green: bool,
+    output_blue: bool,
+    red_output_name: str,
+    green_output_name: str,
+    blue_output_name: str,
+    color_output_name: str,
+) -> RuntimeArrayData | AlignedImageStack | None:
+    red_image, green_image, blue_image = _invert_for_printing_channels(
+        image,
+        input_mode=input_mode,
+        use_red_input=use_red_input,
+        use_green_input=use_green_input,
+        use_blue_input=use_blue_input,
+    )
+    inverted_channels = (
+        ((1.0 - green_image) * (1.0 - blue_image)).astype(np.float32),
+        ((1.0 - red_image) * (1.0 - blue_image)).astype(np.float32),
+        ((1.0 - red_image) * (1.0 - green_image)).astype(np.float32),
+    )
+    resolved_output_mode = coerce_cellprofiler_enum(OutputMode, output_mode)
+    if resolved_output_mode is OutputMode.COLOR:
+        outputs = (
+            with_image_payload_data(
+                image,
+                np.stack(inverted_channels, axis=-1),
+                metadata=image_payload_metadata(image).replace_fields(
+                    source_channel_axis=-1
+                ),
+            ),
+        )
+        output_names = (color_output_name,)
+    else:
+        enabled_outputs = (output_red, output_green, output_blue)
+        output_names = tuple(
+            name
+            for enabled, name in zip(
+                enabled_outputs,
+                (red_output_name, green_output_name, blue_output_name),
+                strict=True,
+            )
+            if enabled
+        )
+        output_metadata = image_payload_metadata(image).without_source_channel_axis()
+        outputs = tuple(
+            with_image_payload_data(
+                image,
+                output,
+                metadata=output_metadata,
+            )
+            for enabled, output in zip(
+                enabled_outputs,
+                inverted_channels,
+                strict=True,
+            )
+            if enabled
+        )
+    if not outputs:
+        return None
+    if any(not name.strip() for name in output_names):
+        raise ValueError("InvertForPrinting output image names cannot be blank.")
+    return pack_aligned_image_outputs(
+        outputs,
+        slice_contexts=tuple(
+            AlignedImageSliceContext.main_flow(
+                name,
+                artifact_kind=ImageArtifactType.value,
+            )
+            for name in output_names
+        ),
+    )
+
+
+@composed_image_payload
 @numpy(contract=ProcessingContract.PURE_3D)
 def invert_for_printing(
     image: np.ndarray,
-    output_mode: OutputMode = OutputMode.COLOR,
+    input_mode: InvertInputMode | str = InvertInputMode.COLOR,
+    use_red_input: bool = True,
+    use_green_input: bool = True,
+    use_blue_input: bool = True,
+    output_mode: OutputMode | str = OutputMode.COLOR,
     output_red: bool = True,
     output_green: bool = True,
     output_blue: bool = True,
-) -> np.ndarray:
-    """Invert fluorescent channels into CellProfiler brightfield-print colors."""
-    output_mode = coerce_cellprofiler_enum(OutputMode, output_mode)
-    image_data = np.asarray(image)
-    if image_data.ndim == 2:
-        image_data = image_data[np.newaxis, :, :]
-    channel_count = image_data.shape[0]
-    height, width = (image_data.shape[1], image_data.shape[2])
-    red_image = (
-        image_data[0]
-        if channel_count >= 1
-        else np.zeros((height, width), dtype=image_data.dtype)
+    red_output_name: str = "InvertedRed",
+    green_output_name: str = "InvertedGreen",
+    blue_output_name: str = "InvertedBlue",
+    color_output_name: str = "InvertedColor",
+) -> np.ndarray | AlignedImageStack | None:
+    """Invert fluorescent channels into the exact selected named outputs."""
+
+    return _invert_for_printing_result(
+        image,
+        input_mode=input_mode,
+        use_red_input=use_red_input,
+        use_green_input=use_green_input,
+        use_blue_input=use_blue_input,
+        output_mode=output_mode,
+        output_red=output_red,
+        output_green=output_green,
+        output_blue=output_blue,
+        red_output_name=red_output_name,
+        green_output_name=green_output_name,
+        blue_output_name=blue_output_name,
+        color_output_name=color_output_name,
     )
-    green_image = (
-        image_data[1]
-        if channel_count >= 2
-        else np.zeros((height, width), dtype=image_data.dtype)
+
+
+@composed_image_payload
+@numpy(contract=ProcessingContract.PURE_3D)
+def invert_for_printing_grayscale(
+    image: np.ndarray,
+    input_mode: InvertInputMode | str = InvertInputMode.COLOR,
+    use_red_input: bool = True,
+    use_green_input: bool = True,
+    use_blue_input: bool = True,
+    output_mode: OutputMode | str = OutputMode.GRAYSCALE,
+    output_red: bool = True,
+    output_green: bool = True,
+    output_blue: bool = True,
+    red_output_name: str = "InvertedRed",
+    green_output_name: str = "InvertedGreen",
+    blue_output_name: str = "InvertedBlue",
+    color_output_name: str = "InvertedColor",
+) -> np.ndarray | AlignedImageStack:
+    """Invert into one or more enabled grayscale output channels."""
+
+    if coerce_cellprofiler_enum(OutputMode, output_mode) is not OutputMode.GRAYSCALE:
+        raise ValueError("invert_for_printing_grayscale requires grayscale output.")
+    result = _invert_for_printing_result(
+        image,
+        input_mode=input_mode,
+        use_red_input=use_red_input,
+        use_green_input=use_green_input,
+        use_blue_input=use_blue_input,
+        output_mode=output_mode,
+        output_red=output_red,
+        output_green=output_green,
+        output_blue=output_blue,
+        red_output_name=red_output_name,
+        green_output_name=green_output_name,
+        blue_output_name=blue_output_name,
+        color_output_name=color_output_name,
     )
-    blue_image = (
-        image_data[2]
-        if channel_count >= 3
-        else np.zeros((height, width), dtype=image_data.dtype)
-    )
-    inverted_red = (1.0 - green_image) * (1.0 - blue_image)
-    inverted_green = (1.0 - red_image) * (1.0 - blue_image)
-    inverted_blue = (1.0 - red_image) * (1.0 - green_image)
-    if output_mode is OutputMode.COLOR:
-        return np.stack([inverted_red, inverted_green, inverted_blue], axis=0).astype(
-            np.float32
+    if result is None:
+        raise ValueError(
+            "invert_for_printing_grayscale requires at least one enabled output."
         )
-    output_channels = []
-    if output_red:
-        output_channels.append(inverted_red)
-    if output_green:
-        output_channels.append(inverted_green)
-    if output_blue:
-        output_channels.append(inverted_blue)
-    if not output_channels:
-        return np.zeros((1, height, width), dtype=np.float32)
-    return np.stack(output_channels, axis=0).astype(np.float32)
+    return result
+
+
+@composed_image_payload
+@numpy(contract=ProcessingContract.PURE_3D)
+def invert_for_printing_without_output(
+    image: np.ndarray,
+    input_mode: InvertInputMode | str = InvertInputMode.COLOR,
+    use_red_input: bool = True,
+    use_green_input: bool = True,
+    use_blue_input: bool = True,
+    output_mode: OutputMode | str = OutputMode.GRAYSCALE,
+    output_red: bool = False,
+    output_green: bool = False,
+    output_blue: bool = False,
+    red_output_name: str = "InvertedRed",
+    green_output_name: str = "InvertedGreen",
+    blue_output_name: str = "InvertedBlue",
+    color_output_name: str = "InvertedColor",
+) -> None:
+    """Execute the valid grayscale topology that retains no output images."""
+
+    result = _invert_for_printing_result(
+        image,
+        input_mode=input_mode,
+        use_red_input=use_red_input,
+        use_green_input=use_green_input,
+        use_blue_input=use_blue_input,
+        output_mode=output_mode,
+        output_red=output_red,
+        output_green=output_green,
+        output_blue=output_blue,
+        red_output_name=red_output_name,
+        green_output_name=green_output_name,
+        blue_output_name=blue_output_name,
+        color_output_name=color_output_name,
+    )
+    if result is not None:
+        raise ValueError(
+            "invert_for_printing_without_output requires all grayscale outputs disabled."
+        )
+    return None
 
 
 def combine_color_to_gray(
@@ -1447,44 +1852,31 @@ def combine_color_to_gray(
     channel_indices: tuple[int, ...],
     contributions: tuple[float, ...],
 ) -> np.ndarray:
-    image_data = image_payload_data(image)
     if len(channel_indices) != len(contributions):
         raise ValueError("channel_indices and contributions must have same length.")
-    color_stack = nhwc_color_stack(image_data)
+    color_stack = nhwc_color_stack(image)
     channels = np.asarray(channel_indices, dtype=int)
     weights = np.asarray(contributions, dtype=float) / float(sum(contributions))
     result = np.sum(
         color_stack[..., channels] * weights[np.newaxis, np.newaxis, np.newaxis, :],
         axis=3,
     )
-    return restore_color_to_gray_shape(image_data, result)
+    return restore_color_to_gray_shape(image, result)
 
 
 def color_to_gray_combine_output_metadata(image: np.ndarray):
     """Return metadata for a color-to-grayscale semantic collapse."""
-    metadata = image_payload_metadata(image).without_unit_interval_intensity_scale()
-    source_role = source_image_payload_role(image)
-    if source_role is None or not type(source_role).CHANNEL_LAST_SOURCE_PLANES:
-        return metadata
-
-    source_component_metadata = dict(metadata.source_component_metadata or {})
-    source_component_metadata[SOURCE_IMAGE_TYPE_METADATA_FIELD] = (
-        GrayscaleImageTypeSourceRole.image_type()
-    )
-    return metadata.with_source_provenance(
-        SourceImageProvenance(
-            source_path=metadata.source_path,
-            source_component_metadata=source_component_metadata,
-            source_image_names=metadata.source_image_names,
-        )
+    return (
+        image_payload_metadata(image)
+        .without_unit_interval_intensity_scale()
+        .without_source_channel_axis()
     )
 
 
 def split_color_to_gray(
     image: np.ndarray, image_type: ImageChannelType, channel_indices: tuple[int, ...]
 ) -> tuple[np.ndarray, ...]:
-    image_data = image_payload_data(image)
-    color_stack = nhwc_color_stack(image_data).astype(np.float32)
+    color_stack = nhwc_color_stack(image).astype(np.float32)
     source_stack = (
         rgb_to_hsv_stack(color_stack)
         if image_type is ImageChannelType.HSV
@@ -1493,7 +1885,7 @@ def split_color_to_gray(
     return tuple(
         (
             restore_color_to_gray_shape(
-                image_data, color_to_gray_channel(source_stack, index)
+                image, color_to_gray_channel(source_stack, index)
             )
             for index in channel_indices
         )
@@ -1509,19 +1901,51 @@ def color_to_gray_channel(color_stack: np.ndarray, channel_index: int) -> np.nda
 
 
 def nhwc_color_stack(image: np.ndarray) -> np.ndarray:
-    if is_channel_last_image_stack(image):
-        return image
-    if is_channel_last_image_slice(image):
-        return image[np.newaxis, ...]
-    raise ValueError(
-        f"ColorToGray requires a channel-last image shaped (H, W, C) or (N, H, W, C), got {getattr(image, 'shape', 'unknown')}."
-    )
+    """Return NHWC pixels from explicitly declared image layout metadata."""
+    image_data = np.asarray(image_payload_data(image))
+    metadata = image_payload_metadata(image)
+    channel_axis = metadata.normalized_source_channel_axis(image_data)
+    if channel_axis is None:
+        raise ValueError(
+            "ColorToGray requires ImagePayloadMetadata.source_channel_axis; "
+            "array shape cannot declare color semantics."
+        )
+    channel_last = np.moveaxis(image_data, channel_axis, -1)
+    if metadata.is_declared_source_channel_plane(image_data):
+        if channel_last.ndim != 3:
+            raise ValueError(
+                "ColorToGray image-plane storage must have one channel and two "
+                f"spatial axes, got shape {image_data.shape!r}."
+            )
+        return channel_last[np.newaxis, ...]
+    if channel_axis == 0:
+        raise ValueError(
+            "ColorToGray metadata cannot declare the leading plane axis as its "
+            "source channel axis."
+        )
+    if channel_last.ndim != 4:
+        raise ValueError(
+            "ColorToGray image-stack storage must have one plane, one channel, "
+            f"and two spatial axes, got shape {image_data.shape!r}."
+        )
+    return channel_last
 
 
 def restore_color_to_gray_shape(original: np.ndarray, stack: np.ndarray) -> np.ndarray:
-    if is_channel_last_image_slice(original):
+    metadata = image_payload_metadata(original)
+    if metadata.is_declared_source_channel_plane(original):
+        if stack.shape[0] != 1:
+            raise ValueError(
+                "ColorToGray plane output must contain exactly one projected "
+                f"plane, got shape {stack.shape!r}."
+            )
         return stack[0]
-    return stack
+    if metadata.is_declared_source_channel_stack(original):
+        return stack
+    raise ValueError(
+        "ColorToGray output restoration requires declared source channel and "
+        "runtime plane-axis metadata."
+    )
 
 
 def normalized_color_to_gray_weights(
@@ -1581,12 +2005,45 @@ def unmix_colors(
     custom_red_absorbance_3: float = 0.5,
     custom_green_absorbance_3: float = 0.5,
     custom_blue_absorbance_3: float = 0.5,
-) -> np.ndarray | tuple[np.ndarray, ...]:
-    """Unmix one RGB image into one image per configured CellProfiler stain row."""
+) -> RuntimeArrayData | AlignedImageStack:
+    """Unmix one RGB image into one image per configured CellProfiler stain row.
+
+    Args:
+        stain_names: Ordered stain types to unmix into separate output images.
+        custom_absorbances: Optional RGB optical-density vector corresponding to
+            each stain in ``stain_names``.
+        stain1: First stain used by the single-output legacy form.
+        stain2: Second stain used by the single-output legacy form.
+        stain3: Optional third stain included in the legacy unmixing matrix.
+        output_stain_index: Zero-based legacy stain output to return.
+        custom_red_absorbance_1: Red optical-density component for custom stain 1.
+        custom_green_absorbance_1: Green optical-density component for custom
+            stain 1.
+        custom_blue_absorbance_1: Blue optical-density component for custom stain 1.
+        custom_red_absorbance_2: Red optical-density component for custom stain 2.
+        custom_green_absorbance_2: Green optical-density component for custom
+            stain 2.
+        custom_blue_absorbance_2: Blue optical-density component for custom stain 2.
+        custom_red_absorbance_3: Red optical-density component for custom stain 3.
+        custom_green_absorbance_3: Green optical-density component for custom
+            stain 3.
+        custom_blue_absorbance_3: Blue optical-density component for custom stain 3.
+    """
     rgb_image = _as_rgb_image(image)
+    output_metadata = image_payload_metadata(image).without_source_channel_axis()
     if stain_names:
-        return _unmix_stain_outputs(
-            rgb_image, _stain_definitions(stain_names, custom_absorbances)
+        return pack_aligned_image_outputs(
+            tuple(
+                with_image_payload_data(
+                    image,
+                    output,
+                    metadata=output_metadata,
+                )
+                for output in _unmix_stain_outputs(
+                    rgb_image,
+                    _stain_definitions(stain_names, custom_absorbances),
+                )
+            )
         )
     definitions = _legacy_stain_definitions(
         stain1=stain1,
@@ -1615,7 +2072,11 @@ def unmix_colors(
         raise ValueError(
             f"output_stain_index must be in [0, {len(outputs) - 1}], got {output_stain_index}."
         )
-    return outputs[output_stain_index]
+    return with_image_payload_data(
+        image,
+        outputs[output_stain_index],
+        metadata=output_metadata,
+    )
 
 
 def _stain_definitions(
@@ -1724,9 +2185,230 @@ def _coerce_custom_absorbance(
     return (float(red), float(green), float(blue))
 
 
-class InvertForPrintingModule(CellProfilerModule):
+class InvertForPrintingModule(
+    CellProfilerModule,
+):
     module_name = "InvertForPrinting"
     function_name = "invert_for_printing"
+    function_variants = (
+        "invert_for_printing_grayscale",
+        "invert_for_printing_without_output",
+    )
     validated = True
-    contract = ProcessingContract.PURE_3D
+    group_by = GroupBy.SITE
     confidence = 1.0
+
+    input_mode_setting = "Input image type"
+    red_input_flag_setting = "Use a red image?"
+    red_input_setting = "Select the red image"
+    green_input_flag_setting = "Use a green image?"
+    green_input_setting = "Select the green image"
+    blue_input_flag_setting = "Use a blue image?"
+    blue_input_setting = "Select the blue image"
+    color_input_setting = "Select the color image"
+    output_mode_setting = "Output image type"
+    red_output_flag_setting = 'Select "*Yes*" to produce a red image.'
+    red_output_setting = "Name the red image"
+    green_output_flag_setting = 'Select "*Yes*" to produce a green image.'
+    green_output_setting = "Name the green image"
+    blue_output_flag_setting = 'Select "*Yes*" to produce a blue image.'
+    blue_output_setting = "Name the blue image"
+    color_output_setting = "Name the inverted color image"
+
+    @dataclass(frozen=True, slots=True)
+    class Channel:
+        """One exact grayscale input/output channel declaration."""
+
+        input_flag_setting: str
+        input_binding: SettingToKeywordBinding
+        output_flag_setting: str
+        output_binding: SettingToKeywordBinding
+
+    red_channel = Channel(
+        red_input_flag_setting,
+        SettingToKeywordBinding.input(
+            red_input_setting,
+            ImageArtifactType,
+        ),
+        red_output_flag_setting,
+        SettingToKeywordBinding.output(
+            red_output_setting,
+            ImageArtifactType,
+            "red_output_name",
+        ),
+    )
+    green_channel = Channel(
+        green_input_flag_setting,
+        SettingToKeywordBinding.input(
+            green_input_setting,
+            ImageArtifactType,
+        ),
+        green_output_flag_setting,
+        SettingToKeywordBinding.output(
+            green_output_setting,
+            ImageArtifactType,
+            "green_output_name",
+        ),
+    )
+    blue_channel = Channel(
+        blue_input_flag_setting,
+        SettingToKeywordBinding.input(
+            blue_input_setting,
+            ImageArtifactType,
+        ),
+        blue_output_flag_setting,
+        SettingToKeywordBinding.output(
+            blue_output_setting,
+            ImageArtifactType,
+            "blue_output_name",
+        ),
+    )
+    channels = (red_channel, green_channel, blue_channel)
+    color_input_binding = SettingToKeywordBinding.input(
+        color_input_setting,
+        ImageArtifactType,
+    )
+    color_output_binding = SettingToKeywordBinding.output(
+        color_output_setting,
+        ImageArtifactType,
+        "color_output_name",
+    )
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (*(channel.input_binding for channel in channels),
+        color_input_binding,*(channel.output_binding for channel in channels),
+        color_output_binding,SettingToKeywordBinding(
+            input_mode_setting,
+            "input_mode",
+            cellprofiler_enum_value_setting_parser(InvertInputMode),
+        ),
+        *(
+            SettingToKeywordBinding(
+                channel.input_flag_setting,
+                parameter_name,
+                parse_cellprofiler_bool,
+            )
+            for channel, parameter_name in zip(
+                channels,
+                ("use_red_input", "use_green_input", "use_blue_input"),
+                strict=True,
+            )
+        ),
+        SettingToKeywordBinding(
+            output_mode_setting,
+            "output_mode",
+            cellprofiler_enum_value_setting_parser(OutputMode),
+        ),
+        *(
+            SettingToKeywordBinding(
+                channel.output_flag_setting,
+                parameter_name,
+                parse_cellprofiler_bool,
+            )
+            for channel, parameter_name in zip(
+                channels,
+                ("output_red", "output_green", "output_blue"),
+                strict=True,
+            )
+        ),)
+
+    @classmethod
+    def input_mode(cls, module: "ModuleBlock") -> InvertInputMode:
+        return coerce_cellprofiler_enum(
+            InvertInputMode,
+            required_setting_value(module, cls.input_mode_setting),
+        )
+
+    @classmethod
+    def output_mode(cls, module: "ModuleBlock") -> OutputMode:
+        return coerce_cellprofiler_enum(
+            OutputMode,
+            required_setting_value(module, cls.output_mode_setting),
+        )
+
+    @classmethod
+    def active_artifact_bindings(cls, module=None, *, invocation_key=None):
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
+        )
+        if module is None:
+            return bindings
+        if cls.input_mode(module) is InvertInputMode.COLOR:
+            active_inputs = (cls.color_input_binding,)
+        else:
+            active_inputs = tuple(
+            channel.input_binding
+            for channel in cls.channels
+            if parse_cellprofiler_bool(
+                required_setting_value(module, channel.input_flag_setting)
+            )
+        )
+        if not active_inputs:
+            raise ValueError(
+                f"InvertForPrinting({module.module_num}) grayscale input requires "
+                "at least one enabled image."
+            )
+        if cls.output_mode(module) is OutputMode.COLOR:
+            active_outputs = (cls.color_output_binding,)
+        else:
+            active_outputs = tuple(
+                channel.output_binding
+                for channel in cls.channels
+                if parse_cellprofiler_bool(
+                    required_setting_value(module, channel.output_flag_setting)
+                )
+            )
+        selected = frozenset((*active_inputs, *active_outputs))
+        declared_images = frozenset(
+            cls.declared_artifact_bindings(artifact_type=ImageArtifactType)
+        )
+        return tuple(
+            binding
+            for binding in bindings
+            if binding not in declared_images or binding in selected
+        )
+
+    @classmethod
+    def artifact_output_relations(
+        cls,
+        module,
+        *,
+        invocation_key,
+        step_context,
+        binding,
+        name,
+        artifact_inputs: ArtifactSpecCollection,
+        output_position: int,
+    ) -> tuple[ArtifactSpecRelation, ...]:
+        """Use the first active input as the composed output's parent context."""
+
+        del cls, module, invocation_key, step_context, binding, name, output_position
+        image_inputs = artifact_inputs.for_artifact_type(ImageArtifactType).specs
+        if not image_inputs:
+            raise ValueError("InvertForPrinting requires at least one image input.")
+        return (GroupLineageSourceRelation(source=image_inputs[0].ref()),)
+
+    @classmethod
+    def resolve_function(
+        cls,
+        module: "ModuleBlock",
+        *,
+        contract,
+        source_bindings,
+    ) -> Callable[..., object]:
+        """Select the callable from the declared output mode and channel flags."""
+
+        del contract, source_bindings
+        mode = cls.output_mode(module)
+        if mode is OutputMode.COLOR:
+            return cls.require_callable()
+        has_grayscale_output = any(
+            parse_cellprofiler_bool(
+                required_setting_value(module, channel.output_flag_setting)
+            )
+            for channel in cls.channels
+        )
+        return cls.require_callable(
+            cls.function_variants[0]
+            if has_grayscale_output
+            else cls.function_variants[1]
+        )

@@ -20,28 +20,34 @@ from openhcs.agent.dto.common import (
 )
 from openhcs.agent.dto.config import ConfigPatch
 from openhcs.agent.dto.pipeline import (
+    CreatePipelineRequest,
     FunctionStepAddRequest,
     FunctionSpecRef,
     FunctionStepSpec,
-    PipelineConfigRefs,
     PipelineRef,
     PipelineSpec,
     PipelineValidationResult,
 )
 from openhcs.agent.exceptions import AgentFacingErrorMixin
-from openhcs.agent.services.config_service import coerce_dataclass_patch_values
+from openhcs.agent.services.config_service import (
+    ConfigService,
+    coerce_dataclass_patch_values,
+)
 from openhcs.agent.services.function_catalog_service import (
     FunctionCatalogService,
     PARAMETER_DOCUMENTATION_POLICY,
 )
-from openhcs.agent.services.source_rendering_service import PythonSourceAssignmentKind
+from openhcs.core.config import PipelineConfig
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
-from openhcs.core.pipeline.step_config_universe import step_config_classes_by_field_name
+from openhcs.core.pipeline_document import (
+    PipelineDocument,
+    PipelineDocumentAuthority,
+)
+from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_step import FunctionStep
 
 
 StepConfig: TypeAlias = object
-DEFAULT_PIPELINE_CONFIG_REFS = PipelineConfigRefs()
 PIPELINE_EMPTY_WARNING = AgentWarning(
     code="pipeline_empty",
     message="Pipeline draft has no FunctionStep entries; it will render as a no-op.",
@@ -105,8 +111,7 @@ class InvalidFunctionKwargsError(PipelineAuthoringError):
             f"accepted kwargs. Accepted kwargs: {valid_text}."
         )
         super().__init__(
-            "Invalid kwargs for OpenHCS function "
-            f"{function_id}: {invalid_text}."
+            f"Invalid kwargs for OpenHCS function {function_id}: {invalid_text}."
         )
 
 
@@ -139,8 +144,10 @@ class PipelineAuthoringService:
     def __init__(
         self,
         function_catalog: FunctionCatalogService | None = None,
+        config_service: ConfigService | None = None,
     ) -> None:
         self._function_catalog = function_catalog or FunctionCatalogService()
+        self._config_service = config_service or ConfigService()
         self._pipelines: dict[str, PipelineSpec] = {}
         self._counter = count(1)
         self._step_counter = count(1)
@@ -149,19 +156,30 @@ class PipelineAuthoringService:
         self,
         *,
         steps: Sequence[FunctionStepSpec] = (),
-        config_refs: PipelineConfigRefs = DEFAULT_PIPELINE_CONFIG_REFS,
+        pipeline_config_id: str | None = None,
     ) -> PipelineRef:
+        resolved_pipeline_config_id = self._resolved_pipeline_config_id(
+            pipeline_config_id
+        )
         pipeline_id = f"pipeline-{next(self._counter)}"
         spec = PipelineSpec(
             schema_version=SCHEMA_VERSION,
             pipeline_id=pipeline_id,
+            pipeline_config_id=resolved_pipeline_config_id,
             steps=tuple(steps),
-            config_refs=config_refs,
         )
         self._pipelines[pipeline_id] = spec
         return PipelineRef(
             pipeline_id=pipeline_id,
             uri=f"openhcs://pipelines/{pipeline_id}",
+        )
+
+    def create_pipeline_from_request(
+        self,
+        request: CreatePipelineRequest,
+    ) -> PipelineRef:
+        return self.create_pipeline(
+            pipeline_config_id=request.pipeline_config_id,
         )
 
     def make_step_spec(
@@ -263,9 +281,25 @@ class PipelineAuthoringService:
         )
 
     def to_function_steps(self, pipeline_ref: PipelineRef | str) -> list[FunctionStep]:
+        return list(self.to_pipeline_document(pipeline_ref).pipeline_steps)
+
+    def to_pipeline_document(
+        self,
+        pipeline_ref: PipelineRef | str,
+    ) -> PipelineDocument:
         spec = self.get_pipeline(pipeline_ref)
         steps = [self._to_function_step(step_spec) for step_spec in spec.steps]
-        return FunctionStepTransportAuthority.normalize_pipeline(steps)
+        normalized_steps = FunctionStepTransportAuthority.normalize_pipeline(steps)
+        pipeline_config = self._config_service.resolve_ref(spec.pipeline_config_id)
+        if not isinstance(pipeline_config, PipelineConfig):
+            raise TypeError(
+                "PipelineSpec.pipeline_config_id must resolve to PipelineConfig; "
+                f"got {type(pipeline_config).__name__}."
+            )
+        return PipelineDocumentAuthority.from_values(
+            pipeline_config=pipeline_config,
+            pipeline_steps=normalized_steps,
+        )
 
     def render_source(
         self,
@@ -273,12 +307,29 @@ class PipelineAuthoringService:
         *,
         clean: bool = True,
     ) -> RenderedSource:
-        steps = self.to_function_steps(pipeline_ref)
+        document = self.to_pipeline_document(pipeline_ref)
         return RenderedSource(
             schema_version=SCHEMA_VERSION,
             title=f"{_pipeline_id(pipeline_ref)} source",
-            source=PythonSourceAssignmentKind.PIPELINE_STEPS.assignment(steps, clean).render(),
+            source=PipelineDocumentAuthority.render(
+                document,
+                clean_mode=clean,
+            ),
         )
+
+    def _resolved_pipeline_config_id(
+        self,
+        pipeline_config_id: str | None,
+    ) -> str:
+        if pipeline_config_id is None:
+            return self._config_service.create("pipeline").config_id
+        pipeline_config = self._config_service.resolve_ref(pipeline_config_id)
+        if not isinstance(pipeline_config, PipelineConfig):
+            raise TypeError(
+                "pipeline_config_id must resolve to PipelineConfig; "
+                f"got {type(pipeline_config).__name__}."
+            )
+        return pipeline_config_id
 
     def _to_function_step(self, step_spec: FunctionStepSpec) -> FunctionStep:
         if not step_spec.functions:
@@ -303,11 +354,6 @@ class PipelineAuthoringService:
         return specs
 
     def _function_spec_item(self, ref: FunctionSpecRef):
-        if ref.runtime_options:
-            raise ValueError(
-                "runtime_options are not accepted by the v1 agent API until "
-                "nominal RuntimeInvocationOptions DTOs are added."
-            )
         func = self._function_catalog.resolve(ref.function_id)
         kwargs = dict(ref.kwargs)
         _validate_callable_kwargs(ref.function_id, func, kwargs)
@@ -325,7 +371,11 @@ class PipelineAuthoringService:
 
 
 def _pipeline_id(pipeline_ref: PipelineRef | str) -> str:
-    return pipeline_ref.pipeline_id if isinstance(pipeline_ref, PipelineRef) else pipeline_ref
+    return (
+        pipeline_ref.pipeline_id
+        if isinstance(pipeline_ref, PipelineRef)
+        else pipeline_ref
+    )
 
 
 def _validate_callable_kwargs(
@@ -335,11 +385,7 @@ def _validate_callable_kwargs(
 ) -> None:
     signature = inspect.signature(func)
     accepted_kwargs = PARAMETER_DOCUMENTATION_POLICY.agent_parameter_names(func)
-    invalid_kwargs = tuple(
-        kwarg
-        for kwarg in kwargs
-        if kwarg not in accepted_kwargs
-    )
+    invalid_kwargs = tuple(kwarg for kwarg in kwargs if kwarg not in accepted_kwargs)
     if invalid_kwargs:
         raise InvalidFunctionKwargsError(
             function_id,
@@ -380,7 +426,7 @@ def _step_config_patches(
 ) -> dict[str, ConfigPatch]:
     if values_by_field_name is None:
         return {}
-    class_by_field_name = _step_config_class_by_field_name()
+    class_by_field_name = AbstractStep.config_classes_by_field_name()
     unknown = tuple(
         field_name
         for field_name in values_by_field_name
@@ -401,14 +447,10 @@ def _step_config_patches(
     }
 
 
-def _step_config_class_by_field_name() -> dict[str, type[StepConfig]]:
-    return dict(step_config_classes_by_field_name())
-
-
 def _step_config_class_by_config_type() -> dict[str, type[StepConfig]]:
     return {
         config_class.__name__: config_class
-        for config_class in _step_config_class_by_field_name().values()
+        for config_class in AbstractStep.config_classes_by_field_name().values()
     }
 
 

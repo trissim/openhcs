@@ -1,19 +1,48 @@
 """ImageMath operation semantics for CellProfiler-compatible processing."""
 
 from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING, ClassVar
+
+import numpy as np
+from metaclass_registry import AutoRegisterMeta
+
 from openhcs.core.artifacts import (
-    ArtifactSpecRef,
-    ArtifactSpecRelation,
-    GroupLineageSourceRelation,
+    ArtifactInputPlan,
+    ArtifactSpecCollection,
     ImageArtifactType,
+    SourceStackLineageSourceRelation,
 )
-from openhcs.interop.cellprofiler.runtime.payload_types import CellProfilerKwargDict
-from openhcs.interop.cellprofiler.runtime.special_input_policies import (
-    SpecialInputBindingRequest,
-    TrailingImageSpecialInputPolicy,
+from openhcs.core.memory.decorators import numpy as numpy_decorator
+from openhcs.core.registry_strategies import (
+    EnumKeyedStrategyMixin,
+    enum_member_with_payload,
 )
-from openhcs.core.registry_strategies import enum_member_with_payload
+from openhcs.core.runtime_array_values import RuntimeArrayData
+from openhcs.core.runtime_image_values import (
+    ImagePayloadMetadata,
+    image_payload_data,
+    image_payload_mask,
+    image_payload_metadata,
+    project_image_mask_to_data_domain,
+)
+from openhcs.core.runtime_plane_projection import (
+    RuntimePlaneAxis,
+    RuntimePlaneAxisValueProjection,
+)
+from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
+from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
+from openhcs.interop.cellprofiler.module_settings import BoundModuleSettings
+from openhcs.interop.cellprofiler.setting_names import (
+    SettingNameFamily,
+    optional_setting_value,
+    setting_names,
+    setting_values,
+    split_symbol_names,
+)
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     coerce_cellprofiler_enum,
@@ -21,30 +50,13 @@ from openhcs.interop.cellprofiler.settings_binder import (
     parse_cellprofiler_bool,
     parse_cellprofiler_float,
 )
-from openhcs.interop.cellprofiler.module_declarations import (
+from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
-    BinderSettingsSourceModule,
-    BoundModuleSettings,
-    CellProfilerModule,
-    ImageArtifactOutputCapability,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
-    ModuleSettingsSourceModule,
-    ScopedMeasurementModule,
-    StructuringElementSettingsModule,
 )
-from openhcs.interop.cellprofiler.setting_names import (
-    optional_setting_value,
-    setting_names,
-    setting_values,
-    split_symbol_names,
-)
-from openhcs.interop.cellprofiler.cellprofiler_literals import (
-    cellprofiler_enum_from_literal,
-)
-from openhcs.processing.backends.cellprofiler.thresholding import (
-    ThresholdSettingsModule,
-)
+
+if TYPE_CHECKING:
+    from openhcs.core.function_patterns import FunctionInvocationKey
+    from openhcs.interop.cellprofiler.parser import ModuleBlock
 
 
 class ImageMathOperation(Enum):
@@ -107,52 +119,42 @@ def parse_image_math_operation(value: str) -> str:
     return ImageMathOperation.from_cellprofiler_literal(value).value
 
 
-class ImageMathSpecialInputPolicy(TrailingImageSpecialInputPolicy):
-    """Bind trailing ImageMath image inputs as ordered operands."""
-
-    def bind(self, request: SpecialInputBindingRequest) -> CellProfilerKwargDict:
-        return {
-            "image_operands": tuple(
-                (request.runtime_value(spec) for spec in request.image_inputs)
-            )
-        }
-
-
 class ImageMathModule(
-    ImageMathSpecialInputPolicy,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
     CellProfilerModule,
 ):
     module_name = "ImageMath"
     function_name = "image_math"
     validated = True
-    contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
+    first_image_setting = SettingNameFamily("Select the first image")
+    second_image_setting = SettingNameFamily("Select the second image")
+    third_image_setting = SettingNameFamily("Select the third image")
+    fourth_image_setting = SettingNameFamily("Select the fourth image")
     image_operand_settings = (
-        "Select the first image",
-        "Select the second image",
-        "Select the third image",
-        "Select the fourth image",
+        first_image_setting,
+        second_image_setting,
+        third_image_setting,
+        fourth_image_setting,
     )
-    output_image_setting = "Name the output image"
-    image_input_settings = image_operand_settings
-    image_output_settings = (output_image_setting,)
+    output_image_setting = SettingNameFamily("Name the output image")
     operand_factor_settings = (
         "Multiply the first image by",
         "Multiply the second image by",
         "Multiply the third image by",
         "Multiply the fourth image by",
     )
-    operand_choice_setting = "Image or measurement?"
-    ignored_settings = (
-        *operand_factor_settings,
-        *image_operand_settings,
-        operand_choice_setting,
-        "Measurement",
+    operand_choice_setting = SettingNameFamily("Image or measurement?")
+    measurement_operand_setting = SettingNameFamily("Measurement")
+    operation_setting = SettingNameFamily("Operation")
+    operation_binding = SettingToKeywordBinding(
+        operation_setting,
+        "operation",
+        parse_image_math_operation,
     )
-    setting_bindings = (
-        SettingToKeywordBinding("Operation", "operation", parse_image_math_operation),
+    setting_bindings = (*tuple(
+        SettingToKeywordBinding.input(setting, ImageArtifactType)
+        for setting in image_operand_settings
+    ), SettingToKeywordBinding.output(output_image_setting, ImageArtifactType),operation_binding,
         SettingToKeywordBinding(
             "Raise the power of the result by", "exponent", parse_cellprofiler_float
         ),
@@ -175,135 +177,179 @@ class ImageMathModule(
         ),
         SettingToKeywordBinding(
             "Ignore the image masks?", "ignore_masks", parse_cellprofiler_bool
-        ),
-    )
+        ),)
 
     @classmethod
-    def compile_time_public_setting_records(cls, module, source_schema=None):
-        from openhcs.interop.cellprofiler.parser import ModuleSetting
+    def active_artifact_bindings(
+        cls,
+        module: "ModuleBlock | None" = None,
+        *,
+        invocation_key: "FunctionInvocationKey | None" = None,
+    ) -> tuple[SettingToKeywordBinding, ...]:
+        """Expose only the image operands active for this module value."""
 
-        records = list(super().compile_time_public_setting_records(module, source_schema))
-        for setting in cls._active_image_operand_settings(module):
-            setting_name = setting_names(setting)[0]
-            records.extend(
-                ModuleSetting(setting_name, image_name)
-                for value in setting_values(module, setting)
-                for image_name in split_symbol_names(value)
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
+        )
+        if module is None:
+            return bindings
+        active_operands = frozenset(cls._active_image_operand_bindings(module))
+        declared_operands = frozenset(
+            cls.declared_artifact_bindings(
+                plan_type=ArtifactInputPlan,
+                artifact_type=ImageArtifactType,
             )
-        return tuple(records)
+        )
+        return tuple(
+            binding
+            for binding in bindings
+            if binding not in declared_operands or binding in active_operands
+        )
 
     @classmethod
-    def _active_image_operand_settings(cls, module) -> tuple[str, ...]:
-        operation_value = optional_setting_value(module, "Operation")
+    def artifact_input_bindings_for_reconstruction(
+        cls,
+        module,
+        *,
+        invocation_key,
+        step_context,
+    ):
+        """Select operation-owned operands before root ordered assignment."""
+
+        bindings = super().artifact_input_bindings_for_reconstruction(
+            module,
+            invocation_key=invocation_key,
+            step_context=step_context,
+        )
+        declared_operands = cls.declared_artifact_bindings(
+            plan_type=ArtifactInputPlan,
+            artifact_type=ImageArtifactType,
+        )
+        expected_settings = frozenset(
+            cls._image_operand_settings_for_records(
+                tuple(module.iter_settings()),
+                available_image_count=len(
+                    step_context.main_flow_artifacts.of_artifact_type(
+                        ImageArtifactType
+                    )
+                ),
+            )
+        )
+        selected_operands = tuple(
+            binding
+            for binding, setting in zip(
+                declared_operands,
+                cls.image_operand_settings,
+                strict=True,
+            )
+            if setting in expected_settings
+        )
+        return tuple(
+            binding
+            for binding in dict.fromkeys((*bindings, *selected_operands))
+            if binding not in declared_operands or binding in selected_operands
+        )
+
+    @classmethod
+    def artifact_output_relations(
+        cls,
+        module,
+        *,
+        invocation_key,
+        step_context,
+        binding,
+        name,
+        artifact_inputs: ArtifactSpecCollection,
+        output_position: int,
+    ):
+        """Preserve the first active operand's source-stack scope."""
+        del (
+            invocation_key,
+            step_context,
+            binding,
+            name,
+        )
+        image_inputs = artifact_inputs.for_artifact_type(ImageArtifactType).specs
+        if not image_inputs:
+            raise ValueError("ImageMath requires at least one active image operand.")
+        return (SourceStackLineageSourceRelation(source=image_inputs[0].ref()),)
+
+    @classmethod
+    def _active_image_operand_bindings(
+        cls,
+        module: "ModuleBlock",
+    ) -> tuple[SettingToKeywordBinding, ...]:
+        operation_value = optional_setting_value(module, cls.operation_setting)
         if operation_value is not None:
             operation_strategy = ImageMathOperationStrategy.coerce(operation_value)
             if operation_strategy.single_image:
-                return cls.image_operand_settings[:1]
+                return cls.declared_artifact_bindings(plan_type = ArtifactInputPlan, artifact_type = ImageArtifactType)[:1]
         return tuple(
-            setting
-            for setting in cls.image_operand_settings
+            binding
+            for binding, setting in zip(
+                cls.declared_artifact_bindings(plan_type = ArtifactInputPlan, artifact_type = ImageArtifactType),
+                cls.image_operand_settings,
+                strict=True,
+            )
             if any(
-                split_symbol_names(value)
-                for value in setting_values(module, setting)
+                split_symbol_names(value) for value in setting_values(module, setting)
             )
         )
 
     @classmethod
-    def compile_time_main_flow_input_setting_records(
-        cls,
-        request,
-        *,
-        existing_records,
-    ):
-        """Infer only ImageMath operands active for the declared operation."""
-        from openhcs.interop.cellprofiler.parser import ModuleSetting
-
-        flow_image_names = request.artifact_flow.image_names_for_group(
-            request.group_key
-        )
-        if not flow_image_names and request.main_flow_image_name is not None:
-            flow_image_names = (request.main_flow_image_name,)
-        if not flow_image_names:
-            return ()
-
-        expected_settings = cls._compile_time_image_operand_settings(
-            existing_records,
-            available_image_count=len(flow_image_names),
-        )
-        existing_setting_names = {record.name for record in existing_records}
-        missing_settings = tuple(
-            setting
-            for setting in expected_settings
-            if setting not in existing_setting_names
-        )
-        if not missing_settings:
-            return ()
-        if len(missing_settings) != len(flow_image_names):
-            raise ValueError(
-                f"Module {request.module_name}({request.module_num}) has "
-                f"{len(missing_settings)} missing active image operand settings, "
-                f"but the OpenHCS artifact flow for group {request.group_key!r} "
-                f"has {len(flow_image_names)} image names: {flow_image_names!r}."
-            )
-        return tuple(
-            ModuleSetting(setting_name, image_name)
-            for setting_name, image_name in zip(
-                missing_settings, flow_image_names, strict=True
-            )
-        )
-
-    @classmethod
-    def _compile_time_image_operand_settings(
+    def _image_operand_settings_for_records(
         cls,
         existing_records,
         *,
         available_image_count: int,
     ) -> tuple[str, ...]:
-        operation_strategy = cls._compile_time_operation_strategy(existing_records)
+        operation_strategy = cls._operation_strategy_from_records(existing_records)
         if operation_strategy is not None and operation_strategy.single_image:
             count = 1
         else:
-            count = max(1, min(available_image_count, len(cls.image_operand_settings)))
+            explicit_positions = tuple(
+                position + 1
+                for position, setting in enumerate(cls.image_operand_settings)
+                if cls._image_names_for_setting_records(existing_records, setting)
+            )
+            count = max((1, available_image_count, *explicit_positions))
+        if count > len(cls.image_operand_settings):
+            raise ValueError(
+                "ImageMath supports at most "
+                f"{len(cls.image_operand_settings)} image operands, got {count}."
+            )
         return cls.image_operand_settings[:count]
 
     @classmethod
-    def _compile_time_operation_strategy(cls, existing_records):
+    def _operation_strategy_from_records(cls, existing_records):
+        values = cls._setting_record_values(
+            existing_records, cls.operation_binding.setting_name
+        )
+        if len(values) > 1:
+            raise ValueError(f"ImageMath declares multiple operation rows: {values!r}.")
+        if not values:
+            return None
+        return ImageMathOperationStrategy.coerce(
+            ImageMathOperation.from_cellprofiler_literal(values[0])
+        )
+
+    @staticmethod
+    def _setting_record_values(records, setting) -> tuple[str, ...]:
         from openhcs.interop.cellprofiler.setting_names import setting_name_matches
 
-        for record in existing_records:
-            if setting_name_matches(record.name, "Operation"):
-                return ImageMathOperationStrategy.coerce(
-                    ImageMathOperation.from_cellprofiler_literal(str(record.value))
-                )
-        return None
+        return tuple(
+            str(record.value)
+            for record in records
+            if setting_name_matches(record.name, setting)
+        )
 
     @classmethod
-    def declared_output_artifact_relations(
-        cls,
-        builder,
-        module,
-        *,
-        setting,
-        capability_type,
-        name,
-    ) -> tuple[ArtifactSpecRelation, ...]:
-        relations = super().declared_output_artifact_relations(
-            builder,
-            module,
-            setting=setting,
-            capability_type=capability_type,
-            name=name,
-        )
-        if capability_type is not ImageArtifactOutputCapability:
-            return relations
-        source_names = cls.active_image_operand_names(module)
-        if len(source_names) != 1:
-            return relations
-        return (
-            *relations,
-            GroupLineageSourceRelation(
-                source=ArtifactSpecRef.input(source_names[0], ImageArtifactType)
-            ),
+    def _image_names_for_setting_records(cls, records, setting) -> tuple[str, ...]:
+        return tuple(
+            image_name
+            for value in cls._setting_record_values(records, setting)
+            for image_name in split_symbol_names(value)
         )
 
     @classmethod
@@ -311,38 +357,28 @@ class ImageMathModule(
         return tuple(
             dict.fromkeys(
                 name
-                for setting in cls.image_operand_settings
-                for name in cls.artifact_input_names_from_setting(module, setting)
+                for binding in cls._active_image_operand_bindings(module)
+                for name in cls.artifact_names_for_binding(module, binding)
             )
         )
-
-    @classmethod
-    def source_binding_participates_in_image_stack(
-        cls,
-        module: "ModuleBlock",
-        symbol: "CellProfilerSymbol",
-        input_symbols: tuple["CellProfilerSymbol", ...],
-    ) -> bool:
-        del module
-        if symbol.artifact_spec.artifact_type is not ImageArtifactType:
-            return True
-        first_external_image = next(
-            (
-                candidate
-                for candidate in input_symbols
-                if candidate.is_external_source
-                and candidate.artifact_spec.artifact_type is ImageArtifactType
-            ),
-            None,
-        )
-        if first_external_image is None:
-            return True
-        return symbol.key == first_external_image.key
 
     @classmethod
     def postprocess_bound_settings(
         cls, module: "ModuleBlock", bound: "BoundModuleSettings"
     ) -> "BoundModuleSettings":
+        operand_choices = tuple(
+            normalize_cellprofiler_setting_name(value)
+            for value in setting_values(module, cls.operand_choice_setting)
+        )
+        unsupported_choices = tuple(
+            choice for choice in operand_choices if choice not in {"", "image"}
+        )
+        if unsupported_choices:
+            raise NotImplementedError(
+                "ImageMath measurement operands are not supported by the "
+                f"absorbed callable: {unsupported_choices!r}."
+            )
+
         factors = tuple(
             (
                 parse_cellprofiler_float(value)
@@ -350,51 +386,33 @@ class ImageMathModule(
                 if (value := optional_setting_value(module, setting_name)) is not None
             )
         )
-        if not factors:
-            return bound
-        return bound.with_kwargs({"factors": factors})
+        private_setting_names = (
+            *cls.operand_factor_settings,
+            cls.operand_choice_setting,
+            cls.measurement_operand_setting,
+        )
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+        for setting in private_setting_names:
+            for setting_name in setting_names(setting):
+                unmapped_kwargs.pop(
+                    normalize_cellprofiler_setting_name(setting_name),
+                    None,
+                )
+        kwargs = dict(bound.kwargs)
+        if factors:
+            kwargs["factors"] = factors
+        return BoundModuleSettings(
+            kwargs,
+            unmapped_kwargs,
+            bound.setting_coverage,
+        )
 
-
-from abc import ABC, abstractmethod
-from collections.abc import Callable
-from dataclasses import dataclass
-from typing import ClassVar
-import numpy as np
-from metaclass_registry import AutoRegisterMeta
-from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
-from openhcs.core.aligned_image_payload import (
-    ImagePayloadSliceProjector,
-    ImagePayloadSourceSpatialDomainAdapter,
-)
-from openhcs.core.image_shapes import is_image_stack
-from openhcs.core.pipeline.function_contracts import special_inputs
-from openhcs.core.runtime_batch_contracts import RuntimePure2DSliceBatchRequest
-from openhcs.core.runtime_batch_contracts import pure_2d_batch_executor
-from openhcs.core.runtime_slice_projection import (
-    RuntimeProjectionAxis,
-    RuntimeSliceProjection,
-    RuntimeSliceProjectionStrategy,
-)
-from openhcs.core.runtime_values import (
-    DerivedImagePayloadContext,
-    ImagePayloadMetadataCompositionRequest,
-    ImagePayloadMetadataInput,
-    RuntimeArrayData,
-    image_payload_mask,
-)
-from openhcs.core.memory.decorators import numpy as numpy_decorator
-from openhcs.core.runtime_values import (
-    RuntimeImagePayloadContext,
-    image_payload_data,
-    image_payload_metadata,
-)
 
 MathOperation = ImageMathOperation
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
-ImageMathBinaryOperator = Callable[[np.ndarray, np.ndarray], np.ndarray]
+ImageMathBinaryOperator = np.ufunc
 ImageMathMask = RuntimeArrayData | None
-ImageMathOperandPixels = np.ndarray | tuple[np.ndarray, ...]
+ImageMathOperandPixels = tuple[np.ndarray, ...]
 
 
 def meaningful_image_math_mask(mask: ImageMathMask) -> ImageMathMask:
@@ -440,7 +458,7 @@ class ImageMathOperationStrategy(
             if not self.binary_output and factors[0] != 1.0:
                 output *= factors[0]
             return output
-        return pixel_data[0].copy()
+        return pixel_data[0]
 
     @abstractmethod
     def apply(
@@ -465,7 +483,11 @@ class PairwiseNumpyImageMathOperationStrategy(ImageMathOperationStrategy):
     ) -> np.ndarray:
         del factors
         for pd in pixel_data[1:]:
-            output_pixel_data = type(self).pairwise_operator(output_pixel_data, pd)
+            type(self).pairwise_operator(
+                output_pixel_data,
+                pd,
+                out=output_pixel_data,
+            )
         return output_pixel_data
 
 
@@ -500,12 +522,11 @@ class SubtractImageMathOperationStrategy(ImageMathOperationStrategy):
     ) -> np.ndarray:
         del factors
         if self.operands_are_logical(pixel_data):
-            output_pixel_data = pixel_data[0].copy()
             for pd in pixel_data[1:]:
                 output_pixel_data[pd.astype(bool)] = False
             return output_pixel_data
         for pd in pixel_data[1:]:
-            output_pixel_data = np.subtract(output_pixel_data, pd)
+            np.subtract(output_pixel_data, pd, out=output_pixel_data)
         return output_pixel_data
 
 
@@ -521,10 +542,11 @@ class DifferenceImageMathOperationStrategy(ImageMathOperationStrategy):
         del factors
         if self.operands_are_logical(pixel_data):
             for pd in pixel_data[1:]:
-                output_pixel_data = np.logical_xor(output_pixel_data, pd)
+                np.logical_xor(output_pixel_data, pd, out=output_pixel_data)
             return output_pixel_data
         for pd in pixel_data[1:]:
-            output_pixel_data = np.abs(np.subtract(output_pixel_data, pd))
+            np.subtract(output_pixel_data, pd, out=output_pixel_data)
+            np.abs(output_pixel_data, out=output_pixel_data)
         return output_pixel_data
 
 
@@ -540,10 +562,10 @@ class MultiplyImageMathOperationStrategy(ImageMathOperationStrategy):
         del factors
         if self.operands_are_logical(pixel_data):
             for pd in pixel_data[1:]:
-                output_pixel_data = np.logical_and(output_pixel_data, pd)
+                np.logical_and(output_pixel_data, pd, out=output_pixel_data)
             return output_pixel_data
         for pd in pixel_data[1:]:
-            output_pixel_data = np.multiply(output_pixel_data, pd)
+            np.multiply(output_pixel_data, pd, out=output_pixel_data)
         return output_pixel_data
 
 
@@ -557,9 +579,13 @@ class AverageImageMathOperationStrategy(ImageMathOperationStrategy):
         factors: tuple[float, ...],
     ) -> np.ndarray:
         for pd in pixel_data[1:]:
-            output_pixel_data = np.add(output_pixel_data, pd)
+            np.add(output_pixel_data, pd, out=output_pixel_data)
         if not self.operands_are_logical(pixel_data):
-            output_pixel_data = output_pixel_data / sum(factors[: len(pixel_data)])
+            np.divide(
+                output_pixel_data,
+                sum(factors[: len(pixel_data)]),
+                out=output_pixel_data,
+            )
         return output_pixel_data
 
 
@@ -711,20 +737,9 @@ class ImageMathMaskPolicy:
     ignore_masks: bool
 
     def operand_masks(
-        self, operands: tuple[ImagePayloadMetadataInput, ...]
+        self, operands: tuple[RuntimeArrayData, ...]
     ) -> tuple[ImageMathMask, ...]:
         return tuple((image_payload_mask(operand) for operand in operands))
-
-    def stacked_operand_masks(
-        self, source_payload: ImagePayloadMetadataInput, operand_count: int
-    ) -> tuple[ImageMathMask, ...]:
-        source_mask = image_payload_mask(source_payload)
-        if source_mask is None:
-            return (None,) * operand_count
-        mask_array = np.asarray(source_mask, dtype=bool)
-        if mask_array.ndim >= 3 and mask_array.shape[0] >= operand_count:
-            return tuple((mask_array[index] for index in range(operand_count)))
-        return (mask_array,) + (None,) * max(operand_count - 1, 0)
 
     def output_mask(self, operand_masks: tuple[ImageMathMask, ...]) -> ImageMathMask:
         if self.ignore_masks:
@@ -747,108 +762,32 @@ class ImageMathMaskPolicy:
         return np.asarray(current_mask, dtype=bool) & np.asarray(next_mask, dtype=bool)
 
     def apply_output_mask(
-        self, pixel_data: np.ndarray, output_mask: ImageMathMask
+        self,
+        pixel_data: np.ndarray,
+        output_mask: ImageMathMask,
+        *,
+        metadata: ImagePayloadMetadata,
     ) -> np.ndarray:
         if output_mask is None:
             return pixel_data
-        return pixel_data * ImageMathMaskProjectionStrategy.project_mask(
-            pixel_data, output_mask
+        projected_mask = project_image_mask_to_data_domain(
+            output_mask,
+            pixel_data,
+            metadata=metadata,
         )
-
-
-class ImageMathMaskProjectionStrategy(ABC, metaclass=AutoRegisterMeta):
-    """Closed projection family for mapping ImageMath masks to output pixels."""
-
-    __registry_key__ = "pixel_ndim"
-    __skip_if_no_key__ = True
-    pixel_ndim: ClassVar[int | None] = None
-
-    @classmethod
-    def for_pixel_data(
-        cls, pixel_data: np.ndarray
-    ) -> "ImageMathMaskProjectionStrategy":
-        strategy_type = cls.__registry__.get(pixel_data.ndim)
-        if strategy_type is None:
-            return IdentityMaskProjectionStrategy()
-        return strategy_type()
-
-    @classmethod
-    def project_mask(
-        cls, pixel_data: np.ndarray, output_mask: RuntimeArrayData
-    ) -> np.ndarray:
-        mask_array = np.asarray(output_mask, dtype=bool)
-        if mask_array.shape == pixel_data.shape:
-            return mask_array
-        return cls.for_pixel_data(pixel_data).project(pixel_data, mask_array)
-
-    @abstractmethod
-    def project(self, pixel_data: np.ndarray, mask_array: np.ndarray) -> np.ndarray:
-        """Return the mask array projected into ``pixel_data`` shape."""
-
-
-class IdentityMaskProjectionStrategy(ImageMathMaskProjectionStrategy):
-    """Leave masks in their native shape when no closed projection case applies."""
-
-    def project(self, pixel_data: np.ndarray, mask_array: np.ndarray) -> np.ndarray:
-        del pixel_data
-        return mask_array
-
-
-class PlanarMaskProjectionStrategy(ImageMathMaskProjectionStrategy):
-    """Project singleton stack masks into 2D ImageMath outputs."""
-
-    pixel_ndim = 2
-
-    def project(self, pixel_data: np.ndarray, mask_array: np.ndarray) -> np.ndarray:
-        pixel_shape = tuple(pixel_data.shape)
-        mask_shape = tuple(mask_array.shape)
-        if mask_shape == (1, *pixel_shape):
-            return mask_array[0]
-        return mask_array
-
-
-class VolumeMaskProjectionStrategy(ImageMathMaskProjectionStrategy):
-    """Project planar masks into 3D ImageMath outputs."""
-
-    pixel_ndim = 3
-    color_channel_counts: ClassVar[frozenset[int]] = frozenset((3, 4))
-
-    def project(self, pixel_data: np.ndarray, mask_array: np.ndarray) -> np.ndarray:
-        pixel_shape = tuple(pixel_data.shape)
-        mask_shape = tuple(mask_array.shape)
-        if mask_shape == pixel_shape[:2]:
-            return mask_array[:, :, np.newaxis]
-        if mask_shape == pixel_shape[1:]:
-            return mask_array[np.newaxis, :, :]
-        if (
-            mask_shape[:2] == pixel_shape[:2]
-            and pixel_shape[2] in type(self).color_channel_counts
-        ):
-            return mask_array[:, :, :1]
-        return mask_array
-
-
-class FourDimensionalMaskProjectionStrategy(ImageMathMaskProjectionStrategy):
-    """Project planar or volumetric masks into 4D ImageMath outputs."""
-
-    pixel_ndim = 4
-
-    def project(self, pixel_data: np.ndarray, mask_array: np.ndarray) -> np.ndarray:
-        pixel_shape = tuple(pixel_data.shape)
-        mask_shape = tuple(mask_array.shape)
-        if mask_shape == pixel_shape[1:3]:
-            return mask_array[np.newaxis, :, :, np.newaxis]
-        if mask_shape == pixel_shape[:3]:
-            return mask_array[:, :, :, np.newaxis]
-        return mask_array
+        if projected_mask is None:
+            return pixel_data
+        return pixel_data * metadata.mask_domain(pixel_data).broadcast_to_data(
+            projected_mask
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class ImageMathPreparedOperands:
     """Aligned ImageMath operands with masks and normalized factors."""
 
-    source_image: ImagePayloadMetadataInput
-    source_payloads: tuple[ImagePayloadMetadataInput, ...]
+    source_image: RuntimeArrayData
+    source_payloads: tuple[RuntimeArrayData, ...]
     operand_pixels: ImageMathOperandPixels
     operand_masks: tuple[ImageMathMask, ...]
     factors: tuple[float, ...]
@@ -858,102 +797,64 @@ class ImageMathPreparedOperands:
         cls,
         *,
         image: RuntimeArrayData,
-        image_operands: tuple[ImagePayloadMetadataInput, ...],
         operation_strategy: ImageMathOperationStrategy,
         factors: tuple[float, ...],
         mask_policy: ImageMathMaskPolicy,
     ) -> "ImageMathPreparedOperands":
-        source_payloads = cls._source_payloads(image, image_operands)
-        source_plane_stack_operand = source_plane_stack_image_math_operand(image)
-        operand_pixels = cls._operand_pixels(
-            image,
-            source_payloads,
-            image_operands,
-            source_plane_stack_operand=source_plane_stack_operand,
+        source_payloads = cls._source_payloads(image)
+        if operation_strategy.single_image and len(source_payloads) != 1:
+            raise ValueError(
+                f"ImageMath {operation_strategy.operation.value!r} requires exactly "
+                f"one declared image operand, got {len(source_payloads)}."
+            )
+        operand_pixels = tuple(
+            np.asarray(image_payload_data(payload)) for payload in source_payloads
         )
-        if operation_strategy.single_image:
-            operand_count = 1
-        else:
-            operand_count = cls._operand_count(operand_pixels)
         return cls(
             source_image=image,
             source_payloads=source_payloads,
             operand_pixels=operand_pixels,
-            operand_masks=cls._operand_masks(
-                image,
-                image_operands,
-                source_payloads,
-                operand_count,
-                mask_policy,
-                source_plane_stack_operand=source_plane_stack_operand,
-            ),
-            factors=cls._factors_for_operands(
-                factors, cls._operand_count(operand_pixels)
-            ),
+            operand_masks=mask_policy.operand_masks(source_payloads),
+            factors=cls._factors_for_operands(factors, len(operand_pixels)),
         )
 
     @staticmethod
     def _source_payloads(
-        image: RuntimeArrayData, image_operands: tuple[ImagePayloadMetadataInput, ...]
-    ) -> tuple[ImagePayloadMetadataInput, ...]:
-        if not image_operands:
-            return (image,)
-        return ImagePayloadSourceSpatialDomainAdapter.payloads_aligned_to_common_source_domain(
-            (image, *image_operands)
-        )
-
-    @staticmethod
-    def _operand_pixels(
         image: RuntimeArrayData,
-        source_payloads: tuple[ImagePayloadMetadataInput, ...],
-        image_operands: tuple[ImagePayloadMetadataInput, ...],
-        *,
-        source_plane_stack_operand: bool,
-    ) -> ImageMathOperandPixels:
-        if image_operands:
-            return tuple(
-                (np.asarray(image_payload_data(payload)) for payload in source_payloads)
+    ) -> tuple[RuntimeArrayData, ...]:
+        metadata = image_payload_metadata(image)
+        if metadata.plane_axis is not RuntimePlaneAxis.SOURCE_BINDING:
+            return (image,)
+        axis_size = metadata.source_provenance.source_plane_count
+        if axis_size <= 0:
+            raise ValueError(
+                "ImageMath SOURCE_BINDING operand payload has no declared source "
+                "plane provenance."
             )
-        operand_pixels = np.asarray(image_payload_data(image))
-        if source_plane_stack_operand:
-            return (operand_pixels,)
-        if operand_pixels.ndim == 2:
-            return operand_pixels[np.newaxis, :, :]
-        return operand_pixels
-
-    @staticmethod
-    def _operand_count(operand_pixels: ImageMathOperandPixels) -> int:
-        if isinstance(operand_pixels, tuple):
-            return len(operand_pixels)
-        return int(operand_pixels.shape[0])
+        projection = RuntimePlaneAxisValueProjection.preserve(
+            axis=RuntimePlaneAxis.SOURCE_BINDING,
+            axis_size=axis_size,
+            source_aliases=metadata.source_image_names,
+        )
+        projection.validate_shape(
+            np.asarray(image_payload_data(image)).shape,
+            value_name="ImageMath operand payload",
+        )
+        return tuple(
+            RuntimeSliceProjection.value_for_slice(
+                image,
+                projection.selected_plane(index),
+            )
+            for index in range(axis_size)
+        )
 
     def operand_pixel(self, index: int) -> np.ndarray:
         """Return one logical operand without forcing stacked copies."""
-        if isinstance(self.operand_pixels, tuple):
-            return self.operand_pixels[index]
         return self.operand_pixels[index]
 
     def initial_output_pixels(self) -> np.ndarray:
         """Return the data passed to the operation's output initializer."""
-        if isinstance(self.operand_pixels, tuple):
-            return self.operand_pixels[0]
-        return self.operand_pixels
-
-    @staticmethod
-    def _operand_masks(
-        image: RuntimeArrayData,
-        image_operands: tuple[ImagePayloadMetadataInput, ...],
-        source_payloads: tuple[ImagePayloadMetadataInput, ...],
-        operand_count: int,
-        mask_policy: ImageMathMaskPolicy,
-        *,
-        source_plane_stack_operand: bool,
-    ) -> tuple[ImageMathMask, ...]:
-        if image_operands:
-            return mask_policy.operand_masks(source_payloads[:operand_count])
-        if source_plane_stack_operand:
-            return (image_payload_mask(image),)
-        return mask_policy.stacked_operand_masks(image, operand_count)
+        return self.operand_pixels[0]
 
     @staticmethod
     def _factors_for_operands(
@@ -966,31 +867,27 @@ class ImageMathPreparedOperands:
     @property
     def image_count(self) -> int:
         """Return the number of operand planes presented to ImageMath."""
-        return self._operand_count(self.operand_pixels)
+        return len(self.operand_pixels)
+
+    def output_metadata(self) -> ImagePayloadMetadata:
+        metadata = image_payload_metadata(self.source_image)
+        if metadata.unit_interval_intensity is not None:
+            metadata = metadata.without_unit_interval_intensity_scale()
+        if metadata.plane_axis is RuntimePlaneAxis.SOURCE_BINDING:
+            return metadata.collapse_leading_plane_axis()
+        return metadata
 
     def output_value(
         self, output: np.ndarray, output_mask: ImageMathMask
     ) -> RuntimeArrayData:
         """Return a runtime image payload preserving the source stack identity."""
-        value_payload = RuntimeImagePayloadContext(
-            output,
-            mask=output_mask,
-            metadata=ImagePayloadMetadataCompositionRequest(
-                self.source_payloads[: self.image_count]
-            )
-            .metadata()
-            .without_unit_interval_intensity_scale(),
-        ).payload()
-        return DerivedImagePayloadContext(
-            source_payload=self.source_image, data=value_payload
-        ).payload()
+        value_payload = self.output_metadata().payload_with(output, output_mask)
+        return value_payload
 
 
-@special_inputs("image_operands")
 @numpy_decorator(contract=ProcessingContract.FLEXIBLE)
 def image_math(
     image: RuntimeArrayData,
-    image_operands: tuple[ImagePayloadMetadataInput, ...] = (),
     operation: MathOperation = MathOperation.ADD,
     factors: tuple[float, ...] = (1.0, 1.0),
     exponent: float = 1.0,
@@ -1001,12 +898,16 @@ def image_math(
     replace_nan: bool = True,
     ignore_masks: bool = False,
 ) -> np.ndarray:
-    """Perform CellProfiler ImageMath through registered operation strategies."""
+    """Perform CellProfiler ImageMath through registered operation strategies.
+
+    Args:
+        factors: Multipliers for the ordered input images; omitted trailing
+            factors default to 1 and binary-output operations ignore them.
+    """
     operation_strategy = ImageMathOperationStrategy.coerce(operation)
     mask_policy = ImageMathMaskPolicy(ignore_masks=ignore_masks)
     prepared_operands = ImageMathPreparedOperands.from_inputs(
         image=image,
-        image_operands=image_operands,
         operation_strategy=operation_strategy,
         factors=factors,
         mask_policy=mask_policy,
@@ -1044,145 +945,15 @@ def image_math(
             output_pixel_data[output_pixel_data > 1] = 1
         if replace_nan:
             output_pixel_data[np.isnan(output_pixel_data)] = 0
-    if output_pixel_data.ndim == 2:
-        output_pixel_data = output_pixel_data[np.newaxis, :, :]
     output_mask = mask_policy.output_mask(prepared_operands.operand_masks)
-    output_pixel_data = mask_policy.apply_output_mask(output_pixel_data, output_mask)
+    output_metadata = prepared_operands.output_metadata()
+    output_pixel_data = mask_policy.apply_output_mask(
+        output_pixel_data,
+        output_mask,
+        metadata=output_metadata,
+    )
     output = output_pixel_data.astype(np.float32)
-    if ignore_masks:
-        return output
-    return prepared_operands.output_value(output, output_mask)
-
-
-IMAGE_MATH_RUNTIME_SEQUENCE_KWARGS = frozenset(("image_operands",))
-
-
-def source_plane_stack_image_math_operand(image: RuntimeArrayData) -> bool:
-    """Return whether ImageMath should treat axis 0 as source planes, not operands."""
-    data = image_payload_data(image)
-    if not is_image_stack(data):
-        return False
-    source_plane_count = image_payload_metadata(
-        image
-    ).source_provenance.source_plane_count
-    return source_plane_count > 1 and int(np.shape(data)[0]) == source_plane_count
-
-
-def _stack_image_math_slice_payloads(
-    payloads: tuple[ImagePayloadMetadataInput, ...],
-) -> ImagePayloadMetadataInput:
-    data = np.stack(
-        tuple(np.asarray(image_payload_data(payload)) for payload in payloads),
-        axis=0,
+    return prepared_operands.output_value(
+        output,
+        None if ignore_masks else output_mask,
     )
-    masks = tuple(image_payload_mask(payload) for payload in payloads)
-    mask = None
-    if any(item is not None for item in masks):
-        mask = np.stack(
-            tuple(
-                (
-                    np.ones_like(np.asarray(image_payload_data(payload)), dtype=bool)
-                    if item is None
-                    else np.asarray(item, dtype=bool)
-                )
-                for payload, item in zip(payloads, masks, strict=True)
-            ),
-            axis=0,
-        )
-    return RuntimeImagePayloadContext(
-        data,
-        mask=mask,
-        metadata=ImagePayloadMetadataCompositionRequest(payloads).metadata(),
-    ).payload()
-
-
-def _image_math_slice_kwargs(
-    request: RuntimePure2DSliceBatchRequest,
-) -> tuple[dict[str, RuntimeArrayData], ...]:
-    return tuple(
-        dict(
-            RuntimeSliceProjection.kwargs_for_slice(
-                request.kwargs,
-                RuntimeProjectionAxis(
-                    slice_index=slice_index,
-                    extent=request.slice_count,
-                ),
-                sequence_kwargs=IMAGE_MATH_RUNTIME_SEQUENCE_KWARGS,
-            )
-        )
-        for slice_index in range(request.slice_count)
-    )
-
-
-def _batched_image_math_operands(
-    slice_kwargs: tuple[dict[str, RuntimeArrayData], ...],
-) -> tuple[ImagePayloadMetadataInput, ...] | None:
-    operand_groups = tuple(
-        tuple(kwargs.get("image_operands", ())) for kwargs in slice_kwargs
-    )
-    if not operand_groups:
-        return ()
-    operand_count = len(operand_groups[0])
-    if any(len(group) != operand_count for group in operand_groups):
-        return None
-    return tuple(
-        _stack_image_math_slice_payloads(
-            tuple(group[operand_index] for group in operand_groups)
-        )
-        for operand_index in range(operand_count)
-    )
-
-
-def _unstack_image_math_batch_result(
-    result: ImagePayloadMetadataInput,
-    *,
-    slice_count: int,
-) -> list[ImagePayloadMetadataInput] | None:
-    result_data = np.asarray(image_payload_data(result))
-    if result_data.ndim < 3 or int(result_data.shape[0]) != slice_count:
-        return None
-    projector = ImagePayloadSliceProjector(
-        mask=image_payload_mask(result),
-        metadata=image_payload_metadata(result),
-    )
-    return [
-        RuntimeSliceProjectionStrategy.strategy_for_value(payload).identity_projected_value(
-            payload,
-            RuntimeProjectionAxis(slice_index=slice_index, extent=slice_count),
-        )
-        for slice_index in range(slice_count)
-        for payload in (
-            projector.payload_for_slice(result_data[slice_index], slice_index),
-        )
-    ]
-
-
-def image_math_batch(
-    request: RuntimePure2DSliceBatchRequest,
-) -> list[ImagePayloadMetadataInput]:
-    """Vectorize equivalent ImageMath PURE_2D slice calls as one stack operation."""
-    if request.slice_count <= 1:
-        return [
-            request.execute_one(slice_index)
-            for slice_index in range(request.slice_count)
-        ]
-    slice_kwargs = _image_math_slice_kwargs(request)
-    batched_operands = _batched_image_math_operands(slice_kwargs)
-    if batched_operands is None:
-        return [
-            request.execute_one(slice_index)
-            for slice_index in range(request.slice_count)
-        ]
-    batched_kwargs = dict(request.kwargs)
-    batched_kwargs["image_operands"] = batched_operands
-    result = request.func(
-        _stack_image_math_slice_payloads(tuple(request.slices_2d)),
-        **batched_kwargs,
-    )
-    unstacked = _unstack_image_math_batch_result(result, slice_count=request.slice_count)
-    if unstacked is None:
-        return [request.execute_one(slice_index) for slice_index in range(request.slice_count)]
-    return unstacked
-
-
-pure_2d_batch_executor(image_math_batch)(image_math)

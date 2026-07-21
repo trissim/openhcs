@@ -7,24 +7,24 @@ behavior when explicitly requested.
 """
 
 from __future__ import annotations
+from collections.abc import Callable
 from enum import Enum
+from typing import TYPE_CHECKING
 import numpy as np
-from openhcs.core.aligned_image_payload import (
-    AlignedImageStack,
-    ImagePayloadExecutionMode,
-)
 from openhcs.core.artifacts import (
-    ArtifactType,
     ImageArtifactType,
+    ArtifactSpecCollection,
+    GroupLineageSourceRelation,
     ObjectLabelsArtifactType,
-    MeasurementsArtifactType,
-    RelationshipsArtifactType,
+    SourceStackLineageSourceRelation,
 )
-from openhcs.core.runtime_values import (
-    DenseObjectLabelSliceStackRequest,
-    ObjectLabelRuntimeSliceStackContract,
-    SingletonObjectLabelStackCollapseStrategy,
+from openhcs.core.source_bindings import StepSourceBindingsConfig
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelValue,
     object_label_dense_array,
+)
+from openhcs.core.measurement_row_materialization import (
+    MeasurementSparseColumnarRows,
 )
 from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
 from openhcs.interop.cellprofiler.settings_binder import (
@@ -35,61 +35,45 @@ from openhcs.interop.cellprofiler.settings_binder import (
     parse_cellprofiler_float,
     parse_cellprofiler_int,
 )
-from openhcs.interop.cellprofiler.runtime.execution_mode_policies import (
-    StructuringElementExecutionModePolicy,
-    VolumetricInputExecutionModePolicy,
-)
 from openhcs.interop.cellprofiler.runtime.primary_image_input_policies import (
     ObjectLabelDrivenPrimaryImageInputPolicy,
 )
-from openhcs.interop.cellprofiler.runtime.binding_authorities import (
-    CellProfilerInvocationOverrideKwarg,
-)
 from openhcs.interop.cellprofiler.runtime.object_input_policies import (
-    CellProfilerObjectInputPolicyMixin,
     LabelsObjectInputPolicy,
 )
 from openhcs.interop.cellprofiler.runtime.output_contexts import (
     InputObjectLabelWithoutParentImageOutputSourceContextPolicyMixin,
 )
-from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
-    ObjectInputBindingRequest,
-)
-from openhcs.interop.cellprofiler.runtime.payload_types import (
-    CellProfilerKwargDict,
-    CellProfilerRuntimeValue,
+from openhcs.interop.cellprofiler.module_settings import (
+    BoundModuleSettings,
 )
 from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
-    BinderSettingsSourceModule,
-    BoundModuleSettings,
     CellProfilerModule,
-    ImageArtifactInputCapability,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
-    ModuleSettingsSourceModule,
+)
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
     MeasurementArtifactOutputModule,
     ObjectArtifactInputModule,
-    ObjectLabelArtifactInputCapability,
-    ObjectLabelArtifactOutputCapability,
     ObjectArtifactOutputModule,
     ObjectLineageTransformContractModule,
     PlaneRuntimeArtifactModule,
-    RelationshipArtifactOutputModule,
-    ScopedMeasurementModule,
+)
+from openhcs.interop.cellprofiler.module_structuring_element_settings import (
     StructuringElementSettingBinding,
     StructuringElementSettingsModule,
 )
 from openhcs.interop.cellprofiler.setting_names import (
+    normalized_symbol_name,
     optional_setting_value,
     required_setting_value,
-    setting_names,
     setting_values,
-    split_symbol_names,
 )
 from openhcs.interop.cellprofiler.cellprofiler_literals import (
     cellprofiler_enum_from_literal,
 )
+
+if TYPE_CHECKING:
+    from openhcs.core.callable_contract import CallableContract
+    from openhcs.interop.cellprofiler.parser import ModuleBlock
 
 
 class CombineObjectsMethod(Enum):
@@ -118,17 +102,36 @@ class MaskObjectsNumberingChoice(Enum):
 
 
 class ImageStructuringElementModule(
-    StructuringElementExecutionModePolicy,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
     StructuringElementSettingsModule,
 ):
     """Shared declaration for image morphology modules with one image output."""
 
     input_image_setting = SettingNameFamily("Select the input image")
     output_image_setting = SettingNameFamily("Name the output image")
-    image_input_settings = (input_image_setting,)
-    image_output_settings = (output_image_setting,)
+    setting_bindings = (
+        SettingToKeywordBinding.input(input_image_setting, ImageArtifactType),
+        SettingToKeywordBinding.output(output_image_setting, ImageArtifactType),
+    )
+
+    @classmethod
+    def postprocess_bound_settings(
+        cls, module: "ModuleBlock", bound: BoundModuleSettings
+    ) -> BoundModuleSettings:
+        setting = cls.declared_structuring_element_setting(module)
+        footprint = build_structuring_element(
+            setting.structuring_element,
+            setting.size,
+        )
+        return BoundModuleSettings(
+            {
+                **bound.kwargs,
+                SliceBySliceRuntimeParameter.require_parameter_name(): (
+                    footprint.ndim == 2
+                ),
+            },
+            bound.unmapped_kwargs,
+            bound.setting_coverage,
+        )
 
 
 class ClosingModule(ImageStructuringElementModule):
@@ -154,145 +157,46 @@ class ObjectTransformContractModule(
         "Name the output objects",
         aliases=("Name the output object", "Name the masked objects"),
     )
-
-    @classmethod
-    def object_input_setting_names(cls) -> tuple[str | SettingNameFamily, ...]:
-        return (cls.input_objects_setting,)
-
-    @classmethod
-    def object_output_setting_names(cls) -> tuple[str | SettingNameFamily, ...]:
-        return (cls.output_objects_setting,)
+    input_objects_binding = SettingToKeywordBinding.input(
+        input_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="labels"
+    )
+    output_objects_binding = SettingToKeywordBinding.output(
+        output_objects_setting,
+        ObjectLabelsArtifactType,
+    )
+    setting_bindings = (
+        input_objects_binding,
+        output_objects_binding,
+    )
 
 
 class ObjectLineageTransformModule(ObjectLineageTransformContractModule):
     """Shared declaration for object transforms that also emit parent-child lineage."""
 
-
-class CombineObjectsInputPolicy(CellProfilerObjectInputPolicyMixin):
-    """Bind two object-label inputs as the CombineObjects label-pair payload."""
-
-    image_override_kwarg = CellProfilerInvocationOverrideKwarg.image
-    execution_mode_override_kwarg = CellProfilerInvocationOverrideKwarg.execution_mode
-
-    def bind(self, request: ObjectInputBindingRequest) -> CellProfilerKwargDict:
-        request.require_exact_object_count(2)
-        label_planes = self.label_pair_payload(request)
-        shapes = {tuple(labels.shape) for labels in label_planes}
-        if len(shapes) != 1:
-            raise ValueError(
-                f"CombineObjects requires object-label inputs with matching shapes, got {sorted(shapes)!r}."
-            )
-        return {
-            CellProfilerInvocationOverrideKwarg.image: self.aligned_label_pair_payload(
-                label_planes
-            ),
-            CellProfilerInvocationOverrideKwarg.execution_mode: ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK,
-        }
-
-    def aligned_label_pair_payload(
-        self, label_planes: tuple[np.ndarray, np.ndarray]
-    ) -> AlignedImageStack:
-        """Return pairwise label payloads without exposing the pair axis as slices."""
-        slice_count = self.common_runtime_slice_count(label_planes)
-        if slice_count is None:
-            return AlignedImageStack((np.stack(label_planes, axis=0),))
-        return AlignedImageStack(
-            tuple(
-                (
-                    np.stack(
-                        tuple(
-                            (label_stack[slice_index] for label_stack in label_planes)
-                        ),
-                        axis=0,
-                    )
-                    for slice_index in range(slice_count)
-                )
-            )
-        )
-
-    def common_runtime_slice_count(
-        self, label_planes: tuple[np.ndarray, np.ndarray]
-    ) -> int | None:
-        """Return shared runtime-slice depth when both pair inputs are stacks."""
-        if any((labels.ndim != 3 for labels in label_planes)):
-            return None
-        counts = {int(labels.shape[0]) for labels in label_planes}
-        if len(counts) != 1:
-            raise ValueError(
-                f"CombineObjects requires object-label stack inputs with matching runtime slice counts, got {sorted(counts)!r}."
-            )
-        return counts.pop()
-
-    def label_pair_payload(
-        self, request: ObjectInputBindingRequest
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Return the two CombineObjects inputs in a shared dense slice domain."""
-        label_payloads = tuple(
-            (request.label_payload_for(spec) for spec in request.object_inputs)
-        )
-        slice_counts = tuple(
-            (
-                count
-                for payload in label_payloads
-                for count in (self.runtime_slice_count(payload),)
-                if count is not None
-            )
-        )
-        if not slice_counts:
-            return tuple(
-                (
-                    np.asarray(
-                        SingletonObjectLabelStackCollapseStrategy.for_labels(
-                            payload
-                        ).collapse(payload),
-                        dtype=np.int32,
-                    )
-                    for payload in label_payloads
-                )
-            )
-        slice_count_set = set(slice_counts)
-        if len(slice_count_set) != 1:
-            raise ValueError(
-                f"CombineObjects requires compatible object-label runtime slice domains, got slice counts {sorted(slice_count_set)!r}."
-            )
-        slice_count = slice_count_set.pop()
-        stacks = tuple(
-            (
-                DenseObjectLabelSliceStackRequest(
-                    payload, slice_count, np.int32
-                ).stack()
-                for payload in label_payloads
-            )
-        )
-        if any((stack is None for stack in stacks)):
-            shapes = [
-                tuple(object_label_dense_array(payload, dtype=np.int32).shape)
-                for payload in label_payloads
-            ]
-            raise ValueError(
-                f"CombineObjects requires object-label inputs compatible with runtime slice count {slice_count}, got shapes {shapes!r}."
-            )
-        return tuple((stack.labels for stack in stacks if stack is not None))
-
-    def runtime_slice_count(self, payload: CellProfilerRuntimeValue) -> int | None:
-        """Return the declared or dense object-label slice count for CombineObjects."""
-        declared_count = ObjectLabelRuntimeSliceStackContract.runtime_slice_count(
-            payload
-        )
-        if declared_count is not None:
-            return declared_count
-        label_array = object_label_dense_array(payload, dtype=np.int32)
-        if label_array.ndim != 3:
-            return None
-        return int(label_array.shape[0])
+    input_objects_setting = SettingNameFamily(
+        "Select the input object", aliases=("Select the input objects",)
+    )
+    output_objects_setting = SettingNameFamily(
+        "Name the output object", aliases=("Name the output objects",)
+    )
+    input_objects_binding = SettingToKeywordBinding.input(
+        input_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="labels"
+    )
+    output_objects_binding = SettingToKeywordBinding.output(
+        output_objects_setting,
+        ObjectLabelsArtifactType,
+    )
+    setting_bindings = (
+        input_objects_binding,
+        output_objects_binding,
+    )
 
 
 class CombineobjectsModule(
     PlaneRuntimeArtifactModule,
-    CombineObjectsInputPolicy,
     ObjectArtifactInputModule,
-    ObjectArtifactOutputModule,
     MeasurementArtifactOutputModule,
+    ObjectArtifactOutputModule,
     CellProfilerModule,
 ):
     module_name = "Combineobjects"
@@ -302,7 +206,21 @@ class CombineobjectsModule(
     first_objects_setting = SettingNameFamily("Select initial object set")
     second_objects_setting = SettingNameFamily("Select object set to combine")
     output_objects_setting = SettingNameFamily("Name the combined object set")
+    first_objects_binding = SettingToKeywordBinding.input(
+        first_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="object_labels"
+    )
+    output_objects_binding = SettingToKeywordBinding.output(
+        output_objects_setting,
+        ObjectLabelsArtifactType,
+    )
     setting_bindings = (
+        first_objects_binding,
+        SettingToKeywordBinding.input(
+            second_objects_setting,
+            ObjectLabelsArtifactType,
+            runtime_parameter_name="object_labels",
+        ),
+        output_objects_binding,
         SettingToKeywordBinding(
             "Select how to handle overlapping objects",
             "method",
@@ -311,12 +229,39 @@ class CombineobjectsModule(
     )
 
     @classmethod
-    def object_input_setting_names(cls) -> tuple[str | SettingNameFamily, ...]:
-        return (cls.first_objects_setting, cls.second_objects_setting)
+    def artifact_output_relations(
+        cls,
+        module,
+        *,
+        binding,
+        name,
+        invocation_key,
+        step_context,
+        artifact_inputs: ArtifactSpecCollection,
+        output_position,
+    ):
+        """Use the declared initial object set as the combined-label domain."""
 
-    @classmethod
-    def object_output_setting_names(cls) -> tuple[str | SettingNameFamily, ...]:
-        return (cls.output_objects_setting,)
+        if binding is not cls.output_objects_binding:
+            return super().artifact_output_relations(
+                module,
+                binding=binding,
+                name=name,
+                invocation_key=invocation_key,
+                step_context=step_context,
+                artifact_inputs=artifact_inputs,
+                output_position=output_position,
+            )
+        del name, invocation_key, step_context, output_position
+        (source_name,) = cls.artifact_names_for_binding(
+            module,
+            cls.first_objects_binding,
+        )
+        source = artifact_inputs.require_by_name_and_artifact_type(
+            source_name,
+            ObjectLabelsArtifactType,
+        )
+        return (SourceStackLineageSourceRelation(source=source.ref()),)
 
 
 class DilateImageModule(ImageStructuringElementModule):
@@ -327,35 +272,40 @@ class DilateImageModule(ImageStructuringElementModule):
     confidence = 1.0
 
 
+class ZStackFunctionVariantModule:
+    """Select the declared volumetric callable for a source Z stack."""
+
+    @classmethod
+    def resolve_function(
+        cls,
+        module: "ModuleBlock",
+        *,
+        contract: "CallableContract",
+        source_bindings: "StepSourceBindingsConfig",
+    ) -> Callable[..., object]:
+        del module, contract
+        function_name = (
+            cls.function_variants[0]
+            if AllComponents.Z_INDEX in source_bindings.source_stack_components
+            else str(cls.function_name)
+        )
+        return cls.require_callable(function_name)
+
+
 class DilateObjectsModule(
-    ObjectTransformContractModule, StructuringElementSettingsModule
+    ZStackFunctionVariantModule,
+    ObjectTransformContractModule,
+    StructuringElementSettingsModule,
 ):
     module_name = "DilateObjects"
     function_name = "dilate_objects"
     function_variants = ("dilate_objects_3d",)
-    contract = ProcessingContract.FLEXIBLE
     validated = True
     confidence = 1.0
     structuring_element_binding = StructuringElementSettingBinding(
         shape_keyword="structuring_element_shape",
         size_keyword="structuring_element_size",
     )
-
-    @classmethod
-    def resolve_semantic_function(
-        cls,
-        module: "ModuleBlock",
-        *,
-        default_function_name: str | None = None,
-        request: "ModuleProcessingComponentRequest",
-    ) -> "ResolvedModuleFunction":
-        del default_function_name
-        function_name = (
-            cls.function_variants[0]
-            if AllComponents.Z_INDEX in request.runtime_lineage.variable_components
-            else str(cls.function_name)
-        )
-        return super().resolve_function(module, default_function_name=function_name)
 
 
 class ErodeImageModule(ImageStructuringElementModule):
@@ -367,7 +317,6 @@ class ErodeImageModule(ImageStructuringElementModule):
 
 
 class ErodeObjectsModule(
-    StructuringElementExecutionModePolicy,
     ObjectLabelDrivenPrimaryImageInputPolicy,
     LabelsObjectInputPolicy,
     ObjectLineageTransformModule,
@@ -377,12 +326,6 @@ class ErodeObjectsModule(
     function_name = "erode_objects"
     validated = True
     confidence = 1.0
-    input_objects_setting = SettingNameFamily(
-        "Select the input object", aliases=("Select the input objects",)
-    )
-    output_objects_setting = SettingNameFamily(
-        "Name the output object", aliases=("Name the output objects",)
-    )
     setting_bindings = (
         SettingToKeywordBinding(
             "Prevent object removal", "preserve_midpoints", parse_cellprofiler_bool
@@ -419,25 +362,22 @@ class ExpandShrinkMode(Enum):
     SKELETONIZE = "skeletonize"
 
 
-class ExpandOrShrinkObjectsModule(
-    PlaneRuntimeArtifactModule,
-    ObjectArtifactInputModule,
-    ObjectArtifactOutputModule,
-    CellProfilerModule,
-):
+class ExpandOrShrinkObjectsModule(ObjectTransformContractModule):
     module_name = "ExpandOrShrinkObjects"
     function_name = "expand_or_shrink_objects"
     validated = True
     confidence = 1.0
-    object_input_settings = ("Select the input objects",)
-    object_output_settings = ("Name the output objects",)
+    input_objects_setting = SettingNameFamily("Select the input objects")
+    output_objects_setting = SettingNameFamily("Name the output objects")
     setting_bindings = (
         SettingToKeywordBinding(
             "Select the operation",
             "mode",
-            lambda value: ExpandShrinkOperationStrategy.mode_for_cellprofiler_operation(
-                value
-            ).value,
+            lambda value: (
+                ExpandShrinkOperationStrategy.mode_for_cellprofiler_operation(
+                    value
+                ).value
+            ),
         ),
         SettingToKeywordBinding(
             "Number of pixels by which to expand or shrink",
@@ -454,14 +394,11 @@ class ExpandOrShrinkObjectsModule(
 
 class MaskObjectsModule(
     ObjectLabelDrivenPrimaryImageInputPolicy,
-    ImageArtifactInputModule,
-    RelationshipArtifactOutputModule,
-    ObjectTransformContractModule,
+    ObjectLineageTransformContractModule,
 ):
     module_name = "MaskObjects"
     function_name = "mask_objects"
     validated = True
-    contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
     outline_retention_setting = "Retain outlines of the resulting objects?"
     outline_image_setting = "Name the outline image"
@@ -473,23 +410,30 @@ class MaskObjectsModule(
     )
     masking_image_setting = SettingNameFamily("Select the masking image")
     masking_objects_setting = SettingNameFamily("Select the masking object")
-    image_input_settings = (masking_image_setting,)
-    ignored_settings = (
-        "Mask using a region defined by other objects or by binary image",
-        "Select the masking image",
-        outline_retention_setting,
+    input_objects_binding = SettingToKeywordBinding.input(
+        input_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="labels"
+    )
+    output_objects_binding = SettingToKeywordBinding.output(
+        output_objects_setting, ObjectLabelsArtifactType
+    )
+    masking_image_binding = SettingToKeywordBinding.input(
+        masking_image_setting, ImageArtifactType, runtime_parameter_name="mask"
+    )
+    masking_objects_binding = SettingToKeywordBinding.input(
+        masking_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="mask"
     )
 
     @classmethod
-    def ignored_settings_for(
-        cls, module: "ModuleBlock"
-    ) -> tuple[str | "SettingNameFamily", ...]:
-        ignored = tuple(cls.ignored_settings)
-        if cls.setting_value(module, cls.outline_retention_setting) == "No":
-            return (*ignored, cls.outline_image_setting)
-        return ignored
+    def primary_image_domain_input_binding(cls) -> SettingToKeywordBinding:
+        """Use the objects being masked, not the masking object, as the domain."""
+
+        return cls.input_objects_binding
 
     setting_bindings = (
+        masking_image_binding,
+        input_objects_binding,
+        masking_objects_binding,
+        output_objects_binding,
         SettingToKeywordBinding(
             "Handling of objects that are partially masked",
             "overlap_handling",
@@ -509,54 +453,51 @@ class MaskObjectsModule(
             "Invert the mask?", "invert_mask", parse_cellprofiler_bool
         ),
     )
+    ignored_settings = (
+        "Mask using a region defined by other objects or by binary image",
+        outline_retention_setting,
+    )
 
     @classmethod
-    def compile_time_public_setting_names(cls):
-        return (
-            *super().compile_time_public_setting_names(),
-            cls.masking_objects_setting,
+    def ignored_settings_for(
+        cls, module: "ModuleBlock"
+    ) -> tuple[str | "SettingNameFamily", ...]:
+        ignored = tuple(cls.ignored_settings)
+        if cls.setting_value(module, cls.outline_retention_setting) == "No":
+            return (*ignored, cls.outline_image_setting)
+        return ignored
+
+    @classmethod
+    def _masking_artifact_names(cls, module):
+        if module is None:
+            return None, None
+        masking_image = normalized_symbol_name(
+            optional_setting_value(module, cls.masking_image_setting) or ""
         )
-
-    @classmethod
-    def compile_time_public_setting_records(cls, module, source_schema=None):
-        from openhcs.interop.cellprofiler.parser import ModuleSetting
-
-        records = list(super().compile_time_public_setting_records(module, source_schema))
-        setting_name = setting_names(cls.masking_objects_setting)[0]
-        records.extend(
-            ModuleSetting(setting_name, object_name)
-            for value in setting_values(module, cls.masking_objects_setting)
-            for object_name in split_symbol_names(value)
+        masking_objects = normalized_symbol_name(
+            optional_setting_value(module, cls.masking_objects_setting) or ""
         )
-        return tuple(records)
+        if masking_image is not None and masking_objects is not None:
+            raise ValueError(
+                "MaskObjects cannot declare both masking image and object inputs."
+            )
+        return masking_image, masking_objects
 
     @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        input_objects = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(required_setting_value(module, cls.input_objects_setting)))
-        inputs = [input_objects]
-        masking_image = optional_setting_value(module, cls.masking_image_setting)
-        if masking_image is not None:
-            inputs.append(
-                ImageArtifactInputCapability.bind_artifact(cls, builder, module, ImageArtifactInputCapability.spec(masking_image))
-            )
-        masking_objects = optional_setting_value(module, cls.masking_objects_setting)
-        if masking_objects is not None:
-            inputs.append(
-                ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(masking_objects))
-            )
-        output_objects = ObjectLabelArtifactOutputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactOutputCapability.spec(required_setting_value(module, cls.output_objects_setting)))
-        outputs = [
-            cls.measurement_output_artifact(builder, module),
-            cls.parent_child_relationship_output_artifact(
-                builder,
-                module,
-                parent_name=input_objects.name,
-                child_name=output_objects.name,
-            ),
-            output_objects,
-        ]
-        return assembler.assemble_contract(
-            module, builder, inputs=inputs, outputs=outputs
+    def active_artifact_bindings(cls, module=None, *, invocation_key=None):
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
+        )
+        if module is None:
+            return bindings
+        masking_image, _ = cls._masking_artifact_names(module)
+        _, masking_objects = cls._masking_artifact_names(module)
+        return tuple(
+            binding
+            for binding in bindings
+            if masking_image is not None or binding is not cls.masking_image_binding
+            if masking_objects is not None or binding is not cls.masking_objects_binding
         )
 
 
@@ -568,40 +509,23 @@ class OpeningModule(ImageStructuringElementModule):
 
 
 class RemoveHolesModule(
-    VolumetricInputExecutionModePolicy,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
+    ZStackFunctionVariantModule,
     CellProfilerModule,
 ):
     module_name = "RemoveHoles"
     function_name = "remove_holes"
     validated = True
     function_variants = ("remove_holes_3d",)
-    contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
-    image_input_settings = ("Select the input image",)
-    image_output_settings = ("Name the output image",)
+    input_image_setting = SettingNameFamily("Select the input image")
+    output_image_setting = SettingNameFamily("Name the output image")
     setting_bindings = (
+        SettingToKeywordBinding.input(input_image_setting, ImageArtifactType),
+        SettingToKeywordBinding.output(output_image_setting, ImageArtifactType),
         SettingToKeywordBinding(
             "Size of holes to fill", "diameter", parse_cellprofiler_float
         ),
     )
-
-    @classmethod
-    def resolve_semantic_function(
-        cls,
-        module: "ModuleBlock",
-        *,
-        default_function_name: str | None = None,
-        request: "ModuleProcessingComponentRequest",
-    ) -> "ResolvedModuleFunction":
-        del default_function_name
-        function_name = (
-            cls.function_variants[0]
-            if AllComponents.Z_INDEX in request.runtime_lineage.variable_components
-            else str(cls.function_name)
-        )
-        return super().resolve_function(module, default_function_name=function_name)
 
 
 class ResizeObjectsModule(
@@ -613,18 +537,12 @@ class ResizeObjectsModule(
     module_name = "ResizeObjects"
     function_name = "resize_objects"
     validated = True
-    contract = ProcessingContract.FLEXIBLE
     function_variants = ("resize_objects_3d",)
     confidence = 1.0
-    input_objects_setting = SettingNameFamily(
-        "Select the input object", aliases=("Select the input objects",)
-    )
-    output_objects_setting = SettingNameFamily(
-        "Name the output object", aliases=("Name the output objects",)
-    )
     desired_dimensions_image_setting = SettingNameFamily(
         "Select the image with the desired dimensions"
     )
+    method_setting = SettingNameFamily("Method")
     factor_z_setting = SettingNameFamily("Z Factor")
     planes_setting = SettingNameFamily("Planes (Z)")
     volumetric_settings = (factor_z_setting, planes_setting)
@@ -642,65 +560,137 @@ class ResizeObjectsModule(
     )
 
     @classmethod
+    def uses_volumetric_resize(cls, module: "ModuleBlock") -> bool:
+        """Return whether this declaration changes the input label-stack depth."""
+
+        return any(
+            setting_values(module, setting) for setting in cls.volumetric_settings
+        )
+
+    @classmethod
+    def changes_stack_depth(cls, module: "ModuleBlock") -> bool:
+        """Return whether the declared resize changes the object stack depth."""
+
+        method = cellprofiler_enum_from_literal(
+            ResizeObjectsMethod,
+            required_setting_value(module, cls.method_setting),
+        )
+        if method is ResizeObjectsMethod.DIMENSIONS:
+            return True
+        return (
+            parse_cellprofiler_float(
+                required_setting_value(module, cls.factor_z_setting)
+            )
+            != 1.0
+        )
+
+    @classmethod
     def resolve_function(
-        cls, module: "ModuleBlock", *, default_function_name: str | None = None
-    ) -> "ResolvedModuleFunction":
-        del default_function_name
+        cls,
+        module: "ModuleBlock",
+        *,
+        contract: "CallableContract",
+        source_bindings: "StepSourceBindingsConfig",
+    ) -> Callable[..., object]:
+        del contract, source_bindings
         function_name = (
             cls.function_variants[0]
-            if any(
-                (setting_values(module, setting) for setting in cls.volumetric_settings)
-            )
+            if cls.uses_volumetric_resize(module)
             else str(cls.function_name)
         )
-        return super().resolve_function(module, default_function_name=function_name)
+        return cls.require_callable(function_name)
+
+    @classmethod
+    def artifact_output_relations(
+        cls,
+        module,
+        *,
+        binding,
+        name,
+        invocation_key,
+        step_context,
+        artifact_inputs: ArtifactSpecCollection,
+        output_position,
+    ):
+        inherited = super().artifact_output_relations(
+            module,
+            binding=binding,
+            name=name,
+            invocation_key=invocation_key,
+            step_context=step_context,
+            artifact_inputs=artifact_inputs,
+            output_position=output_position,
+        )
+        if not cls.uses_volumetric_resize(module) or not cls.changes_stack_depth(
+            module
+        ):
+            return inherited
+        (source_name,) = cls.artifact_names_for_binding(
+            module,
+            cls.input_objects_binding,
+        )
+        source = artifact_inputs.require_by_name_and_artifact_type(
+            source_name,
+            ObjectLabelsArtifactType,
+        )
+        return (GroupLineageSourceRelation(source=source.ref()),)
 
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 import logging
 import os
 import time
-from typing import Any, ClassVar
-import numpy as np
+from typing import ClassVar
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
-from openhcs.constants.constants import AllComponents, MemoryType, VariableComponents
+from openhcs.constants.constants import (
+    AllComponents,
+    MemoryType,
+)
+from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.core.callable_contract import runtime_image_execution_mode
 from openhcs.core.memory.decorators import numpy as numpy_decorator
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
+)
+from openhcs.core.pipeline.function_contracts import (
+    ObjectLabelInputExecutionMode,
+    object_label_input_execution_mode,
+    special_inputs,
+    )
 from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.image_shapes import (
+    apply_over_trailing_spatial_axes,
     trailing_spatial_factors,
     trailing_spatial_target_shape,
 )
-from openhcs.core.runtime_semantics import (
+from openhcs.core.runtime_object_label_domains import (
     DenseObjectLabelConsecutiveRelabelingStrategy,
-    DenseObjectLabelStack,
     ExplicitObjectLabelDomainDeclaration,
     ObjectLabelDomain,
-    ObjectLabelDomainScope,
     ObjectLabelIdDomainStrategy,
-    ParentChildRelationshipPayload,
-    DenseObjectLabelMaskAligner,
-    dense_object_label_plane_id_domains,
-    object_label_lineage_payload,
+    PresentObjectLabelIdsDomainDeclaration,
 )
-from openhcs.core.runtime_values import (
+from openhcs.core.runtime_relationships import (
+    DirectedObjectRelationshipPayload,
+    object_label_identity_lineage_payload,
+    object_label_parent_child_payload,
+)
+from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
-    ObjectLabelPayload,
-    ObjectLabelRuntimeSliceStackContract,
-    ObjectLabelSet,
-    ObjectLabelValue,
     image_payload_data,
     image_payload_metadata,
-    object_label_dense_array,
-    object_label_value_with_dense_labels,
     with_image_payload_data,
 )
+from openhcs.core.runtime_object_labels import (
+    object_label_value_with_dense_labels,
+)
+from openhcs.core.source_metadata import SourceVoxelSpacing
+from openhcs.core.source_spatial_domain import SourceSpatialDomainAdapter
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler.enum_attributes import (
     CellProfilerEnumAttributeMixin,
@@ -710,8 +700,9 @@ from openhcs.processing.backends.cellprofiler.relationships import (
 )
 from openhcs.processing.backends.cellprofiler.structuring_elements import (
     StructuringElement,
+    StructuringElementInput,
+    StructuringElementSize,
     adapt_structuring_element_rank,
-    apply_structuring_element,
     build_structuring_element,
 )
 from openhcs.processing.backends.cellprofiler.worm_geometry import (
@@ -728,10 +719,9 @@ from openhcs.processing.backends.cellprofiler._backend import (
 from openhcs.processing.backends.analysis.region_properties import (
     LabelRegionPropertiesBackendStrategy,
 )
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
-from openhcs.processing.backends.cellprofiler.thresholding import (
-    ThresholdSettingsModule,
+from openhcs.processing.backends.lib_registry.unified_registry import (
+    ProcessingContract,
+    SliceBySliceRuntimeParameter,
 )
 
 HolePredicate = Callable[[int, bool], bool]
@@ -931,6 +921,18 @@ class ResizeObjectsStats:
 
 
 @dataclass(frozen=True, slots=True)
+class ResizeObjects3DStats:
+    slice_index: int
+    original_depth: int
+    original_height: int
+    original_width: int
+    new_depth: int
+    new_height: int
+    new_width: int
+    object_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class ResizeObjectsRequest:
     """Runtime resize configuration independent of public module signature shape."""
 
@@ -999,99 +1001,62 @@ class MorphOperationRequest:
     memory_type: MemoryType = MemoryType.NUMPY
 
 
-MorphOperationImplementation = Callable[[MorphOperationRequest], np.ndarray]
-RepeatCountResolver = Callable[[int], int]
 NeighborConvolutionTransition = Callable[[np.ndarray, np.ndarray], np.ndarray]
-OpenLineStructureBuilder = Callable[[int], np.ndarray]
 
 
-class RegisteredCallableStrategy(ABC, metaclass=AutoRegisterMeta):
-    """Shared callback substrate for registered CellProfiler morphology families."""
-
-    __registry_key__ = "registry_key"
-    __skip_if_no_key__ = True
-    registry_key: ClassVar[str | None] = None
-    callback: ClassVar[Callable[..., Any] | None] = None
-
-    @classmethod
-    def registered_type_for(cls, key: object, label: str) -> type:
-        strategy_type = cls.__registry__.get(key)
-        if strategy_type is None:
-            raise ValueError(f"Unknown {label}: {key}")
-        return strategy_type
-
-    def invoke(self, *args: object) -> Any:
-        callback = type(self).callback
-        if callback is None:
-            raise TypeError(f"{type(self).__name__} cannot invoke callback")
-        return callback(*args)
-
-
-class MorphOperationStrategy(RegisteredCallableStrategy, metaclass=AutoRegisterMeta):
+class MorphOperationStrategy(
+    EnumKeyedStrategyMixin[MorphOperation], ABC, metaclass=AutoRegisterMeta
+):
     """Registered implementation authority for CellProfiler Morph operations."""
 
-    __registry_key__ = "operation"
+    __enum_member_attr__ = "operation"
     operation: ClassVar[MorphOperation | None] = None
-    callback: ClassVar[MorphOperationImplementation | None] = None
 
-    @classmethod
-    def for_operation(cls, operation: MorphOperation) -> "MorphOperationStrategy":
-        return cls.registered_type_for(operation, "Morph operation")()
-
-    def __init_subclass__(cls, **kwargs: object) -> None:
-        super().__init_subclass__(**kwargs)
-        if (
-            cls.operation is not None
-            and cls.callback is None
-            and (cls.apply is MorphOperationStrategy.apply)
-        ):
-            raise TypeError(
-                f"{cls.__name__} must declare implementation or apply() for Morph"
-            )
-
+    @abstractmethod
     def apply(self, request: MorphOperationRequest) -> np.ndarray:
-        return self.invoke(request)
+        """Apply this operation to the runtime request."""
 
 
-class RepeatModeStrategy(RegisteredCallableStrategy, metaclass=AutoRegisterMeta):
+class RepeatModeStrategy(
+    EnumKeyedStrategyMixin[RepeatMode], ABC, metaclass=AutoRegisterMeta
+):
     """Registered iteration-count policy for CellProfiler Morph repeat modes."""
 
-    __registry_key__ = "repeat_mode"
+    __enum_member_attr__ = "repeat_mode"
     repeat_mode: ClassVar[RepeatMode | None] = None
-    callback: ClassVar[RepeatCountResolver | None] = None
 
-    @classmethod
-    def for_repeat_mode(cls, repeat_mode: RepeatMode) -> "RepeatModeStrategy":
-        return cls.registered_type_for(repeat_mode, "Morph repeat mode")()
-
-    def __init_subclass__(cls, **kwargs: object) -> None:
-        super().__init_subclass__(**kwargs)
-        if cls.repeat_mode is not None and cls.callback is None:
-            raise TypeError(f"{cls.__name__} must declare callback for RepeatMode")
-
+    @abstractmethod
     def repeat_count(self, custom_repeats: int) -> int:
-        return self.invoke(custom_repeats)
+        """Return the concrete repeat count for this policy."""
 
 
 class OnceRepeatModeStrategy(RepeatModeStrategy):
     """Run a Morph operation once."""
 
     repeat_mode = RepeatMode.ONCE
-    callback = staticmethod(lambda custom_repeats: 1)
+
+    def repeat_count(self, custom_repeats: int) -> int:
+        del custom_repeats
+        return 1
 
 
 class ForeverRepeatModeStrategy(RepeatModeStrategy):
     """CellProfiler's bounded approximation of FOREVER repeat mode."""
 
     repeat_mode = RepeatMode.FOREVER
-    callback = staticmethod(lambda custom_repeats: 10000)
+
+    def repeat_count(self, custom_repeats: int) -> int:
+        del custom_repeats
+        return 10000
 
 
 class CustomRepeatModeStrategy(RepeatModeStrategy):
     """Run a Morph operation a declared number of times."""
 
     repeat_mode = RepeatMode.CUSTOM
-    callback = staticmethod(lambda custom_repeats: custom_repeats)
+
+    def repeat_count(self, custom_repeats: int) -> int:
+        return custom_repeats
 
 
 def _ensure_binary(image: np.ndarray) -> np.ndarray:
@@ -1198,56 +1163,56 @@ def _majority(image: np.ndarray, iterations: int = 1) -> np.ndarray:
     return result
 
 
-class OpenLineStructuringElement(
-    RegisteredCallableStrategy, metaclass=AutoRegisterMeta
-):
+class OpenLineStructuringElement(ABC, metaclass=AutoRegisterMeta):
     """Registered structuring-element authority for Morph OPENLINES angles."""
 
     __registry_key__ = "angle"
+    __skip_if_no_key__ = True
     angle: ClassVar[int | None] = None
-    callback: ClassVar[OpenLineStructureBuilder | None] = None
 
     @classmethod
     def registered_elements(cls) -> tuple["OpenLineStructuringElement", ...]:
         return tuple((strategy_type() for strategy_type in cls.__registry__.values()))
 
-    def __init_subclass__(cls, **kwargs: object) -> None:
-        super().__init_subclass__(**kwargs)
-        if cls.angle is not None and cls.callback is None:
-            raise TypeError(f"{cls.__name__} must declare callback for Morph OPENLINES")
-
+    @abstractmethod
     def structure(self, line_length: int) -> np.ndarray:
-        return self.invoke(line_length)
+        """Return this angle's line structuring element."""
 
 
 class HorizontalOpenLineStructuringElement(OpenLineStructuringElement):
     """Horizontal OPENLINES structuring element."""
 
     angle = 0
-    callback = staticmethod(lambda line_length: np.ones((1, line_length), dtype=bool))
+
+    def structure(self, line_length: int) -> np.ndarray:
+        return np.ones((1, line_length), dtype=bool)
 
 
 class RisingDiagonalOpenLineStructuringElement(OpenLineStructuringElement):
     """Rising diagonal OPENLINES structuring element."""
 
     angle = 45
-    callback = staticmethod(lambda line_length: np.eye(line_length, dtype=bool))
+
+    def structure(self, line_length: int) -> np.ndarray:
+        return np.eye(line_length, dtype=bool)
 
 
 class VerticalOpenLineStructuringElement(OpenLineStructuringElement):
     """Vertical OPENLINES structuring element."""
 
     angle = 90
-    callback = staticmethod(lambda line_length: np.ones((line_length, 1), dtype=bool))
+
+    def structure(self, line_length: int) -> np.ndarray:
+        return np.ones((line_length, 1), dtype=bool)
 
 
 class FallingDiagonalOpenLineStructuringElement(OpenLineStructuringElement):
     """Falling diagonal OPENLINES structuring element."""
 
     angle = 135
-    callback = staticmethod(
-        lambda line_length: np.fliplr(np.eye(line_length, dtype=bool))
-    )
+
+    def structure(self, line_length: int) -> np.ndarray:
+        return np.fliplr(np.eye(line_length, dtype=bool))
 
 
 def _openlines(image: np.ndarray, line_length: int = 3) -> np.ndarray:
@@ -1314,12 +1279,16 @@ def convex_hull_morph_operation(request: MorphOperationRequest) -> np.ndarray:
 
 class BranchpointsMorphOperationStrategy(MorphOperationStrategy):
     operation = MorphOperation.BRANCHPOINTS
-    callback = staticmethod(lambda request: _branchpoints(request.image))
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        return _branchpoints(request.image)
 
 
 class BridgeMorphOperationStrategy(MorphOperationStrategy):
     operation = MorphOperation.BRIDGE
-    callback = staticmethod(lambda request: _bridge(request.image, request.iterations))
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        return _bridge(request.image, request.iterations)
 
 
 class CleanMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
@@ -1332,24 +1301,30 @@ class CleanMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
 
 class ConvexHullMorphOperationStrategy(MorphOperationStrategy):
     operation = MorphOperation.CONVEX_HULL
-    callback = staticmethod(convex_hull_morph_operation)
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        return convex_hull_morph_operation(request)
 
 
 class DiagMorphOperationStrategy(MorphOperationStrategy):
     operation = MorphOperation.DIAG
-    callback = staticmethod(lambda request: _diag(request.image, request.iterations))
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        return _diag(request.image, request.iterations)
 
 
 class DistanceMorphOperationStrategy(MorphOperationStrategy):
     operation = MorphOperation.DISTANCE
-    callback = staticmethod(
-        lambda request: _distance(request.image, request.rescale_values)
-    )
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        return _distance(request.image, request.rescale_values)
 
 
 class EndpointsMorphOperationStrategy(MorphOperationStrategy):
     operation = MorphOperation.ENDPOINTS
-    callback = staticmethod(lambda request: _endpoints(request.image))
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        return _endpoints(request.image)
 
 
 class FillMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
@@ -1362,21 +1337,23 @@ class FillMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
 
 class HBreakMorphOperationStrategy(MorphOperationStrategy):
     operation = MorphOperation.HBREAK
-    callback = staticmethod(lambda request: _hbreak(request.image, request.iterations))
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        return _hbreak(request.image, request.iterations)
 
 
 class MajorityMorphOperationStrategy(MorphOperationStrategy):
     operation = MorphOperation.MAJORITY
-    callback = staticmethod(
-        lambda request: _majority(request.image, request.iterations)
-    )
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        return _majority(request.image, request.iterations)
 
 
 class OpenLinesMorphOperationStrategy(MorphOperationStrategy):
     operation = MorphOperation.OPENLINES
-    callback = staticmethod(
-        lambda request: _openlines(request.image, request.line_length)
-    )
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        return _openlines(request.image, request.line_length)
 
 
 class RemoveMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
@@ -1389,12 +1366,16 @@ class RemoveMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
 
 class ShrinkMorphOperationStrategy(MorphOperationStrategy):
     operation = MorphOperation.SHRINK
-    callback = staticmethod(lambda request: _shrink(request.image, request.iterations))
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        return _shrink(request.image, request.iterations)
 
 
 class SkelpeMorphOperationStrategy(MorphOperationStrategy):
     operation = MorphOperation.SKELPE
-    callback = staticmethod(lambda request: _skelpe(request.image))
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        return _skelpe(request.image)
 
 
 class SpurMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
@@ -1409,17 +1390,23 @@ class SpurMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
 
 class ThickenMorphOperationStrategy(MorphOperationStrategy):
     operation = MorphOperation.THICKEN
-    callback = staticmethod(lambda request: _thicken(request.image, request.iterations))
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        return _thicken(request.image, request.iterations)
 
 
 class ThinMorphOperationStrategy(MorphOperationStrategy):
     operation = MorphOperation.THIN
-    callback = staticmethod(lambda request: _thin(request.image, request.iterations))
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        return _thin(request.image, request.iterations)
 
 
 class VBreakMorphOperationStrategy(MorphOperationStrategy):
     operation = MorphOperation.VBREAK
-    callback = staticmethod(lambda request: _vbreak(request.image, request.iterations))
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        return _vbreak(request.image, request.iterations)
 
 
 def apply_morph_operation(
@@ -1433,10 +1420,10 @@ def apply_morph_operation(
     memory_type: MemoryType = MemoryType.NUMPY,
 ) -> np.ndarray:
     """Apply one CellProfiler Morph operation through registered backend policies."""
-    iterations = RepeatModeStrategy.for_repeat_mode(repeat_mode).repeat_count(
+    iterations = RepeatModeStrategy.for_enum_member(repeat_mode).repeat_count(
         custom_repeats
     )
-    return MorphOperationStrategy.for_operation(operation).apply(
+    return MorphOperationStrategy.for_enum_member(operation).apply(
         MorphOperationRequest(
             image=image,
             iterations=iterations,
@@ -1458,7 +1445,18 @@ def morph(
     line_length: int = 3,
     morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> np.ndarray:
-    """Decorated CellProfiler Morph entrypoint backed by registered strategies."""
+    """Decorated CellProfiler Morph entrypoint backed by registered strategies.
+
+    Args:
+        operation: Morphological operation to apply to the binary foreground.
+        repeat_mode: Iteration policy: once, a bounded 10,000-pass approximation
+            of ``forever``, or ``custom``.
+        custom_repeats: Number of passes used when ``repeat_mode`` is ``custom``.
+        rescale_values: Normalize the distance-transform result to 0..1 when using
+            the ``distance`` operation.
+        line_length: Structuring-line length in pixels for the ``openlines``
+            operation.
+    """
     return apply_morph_operation(
         image=image,
         operation=operation,
@@ -1470,102 +1468,117 @@ def morph(
     )
 
 
-@numpy_decorator(contract=ProcessingContract.PURE_2D)
+def _morph_image_pixels(
+    image: np.ndarray,
+    structuring_element: StructuringElement | str,
+    size: int,
+    operation: Callable[[np.ndarray, np.ndarray], np.ndarray],
+) -> np.ndarray:
+    pixels = np.asarray(image)
+    footprint = build_structuring_element(structuring_element, size)
+    footprint = adapt_structuring_element_rank(footprint, pixels.ndim)
+    return operation(pixels, footprint)
+
+
+def _morph_image_payload(
+    image: np.ndarray,
+    structuring_element: StructuringElement | str,
+    size: int,
+    operation: Callable[[np.ndarray, np.ndarray], np.ndarray],
+) -> np.ndarray:
+    pixel_data = image_payload_data(image)
+    result = _morph_image_pixels(pixel_data, structuring_element, size, operation)
+    return with_image_payload_data(
+        image,
+        result.astype(pixel_data.dtype, copy=False),
+        metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
+    )
+
+
+@runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
+@numpy_decorator(contract=ProcessingContract.FLEXIBLE)
 def closing(
     image: np.ndarray,
-    structuring_element: StructuringElement = StructuringElement.DISK,
-    size: int = 3,
-    morphology_backend_provider: (
-        CellProfilerBackendProvider | None
-    ) = CellProfilerBackendProvider.OPENCV,
+    structuring_element: StructuringElementInput = StructuringElement.DISK,
+    size: StructuringElementSize = 3,
+    morphology_backend_provider: BackendProviderInput = CellProfilerBackendProvider.NATIVE,
+    *,
+    slice_by_slice: bool = True,
 ) -> np.ndarray:
     """Apply CellProfiler-compatible grayscale closing to an image plane."""
-    pixel_data = image_payload_data(image)
     morphology = MorphologyBackendStrategy.for_callable(
         closing, backend_provider=morphology_backend_provider
     )
-    footprint = adapt_structuring_element_rank(
-        build_structuring_element(structuring_element, size), pixel_data.ndim
-    )
-    result = apply_structuring_element(
-        pixel_data,
-        footprint,
+    return _morph_image_payload(
+        image,
+        structuring_element,
+        size,
         morphology.grayscale_closing,
     )
-    return with_image_payload_data(
-        image,
-        result.astype(pixel_data.dtype, copy=False),
-        metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
-    )
 
 
-@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
+@numpy_decorator(contract=ProcessingContract.FLEXIBLE)
 def opening(
     image: np.ndarray,
-    structuring_element: StructuringElement = StructuringElement.DISK,
-    size: int = 3,
-    morphology_backend_provider: (
-        CellProfilerBackendProvider | None
-    ) = CellProfilerBackendProvider.OPENCV,
+    structuring_element: StructuringElementInput = StructuringElement.DISK,
+    size: StructuringElementSize = 3,
+    morphology_backend_provider: BackendProviderInput = CellProfilerBackendProvider.NATIVE,
+    *,
+    slice_by_slice: bool = True,
 ) -> np.ndarray:
     """Apply CellProfiler-compatible grayscale opening to an image plane."""
-    pixel_data = image_payload_data(image)
     morphology = MorphologyBackendStrategy.for_callable(
         opening, backend_provider=morphology_backend_provider
     )
-    footprint = adapt_structuring_element_rank(
-        build_structuring_element(structuring_element, size), pixel_data.ndim
-    )
-    result = apply_structuring_element(
-        pixel_data,
-        footprint,
+    return _morph_image_payload(
+        image,
+        structuring_element,
+        size,
         morphology.grayscale_opening,
     )
-    return with_image_payload_data(
-        image,
-        result.astype(pixel_data.dtype, copy=False),
-        metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
-    )
 
 
-@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
+@numpy_decorator(contract=ProcessingContract.FLEXIBLE)
 def dilate_image(
     image: np.ndarray,
-    structuring_element: StructuringElement = StructuringElement.DISK,
-    size: int = 3,
+    structuring_element: StructuringElementInput = StructuringElement.DISK,
+    size: StructuringElementSize = 3,
+    *,
+    slice_by_slice: bool = True,
 ) -> np.ndarray:
     """Apply grayscale dilation to an image plane."""
     from skimage.morphology import dilation
 
-    footprint = adapt_structuring_element_rank(
-        build_structuring_element(structuring_element, size), np.asarray(image).ndim
-    )
-    dilated = apply_structuring_element(
+    dilated = _morph_image_pixels(
         image,
-        footprint,
+        structuring_element,
+        size,
         lambda spatial_image, footprint: dilation(spatial_image, footprint),
     )
     return dilated.astype(image.dtype)
 
 
-@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
+@numpy_decorator(contract=ProcessingContract.FLEXIBLE)
 def erode_image(
     image: np.ndarray,
-    structuring_element: StructuringElement | str = StructuringElement.DISK,
-    size: int = 3,
+    structuring_element: StructuringElementInput = StructuringElement.DISK,
+    size: StructuringElementSize = 3,
+    *,
+    slice_by_slice: bool = True,
 ) -> np.ndarray:
     """Apply grayscale erosion to an image plane."""
     from skimage.morphology import erosion
 
-    footprint = adapt_structuring_element_rank(
-        build_structuring_element(structuring_element, size), np.asarray(image).ndim
-    )
-    eroded = apply_structuring_element(
+    eroded = _morph_image_pixels(
         image,
-        footprint,
+        structuring_element,
+        size,
         lambda spatial_image, footprint: erosion(spatial_image, footprint),
     )
-    return eroded.astype(image.dtype)
+    return eroded.astype(image.dtype, copy=False)
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
@@ -1598,7 +1611,12 @@ def morphological_skeleton_3d(image: np.ndarray) -> np.ndarray:
 
 @numpy_decorator(contract=ProcessingContract.PURE_3D)
 def morphologicalskeleton(image: np.ndarray, volumetric: bool = False) -> np.ndarray:
-    """Compute CellProfiler MorphologicalSkeleton on a stack or volume."""
+    """Compute CellProfiler MorphologicalSkeleton on a stack or volume.
+
+    Args:
+        volumetric: Skeletonize the full 3-D volume when true; otherwise
+            skeletonize each Z plane independently.
+    """
     from skimage.morphology import skeletonize
 
     if volumetric:
@@ -2303,7 +2321,9 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         self.erode_labeled_objects(labels, footprint)
         self.local_maxima_by_label(image, labels, footprint)
         self.smooth_image_for_declumping(image, mask, 1.0)
-        self.smooth_image_for_declumping(image, np.ones(mask.shape, dtype=np.bool_), 1.0)
+        self.smooth_image_for_declumping(
+            image, np.ones(mask.shape, dtype=np.bool_), 1.0
+        )
 
     def connected_components(
         self, mask: np.ndarray, *, connectivity: int = 2
@@ -2347,28 +2367,34 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         return _convex_hull_image_numba(np.ascontiguousarray(mask_array))
 
     def grayscale_closing(self, image: np.ndarray, footprint: np.ndarray) -> np.ndarray:
-        image_array = np.asarray(image)
-        footprint_array = np.asarray(footprint, dtype=bool)
-        if image_array.ndim != 2 or footprint_array.ndim != 2:
-            raise NotImplementedError(
-                "Numba morphology backend currently supports 2-D grayscale closing."
-            )
-        footprint_offsets = FootprintOffsetTable.from_footprint(
-            footprint_array, dimension_policy=FOOTPRINT_OFFSET_2D_POLICY
-        )
-        return _grayscale_morphology_2d_numba(
-            np.ascontiguousarray(image_array),
-            footprint_offsets.y_offsets,
-            footprint_offsets.x_offsets,
-            True,
-        )
+        return self._grayscale_morphology(image, footprint, first_pass_is_dilation=True)
 
     def grayscale_opening(self, image: np.ndarray, footprint: np.ndarray) -> np.ndarray:
+        return self._grayscale_morphology(image, footprint, first_pass_is_dilation=False)
+
+    def _grayscale_morphology(
+        self,
+        image: np.ndarray,
+        footprint: np.ndarray,
+        *,
+        first_pass_is_dilation: bool,
+    ) -> np.ndarray:
         image_array = np.asarray(image)
         footprint_array = np.asarray(footprint, dtype=bool)
+        if image_array.ndim > 2:
+            footprint_2d = footprint_array.reshape(footprint_array.shape[-2:])
+            return apply_over_trailing_spatial_axes(
+                image_array,
+                2,
+                lambda plane: self._grayscale_morphology(
+                    plane,
+                    footprint_2d,
+                    first_pass_is_dilation=first_pass_is_dilation,
+                ),
+            )
         if image_array.ndim != 2 or footprint_array.ndim != 2:
             raise NotImplementedError(
-                "Numba morphology backend currently supports 2-D grayscale opening."
+                "Numba morphology backend currently supports 2-D grayscale morphology."
             )
         footprint_offsets = FootprintOffsetTable.from_footprint(
             footprint_array, dimension_policy=FOOTPRINT_OFFSET_2D_POLICY
@@ -2377,7 +2403,7 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
             np.ascontiguousarray(image_array),
             footprint_offsets.y_offsets,
             footprint_offsets.x_offsets,
-            False,
+            first_pass_is_dilation,
         )
 
     def block_labels(
@@ -2429,16 +2455,20 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
     def local_maxima_by_label(
         self, image: np.ndarray, labels: np.ndarray, footprint: np.ndarray
     ) -> np.ndarray:
-        image_array = np.ascontiguousarray(image, dtype=np.float64)
-        labels_array = np.ascontiguousarray(labels, dtype=np.int64)
+        image_array = np.ascontiguousarray(image)
+        labels_array = np.ascontiguousarray(labels)
         footprint_offsets = FootprintOffsetTable.from_footprint(
             footprint, dimension_policy=FOOTPRINT_OFFSET_2D_POLICY
         )
+        offset_distances = np.sum(
+            footprint_offsets.offsets * footprint_offsets.offsets, axis=1
+        )
+        offset_order = np.argsort(offset_distances, kind="stable")
         return _local_maxima_by_label_numba(
             image_array,
             labels_array,
-            footprint_offsets.y_offsets,
-            footprint_offsets.x_offsets,
+            np.ascontiguousarray(footprint_offsets.y_offsets[offset_order]),
+            np.ascontiguousarray(footprint_offsets.x_offsets[offset_order]),
         )
 
     def smooth_image_for_declumping(
@@ -2718,17 +2748,23 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
 
     def relabel_sequential(self, labels: np.ndarray) -> tuple[np.ndarray, int]:
         labels_array = np.asarray(labels)
+        label_dtype = (
+            labels_array.dtype
+            if np.issubdtype(labels_array.dtype, np.integer)
+            else np.dtype(np.int64)
+        )
         if labels_array.ndim > 2:
             relabeled_planes, count = _relabel_sequential_3d_numba(
                 np.ascontiguousarray(
-                    labels_array.reshape((-1, *labels_array.shape[-2:])), dtype=np.int64
+                    labels_array.reshape((-1, *labels_array.shape[-2:])),
+                    dtype=label_dtype,
                 )
             )
             return (relabeled_planes.reshape(labels_array.shape), int(count))
         if labels_array.ndim != 2:
             raise ValueError("Relabeling requires at least two dimensions.")
         return _relabel_sequential_numba(
-            np.ascontiguousarray(labels_array, dtype=np.int64)
+            np.ascontiguousarray(labels_array, dtype=label_dtype)
         )
 
 
@@ -2755,6 +2791,17 @@ class OpenCVNumpyMorphologyBackendStrategy(NumbaNumpyMorphologyBackendStrategy):
 
         image_array = np.asarray(image)
         footprint_array = np.asarray(footprint, dtype=np.uint8)
+        if image_array.ndim > 2:
+            footprint_2d = footprint_array.reshape(footprint_array.shape[-2:])
+            return apply_over_trailing_spatial_axes(
+                image_array,
+                2,
+                lambda plane: self._opencv_morphology(
+                    plane,
+                    footprint_2d,
+                    operation=operation,
+                ),
+            )
         op = cv2.MORPH_OPEN if operation == "opening" else cv2.MORPH_CLOSE
         result = cv2.morphologyEx(
             np.ascontiguousarray(image_array),
@@ -3795,6 +3842,9 @@ def _local_maxima_by_label_numba(
                 if labels[neighbor_y, neighbor_x] != label:
                     continue
                 value = image[neighbor_y, neighbor_x]
+                if value > current:
+                    max_value = value
+                    break
                 if value > max_value:
                     max_value = value
             maxima[y, x] = current == max_value
@@ -3886,7 +3936,9 @@ def _smooth_image_for_declumping_full_mask_numba(
             for x in range(width):
                 image_sum = 0.0
                 for kernel_index in range(kernel_size):
-                    image_sum += float(image[y0 + kernel_index, x]) * kernel[kernel_index]
+                    image_sum += (
+                        float(image[y0 + kernel_index, x]) * kernel[kernel_index]
+                    )
                 image_vertical[y, x] = image_sum
         else:
             for x in range(width):
@@ -4528,15 +4580,6 @@ class ExpandShrinkOperationStrategy(
     ) -> np.ndarray:
         """Return transformed labels for this operation mode."""
 
-    def output_domain(self, labels: np.ndarray) -> ObjectLabelDomain:
-        """Return CP's semantic object domain for transformed labels."""
-        return ObjectLabelDomain(
-            declared_object_count=ObjectLabelIdDomainStrategy.for_value(
-                labels
-            ).max_present_id(labels),
-            scope=ObjectLabelDomainScope.PLANE,
-        )
-
     @staticmethod
     def apply_label_planes(
         labels: np.ndarray, operation: Callable[[np.ndarray], np.ndarray]
@@ -4896,15 +4939,19 @@ def prepare_expand_or_shrink_objects() -> None:
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
-@special_outputs(("labels", segmentation_mask_rois()))
 def expand_or_shrink_objects(
     image: np.ndarray,
     labels: ObjectLabelValue,
     mode: ExpandShrinkMode | str = ExpandShrinkMode.EXPAND_DEFINED_PIXELS,
     iterations: int = 1,
     fill_holes: bool = True,
-) -> tuple[object, ObjectLabelValue]:
-    """Expand or shrink labeled objects using CellProfiler-compatible semantics."""
+) -> tuple[object, MeasurementSparseColumnarRows, ObjectLabelValue]:
+    """Expand or shrink labeled objects using CellProfiler-compatible semantics.
+
+    Args:
+        labels: Object-label plane whose regions are expanded, shrunk, skeletonized,
+            or reduced to points according to ``mode``.
+    """
     labels_int = object_label_dense_array(labels, dtype=np.int32)
     operation = ExpandShrinkOperationStrategy.for_mode(mode)
     result_labels = operation.apply(
@@ -4912,12 +4959,10 @@ def expand_or_shrink_objects(
     )
     return (
         image,
+        MeasurementSparseColumnarRows.from_rows((), fields=()),
         object_label_value_with_dense_labels(
             labels,
             result_labels.astype(np.int32, copy=False),
-            domain_declaration=ExplicitObjectLabelDomainDeclaration(
-                operation.output_domain(result_labels)
-            ),
         ),
     )
 
@@ -4939,7 +4984,7 @@ class MaskObjectsPlaneResult:
 
     labels: np.ndarray
     stats: MaskObjectsStats
-    relationships: ParentChildRelationshipPayload
+    relationships: DirectedObjectRelationshipPayload
 
 
 class MaskObjectsOverlapHandlingStrategy(
@@ -5139,11 +5184,14 @@ class MaskObjectsPlaneOperation:
     relationship_backend: ObjectRelationshipBackendStrategy
 
     def apply(
-        self, label_image: np.ndarray, mask: np.ndarray, *, slice_index: int = 0
+        self, label_image: object, mask: object, *, slice_index: int = 0
     ) -> MaskObjectsPlaneResult:
+        (label_image, mask), adapters = SourceSpatialDomainAdapter.aligned_values(
+            (label_image, mask)
+        )
+        label_adapter = adapters[0]
         label_image = np.asarray(label_image, dtype=np.int32)
-        _aligned_labels, mask = DenseObjectLabelMaskAligner(label_image, mask).aligned()
-        label_image = _aligned_labels.astype(np.int32, copy=False)
+        mask = np.asarray(mask)
         binary_mask = mask > 0 if mask.max() > 1 else mask.astype(bool)
         if self.invert_mask:
             binary_mask = ~binary_mask
@@ -5151,18 +5199,22 @@ class MaskObjectsPlaneOperation:
         nobjects = int(np.max(label_image))
         if nobjects == 0:
             return MaskObjectsPlaneResult(
-                labels=masked_labels,
+                labels=(
+                    label_adapter.extract_source_array(
+                        masked_labels,
+                        spatial_axes_yx=label_adapter.spatial_axes_yx,
+                    )
+                ),
                 stats=MaskObjectsStats(
                     slice_index=slice_index,
                     original_object_count=0,
                     remaining_object_count=0,
                     objects_removed=0,
                 ),
-                relationships=ParentChildRelationshipPayload(
-                    parent_ids=(), child_ids=()
+                relationships=DirectedObjectRelationshipPayload(
+                    source_ids=(), target_ids=()
                 ),
             )
-        binary_mask = _size_binary_mask_like_labels(label_image, binary_mask)
         masked_labels = MaskObjectsOverlapHandlingStrategy.for_choice(
             self.overlap_handling
         ).apply(
@@ -5176,7 +5228,12 @@ class MaskObjectsPlaneOperation:
             self.numbering
         ).apply(masked_labels, nobjects=nobjects)
         return MaskObjectsPlaneResult(
-            labels=masked_labels,
+            labels=(
+                label_adapter.extract_source_array(
+                    masked_labels,
+                    spatial_axes_yx=label_adapter.spatial_axes_yx,
+                )
+            ),
             stats=MaskObjectsStats(
                 slice_index=slice_index,
                 original_object_count=nobjects,
@@ -5193,49 +5250,28 @@ class MaskObjectsPlaneOperation:
 class MaskObjectsOutputLabels:
     """Typed MaskObjects label output preserving input object-label semantics."""
 
-    source: object
+    source: ObjectLabelValue
     labels: np.ndarray
 
-    def value(self) -> object:
-        if not isinstance(self.source, (ObjectLabelPayload, ObjectLabelSet)):
-            return self.labels
-        plane_domains = dense_object_label_plane_id_domains(
-            self.labels, domain_scope=ObjectLabelDomainScope.PLANE
-        )
+    def value(self) -> ObjectLabelValue:
+        source_domain = self.source.object_label_domain()
         return object_label_value_with_dense_labels(
             self.source,
             self.labels,
-            domain_declaration=ExplicitObjectLabelDomainDeclaration(
-                ObjectLabelDomain(
-                    declared_object_id_domains=plane_domains,
-                    scope=ObjectLabelDomainScope.PLANE,
-                )
+            domain_declaration=PresentObjectLabelIdsDomainDeclaration(
+                scope=source_domain.scope,
+                plane_projection=self.source.declared_plane_projection(),
             ),
         )
 
 
 @numpy_decorator(contract=ProcessingContract.FLEXIBLE)
+@object_label_input_execution_mode(ObjectLabelInputExecutionMode.MATCH_IMAGE_STACK)
 @special_inputs("labels", "mask")
-@special_outputs(
-    (
-        "mask_stats",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "original_object_count",
-                "remaining_object_count",
-                "objects_removed",
-            ],
-            analysis_type="mask_objects",
-        ),
-    ),
-    "object_relationships",
-    ("masked_labels", segmentation_mask_rois()),
-)
 def mask_objects(
     image: np.ndarray,
-    labels: np.ndarray,
-    mask: np.ndarray,
+    labels: ObjectLabelValue,
+    mask: np.ndarray | ObjectLabelValue,
     overlap_handling: MaskObjectsOverlapHandling = MaskObjectsOverlapHandling.MASK,
     overlap_fraction: float = 0.5,
     numbering: MaskObjectsNumberingChoice = MaskObjectsNumberingChoice.RENUMBER,
@@ -5243,16 +5279,22 @@ def mask_objects(
     relationship_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> tuple[
     np.ndarray,
-    MaskObjectsStats | list[MaskObjectsStats],
-    ParentChildRelationshipPayload,
-    object,
+    DataclassMeasurementColumnarRows,
+    ObjectLabelValue,
+    DirectedObjectRelationshipPayload,
 ]:
-    """Mask object labels while preserving OpenHCS object-label domain semantics."""
+    """Mask object labels while preserving OpenHCS object-label domain semantics.
+
+    Args:
+        labels: Source object labels whose regions are clipped, retained, or removed
+            according to the overlap policy.
+        mask: Binary image or object-label mask selecting the spatial region used
+            to evaluate each source object.
+    """
     overlap_handling = coerce_cellprofiler_enum(
         MaskObjectsOverlapHandling, overlap_handling
     )
     numbering = coerce_cellprofiler_enum(MaskObjectsNumberingChoice, numbering)
-    label_array = object_label_dense_array(labels, dtype=np.int32)
     relationship_backend = ObjectRelationshipBackendStrategy.for_memory_type(
         backend_provider=relationship_backend_provider
     )
@@ -5263,104 +5305,92 @@ def mask_objects(
         invert_mask=invert_mask,
         relationship_backend=relationship_backend,
     )
-    stack_slice_count = ObjectLabelRuntimeSliceStackContract.runtime_slice_count(labels)
-    if stack_slice_count is None and label_array.ndim == 3:
-        stack_slice_count = int(label_array.shape[0])
-    if stack_slice_count is not None and stack_slice_count > 1:
-        stack_alignment = DenseObjectLabelMaskAligner(
-            label_array, mask
-        ).aligned_stack_context(stack_slice_count)
-        if stack_alignment is not None:
-            plane_results = tuple(
-                (
-                    operation.apply(
-                        stack_alignment.label_stack[slice_index],
-                        stack_alignment.mask_stack[slice_index],
-                        slice_index=slice_index,
-                    )
-                    for slice_index in range(stack_slice_count)
-                )
-            )
-            masked_stack = stack_alignment.restore_label_stack(
-                np.stack([result.labels for result in plane_results], axis=0)
-            )
-            plane_domains = dense_object_label_plane_id_domains(
-                masked_stack, domain_scope=ObjectLabelDomainScope.PLANE
-            )
-            masked_payload = object_label_value_with_dense_labels(
-                labels,
-                masked_stack,
-                domain_declaration=ExplicitObjectLabelDomainDeclaration(
-                    ObjectLabelDomain(
-                        declared_object_id_domains=plane_domains,
-                        scope=ObjectLabelDomainScope.PLANE,
-                    )
-                ),
-            )
-            relationships = ParentChildRelationshipPayload(
-                parent_ids=tuple(
-                    (
-                        parent_id
-                        for result in plane_results
-                        for parent_id in result.relationships.parent_ids
-                    )
-                ),
-                child_ids=tuple(
-                    (
-                        child_id
-                        for result in plane_results
-                        for child_id in result.relationships.child_ids
-                    )
-                ),
-                slice_indices=tuple(
-                    (
-                        slice_index
-                        for slice_index, result in enumerate(plane_results)
-                        for _child_id in result.relationships.child_ids
-                    )
-                ),
-                slice_count=stack_slice_count,
-            )
-            return (
-                image,
-                [result.stats for result in plane_results],
-                relationships,
-                masked_payload,
-            )
-    try:
-        label_image = (
-            DenseObjectLabelStack.from_labels(label_array)
-            .project_xy_plane_without_relabeling()
-            .astype(np.int32, copy=False)
-        )
-    except ValueError as exc:
-        raise ValueError(
-            f"MaskObjects could not project object labels; labels shape={label_array.shape!r}, mask shape={mask.shape!r}."
-        ) from exc
-    result = operation.apply(label_image, mask)
-    masked_labels = MaskObjectsOutputLabels(labels, result.labels).value()
-    return (image, result.stats, result.relationships, masked_labels)
-
-
-def _size_binary_mask_like_labels(
-    labels: np.ndarray, binary_mask: np.ndarray
-) -> np.ndarray:
-    """Return a binary mask sized like CP size_similarly(labels, mask)."""
-    if binary_mask.shape == labels.shape:
-        return binary_mask
-    result = np.zeros(labels.shape, dtype=bool)
-    common_slices = tuple(
-        (
-            slice(0, min(label_extent, mask_extent))
-            for label_extent, mask_extent in zip(
-                labels.shape, binary_mask.shape, strict=False
-            )
-        )
+    stack_slice_count = (
+        labels.runtime_slice_plane_count()
+        if isinstance(labels, ObjectLabelValue)
+        else None
     )
-    if not common_slices:
-        return result
-    result[common_slices] = binary_mask[common_slices]
-    return result
+    if stack_slice_count is not None:
+        (label_stack, mask_stack), stack_adapters = (
+            SourceSpatialDomainAdapter.aligned_values((labels, mask))
+        )
+        if (
+            label_stack.ndim != 3
+            or mask_stack.ndim != 3
+            or label_stack.shape[0] != stack_slice_count
+            or mask_stack.shape[0] != stack_slice_count
+        ):
+            raise ValueError(
+                "Plane-scoped object-label mask alignment requires dense stacks "
+                f"with exactly {stack_slice_count} declared planes; got "
+                f"{label_stack.shape!r} and {mask_stack.shape!r}."
+            )
+        plane_results = tuple(
+            operation.apply(
+                label_stack[slice_index],
+                mask_stack[slice_index],
+                slice_index=slice_index,
+            )
+            for slice_index in range(stack_slice_count)
+        )
+        label_adapter = stack_adapters[0]
+        masked_stack = label_adapter.extract_source_array(
+            np.stack([result.labels for result in plane_results], axis=0),
+            spatial_axes_yx=label_adapter.spatial_axes_yx,
+        )
+        if not isinstance(labels, ObjectLabelValue):
+            raise TypeError(
+                "Runtime-slice MaskObjects labels require an ObjectLabelValue."
+            )
+        source_domain = labels.object_label_domain()
+        masked_payload = object_label_value_with_dense_labels(
+            labels,
+            masked_stack,
+            domain_declaration=PresentObjectLabelIdsDomainDeclaration(
+                scope=source_domain.scope,
+                plane_projection=labels.declared_plane_projection(),
+            ),
+        )
+        relationships = DirectedObjectRelationshipPayload(
+            source_ids=tuple(
+                parent_id
+                for result in plane_results
+                for parent_id in result.relationships.source_ids
+            ),
+            target_ids=tuple(
+                child_id
+                for result in plane_results
+                for child_id in result.relationships.target_ids
+            ),
+            slice_indices=tuple(
+                slice_index
+                for slice_index, result in enumerate(plane_results)
+                for _child_id in result.relationships.target_ids
+            ),
+            slice_count=stack_slice_count,
+        )
+        return (
+            image,
+            DataclassMeasurementColumnarRows(
+                tuple(result.stats for result in plane_results),
+                row_type=MaskObjectsStats,
+            ),
+            masked_payload,
+            relationships,
+        )
+    result = operation.apply(labels, mask)
+    if not isinstance(labels, ObjectLabelValue):
+        raise TypeError("MaskObjects labels require an ObjectLabelValue.")
+    masked_labels = MaskObjectsOutputLabels(labels, result.labels).value()
+    return (
+        image,
+        DataclassMeasurementColumnarRows(
+            (result.stats,),
+            row_type=MaskObjectsStats,
+        ),
+        masked_labels,
+        result.relationships,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -5485,32 +5515,33 @@ class SegmentCombineObjectsStrategy(CombineObjectsStrategy):
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
-@special_outputs(
-    (
-        "combine_stats",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "method",
-                "input_objects_x",
-                "input_objects_y",
-                "output_objects",
-            ],
-            analysis_type="combine_objects",
-        ),
-    ),
-    ("labels", segmentation_mask_rois()),
-)
+@special_inputs("object_labels")
 def combineobjects(
-    image: np.ndarray, method: CombineObjectsMethod | str = CombineObjectsMethod.MERGE
-) -> tuple[np.ndarray, CombineObjectsStats, np.ndarray]:
-    """Combine objects from two label images using CellProfiler policies."""
-    labels_x = object_label_dense_array(image[0], dtype=np.int32)
-    labels_y = object_label_dense_array(image[1], dtype=np.int32)
+    image: np.ndarray,
+    object_labels: tuple[ObjectLabelValue, ...],
+    method: CombineObjectsMethod | str = CombineObjectsMethod.MERGE,
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
+    """Combine objects from two label images using CellProfiler policies.
+
+    Args:
+        object_labels: Exactly two object-label inputs, ordered as the base labels
+            and the incoming labels interpreted by ``method``.
+    """
+    if len(object_labels) != 2:
+        raise ValueError(
+            f"CombineObjects requires exactly two object-label inputs, got {len(object_labels)}."
+        )
+    labels_x, labels_y = (
+        object_label_dense_array(value, dtype=np.int32) for value in object_labels
+    )
     stats, combined_labels = CombineObjectsStrategy.for_method(method).result(
         labels_x, labels_y
     )
-    return (labels_x.astype(np.float32), stats, combined_labels)
+    return (
+        image,
+        DataclassMeasurementColumnarRows((stats,), row_type=CombineObjectsStats),
+        object_label_value_with_dense_labels(object_labels[0], combined_labels),
+    )
 
 
 class SplitOrMergeOperation(Enum):
@@ -5539,6 +5570,36 @@ class SplitOrMergeIntensityMethod(Enum):
 
     CENTROIDS = "centroids"
     CLOSEST_POINT = "closest_point"
+
+
+class SplitOrMergeInputTopology(Enum):
+    """Exact public callable ABI selected by SplitOrMergeObjects settings."""
+
+    LABELS_ONLY = "split_or_merge_objects"
+    GUIDE_IMAGE = "split_or_merge_objects_with_guide_image"
+    PARENT_OBJECTS = "split_or_merge_objects_per_parent"
+
+    @classmethod
+    def from_values(
+        cls,
+        *,
+        operation: SplitOrMergeOperation | str,
+        merge_method: SplitOrMergeMergeMethod | str,
+        use_guide_image: bool,
+    ) -> "SplitOrMergeInputTopology":
+        operation_member = coerce_cellprofiler_enum(
+            SplitOrMergeOperation,
+            operation,
+        )
+        if operation_member is SplitOrMergeOperation.SPLIT:
+            return cls.LABELS_ONLY
+        merge_method_member = coerce_cellprofiler_enum(
+            SplitOrMergeMergeMethod,
+            merge_method,
+        )
+        if merge_method_member is SplitOrMergeMergeMethod.PER_PARENT:
+            return cls.PARENT_OBJECTS
+        return cls.GUIDE_IMAGE if use_guide_image else cls.LABELS_ONLY
 
 
 @dataclass(frozen=True, slots=True)
@@ -5749,37 +5810,21 @@ class SplitOrMergeConvexHull:
         return output
 
 
-@numpy_decorator(contract=ProcessingContract.PURE_2D)
-@special_inputs("labels")
-@special_outputs(
-    (
-        "split_merge_stats",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "input_object_count",
-                "output_object_count",
-                "operation",
-            ],
-            analysis_type="split_or_merge",
-        ),
-    ),
-    ("output_labels", segmentation_mask_rois()),
-)
-def split_or_merge_objects(
+def _execute_split_or_merge_objects(
     image: np.ndarray,
-    labels: np.ndarray,
-    operation: SplitOrMergeOperation = SplitOrMergeOperation.MERGE,
-    merge_method: SplitOrMergeMergeMethod = SplitOrMergeMergeMethod.DISTANCE,
-    output_object_type: SplitOrMergeOutputObjectType = SplitOrMergeOutputObjectType.DISCONNECTED,
-    distance_threshold: int = 0,
-    use_guide_image: bool = False,
-    minimum_intensity_fraction: float = 0.9,
-    intensity_method: SplitOrMergeIntensityMethod = SplitOrMergeIntensityMethod.CENTROIDS,
-    parent_labels: np.ndarray | None = None,
-    morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> tuple[np.ndarray, SplitOrMergeStats, np.ndarray]:
-    """Split or merge dense object labels."""
+    labels: ObjectLabelValue,
+    *,
+    operation: SplitOrMergeOperation,
+    merge_method: SplitOrMergeMergeMethod,
+    output_object_type: SplitOrMergeOutputObjectType,
+    distance_threshold: int,
+    use_guide_image: bool,
+    minimum_intensity_fraction: float,
+    intensity_method: SplitOrMergeIntensityMethod,
+    parent_labels: ObjectLabelValue | None,
+    morphology_backend_provider: BackendProviderInput,
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
+    """Execute one exact SplitOrMergeObjects public ABI."""
     labels_array = object_label_dense_array(labels, dtype=np.int32)
     parent_array = (
         None
@@ -5812,7 +5857,123 @@ def split_or_merge_objects(
         output_object_count=int(positive_dense_label_count(output_labels)),
         operation=request.operation.value,
     )
-    return (image, stats, output_labels.astype(np.int32))
+    return (
+        image,
+        DataclassMeasurementColumnarRows((stats,), row_type=SplitOrMergeStats),
+        object_label_value_with_dense_labels(
+            labels,
+            output_labels.astype(np.int32, copy=False),
+            domain_declaration=PresentObjectLabelIdsDomainDeclaration(),
+        ),
+    )
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels")
+def split_or_merge_objects(
+    image: np.ndarray,
+    labels: ObjectLabelValue,
+    operation: SplitOrMergeOperation = SplitOrMergeOperation.MERGE,
+    merge_method: SplitOrMergeMergeMethod = SplitOrMergeMergeMethod.DISTANCE,
+    output_object_type: SplitOrMergeOutputObjectType = SplitOrMergeOutputObjectType.DISCONNECTED,
+    distance_threshold: int = 0,
+    use_guide_image: bool = False,
+    minimum_intensity_fraction: float = 0.9,
+    intensity_method: SplitOrMergeIntensityMethod = SplitOrMergeIntensityMethod.CENTROIDS,
+    morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
+    """Split objects or merge them by distance without a guide image.
+
+    Args:
+        labels: Object-label plane to split into connected regions or merge by the
+            configured distance policy.
+    """
+    return _execute_split_or_merge_objects(
+        image,
+        labels,
+        operation=operation,
+        merge_method=merge_method,
+        output_object_type=output_object_type,
+        distance_threshold=distance_threshold,
+        use_guide_image=use_guide_image,
+        minimum_intensity_fraction=minimum_intensity_fraction,
+        intensity_method=intensity_method,
+        parent_labels=None,
+        morphology_backend_provider=morphology_backend_provider,
+    )
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels")
+def split_or_merge_objects_with_guide_image(
+    image: np.ndarray,
+    labels: ObjectLabelValue,
+    operation: SplitOrMergeOperation = SplitOrMergeOperation.MERGE,
+    merge_method: SplitOrMergeMergeMethod = SplitOrMergeMergeMethod.DISTANCE,
+    output_object_type: SplitOrMergeOutputObjectType = SplitOrMergeOutputObjectType.DISCONNECTED,
+    distance_threshold: int = 0,
+    use_guide_image: bool = True,
+    minimum_intensity_fraction: float = 0.9,
+    intensity_method: SplitOrMergeIntensityMethod = SplitOrMergeIntensityMethod.CENTROIDS,
+    morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
+    """Merge objects by distance using the declared guide image.
+
+    Args:
+        labels: Object-label plane whose distance-based merges are filtered by the
+            intensities in the primary guide image.
+    """
+    return _execute_split_or_merge_objects(
+        image,
+        labels,
+        operation=operation,
+        merge_method=merge_method,
+        output_object_type=output_object_type,
+        distance_threshold=distance_threshold,
+        use_guide_image=use_guide_image,
+        minimum_intensity_fraction=minimum_intensity_fraction,
+        intensity_method=intensity_method,
+        parent_labels=None,
+        morphology_backend_provider=morphology_backend_provider,
+    )
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels", "parent_labels")
+def split_or_merge_objects_per_parent(
+    image: np.ndarray,
+    labels: ObjectLabelValue,
+    parent_labels: ObjectLabelValue,
+    operation: SplitOrMergeOperation = SplitOrMergeOperation.MERGE,
+    merge_method: SplitOrMergeMergeMethod = SplitOrMergeMergeMethod.PER_PARENT,
+    output_object_type: SplitOrMergeOutputObjectType = SplitOrMergeOutputObjectType.DISCONNECTED,
+    distance_threshold: int = 0,
+    use_guide_image: bool = False,
+    minimum_intensity_fraction: float = 0.9,
+    intensity_method: SplitOrMergeIntensityMethod = SplitOrMergeIntensityMethod.CENTROIDS,
+    morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
+    """Merge child objects through the declared parent-object input.
+
+    Args:
+        labels: Child object-label plane whose regions are grouped by overlapping
+            parent identity.
+        parent_labels: Parent object-label plane assigning each child to the parent
+            used for the per-parent merge.
+    """
+    return _execute_split_or_merge_objects(
+        image,
+        labels,
+        operation=operation,
+        merge_method=merge_method,
+        output_object_type=output_object_type,
+        distance_threshold=distance_threshold,
+        use_guide_image=use_guide_image,
+        minimum_intensity_fraction=minimum_intensity_fraction,
+        intensity_method=intensity_method,
+        parent_labels=parent_labels,
+        morphology_backend_provider=morphology_backend_provider,
+    )
 
 
 def positive_dense_label_count(labels: np.ndarray) -> int:
@@ -5981,9 +6142,10 @@ def filter_border_objects(
 ) -> np.ndarray:
     """Remove labels touching the physical border or masked image border."""
     labeled_array = np.asarray(labeled_image)
-    if labeled_array.ndim > 2:
-        return filter_border_objects_planewise(
-            labeled_array, image_mask=image_mask, image_metadata=image_metadata
+    if labeled_array.ndim != 2:
+        raise ValueError(
+            "IdentifyPrimaryObjects border filtering requires one 2D label plane; "
+            "the PURE_2D processing contract owns plane projection."
         )
     height, width = labeled_array.shape[:2]
     physical_edges = image_metadata.physical_border_edges_for_shape((height, width))
@@ -6004,6 +6166,11 @@ def filter_border_objects(
     if max_label <= 0:
         return output
     mask = np.asarray(image_mask, dtype=bool)
+    if mask.shape != labeled_array.shape:
+        raise ValueError(
+            "IdentifyPrimaryObjects mask and label plane shapes must match exactly; "
+            f"got {mask.shape!r} and {labeled_array.shape!r}."
+        )
     mask_border = np.logical_not(ndi.binary_erosion(mask, border_value=1)) & mask
     masked_border_labels = output[mask_border].astype(np.int64, copy=False)
     masked_border_histogram = np.bincount(masked_border_labels, minlength=max_label + 1)
@@ -6011,43 +6178,6 @@ def filter_border_objects(
     if labels_to_remove.size:
         output[np.isin(output, labels_to_remove)] = 0
     return output
-
-
-def filter_border_objects_planewise(
-    labeled_image: np.ndarray,
-    *,
-    image_mask: np.ndarray | None,
-    image_metadata: ImagePayloadMetadata,
-) -> np.ndarray:
-    output = np.empty_like(labeled_image)
-    label_planes = labeled_image.reshape((-1, *labeled_image.shape[-2:]))
-    output_planes = output.reshape((-1, *output.shape[-2:]))
-    mask_planes = mask_planes_for_labels(image_mask, label_planes.shape[0])
-    for plane_index in range(label_planes.shape[0]):
-        output_planes[plane_index] = filter_border_objects(
-            label_planes[plane_index],
-            image_mask=None if mask_planes is None else mask_planes[plane_index],
-            image_metadata=image_metadata.for_source_plane(plane_index),
-        )
-    return output
-
-
-def mask_planes_for_labels(
-    image_mask: np.ndarray | None, plane_count: int
-) -> np.ndarray | None:
-    if image_mask is None:
-        return None
-    mask = np.asarray(image_mask, dtype=bool)
-    if mask.ndim == 2:
-        return np.broadcast_to(mask, (plane_count, *mask.shape))
-    mask_planes = mask.reshape((-1, *mask.shape[-2:]))
-    if mask_planes.shape[0] == plane_count:
-        return mask_planes
-    if mask_planes.shape[0] == 1:
-        return np.broadcast_to(mask_planes[0], (plane_count, *mask_planes.shape[-2:]))
-    raise ValueError(
-        f"IdentifyPrimaryObjects mask stack must align with label stack; got {mask.shape!r} for {plane_count} label planes."
-    )
 
 
 @njit(cache=True)
@@ -6108,44 +6238,38 @@ def log_function_runtime_profile(label: str, seconds: float, **fields: object) -
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
-@special_outputs(
-    (
-        "erosion_stats",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "input_object_count",
-                "output_object_count",
-                "objects_removed",
-            ],
-            analysis_type="erosion",
-        ),
-    ),
-    "parent_child_relationship",
-    ("eroded_labels", segmentation_mask_rois()),
-)
 def erode_objects(
     image: np.ndarray,
-    labels: np.ndarray,
-    structuring_element: Any = "disk",
-    size: int = 1,
+    labels: ObjectLabelValue,
+    structuring_element: StructuringElementInput = StructuringElement.DISK,
+    size: StructuringElementSize = 1,
     preserve_midpoints: bool = True,
     relabel_objects: bool = False,
-) -> tuple[np.ndarray, ErosionStats, ParentChildRelationshipPayload, np.ndarray]:
-    """Erode CellProfiler object labels while preserving optional midpoints."""
+) -> tuple[
+    np.ndarray,
+    DataclassMeasurementColumnarRows,
+    ObjectLabelValue,
+    DirectedObjectRelationshipPayload,
+]:
+    """Erode CellProfiler object labels while preserving optional midpoints.
+
+    Args:
+        labels: Two-dimensional object labels to erode while retaining or relabeling
+            IDs according to the midpoint settings.
+    """
     from skimage.measure import label as relabel
     from openhcs.processing.backends.cellprofiler.structuring_elements import (
         adapt_structuring_element_rank,
     )
 
     total_started_at = time.perf_counter()
-    labels = object_label_dense_array(labels, dtype=np.int32)
+    source_labels = labels
+    labels = object_label_dense_array(source_labels, dtype=np.int32)
     footprint = adapt_structuring_element_rank(
         build_structuring_element(structuring_element, size), labels.ndim
     )
     phase_started_at = time.perf_counter()
-    input_labels = np.unique(labels)
-    input_labels = input_labels[input_labels != 0]
+    input_labels = ObjectLabelIdDomainStrategy.for_value(labels).present_ids(labels)
     input_count = len(input_labels)
     log_function_runtime_profile(
         "erode_objects_input_labels", time.perf_counter() - phase_started_at
@@ -6157,9 +6281,14 @@ def erode_objects(
     log_function_runtime_profile(
         "erode_objects_backend", time.perf_counter() - phase_started_at
     )
+    eroded_labels = ObjectLabelIdDomainStrategy.for_value(eroded).present_ids(eroded)
     if preserve_midpoints:
         phase_started_at = time.perf_counter()
-        missing_labels = np.setxor1d(labels, eroded)
+        missing_labels = np.setdiff1d(
+            np.asarray(input_labels, dtype=np.int64),
+            np.asarray(eroded_labels, dtype=np.int64),
+            assume_unique=True,
+        )
         preservation = MidpointPreservationPolicy.for_footprint(footprint)
         eroded = preservation.preserve_missing_labels(labels, eroded, missing_labels)
         log_function_runtime_profile(
@@ -6168,19 +6297,17 @@ def erode_objects(
             missing=len(missing_labels),
             policy=type(preservation).__name__,
         )
+        output_labels = input_labels
+    else:
+        output_labels = eroded_labels
     if relabel_objects:
         phase_started_at = time.perf_counter()
         eroded = relabel(eroded > 0).astype(labels.dtype)
+        output_labels = tuple(range(1, int(eroded.max()) + 1))
         log_function_runtime_profile(
             "erode_objects_relabel", time.perf_counter() - phase_started_at
         )
-    phase_started_at = time.perf_counter()
-    output_labels = np.unique(eroded)
-    output_labels = output_labels[output_labels != 0]
     output_count = len(output_labels)
-    log_function_runtime_profile(
-        "erode_objects_output_labels", time.perf_counter() - phase_started_at
-    )
     stats = ErosionStats(
         slice_index=0,
         input_object_count=input_count,
@@ -6188,14 +6315,31 @@ def erode_objects(
         objects_removed=input_count - output_count,
     )
     phase_started_at = time.perf_counter()
-    relationship = object_label_lineage_payload(labels, eroded)
+    eroded_value = object_label_value_with_dense_labels(
+        source_labels,
+        eroded,
+        domain_declaration=ExplicitObjectLabelDomainDeclaration(
+            ObjectLabelDomain(declared_object_ids=output_labels)
+        ),
+    )
+    if relabel_objects:
+        relationship = object_label_parent_child_payload(source_labels, eroded_value)
+    else:
+        relationship = object_label_identity_lineage_payload(
+            source_labels, eroded_value
+        )
     log_function_runtime_profile(
         "erode_objects_lineage", time.perf_counter() - phase_started_at
     )
     log_function_runtime_profile(
         "erode_objects_total", time.perf_counter() - total_started_at
     )
-    return (image, stats, relationship, eroded)
+    return (
+        image,
+        DataclassMeasurementColumnarRows((stats,), row_type=ErosionStats),
+        eroded_value,
+        relationship,
+    )
 
 
 class MidpointPreservationPolicy:
@@ -6271,28 +6415,18 @@ class SimpleDiskMidpointPreservationPolicy(MidpointPreservationPolicy):
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
-@special_outputs(
-    (
-        "dilation_stats",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "object_count",
-                "mean_area_before",
-                "mean_area_after",
-            ],
-            analysis_type="dilation",
-        ),
-    ),
-    ("dilated_labels", segmentation_mask_rois()),
-)
 def dilate_objects(
     image: np.ndarray,
-    labels: np.ndarray,
-    structuring_element_shape: StructuringElement | str = StructuringElement.DISK,
-    structuring_element_size: int = 1,
-) -> tuple[np.ndarray, DilationStats, np.ndarray]:
-    """Dilate labels with CellProfiler's higher-label-overwrites policy."""
+    labels: ObjectLabelValue,
+    structuring_element_shape: StructuringElementInput = StructuringElement.DISK,
+    structuring_element_size: StructuringElementSize = 1,
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
+    """Dilate labels with CellProfiler's higher-label-overwrites policy.
+
+    Args:
+        labels: Two-dimensional object labels whose regions are expanded by the
+            selected structuring element.
+    """
     from scipy.ndimage import grey_dilation
 
     label_array = object_label_dense_array(labels, dtype=np.int32)
@@ -6319,28 +6453,30 @@ def dilate_objects(
         mean_area_before=mean_area_before,
         mean_area_after=mean_area_after,
     )
-    return (image, stats, dilated_labels.astype(np.float32))
+    return (
+        image,
+        DataclassMeasurementColumnarRows((stats,), row_type=DilationStats),
+        object_label_value_with_dense_labels(
+            labels, dilated_labels.astype(np.int32, copy=False)
+        ),
+    )
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_3D)
+@object_label_input_execution_mode(ObjectLabelInputExecutionMode.FULL_STACK)
 @special_inputs("labels")
-@special_outputs(
-    (
-        "dilation_stats_3d",
-        csv_materializer(
-            fields=["object_count", "mean_volume_before", "mean_volume_after"],
-            analysis_type="dilation_3d",
-        ),
-    ),
-    ("dilated_labels", segmentation_mask_rois()),
-)
 def dilate_objects_3d(
     image: np.ndarray,
-    labels: np.ndarray,
-    structuring_element_shape: StructuringElement | str = StructuringElement.BALL,
-    structuring_element_size: int = 1,
-) -> tuple[np.ndarray, DilationStats3D, np.ndarray]:
-    """Dilate 3D labels with CellProfiler's higher-label-overwrites policy."""
+    labels: ObjectLabelValue,
+    structuring_element_shape: StructuringElementInput = StructuringElement.BALL,
+    structuring_element_size: StructuringElementSize = 1,
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
+    """Dilate 3D labels with CellProfiler's higher-label-overwrites policy.
+
+    Args:
+        labels: Three-dimensional object-label volume whose regions are expanded
+            by the selected volumetric structuring element.
+    """
     from scipy.ndimage import grey_dilation
     from skimage.measure import regionprops
 
@@ -6360,23 +6496,36 @@ def dilate_objects_3d(
         mean_volume_before=mean_volume_before,
         mean_volume_after=mean_volume_after,
     )
-    return (image, stats, dilated_labels.astype(np.float32))
+    return (
+        image,
+        DataclassMeasurementColumnarRows((stats,), row_type=DilationStats3D),
+        object_label_value_with_dense_labels(
+            labels, dilated_labels.astype(np.int32, copy=False)
+        ),
+    )
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
-@special_outputs(("labels", segmentation_mask_rois()))
 def fill_objects(
     image: np.ndarray,
-    labels: np.ndarray,
+    labels: ObjectLabelValue,
     mode: FillMode = FillMode.HOLES,
     diameter: float = 64.0,
     morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Fill object holes or replace objects with convex hull labels."""
+) -> ObjectLabelValue:
+    """Fill object holes or replace objects with convex hull labels.
+
+    Args:
+        labels: Object-label plane whose internal holes or concavities are filled.
+        mode: Fill holes up to the diameter threshold or replace each object with
+            its convex hull.
+        diameter: Maximum hole diameter in pixels for ``holes`` mode; converted to
+            a circular area threshold.
+    """
     label_array = object_label_dense_array(labels, dtype=np.int32)
     if label_array.max() == 0:
-        return (image, label_array.copy())
+        return object_label_value_with_dense_labels(labels, label_array.copy())
     filled_labels = FillObjectsModeStrategy.for_mode(mode).fill(
         FillObjectsRequest(
             image=image,
@@ -6385,24 +6534,23 @@ def fill_objects(
             morphology_backend_provider=morphology_backend_provider,
         )
     )
-    return (image, filled_labels.astype(label_array.dtype))
+    return object_label_value_with_dense_labels(
+        labels,
+        filled_labels.astype(label_array.dtype, copy=False),
+    )
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
-@special_outputs(
-    (
-        "centroid_stats",
-        csv_materializer(
-            fields=["slice_index", "object_count"], analysis_type="centroid"
-        ),
-    ),
-    ("centroid_labels", segmentation_mask_rois()),
-)
 def shrink_to_object_centers(
-    image: np.ndarray, labels: np.ndarray
-) -> tuple[np.ndarray, CentroidStats, np.ndarray]:
-    """Transform labeled objects into single-pixel centroid labels."""
+    image: np.ndarray, labels: ObjectLabelValue
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
+    """Transform labeled objects into single-pixel centroid labels.
+
+    Args:
+        labels: Two-dimensional object labels reduced to one labeled centroid pixel
+            per region.
+    """
     label_array = object_label_dense_array(labels, dtype=np.int32)
     region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
         label_array
@@ -6422,26 +6570,31 @@ def shrink_to_object_centers(
             output_labels[centroid_int] = int(label_id)
     return (
         image,
-        CentroidStats(slice_index=0, object_count=int(region_props.label.size)),
-        output_labels,
+        DataclassMeasurementColumnarRows(
+            (
+                CentroidStats(
+                    slice_index=0,
+                    object_count=int(region_props.label.size),
+                ),
+            ),
+            row_type=CentroidStats,
+        ),
+        object_label_value_with_dense_labels(labels, output_labels),
     )
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_3D)
+@object_label_input_execution_mode(ObjectLabelInputExecutionMode.FULL_STACK)
 @special_inputs("labels")
-@special_outputs(
-    (
-        "centroid_stats",
-        csv_materializer(
-            fields=["slice_index", "object_count"], analysis_type="centroid"
-        ),
-    ),
-    ("centroid_labels", segmentation_mask_rois()),
-)
 def shrink_to_object_centers_3d(
-    image: np.ndarray, labels: np.ndarray
-) -> tuple[np.ndarray, CentroidStats, np.ndarray]:
-    """Transform 3D labeled objects into single-voxel centroid labels."""
+    image: np.ndarray, labels: ObjectLabelValue
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
+    """Transform 3D labeled objects into single-voxel centroid labels.
+
+    Args:
+        labels: Three-dimensional object labels reduced to one labeled centroid
+            voxel per region.
+    """
     from skimage.measure import regionprops
 
     label_array = object_label_dense_array(labels, dtype=np.int32)
@@ -6456,32 +6609,21 @@ def shrink_to_object_centers_3d(
             )
         ):
             output_labels[centroid_int] = region.label
-    return (image, CentroidStats(slice_index=0, object_count=len(props)), output_labels)
+    return (
+        image,
+        DataclassMeasurementColumnarRows(
+            (CentroidStats(slice_index=0, object_count=len(props)),),
+            row_type=CentroidStats,
+        ),
+        object_label_value_with_dense_labels(labels, output_labels),
+    )
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
-@special_outputs(
-    (
-        "resize_stats",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "original_height",
-                "original_width",
-                "new_height",
-                "new_width",
-                "object_count",
-            ],
-            analysis_type="resize_objects",
-        ),
-    ),
-    "parent_child_relationship",
-    ("resized_labels", segmentation_mask_rois()),
-)
 def resize_objects(
     image: np.ndarray,
-    labels: np.ndarray,
+    labels: ObjectLabelValue,
     method: ResizeObjectsMethod = ResizeObjectsMethod.FACTOR,
     factor_x: float = 0.25,
     factor_y: float = 0.25,
@@ -6489,9 +6631,20 @@ def resize_objects(
     width: int = 100,
     height: int = 100,
     planes: int = 10,
-) -> tuple[np.ndarray, ResizeObjectsStats, ParentChildRelationshipPayload, np.ndarray]:
-    """Resize object labels by CellProfiler nearest-neighbor label semantics."""
-    labels = object_label_dense_array(labels, dtype=np.int32)
+) -> tuple[
+    np.ndarray,
+    DataclassMeasurementColumnarRows,
+    ObjectLabelValue,
+    DirectedObjectRelationshipPayload,
+]:
+    """Resize object labels by CellProfiler nearest-neighbor label semantics.
+
+    Args:
+        labels: Two-dimensional object labels to resample by factors or an explicit
+            output width and height.
+    """
+    source_labels = labels
+    labels = object_label_dense_array(source_labels, dtype=np.int32)
     original_shape = labels.shape
     request = ResizeObjectsRequest(
         labels=labels,
@@ -6514,8 +6667,27 @@ def resize_objects(
         new_width=resized_labels.shape[-1],
         object_count=object_count,
     )
-    relationship = object_label_lineage_payload(labels, resized_labels)
-    return (image, stats, relationship, resized_labels)
+    output_labels = object_label_value_with_dense_labels(
+        source_labels,
+        resized_labels,
+        domain_declaration=PresentObjectLabelIdsDomainDeclaration(),
+        source_spatial_domain=(
+            source_labels.object_label_source_spatial_domain().with_spatial_resize(
+                resized_labels.shape[-2:]
+            )
+        ),
+    )
+    output_labels = output_labels.with_variants(
+        output_labels.variant_data,
+        parent_image_source_voxel_spacing=SourceVoxelSpacing(),
+    )
+    relationship = object_label_identity_lineage_payload(source_labels, output_labels)
+    return (
+        image,
+        DataclassMeasurementColumnarRows((stats,), row_type=ResizeObjectsStats),
+        output_labels,
+        relationship,
+    )
 
 
 def resize_objects_target_shape(
@@ -6546,9 +6718,7 @@ def resize_object_labels_nearest(
     if any(axis_size <= 0 for axis_size in target_shape):
         from scipy.ndimage import zoom
 
-        return zoom(label_array, zoom_factors, order=0, mode="nearest").astype(
-            np.int32
-        )
+        return zoom(label_array, zoom_factors, order=0, mode="nearest").astype(np.int32)
     resized = label_array
     for axis, target_size in enumerate(target_shape):
         source_size = resized.shape[axis]
@@ -6569,29 +6739,11 @@ def resize_object_labels_nearest(
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_3D)
+@object_label_input_execution_mode(ObjectLabelInputExecutionMode.FULL_STACK)
 @special_inputs("labels")
-@special_outputs(
-    (
-        "resize_stats_3d",
-        csv_materializer(
-            fields=[
-                "original_depth",
-                "original_height",
-                "original_width",
-                "new_depth",
-                "new_height",
-                "new_width",
-                "object_count",
-            ],
-            analysis_type="resize_objects_3d",
-        ),
-    ),
-    "parent_child_relationship",
-    ("resized_labels", segmentation_mask_rois()),
-)
 def resize_objects_3d(
     image: np.ndarray,
-    labels: np.ndarray,
+    labels: ObjectLabelValue,
     method: ResizeObjectsMethod = ResizeObjectsMethod.FACTOR,
     factor_x: float = 0.25,
     factor_y: float = 0.25,
@@ -6599,9 +6751,20 @@ def resize_objects_3d(
     width: int = 100,
     height: int = 100,
     planes: int = 10,
-) -> tuple[np.ndarray, dict, ParentChildRelationshipPayload, np.ndarray]:
-    """Resize 3D object labels by CellProfiler nearest-neighbor semantics."""
-    labels = object_label_dense_array(labels, dtype=np.int32)
+) -> tuple[
+    np.ndarray,
+    DataclassMeasurementColumnarRows,
+    ObjectLabelValue,
+    DirectedObjectRelationshipPayload,
+]:
+    """Resize 3D object labels by CellProfiler nearest-neighbor semantics.
+
+    Args:
+        labels: Three-dimensional object-label volume to resample by factors or an
+            explicit plane, height, and width shape.
+    """
+    source_labels = labels
+    labels = object_label_dense_array(source_labels, dtype=np.int32)
     original_shape = labels.shape
     request = ResizeObjectsRequest(
         labels=labels,
@@ -6614,56 +6777,291 @@ def resize_objects_3d(
         planes=planes,
     )
     resized_labels = resize_object_labels_nearest(labels, request.zoom_factors())
-    unique_labels = np.unique(resized_labels)
-    object_count = len(unique_labels[unique_labels > 0])
-    stats = {
-        "original_depth": original_shape[0],
-        "original_height": original_shape[1],
-        "original_width": original_shape[2],
-        "new_depth": resized_labels.shape[0],
-        "new_height": resized_labels.shape[1],
-        "new_width": resized_labels.shape[2],
-        "object_count": object_count,
-    }
-    relationship = object_label_lineage_payload(labels, resized_labels)
-    return (image, stats, relationship, resized_labels)
+    output_ids = ObjectLabelIdDomainStrategy.for_value(resized_labels).present_ids(
+        resized_labels
+    )
+    object_count = len(output_ids)
+    stats = ResizeObjects3DStats(
+        slice_index=0,
+        original_depth=original_shape[0],
+        original_height=original_shape[1],
+        original_width=original_shape[2],
+        new_depth=resized_labels.shape[0],
+        new_height=resized_labels.shape[1],
+        new_width=resized_labels.shape[2],
+        object_count=object_count,
+    )
+    output_labels = object_label_value_with_dense_labels(
+        source_labels,
+        resized_labels,
+        domain_declaration=ExplicitObjectLabelDomainDeclaration(
+            ObjectLabelDomain(declared_object_ids=output_ids)
+        ),
+        source_spatial_domain=(
+            source_labels.object_label_source_spatial_domain().with_spatial_resize(
+                resized_labels.shape[-2:]
+            )
+        ),
+    )
+    output_labels = output_labels.with_variants(
+        output_labels.variant_data,
+        parent_image_source_voxel_spacing=SourceVoxelSpacing(),
+    )
+    relationship = object_label_identity_lineage_payload(source_labels, output_labels)
+    return (
+        image,
+        DataclassMeasurementColumnarRows((stats,), row_type=ResizeObjects3DStats),
+        output_labels,
+        relationship,
+    )
 
 
-class FillObjectsModule(CellProfilerModule):
+class FillObjectsModule(
+    ObjectLabelDrivenPrimaryImageInputPolicy,
+    LabelsObjectInputPolicy,
+    ObjectArtifactInputModule,
+    ObjectArtifactOutputModule,
+    CellProfilerModule,
+):
     module_name = "FillObjects"
     function_name = "fill_objects"
     validated = True
     confidence = 1.0
+    input_objects_setting = SettingNameFamily("Select the input objects")
+    output_objects_setting = SettingNameFamily("Name the output objects")
+    input_objects_binding = SettingToKeywordBinding.input(
+        input_objects_setting,
+        ObjectLabelsArtifactType,
+        runtime_parameter_name="labels",
+    )
+    setting_bindings = (
+        input_objects_binding,
+        SettingToKeywordBinding.output(
+            output_objects_setting, ObjectLabelsArtifactType
+        ),
+    )
 
 
-class MorphModule(CellProfilerModule):
+class MorphModule(
+    CellProfilerModule
+):
     module_name = "Morph"
     function_name = "morph"
     validated = True
     confidence = 1.0
+    input_image_setting = SettingNameFamily("Select the input image")
+    output_image_setting = SettingNameFamily("Name the output image")
+    setting_bindings = (
+        SettingToKeywordBinding.input(input_image_setting, ImageArtifactType),
+        SettingToKeywordBinding.output(output_image_setting, ImageArtifactType),
+    )
 
 
-class MorphologicalskeletonModule(CellProfilerModule):
+class MorphologicalskeletonModule(
+    CellProfilerModule,
+):
     module_name = "Morphologicalskeleton"
     function_name = "morphologicalskeleton"
     validated = True
-    contract = ProcessingContract.PURE_3D
-    default_variable_components = (VariableComponents.Z_INDEX,)
     confidence = 0.95
+    input_image_setting = SettingNameFamily("Select the input image")
+    output_image_setting = SettingNameFamily("Name the output image")
+    setting_bindings = (
+        SettingToKeywordBinding.input(input_image_setting, ImageArtifactType),
+        SettingToKeywordBinding.output(output_image_setting, ImageArtifactType),
+    )
 
 
-class ShrinkToObjectCentersModule(CellProfilerModule):
+class ShrinkToObjectCentersModule(
+    ZStackFunctionVariantModule,
+    ObjectLabelDrivenPrimaryImageInputPolicy,
+    LabelsObjectInputPolicy,
+    ObjectTransformContractModule,
+):
     module_name = "ShrinkToObjectCenters"
     function_name = "shrink_to_object_centers"
+    function_variants = ("shrink_to_object_centers_3d",)
     validated = True
     confidence = 1.0
 
 
-class SplitOrMergeObjectsModule(CellProfilerModule):
+class SplitOrMergeObjectsModule(
+    PlaneRuntimeArtifactModule,
+    MeasurementArtifactOutputModule,
+    ObjectArtifactInputModule,
+    ObjectArtifactOutputModule,
+):
     module_name = "SplitOrMergeObjects"
     function_name = "split_or_merge_objects"
+    function_variants = (
+        "split_or_merge_objects_with_guide_image",
+        "split_or_merge_objects_per_parent",
+    )
     validated = True
     confidence = 1.0
+    input_objects_setting = SettingNameFamily("Select the input objects")
+    output_objects_setting = SettingNameFamily("Name the new objects")
+    guide_image_setting = SettingNameFamily(
+        "Select the grayscale image to guide merging"
+    )
+    parent_objects_setting = SettingNameFamily("Select the parent object")
+    input_objects_binding = SettingToKeywordBinding.input(
+        input_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="labels"
+    )
+    output_objects_binding = SettingToKeywordBinding.output(
+        output_objects_setting,
+        ObjectLabelsArtifactType,
+    )
+    parent_objects_binding = SettingToKeywordBinding.input(
+        parent_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="parent_labels"
+    )
+    guide_image_binding = SettingToKeywordBinding.input(
+        guide_image_setting, ImageArtifactType
+    )
+    operation_binding = SettingToKeywordBinding(
+        "Operation",
+        "operation",
+        cellprofiler_enum_value_setting_parser(SplitOrMergeOperation),
+    )
+    merge_method_binding = SettingToKeywordBinding(
+        "Merging method",
+        "merge_method",
+        cellprofiler_enum_value_setting_parser(SplitOrMergeMergeMethod),
+    )
+    use_guide_image_binding = SettingToKeywordBinding(
+        "Merge using a grayscale image?",
+        "use_guide_image",
+        parse_cellprofiler_bool,
+    )
+    setting_bindings = (
+        input_objects_binding,
+        parent_objects_binding,
+        output_objects_binding,
+        guide_image_binding,
+        operation_binding,
+        SettingToKeywordBinding(
+            "Maximum distance within which to merge objects",
+            "distance_threshold",
+            parse_cellprofiler_int,
+        ),
+        use_guide_image_binding,
+        SettingToKeywordBinding(
+            "Minimum intensity fraction",
+            "minimum_intensity_fraction",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            "Method to find object intensity",
+            "intensity_method",
+            cellprofiler_enum_value_setting_parser(SplitOrMergeIntensityMethod),
+        ),
+        merge_method_binding,
+        SettingToKeywordBinding(
+            "Output object type",
+            "output_object_type",
+            cellprofiler_enum_value_setting_parser(SplitOrMergeOutputObjectType),
+        ),
+    )
+
+    @classmethod
+    def input_topology(cls, module: "ModuleBlock") -> SplitOrMergeInputTopology:
+        return SplitOrMergeInputTopology.from_values(
+            operation=required_setting_value(
+                module, cls.operation_binding.setting_name
+            ),
+            merge_method=required_setting_value(
+                module,
+                cls.merge_method_binding.setting_name,
+            ),
+            use_guide_image=parse_cellprofiler_bool(
+                required_setting_value(
+                    module,
+                    cls.use_guide_image_binding.setting_name,
+                )
+            ),
+        )
+
+    @classmethod
+    def active_artifact_bindings(cls, module=None, *, invocation_key=None):
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
+        )
+        if module is None:
+            return bindings
+        topology = cls.input_topology(module)
+        return tuple(
+            binding
+            for binding in bindings
+            if topology is SplitOrMergeInputTopology.GUIDE_IMAGE
+            or binding is not cls.guide_image_binding
+            if topology is SplitOrMergeInputTopology.PARENT_OBJECTS
+            or binding is not cls.parent_objects_binding
+        )
+
+    @classmethod
+    def artifact_output_relations(
+        cls,
+        module,
+        *,
+        binding,
+        name,
+        invocation_key,
+        step_context,
+        artifact_inputs: ArtifactSpecCollection,
+        output_position,
+    ):
+        if binding is not cls.output_objects_binding:
+            return super().artifact_output_relations(
+                module,
+                binding=binding,
+                name=name,
+                invocation_key=invocation_key,
+                step_context=step_context,
+                artifact_inputs=artifact_inputs,
+                output_position=output_position,
+            )
+        del name, invocation_key, step_context, output_position
+        source_names = cls.artifact_names_for_binding(
+            module,
+            cls.input_objects_binding,
+        )
+        if len(source_names) != 1:
+            raise ValueError(
+                f"SplitOrMergeObjects requires exactly one source object artifact, "
+                f"got {source_names!r}."
+            )
+        source = artifact_inputs.require_by_name_and_artifact_type(
+            source_names[0],
+            ObjectLabelsArtifactType,
+        )
+        return (SourceStackLineageSourceRelation(source=source.ref()),)
+
+    @classmethod
+    def resolve_function(
+        cls,
+        module: "ModuleBlock",
+        *,
+        contract: "CallableContract",
+        source_bindings: "StepSourceBindingsConfig",
+    ) -> Callable[..., object]:
+        del contract, source_bindings
+        return cls.require_callable(cls.input_topology(module).value)
+
+    @classmethod
+    def finalize_module_blocks_for_invocation(cls, blocks, *, invocation, step_context) -> tuple[ModuleBlock, ...]:
+        blocks = super().finalize_module_blocks_for_invocation(
+            blocks, invocation=invocation,
+            step_context=step_context,
+        )
+        for block in blocks:
+            topology = cls.input_topology(block)
+            if invocation.contract.function_name != topology.value:
+                raise ValueError(
+                    f"{cls.module_name} callable {invocation.contract.function_name!r} "
+                    f"does not match declared input topology {topology.name}."
+                )
+        return blocks
 
 
 __all__ = public_names_from_objects(
@@ -6694,6 +7092,7 @@ __all__ = public_names_from_objects(
     RepeatMode,
     RepeatModeStrategy,
     ResizeObjectsMethod,
+    ResizeObjects3DStats,
     ResizeObjectsStats,
     DilationStats,
     DilationStats3D,
@@ -6726,7 +7125,6 @@ __all__ = public_names_from_objects(
     expand_or_shrink_objects,
     fill_objects,
     filter_border_objects,
-    filter_border_objects_planewise,
     filter_labels_above_maximum_diameter,
     filter_labels_below_minimum_diameter,
     filter_labels_by_area_numba,
@@ -6734,7 +7132,6 @@ __all__ = public_names_from_objects(
     filter_labels_by_diameter_range_numba,
     filter_physical_border_objects_numba,
     manual_declumping_size,
-    mask_planes_for_labels,
     mask_objects,
     morph,
     morphological_skeleton_2d,
@@ -6752,4 +7149,6 @@ __all__ = public_names_from_objects(
     shrink_to_object_centers,
     shrink_to_object_centers_3d,
     split_or_merge_objects,
+    split_or_merge_objects_per_parent,
+    split_or_merge_objects_with_guide_image,
 )

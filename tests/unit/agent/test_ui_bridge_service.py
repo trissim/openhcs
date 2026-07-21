@@ -21,6 +21,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiBridgeOperationRef,
     UiBridgeOperationRoute,
     UiBridgeOperationStatusRequest,
+    UiBridgeOperationWaitRequest,
     UiBridgeStatus,
     UiCodeDocument,
     UiCodeDocumentApplyRequest,
@@ -89,11 +90,10 @@ from openhcs.agent.services.ui_bridge_service import (
     UiBridgeProcessAdvertisedDescriptorCatalog,
     UiBridgeService,
 )
-from openhcs.agent.serialization import to_jsonable
+from openhcs.serialization.json import to_jsonable
 from openhcs.runtime.window_snapshot import (
     WindowSnapshotCaptureScope,
 )
-
 
 DOCUMENT_ID = UiCodeDocumentId.PLATE_MANAGER_ORCHESTRATOR.value
 STATE_SURFACE_ID = UiStateSurfaceId.PLATE_MANAGER.value
@@ -231,9 +231,7 @@ class _FakeUiBridgeGateway(UiBridgeGatewayABC):
             documents=(
                 UiCodeDocumentSummary(
                     schema_version=SCHEMA_VERSION,
-                    identity=UiCodeDocumentIdentity(
-                        document_id=DOCUMENT_ID
-                    ),
+                    identity=UiCodeDocumentIdentity(document_id=DOCUMENT_ID),
                     title="Plate manager orchestrator config",
                     widget_id=WIDGET_ID,
                     readable=True,
@@ -931,9 +929,7 @@ def test_configured_descriptor_directory_disables_process_advertised_fallback(
     process_dir = proc_root / "1234"
     process_dir.mkdir(parents=True)
     process_dir.joinpath("environ").write_bytes(
-        b"OPENHCS_UI_BRIDGE_DESCRIPTOR="
-        + os.fsencode(descriptor.path)
-        + b"\0"
+        b"OPENHCS_UI_BRIDGE_DESCRIPTOR=" + os.fsencode(descriptor.path) + b"\0"
     )
     monkeypatch.delenv("OPENHCS_UI_BRIDGE_DESCRIPTOR", raising=False)
     monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR", str(tmp_path / "empty"))
@@ -1080,10 +1076,10 @@ def test_service_forwards_fake_gateway_requests(monkeypatch, tmp_path):
     assert apply_result.pre_apply_snapshot == apply_result.undo_snapshot
     assert apply_result.post_apply_snapshot == apply_result.current_snapshot
     assert close_result.closed is True
-    assert gateway.close_requests == [
-        UiWindowCloseRequest(window_id=WINDOW_ID)
-    ]
-    assert workflow_result.action_result.status == UiActionInvocationStatus.ACCEPTED.value
+    assert gateway.close_requests == [UiWindowCloseRequest(window_id=WINDOW_ID)]
+    assert (
+        workflow_result.action_result.status == UiActionInvocationStatus.ACCEPTED.value
+    )
     assert gateway.selected_plate_workflow_requests == [
         UiSelectedPlateWorkflowRequest(
             workflow=UiSelectedPlateWorkflowKind.COMPILE,
@@ -1179,9 +1175,9 @@ def test_list_object_state_scopes_filters_requested_scope_ids(monkeypatch, tmp_p
         UiObjectStateScopeListRequest(scope_ids=(PLATE_SCOPE_ID,)),
     )
 
-    assert [
-        scope.identity.object_state_scope_id for scope in result.scopes
-    ] == [PLATE_SCOPE_ID]
+    assert [scope.identity.object_state_scope_id for scope in result.scopes] == [
+        PLATE_SCOPE_ID
+    ]
     assert gateway.scope_requests[0].scope_ids == (PLATE_SCOPE_ID,)
 
 
@@ -1203,9 +1199,7 @@ def test_get_object_state_fields_projects_query_from_scope_catalog(
                 field_path=field_path,
             ),
             field_name=field_path.rsplit(".", 1)[-1],
-            container_path=(
-                field_path.rsplit(".", 1)[0] if "." in field_path else ""
-            ),
+            container_path=(field_path.rsplit(".", 1)[0] if "." in field_path else ""),
             object_state_path_type="openhcs.core.config.NapariStreamingConfig",
             raw_value_type="None" if inherited_value else "bool",
             resolved_value_type="bool",
@@ -1396,3 +1390,111 @@ def test_snapshot_window_forwards_request_and_resource(monkeypatch, tmp_path):
         ),
     ]
     assert gateway.connections[-1].auth_token == "token"
+
+
+def test_wait_for_operation_uses_gateway_terminal_wait_owner(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR", str(tmp_path))
+    gateway = _FakeUiBridgeGateway()
+    statuses = iter(("running", "completed"))
+    calls: list[UiBridgeOperationStatusRequest] = []
+
+    def get_operation_status(connection, request):
+        gateway.connections.append(connection)
+        calls.append(request)
+        status = next(statuses)
+        return UiBridgeOperationRef(
+            schema_version=SCHEMA_VERSION,
+            identity=UiBridgeOperationIdentity(
+                operation_id=request.operation_id,
+                route=UiBridgeOperationRoute(operation_name="apply_document"),
+            ),
+            status=status,
+            started_at_unix=1.0,
+            completed_at_unix=2.0 if status == "completed" else None,
+            outcome="applied" if status == "completed" else None,
+        )
+
+    monkeypatch.setattr(gateway, "get_operation_status", get_operation_status)
+    monkeypatch.setattr(
+        "openhcs.agent.services.ui_bridge_service.time.sleep",
+        lambda _seconds: None,
+    )
+    service = UiBridgeService(gateway=gateway)
+    connection = service.connection_from_args(port=9999, auth_token="token")
+
+    result = service.wait_for_operation(
+        UiBridgeOperationWaitRequest(
+            operation_id="op-1",
+            timeout_seconds=1.0,
+            poll_interval_seconds=0.1,
+        ),
+        connection,
+    )
+
+    assert result.status == "completed"
+    assert result.outcome == "applied"
+    assert result.completed_at_unix == 2.0
+    assert calls == [
+        UiBridgeOperationStatusRequest(operation_id="op-1"),
+        UiBridgeOperationStatusRequest(operation_id="op-1"),
+    ]
+    assert [item.auth_token for item in gateway.connections] == ["token", "token"]
+
+
+def test_wait_for_operation_returns_fresh_running_ref_with_timeout_error(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR", str(tmp_path))
+    gateway = _FakeUiBridgeGateway()
+    monotonic_values = iter((10.0, 10.0))
+    running = UiBridgeOperationRef(
+        schema_version=SCHEMA_VERSION,
+        identity=UiBridgeOperationIdentity(
+            operation_id="op-1",
+            route=UiBridgeOperationRoute(operation_name="apply_document"),
+        ),
+        status="running",
+        started_at_unix=7.0,
+    )
+    monkeypatch.setattr(
+        gateway,
+        "get_operation_status",
+        lambda _connection, _request: running,
+    )
+    monkeypatch.setattr(
+        "openhcs.agent.services.ui_bridge_service.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+    service = UiBridgeService(gateway=gateway)
+    connection = service.connection_from_args(port=9999, auth_token="token")
+
+    result = service.wait_for_operation(
+        UiBridgeOperationWaitRequest(
+            operation_id="op-1",
+            timeout_seconds=0.0,
+            poll_interval_seconds=0.1,
+        ),
+        connection,
+    )
+
+    assert result.status == "running"
+    assert result.started_at_unix == 7.0
+    assert result.errors[0].code == "ui_bridge_operation_wait_timeout"
+    assert result.identity is running.identity
+
+
+def test_wait_for_operation_request_rejects_unbounded_controls():
+    invalid_controls = (
+        {"timeout_seconds": -0.1},
+        {"timeout_seconds": 120.1},
+        {"poll_interval_seconds": 0.0},
+        {"poll_interval_seconds": 5.1},
+    )
+
+    for controls in invalid_controls:
+        try:
+            UiBridgeOperationWaitRequest(operation_id="op-1", **controls)
+        except ValueError:
+            continue
+        raise AssertionError(f"Unbounded wait controls were accepted: {controls}")

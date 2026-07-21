@@ -23,8 +23,14 @@ def _with_openhcs_metadata(decorator: Callable[..., Any]) -> Callable[..., Any]:
         contract: Any = None,
         **kwargs: Any,
     ) -> Any:
+        if contract is None:
+            from openhcs.processing.backends.lib_registry.unified_registry import (
+                ProcessingContract,
+            )
+
+            contract = ProcessingContract.FLEXIBLE
         declared_processing_contract = _declared_processing_contract_name(contract)
-        if declared_processing_contract is None and contract is not None:
+        if declared_processing_contract is None:
             kwargs["contract"] = contract
 
         if args and callable(args[0]) and len(args) == 1:
@@ -76,18 +82,54 @@ def _attach_openhcs_metadata(
     prepare: Any,
     declared_processing_contract: str | None,
 ) -> None:
+    from openhcs.core.callable_contract import attach_callable_contract_metadata
+    from openhcs.core.config import runtime_config_parameter
+
+    signature = _signature_with_resolved_raw_annotations(wrapped)
+    normalized_parameter_items: list[inspect.Parameter] = []
+    runtime_config_parameter_names: list[str] = []
+    for parameter in signature.parameters.values():
+        normalized = runtime_config_parameter(parameter)
+        if normalized is not None:
+            runtime_config_parameter_names.append(parameter.name)
+        normalized_parameter_items.append(
+            parameter if normalized is None else normalized
+        )
+    normalized_parameters = tuple(normalized_parameter_items)
+    if normalized_parameters != tuple(signature.parameters.values()):
+        wrapped.__signature__ = signature.replace(parameters=normalized_parameters)
+    if runtime_config_parameter_names:
+        from python_introspect import add_parameter_exclusions
+
+        add_parameter_exclusions(wrapped, tuple(runtime_config_parameter_names))
     if prepare is not None:
         from openhcs.core.callable_contract import attach_processing_prepare
 
         attach_processing_prepare(wrapped, prepare)
     if declared_processing_contract is not None:
-        from openhcs.core.callable_contract import attach_callable_contract_metadata
-
         _strip_unowned_semantic_controls(wrapped, declared_processing_contract)
         attach_callable_contract_metadata(
             wrapped,
             declared_processing_contract=declared_processing_contract,
         )
+
+
+def _signature_with_resolved_raw_annotations(wrapped: Any) -> inspect.Signature:
+    """Resolve postponed annotations at their authoritative callable globals."""
+
+    signature = inspect.signature(wrapped)
+    raw_signature = inspect.signature(inspect.unwrap(wrapped), eval_str=True)
+    raw_parameters = raw_signature.parameters
+    parameters = tuple(
+        parameter.replace(annotation=raw_parameters[parameter.name].annotation)
+        if parameter.name in raw_parameters
+        else parameter
+        for parameter in signature.parameters.values()
+    )
+    return signature.replace(
+        parameters=parameters,
+        return_annotation=raw_signature.return_annotation,
+    )
 
 
 def _strip_unowned_semantic_controls(

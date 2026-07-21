@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
-from dataclasses import dataclass
 from enum import Enum
-from typing import ClassVar
+from typing import Annotated, ClassVar, TypeAlias
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -27,32 +25,14 @@ class StructuringElement(str, Enum):
     OCTAHEDRON = "octahedron"
 
 
-class StructuringElementDomain(str, Enum):
-    """How a structuring element's rank relates to the image domain."""
-
-    MATCHING_RANK = "matching_rank"
-    STACKWISE = "stackwise"
-    UNSUPPORTED_VOLUMETRIC_TO_PLANE = "unsupported_volumetric_to_plane"
-
-
-StructuringElementOperation = Callable[[np.ndarray, np.ndarray], np.ndarray]
-
-
-@dataclass(frozen=True, slots=True)
-class StructuringElementApplication:
-    """Typed request for applying one structuring element to an image."""
-
-    image: np.ndarray
-    footprint: np.ndarray
-    operation: StructuringElementOperation
-
-    @property
-    def domain(self) -> StructuringElementDomain:
-        if self.footprint.ndim == self.image.ndim:
-            return StructuringElementDomain.MATCHING_RANK
-        if 1 < self.footprint.ndim < self.image.ndim:
-            return StructuringElementDomain.STACKWISE
-        return StructuringElementDomain.UNSUPPORTED_VOLUMETRIC_TO_PLANE
+StructuringElementInput: TypeAlias = Annotated[
+    StructuringElement,
+    "Footprint shape used to select neighboring pixels for the morphology step.",
+]
+StructuringElementSize: TypeAlias = Annotated[
+    int,
+    "Positive footprint radius or extent in pixels.",
+]
 
 
 class StructuringElementFactory(
@@ -177,111 +157,25 @@ def build_structuring_element(
     ).build(size)
 
 
-class StructuringElementApplicationStrategy(
-    EnumKeyedStrategyMixin[StructuringElementDomain],
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Apply CellProfiler structuring-element rank semantics."""
-
-    __registry_key__ = "domain_label"
-    __skip_if_no_key__ = True
-    __enum_member_attr__ = "domain_key"
-    __enum_label_attr__ = "domain_label"
-    domain_key: ClassVar[StructuringElementDomain | None] = None
-    domain_label: ClassVar[str | None] = None
-
-    @classmethod
-    def apply(
-        cls,
-        image: np.ndarray,
-        footprint: np.ndarray,
-        operation: StructuringElementOperation,
-    ) -> np.ndarray:
-        request = StructuringElementApplication(
-            image=np.asarray(image),
-            footprint=np.asarray(footprint, dtype=bool),
-            operation=operation,
-        )
-        return cls.for_enum_member(request.domain).apply_request(request)
-
-    @abstractmethod
-    def apply_request(self, request: StructuringElementApplication) -> np.ndarray:
-        """Apply the requested operation under this domain relationship."""
-
-
-class MatchingRankStructuringElementApplicationStrategy(
-    StructuringElementApplicationStrategy
-):
-    domain_key = StructuringElementDomain.MATCHING_RANK
-
-    def apply_request(self, request: StructuringElementApplication) -> np.ndarray:
-        return request.operation(request.image, request.footprint)
-
-
-class StackwiseStructuringElementApplicationStrategy(
-    StructuringElementApplicationStrategy
-):
-    domain_key = StructuringElementDomain.STACKWISE
-
-    def apply_request(self, request: StructuringElementApplication) -> np.ndarray:
-        output = np.empty_like(request.image)
-        spatial_shape = request.image.shape[-request.footprint.ndim :]
-        plane_count = int(
-            np.prod(request.image.shape[: -request.footprint.ndim], dtype=np.int64)
-        )
-        image_planes = request.image.reshape((plane_count, *spatial_shape))
-        output_planes = output.reshape((plane_count, *spatial_shape))
-        for plane_index in range(plane_count):
-            output_planes[plane_index] = request.operation(
-                image_planes[plane_index],
-                request.footprint,
-            )
-        return output
-
-
-class UnsupportedVolumetricToPlaneStructuringElementApplicationStrategy(
-    StructuringElementApplicationStrategy
-):
-    domain_key = StructuringElementDomain.UNSUPPORTED_VOLUMETRIC_TO_PLANE
-
-    def apply_request(self, request: StructuringElementApplication) -> np.ndarray:
-        raise NotImplementedError(
-            "A volumetric structuring element cannot be applied to a lower-rank "
-            "CellProfiler image domain; got "
-            f"footprint ndim={request.footprint.ndim}, image ndim={request.image.ndim}."
-        )
-
-
-def apply_structuring_element(
-    image: np.ndarray,
-    footprint: np.ndarray,
-    operation: StructuringElementOperation,
-) -> np.ndarray:
-    """Apply a morphology operation using CellProfiler rank semantics."""
-    return StructuringElementApplicationStrategy.apply(image, footprint, operation)
-
-
 def adapt_structuring_element_rank(
     footprint: np.ndarray,
     spatial_rank: int,
 ) -> np.ndarray:
     """Return a footprint compatible with the target spatial rank.
 
-    CellProfiler image modules can execute plane-wise even when a pipeline
-    setting names a volumetric structuring element. A centered section preserves
-    the requested morphology for lower-rank planes without inventing per-module
-    shape conventions. Lower-rank footprints expand with singleton leading axes
-    so they do not erode across spatial axes the setting did not define.
+    Lower-rank footprints expand with singleton leading axes so they do not
+    operate across spatial axes the setting did not define. Volumetric
+    footprints cannot be projected into a plane without changing the declared
+    morphology and are rejected.
     """
     if spatial_rank <= 0:
         raise ValueError("spatial_rank must be positive.")
     if footprint.ndim == spatial_rank:
         return footprint
     if footprint.ndim > spatial_rank:
-        reduced = footprint
-        while reduced.ndim > spatial_rank:
-            reduced = reduced[reduced.shape[0] // 2]
-        return np.asarray(reduced)
+        raise ValueError(
+            "Structuring-element rank exceeds the declared spatial domain: "
+            f"footprint ndim={footprint.ndim}, spatial rank={spatial_rank}."
+        )
     leading_axes = (1,) * (spatial_rank - footprint.ndim)
     return footprint.reshape((*leading_axes, *footprint.shape))

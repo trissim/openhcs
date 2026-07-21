@@ -51,7 +51,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiObjectStateValuePreview,
     UiSemanticAddress,
 )
-from openhcs.agent.serialization import to_jsonable
+from openhcs.serialization.json import to_jsonable
 from openhcs.agent.services.object_state_field_projection import (
     ObjectStateFieldFilterDeclaration,
 )
@@ -75,7 +75,6 @@ from openhcs.pyqt_gui.services.ui_bridge_registry import (
     UiBridgeRegistrationContext,
 )
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
-
 
 OBJECT_STATE_SCOPE_PROVIDER_ID = "object_state.scopes"
 OBJECT_STATE_SCOPE_CODE_DOCUMENT_ID = "object_state_scope"
@@ -114,9 +113,11 @@ class ObjectStateScopeCodeDocumentAddress:
                 "ObjectState scope code document ids must start with "
                 f"{cls.prefix!r}; got {document_id!r}."
             )
-        scope_id = document_id[len(cls.prefix):]
+        scope_id = document_id[len(cls.prefix) :]
         if len(scope_id) < cls.minimum_scope_id_length:
-            raise ValueError("ObjectState scope code document id is missing a scope id.")
+            raise ValueError(
+                "ObjectState scope code document id is missing a scope id."
+            )
         return cls(scope_id=scope_id)
 
     @property
@@ -150,7 +151,7 @@ class WindowCodeDocumentAddress:
                 "Window code-document ids must start with "
                 f"{cls.prefix!r}; got {document_id!r}."
             )
-        window_id = document_id[len(cls.prefix):]
+        window_id = document_id[len(cls.prefix) :]
         if not window_id:
             raise ValueError("Window code-document id is missing a window id.")
         return cls(window_id=window_id)
@@ -217,7 +218,9 @@ class ResolvedObjectStateFieldProvenance(ObjectStateFieldProvenanceEffect):
     def to_dto(self) -> UiObjectStateFieldProvenance | None:
         return UiObjectStateFieldProvenance(
             source_scope_id=agent_object_state_scope_id(self.source_scope_id),
-            source_type=ObjectStateScopeProjectionService.type_qualname(self.source_type),
+            source_type=ObjectStateScopeProjectionService.type_qualname(
+                self.source_type
+            ),
             source_field_path=self.source_field_path(),
         )
 
@@ -444,10 +447,7 @@ class ObjectStateFieldSemanticProjection:
         text = cls._preview_text_unbounded(value)
         truncated = len(text) > OBJECT_STATE_FIELD_VALUE_PREVIEW_LIMIT
         if truncated:
-            text = (
-                f"{text[:OBJECT_STATE_FIELD_VALUE_PREVIEW_LIMIT]}"
-                "...<truncated>"
-            )
+            text = f"{text[:OBJECT_STATE_FIELD_VALUE_PREVIEW_LIMIT]}" "...<truncated>"
         return text, truncated
 
     @classmethod
@@ -464,8 +464,7 @@ class ObjectStateFieldSemanticProjection:
             return f"bytes(len={len(value)})"
         if isinstance(value, Mapping):
             keys = tuple(
-                cls._preview_item_text(key)
-                for key in cls._first_items(value.keys())
+                cls._preview_item_text(key) for key in cls._first_items(value.keys())
             )
             return f"{type(value).__name__}(len={len(value)}, keys={keys!r})"
         if isinstance(value, (Sequence, Set)) and not isinstance(
@@ -473,8 +472,7 @@ class ObjectStateFieldSemanticProjection:
             (str, bytes, bytearray),
         ):
             items = tuple(
-                cls._preview_item_text(item)
-                for item in cls._first_items(value)
+                cls._preview_item_text(item) for item in cls._first_items(value)
             )
             return f"{type(value).__name__}(len={len(value)}, items={items!r})"
         if is_dataclass(value) and not isinstance(value, type):
@@ -584,12 +582,12 @@ class ObjectStateScopeProjectionService:
                         field_path,
                         include_values=False,
                         include_description=False,
-                    )
+                    ),
                 )
             )
         offset = max(0, request.field_offset)
         limit = min(max(0, request.field_limit), OBJECT_STATE_FIELD_PAGE_LIMIT_MAX)
-        selected_paths = all_field_paths[offset:offset + limit]
+        selected_paths = all_field_paths[offset : offset + limit]
         next_offset = offset + len(selected_paths)
         truncated = next_offset < len(all_field_paths)
         next_page_offset = None
@@ -753,7 +751,9 @@ class ObjectStateFieldHelpProjectionService:
         return None
 
     @staticmethod
-    def _help_target(state: ObjectState, field_path: str) -> type | Callable[..., object]:
+    def _help_target(
+        state: ObjectState, field_path: str
+    ) -> type | Callable[..., object]:
         return state.type_for_path(field_path)
 
     @staticmethod
@@ -783,8 +783,7 @@ class ObjectStateFieldHelpProjectionService:
         if len(value) <= bounded_max:
             return value, False
         return (
-            value[:bounded_max]
-            + f"\n...<truncated {len(value) - bounded_max} chars>",
+            value[:bounded_max] + f"\n...<truncated {len(value) - bounded_max} chars>",
             True,
         )
 
@@ -937,9 +936,7 @@ class ObjectStateScopeProvider(UiObjectStateScopeProviderABC):
         return self._projection.catalog(request)
 
 
-class WindowCodeDocumentDriverBackedProvider(
-    SnapshotBackedUiCodeDocumentProviderABC
-):
+class WindowCodeDocumentDriverBackedProvider(SnapshotBackedUiCodeDocumentProviderABC):
     """Shared provider flow for WindowCodeDocumentDriver-backed documents."""
 
     def __init__(self, snapshot_provider: UiBridgeSnapshotProviderABC) -> None:
@@ -988,7 +985,11 @@ class WindowCodeDocumentDriverBackedProvider(
                 schema_version=SCHEMA_VERSION,
                 document_id=request.document_id,
                 valid=False,
-                errors=(AgentError.from_exception("ui_code_document_validation_failed", exc),),
+                errors=(
+                    AgentError.from_exception(
+                        "ui_code_document_validation_failed", exc
+                    ),
+                ),
             )
 
     def apply(self, request: UiCodeDocumentApplyRequest) -> UiCodeDocumentApplyResult:
@@ -1330,10 +1331,7 @@ class WindowManagerCodeDocumentProvider(WindowCodeDocumentDriverBackedProvider):
         scopes = WindowManager.get_code_document_scopes()
         if not scopes:
             return (self.summary(),)
-        return tuple(
-            self._summary_for_open_scope(scope_id)
-            for scope_id in scopes
-        )
+        return tuple(self._summary_for_open_scope(scope_id) for scope_id in scopes)
 
     def _summary_for_open_scope(self, scope_id: str) -> UiCodeDocumentSummary:
         address = WindowCodeDocumentAddress.from_scope_id(scope_id)
@@ -1350,9 +1348,11 @@ class WindowManagerCodeDocumentProvider(WindowCodeDocumentDriverBackedProvider):
         if window is not None and window.windowTitle():
             return f"Code mode - {window.windowTitle()}"
         try:
-            document_title = WindowManager.require_code_document_driver(
-                scope_id
-            ).read_document(clean=True).title
+            document_title = (
+                WindowManager.require_code_document_driver(scope_id)
+                .read_document(clean=True)
+                .title
+            )
         except Exception:
             document_title = address.window_id
         return f"Code mode - {document_title}"
@@ -1425,8 +1425,15 @@ class ObjectStateBridgeProviderSet(UiBridgeProviderSetABC):
 
     registry_key = OBJECT_STATE_SCOPE_PROVIDER_ID
 
+    @classmethod
+    def for_main_window(cls, main_window) -> "ObjectStateBridgeProviderSet":
+        del main_window
+        return cls()
+
     def register(self, context: UiBridgeRegistrationContext) -> None:
-        context.registry.register_object_state_scope_provider(ObjectStateScopeProvider())
+        context.registry.register_object_state_scope_provider(
+            ObjectStateScopeProvider()
+        )
         context.registry.register_code_document_provider(
             ObjectStateScopeCodeDocumentProvider(context.snapshot_provider)
         )

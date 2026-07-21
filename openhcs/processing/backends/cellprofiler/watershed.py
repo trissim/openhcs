@@ -1,77 +1,62 @@
 """Watershed backend strategies for CellProfiler-compatible processing."""
 
 from __future__ import annotations
-from abc import abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any, Callable, ClassVar
+from typing import Callable, ClassVar, TYPE_CHECKING
 from metaclass_registry import AutoRegisterMeta
+from python_introspect import set_signature_analysis_target
 from openhcs.core.artifacts import (
-    ArtifactSpecRef,
-    ArtifactSpec,
     ArtifactSpecCollection,
-    ArtifactType,
-    GroupLineageSourceRelation,
     ImageArtifactType,
     ObjectLabelsArtifactType,
-    MeasurementsArtifactType,
+    SourceStackLineageSourceRelation,
 )
-from openhcs.interop.cellprofiler.runtime.execution_mode_policies import (
-    VolumetricInputExecutionModePolicy,
+from openhcs.core.registry_strategies import (
+    EnumKeyedStrategyMixin,
 )
-from openhcs.interop.cellprofiler.runtime.payload_types import (
-    CellProfilerFunction,
-    CellProfilerKwargDict,
-    CellProfilerRuntimeValue,
+from openhcs.core.source_bindings import StepSourceBindingsConfig
+from openhcs.core.callable_contract import (
+    attach_processing_prepare,
+    callable_request,
 )
-from openhcs.interop.cellprofiler.runtime.policy_registry import (
-    EnumStrategyLabelRegistryMixin,
-)
-from openhcs.interop.cellprofiler.runtime.profile_fields import (
-    CellProfilerSpecialInputPayloadSemantics,
-)
-from openhcs.interop.cellprofiler.runtime.special_input_policies import (
-    CellProfilerSpecialInputPolicyMixin,
-    SpecialInputBindingRequest,
-)
-from openhcs.interop.cellprofiler.semantic_defaults import (
-    SourceDictField,
-    SourceDictSemanticDefaultContract,
-    SourceVolumetricPixelDataExecutionContract,
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
 )
 from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
     coerce_cellprofiler_enum,
     normalize_cellprofiler_setting_name,
+    parse_cellprofiler_bool,
+    parse_cellprofiler_float,
+    parse_cellprofiler_int,
+)
+from openhcs.interop.cellprofiler.module_settings import (
+    BoundModuleSettings,
 )
 from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
-    BinderSettingsSourceModule,
-    BoundModuleSettings,
     CellProfilerModule,
-    ImageArtifactInputModule,
+)
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
     MeasurementArtifactOutputModule,
-    ModuleSettingsSourceModule,
-    ObjectLabelArtifactOutputCapability,
     ObjectArtifactOutputModule,
-    ScopedMeasurementModule,
+)
+from openhcs.interop.cellprofiler.module_structuring_element_settings import (
     StructuringElementSetting,
-    StructuringElementSettingsModule,
 )
 from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
     optional_setting_value,
     required_setting_value,
-    setting_name_matches,
     setting_names,
     setting_values,
     split_symbol_names,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import (
-    cellprofiler_enum_from_literal,
-)
-from openhcs.processing.backends.cellprofiler.thresholding import (
-    ThresholdSettingsModule,
-)
+
+if TYPE_CHECKING:
+    from openhcs.core.function_patterns import FunctionInvocationKey
+    from openhcs.core.callable_contract import CallableContract
+    from openhcs.interop.cellprofiler.parser import ModuleBlock
 
 
 def parse_watershed_border_exclusion(value: str) -> bool:
@@ -89,19 +74,6 @@ def parse_watershed_border_exclusion(value: str) -> bool:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class ModuleRevisionRange:
-    """Closed revision interval for CellProfiler module schema semantics."""
-
-    maximum: int | None = None
-
-    def contains(self, module: "ModuleBlock") -> bool:
-        revision = module.variable_revision_number
-        if revision is None:
-            return self.maximum is None
-        return self.maximum is None or revision <= self.maximum
-
-
 class WatershedMethod(str, Enum):
     """CellProfiler watershed surface source."""
 
@@ -110,435 +82,269 @@ class WatershedMethod(str, Enum):
     MARKERS = "markers"
 
 
-class WatershedInputKeyword(str, Enum):
-    """Special-input keyword names owned by the Watershed callable contract."""
-
-    INTENSITY_IMAGE = "intensity_image"
-    MARKERS = "markers"
-    MASK = "mask"
-
-
-class WatershedSpecialInputBindingStrategy(
-    EnumStrategyLabelRegistryMixin, metaclass=AutoRegisterMeta
-):
-    """Bind Watershed special input roles for one nominal watershed method."""
-
-    strategy_key: ClassVar[WatershedMethod | None] = None
-
-    @abstractmethod
-    def bind(
-        self,
-        request: SpecialInputBindingRequest,
-        image_inputs: tuple[ArtifactSpec, ...],
-        needs_intensity_image: bool,
-    ) -> CellProfilerKwargDict:
-        """Return callable kwargs for declared Watershed special image roles."""
-
-    def _runtime_image_value(
-        self,
-        spec: ArtifactSpec,
-        request: SpecialInputBindingRequest,
-        semantics: CellProfilerSpecialInputPayloadSemantics = CellProfilerSpecialInputPayloadSemantics.INTENSITY_IMAGE,
-    ) -> CellProfilerRuntimeValue:
-        if spec.artifact_type is ObjectLabelsArtifactType:
-            return request.labels_for(spec)
-        return request.runtime_value(spec, semantics=semantics)
-
-
-class MarkerWatershedSpecialInputBindingStrategy(WatershedSpecialInputBindingStrategy):
-    """Marker mode consumes marker labels first and an optional mask second."""
-
-    strategy_key = WatershedMethod.MARKERS
-
-    def bind(
-        self,
-        request: SpecialInputBindingRequest,
-        image_inputs: tuple[ArtifactSpec, ...],
-        needs_intensity_image: bool,
-    ) -> CellProfilerKwargDict:
-        if not image_inputs:
-            return {}
-        remaining_inputs = list(image_inputs)
-        bound = {
-            WatershedInputKeyword.MARKERS.value: self._runtime_image_value(
-                remaining_inputs.pop(0),
-                request,
-                CellProfilerSpecialInputPayloadSemantics.DENSE_LABEL_IMAGE,
-            )
-        }
-        if needs_intensity_image:
-            if not remaining_inputs:
-                raise ValueError(
-                    "Watershed intensity mode requires a declared reference image."
-                )
-            bound[WatershedInputKeyword.INTENSITY_IMAGE.value] = (
-                self._runtime_image_value(remaining_inputs.pop(0), request)
-            )
-        if remaining_inputs:
-            bound[WatershedInputKeyword.MASK.value] = self._runtime_image_value(
-                remaining_inputs.pop(0), request
-            )
-        if remaining_inputs:
-            raise ValueError(
-                "Watershed received more special image inputs than its marker, "
-                "reference-image, and mask roles can bind: "
-                f"{tuple(spec.name for spec in remaining_inputs)!r}."
-            )
-        return bound
-
-
-class MaskedWatershedSpecialInputBindingStrategy(WatershedSpecialInputBindingStrategy):
-    """Non-marker modes consume their special image as a mask."""
-
-    strategy_key = WatershedMethod.DISTANCE
-
-    def bind(
-        self,
-        request: SpecialInputBindingRequest,
-        image_inputs: tuple[ArtifactSpec, ...],
-        needs_intensity_image: bool,
-    ) -> CellProfilerKwargDict:
-        if not image_inputs:
-            return {}
-        remaining_inputs = list(image_inputs)
-        bound: CellProfilerKwargDict = {}
-        if needs_intensity_image:
-            bound[WatershedInputKeyword.INTENSITY_IMAGE.value] = (
-                self._runtime_image_value(remaining_inputs.pop(0), request)
-            )
-        if remaining_inputs:
-            bound[WatershedInputKeyword.MASK.value] = self._runtime_image_value(
-                remaining_inputs.pop(0), request
-            )
-        if remaining_inputs:
-            raise ValueError(
-                "Watershed received more special image inputs than its "
-                f"reference-image and mask roles can bind: "
-                f"{tuple(spec.name for spec in remaining_inputs)!r}."
-            )
-        return bound
-
-
-class IntensityWatershedSpecialInputBindingStrategy(
-    MaskedWatershedSpecialInputBindingStrategy
-):
-    strategy_key = WatershedMethod.INTENSITY
-
-
-class WatershedSpecialInputPolicy(CellProfilerSpecialInputPolicyMixin):
-    """Bind optional Watershed marker/mask images without making them primary domains."""
-
-    def special_image_inputs(
-        self,
-        module_name: str,
-        func: CellProfilerFunction,
-        declared_inputs: tuple[ArtifactSpec, ...],
-    ) -> tuple[ArtifactSpec, ...]:
-        del module_name, func
-        return ArtifactSpecCollection(declared_inputs).of_artifact_type(
-            ImageArtifactType
-        )[1:]
-
-    def bind(self, request: SpecialInputBindingRequest) -> CellProfilerKwargDict:
-        image_inputs = request.image_inputs
-        watershed_method = (
-            WatershedMethod.DISTANCE
-            if request.kwargs.get("watershed_method") is None
-            else coerce_cellprofiler_enum(
-                WatershedMethod, request.kwargs["watershed_method"]
-            )
-        )
-        declump_method = coerce_watershed_declump_method(
-            request.kwargs.get("declump_method", WatershedDeclumpMethod.SHAPE)
-        )
-        needs_intensity_image = (
-            watershed_method is WatershedMethod.INTENSITY
-            or declump_method is WatershedDeclumpMethod.INTENSITY
-        )
-        return WatershedSpecialInputBindingStrategy.for_enum_member(
-            watershed_method
-        ).bind(request, image_inputs, needs_intensity_image)
-
-
-class WatershedBasicSemanticDefaultContract(SourceDictSemanticDefaultContract):
-    contract_key = "Watershed.basic_defaults"
-    source_filename = "watershed.py"
-    source_dict_name = "basic_mode_defaults"
-
-    def source_dict_fields(self) -> tuple[SourceDictField, ...]:
-        return tuple(
-            (
-                SourceDictField(source_key, absorbed_value)
-                for source_key, absorbed_value in WatershedParameters.basic_default_values().items()
-            )
-        )
-
-    def normalize_source_value(self, value: object) -> object:
-        return value.casefold() if isinstance(value, str) else value
-
-    def normalize_absorbed_value(self, value: object) -> object:
-        return value.value if isinstance(value, Enum) else value
-
-
-class WatershedExecutionDomainContract(SourceVolumetricPixelDataExecutionContract):
-    contract_key = "Watershed.execution_domain"
-    source_filename = "watershed.py"
-    callable_name = "watershed_library"
-
-    @property
-    def absorbed_callable(self) -> Callable[..., Any]:
-        return watershed_library
-
-
 class WatershedModule(
-    WatershedSpecialInputPolicy,
-    VolumetricInputExecutionModePolicy,
-    ImageArtifactInputModule,
-    ObjectArtifactOutputModule,
     MeasurementArtifactOutputModule,
+    ObjectArtifactOutputModule,
     CellProfilerModule,
 ):
     module_name = "Watershed"
     function_name = "watershed_library"
-    function_variants = ("watershed_cellprofiler4", "watershed")
-    contract = ProcessingContract.FLEXIBLE
+    function_variants = ("watershed_cellprofiler4",)
     validated = True
     respects_masks = True
     confidence = 1.0
-    semantic_default_contract_types = (
-        WatershedBasicSemanticDefaultContract,
-        WatershedExecutionDomainContract,
+    watershed_method_setting = SettingNameFamily(
+        "Generate from",
+        aliases=("Select watershed method",),
     )
-    watershed_method_setting = "Generate from"
+    advanced_setting = "Use advanced settings?"
     declump_method_setting = "Declump method"
+    seed_method_setting = "Select seed generation method"
+    connectivity_setting = "Connectivity"
+    compactness_setting = "Compactness"
+    footprint_setting = "Footprint"
+    downsample_setting = "Downsample"
+    watershed_line_setting = SettingNameFamily(
+        "Separate watershed labels",
+        aliases=("Watershed line",),
+    )
+    gaussian_sigma_setting = SettingNameFamily(
+        "Segmentation distance transform smoothing factor",
+        aliases=("Gaussian sigma",),
+    )
+    minimum_distance_setting = SettingNameFamily(
+        "Minimum distance between seeds",
+        aliases=("Minimum distance",),
+    )
+    minimum_intensity_setting = "Minimum absolute internal distance"
+    exclude_border_setting = SettingNameFamily(
+        "Pixels from border to exclude",
+        aliases=("Exclude objects touching the border?",),
+    )
+    maximum_seeds_setting = "Maximum number of seeds"
     markers_setting = "Markers"
     mask_setting = "Mask"
-    setting_parameter_aliases = {
-        watershed_method_setting: "watershed_method",
-        "Use advanced settings?": "use_advanced_settings",
-        "Minimum absolute internal distance": "min_intensity",
-    }
-    segmentation_image_setting = "Select the input image"
+    segmentation_image_setting = SettingNameFamily(
+        "Select the input image",
+        aliases=("InputImage",),
+    )
     intensity_image_setting = SettingNameFamily(
         "Reference Image", aliases=("Intensity image",)
     )
-    image_input_settings = (
-        segmentation_image_setting,
-        markers_setting,
-        intensity_image_setting,
-        mask_setting,
+    output_object_setting = SettingNameFamily(
+        "Name the output object",
+        aliases=("OutputObjects",),
     )
-    object_output_settings = ("Name the output object",)
-    cellprofiler4_revisions = ModuleRevisionRange(maximum=3)
-    ignored_settings = (
-        "InputImage",
-        markers_setting,
-        mask_setting,
-        "Intensity image",
-        "Reference Image",
-        "OutputObjects",
-        "Display watershed seeds?",
+    segmentation_image_binding = SettingToKeywordBinding.input(
+        segmentation_image_setting, ImageArtifactType
     )
+    intensity_image_binding = SettingToKeywordBinding.input(
+        intensity_image_setting, ImageArtifactType, runtime_parameter_name="topology_inputs"
+    )
+    output_object_binding = SettingToKeywordBinding.output(
+        output_object_setting, ObjectLabelsArtifactType
+    )
+    cellprofiler4_max_revision = 3
+    ignored_settings = ("Display watershed seeds?",)
+    watershed_method_binding = SettingToKeywordBinding(
+        watershed_method_setting,
+        "watershed_method",
+        normalize_cellprofiler_setting_name,
+    )
+    markers_binding = SettingToKeywordBinding.input(
+        markers_setting, ImageArtifactType, runtime_parameter_name="topology_inputs"
+    )
+    mask_binding = SettingToKeywordBinding.input(
+        mask_setting, ImageArtifactType, runtime_parameter_name="topology_inputs"
+    )
+    declump_method_binding = SettingToKeywordBinding(
+        declump_method_setting,
+        "declump_method",
+        normalize_cellprofiler_setting_name,
+    )
+    setting_bindings = (output_object_binding,segmentation_image_binding,
+        markers_binding,
+        intensity_image_binding,
+        mask_binding,watershed_method_binding,
+        SettingToKeywordBinding(
+            advanced_setting,
+            "use_advanced_settings",
+            parse_cellprofiler_bool,
+        ),
+        declump_method_binding,
+        SettingToKeywordBinding(
+            seed_method_setting,
+            "seed_method",
+            normalize_cellprofiler_setting_name,
+        ),
+        SettingToKeywordBinding(
+            connectivity_setting,
+            "connectivity",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            compactness_setting,
+            "compactness",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            footprint_setting,
+            "footprint",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            downsample_setting,
+            "downsample",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            watershed_line_setting,
+            "watershed_line",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            gaussian_sigma_setting,
+            "gaussian_sigma",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            minimum_distance_setting,
+            "min_distance",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            minimum_intensity_setting,
+            "min_intensity",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            exclude_border_setting,
+            "exclude_border",
+            parse_watershed_border_exclusion,
+        ),
+        SettingToKeywordBinding(
+            maximum_seeds_setting,
+            "max_seeds",
+            parse_cellprofiler_int,
+        ),)
 
     @classmethod
-    def compile_time_divergent_image_input_setting_records(
+    def active_artifact_bindings(
         cls,
-        module,
-        source_schema,
+        module: "ModuleBlock | None" = None,
         *,
-        artifact_flow,
-        group_key: str,
-    ):
-        """Preserve active mask role rows even when the mask is the primary image."""
-        from openhcs.interop.cellprofiler.parser import ModuleSetting
+        invocation_key: "FunctionInvocationKey | None" = None,
+    ) -> tuple[SettingToKeywordBinding, ...]:
+        """Return only image roles active for this Watershed configuration."""
 
-        records = list(
-            super().compile_time_divergent_image_input_setting_records(
-                module,
-                source_schema,
-                artifact_flow=artifact_flow,
-                group_key=group_key,
-            )
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
         )
-        for concrete_name in setting_names(cls.mask_setting):
-            records.extend(
-                ModuleSetting(concrete_name, value)
-                for value in setting_values(module, concrete_name)
-                if split_symbol_names(value)
-            )
-        return tuple(dict.fromkeys(records))
-
-    @classmethod
-    def compile_time_required_artifact_input_settings_for_records(
-        cls, existing_records
-    ):
-        required_settings: list[str | SettingNameFamily] = [
-            cls.segmentation_image_setting
-        ]
-        watershed_method = coerce_cellprofiler_enum(
-            WatershedMethod,
-            cls._compile_time_record_value(
-                existing_records, cls.watershed_method_setting
-            )
-            or WatershedMethod.DISTANCE,
+        if module is None:
+            return bindings
+        topology = WatershedInputTopology.from_values(
+            cls._setting_row_value(module, cls.watershed_method_setting),
+            cls._setting_row_value(module, cls.declump_method_setting),
         )
-        declump_method = coerce_watershed_declump_method(
-            cls._compile_time_record_value(
-                existing_records, cls.declump_method_setting
-            )
-            or WatershedDeclumpMethod.SHAPE
-        )
-        if watershed_method is WatershedMethod.MARKERS:
-            required_settings.append(cls.markers_setting)
-        if (
-            watershed_method is WatershedMethod.INTENSITY
-            or declump_method is WatershedDeclumpMethod.INTENSITY
-        ):
-            required_settings.append(cls.intensity_image_setting)
-        if cls._compile_time_record_symbol_names(existing_records, cls.mask_setting):
-            required_settings.append(cls.mask_setting)
-
         return tuple(
-            (setting, capability_type)
-            for setting, capability_type in super().compile_time_required_artifact_input_settings()
-            if any(
-                setting_name_matches(concrete_name, required_setting)
-                for concrete_name in setting_names(setting)
-                for required_setting in required_settings
-            )
+            binding
+            for binding in bindings
+            if topology.requires_markers or binding is not cls.markers_binding
+            if topology.requires_intensity_image
+            or binding is not cls.intensity_image_binding
+            if cls._setting_row_symbol_names(module, cls.mask_setting)
+            or binding is not cls.mask_binding
         )
 
     @classmethod
-    def compile_time_main_flow_input_setting_records(
+    def _setting_row_value(
         cls,
-        request,
-        *,
-        existing_records,
-    ):
-        """Infer Watershed's primary segmentation image from the first flow image."""
-        from openhcs.interop.cellprofiler.parser import ModuleSetting
-
-        flow_image_names = request.artifact_flow.image_names_for_group(
-            request.group_key
-        )
-        if not flow_image_names and request.main_flow_image_name is not None:
-            flow_image_names = (request.main_flow_image_name,)
-        if not flow_image_names:
-            return ()
-
-        missing_image_settings = tuple(
-            setting_name
-            for setting_name, artifact_type in cls._missing_declared_input_settings(
-                existing_records
-            )
-            if artifact_type is ImageArtifactType
-        )
-        if not missing_image_settings:
-            return ()
-
-        segmentation_setting = setting_names(cls.segmentation_image_setting)[0]
-        records: list[ModuleSetting] = []
-        remaining_settings = list(missing_image_settings)
-        if any(
-            setting_name_matches(setting_name, cls.segmentation_image_setting)
-            for setting_name in missing_image_settings
-        ):
-            records.append(ModuleSetting(segmentation_setting, flow_image_names[0]))
-            remaining_settings = [
-                setting_name
-                for setting_name in remaining_settings
-                if not setting_name_matches(
-                    setting_name, cls.segmentation_image_setting
-                )
-            ]
-
-        if not remaining_settings:
-            return tuple(records)
-
-        remaining_flow_images = flow_image_names[len(records) :]
-        if len(remaining_settings) != len(remaining_flow_images):
+        module: "ModuleBlock",
+        setting_name: str | SettingNameFamily,
+    ) -> str | None:
+        values = setting_values(module, setting_name)
+        if len(values) > 1:
             raise ValueError(
-                f"Module {request.module_name}({request.module_num}) has "
-                f"{len(remaining_settings)} Watershed image role settings still "
-                f"missing after primary-image inference, but artifact flow has "
-                f"{len(remaining_flow_images)} remaining image names: "
-                f"{remaining_flow_images!r}."
+                f"Watershed declares multiple rows for "
+                f"{setting_names(setting_name)[0]!r}: {values!r}."
             )
-        records.extend(
-            ModuleSetting(setting_name, image_name)
-            for setting_name, image_name in zip(
-                remaining_settings, remaining_flow_images, strict=True
-            )
-        )
-        return tuple(records)
+        return values[0] if values else None
 
     @classmethod
-    def _compile_time_record_value(cls, existing_records, setting_name):
-        for record in existing_records:
-            if setting_name_matches(record.name, setting_name):
-                return record.value
-        return None
-
-    @classmethod
-    def _compile_time_record_symbol_names(cls, existing_records, setting_name):
-        value = cls._compile_time_record_value(existing_records, setting_name)
+    def _setting_row_symbol_names(
+        cls,
+        module: "ModuleBlock",
+        setting_name: str | SettingNameFamily,
+    ) -> tuple[str, ...]:
+        value = cls._setting_row_value(module, setting_name)
         if value is None:
             return ()
-        return split_symbol_names(value)
+        return split_symbol_names(str(value))
 
     @classmethod
-    def preserve_duplicate_artifact_inputs(cls, module: "ModuleBlock") -> bool:
-        del module
-        return True
-
-    @classmethod
-    def declared_output_artifact_relations(
+    def artifact_contract_outputs(
         cls,
-        builder,
         module,
         *,
-        setting,
-        capability_type,
-        name,
+        invocation_key,
+        step_context,
+        artifact_inputs: ArtifactSpecCollection,
     ):
-        relations = super().declared_output_artifact_relations(
-            builder,
+        outputs = super().artifact_contract_outputs(
             module,
-            setting=setting,
-            capability_type=capability_type,
-            name=name,
+            invocation_key=invocation_key,
+            step_context=step_context,
+            artifact_inputs=artifact_inputs,
         )
-        if capability_type is not ObjectLabelArtifactOutputCapability:
-            return relations
-        source_name = required_setting_value(module, cls.segmentation_image_setting)
-        source_symbol = builder.optional_artifact(
-            ArtifactSpec.input(source_name, ImageArtifactType)
+        relations = cls._output_object_relations(
+            module,
+            artifact_inputs=artifact_inputs,
         )
-        if source_symbol is None or source_symbol.source_bound:
-            return relations
-        return (
-            *relations,
-            GroupLineageSourceRelation(
-                source=ArtifactSpecRef.input(source_symbol.name, ImageArtifactType)
-            ),
+        if not relations:
+            return outputs
+        return tuple(
+            (
+                replace(
+                    output,
+                    relations=(*output.relations, *relations),
+                )
+                if output.artifact_type is ObjectLabelsArtifactType
+                else output
+            )
+            for output in outputs
         )
 
     @classmethod
-    def function_name_for_module(cls, module: "ModuleBlock") -> str:
-        return (
-            cls.function_variants[0]
-            if cls.cellprofiler4_revisions.contains(module)
-            else str(cls.function_name)
+    def _output_object_relations(
+        cls,
+        module: "ModuleBlock",
+        *,
+        artifact_inputs: ArtifactSpecCollection,
+    ):
+        source_name = required_setting_value(module, cls.segmentation_image_setting)
+        source = artifact_inputs.require_by_name_and_artifact_type(
+            source_name,
+            ImageArtifactType,
         )
+        return (SourceStackLineageSourceRelation(source=source.ref()),)
 
     @classmethod
     def resolve_function(
-        cls, module: "ModuleBlock", *, default_function_name: str | None = None
-    ) -> "ResolvedModuleFunction":
-        del default_function_name
-        return super().resolve_function(
-            module, default_function_name=cls.function_name_for_module(module)
-        )
+        cls,
+        module: "ModuleBlock",
+        *,
+        contract: "CallableContract",
+        source_bindings: "StepSourceBindingsConfig",
+    ) -> Callable[..., object]:
+        del cls, contract, source_bindings
+        module_revision = module.variable_revision_number
+        if (
+            module_revision is not None
+            and module_revision <= WatershedModule.cellprofiler4_max_revision
+        ):
+            return watershed_cellprofiler4
+        return watershed_library
 
     @classmethod
     def postprocess_bound_settings(
@@ -561,39 +367,33 @@ class WatershedModule(
         unmapped_kwargs.pop(
             normalize_cellprofiler_setting_name(structuring_element_setting), None
         )
-        legacy_border_setting = "Pixels from border to exclude"
-        legacy_border_value = optional_setting_value(module, legacy_border_setting)
-        if legacy_border_value is not None:
-            kwargs["exclude_border"] = parse_watershed_border_exclusion(
-                legacy_border_value
-            )
-            unmapped_kwargs.pop(
-                normalize_cellprofiler_setting_name(legacy_border_setting), None
-            )
-        return BoundModuleSettings(
-            kwargs, unmapped_kwargs, bound.invocation_options, bound.setting_coverage
-        )
+        return BoundModuleSettings(kwargs, unmapped_kwargs, bound.setting_coverage)
 
 
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import ClassVar, Literal
 import numpy as np
-from metaclass_registry import AutoRegisterMeta
 from numba import njit
 from openhcs.constants.constants import MemoryType
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.callable_contract import runtime_image_execution_mode
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.image_shapes import trailing_spatial_factors
 from openhcs.core.runtime_profile import RuntimeProfileLogger
-from openhcs.core.runtime_semantics import DenseObjectLabelConsecutiveRelabelingStrategy
-from openhcs.core.runtime_values import image_payload_data, object_label_dense_array
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.core.runtime_object_label_domains import DenseObjectLabelConsecutiveRelabelingStrategy
+from openhcs.core.runtime_image_values import (
+    image_payload_data,
+)
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelValue,
+    object_label_dense_array,
+)
+from openhcs.core.runtime_object_label_building import (
+    SourceImageObjectLabelBuildRequest,
+)
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -603,11 +403,12 @@ from openhcs.processing.backends.cellprofiler._backend import (
 )
 from openhcs.processing.backends.cellprofiler.structuring_elements import (
     StructuringElement,
+    StructuringElementInput,
+    StructuringElementSize,
     adapt_structuring_element_rank,
     build_structuring_element,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 NDIMAGE_CONSTANT_MODE = "constant"
 WATERSHED_STRATEGY_REGISTRY_KEY = "strategy_label"
@@ -621,11 +422,32 @@ def watershed_xy_downsample_factors(ndim: int, factor: int) -> tuple[int, ...]:
     )
 
 
+def watershed_resize_labels(
+    labels: np.ndarray,
+    output_shape: tuple[int, ...],
+) -> np.ndarray:
+    """Resize labels exactly while avoiding redundant integer conversions."""
+    from skimage.transform import resize
+
+    resized = resize(
+        labels,
+        output_shape,
+        mode="edge",
+        order=0,
+        preserve_range=True,
+    )
+    if not np.issubdtype(resized.dtype, np.integer):
+        np.rint(resized, out=resized)
+    return resized.astype(np.uint16, copy=False)
+
+
 def watershed_connected_components(labels_like: np.ndarray) -> np.ndarray:
     """Label connected components over skimage-supported trailing spatial axes."""
     import skimage.measure
 
     labels_array = np.asarray(labels_like)
+    if not np.any(labels_array):
+        return np.zeros(labels_array.shape, dtype=np.int32)
     spatial_rank = min(labels_array.ndim, 3)
     if labels_array.ndim == spatial_rank:
         return skimage.measure.label(labels_array).astype(np.int32, copy=False)
@@ -641,7 +463,13 @@ def watershed_regionprops_stats(labels: np.ndarray) -> tuple[int, float]:
     labels_array = np.asarray(labels)
     spatial_rank = min(labels_array.ndim, 3)
     if labels_array.ndim == spatial_rank:
-        areas = watershed_label_areas(labels_array)
+        object_count = int(np.max(labels_array, initial=0))
+        if object_count == 0:
+            return (0, 0.0)
+        return (
+            object_count,
+            float(np.count_nonzero(labels_array) / object_count),
+        )
     else:
         leading_shape = labels_array.shape[: labels_array.ndim - spatial_rank]
         area_batches: list[np.ndarray] = []
@@ -712,6 +540,73 @@ class WatershedDeclumpMethod(str, Enum):
     NONE = "none"
 
 
+@dataclass(frozen=True, slots=True)
+class WatershedInputTopology:
+    """Nominal owner for method-dependent Watershed input roles."""
+
+    watershed_method: WatershedMethod
+    declump_method: WatershedDeclumpMethod
+
+    @classmethod
+    def from_values(
+        cls,
+        watershed_method: object,
+        declump_method: object,
+    ) -> "WatershedInputTopology":
+        return cls(
+            watershed_method=(
+                WatershedMethod.DISTANCE
+                if watershed_method is None
+                else coerce_cellprofiler_enum(WatershedMethod, watershed_method)
+            ),
+            declump_method=(
+                WatershedDeclumpMethod.SHAPE
+                if declump_method is None
+                else coerce_cellprofiler_enum(WatershedDeclumpMethod, declump_method)
+            ),
+        )
+
+    @property
+    def requires_markers(self) -> bool:
+        return self.watershed_method is WatershedMethod.MARKERS
+
+    @property
+    def requires_intensity_image(self) -> bool:
+        return (
+            self.watershed_method is WatershedMethod.INTENSITY
+            or self.declump_method is WatershedDeclumpMethod.INTENSITY
+        )
+
+    def special_inputs(
+        self,
+        values: tuple[object, ...],
+    ) -> "WatershedSpecialInputs":
+        """Assign ordered auxiliary images to this topology's exact roles."""
+
+        required_count = int(self.requires_markers) + int(self.requires_intensity_image)
+        if len(values) not in (required_count, required_count + 1):
+            raise ValueError(
+                f"Watershed {self.watershed_method.value}/{self.declump_method.value} "
+                f"topology requires {required_count} special image input(s) and "
+                f"accepts one trailing mask; got {len(values)}."
+            )
+        position = 0
+        markers = None
+        if self.requires_markers:
+            markers = values[position]
+            position += 1
+        intensity_image = None
+        if self.requires_intensity_image:
+            intensity_image = values[position]
+            position += 1
+        mask = values[position] if position < len(values) else None
+        return WatershedSpecialInputs(
+            intensity_image=intensity_image,
+            markers=markers,
+            mask=mask,
+        )
+
+
 class WatershedSeedMethod(str, Enum):
     """CellProfiler watershed seed detector family."""
 
@@ -727,6 +622,15 @@ class WatershedRuntimeFamily(str, Enum):
     LIBRARY = "library"
 
 
+@dataclass(frozen=True, slots=True)
+class WatershedSpecialInputs:
+    """Method-resolved auxiliary images for one Watershed invocation."""
+
+    intensity_image: object | None
+    markers: object | None
+    mask: object | None
+
+
 @dataclass
 class WatershedStats:
     """Watershed object-count measurement row."""
@@ -734,6 +638,122 @@ class WatershedStats:
     slice_index: int
     object_count: int
     mean_area: float
+
+
+@dataclass(frozen=True, slots=True)
+class WatershedInvocationRequest:
+    """Single typed owner for the public Watershed behavior surface."""
+
+    image: np.ndarray
+    watershed_method: WatershedMethod = WatershedMethod.DISTANCE
+    declump_method: WatershedDeclumpMethod = WatershedDeclumpMethod.SHAPE
+    seed_method: WatershedSeedMethod = WatershedSeedMethod.LOCAL
+    use_advanced_settings: bool = True
+    max_seeds: int = -1
+    downsample: int = 1
+    min_distance: int = 1
+    min_intensity: float = 0.0
+    footprint: int = 8
+    connectivity: int = 1
+    compactness: float = 0.0
+    exclude_border: bool = False
+    watershed_line: bool = False
+    gaussian_sigma: float = 0.0
+    structuring_element: StructuringElementInput = StructuringElement.DISK
+    structuring_element_size: StructuringElementSize = 1
+
+    @property
+    def topology(self) -> WatershedInputTopology:
+        """Return the input topology selected by public behavior settings."""
+
+        return WatershedInputTopology.from_values(
+            self.watershed_method,
+            self.declump_method,
+        )
+
+    def execute(
+        self,
+        runtime_family: WatershedRuntimeFamily,
+        special_inputs: tuple[object, ...] = (),
+    ) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
+        """Apply this request through its declaration-owned runtime family."""
+
+        resolved_inputs = self.topology.special_inputs(special_inputs)
+        image_array = watershed_image_array(self.image, parameter_name="image")
+        intensity_image_array = (
+            None
+            if resolved_inputs.intensity_image is None
+            else watershed_image_array(
+                resolved_inputs.intensity_image,
+                parameter_name="intensity_image",
+            )
+        )
+        if (
+            intensity_image_array is not None
+            and intensity_image_array.shape != image_array.shape
+        ):
+            raise ValueError(
+                "Watershed reference image shape must match the input image shape; "
+                f"got intensity_image={intensity_image_array.shape!r}, "
+                f"image={image_array.shape!r}."
+            )
+        mask_array = (
+            None
+            if resolved_inputs.mask is None
+            else watershed_image_array(resolved_inputs.mask, parameter_name="mask")
+        )
+        markers_array = (
+            None
+            if resolved_inputs.markers is None
+            else watershed_image_array(
+                resolved_inputs.markers,
+                parameter_name="markers",
+            ).astype(np.int32, copy=False)
+        )
+        if not np.array_equal(image_array, image_array.astype(bool)):
+            raise ValueError("Watershed expects a thresholded image as input.")
+        parameters = WatershedParameters.from_settings(
+            image_ndim=image_array.ndim,
+            watershed_method=self.watershed_method,
+            declump_method=self.declump_method,
+            seed_method=self.seed_method,
+            use_advanced_settings=self.use_advanced_settings,
+            max_seeds=self.max_seeds,
+            downsample=self.downsample,
+            min_distance=self.min_distance,
+            min_intensity=self.min_intensity,
+            footprint=self.footprint,
+            connectivity=self.connectivity,
+            compactness=self.compactness,
+            exclude_border=self.exclude_border,
+            watershed_line=self.watershed_line,
+            gaussian_sigma=self.gaussian_sigma,
+            structuring_element=self.structuring_element,
+            structuring_element_size=self.structuring_element_size,
+        )
+        labels = WatershedRuntimeStrategy.for_enum_member(runtime_family).labels(
+            image_array,
+            intensity_image_array,
+            markers_array,
+            mask_array,
+            parameters,
+        )
+        object_count, mean_area = watershed_regionprops_stats(labels)
+        stats = WatershedStats(
+            slice_index=0,
+            object_count=object_count,
+            mean_area=mean_area,
+        )
+        return (
+            self.image,
+            DataclassMeasurementColumnarRows((stats,), row_type=WatershedStats),
+            SourceImageObjectLabelBuildRequest(
+                image=self.image,
+                labels=labels.astype(np.int32, copy=False),
+                declared_object_count=object_count,
+                declared_object_ids=tuple(range(1, object_count + 1)),
+            ).payload(),
+        )
 
 
 def watershed_image_array(value: object, *, parameter_name: str) -> np.ndarray:
@@ -1270,14 +1290,12 @@ class CellProfiler4DistanceInitialWatershedStrategy(
             "watershed_cp4_distance_markers", phase_started_at, seeds=marker_count
         )
         phase_started_at = time.perf_counter()
-        y_data = mahotas.cwatershed(surface, seed_markers) * x_data
+        y_data = mahotas.cwatershed(surface, seed_markers)
+        y_data *= x_data
         factor_profiler.record("watershed_cp4_distance_cwatershed", phase_started_at)
         if factor > 1:
             phase_started_at = time.perf_counter()
-            y_data = skimage.transform.resize(
-                y_data, input_shape, mode="edge", order=0, preserve_range=True
-            )
-            y_data = np.rint(y_data).astype(np.uint16)
+            y_data = watershed_resize_labels(y_data, input_shape)
             x_data = image > threshold
             factor_profiler.record("watershed_cp4_distance_upsample", phase_started_at)
         factor_profiler.record("watershed_cp4_distance_initial_total", total_started_at)
@@ -1308,11 +1326,24 @@ class CellProfiler4MarkerInitialWatershedStrategy(
             raise NotImplementedError(
                 "CellProfiler 4 marker watershed lines require legacy watershed-line semantics."
             )
-        import skimage.segmentation
-
         image_array = np.asarray(image)
         markers_array = np.asarray(markers)
-        mask_array = None if mask is None else np.asarray(mask, dtype=bool)
+        mask_array = (
+            image_array.astype(bool, copy=False)
+            if mask is None
+            else np.asarray(mask, dtype=bool)
+        )
+        if (
+            np.issubdtype(markers_array.dtype, np.integer)
+            and markers_array.shape == image_array.shape == mask_array.shape
+            and not np.any(mask_array)
+        ):
+            return (
+                np.zeros(markers_array.shape, dtype=markers_array.dtype),
+                image,
+            )
+        import skimage.segmentation
+
         y_data = skimage.segmentation.watershed(
             image=image_array,
             markers=markers_array,
@@ -1340,7 +1371,6 @@ class CellProfiler4WatershedRuntimeStrategy(WatershedRuntimeStrategy):
         import scipy.ndimage
         import skimage.feature
         import skimage.filters
-        import skimage.measure
         import skimage.morphology
         import skimage.segmentation
 
@@ -1454,7 +1484,7 @@ class LibraryWatershedRuntimeStrategy(WatershedRuntimeStrategy):
     ) -> np.ndarray:
         from skimage.segmentation import watershed as skimage_watershed
         from skimage.segmentation import clear_border
-        from skimage.transform import downscale_local_mean, resize
+        from skimage.transform import downscale_local_mean
         from scipy.ndimage import label as ndi_label
 
         binary = image.astype(bool, copy=False)
@@ -1512,10 +1542,7 @@ class LibraryWatershedRuntimeStrategy(WatershedRuntimeStrategy):
                 watershed_line=parameters.watershed_line,
             )
         if parameters.downsample > 1:
-            labels = resize(
-                labels, input_shape, mode="edge", order=0, preserve_range=True
-            )
-            labels = np.rint(labels).astype(np.uint16)
+            labels = watershed_resize_labels(labels, input_shape)
         if parameters.exclude_border:
             labels = clear_border(labels)
         return DenseObjectLabelConsecutiveRelabelingStrategy.for_labels(labels).relabel(
@@ -1788,267 +1815,40 @@ def cellprofiler_legacy_watershed(
 
 @runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
 @numpy(contract=ProcessingContract.PURE_2D)
-@special_inputs("intensity_image", "markers", "mask")
-@special_outputs(
-    (
-        "watershed_stats",
-        csv_materializer(
-            fields=["slice_index", "object_count", "mean_area"],
-            analysis_type="watershed",
-        ),
-    ),
-    ("labels", segmentation_mask_rois()),
-)
+@special_inputs("topology_inputs")
+@callable_request(WatershedInvocationRequest)
 def watershed_library(
-    image: np.ndarray,
-    intensity_image: np.ndarray | None = None,
-    markers: np.ndarray | None = None,
-    mask: np.ndarray | None = None,
-    watershed_method: Literal["distance", "intensity", "markers"] = "distance",
-    declump_method: Literal["shape", "intensity"] = "shape",
-    seed_method: Literal["local", "regional"] = "local",
-    use_advanced_settings: bool = True,
-    max_seeds: int = -1,
-    downsample: int = 1,
-    min_distance: int = 1,
-    min_intensity: float = 0.0,
-    footprint: int = 8,
-    connectivity: int = 1,
-    compactness: float = 0.0,
-    exclude_border: bool = False,
-    watershed_line: bool = False,
-    gaussian_sigma: float = 0.0,
-    structuring_element: Literal[
-        "ball", "cube", "diamond", "disk", "octahedron", "square", "star"
-    ] = "disk",
-    structuring_element_size: int = 1,
-) -> tuple[np.ndarray, WatershedStats, np.ndarray]:
-    """Apply current CellProfiler library-style Watershed segmentation."""
-    return _watershed_execute(
-        image,
-        runtime_family=WatershedRuntimeFamily.LIBRARY,
-        intensity_image=intensity_image,
-        markers=markers,
-        mask=mask,
-        watershed_method=watershed_method,
-        declump_method=declump_method,
-        seed_method=seed_method,
-        use_advanced_settings=use_advanced_settings,
-        max_seeds=max_seeds,
-        downsample=downsample,
-        min_distance=min_distance,
-        min_intensity=min_intensity,
-        footprint=footprint,
-        connectivity=connectivity,
-        compactness=compactness,
-        exclude_border=exclude_border,
-        watershed_line=watershed_line,
-        gaussian_sigma=gaussian_sigma,
-        structuring_element=structuring_element,
-        structuring_element_size=structuring_element_size,
-    )
-
-
-@runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
-@numpy(contract=ProcessingContract.PURE_2D)
-@special_inputs("intensity_image", "markers", "mask")
-@special_outputs(
-    (
-        "watershed_stats",
-        csv_materializer(
-            fields=["slice_index", "object_count", "mean_area"],
-            analysis_type="watershed",
-        ),
-    ),
-    ("labels", segmentation_mask_rois()),
-)
-def watershed_cellprofiler4(
-    image: np.ndarray,
-    intensity_image: np.ndarray | None = None,
-    markers: np.ndarray | None = None,
-    mask: np.ndarray | None = None,
-    watershed_method: Literal["distance", "intensity", "markers"] = "distance",
-    declump_method: Literal["shape", "intensity"] = "shape",
-    seed_method: Literal["local", "regional"] = "local",
-    use_advanced_settings: bool = True,
-    max_seeds: int = -1,
-    downsample: int = 1,
-    min_distance: int = 1,
-    min_intensity: float = 0.0,
-    footprint: int = 8,
-    connectivity: int = 1,
-    compactness: float = 0.0,
-    exclude_border: bool = False,
-    watershed_line: bool = False,
-    gaussian_sigma: float = 0.0,
-    structuring_element: Literal[
-        "ball", "cube", "diamond", "disk", "octahedron", "square", "star"
-    ] = "disk",
-    structuring_element_size: int = 1,
-) -> tuple[np.ndarray, WatershedStats, np.ndarray]:
-    """Apply CellProfiler 4 module-level Watershed segmentation."""
-    return _watershed_execute(
-        image,
-        runtime_family=WatershedRuntimeFamily.CELLPROFILER4,
-        intensity_image=intensity_image,
-        markers=markers,
-        mask=mask,
-        watershed_method=watershed_method,
-        declump_method=declump_method,
-        seed_method=seed_method,
-        use_advanced_settings=use_advanced_settings,
-        max_seeds=max_seeds,
-        downsample=downsample,
-        min_distance=min_distance,
-        min_intensity=min_intensity,
-        footprint=footprint,
-        connectivity=connectivity,
-        compactness=compactness,
-        exclude_border=exclude_border,
-        watershed_line=watershed_line,
-        gaussian_sigma=gaussian_sigma,
-        structuring_element=structuring_element,
-        structuring_element_size=structuring_element_size,
-    )
-
-
-@runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
-@numpy(contract=ProcessingContract.PURE_2D)
-@special_inputs("intensity_image", "markers", "mask")
-@special_outputs(
-    (
-        "watershed_stats",
-        csv_materializer(
-            fields=["slice_index", "object_count", "mean_area"],
-            analysis_type="watershed",
-        ),
-    ),
-    ("labels", segmentation_mask_rois()),
-)
-def watershed(
-    image: np.ndarray,
-    intensity_image: np.ndarray | None = None,
-    markers: np.ndarray | None = None,
-    mask: np.ndarray | None = None,
-    watershed_method: Literal["distance", "intensity", "markers"] = "distance",
-    declump_method: Literal["shape", "intensity"] = "shape",
-    seed_method: Literal["local", "regional"] = "local",
-    use_advanced_settings: bool = True,
-    max_seeds: int = -1,
-    downsample: int = 1,
-    min_distance: int = 1,
-    min_intensity: float = 0.0,
-    footprint: int = 8,
-    connectivity: int = 1,
-    compactness: float = 0.0,
-    exclude_border: bool = False,
-    watershed_line: bool = False,
-    gaussian_sigma: float = 0.0,
-    structuring_element: Literal[
-        "ball", "cube", "diamond", "disk", "octahedron", "square", "star"
-    ] = "disk",
-    structuring_element_size: int = 1,
-) -> tuple[np.ndarray, WatershedStats, np.ndarray]:
-    """Legacy alias for current library-style Watershed segmentation."""
-    return _watershed_execute(
-        image,
-        runtime_family=WatershedRuntimeFamily.LIBRARY,
-        intensity_image=intensity_image,
-        markers=markers,
-        mask=mask,
-        watershed_method=watershed_method,
-        declump_method=declump_method,
-        seed_method=seed_method,
-        use_advanced_settings=use_advanced_settings,
-        max_seeds=max_seeds,
-        downsample=downsample,
-        min_distance=min_distance,
-        min_intensity=min_intensity,
-        footprint=footprint,
-        connectivity=connectivity,
-        compactness=compactness,
-        exclude_border=exclude_border,
-        watershed_line=watershed_line,
-        gaussian_sigma=gaussian_sigma,
-        structuring_element=structuring_element,
-        structuring_element_size=structuring_element_size,
-    )
-
-
-def _watershed_execute(
-    image: np.ndarray,
+    request: WatershedInvocationRequest,
     *,
-    runtime_family: WatershedRuntimeFamily,
-    intensity_image: np.ndarray | None,
-    markers: np.ndarray | None,
-    mask: np.ndarray | None,
-    watershed_method: WatershedMethod | str | None,
-    declump_method: WatershedDeclumpMethod | str,
-    seed_method: WatershedSeedMethod | str,
-    use_advanced_settings: bool,
-    max_seeds: int,
-    downsample: int,
-    min_distance: int,
-    min_intensity: float,
-    footprint: int,
-    connectivity: int,
-    compactness: float,
-    exclude_border: bool,
-    watershed_line: bool,
-    gaussian_sigma: float,
-    structuring_element: StructuringElement | str,
-    structuring_element_size: int,
-) -> tuple[np.ndarray, WatershedStats, np.ndarray]:
-    """Apply watershed segmentation using one explicit implementation family."""
-    image_array = watershed_image_array(image, parameter_name="image")
-    intensity_image_array = (
-        None
-        if intensity_image is None
-        else watershed_image_array(intensity_image, parameter_name="intensity_image")
-    )
-    if (
-        intensity_image_array is not None
-        and intensity_image_array.shape != image_array.shape
-    ):
-        raise ValueError(
-            "Watershed reference image shape must match the input image shape; "
-            f"got intensity_image={intensity_image_array.shape!r}, image={image_array.shape!r}."
-        )
-    mask_array = (
-        None if mask is None else watershed_image_array(mask, parameter_name="mask")
-    )
-    markers_array = (
-        None if markers is None else object_label_dense_array(markers, dtype=np.int32)
-    )
-    if not np.array_equal(image_array, image_array.astype(bool)):
-        raise ValueError("Watershed expects a thresholded image as input.")
-    parameters = WatershedParameters.from_settings(
-        image_ndim=image_array.ndim,
-        watershed_method=watershed_method,
-        declump_method=declump_method,
-        seed_method=seed_method,
-        use_advanced_settings=use_advanced_settings,
-        max_seeds=max_seeds,
-        downsample=downsample,
-        min_distance=min_distance,
-        min_intensity=min_intensity,
-        footprint=footprint,
-        connectivity=connectivity,
-        compactness=compactness,
-        exclude_border=exclude_border,
-        watershed_line=watershed_line,
-        gaussian_sigma=gaussian_sigma,
-        structuring_element=structuring_element,
-        structuring_element_size=structuring_element_size,
-    )
-    labels = WatershedRuntimeStrategy.for_enum_member(runtime_family).labels(
-        image_array, intensity_image_array, markers_array, mask_array, parameters
-    )
-    object_count, mean_area = watershed_regionprops_stats(labels)
-    stats = WatershedStats(
-        slice_index=0, object_count=object_count, mean_area=mean_area
-    )
-    return (image, stats, labels.astype(np.int32))
+    topology_inputs: tuple[np.ndarray | ObjectLabelValue, ...] = (),
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
+    """Apply library-style Watershed with topology-resolved auxiliary inputs.
+
+    Args:
+        structuring_element: Footprint shape used to define neighboring pixels.
+        structuring_element_size: Positive footprint radius or extent in pixels.
+        topology_inputs: Ordered marker, intensity, or mask inputs selected by the
+            watershed method and supplied by OpenHCS.
+    """
+
+    return request.execute(WatershedRuntimeFamily.LIBRARY, topology_inputs)
+
+
+@runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
+@numpy(contract=ProcessingContract.PURE_2D)
+@special_inputs("topology_inputs")
+@callable_request(WatershedInvocationRequest)
+def watershed_cellprofiler4(
+    request: WatershedInvocationRequest,
+    *,
+    topology_inputs: tuple[np.ndarray | ObjectLabelValue, ...] = (),
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
+    """Apply CellProfiler 4 Watershed with topology-resolved auxiliary inputs."""
+
+    return request.execute(WatershedRuntimeFamily.CELLPROFILER4, topology_inputs)
+
+
+set_signature_analysis_target(watershed_cellprofiler4, watershed_library)
 
 
 def prepare_watershed() -> None:
@@ -2058,7 +1858,7 @@ def prepare_watershed() -> None:
     markers = np.zeros(image.shape, dtype=np.int32)
     markers[3, 6, 6] = 1
     markers[4, 10, 10] = 2
-    watershed_cellprofiler4.__wrapped__(
+    watershed_cellprofiler4(
         image,
         use_advanced_settings=False,
         watershed_method=WatershedMethod.DISTANCE,
@@ -2066,17 +1866,16 @@ def prepare_watershed() -> None:
         footprint=4,
         downsample=2,
     )
-    watershed_cellprofiler4.__wrapped__(
+    watershed_cellprofiler4(
         image,
-        markers=markers,
-        mask=image,
+        topology_inputs=(markers, image),
         use_advanced_settings=False,
         watershed_method=WatershedMethod.MARKERS,
         declump_method=WatershedDeclumpMethod.SHAPE,
         footprint=4,
         downsample=1,
     )
-    watershed_library.__wrapped__(
+    watershed_library(
         image,
         use_advanced_settings=False,
         watershed_method=WatershedMethod.DISTANCE,
@@ -2086,9 +1885,12 @@ def prepare_watershed() -> None:
     )
 
 
-watershed_library.__openhcs_prepare__ = prepare_watershed
-watershed_cellprofiler4.__openhcs_prepare__ = prepare_watershed
-watershed.__openhcs_prepare__ = prepare_watershed
+for _watershed_function_name in WatershedModule.declared_function_names():
+    attach_processing_prepare(
+        WatershedModule.require_callable(_watershed_function_name),
+        prepare_watershed,
+    )
+del _watershed_function_name
 
 
 @dataclass(frozen=True, slots=True)
@@ -2528,7 +2330,8 @@ __all__ = public_names_from_objects(
     NumpyLegacyWatershedBackendStrategy,
     WatershedStats,
     cellprofiler_legacy_watershed,
-    watershed,
-    watershed_cellprofiler4,
-    watershed_library,
+    *(
+        WatershedModule.require_callable(function_name)
+        for function_name in WatershedModule.declared_function_names()
+    ),
 )

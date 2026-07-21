@@ -2,100 +2,61 @@
 
 from __future__ import annotations
 
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, is_dataclass, replace
+from dataclasses import replace
 from functools import lru_cache
-import time
+from graphlib import TopologicalSorter
 from types import MappingProxyType
 from typing import ClassVar
 
-import numpy as np
-
 from openhcs.core.artifacts import (
-    ArtifactSpec,
+    ArtifactOutputPlan,
     ArtifactSpecCollection,
+    ArtifactSpecRef,
     ArtifactType,
-    ArtifactTypeValue,
     ArtifactTypeStrategyMatchMixin,
+    ArtifactTypeValue,
     ImageArtifactType,
-    ObjectLabelsArtifactType,
     MeasurementsArtifactType,
-    RelationshipsArtifactType,
+    ObjectLabelsArtifactType,
+    ObjectLineageArtifactType,
     SpatialGridArtifactType,
 )
+from openhcs.core.callable_contract import CallableContract
+from openhcs.core.function_patterns import InvocationArtifactInputEdgePlan
 from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
-from openhcs.core.runtime_semantics import ParentChildRelationshipPayload
-from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
-from openhcs.core.runtime_values import (
+from openhcs.core.runtime_adapters import RuntimeFunctionInvocationRequest
+from openhcs.core.runtime_image_values import image_payload_metadata
+from openhcs.core.runtime_object_labels import (
     ObjectLabelValue,
-    SpatialGrid,
-    image_payload_metadata,
 )
+from openhcs.core.runtime_output_matching import RuntimeMatchedOutput
+from openhcs.core.runtime_relationships import (
+    DirectedObjectRelationshipPayload,
+    ObjectRelationship,
+    ObjectRelationshipDeclaration,
+)
+from openhcs.core.steps.function_runtime import FunctionOutputContextStrategy
+from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 from openhcs.interop.cellprofiler.runtime.adapter import CellProfilerRuntimeAdapter
 from openhcs.interop.cellprofiler.runtime.invocation import (
     CellProfilerImageRequest,
-    CellProfilerInvocationRequest,
 )
-from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-    CellProfilerMeasurementMaterializer,
-)
-from openhcs.interop.cellprofiler.runtime.output_contexts import (
-    CellProfilerImageOutputContextStrategy,
-    CellProfilerObjectLabelOutputContextStrategy,
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    measurement_table_for_module,
 )
 from openhcs.interop.cellprofiler.runtime.output_record_request import (
     CellProfilerOutputRecordRequest,
 )
-from openhcs.interop.cellprofiler.runtime.output_value_resolution import (
-    CellProfilerResolvedOutputValues,
-)
-from openhcs.interop.cellprofiler.runtime.payload_types import (
-    CellProfilerKwargs,
-    CellProfilerRuntimeValue,
-    CellProfilerRuntimeValues,
-    CellProfilerRuntimeValueSequence,
-)
+from openhcs.core.steps.function_runtime import RuntimeCallableArgument
 from openhcs.interop.cellprofiler.runtime.profile_fields import (
     cellprofiler_profile_payload_fields,
-)
-from openhcs.interop.cellprofiler.runtime.measurement_recording import (
-    measurement_record_for_module,
-)
-from openhcs.interop.cellprofiler.runtime.relationship_endpoints import (
-    RelationshipEndpointResolver,
 )
 from openhcs.interop.cellprofiler.runtime.runtime_profile import (
     CellProfilerRuntimeProfileLogger,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerOutputRecordingPlan:
-    """Prepared output order and recorders for one module contract."""
-
-    ordered_outputs: tuple[ArtifactSpec, ...]
-    recorders: Mapping[type[ArtifactType], CellProfilerOutputRecorder]
-
-    @classmethod
-    def from_outputs(
-        cls,
-        outputs: tuple[ArtifactSpec, ...],
-    ) -> "CellProfilerOutputRecordingPlan":
-        ordered_outputs = _output_recording_order(outputs)
-        return cls(
-            ordered_outputs=ordered_outputs,
-            recorders=MappingProxyType(
-                {
-                    artifact_type: CellProfilerOutputRecorder.for_artifact_type(
-                        artifact_type
-                    )
-                    for artifact_type in {
-                        spec.artifact_type for spec in ordered_outputs
-                    }
-                }
-            ),
-        )
 
 
 class CellProfilerOutputRecorder(
@@ -119,48 +80,78 @@ class CellProfilerOutputRecorder(
         )
 
     @classmethod
-    def recording_dependency_depth(cls) -> int:
-        """Return dependency order from the recorder inheritance chain."""
-        return cls.mro().index(CellProfilerOutputRecorder)
+    def transient_output_values(
+        cls,
+        *,
+        callable_contract: CallableContract,
+        active_output_plans: tuple[ArtifactOutputPlan, ...],
+        returned_values: Mapping[ArtifactSpecRef, RuntimeCallableArgument],
+    ) -> Mapping[ArtifactSpecRef, RuntimeCallableArgument]:
+        """Return callable outputs not recorded by this active invocation."""
+
+        runtime_adapter = callable_contract.runtime_adapter
+        recorded_refs = (
+            frozenset(plan.ref() for plan in active_output_plans)
+            if runtime_adapter is not None
+            and runtime_adapter.manages_artifact_outputs
+            else frozenset()
+        )
+        return MappingProxyType(
+            {
+                spec.ref(): returned_values[spec.ref()]
+                for spec in callable_contract.artifact_outputs
+                if spec.ref() not in recorded_refs
+            }
+        )
 
     @classmethod
     def record_module_outputs(
         cls,
         *,
-        runtime_plan: "CellProfilerModuleRuntimePlan",
+        callable_contract: CallableContract,
+        active_input_edges: tuple[InvocationArtifactInputEdgePlan, ...],
         adapter: CellProfilerRuntimeAdapter,
-        main_output: CellProfilerRuntimeValue,
-        artifact_values: CellProfilerRuntimeValues,
-        invocation: CellProfilerInvocationRequest,
+        returned_values: Mapping[ArtifactSpecRef, RuntimeCallableArgument],
+        matched_outputs: tuple[RuntimeMatchedOutput, ...],
+        invocation: RuntimeFunctionInvocationRequest,
         image_request: CellProfilerImageRequest,
-        current_image: CellProfilerRuntimeValue,
-    ) -> None:
+        current_image: RuntimeCallableArgument,
+    ) -> Mapping[ArtifactSpecRef, RuntimeCallableArgument]:
         """Record one module invocation's returned artifacts."""
-        contract = runtime_plan.contract
-        func = runtime_plan.func
-        function_name = runtime_plan.function_name
-        if not contract.outputs:
-            return
+        function_name = callable_contract.function_name
+        active_output_plans = tuple(plan for plan, _spec, _value in matched_outputs)
+        active_output_refs = frozenset(plan.ref() for plan in active_output_plans)
+        output_pairs = {
+            output_plan.ref(): (output_plan, spec, output_value)
+            for output_plan, spec, output_value in matched_outputs
+        }
+        output_dependencies = {
+            output_plan.ref(): tuple(
+                dependency_ref
+                for relation in output_plan.relations
+                for dependency_ref in relation.dependency_refs()
+                if dependency_ref in active_output_refs
+            )
+            for output_plan, _spec, _output_value in matched_outputs
+        }
+        recording_order = tuple(
+            output_pairs[ref]
+            for ref in TopologicalSorter(output_dependencies).static_order()
+        )
 
         profile_enabled = CellProfilerRuntimeProfileLogger.enabled()
-        if profile_enabled:
-            values_started_at = time.perf_counter()
-        resolved_values = CellProfilerResolvedOutputValues.from_returned_outputs(
-            recorded_specs=contract.outputs,
-            context_specs=contract.declared_outputs or contract.outputs,
-            main_output=main_output,
-            artifact_values=artifact_values,
-            func=func,
-            declared_output_specs=contract.declared_outputs,
+        declared_only_outputs = cls.transient_output_values(
+            callable_contract=callable_contract,
+            active_output_plans=active_output_plans,
+            returned_values=returned_values,
         )
-        if profile_enabled:
-            CellProfilerRuntimeProfileLogger.log_module_profile(
-                "cp_output_values_by_kind",
-                time.perf_counter() - values_started_at,
-                module=contract.module_name,
-                function=function_name,
-                outputs=len(contract.outputs),
-            )
+        runtime_adapter = callable_contract.runtime_adapter
+        if (
+            runtime_adapter is None
+            or not runtime_adapter.manages_artifact_outputs
+            or not active_output_plans
+        ):
+            return declared_only_outputs
 
         output_source = replace(
             image_request,
@@ -168,23 +159,23 @@ class CellProfilerOutputRecorder(
             source_image_name=invocation.source_image_name,
             image_count=invocation.image_count,
             execution_mode=invocation.execution_mode,
+            plane_projection=invocation.plane_projection,
         )
-        for spec in runtime_plan.output_recording_plan.ordered_outputs:
+        for output_plan, spec, output_value in recording_order:
             if profile_enabled:
                 record_started_at = time.perf_counter()
-            output_value = resolved_values.recorded_value(spec)
-            runtime_plan.output_recording_plan.recorders[spec.artifact_type].record(
+            CellProfilerOutputRecorder.for_artifact_type(spec.artifact_type).record(
                 CellProfilerOutputRecordRequest(
-                    runtime_plan=runtime_plan,
+                    callable_contract=callable_contract,
+                    active_input_edges=active_input_edges,
                     adapter=adapter,
                     spec=spec,
+                    output_plan=output_plan,
                     output_value=output_value,
-                    output_values=resolved_values.context_values,
                     source=output_source,
-                    func=func,
-                    function_name=function_name,
                     call_kwargs=invocation.kwargs,
                     current_image=current_image,
+                    declared_only_outputs=declared_only_outputs,
                 )
             )
             if profile_enabled:
@@ -192,93 +183,74 @@ class CellProfilerOutputRecorder(
                     "cp_output_record_one",
                     time.perf_counter() - record_started_at,
                     lambda: {
-                        "module": contract.module_name,
                         "function": function_name,
                         "artifact": spec.name,
                         "artifact_type": spec.artifact_type.value,
                         **cellprofiler_profile_payload_fields("value", output_value),
                     },
                 )
+        return declared_only_outputs
 
     @abstractmethod
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
         """Record one output artifact through the runtime adapter."""
 
 
-class ImmediateOutputRecorder(CellProfilerOutputRecorder):
-    """Recorder family for artifacts that create no later recording dependency."""
-
-
-class RelationshipDependentOutputRecorder(ImmediateOutputRecorder):
-    """Recorder family for artifacts that require object endpoints to exist."""
-
-
-class MeasurementDependentOutputRecorder(RelationshipDependentOutputRecorder):
-    """Recorder family for artifacts that may require prior relationships."""
-
-
-class ImageOutputRecorder(ImmediateOutputRecorder):
+class ImageOutputRecorder(CellProfilerOutputRecorder):
     """Record image outputs."""
 
     artifact_type = ImageArtifactType
 
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
-        output_value = request.runtime_plan.image_output_value_policy.output_value(
-            request
+        module_type = CellProfilerModule.for_function_name(
+            request.callable_contract.function_name
         )
-        source_payload = (
-            request.runtime_plan.image_output_source_payload_policy.source_payload(
-                request
+        if module_type is None:
+            raise KeyError(
+                "No CellProfiler module declaration owns callable "
+                f"{request.callable_contract.function_name!r}."
             )
-        )
-        value = CellProfilerImageOutputContextStrategy.for_value(
-            output_value
-        ).runtime_image_value(
-            output_value,
+        output_value = module_type.output_value(request)
+        source_payload = module_type.source_payload(request)
+        value = FunctionOutputContextStrategy.for_output_plan(
+            request.output_plan,
+        ).contextualize(
             source_payload,
+            output_value,
+            request.output_plan,
+            request.source.plane_projection,
         )
         request.adapter.add_image(
             request.spec.name,
             value,
-            source_image_name=request.source.source_image_name,
+            materialization_source_metadata=(request.materialization_source_metadata()),
         )
 
 
-class ObjectLabelsOutputRecorder(ImmediateOutputRecorder):
+class ObjectLabelsOutputRecorder(CellProfilerOutputRecorder):
     """Record object-label outputs."""
 
     artifact_type = ObjectLabelsArtifactType
 
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
-        output_policy = request.runtime_plan.object_label_output_source_context_policy
-        source_context = output_policy.source_context(request)
-        if isinstance(request.output_value, np.ndarray):
-            source_image_names = (
-                request.source.source_aliases or source_context.source_metadata.source_image_names
-            )
-            request.adapter.add_source_image_objects(
-                request.spec.name,
-                request.output_value,
-                source_image_name=request.source.source_image_name,
-                source_image_names=source_image_names,
-                source_image_payload=source_context.source_payload,
-                parent_image_source_voxel_spacing=(
-                    source_context.parent_image_source_voxel_spacing
-                ),
-                domain_scope=request.object_label_output_domain_scope(),
-            )
-            return
-        value = CellProfilerObjectLabelOutputContextStrategy.for_value(
-            request.output_value
-        ).runtime_object_label_value(
-            request.output_value,
-            source_context.source_payload,
-            request.object_label_output_domain_scope(),
+        module_type = CellProfilerModule.for_function_name(
+            request.callable_contract.function_name
         )
-        if (
-            source_context.parent_image_payload is not None
-            and isinstance(value, ObjectLabelValue)
-        ):
+        if module_type is None:
+            raise KeyError(
+                "No CellProfiler module declaration owns callable "
+                f"{request.callable_contract.function_name!r}."
+            )
+        source_context = module_type.source_context(request)
+        if not isinstance(request.output_value, ObjectLabelValue):
+            raise TypeError(
+                f"CellProfiler object-label output {request.spec.name!r} must be "
+                "an ObjectLabelValue."
+            )
+        value = request.output_value.with_source_image_context(
+            source_context.source_payload
+        )
+        if source_context.parent_image_payload is not None:
             value = value.with_parent_image_context(source_context.parent_image_payload)
         request.adapter.add_objects(
             request.spec.name,
@@ -292,125 +264,86 @@ class ObjectLabelsOutputRecorder(ImmediateOutputRecorder):
         )
 
 
-class MeasurementsOutputRecorder(MeasurementDependentOutputRecorder):
+class MeasurementsOutputRecorder(CellProfilerOutputRecorder):
     """Record measurement outputs with inferred image/object ownership."""
 
     artifact_type = MeasurementsArtifactType
 
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
-        function_name = request.function_name
+        module_type = CellProfilerModule.for_function_name(
+            request.callable_contract.function_name
+        )
+        if module_type is None:
+            raise KeyError(
+                "No CellProfiler module declaration owns callable "
+                f"{request.callable_contract.function_name!r}."
+            )
+        module_name = module_type.require_module_name()
+        function_name = request.callable_contract.function_name
         profile_enabled = CellProfilerRuntimeProfileLogger.enabled()
         if profile_enabled:
             build_started_at = time.perf_counter()
-        measurement_record = measurement_record_for_module(request)
+        measurement_table = measurement_table_for_module(request)
         if profile_enabled:
             CellProfilerRuntimeProfileLogger.log_module_profile(
                 "cp_measurement_record_build",
                 time.perf_counter() - build_started_at,
-                module=request.module_name,
+                module=module_name,
                 function=function_name,
                 artifact=request.spec.name,
-                rows=len(measurement_record.rows),
+                rows=len(measurement_table.rows),
             )
-        if self._records_runtime_artifact(request):
-            if profile_enabled:
-                materialize_started_at = time.perf_counter()
-            CellProfilerMeasurementMaterializer.record(
-                measurement_record.materialization_request(
-                    adapter=request.adapter,
-                    name=request.spec.name,
-                    output_values=request.output_values,
-                    current_image=request.current_image,
-                )
-            )
-            if profile_enabled:
-                CellProfilerRuntimeProfileLogger.log_module_profile(
-                    "cp_measurement_record_materialize",
-                    time.perf_counter() - materialize_started_at,
-                    module=request.module_name,
-                    function=function_name,
-                    artifact=request.spec.name,
-                    rows=len(measurement_record.rows),
-                )
-            return
-
-        row_policy = request.runtime_plan.object_measurement_row_policy
+        row_policy = module_type.runtime_object_measurement_row_policy()
+        row_policy.validate_table_ownership(measurement_table)
         if profile_enabled:
-            partitions_started_at = time.perf_counter()
-        partitions = row_policy.record_partitions(measurement_record)
+            materialize_started_at = time.perf_counter()
+        request.adapter.add_measurements(measurement_table)
         if profile_enabled:
             CellProfilerRuntimeProfileLogger.log_module_profile(
-                "cp_measurement_record_partitions",
-                time.perf_counter() - partitions_started_at,
-                module=request.module_name,
+                "cp_measurement_record_materialize",
+                time.perf_counter() - materialize_started_at,
+                module=module_name,
                 function=function_name,
                 artifact=request.spec.name,
-                rows=len(measurement_record.rows),
-                partitions=len(partitions),
+                rows=len(measurement_table.rows),
             )
-        for partition in partitions:
-            if profile_enabled:
-                materialize_started_at = time.perf_counter()
-            CellProfilerMeasurementMaterializer.record(
-                partition.materialization_request(
-                    adapter=request.adapter,
-                    name=request.spec.name,
-                    output_values=request.output_values,
-                    current_image=request.current_image,
-                )
-            )
-            if profile_enabled:
-                CellProfilerRuntimeProfileLogger.log_module_profile(
-                    "cp_measurement_record_materialize",
-                    time.perf_counter() - materialize_started_at,
-                    module=request.module_name,
-                    function=function_name,
-                    artifact=request.spec.name,
-                    rows=len(partition.rows),
-                )
-
-    @staticmethod
-    def _records_runtime_artifact(request: CellProfilerOutputRecordRequest) -> bool:
-        """Return whether the adapter has one compiled output slot for this table."""
-        return (
-            isinstance(request.adapter, CellProfilerRuntimeAdapter)
-            and request.spec.name in request.adapter.artifact_outputs
-        )
 
 
-class RelationshipsOutputRecorder(RelationshipDependentOutputRecorder):
-    """Record parent-child relationship artifacts."""
+class RelationshipsOutputRecorder(CellProfilerOutputRecorder):
+    """Record contract-bound directed object-lineage artifacts."""
 
-    artifact_type = RelationshipsArtifactType
+    artifact_type = ObjectLineageArtifactType
 
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
-        if not isinstance(request.output_value, ParentChildRelationshipPayload):
+        if not isinstance(request.output_value, DirectedObjectRelationshipPayload):
             raise TypeError(
-                f"{request.module_name} relationship output "
-                f"'{request.spec.name}' must be ParentChildRelationshipPayload, "
+                f"CellProfiler callable {request.callable_contract.function_name!r} "
+                "relationship output "
+                f"'{request.spec.name}' must be a directed relationship payload, "
                 f"got {type(request.output_value).__name__}."
             )
-        parent_spec, child_spec = RelationshipEndpointResolver.for_request(
-            request
-        ).endpoint_specs(request.spec)
+        relations = ArtifactSpecCollection((request.spec,)).relation_refs(
+            ObjectRelationshipDeclaration
+        )
+        if len(relations) != 1:
+            raise ValueError(
+                f"Relationship output {request.spec.ref()!r} requires exactly one "
+                f"ObjectRelationshipDeclaration, got {len(relations)}."
+            )
+        _relationship_spec, declaration = relations[0]
         source_metadata = image_payload_metadata(request.source.payload)
         request.adapter.add_relationship(
-            request.spec.name,
-            parent_object_name=parent_spec.name,
-            child_object_name=child_spec.name,
-            parent_ids=request.output_value.parent_ids,
-            child_ids=request.output_value.child_ids,
-            slice_indices=request.output_value.explicit_slice_indices(),
-            slice_count=request.output_value.slice_count,
-            source_path=source_metadata.source_path,
-            source_component_metadata=source_metadata.source_component_metadata,
-            source_image_provenance_planes=(
-                source_metadata.source_image_provenance_planes
+            ObjectRelationship.from_payload(
+                name=request.spec.name,
+                declaration=declaration,
+                payload=request.output_value,
+                source_provenance=source_metadata.source_provenance,
             ),
+            artifact_type=request.spec.artifact_type,
         )
 
 
-class SpatialGridOutputRecorder(ImmediateOutputRecorder):
+class SpatialGridOutputRecorder(CellProfilerOutputRecorder):
     """Record spatial-grid outputs."""
 
     artifact_type = SpatialGridArtifactType
@@ -418,40 +351,5 @@ class SpatialGridOutputRecorder(ImmediateOutputRecorder):
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
         request.adapter.add_spatial_grid(
             request.spec.name,
-            _coerce_spatial_grid(request.output_value, request.spec.name),
+            request.output_value,
         )
-
-
-def _output_recording_order(
-    output_specs: tuple[ArtifactSpec, ...],
-) -> tuple[ArtifactSpec, ...]:
-    return tuple(
-        sorted(
-            output_specs,
-            key=lambda spec: type(
-                CellProfilerOutputRecorder.for_artifact_type(spec.artifact_type)
-            ).recording_dependency_depth(),
-        )
-    )
-
-
-def _coerce_spatial_grid(
-    value: CellProfilerRuntimeValue,
-    name: str,
-) -> SpatialGrid | CellProfilerKwargs | RuntimeSliceAlignedValues[CellProfilerRuntimeValue]:
-    match value:
-        case RuntimeSliceAlignedValues(slices=slices):
-            return RuntimeSliceAlignedValues(
-                slices=tuple(_coerce_spatial_grid(item, name) for item in slices)
-            )
-        case SpatialGrid() as grid:
-            return grid.with_name(name)
-        case Mapping() as mapping:
-            return mapping
-        case _ if is_dataclass(value):
-            return asdict(value)
-        case _:
-            raise TypeError(
-                f"Spatial grid output '{name}' must be SpatialGrid or mapping-backed, "
-                f"got {type(value).__name__}."
-            )

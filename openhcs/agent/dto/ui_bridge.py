@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import Enum
+from math import isfinite
 from typing import ClassVar
 
 from objectstate import DottedFieldPath
@@ -101,6 +102,11 @@ class UiBridgeOperationStatus(str, Enum):
     FAILED = "failed"
     NOT_FOUND = "not_found"
     UNAVAILABLE = "unavailable"
+
+    @property
+    def is_terminal(self) -> bool:
+        """Whether this status ends terminal-operation waiting."""
+        return self is not self.RUNNING
 
     @property
     def live_overview_severity(self) -> str:
@@ -1281,6 +1287,7 @@ class UiWidgetTreeNode(WidgetNodeIdentity):
     current_text: str | None
     item_count: int | None
     children: tuple["UiWidgetTreeNode", ...]
+    item_texts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1298,6 +1305,7 @@ class UiWidgetActionSummary(UiObjectStateFieldValuePreviewCarrier, WidgetNodeIde
     current_text: str | None
     item_count: int | None
     tool_tip: str
+    item_texts: tuple[str, ...] = ()
     context_label: str | None = None
     action_role: str | None = None
     semantic_address: UiSemanticAddress | None = None
@@ -1322,6 +1330,7 @@ class UiWidgetActionInvokeRequest(
 ):
     path_id: str
     action_kind: str = "auto"
+    target_index: int | None = None
 
     @classmethod
     def from_fields(
@@ -1330,6 +1339,7 @@ class UiWidgetActionInvokeRequest(
         window_id: str,
         path_id: str,
         action_kind: str = "button",
+        target_index: int | None = None,
         create_if_missing: bool = False,
         request_token: str | None = None,
     ) -> "UiWidgetActionInvokeRequest":
@@ -1338,6 +1348,7 @@ class UiWidgetActionInvokeRequest(
             open_policy=UiWindowOpenPolicy(create_if_missing=create_if_missing),
             path_id=path_id,
             action_kind=action_kind,
+            target_index=target_index,
             request_token=UiMutationRequestToken(value=request_token),
         )
 
@@ -2131,6 +2142,42 @@ class UiBridgeOperationIdentity:
 @dataclass(frozen=True, slots=True)
 class UiBridgeOperationStatusRequest:
     operation_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class UiBridgeOperationWaitRequest:
+    """Bounded terminal wait for one accepted UI bridge operation."""
+
+    operation_id: str
+    timeout_seconds: float = 30.0
+    poll_interval_seconds: float = 0.5
+
+    @classmethod
+    def from_fields(
+        cls,
+        operation_id: str,
+        timeout_seconds: float = 30.0,
+        poll_interval_seconds: float = 0.5,
+    ) -> "UiBridgeOperationWaitRequest":
+        return cls(
+            operation_id=operation_id,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+
+    def __post_init__(self) -> None:
+        if not self.operation_id:
+            raise ValueError("operation_id must not be empty.")
+        if (
+            not isfinite(self.timeout_seconds)
+            or not 0.0 <= self.timeout_seconds <= 120.0
+        ):
+            raise ValueError("timeout_seconds must be between 0 and 120.")
+        if (
+            not isfinite(self.poll_interval_seconds)
+            or not 0.05 <= self.poll_interval_seconds <= 5.0
+        ):
+            raise ValueError("poll_interval_seconds must be between 0.05 and 5.")
 
 
 @dataclass(frozen=True, slots=True)

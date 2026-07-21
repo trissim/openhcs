@@ -49,8 +49,17 @@ class PlateImageSampleRenderer(McpDevOutputRenderer):
             f"Image: {cls._text(sample_payload.get('virtual_path'))}",
             f"Source: {cls._text(sample_payload.get('source_path'))}",
             (
-                "Array: "
-                f"shape={cls._sequence_text(sample_payload.get('shape'))} "
+                "Resolution: "
+                f"selected={cls._text(sample_payload.get('selected_resolution_index'))} "
+                f"count={cls._text(sample_payload.get('resolution_count'))} "
+                f"source_shape={cls._sequence_text(sample_payload.get('shape'))} "
+                "resolution_shape="
+                f"{cls._sequence_text(sample_payload.get('resolution_shape'))} "
+                f"downsample_yx={cls._sequence_text(sample_payload.get('downsample_yx'))}"
+            ),
+            (
+                "Statistics: "
+                f"scope={cls._text(sample_payload.get('statistics_scope'))} "
                 f"dtype={cls._text(sample_payload.get('dtype'))} "
                 f"min={cls._text(sample_payload.get('minimum'))} "
                 f"max={cls._text(sample_payload.get('maximum'))} "
@@ -279,6 +288,13 @@ class PlateInspectionRenderer(McpDevOutputRenderer):
             payload,
             "workspace_preparation",
         )
+        workflow = McpDevPayloadProjection.nested_mapping(
+            payload,
+            "workflow_advice",
+        )
+        handler_candidates = McpDevPayloadProjection.sequence_of_mappings(
+            payload.get("format_specific_handler_candidates")
+        )
         sampled_files = cls._text_sequence(image_files.get("sampled_files"))
         sampled_records = McpDevPayloadProjection.sequence_of_mappings(
             image_files.get("sampled_records")
@@ -339,6 +355,29 @@ class PlateInspectionRenderer(McpDevOutputRenderer):
                 f"required_before_execution="
                 f"{McpDevPayloadProjection.text(workspace.get('required_before_execution'))}"
             )
+        if workflow:
+            lines.extend(
+                (
+                    "Routing: "
+                    f"scope={McpDevPayloadProjection.text(workflow.get('workflow_scope'))} "
+                    f"ingestion={McpDevPayloadProjection.text(workflow.get('ingestion_route'))} "
+                    f"owner={McpDevPayloadProjection.text(workflow.get('ingestion_owner'))} "
+                    "source_bindings="
+                    f"{McpDevPayloadProjection.text(workflow.get('source_binding_role'))}",
+                    "UI next: "
+                    f"document={McpDevPayloadProjection.text(workflow.get('ui_code_document_id'))} "
+                    f"operation={McpDevPayloadProjection.text(workflow.get('ui_operation'))}",
+                    f"Advice: {McpDevPayloadProjection.text(workflow.get('message'))}",
+                    "Knowledge query: "
+                    f"{McpDevPayloadProjection.text(workflow.get('knowledge_query'))}",
+                )
+            )
+        if handler_candidates:
+            lines.append("Format-specific handler candidates:")
+            lines.extend(
+                cls._handler_candidate_line(candidate)
+                for candidate in handler_candidates
+            )
         components = McpDevPayloadProjection.sequence_of_mappings(
             payload.get("components")
         )
@@ -347,6 +386,12 @@ class PlateInspectionRenderer(McpDevOutputRenderer):
             lines.append(cls._metadata_sources_line(components))
             lines.append("Components:")
             lines.extend(cls._component_lines(components))
+        source_diagnostics = McpDevPayloadProjection.sequence_of_mappings(
+            payload.get("source_diagnostics")
+        )
+        if source_diagnostics:
+            lines.append(f"Source diagnostics: {len(source_diagnostics)}")
+            lines.extend(cls._source_diagnostic_lines(source_diagnostics))
         modified_line = PlateFileQueryRenderer.records_modified_summary_line(
             "Sampled artifacts modified",
             (*sampled_records, *result_records),
@@ -387,6 +432,32 @@ class PlateInspectionRenderer(McpDevOutputRenderer):
             lines.append("Warnings:")
             lines.extend(cls._error_lines(warnings))
         return "\n".join(lines)
+
+    @staticmethod
+    def _handler_candidate_line(candidate: Mapping[str, JsonValue]) -> str:
+        return (
+            "  - "
+            f"{McpDevPayloadProjection.text(candidate.get('microscope_type'))} "
+            f"parser={McpDevPayloadProjection.text(candidate.get('parser_class'))} "
+            f"recognized={McpDevPayloadProjection.text(candidate.get('recognized_file_count'))}/"
+            f"{McpDevPayloadProjection.text(candidate.get('tested_file_count'))} "
+            f"root={McpDevPayloadProjection.text(candidate.get('root_dir'))} "
+            f"metadata_detected={McpDevPayloadProjection.text(candidate.get('metadata_detected'))} "
+            f"diagnostic={McpDevPayloadProjection.text(candidate.get('metadata_diagnostic'))}"
+        )
+
+    @staticmethod
+    def _source_diagnostic_lines(
+        diagnostics: tuple[Mapping[str, JsonValue], ...],
+    ) -> list[str]:
+        """Render one concise line per structured source-level diagnostic."""
+
+        return [
+            "- "
+            f"{McpDevPayloadProjection.text(diagnostic.get('diagnostic_type'))}: "
+            f"{McpDevPayloadProjection.text(diagnostic.get('message'))}"
+            for diagnostic in diagnostics
+        ]
 
     @classmethod
     def _record_lines(

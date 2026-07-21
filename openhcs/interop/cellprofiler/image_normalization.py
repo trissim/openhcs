@@ -7,13 +7,18 @@ from typing import Any
 
 import numpy as np
 
-from openhcs.core.runtime_values import (
+from openhcs.core.image_file_serialization import (
+    ImageFileFormat,
+    PngImageFileFormat,
+)
+from openhcs.core.runtime_image_values import (
     image_payload_data,
     image_payload_intensity_scale,
     image_payload_metadata,
     normalize_image_payload_intensity,
     with_image_payload_data,
 )
+from openhcs.core.source_metadata import SourceMetadataRoleView
 
 
 def normalize_cellprofiler_image_payload(
@@ -156,5 +161,17 @@ def _cellprofiler_float32_uint8_domain(
 
 def _cellprofiler_uses_bioformats_uint8_domain(payload: Any) -> bool:
     """Return whether native CP loads this source through its PNG float codebook."""
-    paths = image_payload_metadata(payload).source_image_paths
-    return bool(paths) and all(path.lower().endswith(".png") for path in paths)
+    metadata = image_payload_metadata(payload)
+    source_format_paths: tuple[str, ...] = ()
+    if metadata.source_component_metadata is not None:
+        source_format_paths = SourceMetadataRoleView(
+            metadata.source_component_metadata
+        ).source_filter_paths()
+    if not source_format_paths:
+        source_format_paths = metadata.source_image_paths
+    source_formats = tuple(
+        type(ImageFileFormat.require_path(path)) for path in source_format_paths
+    )
+    return bool(source_formats) and all(
+        source_format is PngImageFileFormat for source_format in source_formats
+    )

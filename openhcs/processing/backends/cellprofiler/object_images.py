@@ -2,49 +2,18 @@
 
 from __future__ import annotations
 from enum import Enum
-from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
-    CellProfilerObjectInputCountAuthority,
-)
-from openhcs.interop.cellprofiler.runtime.output_contexts import (
-    CellProfilerImageOutputSourcePayloadPolicyMixin,
-)
-from openhcs.interop.cellprofiler.runtime.output_record_request import (
-    CellProfilerOutputRecordRequest,
-)
-from openhcs.interop.cellprofiler.runtime.payload_types import (
-    CellProfilerKwargDict,
-    CellProfilerRuntimeValue,
-)
-from openhcs.interop.cellprofiler.runtime.special_input_policies import (
-    NoSpecialImageInputsMixin,
-    SpecialInputBindingRequest,
-)
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     cellprofiler_enum_value_setting_parser,
 )
+from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
 from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
-    BinderSettingsSourceModule,
-    BoundModuleSettings,
     CellProfilerModule,
-    ImageArtifactOutputModule,
-    ModuleSettingsSourceModule,
+)
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
     ObjectArtifactInputModule,
-    ScopedMeasurementModule,
-    StructuringElementSettingsModule,
 )
-from openhcs.interop.cellprofiler.setting_names import (
-    optional_setting_value,
-    setting_values,
-    split_symbol_names,
-)
-from openhcs.interop.cellprofiler.cellprofiler_literals import (
-    cellprofiler_enum_from_literal,
-)
-from openhcs.processing.backends.cellprofiler.thresholding import (
-    ThresholdSettingsModule,
-)
+from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
 
 
 class ConvertObjectsToImageMode(Enum):
@@ -56,43 +25,21 @@ class ConvertObjectsToImageMode(Enum):
     UINT16 = "uint16"
 
 
-class ConvertObjectsToImageSpecialInputPolicy(NoSpecialImageInputsMixin):
-    """Bind object labels as payloads so rendered images inherit label provenance."""
-
-    def bind(self, request: SpecialInputBindingRequest) -> CellProfilerKwargDict:
-        object_inputs = request.object_inputs
-        CellProfilerObjectInputCountAuthority.require_exact(
-            request.module_name, object_inputs, 1
-        )
-        return {"labels": request.object_label_payload(object_inputs[0])}
-
-
-class ConvertObjectsToImageOutputSourcePayloadPolicy(
-    CellProfilerImageOutputSourcePayloadPolicyMixin
-):
-    """Use the input object-label payload as provenance for rendered images."""
-
-    def source_payload(
-        self, request: CellProfilerOutputRecordRequest
-    ) -> CellProfilerRuntimeValue | None:
-        return request.input_object_label_output_source_payload()
-
-
 class ConvertObjectsToImageModule(
-    ConvertObjectsToImageOutputSourcePayloadPolicy,
-    ConvertObjectsToImageSpecialInputPolicy,
     ObjectArtifactInputModule,
-    ImageArtifactOutputModule,
     CellProfilerModule,
 ):
     module_name = "ConvertObjectsToImage"
     function_name = "convert_objects_to_image"
     validated = True
-    contract = ProcessingContract.PURE_3D
     confidence = 1.0
-    object_input_settings = ("Select the input objects",)
-    image_output_settings = ("Name the output image",)
+    input_objects_setting = SettingNameFamily("Select the input objects")
+    output_image_setting = SettingNameFamily("Name the output image")
     setting_bindings = (
+        SettingToKeywordBinding.input(
+            input_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="labels"
+        ),
+        SettingToKeywordBinding.output(output_image_setting, ImageArtifactType),
         SettingToKeywordBinding(
             "Select the color format",
             "image_mode",
@@ -109,19 +56,29 @@ from typing import ClassVar
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory import numpy as numpy_decorator
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.pipeline.function_contracts import (
+    ObjectLabelInputExecutionMode,
+    object_label_input_execution_mode,
+    special_inputs,
+    )
 from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.runtime_values import (
+from openhcs.core.runtime_image_values import (
+    ImagePayloadMetadata,
     image_payload_metadata,
-    object_label_dense_array,
     with_image_payload_data,
+)
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelValue,
+    object_label_dense_array,
+)
+from openhcs.core.runtime_object_label_building import (
+    SourceImageObjectLabelBuildRequest,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.analysis.region_properties import (
     LabelRegionPropertiesBackendStrategy,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 
 class ImageMode(Enum):
@@ -215,24 +172,24 @@ def object_label_colormap(colormap_name: str, num_labels: int) -> np.ndarray:
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
-@special_outputs(
-    (
-        "conversion_stats",
-        csv_materializer(
-            fields=["slice_index", "object_count", "mean_area", "total_area"],
-            analysis_type="object_conversion",
-        ),
-    ),
-    ("labels", segmentation_mask_rois()),
-)
 def convert_image_to_objects(
     image: np.ndarray,
     cast_to_bool: bool = False,
     preserve_label: bool = False,
     background: int = 0,
     connectivity: int = 1,
-) -> tuple[np.ndarray, ObjectConversionStats, np.ndarray]:
-    """Convert an image plane into CellProfiler-compatible object labels."""
+) -> tuple[np.ndarray, ObjectConversionStats, ObjectLabelValue]:
+    """Convert an image plane into CellProfiler-compatible object labels.
+
+    Args:
+        cast_to_bool: Treat every pixel unequal to ``background`` as foreground
+            before labeling.
+        preserve_label: Keep non-background pixel values as object IDs instead of
+            relabeling connected foreground regions.
+        background: Pixel value treated as background and mapped to object label 0.
+        connectivity: Neighborhood connectivity used for connected-component
+            labeling when ``preserve_label`` is false.
+    """
     from skimage.measure import label
 
     working_image = image.copy()
@@ -261,29 +218,47 @@ def convert_image_to_objects(
             mean_area=mean_area,
             total_area=total_area,
         ),
-        labels,
+        SourceImageObjectLabelBuildRequest(
+            image=image,
+            labels=labels,
+            declared_object_count=object_count,
+            declared_object_ids=tuple(int(value) for value in props.label),
+        ).payload(),
     )
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_3D)
+@object_label_input_execution_mode(ObjectLabelInputExecutionMode.FULL_STACK)
 @special_inputs("labels")
 def convert_objects_to_image(
     image: np.ndarray,
-    labels: np.ndarray,
+    labels: ObjectLabelValue,
     image_mode: ImageMode = ImageMode.COLOR,
     colormap_value: str = "jet",
 ) -> np.ndarray:
-    """Render object labels into the requested CellProfiler image mode."""
+    """Render object labels into the requested CellProfiler image mode.
+
+    Args:
+        labels: Object-label image or volume to render in the selected image mode.
+    """
     del image
     label_array = object_label_dense_array(labels, dtype=np.int32)
     resolved_image_mode = coerce_cellprofiler_enum(ImageMode, image_mode)
     rendered = ImageModeRenderer.for_image_mode(resolved_image_mode).render(
         label_array, colormap_value=colormap_value
     )
+    label_metadata = image_payload_metadata(labels)
+    output_metadata = (
+        ImagePayloadMetadata(intensity_scale=1.0).with_source_context_from(
+            label_metadata
+        )
+        if resolved_image_mode is ImageMode.UINT16
+        else label_metadata
+    )
     return with_image_payload_data(
         labels,
         rendered,
-        metadata=image_payload_metadata(labels).without_unit_interval_intensity_scale(),
+        metadata=output_metadata,
     )
 
 

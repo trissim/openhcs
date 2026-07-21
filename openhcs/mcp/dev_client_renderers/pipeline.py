@@ -305,6 +305,34 @@ class PipelineArtifactPlanRenderer(McpDevOutputRenderer):
                 f"axis={McpDevPayloadProjection.text(step.get('axis_id'))} "
                 f"groups={ViewerValidationRenderer._sequence_text(step.get('execution_groups'))}"
             )
+            main_flow_materialization = McpDevPayloadProjection.nested_mapping(
+                step,
+                "main_flow_materialization",
+            )
+            if main_flow_materialization:
+                lines.append(
+                    "  main-flow checkpoint: "
+                    f"backend={McpDevPayloadProjection.text(main_flow_materialization.get('backend'))} "
+                    f"output_dir={McpDevPayloadProjection.text(main_flow_materialization.get('output_dir'))} "
+                    f"sub_dir={McpDevPayloadProjection.text(main_flow_materialization.get('sub_dir'))}"
+                )
+            viewer_streaming = McpDevPayloadProjection.sequence_of_mappings(
+                step.get("viewer_streaming")
+            )
+            for viewer in viewer_streaming:
+                effective_config = McpDevPayloadProjection.nested_mapping(
+                    viewer,
+                    "effective_config",
+                )
+                line = (
+                    "  viewer stream: "
+                    f"viewer={McpDevPayloadProjection.text(viewer.get('viewer_type'))} "
+                    f"config={McpDevPayloadProjection.text(viewer.get('config_key'))} "
+                    f"backend={McpDevPayloadProjection.text(viewer.get('backend'))}"
+                )
+                if effective_config:
+                    line += f" effective={cls._mapping_text(effective_config)}"
+                lines.append(line)
             artifact_inputs = McpDevPayloadProjection.sequence_of_mappings(
                 step.get("artifact_inputs")
             )

@@ -1,21 +1,64 @@
 """CellProfiler-compatible skeleton measurement backends."""
 
 from __future__ import annotations
+from openhcs.core.artifacts import ArtifactOutputPlan
+from collections.abc import Callable
+from typing import Annotated, TYPE_CHECKING
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
     CellProfilerModule,
+)
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
+    MeasurementArtifactOutputModule,
+    ObjectArtifactInputModule,
+    PlaneRuntimeArtifactModule,
 )
 from dataclasses import dataclass
 import numpy as np
 import scipy.ndimage
 from skimage.morphology import remove_small_holes, skeletonize
-from openhcs.core.memory.decorators import numpy as numpy_backend
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
-from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.runtime_values import object_label_dense_array
-from openhcs.processing.materialization import (
-    csv_dataclass_materializer,
+from openhcs.core.aligned_image_payload import (
+    AlignedImageSliceContext,
+    pack_aligned_image_outputs,
 )
+from openhcs.core.artifacts import ObjectLabelsArtifactType, ImageArtifactType
+from openhcs.core.memory.decorators import numpy as numpy_backend
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
+)
+from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.core.public_api import public_names_from_objects
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelValue,
+    object_label_dense_array,
+)
+from openhcs.core.runtime_array_values import RuntimeArrayData
+from openhcs.core.runtime_image_values import (
+    image_payload_metadata,
+    with_image_payload_data,
+)
+from openhcs.interop.cellprofiler.parser import ModuleSetting
+from openhcs.interop.cellprofiler.setting_names import (
+    optional_setting_value,
+    required_setting_value,
+)
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    parse_cellprofiler_bool,
+    parse_cellprofiler_int,
+)
+
+SeedObjectLabelsInput = Annotated[
+    ObjectLabelValue,
+    (
+        "Seed-object labels that assign skeleton pixels, branches, and endpoint "
+        "measurements to their originating objects."
+    ),
+]
+
+if TYPE_CHECKING:
+    from openhcs.interop.cellprofiler.parser import ModuleBlock
+
 EIGHT_NEIGHBOR_KERNEL = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=np.uint8)
 
 
@@ -38,6 +81,14 @@ class ObjectSkeletonMeasurement:
     number_non_trunk_branches: int
     number_branch_ends: int
     total_skeleton_length: float
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectSkeletonSliceResult:
+    """Measurements and the exact CellProfiler branchpoint visualization."""
+
+    measurements: tuple[ObjectSkeletonMeasurement, ...]
+    branchpoint_image: np.ndarray
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,11 +161,9 @@ class ObjectSkeletonSliceMeasurement:
     fill_small_holes: bool
     maximum_hole_size: int
 
-    def measurements(self) -> list[ObjectSkeletonMeasurement]:
+    def analyze(self) -> ObjectSkeletonSliceResult:
         labels = self.seed_labels.astype(np.int32)
         label_count = int(np.max(labels))
-        if label_count == 0:
-            return []
         label_range = np.arange(1, label_count + 1, dtype=np.int32)
         disk = DiskStructuringElement(1.5).footprint()
         dilated_labels = scipy.ndimage.grey_dilation(labels, footprint=disk)
@@ -167,7 +216,7 @@ class ObjectSkeletonSliceMeasurement:
             labels=propagated_labels * outside_skeleton.astype(np.int32),
             label_range=label_range,
         ).lengths()
-        return [
+        measurements = tuple(
             ObjectSkeletonMeasurement(
                 slice_index=self.slice_index,
                 object_label=int(label),
@@ -179,7 +228,22 @@ class ObjectSkeletonSliceMeasurement:
                 ),
             )
             for index, label in enumerate(label_range)
-        ]
+        )
+        trunk_mask = (branching_counts > 0) & (nearby_labels != 0)
+        branch_mask = branch_points & (outside_labels != 0)
+        end_mask = end_points & (outside_labels != 0)
+        branchpoint_image = np.zeros((*self.skeleton.shape, 3), dtype=float)
+        branchpoint_image[outside_skeleton, :] = 1
+        branchpoint_image[trunk_mask | branch_mask | end_mask, :] = 0
+        branchpoint_image[trunk_mask, 0] = 1
+        branchpoint_image[branch_mask, 1] = 1
+        branchpoint_image[end_mask, 2] = 1
+        branchpoint_image[dilated_labels != 0, :] *= 0.875
+        branchpoint_image[dilated_labels != 0, :] += 0.1
+        return ObjectSkeletonSliceResult(measurements, branchpoint_image)
+
+    def measurements(self) -> list[ObjectSkeletonMeasurement]:
+        return list(self.analyze().measurements)
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,30 +287,12 @@ class SkeletonLengthByLabel:
 
 
 @numpy_backend(contract=ProcessingContract.PURE_2D)
-@special_outputs(
-    (
-        "skeleton_measurements",
-        csv_dataclass_materializer(
-            SkeletonMeasurement,
-            analysis_type="skeleton_measurement",
-        ),
-    )
-)
 def measure_image_skeleton(image: np.ndarray) -> tuple[np.ndarray, SkeletonMeasurement]:
     """Measure branches and endpoints in a 2-D skeletonized image."""
     return (image, SkeletonNeighborhood(image).measurement())
 
 
 @numpy_backend(contract=ProcessingContract.PURE_3D)
-@special_outputs(
-    (
-        "skeleton_measurements_3d",
-        csv_dataclass_materializer(
-            SkeletonMeasurement,
-            analysis_type="skeleton_measurement_3d",
-        ),
-    )
-)
 def measure_image_skeleton_3d(
     image: np.ndarray,
 ) -> tuple[np.ndarray, SkeletonMeasurement]:
@@ -254,45 +300,99 @@ def measure_image_skeleton_3d(
     return (image, SkeletonNeighborhood(image).measurement())
 
 
-@numpy_backend
+@numpy_backend(contract=ProcessingContract.PURE_2D)
 @special_inputs("seed_labels")
-@special_outputs(
-    (
-        "skeleton_measurements",
-        csv_dataclass_materializer(
-            ObjectSkeletonMeasurement,
-            analysis_type="object_skeleton",
-        ),
-    )
-)
 def measure_object_skeleton(
     image: np.ndarray,
-    seed_labels: np.ndarray,
+    seed_labels: SeedObjectLabelsInput,
     fill_small_holes: bool = True,
     maximum_hole_size: int = 10,
-) -> tuple[np.ndarray, list[ObjectSkeletonMeasurement]]:
+) -> tuple[RuntimeArrayData, DataclassMeasurementColumnarRows]:
     """Measure branching structures in skeletonized images relative to seed objects."""
-    image_stack = image[np.newaxis, :, :] if image.ndim == 2 else image
-    label_stack = object_label_dense_array(seed_labels, dtype=np.int32)
-    if label_stack.ndim == 2:
-        label_stack = label_stack[np.newaxis, :, :]
-    measurements: list[ObjectSkeletonMeasurement] = []
-    for slice_index in range(image_stack.shape[0]):
-        labels_slice = (
-            label_stack[slice_index]
-            if slice_index < label_stack.shape[0]
-            else label_stack[0]
+
+    result = _object_skeleton_slice_analysis(
+        image,
+        seed_labels,
+        fill_small_holes=fill_small_holes,
+        maximum_hole_size=maximum_hole_size,
+    )
+    return (
+        image,
+        DataclassMeasurementColumnarRows(
+            result.measurements,
+            row_type=ObjectSkeletonMeasurement,
+        ),
+    )
+
+
+@numpy_backend(contract=ProcessingContract.PURE_2D)
+@special_inputs("seed_labels")
+def measure_object_skeleton_with_branchpoint_image(
+    image: np.ndarray,
+    seed_labels: SeedObjectLabelsInput,
+    fill_small_holes: bool = True,
+    maximum_hole_size: int = 10,
+    branchpoint_image_name: str = "BranchpointImage",
+) -> tuple[RuntimeArrayData, DataclassMeasurementColumnarRows]:
+    """Measure object skeletons and retain the named branchpoint RGB image."""
+
+    if not branchpoint_image_name.strip():
+        raise ValueError(
+            "MeasureObjectSkeleton branchpoint image name cannot be blank."
         )
-        measurements.extend(
-            ObjectSkeletonSliceMeasurement(
-                skeleton=image_stack[slice_index],
-                seed_labels=labels_slice,
-                slice_index=slice_index,
-                fill_small_holes=fill_small_holes,
-                maximum_hole_size=maximum_hole_size,
-            ).measurements()
+    result = _object_skeleton_slice_analysis(
+        image,
+        seed_labels,
+        fill_small_holes=fill_small_holes,
+        maximum_hole_size=maximum_hole_size,
+    )
+    branchpoint_payload = with_image_payload_data(
+        image,
+        result.branchpoint_image,
+        metadata=image_payload_metadata(image).replace_fields(source_channel_axis=-1),
+    )
+    branchpoint_image = pack_aligned_image_outputs(
+        (branchpoint_payload,),
+        slice_contexts=(
+            AlignedImageSliceContext.main_flow(
+                branchpoint_image_name,
+                artifact_kind=ImageArtifactType.value,
+            ),
+        ),
+    )
+    return (
+        branchpoint_image,
+        DataclassMeasurementColumnarRows(
+            result.measurements,
+            row_type=ObjectSkeletonMeasurement,
+        ),
+    )
+
+
+def _object_skeleton_slice_analysis(
+    image: np.ndarray,
+    seed_labels: ObjectLabelValue,
+    *,
+    fill_small_holes: bool,
+    maximum_hole_size: int,
+) -> ObjectSkeletonSliceResult:
+    if not isinstance(seed_labels, ObjectLabelValue):
+        raise TypeError(
+            "MeasureObjectSkeleton requires a runtime-projected ObjectLabelValue."
         )
-    return (image, measurements)
+    image_plane = np.asarray(image)
+    label_plane = object_label_dense_array(seed_labels, dtype=np.int32)
+    if image_plane.ndim != 2 or label_plane.ndim != 2:
+        raise ValueError(
+            "MeasureObjectSkeleton requires runtime-projected 2-D image and label planes."
+        )
+    return ObjectSkeletonSliceMeasurement(
+        skeleton=image_plane,
+        seed_labels=label_plane,
+        slice_index=0,
+        fill_small_holes=fill_small_holes,
+        maximum_hole_size=maximum_hole_size,
+    ).analyze()
 
 
 class MeasureImageSkeletonModule(CellProfilerModule):
@@ -302,11 +402,167 @@ class MeasureImageSkeletonModule(CellProfilerModule):
     confidence = 1.0
 
 
-class MeasureObjectSkeletonModule(CellProfilerModule):
+class MeasureObjectSkeletonModule(
+    PlaneRuntimeArtifactModule,
+    ObjectArtifactInputModule,
+    MeasurementArtifactOutputModule,
+    CellProfilerModule,
+):
     module_name = "MeasureObjectSkeleton"
     function_name = "measure_object_skeleton"
+    function_variants = ("measure_object_skeleton_with_branchpoint_image",)
     validated = True
     confidence = 1.0
+
+    seed_objects_setting = "Select the seed objects"
+    skeleton_image_setting = "Select the skeletonized image"
+    retain_branchpoint_image_setting = "Retain the branchpoint image?"
+    branchpoint_image_setting = "Name the branchpoint image"
+    fill_small_holes_setting = "Fill small holes?"
+    maximum_hole_size_setting = "Maximum hole size"
+    export_graph_setting = "Export the skeleton graph relationships?"
+    intensity_image_setting = "Intensity image"
+    graph_directory_setting = "File output directory"
+    vertex_file_setting = "Vertex file name"
+    edge_file_setting = "Edge file name"
+    branchpoint_image_binding = SettingToKeywordBinding.output(
+        branchpoint_image_setting,
+        ImageArtifactType,
+        "branchpoint_image_name",
+    )
+    setting_bindings = (
+        SettingToKeywordBinding.input(skeleton_image_setting, ImageArtifactType),
+        SettingToKeywordBinding.input(
+            seed_objects_setting,
+            ObjectLabelsArtifactType,
+            runtime_parameter_name="seed_labels",
+        ),
+        branchpoint_image_binding,
+        SettingToKeywordBinding(
+            fill_small_holes_setting,
+            "fill_small_holes",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            maximum_hole_size_setting,
+            "maximum_hole_size",
+            parse_cellprofiler_int,
+        ),
+    )
+    ignored_settings = (
+        retain_branchpoint_image_setting,
+        export_graph_setting,
+        intensity_image_setting,
+        graph_directory_setting,
+        vertex_file_setting,
+        edge_file_setting,
+    )
+
+    @classmethod
+    def retain_branchpoint_image(cls, module: "ModuleBlock") -> bool:
+        return parse_cellprofiler_bool(
+            required_setting_value(module, cls.retain_branchpoint_image_setting)
+        )
+
+    @classmethod
+    def active_artifact_bindings(cls, module=None, *, invocation_key=None):
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
+        )
+        if module is None:
+            return bindings
+        retain_setting = optional_setting_value(
+            module,
+            cls.retain_branchpoint_image_setting,
+        )
+        if retain_setting is None:
+            if invocation_key is None:
+                required_setting_value(
+                    module,
+                    cls.retain_branchpoint_image_setting,
+                )
+            retain_branchpoint_image = (
+                invocation_key.function_name == cls.function_variants[0]
+            )
+        else:
+            retain_branchpoint_image = parse_cellprofiler_bool(retain_setting)
+        return tuple(
+            binding
+            for binding in bindings
+            if retain_branchpoint_image
+            or binding is not cls.branchpoint_image_binding
+        )
+
+    @classmethod
+    def main_flow_output_specs(cls, main_flow_candidates):
+        """Record the retained image without replacing the skeleton main flow."""
+
+        del cls, main_flow_candidates
+        return ()
+
+    @classmethod
+    def bind_settings(cls, module, *, binder):
+        graph_setting = optional_setting_value(module, cls.export_graph_setting)
+        if graph_setting is not None and parse_cellprofiler_bool(graph_setting):
+            raise NotImplementedError(
+                "MeasureObjectSkeleton graph export is not supported by the "
+                "absorbed callable."
+            )
+        return super().bind_settings(module, binder=binder)
+
+    @classmethod
+    def resolve_function(
+        cls,
+        module: "ModuleBlock",
+        *,
+        contract,
+        source_bindings,
+    ) -> Callable[..., object]:
+        """Select the retained-image ABI from the declared retain setting."""
+
+        del contract, source_bindings
+        return cls.require_callable(
+            cls.function_variants[0]
+            if cls.retain_branchpoint_image(module)
+            else cls.function_name
+        )
+
+    @classmethod
+    def _derived_identity_setting_records(
+        cls,
+        *,
+        invocation,
+        block_position,
+        existing_records,
+        step_context,
+    ):
+        """Reconstruct the retain condition from the explicit callable ABI."""
+
+        setting_key = cls.normalize_setting_name(cls.retain_branchpoint_image_setting)
+        own_records = (
+            ()
+            if setting_key in cls._normalized_record_setting_names(existing_records)
+            else (
+                ModuleSetting(
+                    cls.retain_branchpoint_image_setting,
+                    (
+                        "Yes"
+                        if invocation.contract.function_name == cls.function_variants[0]
+                        else "No"
+                    ),
+                ),
+            )
+        )
+        return (
+            *own_records,
+            *super()._derived_identity_setting_records(
+                invocation=invocation,
+                block_position=block_position,
+                existing_records=(*existing_records, *own_records),
+                step_context=step_context,
+            ),
+        )
 
 
 __all__ = public_names_from_objects(
@@ -322,4 +578,5 @@ __all__ = public_names_from_objects(
     measure_image_skeleton,
     measure_image_skeleton_3d,
     measure_object_skeleton,
+    measure_object_skeleton_with_branchpoint_image,
 )

@@ -1,177 +1,498 @@
 from __future__ import annotations
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
 
-import csv
-from dataclasses import replace
+import ast
 import os
-from pathlib import Path
 import re
+from functools import lru_cache
+from pathlib import Path
+from typing import cast
 
-from openhcs.interop.cellprofiler.runtime_pipeline import (
-    DirectPipelineExecution,
-    execute_pipeline_direct,
-    prepare_generated_pipeline,
-)
-from openhcs.interop.cellprofiler.source_schema_ingestion import (
-    CellProfilerSourceSchemaWorkspaceRequest,
-    prepare_cellprofiler_source_schema_workspace,
-)
-from openhcs.interop.cellprofiler.execution_validation import validate_cppipe_execution
 import numpy as np
 import pytest
 import tifffile
+from objectstate import replace_raw
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
-from openhcs.constants import Microscope
+from PIL import Image
+from polystore.base import _create_storage_registry
+from polystore.filemanager import FileManager
+from scipy.io import savemat
+from zmqruntime.execution.responses import (
+    ExecutionSubmissionResponse,
+    ExecutionWaitResult,
+)
+
+from benchmark.cellprofiler_comparison import (
+    CellProfilerComparisonCase,
+    load_comparison_cases,
+)
+from openhcs.constants import Backend, Microscope
 from openhcs.constants.constants import AllComponents
+from openhcs.constants.input_source import InputSource
 from openhcs.core.artifacts import (
     ArtifactType,
     ImageArtifactType,
-    ObjectLabelsArtifactType,
     MeasurementsArtifactType,
+    ObjectLineageArtifactType,
+    ObjectLabelsArtifactType,
     RelationshipsArtifactType,
     SpatialGridArtifactType,
 )
 from openhcs.core.config import (
     AnalysisConsolidationConfig,
     GlobalPipelineConfig,
-    LazyWellFilterConfig,
     LazyPathPlanningConfig,
+    LazyProcessingConfig,
+    LazyVFSConfig,
+    LazyWellFilterConfig,
     MaterializationBackend,
     PipelineConfig,
-    VFSConfig,
 )
-from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-from openhcs.core.runtime_artifact_queries import (
-    RuntimeArtifactQueryContext,
-    runtime_relationship,
+from openhcs.core.function_step_transport import FunctionStepTransportAuthority
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelValue,
+    object_label_dense_array,
 )
-from openhcs.core.runtime_values import ObjectRelationship, object_label_dense_array
+from openhcs.core.runtime_measurements import MeasurementTable
+from openhcs.core.runtime_relationships import (
+    ObjectRelationship,
+)
+from openhcs.core.runtime_plane_projection import RuntimePlaneAxis
+from openhcs.core.runtime_tabular_values import measurement_row_mapping
+from openhcs.core.runtime_stores import StoredRuntimeValue
+from openhcs.core.source_binding_workspace import (
+    SourceBindingWorkspaceMaterialization,
+    materialize_source_binding_workspace,
+)
 from openhcs.core.source_bindings import (
     ComponentSelector,
+    LazySourceBindingsConfig,
+    NamedSourceBinding,
     SourceBindingOrigin,
+    SourceFilterClause,
     SourceFilterMatchType,
     SourceFilterSubject,
+    SourceSelector,
+    source_bindings_defaults_to_base,
 )
-from openhcs.core.source_schema_workspace import (
-    SourceSchemaImageSetSelection,
-    SourceSchemaWorkspaceMaterialization,
-    materialize_source_schema_workspace,
+from openhcs.core.steps.function_step import FunctionStep
+from openhcs.interop.cellprofiler.pipeline_import import import_cellprofiler_pipeline
+from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
+from openhcs.processing.backends.cellprofiler import align
+from openhcs.runtime.zmq_execution_client import (
+    OpenHCSExecutionSubmission,
+    ZMQExecutionClient,
+)
+from openhcs.runtime.zmq_execution_observation import (
+    ZMQRuntimeExecutionObservationExport,
 )
 from openhcs.tests.generators.generate_synthetic_data import (
     SyntheticMicroscopyGenerator,
 )
-from PIL import Image
-from scipy.io import savemat
 
 
-def _generated_pipeline_config(
-    prepared,
+def _materialize_imported_sources(
     *,
-    path_planning_config: LazyPathPlanningConfig,
-    vfs_config: VFSConfig,
-    well_filter_config: LazyWellFilterConfig | None = None,
-) -> PipelineConfig:
-    config = prepared.generated_pipeline.pipeline_config
-    overrides = {
-        "path_planning_config": path_planning_config,
-        "vfs_config": vfs_config,
+    cppipe_path: Path,
+    source_root: Path,
+    workspace_root: Path,
+    pipeline_config: PipelineConfig,
+) -> SourceBindingWorkspaceMaterialization | None:
+    source_bindings = source_bindings_defaults_to_base(
+        pipeline_config.source_bindings_config
+    ).resolved_imported_metadata_locations(
+        source_root,
+        portable_roots=(cppipe_path.parent,),
+    )
+    if source_bindings.is_empty:
+        return None
+    filemanager = FileManager(_create_storage_registry())
+    return materialize_source_binding_workspace(
+        source_root,
+        workspace_root,
+        source_bindings,
+        filemanager=filemanager,
+        source_backend=Backend.DISK,
+        workspace_backend=Backend.DISK,
+        source_files=tuple(
+            filemanager.list_files(
+                source_root,
+                Backend.DISK.value,
+                recursive=True,
+            )
+        ),
+        parser=SourceSchemaFilenameParser(),
+    )
+
+
+def _execute_imported_cppipe_via_zmq(
+    tmp_path: Path,
+    *,
+    cppipe_path: Path,
+    source_root: Path,
+    microscope: Microscope = Microscope.AUTO,
+    well_filter: tuple[str, ...] | int | None = None,
+    materialize_runtime_artifacts: bool = True,
+) -> tuple[
+    SourceBindingWorkspaceMaterialization | None,
+    ZMQRuntimeExecutionObservationExport,
+]:
+    pipeline_steps, imported_config = import_cellprofiler_pipeline(
+        cppipe_path,
+        source_root=source_root,
+    )
+    assert pipeline_steps
+
+    workspace = _materialize_imported_sources(
+        cppipe_path=cppipe_path,
+        source_root=source_root,
+        workspace_root=tmp_path / f"{cppipe_path.stem}_source_workspace",
+        pipeline_config=imported_config,
+    )
+    execution_plate_path = (
+        source_root if workspace is None else workspace.workspace_root
+    )
+    global_config = GlobalPipelineConfig(
+        num_workers=1,
+        use_threading=False,
+        microscope=microscope,
+        materialize_runtime_artifacts=materialize_runtime_artifacts,
+        analysis_consolidation_config=AnalysisConsolidationConfig(enabled=False),
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = replace_raw(
+        imported_config,
+        path_planning_config=LazyPathPlanningConfig(
+            global_output_folder=tmp_path / "zmq_outputs",
+            output_dir_suffix="_imported_cppipe_zmq",
+        ),
+        vfs_config=LazyVFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+        well_filter_config=(
+            None
+            if well_filter is None
+            else LazyWellFilterConfig(
+                well_filter=(
+                    well_filter if isinstance(well_filter, int) else list(well_filter)
+                )
+            )
+        ),
+    )
+    observation_path = tmp_path / f"{cppipe_path.stem}_runtime_observation.pkl"
+    config_params = {
+        "runtime_observation_export_path": str(observation_path),
     }
-    if well_filter_config is not None:
-        overrides["well_filter_config"] = well_filter_config
-    return replace(config, **overrides)
+    submission = OpenHCSExecutionSubmission(
+        plate_id=source_root,
+        execution_plate_id=execution_plate_path,
+        selected_pipeline_path=cppipe_path,
+        pipeline_document=PipelineDocumentAuthority.from_values(
+            pipeline_config=pipeline_config, pipeline_steps=pipeline_steps
+        ),
+        global_config=global_config,
+        config_params=config_params,
+    )
+    assert submission.pipeline_code() == (
+        FunctionStepTransportAuthority.source_from_pipeline(pipeline_steps)
+    )
+
+    client = ZMQExecutionClient(
+        port=18000 + os.getpid() % 20000,
+        persistent=False,
+    )
+    try:
+        assert client.connect(timeout=30)
+        compile_response = ExecutionSubmissionResponse.from_wire(
+            client.submit_compile(submission)
+        )
+        compile_id = compile_response.require_execution_id(
+            "CellProfiler integration compilation"
+        )
+        ExecutionWaitResult.from_wire(
+            client.wait_for_completion(compile_id)
+        ).require_complete("CellProfiler integration compilation")
+
+        execution_submission = OpenHCSExecutionSubmission(
+            plate_id=source_root,
+            execution_plate_id=execution_plate_path,
+            selected_pipeline_path=cppipe_path,
+            pipeline_document=PipelineDocumentAuthority.from_values(
+                pipeline_config=pipeline_config, pipeline_steps=pipeline_steps
+            ),
+            global_config=global_config,
+            config_params=config_params,
+            compile_artifact_id=compile_id,
+        )
+        execution_response = ExecutionSubmissionResponse.from_wire(
+            client.submit_pipeline(execution_submission)
+        )
+        execution_id = execution_response.require_execution_id(
+            "CellProfiler integration execution"
+        )
+        ExecutionWaitResult.from_wire(
+            client.wait_for_completion(execution_id)
+        ).require_complete("CellProfiler integration execution")
+    finally:
+        client.disconnect()
+
+    export = ZMQRuntimeExecutionObservationExport.read(observation_path)
+    export.require_valid_observation()
+    return workspace, export
 
 
-def test_cppipe_generated_pipeline_executes_through_orchestrator(
+def _runtime_records(
+    export: ZMQRuntimeExecutionObservationExport,
+    *,
+    name: str | None = None,
+    artifact_type: type[ArtifactType] | None = None,
+    axis_id: str | None = None,
+) -> tuple[StoredRuntimeValue, ...]:
+    records = tuple(
+        record
+        for current_axis, axis_records in export.records_by_axis.items()
+        if axis_id is None or current_axis == axis_id
+        for record in axis_records
+        if name is None or record.key.name == name
+        if artifact_type is None or record.key.artifact_type is artifact_type
+    )
+    return records
+
+
+def _single_execution_axis(
+    export: ZMQRuntimeExecutionObservationExport,
+) -> str:
+    axis_ids = tuple(str(axis_id) for axis_id in export.records_by_axis)
+    assert len(axis_ids) == 1
+    return axis_ids[0]
+
+
+def _runtime_export_has_semantic_record(
+    export: ZMQRuntimeExecutionObservationExport,
+    *,
+    name: str | tuple[str, str],
+    artifact_type: type[ArtifactType],
+    axis_id: str,
+) -> bool:
+    if isinstance(name, tuple):
+        if artifact_type is not RelationshipsArtifactType:
+            raise TypeError(
+                "Structured endpoint identity is only valid for relationship records."
+            )
+        return any(
+            isinstance(record.value.data, ObjectRelationship)
+            and (
+                record.value.data.declaration.source.name,
+                record.value.data.declaration.target.name,
+            )
+            == name
+            for record in _runtime_records(
+                export,
+                artifact_type=artifact_type,
+                axis_id=axis_id,
+            )
+        )
+    if _runtime_records(
+        export,
+        name=name,
+        artifact_type=artifact_type,
+        axis_id=axis_id,
+    ):
+        return True
+    if artifact_type is not MeasurementsArtifactType:
+        return False
+    match = re.fullmatch(r"(?P<prefix>.+)_\d+_measurements", name)
+    if match is None:
+        return False
+    prefix = match.group("prefix")
+    return any(
+        record.key.name.startswith(f"{prefix}_")
+        and record.key.name.endswith("_measurements")
+        for record in _runtime_records(
+            export,
+            artifact_type=artifact_type,
+            axis_id=axis_id,
+        )
+    )
+
+
+def test_cellprofiler_integration_uses_public_two_stage_zmq_boundary() -> None:
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    called_attributes = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+
+    assert "submit_compile" in called_attributes
+    assert "submit_pipeline" in called_attributes
+
+
+def test_invalid_public_cellprofiler_step_fails_during_zmq_compilation(
+    tmp_path: Path,
+) -> None:
+    source_root = _generate_plate(tmp_path / "single_channel_plate")
+    selected_pipeline_path = _write_cppipe(tmp_path / "source_config.cppipe")
+    pipeline_steps = [
+        FunctionStep(
+            func=align,
+            name="Align",
+            processing_config=LazyProcessingConfig(
+                input_source=InputSource.PIPELINE_START,
+            ),
+        )
+    ]
+    global_config = GlobalPipelineConfig(
+        num_workers=1,
+        use_threading=False,
+        microscope=Microscope.SOURCE_BINDINGS,
+        analysis_consolidation_config=AnalysisConsolidationConfig(enabled=False),
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = replace_raw(
+        PipelineConfig(
+            microscope=Microscope.SOURCE_BINDINGS,
+            source_bindings_config=LazySourceBindingsConfig(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="OnlyImage",
+                        selector=SourceSelector(
+                            filters=(
+                                SourceFilterClause(
+                                    subject=SourceFilterSubject.FILE,
+                                    match_type=SourceFilterMatchType.CONTAINS,
+                                    value="w1",
+                                ),
+                            ),
+                        ),
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                        component_identity=(
+                            ComponentSelector(AllComponents.CHANNEL, "1"),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        path_planning_config=LazyPathPlanningConfig(
+            global_output_folder=tmp_path / "invalid_compile_outputs",
+        ),
+        vfs_config=LazyVFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+    observation_path = tmp_path / "invalid_compile_observation.pkl"
+    submission = OpenHCSExecutionSubmission(
+        plate_id=source_root,
+        execution_plate_id=source_root,
+        selected_pipeline_path=selected_pipeline_path,
+        pipeline_document=PipelineDocumentAuthority.from_values(
+            pipeline_config=pipeline_config, pipeline_steps=pipeline_steps
+        ),
+        global_config=global_config,
+        config_params={"runtime_observation_export_path": str(observation_path)},
+    )
+    assert submission.pipeline_code() == (
+        FunctionStepTransportAuthority.source_from_pipeline(pipeline_steps)
+    )
+
+    client = ZMQExecutionClient(
+        port=18000 + os.getpid() % 20000,
+        persistent=False,
+    )
+    try:
+        assert client.connect(timeout=30)
+        compile_response = ExecutionSubmissionResponse.from_wire(
+            client.submit_compile(submission)
+        )
+        compile_id = compile_response.require_execution_id(
+            "Invalid CellProfiler integration compilation"
+        )
+        wait_result = ExecutionWaitResult.from_wire(
+            client.wait_for_completion(compile_id)
+        )
+    finally:
+        client.disconnect()
+
+    assert not wait_result.complete
+    diagnostic = wait_result.diagnostic.require_text(
+        "Invalid CellProfiler integration compilation"
+    )
+    assert "step 0" in diagnostic
+    assert "Align" in diagnostic
+    assert "AlignModule" in diagnostic
+    assert "cannot reconstruct an exact module block" in diagnostic
+    assert not observation_path.exists()
+
+
+def test_cppipe_import_returns_only_public_openhcs_declarations(
+    tmp_path: Path,
+) -> None:
+    cppipe_path = _write_bbbc021_cppipe(tmp_path / "public_import.cppipe")
+
+    pipeline_steps, pipeline_config = import_cellprofiler_pipeline(cppipe_path)
+
+    assert pipeline_steps
+    assert all(isinstance(step, FunctionStep) for step in pipeline_steps)
+    assert isinstance(pipeline_config, PipelineConfig)
+    source = FunctionStepTransportAuthority.source_from_pipeline(pipeline_steps)
+    assert "pipeline_steps = [" in source
+    assert "runtime_pipeline" not in source
+
+
+def test_cppipe_import_executes_through_canonical_zmq_path(
     tmp_path: Path,
 ) -> None:
     plate_path = _generate_plate(tmp_path / "plate")
     cppipe_path = _write_cppipe(tmp_path / "identify_primary_objects.cppipe")
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_cellprofiler_pipeline.py",
+
+    _, export = _execute_imported_cppipe_via_zmq(
+        tmp_path,
+        cppipe_path=cppipe_path,
+        source_root=plate_path,
     )
 
-    global_config = GlobalPipelineConfig(num_workers=1, use_threading=True)
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-    )
-    orchestrator = PipelineOrchestrator(plate_path, pipeline_config=pipeline_config)
-    orchestrator.initialize()
-
-    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
-
-    assert prepared.infrastructure_modules
-    assert prepared.registered_functions
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
-
-    nuclei_records = execution.compiled_contexts["A01"].runtime_value_store.find(
+    assert export.axis_count == 1
+    nuclei_records = _runtime_records(
+        export,
         name="Nuclei",
         artifact_type=ObjectLabelsArtifactType,
         axis_id="A01",
     )
     assert len(nuclei_records) == 1
-    assert nuclei_records[0].value.data.max() > 0
+    assert object_label_dense_array(nuclei_records[0].value.data).max() > 0
 
 
-def test_bbbc021_cppipe_generated_pipeline_executes_named_channel_bindings(
+def test_bbbc021_cppipe_executes_named_channel_bindings_through_zmq(
     tmp_path: Path,
 ) -> None:
     plate_path = _generate_bbbc021_plate(tmp_path / "Week1_22123")
     cppipe_path = _write_bbbc021_cppipe(tmp_path / "bbbc021_multichannel.cppipe")
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_bbbc021_cellprofiler_pipeline.py",
-    )
 
-    global_config = GlobalPipelineConfig(
-        num_workers=1,
-        use_threading=True,
+    _, export = _execute_imported_cppipe_via_zmq(
+        tmp_path,
+        cppipe_path=cppipe_path,
+        source_root=plate_path,
         microscope=Microscope.BBBC021,
     )
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-    )
-    orchestrator = PipelineOrchestrator(plate_path, pipeline_config=pipeline_config)
-    orchestrator.initialize()
 
-    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
-
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
-    nuclei_records = execution.compiled_contexts["A01"].runtime_value_store.find(
+    nuclei_records = _runtime_records(
+        export,
         name="Nuclei",
         artifact_type=ObjectLabelsArtifactType,
         axis_id="A01",
     )
-    composite_records = execution.compiled_contexts["A01"].runtime_value_store.find(
+    composite_records = _runtime_records(
+        export,
         name="Composite",
         artifact_type=ImageArtifactType,
         axis_id="A01",
     )
     assert len(nuclei_records) == 1
-    assert nuclei_records[0].value.data.max() > 0
+    assert object_label_dense_array(nuclei_records[0].value.data).max() > 0
     assert len(composite_records) == 1
 
 
-def test_bbbc021_canonical_illum_cppipe_executes_real_pipeline_shape(
+def test_bbbc021_canonical_illum_cppipe_materializes_declared_images_through_zmq(
     tmp_path: Path,
 ) -> None:
     plate_path = _generate_bbbc021_plate(tmp_path / "Week1_22123")
@@ -186,202 +507,188 @@ def test_bbbc021_canonical_illum_cppipe_executes_real_pipeline_shape(
         / "cellprofiler_pipelines"
         / "BBBC021_illum.cppipe"
     )
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_bbbc021_illum_pipeline.py",
-    )
 
-    global_config = GlobalPipelineConfig(
-        num_workers=1,
-        use_threading=True,
+    _, export = _execute_imported_cppipe_via_zmq(
+        tmp_path,
+        cppipe_path=cppipe_path,
+        source_root=plate_path,
         microscope=Microscope.BBBC021,
     )
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-    )
-    orchestrator = PipelineOrchestrator(plate_path, pipeline_config=pipeline_config)
-    orchestrator.initialize()
 
-    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
-
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
-    generated_images = sorted(
-        (_generated_output_root(plate_path) / "images").glob("*.tif")
-    )
-    assert [path.name for path in generated_images] == [
-        "A01_s1_w1_z001_t001.tif",
-        "A01_s1_w2_z001_t001.tif",
-        "A01_s1_w4_z001_t001.tif",
-    ]
-    generated_artifacts = sorted(
-        (_generated_output_root(plate_path) / "images_results").glob("*_slice_000.tif")
-    )
-    assert [path.name for path in generated_artifacts] == [
-        "A01_s1_w1_z001_t001_IllumDAPI_step0_slice_000.tif",
-        "A01_s1_w2_z001_t001_IllumActin_step0_slice_000.tif",
-        "A01_s1_w4_z001_t001_IllumTubulin_step0_slice_000.tif",
-    ]
+    image_names = {path.name for path in export.exports.image_outputs}
+    assert image_names == {
+        "fields_IllumActin.npy",
+        "fields_IllumActinAvg.npy",
+        "fields_IllumDAPI.npy",
+        "fields_IllumDAPIAvg.npy",
+        "fields_IllumTubulin.npy",
+        "fields_IllumTubulinAvg.npy",
+    }
 
 
-def test_loadimages_cppipe_executes_pipeline_start_mat_illumination_binding(
+def test_loadimages_cppipe_preserves_source_artifact_bindings_through_zmq(
     tmp_path: Path,
 ) -> None:
     plate_path = _generate_loadimages_mat_illum_plate(tmp_path / "mat_illum_plate")
     cppipe_path = _write_loadimages_mat_illum_cppipe(
         tmp_path / "loadimages_mat_illum.cppipe"
     )
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_loadimages_mat_illum_pipeline.py",
+    _, imported_config = import_cellprofiler_pipeline(cppipe_path)
+    source_bindings = source_bindings_defaults_to_base(
+        imported_config.source_bindings_config
     )
-
-    raw_assignment = prepared.source_schema.resolved_assignment_for_alias("Raw")
-    illum_assignment = prepared.source_schema.resolved_source_artifact_for_alias(
-        "Illum",
-        ImageArtifactType,
-    )
+    raw_assignment = source_bindings.binding_for_alias("Raw")
+    illum_assignment = source_bindings.binding_for_alias("Illum")
     assert raw_assignment is not None
-    assert raw_assignment.origin is SourceBindingOrigin.PIPELINE_START
     assert illum_assignment is not None
+    assert raw_assignment.origin is SourceBindingOrigin.PIPELINE_START
     assert illum_assignment.origin is SourceBindingOrigin.PIPELINE_START
 
-    global_config = GlobalPipelineConfig(
-        num_workers=1,
-        use_threading=True,
+    _, export = _execute_imported_cppipe_via_zmq(
+        tmp_path,
+        cppipe_path=cppipe_path,
+        source_root=plate_path,
         microscope=Microscope.IMAGEXPRESS,
     )
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-    )
-    orchestrator = PipelineOrchestrator(plate_path, pipeline_config=pipeline_config)
-    orchestrator.initialize()
 
-    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
-
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
-    corrected_records = execution.compiled_contexts["A01"].runtime_value_store.find(
+    corrected_records = _runtime_records(
+        export,
         name="CorrectedRaw",
         artifact_type=ImageArtifactType,
         axis_id="A01",
     )
     assert len(corrected_records) == 1
     assert np.asarray(corrected_records[0].value.data).shape[-2:] == (64, 64)
-    assert sorted(
-        path.name
-        for path in (_generated_output_root(plate_path) / "images").glob("*.tif")
-    ) == ["A01_s001_w1_z001_t001.tif"]
 
 
-def test_examplefly_cppipe_generated_pipeline_executes_real_pipeline_shape(
-    tmp_path: Path,
-) -> None:
-    plate_path = _generate_two_channel_plate(tmp_path / "examplefly_plate")
+def test_legacy_examplefly_load_data_cppipe_fails_at_nominal_import_boundary() -> None:
     cppipe_path = (
         Path(__file__).resolve().parents[2]
         / "benchmark"
         / "cellprofiler_pipelines"
         / "ExampleFly.cppipe"
     )
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_examplefly_cellprofiler_pipeline.py",
+
+    with pytest.raises(
+        KeyError,
+        match="No CellProfiler module declaration.*LoadData",
+    ):
+        import_cellprofiler_pipeline(cppipe_path)
+
+
+def test_cppipe_relationship_outputs_are_compiler_derived_over_zmq(
+    tmp_path: Path,
+) -> None:
+    plate_path = _generate_plate(tmp_path / "relationship_plate")
+    cppipe_path = _write_relationship_cppipe(tmp_path / "relate_objects.cppipe")
+
+    _, export = _execute_imported_cppipe_via_zmq(
+        tmp_path,
+        cppipe_path=cppipe_path,
+        source_root=plate_path,
     )
 
-    blue_assignment = prepared.source_schema.resolved_assignment_for_alias("OrigBlue")
-    green_assignment = prepared.source_schema.resolved_assignment_for_alias("OrigGreen")
-    assert blue_assignment is not None
-    assert blue_assignment.selector.components == (
-        ComponentSelector(AllComponents.CHANNEL, "1"),
-    )
-    assert green_assignment is not None
-    assert green_assignment.selector.components == (
-        ComponentSelector(AllComponents.CHANNEL, "2"),
-    )
-    assert any(
-        module.name == "ExportToSpreadsheet"
-        for module in prepared.infrastructure_modules
-    )
-
-    global_config = GlobalPipelineConfig(num_workers=1, use_threading=True)
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-    )
-    orchestrator = PipelineOrchestrator(plate_path, pipeline_config=pipeline_config)
-    orchestrator.initialize()
-
-    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
-
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
-    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
-    assert runtime_store.find(
-        name="Cells",
-        artifact_type=ObjectLabelsArtifactType,
+    relationship_records = _runtime_records(
+        export,
+        artifact_type=RelationshipsArtifactType,
         axis_id="A01",
     )
-    assert runtime_store.find(
-        name="Cytoplasm",
-        artifact_type=ObjectLabelsArtifactType,
-        axis_id="A01",
-    )
-    assert runtime_store.find(
+    measurement_records = _runtime_records(
+        export,
         artifact_type=MeasurementsArtifactType,
         axis_id="A01",
     )
-    csv_outputs = sorted(
-        path
-        for path in _generated_results_dir(plate_path).rglob("*.csv")
-        if "summary" not in path.name.lower()
-    )
-    assert len(csv_outputs) >= 6
-    assert all(path.stat().st_size > 0 for path in csv_outputs)
-    headers_by_name = {path.name: _csv_header(path) for path in csv_outputs}
-    assert _matching_header(
-        headers_by_name,
-        "MeasureObjectSizeShape",
-    )[:4] == ["slice_index", "object_label", "area", "perimeter"]
-    assert "contrast" in _matching_header(headers_by_name, "MeasureTexture")
-    assert any(
-        "correlation_manders" in column
-        for column in _matching_header(headers_by_name, "MeasureColocalization")
-    )
-    assert all(
-        "slice_index" in header
-        for name, header in headers_by_name.items()
-        if any(prefix in name for prefix in ("MeasureObjectSizeShape", "MeasureTexture"))
-    )
+    assert relationship_records
+    assert measurement_records
+    relationship = cast(ObjectRelationship, relationship_records[0].value.data)
+    assert relationship.declaration.source.name == "Nuclei"
+    assert relationship.declaration.target.name == "Cells"
+    assert relationship.declaration.relationship_type == "Parent"
+
+    headers_by_name = {
+        path.name: list(export.exports.table_headers_by_path[path])
+        for path in export.exports.table_outputs
+    }
+    assert _matching_header(headers_by_name, "relationships") == [
+        "relationship_type",
+        "source_role",
+        "target_role",
+        "source_object",
+        "target_object",
+        "producer_module_number",
+        "parent_id",
+        "child_id",
+        "image_number",
+        "slice_count",
+    ]
+    assert _matching_header(headers_by_name, "Image.csv") == [
+        "image_number",
+        "Count_Nuclei",
+        "Threshold_FinalThreshold_Nuclei",
+        "Threshold_OrigThreshold_Nuclei",
+        "Threshold_WeightedVariance_Nuclei",
+        "Threshold_SumOfEntropies_Nuclei",
+        "Count_Cells",
+        "Threshold_FinalThreshold_Cells",
+        "Threshold_OrigThreshold_Cells",
+        "Threshold_WeightedVariance_Cells",
+        "Threshold_SumOfEntropies_Cells",
+    ]
 
 
-def test_examplehuman_cppipe_executes_via_source_schema_workspace(
+def test_percent_positive_cppipe_executes_measurement_consumers_over_zmq(
+    tmp_path: Path,
+) -> None:
+    source_root = _generate_percent_positive_source_folder(
+        tmp_path / "ExamplePercentPositive"
+    )
+    cppipe_path = _write_percent_positive_cppipe(tmp_path / "percent_positive.cppipe")
+
+    _, export = _execute_imported_cppipe_via_zmq(
+        tmp_path,
+        cppipe_path=cppipe_path,
+        source_root=source_root,
+        well_filter=1,
+    )
+
+    filtered_object_records = _runtime_records(
+        export,
+        name="PH3PosNuclei",
+        artifact_type=ObjectLabelsArtifactType,
+    )
+    assert len(filtered_object_records) == 1
+    assert _runtime_records(
+        export,
+        name="DisplayImage",
+        artifact_type=ImageArtifactType,
+    )
+    calculate_math_records = tuple(
+        record
+        for record in _runtime_records(
+            export,
+            artifact_type=MeasurementsArtifactType,
+        )
+        if isinstance(record.value.data, MeasurementTable)
+        if any(
+            row_mapping["output_name"] == "PercentPositive"
+            for row in record.value.data.rows.iter_row_mappings()
+            for row_mapping in (measurement_row_mapping(row),)
+            if "output_name" in row_mapping
+        )
+    )
+    assert calculate_math_records
+    calculate_math_table = cast(
+        MeasurementTable,
+        calculate_math_records[0].value.data,
+    )
+    calculate_math_rows = tuple(
+        measurement_row_mapping(row)
+        for row in calculate_math_table.rows.iter_row_mappings()
+    )
+    assert calculate_math_rows[0]["output_name"] == "PercentPositive"
+
+
+def test_examplehuman_cppipe_executes_source_bound_objects_over_zmq(
     tmp_path: Path,
 ) -> None:
     source_root = _generate_examplehuman_source_folder(tmp_path / "ExampleHuman")
@@ -391,142 +698,56 @@ def test_examplehuman_cppipe_executes_via_source_schema_workspace(
         / "cellprofiler_pipelines"
         / "ExampleHuman.cppipe"
     )
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_examplehuman_cellprofiler_pipeline.py",
-    )
-    workspace = materialize_source_schema_workspace(
-        source_root,
-        tmp_path / "examplehuman_openhcs_workspace",
-        prepared.source_schema,
+
+    workspace, export = _execute_imported_cppipe_via_zmq(
+        tmp_path,
+        cppipe_path=cppipe_path,
+        source_root=source_root,
+        well_filter=1,
     )
 
-    global_config = GlobalPipelineConfig(
-        num_workers=1,
-        use_threading=True,
-        microscope=Microscope.AUTO,
-    )
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-    )
-    orchestrator = PipelineOrchestrator(
-        workspace.workspace_root,
-        pipeline_config=pipeline_config,
-    )
-    orchestrator.initialize()
-
-    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
-
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
-    axis_id = _single_execution_axis(execution)
-    runtime_store = execution.compiled_contexts[axis_id].runtime_value_store
-    cytoplasm_records = runtime_store.find(
+    assert workspace is not None
+    axis_id = _single_execution_axis(export)
+    cytoplasm_records = _runtime_records(
+        export,
         name="Cytoplasm",
         artifact_type=ObjectLabelsArtifactType,
         axis_id=axis_id,
     )
-    measurement_records = runtime_store.find(
+    assert len(cytoplasm_records) == 1
+    cytoplasm = object_label_dense_array(cytoplasm_records[0].value.data)
+    assert cytoplasm.ndim == 2 or cytoplasm.ndim == 3 and cytoplasm.shape[0] == 1
+    assert _runtime_export_has_semantic_record(
+        export,
         name="MeasureObjectIntensity_10_measurements",
         artifact_type=MeasurementsArtifactType,
         axis_id=axis_id,
     )
-    assert len(cytoplasm_records) == 1
-    cytoplasm_labels = object_label_dense_array(cytoplasm_records[0].value.data)
-    assert (
-        cytoplasm_labels.ndim == 2
-        or cytoplasm_labels.ndim == 3
-        and cytoplasm_labels.shape[0] == 1
-    )
-    assert measurement_records
 
 
-def test_official_example_untangleworms_cppipe_executes_via_source_schema_workspace(
+def test_official_untangleworms_preserves_overlay_shape_over_zmq(
     tmp_path: Path,
 ) -> None:
-    examples_root = _official_cellprofiler_examples_root()
-    cppipe_path = (
-        examples_root
-        / "CellProfiler3Pipelines"
-        / "ExampleUntangleWorms.cppipe"
+    _, export = _execute_official_cellprofiler3_pipeline(
+        tmp_path,
+        "ExampleUntangleWorms",
     )
-    source_root = examples_root / "ExampleUntangleWorms"
-    if not cppipe_path.exists() or not source_root.exists():
-        pytest.skip(
-            "Official CellProfiler ExampleUntangleWorms files are not available. "
-            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
-            f"looked under {examples_root}."
-        )
+    axis_id = _single_execution_axis(export)
 
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_official_untangleworms_pipeline.py",
-    )
-    workspace = materialize_source_schema_workspace(
-        source_root,
-        tmp_path / "official_untangleworms_openhcs_workspace",
-        prepared.source_schema,
-    )
-    effective_well_filter = _effective_source_schema_well_filter(
-        workspace,
-        requested_well_filter=("A01",),
-    )
-
-    global_config = GlobalPipelineConfig(
-        num_workers=1,
-        use_threading=True,
-        microscope=Microscope.AUTO,
-    )
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-        well_filter_config=LazyWellFilterConfig(
-            well_filter=list(effective_well_filter),
-        ),
-    )
-    orchestrator = PipelineOrchestrator(
-        workspace.workspace_root,
-        pipeline_config=pipeline_config,
-    )
-    orchestrator.initialize()
-
-    execution = execute_pipeline_direct(
-        orchestrator,
-        prepared.runtime_pipeline_steps,
-    )
-
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
-    axis_id = _single_execution_axis(execution)
-    runtime_store = execution.compiled_contexts[axis_id].runtime_value_store
-    assert runtime_store.find(
+    assert _runtime_records(
+        export,
         name="OverlappingWorms",
         artifact_type=ObjectLabelsArtifactType,
         axis_id=axis_id,
     )
-    assert runtime_store.find(
+    assert _runtime_records(
+        export,
         name="NonOverlappingWorms",
         artifact_type=ObjectLabelsArtifactType,
         axis_id=axis_id,
     )
-    overlay_records = runtime_store.find(
+    overlay_records = _runtime_records(
+        export,
         name="OrigOverlay",
         artifact_type=ImageArtifactType,
         axis_id=axis_id,
@@ -536,224 +757,18 @@ def test_official_example_untangleworms_cppipe_executes_via_source_schema_worksp
     assert overlay.ndim == 4
     assert overlay.shape[0] == 2
     assert overlay.shape[-1] == 3
-    assert runtime_store.find(
-        name="MeasureObjectIntensity_17_measurements",
-        artifact_type=MeasurementsArtifactType,
-        axis_id=axis_id,
-    )
 
 
-def test_official_examplefly_cppipe_executes_measurement_math_classification(
+def test_official_untangleworms_brightfield_preserves_overlay_pixels_over_zmq(
     tmp_path: Path,
 ) -> None:
-    examples_root = _official_cellprofiler_examples_root()
-    source_root = examples_root / "ExampleFly"
-    cppipe_path = source_root / "ExampleFly.cppipe"
-    if not cppipe_path.exists() or not source_root.exists():
-        pytest.skip(
-            "Official CellProfiler ExampleFly files are not available. "
-            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
-            f"looked under {examples_root}."
-        )
-
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_official_examplefly_pipeline.py",
-    )
-    workspace = materialize_source_schema_workspace(
-        source_root,
-        tmp_path / "official_examplefly_openhcs_workspace",
-        prepared.source_schema,
+    _, export = _execute_official_cellprofiler3_pipeline(
+        tmp_path,
+        "ExampleUntangleWormsBrightField",
     )
 
-    global_config = GlobalPipelineConfig(
-        num_workers=1,
-        use_threading=True,
-        microscope=Microscope.AUTO,
-    )
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-        well_filter_config=LazyWellFilterConfig(
-            well_filter=["A01"],
-        ),
-    )
-    orchestrator = PipelineOrchestrator(
-        workspace.workspace_root,
-        pipeline_config=pipeline_config,
-    )
-    orchestrator.initialize()
-
-    execution = execute_pipeline_direct(
-        orchestrator,
-        prepared.runtime_pipeline_steps,
-    )
-
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
-    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
-    assert runtime_store.find(
-        name="CalculateMath_18_measurements",
-        artifact_type=MeasurementsArtifactType,
-        axis_id="A01",
-    )
-    assert runtime_store.find(
-        name="ClassifyObjects_19_measurements",
-        artifact_type=MeasurementsArtifactType,
-        axis_id="A01",
-    )
-    assert runtime_store.find(
-        name="RGBImage",
-        artifact_type=ImageArtifactType,
-        axis_id="A01",
-    )
-
-
-def test_official_examplefly_cppipe_executes_through_zmq_server(
-    tmp_path: Path,
-) -> None:
-    from openhcs.runtime.zmq_execution_client import (
-        OpenHCSExecutionSubmission,
-        ZMQExecutionClient,
-    )
-
-    examples_root = _official_cellprofiler_examples_root()
-    source_root = examples_root / "ExampleFly"
-    cppipe_path = source_root / "ExampleFly.cppipe"
-    if not cppipe_path.exists() or not source_root.exists():
-        pytest.skip(
-            "Official CellProfiler ExampleFly files are not available. "
-            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
-            f"looked under {examples_root}."
-        )
-
-    workspace = prepare_cellprofiler_source_schema_workspace(
-        CellProfilerSourceSchemaWorkspaceRequest.from_paths(
-            source_root=source_root,
-            cppipe_path=cppipe_path,
-            workspace_root=tmp_path / "official_examplefly_zmq_openhcs_workspace",
-            generated_pipeline_path=(
-                tmp_path / "generated_official_examplefly_zmq_pipeline.py"
-            ),
-            image_set_selection=SourceSchemaImageSetSelection(
-                max_image_set_count=1,
-            ),
-        )
-    )
-    prepared = workspace.prepared_pipeline
-
-    global_config = GlobalPipelineConfig(
-        num_workers=1,
-        use_threading=False,
-        microscope=Microscope.AUTO,
-        analysis_consolidation_config=AnalysisConsolidationConfig(enabled=False),
-    )
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            global_output_folder=str(tmp_path / "zmq_output"),
-            output_dir_suffix="_generated_cppipe_zmq",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-    )
-
-    client = ZMQExecutionClient(
-        port=18000 + (os.getpid() % 20000),
-        persistent=False,
-    )
-    try:
-        client.connect(timeout=30)
-        response = client.execute_pipeline(
-            OpenHCSExecutionSubmission(
-                plate_id=str(workspace.source_root),
-                execution_plate_id=str(workspace.execution_plate_path),
-                pipeline_steps=prepared.runtime_pipeline_steps,
-                global_config=global_config,
-                pipeline_config=pipeline_config,
-                selected_pipeline_path=cppipe_path,
-            )
-        )
-    finally:
-        client.disconnect()
-
-    assert response["status"] == "complete"
-    assert response["results"]["well_count"] == 1
-    assert response["results"]["wells"] == ["A01"]
-
-
-def test_official_example_untangleworms_brightfield_cppipe_executes_overlay(
-    tmp_path: Path,
-) -> None:
-    examples_root = _official_cellprofiler_examples_root()
-    cppipe_path = (
-        examples_root
-        / "CellProfiler3Pipelines"
-        / "ExampleUntangleWormsBrightField.cppipe"
-    )
-    source_root = examples_root / "ExampleUntangleWormsBrightField"
-    if not cppipe_path.exists() or not source_root.exists():
-        pytest.skip(
-            "Official CellProfiler ExampleUntangleWormsBrightField files are not "
-            f"available. Set CELLPROFILER_EXAMPLES_ROOT to a local examples "
-            f"checkout; looked under {examples_root}."
-        )
-
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_official_brightfield_pipeline.py",
-    )
-    workspace = materialize_source_schema_workspace(
-        source_root,
-        tmp_path / "official_brightfield_openhcs_workspace",
-        prepared.source_schema,
-    )
-
-    global_config = GlobalPipelineConfig(
-        num_workers=1,
-        use_threading=True,
-        microscope=Microscope.AUTO,
-    )
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-        well_filter_config=LazyWellFilterConfig(
-            well_filter=["A01"],
-        ),
-    )
-    orchestrator = PipelineOrchestrator(
-        workspace.workspace_root,
-        pipeline_config=pipeline_config,
-    )
-    orchestrator.initialize()
-
-    execution = execute_pipeline_direct(
-        orchestrator,
-        prepared.runtime_pipeline_steps,
-    )
-
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
     overlay_outputs = sorted(
-        (_generated_output_root(workspace.workspace_root) / "images").glob("*.png")
+        path for path in export.exports.image_outputs if path.suffix.lower() == ".png"
     )
     assert [path.name for path in overlay_outputs] == [
         "A01_s001_w1_z001_t001.png",
@@ -767,289 +782,174 @@ def test_official_example_untangleworms_brightfield_cppipe_executes_overlay(
     assert np.count_nonzero(blue > red + 32) > 0
 
 
-def test_official_example_cometassay_cppipe_executes_mask_geometry(
+def test_official_cometassay_preserves_mask_geometry_over_zmq(
     tmp_path: Path,
 ) -> None:
-    examples_root = _official_cellprofiler_examples_root()
-    cppipe_path = (
-        examples_root
-        / "CellProfiler3Pipelines"
-        / "ExampleCometAssay.cppipe"
-    )
-    source_root = examples_root / "ExampleCometAssay"
-    if not cppipe_path.exists() or not source_root.exists():
-        pytest.skip(
-            "Official CellProfiler ExampleCometAssay files are not available. "
-            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
-            f"looked under {examples_root}."
-        )
-
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_official_comet_pipeline.py",
-    )
-    workspace = materialize_source_schema_workspace(
-        source_root,
-        tmp_path / "official_comet_openhcs_workspace",
-        prepared.source_schema,
+    _, export = _execute_official_cellprofiler3_pipeline(
+        tmp_path,
+        "ExampleCometAssay",
     )
 
-    global_config = GlobalPipelineConfig(
-        num_workers=1,
-        use_threading=True,
-        microscope=Microscope.AUTO,
-    )
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-        well_filter_config=LazyWellFilterConfig(
-            well_filter=["A01"],
-        ),
-    )
-    orchestrator = PipelineOrchestrator(
-        workspace.workspace_root,
-        pipeline_config=pipeline_config,
-    )
-    orchestrator.initialize()
-
-    execution = execute_pipeline_direct(
-        orchestrator,
-        prepared.runtime_pipeline_steps,
-    )
-
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
-    image_outputs = sorted(
-        (_generated_output_root(workspace.workspace_root) / "images").glob("*.tif")
-    )
+    image_outputs = sorted(export.exports.image_outputs)
     assert [path.name for path in image_outputs] == [
-        "A01_s001_w1_z001_t001.tif",
-        "A01_s002_w1_z001_t001.tif",
+        "A01_s001_w1_z001_t001_CometHeadOutline.png",
+        "A01_s002_w1_z001_t001_CometHeadOutline.png",
     ]
-    overlay = tifffile.imread(image_outputs[0])
+    overlay = np.asarray(Image.open(image_outputs[0]))
     assert overlay.shape[:2] == (1040, 1388)
     assert overlay.ndim == 3
 
 
-def test_official_example_colocalization_cppipe_executes_relationship_exports(
+def test_official_colocalization_preserves_relationships_and_configured_export(
     tmp_path: Path,
 ) -> None:
-    examples_root = _official_cellprofiler_examples_root()
-    cppipe_path = (
-        examples_root
-        / "CellProfiler3Pipelines"
-        / "ExampleColocalization.cppipe"
+    _, export = _execute_official_cellprofiler3_pipeline(
+        tmp_path,
+        "ExampleColocalization",
+        materialize_runtime_artifacts=False,
     )
-    source_root = examples_root / "ExampleColocalization"
-    if not cppipe_path.exists() or not source_root.exists():
-        pytest.skip(
-            "Official CellProfiler ExampleColocalization files are not available. "
-            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
-            f"looked under {examples_root}."
+    axis_id = _single_execution_axis(export)
+    object_records = _runtime_records(
+        export,
+        artifact_type=ObjectLabelsArtifactType,
+        axis_id=axis_id,
+    )
+    object_records_by_name = {
+        name: tuple(record for record in object_records if record.key.name == name)
+        for name in ("Objects1", "Objects2", "ColocalizedRegion")
+    }
+    assert {
+        name: tuple(
+            (
+                record.key.scope.component,
+                record.key.scope.value_text,
+                object_label_dense_array(record.value.data).shape,
+                cast(ObjectLabelValue, record.value.data).plane_axis,
+            )
+            for record in records
         )
-
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_official_colocalization_pipeline.py",
-    )
-    workspace = materialize_source_schema_workspace(
-        source_root,
-        tmp_path / "official_colocalization_openhcs_workspace",
-        prepared.source_schema,
-    )
-
-    global_config = GlobalPipelineConfig(
-        num_workers=1,
-        use_threading=True,
-        microscope=Microscope.AUTO,
-    )
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
+        for name, records in object_records_by_name.items()
+    } == {
+        "Objects1": (
+            (
+                AllComponents.CHANNEL,
+                "1",
+                (2, 1040, 1392),
+                RuntimePlaneAxis.RUNTIME_SLICE,
+            ),
         ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
+        "Objects2": (
+            (
+                AllComponents.CHANNEL,
+                "2",
+                (2, 1040, 1392),
+                RuntimePlaneAxis.RUNTIME_SLICE,
+            ),
         ),
-        well_filter_config=LazyWellFilterConfig(
-            well_filter=["A01"],
+        "ColocalizedRegion": (
+            (
+                AllComponents.CHANNEL,
+                "1",
+                (2, 1040, 1392),
+                RuntimePlaneAxis.RUNTIME_SLICE,
+            ),
         ),
-    )
-    orchestrator = PipelineOrchestrator(
-        workspace.workspace_root,
-        pipeline_config=pipeline_config,
-    )
-    orchestrator.initialize()
-
-    execution = execute_pipeline_direct(
-        orchestrator,
-        prepared.runtime_pipeline_steps,
-    )
-
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
-    validate_cppipe_execution(
-        prepared,
-        execution,
-        _generated_output_root(workspace.workspace_root),
-    )
-    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
-    relationship_records = runtime_store.find(
+    }
+    relationship_records = _runtime_records(
+        export,
         artifact_type=RelationshipsArtifactType,
-        axis_id="A01",
+        axis_id=axis_id,
     )
     assert {
-        record.key.name
+        (
+            record.value.data.declaration.source.name,
+            record.value.data.declaration.target.name,
+        )
         for record in relationship_records
     } == {
-        "Objects1_Objects2_relationships",
-        "ExpandedObjects1_ExpandedObjects2_relationships",
-        "Objects1_ColocalizedObjects_relationships",
-        "Objects1_ColocalizedRegion_relationships",
+        ("Objects1", "Objects2"),
+        ("Objects2", "Objects1"),
+        ("ExpandedObjects1", "ExpandedObjects2"),
+        ("ExpandedObjects2", "ExpandedObjects1"),
+    }
+    lineage_records = _runtime_records(
+        export,
+        artifact_type=ObjectLineageArtifactType,
+        axis_id=axis_id,
+    )
+    assert {
+        (
+            record.value.data.declaration.source.name,
+            record.value.data.declaration.target.name,
+        )
+        for record in lineage_records
+    } == {
+        ("Objects1", "ColocalizedObjects"),
+        ("Objects1", "ColocalizedRegion"),
     }
     relationships = tuple(
-        runtime_relationship(
-            RuntimeArtifactQueryContext(
-                runtime_store,
-                "A01",
-                group_key=record.key.scope.group_key,
-                match_group=True,
-            ),
-            record.key.name,
+        cast(ObjectRelationship, record.value.data) for record in relationship_records
+    )
+    assert {
+        (
+            relationship.declaration.source_role,
+            relationship.declaration.target_role,
         )
-        for record in relationship_records
-    )
-    assert {relationship.source.role for relationship in relationships} == {"parent"}
-    assert {relationship.target.role for relationship in relationships} == {"child"}
-    measurement_records = runtime_store.find(
-        artifact_type=MeasurementsArtifactType,
-        axis_id="A01",
-    )
-    measurement_names = {record.key.name for record in measurement_records}
+        for relationship in relationships
+    } == {
+        ("parent", "child"),
+        ("child", "parent"),
+    }
+    measurement_names = {
+        record.key.name
+        for record in _runtime_records(
+            export,
+            artifact_type=MeasurementsArtifactType,
+            axis_id=axis_id,
+        )
+    }
     assert any(
-        name.startswith("MeasureColocalization_")
-        and name.endswith("_measurements")
+        name.startswith("MeasureColocalization_") and name.endswith("_measurements")
         for name in measurement_names
     )
     assert any(
-        name.startswith("CalculateMath_")
-        and name.endswith("_measurements")
+        name.startswith("CalculateMath_") and name.endswith("_measurements")
         for name in measurement_names
     )
-
-    csv_outputs = sorted(
-        _generated_results_dir(workspace.workspace_root).glob("*.csv")
-    )
-    assert any("relationships" in path.name for path in csv_outputs)
-    assert any("MeasureColocalization" in path.name for path in csv_outputs)
-    assert _matching_header(
-        {path.name: _csv_header(path) for path in csv_outputs},
-        "relationships",
-    ) == [
-        "relationship_type",
-        "source_role",
-        "target_role",
-        "source_object",
-        "target_object",
-        "parent_id",
-        "child_id",
-        "slice_index",
-        "slice_count",
-    ]
+    headers_by_name = {
+        path.name: list(export.exports.table_headers_by_path[path])
+        for path in export.exports.table_outputs
+    }
+    assert tuple(headers_by_name) == ("Image.csv",)
 
 
-def test_official_example_neighbors_cppipe_executes_neighbor_exports(
+def test_official_neighbors_preserves_measurement_and_image_exports_over_zmq(
     tmp_path: Path,
 ) -> None:
-    examples_root = _official_cellprofiler_examples_root()
-    cppipe_path = (
-        examples_root
-        / "CellProfiler3Pipelines"
-        / "ExampleNeighbors.cppipe"
+    _, export = _execute_official_cellprofiler3_pipeline(
+        tmp_path,
+        "ExampleNeighbors",
     )
-    source_root = examples_root / "ExampleNeighbors"
-    if not cppipe_path.exists() or not source_root.exists():
-        pytest.skip(
-            "Official CellProfiler ExampleNeighbors files are not available. "
-            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
-            f"looked under {examples_root}."
-        )
-
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_official_neighbors_pipeline.py",
-    )
-    workspace = materialize_source_schema_workspace(
-        source_root,
-        tmp_path / "official_neighbors_openhcs_workspace",
-        prepared.source_schema,
-    )
-
-    global_config = GlobalPipelineConfig(
-        num_workers=1,
-        use_threading=True,
-        microscope=Microscope.AUTO,
-    )
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-        well_filter_config=LazyWellFilterConfig(
-            well_filter=["A01"],
-        ),
-    )
-    orchestrator = PipelineOrchestrator(
-        workspace.workspace_root,
-        pipeline_config=pipeline_config,
-    )
-    orchestrator.initialize()
-
-    execution = execute_pipeline_direct(
-        orchestrator,
-        prepared.runtime_pipeline_steps,
-    )
-
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
-    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
-    cells_records = runtime_store.find(
+    axis_id = _single_execution_axis(export)
+    cells_records = _runtime_records(
+        export,
         name="Cells",
         artifact_type=ObjectLabelsArtifactType,
-        axis_id="A01",
+        axis_id=axis_id,
     )
     assert cells_records
-    assert np.asarray(cells_records[0].value.data).max() > 0
-    assert runtime_store.find(
-        name="MeasureObjectNeighbors_10_measurements",
+    assert object_label_dense_array(cells_records[0].value.data).max() > 0
+    assert _runtime_export_has_semantic_record(
+        export,
+        name="MeasureObjectNeighbors_6_measurements",
         artifact_type=MeasurementsArtifactType,
-        axis_id="A01",
+        axis_id=axis_id,
     )
-
-    csv_outputs = sorted(
-        _generated_results_dir(workspace.workspace_root).glob("*.csv")
-    )
-    assert _matching_header(
-        {path.name: _csv_header(path) for path in csv_outputs},
-        "MeasureObjectNeighbors",
-    ) == [
+    headers_by_name = {
+        path.name: list(export.exports.table_headers_by_path[path])
+        for path in export.exports.table_outputs
+    }
+    assert _matching_header(headers_by_name, "MeasureObjectNeighbors") == [
         "slice_index",
         "object_id",
         "scale",
@@ -1062,14 +962,12 @@ def test_official_example_neighbors_cppipe_executes_neighbor_exports(
         "angle_between_neighbors",
         "image_number",
     ]
-    image_outputs = sorted(
-        _generated_results_dir(workspace.workspace_root).glob("*.tif")
-    )
-    assert any("ColorNeighbors" in path.name for path in image_outputs)
-    assert any("InvertedRedOutlines" in path.name for path in image_outputs)
+    image_names = {path.name for path in export.exports.image_outputs}
+    assert any("ColorNeighbors" in name for name in image_names)
+    assert any("InvertedRedOutlines" in name for name in image_names)
 
 
-def test_official_example_illumination_example1_uses_rule_row_binding(
+def test_official_illumination_preserves_rule_row_binding_over_zmq(
     tmp_path: Path,
 ) -> None:
     examples_root = _official_cellprofiler_examples_root()
@@ -1081,147 +979,53 @@ def test_official_example_illumination_example1_uses_rule_row_binding(
     source_root = examples_root / "ExampleIlluminationCorrection"
     if not cppipe_path.exists() or not source_root.exists():
         pytest.skip(
-            "Official CellProfiler ExampleIlluminationCorrection files are not "
-            f"available. Set CELLPROFILER_EXAMPLES_ROOT to a local examples "
-            f"checkout; looked under {examples_root}."
+            "Official CellProfiler illumination example is not available under "
+            f"{examples_root}."
         )
 
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_official_illumination_pipeline.py",
+    _, pipeline_config = import_cellprofiler_pipeline(cppipe_path)
+    source_bindings = source_bindings_defaults_to_base(
+        pipeline_config.source_bindings_config
     )
-    orig_green = prepared.source_schema.assignment_for_alias("OrigGreen")
+    orig_green = source_bindings.binding_for_alias("OrigGreen")
     assert orig_green is not None
-    assert prepared.source_schema.assignment_for_alias("DNA") is None
+    assert source_bindings.binding_for_alias("DNA") is None
     assert orig_green.origin is SourceBindingOrigin.PIPELINE_START
-    assert orig_green.selector.components == ()
+    assert orig_green.component_identity == ()
     assert len(orig_green.selector.filters) == 1
-    assert orig_green.selector.filters[0].subject is SourceFilterSubject.FILE
-    assert (
-        orig_green.selector.filters[0].match_type
-        is SourceFilterMatchType.CONTAINS
-    )
-    assert orig_green.selector.filters[0].value == "AS_09047_"
+    source_filter = orig_green.selector.filters[0]
+    assert source_filter.subject is SourceFilterSubject.FILE
+    assert source_filter.match_type is SourceFilterMatchType.CONTAINS
+    assert source_filter.value == "AS_09047_"
 
-    workspace = materialize_source_schema_workspace(
-        source_root,
-        tmp_path / "official_illumination_openhcs_workspace",
-        prepared.source_schema,
+    _, export = _execute_imported_cppipe_via_zmq(
+        tmp_path,
+        cppipe_path=cppipe_path,
+        source_root=source_root,
+        well_filter=1,
     )
-    effective_well_filter = _effective_source_schema_well_filter(
-        workspace,
-        requested_well_filter=("A01",),
+    image_outputs = tuple(
+        path for path in export.exports.image_outputs if path.suffix == ".TIF"
     )
-
-    global_config = GlobalPipelineConfig(
-        num_workers=1,
-        use_threading=True,
-        microscope=Microscope.AUTO,
-    )
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-        well_filter_config=LazyWellFilterConfig(
-            well_filter=list(effective_well_filter),
-        ),
-    )
-    orchestrator = PipelineOrchestrator(
-        workspace.workspace_root,
-        pipeline_config=pipeline_config,
-    )
-    orchestrator.initialize()
-
-    execution = execute_pipeline_direct(
-        orchestrator,
-        prepared.runtime_pipeline_steps,
-    )
-
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
-    axis_id = _single_execution_axis(execution)
-    image_outputs = sorted(
-        (_generated_output_root(workspace.workspace_root) / "images").glob("*.TIF")
-    )
-    assert [path.name for path in image_outputs] == [
-        f"{axis_id}_s001_w1_z001_t001.TIF",
-        f"{axis_id}_s002_w1_z001_t001.TIF",
-        f"{axis_id}_s003_w1_z001_t001.TIF",
-    ]
+    assert len(image_outputs) == 3
     corrected = tifffile.imread(image_outputs[0])
     assert corrected.ndim == 2
     assert corrected.shape[0] > 0
     assert corrected.shape[1] > 0
 
 
-def test_official_example_woundhealing_cppipe_executes_disk_outputs(
+def test_official_woundhealing_preserves_area_table_shape_over_zmq(
     tmp_path: Path,
 ) -> None:
-    examples_root = _official_cellprofiler_examples_root()
-    cppipe_path = (
-        examples_root
-        / "CellProfiler3Pipelines"
-        / "ExampleWoundHealing.cppipe"
+    _, export = _execute_official_cellprofiler3_pipeline(
+        tmp_path,
+        "ExampleWoundHealing",
     )
-    source_root = examples_root / "ExampleWoundHealing"
-    if not cppipe_path.exists() or not source_root.exists():
-        pytest.skip(
-            "Official CellProfiler ExampleWoundHealing files are not available. "
-            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
-            f"looked under {examples_root}."
-        )
-
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_official_woundhealing_pipeline.py",
-    )
-    workspace = materialize_source_schema_workspace(
-        source_root,
-        tmp_path / "official_woundhealing_openhcs_workspace",
-        prepared.source_schema,
-    )
-
-    global_config = GlobalPipelineConfig(
-        num_workers=1,
-        use_threading=True,
-        microscope=Microscope.AUTO,
-    )
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-    )
-    orchestrator = PipelineOrchestrator(
-        workspace.workspace_root,
-        pipeline_config=pipeline_config,
-    )
-    orchestrator.initialize()
-
-    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
-
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
-    csv_outputs = sorted(
-        _generated_results_dir(workspace.workspace_root).glob(
-            "*MeasureImageAreaOccupied_8_measurements_step3.csv"
-        )
-    )
-    assert len(csv_outputs) == 1
-    assert _csv_header(csv_outputs[0]) == [
+    headers_by_name = {
+        path.name: list(export.exports.table_headers_by_path[path])
+        for path in export.exports.table_outputs
+    }
+    assert _matching_header(headers_by_name, "MeasureImageAreaOccupied") == [
         "slice_index",
         "area_occupied",
         "perimeter",
@@ -1234,82 +1038,60 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
 @pytest.mark.parametrize(
     (
         "pipeline_name",
-        "source_name",
         "expected_records",
-        "csv_fragments",
-        "image_suffixes",
     ),
     (
         pytest.param(
             "ExamplePercentPositive",
-            "ExamplePercentPositive",
             (
                 ("PH3PosNuclei", ObjectLabelsArtifactType),
-                ("Nuclei_PH3_relationships", RelationshipsArtifactType),
+                (("Nuclei", "PH3"), RelationshipsArtifactType),
                 ("CalculateMath_13_measurements", MeasurementsArtifactType),
                 ("DisplayImage", ImageArtifactType),
             ),
-            ("relationships", "ClassifyObjects", "CalculateMath"),
-            (".tif",),
             id="percent-positive",
         ),
         pytest.param(
             "ExampleSpeckles",
-            "ExampleSpeckles",
             (
                 ("h2ax", ObjectLabelsArtifactType),
-                ("Nuclei_h2ax_relationships", RelationshipsArtifactType),
+                (("Nuclei", "h2ax"), RelationshipsArtifactType),
                 ("MeasureObjectIntensity_10_measurements", MeasurementsArtifactType),
             ),
-            ("relationships", "MeasureObjectIntensity", "RelateObjects"),
-            (),
             id="speckles",
         ),
         pytest.param(
-            "ExampleTumor",
             "ExampleTumor",
             (
                 ("tumor", ObjectLabelsArtifactType),
                 ("TumorOutline", ImageArtifactType),
                 ("MeasureObjectSizeShape_8_measurements", MeasurementsArtifactType),
             ),
-            ("MeasureObjectSizeShape",),
-            (".jpg",),
             id="tumor",
         ),
         pytest.param(
             "ExampleUntangleAndStraightenWorms",
-            "ExampleStraightenWorms",
             (
                 ("StraightenedWorms", ObjectLabelsArtifactType),
                 (
-                    "NonOverlappingWorms_HeadMarkers_relationships",
+                    ("NonOverlappingWorms", "HeadMarkers"),
                     RelationshipsArtifactType,
                 ),
                 ("StraightenWorms_11_measurements", MeasurementsArtifactType),
-                ("StraightenedRG", ImageArtifactType),
+                ("Straightened_GFP", ImageArtifactType),
             ),
-            ("relationships", "StraightenWorms", "UntangleWorms"),
-            (".tif",),
             id="untangle-and-straighten",
         ),
         pytest.param(
-            "ExampleYeastColonies",
             "ExampleYeastColonies",
             (
                 ("Colonies", ObjectLabelsArtifactType),
                 ("OutlinedColonies", ImageArtifactType),
                 ("ClassifyObjects_18_measurements", MeasurementsArtifactType),
             ),
-            (
-                "MeasureObjectIntensity",
-                "ClassifyObjects",
-            ),
-            (".jpg", ".tif"),
             id="yeast-colonies",
         ),
         pytest.param(
-            "ExampleYeastPatches",
             "ExampleYeastPatches",
             (
                 ("Prespots", ObjectLabelsArtifactType),
@@ -1319,21 +1101,14 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
                 ("Grid", SpatialGridArtifactType),
                 ("MeasureObjectIntensity_18_measurements", MeasurementsArtifactType),
             ),
-            (
-                "FilterObjects",
-                "Grid",
-                "IdentifyObjectsInGrid",
-            ),
-            (".JPG",),
             id="yeast-patches-grid-illumination",
         ),
         pytest.param(
             "ExampleImagingFlowCytometryObjectsInGrid",
-            "ExampleImagingFlowCytometryObjectsInGrid",
             (
                 ("BF_cells_on_grid", ObjectLabelsArtifactType),
                 (
-                    "Non_empty_tile_FilteredBF_relationships",
+                    ("Non_empty_tile", "FilteredBF"),
                     RelationshipsArtifactType,
                 ),
                 ("MeasureGranularity_24_measurements", MeasurementsArtifactType),
@@ -1343,18 +1118,9 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
                     MeasurementsArtifactType,
                 ),
             ),
-            (
-                "relationships",
-                "FilterObjects_19",
-                "MeasureGranularity",
-                "MeasureTexture",
-                "MeasureObjectIntensityDistribution",
-            ),
-            (".tif",),
             id="imaging-flow-cytometry-grid",
         ),
         pytest.param(
-            "ExampleTrackObjects",
             "ExampleTrackObjects",
             (
                 ("TrackedCells", ImageArtifactType),
@@ -1362,13 +1128,10 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
                 ("OutlineImage", ImageArtifactType),
                 ("AdjacentImage", ImageArtifactType),
             ),
-            ("TrackObjects",),
-            (".tif",),
             id="track-objects",
         ),
         pytest.param(
             "ExampleVitra",
-            "ExampleVitraImages",
             (
                 ("CorrProtein", ImageArtifactType),
                 ("Cells", ObjectLabelsArtifactType),
@@ -1378,94 +1141,31 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
                 ("CalculateMath_10_measurements", MeasurementsArtifactType),
                 ("CalculateMath_11_measurements", MeasurementsArtifactType),
             ),
-            (
-                "MeasureObjectIntensity",
-                "CalculateMath_10",
-                "CalculateMath_11",
-            ),
-            (".tif",),
             id="vitra-npy-illumination",
         ),
     ),
 )
-def test_official_cellprofiler3_additional_representative_pipelines_execute(
+def test_official_cellprofiler3_representative_pipelines_execute_over_zmq(
     tmp_path: Path,
     pipeline_name: str,
-    source_name: str,
-    expected_records: tuple[tuple[str, ArtifactType], ...],
-    csv_fragments: tuple[str, ...],
-    image_suffixes: tuple[str, ...],
+    expected_records: tuple[tuple[str | tuple[str, str], type[ArtifactType]], ...],
 ) -> None:
-    workspace, execution = _execute_official_cellprofiler3_pipeline(
+    workspace, export = _execute_official_cellprofiler3_pipeline(
         tmp_path,
         pipeline_name,
-        source_name,
-        well_filter=("A01",),
     )
-
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
-    axis_id = _single_execution_axis(execution)
-    runtime_store = execution.compiled_contexts[axis_id].runtime_value_store
+    assert workspace is not None
+    axis_id = _single_execution_axis(export)
     for name, kind in expected_records:
-        assert _runtime_store_has_semantic_record(
-            runtime_store,
+        assert _runtime_export_has_semantic_record(
+            export,
             name=name,
             artifact_type=kind,
             axis_id=axis_id,
         )
 
-    result_outputs = sorted(
-        path
-        for path in _generated_results_dir(workspace.workspace_root).rglob("*")
-        if path.is_file()
-    )
-    assert result_outputs
-    result_names = tuple(path.name for path in result_outputs)
-    for fragment in csv_fragments:
-        assert any(fragment in name for name in result_names)
 
-    image_outputs = sorted(
-        path
-        for path in _generated_output_root(workspace.workspace_root).rglob("*")
-        if path.is_file()
-    )
-    image_names = tuple(path.name for path in image_outputs if path.is_file())
-    for suffix in image_suffixes:
-        assert any(name.endswith(suffix) for name in image_names)
-
-
-def _runtime_store_has_semantic_record(
-    runtime_store,
-    *,
-    name: str,
-    artifact_type: type[ArtifactType],
-    axis_id: str,
-) -> bool:
-    """Return whether the runtime store contains the public semantic artifact."""
-    if runtime_store.find(name=name, artifact_type=artifact_type, axis_id=axis_id):
-        return True
-    if artifact_type is not MeasurementsArtifactType:
-        return False
-    match = re.fullmatch(r"(?P<prefix>.+)_\d+_measurements", name)
-    if match is None:
-        return False
-    prefix = match.group("prefix")
-    return any(
-        record.key.name.startswith(f"{prefix}_")
-        and record.key.name.endswith("_measurements")
-        for record in runtime_store.find(
-            artifact_type=artifact_type,
-            axis_id=axis_id,
-        )
-    )
-
-
-def test_official_cellprofiler3_cppipe_corpus_prepares(
-    tmp_path: Path,
-) -> None:
+def test_official_cellprofiler3_cppipe_corpus_imports_public_declarations() -> None:
     examples_root = _official_cellprofiler_examples_root()
     cppipe_dir = examples_root / "CellProfiler3Pipelines"
     if not cppipe_dir.exists():
@@ -1475,33 +1175,63 @@ def test_official_cellprofiler3_cppipe_corpus_prepares(
             f"looked under {examples_root}."
         )
 
+    failures: list[str] = []
     cppipe_paths = tuple(sorted(cppipe_dir.glob("*.cppipe")))
     assert cppipe_paths
-    failures: list[str] = []
-    for cppipe_path in cppipe_paths:
+    cases_by_name = {case.name: case for case in _official_cellprofiler3_cases()}
+    missing_cases = tuple(
+        cppipe_path.stem
+        for cppipe_path in cppipe_paths
+        if cppipe_path.stem not in cases_by_name
+    )
+    assert not missing_cases
+    for discovered_path in cppipe_paths:
+        case = cases_by_name[discovered_path.stem]
         try:
-            prepared = prepare_generated_pipeline(
-                cppipe_path,
-                output_path=tmp_path / f"{cppipe_path.stem}_openhcs.py",
+            pipeline_steps, pipeline_config = import_cellprofiler_pipeline(
+                case.cppipe_path,
+                source_root=case.dataset_path,
             )
-        except Exception as exc:  # pragma: no cover - assertion includes details
-            failures.append(f"{cppipe_path.name}: {type(exc).__name__}: {exc}")
+            source = FunctionStepTransportAuthority.source_from_pipeline(pipeline_steps)
+        except Exception as exc:
+            failures.append(f"{discovered_path.name}: {type(exc).__name__}: {exc}")
             continue
-        assert prepared.pipeline.steps
+        assert pipeline_steps
+        assert isinstance(pipeline_config, PipelineConfig)
+        assert "pipeline_steps = [" in source
 
     assert not failures
 
 
-def test_official_cellprofiler3_cppipe_corpus_executes_when_enabled(
+@pytest.mark.parametrize(
+    "pipeline_name",
+    ("ExampleFly", "ExampleYeastColonies"),
+)
+def test_official_classify_repeated_rows_import_as_one_object_role(
+    pipeline_name: str,
+) -> None:
+    cppipe_path = (
+        _official_cellprofiler_examples_root()
+        / "CellProfiler3Pipelines"
+        / f"{pipeline_name}.cppipe"
+    )
+    if not cppipe_path.exists():
+        pytest.skip(f"Official corpus pipeline is unavailable: {cppipe_path}")
+
+    pipeline_steps, pipeline_config = import_cellprofiler_pipeline(cppipe_path)
+
+    assert isinstance(pipeline_config, PipelineConfig)
+    assert sum(step.name == "ClassifyObjects" for step in pipeline_steps) == 1
+
+
+def test_official_cellprofiler3_cppipe_corpus_executes_over_zmq_when_enabled(
     tmp_path: Path,
 ) -> None:
-    exhaustive_execution_env = (
-        "OPENHCS_RUN_OFFICIAL_CELLPROFILER3_CORPUS_EXECUTION"
-    )
+    exhaustive_execution_env = "OPENHCS_RUN_OFFICIAL_CELLPROFILER3_CORPUS_EXECUTION"
     if os.environ.get(exhaustive_execution_env) != "1":
         pytest.skip(
             "Official corpus execution is intentionally opt-in because it runs "
-            f"every discovered CellProfiler3 .cppipe. Set "
+            "every discovered CellProfiler3 .cppipe. Set "
             f"{exhaustive_execution_env}=1 to enable it."
         )
 
@@ -1520,197 +1250,44 @@ def test_official_cellprofiler3_cppipe_corpus_executes_when_enabled(
     for cppipe_path in cppipe_paths:
         pipeline_name = cppipe_path.stem
         try:
-            workspace, execution = _execute_official_cellprofiler3_pipeline(
-                tmp_path,
+            _, export = _execute_official_cellprofiler3_pipeline(
+                tmp_path / pipeline_name,
                 pipeline_name,
-                _official_cellprofiler3_source_name_for_pipeline(
-                    examples_root,
-                    pipeline_name,
-                ),
-                well_filter=("A01",),
             )
-        except Exception as exc:  # pragma: no cover - assertion includes details
-            failures.append(
-                f"{pipeline_name}: {type(exc).__name__}: {exc}"
-            )
+        except Exception as exc:
+            failures.append(f"{pipeline_name}: {type(exc).__name__}: {exc}")
             continue
-
-        unsuccessful_results = {
-            axis: result
-            for axis, result in execution.execution_results.items()
-            if not result.is_success()
-        }
-        if unsuccessful_results:
-            failures.append(
-                f"{pipeline_name}: unsuccessful execution results: "
-                f"{unsuccessful_results!r} in {workspace.workspace_root}"
-            )
+        if export.execution_failures():
+            failures.append(f"{pipeline_name}: {export.execution_failures()!r}")
 
     assert not failures
 
 
-def test_cppipe_generated_pipeline_materializes_relationship_outputs(
+def _execute_official_cellprofiler3_pipeline(
     tmp_path: Path,
-) -> None:
-    plate_path = _generate_plate(tmp_path / "relationship_plate")
-    cppipe_path = _write_relationship_cppipe(tmp_path / "relate_objects.cppipe")
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_relationship_pipeline.py",
+    pipeline_name: str,
+    *,
+    materialize_runtime_artifacts: bool = True,
+) -> tuple[
+    SourceBindingWorkspaceMaterialization | None,
+    ZMQRuntimeExecutionObservationExport,
+]:
+    case = _official_cellprofiler3_case(pipeline_name)
+    cppipe_path = case.cppipe_path
+    source_root = case.dataset_path
+    if not cppipe_path.exists() or not source_root.exists():
+        pytest.skip(
+            f"Official CellProfiler {pipeline_name} files are not available. "
+            f"Manifest paths: cppipe={cppipe_path}, source={source_root}."
+        )
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    return _execute_imported_cppipe_via_zmq(
+        tmp_path,
+        cppipe_path=cppipe_path,
+        source_root=source_root,
+        well_filter=1,
+        materialize_runtime_artifacts=materialize_runtime_artifacts,
     )
-
-    global_config = GlobalPipelineConfig(num_workers=1, use_threading=True)
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-    )
-    orchestrator = PipelineOrchestrator(plate_path, pipeline_config=pipeline_config)
-    orchestrator.initialize()
-
-    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
-
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
-    validate_cppipe_execution(
-        prepared,
-        execution,
-        _generated_output_root(plate_path),
-    )
-
-    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
-    relationship_records = runtime_store.find(
-        artifact_type=RelationshipsArtifactType,
-        axis_id="A01",
-    )
-    measurement_records = runtime_store.find(
-        artifact_type=MeasurementsArtifactType,
-        axis_id="A01",
-    )
-    assert relationship_records
-    assert measurement_records
-    relationship_record = relationship_records[0]
-    relationship = ObjectRelationship.from_runtime_value(relationship_record.value)
-    assert relationship.source.name == "Nuclei"
-    assert relationship.target.name == "Cells"
-    assert relationship.relationship_type == "parent_child"
-
-    csv_outputs = sorted(_generated_results_dir(plate_path).rglob("*.csv"))
-    assert csv_outputs
-    assert any("relationships" in path.name for path in csv_outputs)
-    assert any("measurements" in path.name for path in csv_outputs)
-    headers_by_name = {path.name: _csv_header(path) for path in csv_outputs}
-    assert _matching_header(
-        headers_by_name,
-        "relationships",
-    ) == [
-        "relationship_type",
-        "source_role",
-        "target_role",
-        "source_object",
-        "target_object",
-        "parent_id",
-        "child_id",
-        "slice_index",
-        "slice_count",
-    ]
-    assert _matching_header(
-        headers_by_name,
-        "RelateObjects_4_measurements",
-    ) == [
-        "slice_index",
-        "parent_object_count",
-        "child_object_count",
-        "children_with_parents_count",
-        "mean_children_per_parent",
-        "mean_centroid_distance",
-        "mean_minimum_distance",
-        "object_name",
-        "object_label",
-        "children_cells_count",
-        "parent_nuclei",
-        "distance_centroid_nuclei",
-        "distance_minimum_nuclei",
-        "image_number",
-    ]
-
-
-def test_percent_positive_cppipe_executes_relationship_measurement_consumers(
-    tmp_path: Path,
-) -> None:
-    source_root = _generate_percent_positive_source_folder(
-        tmp_path / "ExamplePercentPositive"
-    )
-    cppipe_path = _write_percent_positive_cppipe(
-        tmp_path / "percent_positive.cppipe"
-    )
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / "generated_percent_positive_pipeline.py",
-    )
-    workspace = materialize_source_schema_workspace(
-        source_root,
-        tmp_path / "percent_positive_openhcs_workspace",
-        prepared.source_schema,
-    )
-
-    global_config = GlobalPipelineConfig(
-        num_workers=1,
-        use_threading=True,
-        microscope=Microscope.AUTO,
-    )
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-    )
-    orchestrator = PipelineOrchestrator(
-        workspace.workspace_root,
-        pipeline_config=pipeline_config,
-    )
-    orchestrator.initialize()
-
-    execution = execute_pipeline_direct(orchestrator, prepared.runtime_pipeline_steps)
-
-    assert all(
-        result.is_success()
-        for result in execution.execution_results.values()
-    )
-    validate_cppipe_execution(
-        prepared,
-        execution,
-        _generated_output_root(workspace.workspace_root),
-    )
-    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
-    assert runtime_store.find(
-        name="PH3PosNuclei",
-        artifact_type=ObjectLabelsArtifactType,
-        axis_id="A01",
-    )
-    assert runtime_store.find(
-        name="DisplayImage",
-        artifact_type=ImageArtifactType,
-        axis_id="A01",
-    )
-    calculate_math_records = runtime_store.find(
-        name="CalculateMath_11_measurements",
-        artifact_type=MeasurementsArtifactType,
-        axis_id="A01",
-    )
-    assert calculate_math_records
-    assert calculate_math_records[0].value.data[0]["output_name"] == "PercentPositive"
 
 
 def _generate_plate(plate_path: Path) -> Path:
@@ -1866,14 +1443,6 @@ def _write_percent_positive_image(
     Image.fromarray(image).save(path)
 
 
-def _generated_output_root(plate_path: Path) -> Path:
-    return plate_path.parent / f"{plate_path.name}_generated_cppipe"
-
-
-def _generated_results_dir(plate_path: Path) -> Path:
-    return _generated_output_root(plate_path) / "images_results"
-
-
 def _official_cellprofiler_examples_root() -> Path:
     return Path(
         os.environ.get(
@@ -1883,122 +1452,31 @@ def _official_cellprofiler_examples_root() -> Path:
     )
 
 
-def _official_cellprofiler3_source_name_for_pipeline(
-    examples_root: Path,
+@lru_cache(maxsize=1)
+def _official_cellprofiler3_cases() -> tuple[CellProfilerComparisonCase, ...]:
+    """Load the canonical pipeline and source roots for official cases."""
+
+    return load_comparison_cases(
+        Path(__file__).parents[2]
+        / "benchmark"
+        / "manifests"
+        / "official30_portable_axis1.json"
+    )
+
+
+def _official_cellprofiler3_case(
     pipeline_name: str,
-) -> str:
-    candidate_names = (
-        pipeline_name,
-        pipeline_name.removesuffix("URL"),
-        pipeline_name.split("_", maxsplit=1)[0],
-        f"{pipeline_name}Images",
-        pipeline_name.replace("ExampleUntangleAnd", "Example"),
+) -> CellProfilerComparisonCase:
+    """Return one exact manifest-owned official case."""
+
+    matches = tuple(
+        case for case in _official_cellprofiler3_cases() if case.name == pipeline_name
     )
-    for candidate_name in candidate_names:
-        if candidate_name and (examples_root / candidate_name).exists():
-            return candidate_name
-    raise FileNotFoundError(
-        f"No source directory found for official pipeline {pipeline_name!r} "
-        f"under {examples_root}."
-    )
-
-
-def _single_execution_axis(execution: DirectPipelineExecution) -> str:
-    """Return the only compiled axis for one-sample generated-pipeline tests."""
-    axis_ids = tuple(str(axis_id) for axis_id in execution.compiled_contexts)
-    assert len(axis_ids) == 1
-    return axis_ids[0]
-
-
-def _execute_official_cellprofiler3_pipeline(
-    tmp_path: Path,
-    pipeline_name: str,
-    source_name: str,
-    *,
-    well_filter: tuple[str, ...],
-) -> tuple[SourceSchemaWorkspaceMaterialization, DirectPipelineExecution]:
-    examples_root = _official_cellprofiler_examples_root()
-    cppipe_path = (
-        examples_root
-        / "CellProfiler3Pipelines"
-        / f"{pipeline_name}.cppipe"
-    )
-    source_root = examples_root / source_name
-    if not cppipe_path.exists() or not source_root.exists():
-        pytest.skip(
-            f"Official CellProfiler {pipeline_name} files are not available. "
-            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
-            f"looked under {examples_root}."
+    if len(matches) != 1:
+        raise ValueError(
+            f"Official manifest requires one {pipeline_name!r} case, got {matches!r}."
         )
-
-    prepared = prepare_generated_pipeline(
-        cppipe_path,
-        output_path=tmp_path / f"generated_{pipeline_name}_pipeline.py",
-    )
-    workspace = materialize_source_schema_workspace(
-        source_root,
-        tmp_path / f"{pipeline_name}_openhcs_workspace",
-        prepared.source_schema,
-    )
-    effective_well_filter = _effective_source_schema_well_filter(
-        workspace,
-        requested_well_filter=well_filter,
-    )
-
-    global_config = GlobalPipelineConfig(
-        num_workers=1,
-        use_threading=True,
-        microscope=Microscope.AUTO,
-    )
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
-    pipeline_config = _generated_pipeline_config(
-        prepared,
-        path_planning_config=LazyPathPlanningConfig(
-            output_dir_suffix="_generated_cppipe",
-        ),
-        vfs_config=VFSConfig(
-            materialization_backend=MaterializationBackend.DISK,
-        ),
-        well_filter_config=LazyWellFilterConfig(
-            well_filter=list(effective_well_filter),
-        ),
-    )
-    orchestrator = PipelineOrchestrator(
-        workspace.workspace_root,
-        pipeline_config=pipeline_config,
-    )
-    orchestrator.initialize()
-
-    execution = execute_pipeline_direct(
-        orchestrator,
-        prepared.runtime_pipeline_steps,
-    )
-    validate_cppipe_execution(
-        prepared,
-        execution,
-        _generated_output_root(workspace.workspace_root),
-    )
-    return workspace, execution
-
-
-def _effective_source_schema_well_filter(
-    workspace: SourceSchemaWorkspaceMaterialization,
-    *,
-    requested_well_filter: tuple[str, ...],
-) -> tuple[str, ...]:
-    """Resolve a requested one-sample filter against source-schema identity."""
-    available_wells = workspace.primary_wells()
-    requested_available = tuple(
-        well for well in requested_well_filter if well in available_wells
-    )
-    if requested_available:
-        return requested_available
-    return available_wells[:1]
-
-
-def _csv_header(path: Path) -> list[str]:
-    with path.open(newline="") as handle:
-        return next(csv.reader(handle))
+    return matches[0]
 
 
 def _matching_header(
@@ -2009,8 +1487,7 @@ def _matching_header(
         if name_fragment in filename:
             return header
     raise AssertionError(
-        f"No CSV output filename contained {name_fragment!r}: "
-        f"{sorted(headers_by_name)}"
+        f"No CSV output filename contained {name_fragment!r}: {sorted(headers_by_name)}"
     )
 
 
@@ -2025,10 +1502,19 @@ def _write_cppipe(cppipe_path: Path) -> Path:
                 "ModuleCount:3",
                 "HasImagePlaneDetails:False",
                 (
-                    "LoadData:[module_num:1|svn_version:'Unknown'|"
+                    "LoadImages:[module_num:1|svn_version:'Unknown'|"
                     "enabled:True|wants_pause:False]"
                 ),
-                "    Input data file location:Elsewhere...",
+                "    What type of files are you loading?:individual images",
+                "    How do you want to load these files?:Text-Exact match",
+                "    Do you want to exclude certain files?:No",
+                "    Type the text that these images have in common (case-sensitive):w1",
+                "    What do you want to call this image in CellProfiler?:OrigBlue",
+                "    What is the position of this image in each group?:1",
+                (
+                    "    Do you want to extract metadata from the file name, "
+                    "the subfolder path or both?:None"
+                ),
                 (
                     "IdentifyPrimaryObjects:[module_num:2|svn_version:'Unknown'|"
                     "enabled:True|wants_pause:False]"
@@ -2055,7 +1541,7 @@ def _write_bbbc021_cppipe(cppipe_path: Path) -> Path:
                 "Version:3",
                 "DateRevision:300",
                 "GitHash:",
-                "ModuleCount:6",
+                "ModuleCount:5",
                 "HasImagePlaneDetails:False",
                 (
                     "Images:[module_num:1|svn_version:'Unknown'|"
@@ -2067,8 +1553,10 @@ def _write_bbbc021_cppipe(cppipe_path: Path) -> Path:
                     "Metadata:[module_num:2|svn_version:'Unknown'|"
                     "enabled:True|wants_pause:False]"
                 ),
+                "    Extract metadata?:Yes",
                 "    Metadata extraction method:Extract from file/folder names",
                 "    Metadata source:File name",
+                "    Extract metadata from:All images",
                 (
                     "    Regular expression to extract from file name:"
                     "^.*(?P<well>[A-Z]\\d+)_s(?P<site>\\d+)_w(?P<channel>\\d).*$"
@@ -2080,15 +1568,17 @@ def _write_bbbc021_cppipe(cppipe_path: Path) -> Path:
                 "    Assign a name to:Images matching rules",
                 "    Select the image type:Grayscale image",
                 "    Name to assign these images:DNA",
-                "    Match metadata:[{'DNA': 'well'}, {'DNA': 'site'}]",
-                "    Image set matching method:Metadata",
-                '    Select the rule criteria:and (metadata does channel "1")',
-                "    Assign a name to:Images matching rules",
+                "    Image set matching method:Order",
+                "    Assignments count:2",
+                "    Single images count:0",
+                '    Select the rule criteria:and (file does contain "_w1")',
+                "    Name to assign these images:DNA",
+                "    Name to assign these objects:UnusedObjects1",
                 "    Select the image type:Grayscale image",
+                '    Select the rule criteria:and (file does contain "_w2")',
                 "    Name to assign these images:Actin",
-                "    Match metadata:[{'Actin': 'well'}, {'Actin': 'site'}]",
-                "    Image set matching method:Metadata",
-                '    Select the rule criteria:and (metadata does channel "2")',
+                "    Name to assign these objects:UnusedObjects2",
+                "    Select the image type:Grayscale image",
                 (
                     "IdentifyPrimaryObjects:[module_num:4|svn_version:'Unknown'|"
                     "enabled:True|wants_pause:False]"
@@ -2102,11 +1592,6 @@ def _write_bbbc021_cppipe(cppipe_path: Path) -> Path:
                 "    Select the image to be colored green:Actin",
                 "    Select the image to be colored blue:DNA",
                 "    Name the output image:Composite",
-                (
-                    "ExportToSpreadsheet:[module_num:6|svn_version:'Unknown'|"
-                    "enabled:True|wants_pause:False]"
-                ),
-                "    Select measurements to export:No",
                 "",
             )
         )
@@ -2174,10 +1659,19 @@ def _write_relationship_cppipe(cppipe_path: Path) -> Path:
                 "ModuleCount:5",
                 "HasImagePlaneDetails:False",
                 (
-                    "LoadData:[module_num:1|svn_version:'Unknown'|"
+                    "LoadImages:[module_num:1|svn_version:'Unknown'|"
                     "enabled:True|wants_pause:False]"
                 ),
-                "    Input data file location:Elsewhere...",
+                "    What type of files are you loading?:individual images",
+                "    How do you want to load these files?:Text-Exact match",
+                "    Do you want to exclude certain files?:No",
+                "    Type the text that these images have in common (case-sensitive):w1",
+                "    What do you want to call this image in CellProfiler?:OrigBlue",
+                "    What is the position of this image in each group?:1",
+                (
+                    "    Do you want to extract metadata from the file name, "
+                    "the subfolder path or both?:None"
+                ),
                 (
                     "IdentifyPrimaryObjects:[module_num:2|svn_version:'Unknown'|"
                     "enabled:True|wants_pause:False]"
@@ -2195,10 +1689,16 @@ def _write_relationship_cppipe(cppipe_path: Path) -> Path:
                 "    Name the new primary objects:FilteredNuclei",
                 (
                     "RelateObjects:[module_num:4|svn_version:'Unknown'|"
-                    "enabled:True|wants_pause:False]"
+                    "variable_revision_number:5|enabled:True|wants_pause:False]"
                 ),
-                "    Select the parent objects:Nuclei",
-                "    Select the child objects:Cells",
+                "    Parent objects:Nuclei",
+                "    Child objects:Cells",
+                "    Calculate child-parent distances?:None",
+                "    Calculate per-parent means for all child measurements?:No",
+                "    Calculate distances to other parents?:No",
+                "    Do you want to save the children with parents as a new object set?:No",
+                "    Name the output object:None",
+                "    Parent name:None",
                 (
                     "ExportToSpreadsheet:[module_num:5|svn_version:'Unknown'|"
                     "enabled:True|wants_pause:False]"
@@ -2231,14 +1731,16 @@ def _write_percent_positive_cppipe(cppipe_path: Path) -> Path:
                     "Metadata:[module_num:2|svn_version:'Unknown'|"
                     "enabled:True|wants_pause:False]"
                 ),
+                "    Extract metadata?:Yes",
                 "    Metadata extraction method:Extract from file/folder names",
                 "    Metadata source:File name",
+                "    Extract metadata from:All images",
                 (
                     "    Regular expression to extract from file name:"
                     "^(?P<Plate>.*)_(?P<Well>[A-P][0-9]{2})_s"
                     "(?P<Site>[0-9])_w(?P<ChannelNumber>[0-9])"
                 ),
-                "    Select the filtering criteria:and (file does contain \"\")",
+                '    Select the filtering criteria:and (file does contain "")',
                 (
                     "NamesAndTypes:[module_num:3|svn_version:'Unknown'|"
                     "enabled:True|wants_pause:False]"
@@ -2250,11 +1752,11 @@ def _write_percent_positive_cppipe(cppipe_path: Path) -> Path:
                 "    Assignments count:2",
                 "    Single images count:0",
                 "    Process as 3D?:No",
-                "    Select the rule criteria:and (file does contain \"d0.tif\")",
+                '    Select the rule criteria:and (file does contain "d0.tif")',
                 "    Name to assign these images:OrigBlue",
                 "    Name to assign these objects:Cell",
                 "    Select the image type:Grayscale image",
-                "    Select the rule criteria:and (file does contain \"d1.tif\")",
+                '    Select the rule criteria:and (file does contain "d1.tif")',
                 "    Name to assign these images:OrigGreen",
                 "    Name to assign these objects:Cell",
                 "    Select the image type:Grayscale image",
@@ -2272,10 +1774,16 @@ def _write_percent_positive_cppipe(cppipe_path: Path) -> Path:
                 "    Name the primary objects to be identified:PH3",
                 (
                     "RelateObjects:[module_num:6|svn_version:'Unknown'|"
-                    "enabled:True|wants_pause:False]"
+                    "variable_revision_number:5|enabled:True|wants_pause:False]"
                 ),
                 "    Parent objects:Nuclei",
                 "    Child objects:PH3",
+                "    Calculate child-parent distances?:None",
+                "    Calculate per-parent means for all child measurements?:No",
+                "    Calculate distances to other parents?:No",
+                "    Do you want to save the children with parents as a new object set?:No",
+                "    Name the output object:None",
+                "    Parent name:None",
                 (
                     "FilterObjects:[module_num:7|svn_version:'Unknown'|"
                     "enabled:True|wants_pause:False]"

@@ -5,40 +5,57 @@ execution. FunctionStep remains responsible for step-level orchestration.
 """
 
 from abc import ABC, abstractmethod
+from functools import singledispatch
 import logging
 import os
 import time
 from collections.abc import Sequence as SequenceABC
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from threading import Lock
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Callable, ClassVar, Iterator, Mapping, Optional, Sequence
+from typing import (
+    Callable,
+    ClassVar,
+    Generic,
+    Iterator,
+    Mapping,
+    Sequence,
+    TypeVar,
+    cast,
+)
 
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
 
-from openhcs.constants.constants import Backend, VariableComponents
+from openhcs.constants.constants import AllComponents, Backend, VariableComponents
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
     ArtifactOutputPlan,
     NoMainFlowOutput,
-    StepResult,
     ArtifactType,
     ArtifactTypeStrategyMatchMixin,
     SpecialArtifactType,
     ImageArtifactType,
+    MeasurementsArtifactType,
     ObjectLabelsArtifactType,
+    ArtifactSpecRef,
 )
 from openhcs.core.callable_contract import (
-    CallableContract,
     CallableRuntimeCacheKey,
     prepare_processing_callable,
 )
+from openhcs.core.component_group_scope import (
+    ComponentGroupScope,
+    RuntimeExecutionAxisScope,
+    RuntimeFixedComponentValues,
+)
+from openhcs.core.component_set import ComponentSet
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.debug import (
     DebugCursor,
     DebugEvent,
+    DebugEventSink,
     DebugEventType,
     DebugArtifactRefProjection,
     DebugInvocationParameter,
@@ -47,35 +64,49 @@ from openhcs.core.debug import (
 from openhcs.core.function_patterns import (
     CompiledFunctionGroup,
     CompiledFunctionInvocation,
+    InvocationArtifactInputEdgePlan,
+    InvocationArtifactInputProjectionKey,
     RuntimeComponentValue,
+    RuntimeInvocationDomain,
 )
 from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
     AlignedImageSliceContext,
+    ImagePayloadBundleContext,
+    ImageOutputBundle,
     flatten_aligned_image_slice_contexts,
     flatten_aligned_image_payload_slices,
     stack_image_payload_context,
     stack_image_payload_context_from_metadata,
     unstack_image_payload_context,
 )
-from openhcs.core.image_stack_layout import ImageStackLayout, SourceSliceUnstackRequest
-from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.memory import (
     convert_memory,
+    stack_runtime_slices,
+    unstack_runtime_slices,
 )
+from openhcs.core.process_local_cache import IdentityBoundProcessCache
 from openhcs.core.runtime_stores import (
+    RuntimeArtifactInput,
     RuntimeArtifactLocation,
-    RuntimeArtifactQuery,
     replace_runtime_artifact_payload,
 )
-from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
-from openhcs.core.runtime_adapters import RuntimeAdapterRequest
-from openhcs.core.runtime_invocation import RuntimeInvocationOptions
+from openhcs.core.runtime_artifact_values import RuntimeValue
+from openhcs.core.runtime_output_matching import (
+    RuntimeReturnedOutputMatcher,
+)
+from openhcs.core.runtime_adapters import (
+    RuntimeAdapterRequest,
+)
 from openhcs.core.runtime_slice_alignment import (
     RuntimeSliceAlignedValueSet,
     RuntimeSliceAlignedValues,
 )
-from openhcs.core.source_image_semantics import SourceImagePayloadSemantics
+from openhcs.core.runtime_slice_projection import (
+    RuntimeSliceProjectionDeclarationError,
+)
+from openhcs.core.source_image_semantics import apply_source_binding_payload
+from openhcs.core.source_image_provenance import SourceImageIdentity
 from openhcs.core.source_workspace_projection import (
     VirtualWorkspacePathLookup,
     VirtualWorkspaceSourceProjection,
@@ -88,32 +119,51 @@ from openhcs.core.source_binding_selection import (
     SourceBindingRuntimeContextRequest,
     SourcePatternResolutionContext,
 )
-from openhcs.core.source_matching import with_source_component_metadata
+from openhcs.core.source_matching import (
+    source_component_metadata_value,
+    source_metadata_value,
+    with_source_component_metadata,
+)
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
+    SOURCE_BINDING_ALIAS_METADATA_FIELD,
     SourceBindingRuntimeContext,
+    SourceProjectionRole,
 )
-from openhcs.core.runtime_values import (
-    DerivedImagePayloadContext,
+from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
-    ObjectLabelValue,
-    RuntimeArrayData,
-    RuntimeImageSourceIdentityCompleteness,
-    SourceImageObjectLabelBuildRequest,
+    ImagePayloadMetadataCarrier,
+    ImagePayloadMetadataCompositionMode,
     image_payload_data,
+    image_payload_mask,
     image_payload_metadata,
     image_payload_slice_context,
-    is_array_payload,
-    normalize_artifact_value,
+    preserve_declared_image_payload_axis,
     with_image_payload_data,
-    with_image_payload_metadata,
 )
+from openhcs.core.runtime_image_loading import ImagePayloadSourceMetadataContext
+from openhcs.core.runtime_array_values import RuntimeArrayData
+from openhcs.core.runtime_measurements import MeasurementSubject, MeasurementTable
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelSet,
+    ObjectLabelValue,
+    object_label_dense_array,
+)
+from openhcs.core.runtime_object_label_building import (
+    SourceImageObjectLabelBuildRequest,
+)
+from openhcs.core.runtime_tabular_values import ColumnarRows
 from openhcs.core.registry_strategies import (
-    EnumKeyedStrategyMixin,
     MostDerivedContextStrategyMixin,
     NominalTypeKeyedStrategyMixin,
 )
-from openhcs.core.runtime_semantics import RuntimePlaneProjection
+from openhcs.core.runtime_plane_projection import (
+    RuntimePlaneAxis,
+    RuntimePlaneAxisProjector,
+    RuntimePlaneAxisValueProjection,
+    RuntimePlaneProjection,
+)
+from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 from openhcs.core.step_dependencies import StepInputDependencyKind
 from openhcs.core.steps.function_output_manifest import (
     NoStepOutputManifestMatch,
@@ -126,32 +176,47 @@ from openhcs.core.steps.function_output_identity import (
     FunctionOutputPathAuthority,
     FunctionOutputPathRequest,
 )
-from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
+from openhcs.core.compiled_step_plan import CompiledStepPlan
 
 logger = logging.getLogger(__name__)
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 _PROFILE_RUNTIME_PATH_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME_PATH"
-PROCESSING_CONTEXT_OWNER_NAME = ProcessingContext.__name__
-ArtifactInputPlans = Mapping[str, ArtifactInputPlan]
-ArtifactOutputPlans = Mapping[str, ArtifactOutputPlan]
+ArtifactInputPlanKeyT = TypeVar(
+    "ArtifactInputPlanKeyT",
+    ArtifactSpecRef,
+    InvocationArtifactInputProjectionKey,
+)
+ArtifactInputPlanT = TypeVar(
+    "ArtifactInputPlanT",
+    ArtifactInputPlan,
+    InvocationArtifactInputEdgePlan,
+)
+ArtifactInputPlans = Mapping[ArtifactInputPlanKeyT, ArtifactInputPlanT]
+ArtifactOutputPlans = Mapping[ArtifactSpecRef, ArtifactOutputPlan]
 JsonValue = RuntimeComponentValue | Mapping[str, "JsonValue"] | Sequence["JsonValue"]
-ObjectLabelContextualizedOutput = (
-    ObjectLabelValue | RuntimeSliceAlignedValueSet[ObjectLabelValue]
+FunctionOutputContextualizedValue = (
+    RuntimeArrayData
+    | ObjectLabelValue
+    | ColumnarRows
+    | MeasurementTable
+    | RuntimeSliceAlignedValueSet
 )
 ObjectLabelContextualizableOutput = (
     RuntimeArrayData | ObjectLabelValue | RuntimeSliceAlignedValueSet
 )
-RuntimePayload = RuntimeArrayData | ObjectLabelValue | RuntimeSliceAlignedValueSet
-RuntimeFunctionOutput = (
-    RuntimePayload | NoMainFlowOutput | StepResult | tuple[RuntimePayload, ...]
-)
-RuntimeCallableArgument = (
-    JsonValue | RuntimePayload | ProcessingContext | RuntimeInvocationOptions
-)
+RuntimePayload = FunctionOutputContextualizedValue
+RuntimeFunctionOutput = RuntimePayload | NoMainFlowOutput | tuple[RuntimePayload, ...]
+RuntimeCallableArgument = JsonValue | RuntimePayload | ProcessingContext
 RuntimeCallableKwargs = Mapping[str, RuntimeCallableArgument]
 RuntimeProfileFieldValue = str | int | float | bool | None
 EMPTY_ARTIFACT_PLANS: ArtifactOutputPlans = MappingProxyType({})
+
+
+class FunctionInvocationCallableCache(IdentityBoundProcessCache):
+    """Bound resolved callables to their exact compiled contract owners."""
+
+    registry_key = "function_invocation_callable"
 
 
 class FunctionInvocationCallableResolver:
@@ -164,26 +229,28 @@ class FunctionInvocationCallableResolver:
     """
 
     _lock = Lock()
-    _cache: dict[CallableRuntimeCacheKey, Callable] = {}
 
     @classmethod
     def prepare(cls, invocation: CompiledFunctionInvocation) -> None:
         """Resolve and cache one invocation callable before timed execution."""
-        prepare_processing_callable(cls.resolve(invocation))
+        cls.resolve(invocation)
+        prepare_processing_callable(
+            invocation.contract.resolve_canonical_raw_callable()
+        )
 
     @classmethod
     def resolve(cls, invocation: CompiledFunctionInvocation) -> Callable:
         """Return the callable for a compiled invocation."""
-        cache_key = cls.cache_key(invocation)
+        cache = FunctionInvocationCallableCache.process_cache()
         with cls._lock:
-            cached = cls._cache.get(cache_key)
+            cached = cache.get_bound(invocation.contract)
         if cached is not None:
             return cached
 
         resolved = invocation.contract.resolve_runtime_callable()
 
         with cls._lock:
-            cls._cache[cache_key] = resolved
+            cache.put_bound(invocation.contract, resolved)
         return resolved
 
     @classmethod
@@ -228,30 +295,6 @@ class RuntimeProfileSink:
                 handle.write(f"RUNTIME_PROFILE {label} {seconds:.6f}s {field_text}\n")
 
 
-@dataclass(frozen=True, slots=True)
-class SourceImagePayloadSlice:
-    """One source-image slice used to contextualize slice-aligned outputs."""
-
-    source_payload: RuntimePayload
-    slice_index: int
-
-    def payload(self) -> RuntimeArrayData:
-        source_data = image_payload_data(self.source_payload)
-        source_array = np.asarray(source_data)
-        if source_array.ndim >= 3:
-            return image_payload_slice_context(
-                self.source_payload,
-                source_array[self.slice_index],
-                self.slice_index,
-            )
-        if self.slice_index == 0:
-            return self.source_payload
-        raise ValueError(
-            "Slice-aligned object-label output has more slices than its source "
-            "image context."
-        )
-
-
 class FunctionOutputContextStrategy(
     ArtifactTypeStrategyMatchMixin,
     MostDerivedContextStrategyMixin[type[ArtifactType]],
@@ -266,9 +309,15 @@ class FunctionOutputContextStrategy(
         cls,
         output_plan: ArtifactOutputPlan | None,
     ) -> "FunctionOutputContextStrategy":
-        output_kind = ImageArtifactType if output_plan is None else output_plan.artifact_type
+        output_kind = (
+            ImageArtifactType if output_plan is None else output_plan.artifact_type
+        )
         strategy = cls.for_context(output_kind, required=False)
-        return strategy if strategy is not None else UnchangedFunctionOutputContextStrategy()
+        return (
+            strategy
+            if strategy is not None
+            else UnchangedFunctionOutputContextStrategy()
+        )
 
     @abstractmethod
     def contextualize(
@@ -276,8 +325,70 @@ class FunctionOutputContextStrategy(
         source_payload: RuntimePayload,
         output_value: RuntimePayload,
         output_plan: ArtifactOutputPlan | None,
-    ) -> ObjectLabelContextualizedOutput:
+        plane_projection: RuntimePlaneAxisValueProjection | None,
+    ) -> FunctionOutputContextualizedValue:
         """Return output with source context preserved where semantics allow it."""
+
+    def contextualize_from_projector(
+        self,
+        source_payload: RuntimePayload,
+        output_value: RuntimePayload,
+        output_plan: ArtifactOutputPlan | None,
+        plane_projector: RuntimePlaneAxisProjector | None,
+    ) -> FunctionOutputContextualizedValue:
+        """Resolve plane projection only after the artifact strategy is selected."""
+
+        plane_projection = (
+            None
+            if plane_projector is None
+            else preserve_declared_image_payload_axis(
+                plane_projector,
+                output_value,
+                source_payload=source_payload,
+            )
+        )
+        if (
+            plane_projection is None
+            and output_plan is not None
+            and output_plan.variable_components
+        ):
+            if plane_projector is None:
+                if not self.output_owns_source_context(
+                    source_payload,
+                    output_value,
+                    output_plan,
+                    None,
+                ):
+                    raise ValueError(
+                        f"Artifact output {output_plan.ref()!r} preserves variable "
+                        f"components {output_plan.variable_components!r} but the "
+                        "runtime invocation supplies no plane projector."
+                    )
+                return output_value
+            plane_projection = (
+                RuntimePlaneAxisValueProjection.require_from_projector(
+                    plane_projector,
+                    RuntimePlaneAxis.RUNTIME_SLICE,
+                )
+            )
+        return self.contextualize(
+            source_payload,
+            output_value,
+            output_plan,
+            plane_projection,
+        )
+
+    @staticmethod
+    def output_owns_source_context(
+        source_payload: RuntimePayload,
+        output_value: RuntimePayload,
+        output_plan: ArtifactOutputPlan | None,
+        plane_projection: RuntimePlaneAxisValueProjection | None,
+    ) -> bool:
+        """Return whether this artifact value already owns complete context."""
+
+        del source_payload, output_value, output_plan, plane_projection
+        return False
 
 
 class UnchangedFunctionOutputContextStrategy(FunctionOutputContextStrategy):
@@ -290,8 +401,9 @@ class UnchangedFunctionOutputContextStrategy(FunctionOutputContextStrategy):
         source_payload: RuntimePayload,
         output_value: RuntimePayload,
         output_plan: ArtifactOutputPlan | None,
-    ) -> ObjectLabelContextualizedOutput:
-        del source_payload, output_plan
+        plane_projection: RuntimePlaneAxisValueProjection | None,
+    ) -> FunctionOutputContextualizedValue:
+        del source_payload, output_plan, plane_projection
         return output_value
 
 
@@ -300,16 +412,284 @@ class ImageFunctionOutputContextStrategy(FunctionOutputContextStrategy):
 
     artifact_type = ImageArtifactType
 
+    @staticmethod
+    def output_owns_source_context(
+        source_payload: RuntimePayload,
+        output_value: RuntimePayload,
+        output_plan: ArtifactOutputPlan | None,
+        plane_projection: RuntimePlaneAxisValueProjection | None,
+    ) -> bool:
+        """Return whether an image result already carries complete source identity."""
+
+        if not isinstance(output_value, AlignedImageStack) and not (
+            image_payload_metadata(output_value).has_complete_source_identity(
+                output_value,
+                plane_projection,
+            )
+        ):
+            return False
+        output_surfaces = flatten_aligned_image_payload_slices(output_value)
+        if not all(
+            image_payload_metadata(output_surface).has_complete_source_identity(
+                output_surface
+            )
+            for output_surface in output_surfaces
+        ):
+            return False
+        if output_plan is None:
+            return True
+        source_surfaces = flatten_aligned_image_payload_slices(source_payload)
+        return len(output_surfaces) == len(source_surfaces) and all(
+            image_payload_metadata(
+                output_surface
+            ).source_provenance.represented_source_identities
+            == image_payload_metadata(
+                source_surface
+            ).source_provenance.represented_source_identities
+            for source_surface, output_surface in zip(
+                source_surfaces,
+                output_surfaces,
+                strict=True,
+            )
+        )
+
     def contextualize(
         self,
         source_payload: RuntimePayload,
         output_value: RuntimePayload,
         output_plan: ArtifactOutputPlan | None,
-    ) -> ObjectLabelContextualizedOutput:
-        del output_plan
-        return ImageOutputSourceContextStrategy.for_source_payload(
+        plane_projection: RuntimePlaneAxisValueProjection | None,
+    ) -> FunctionOutputContextualizedValue:
+        if isinstance(output_value, RuntimeSliceAlignedValueSet):
+            if (
+                plane_projection is None
+                or plane_projection.axis is not RuntimePlaneAxis.RUNTIME_SLICE
+            ):
+                raise ValueError(
+                    "Runtime-slice-aligned image output requires an exact runtime "
+                    "slice projection."
+                )
+            if plane_projection.axis_size != output_value.slice_count:
+                raise ValueError(
+                    "Runtime-slice-aligned image output count must exactly match "
+                    "the declared runtime plane axis: "
+                    f"{output_value.slice_count} != {plane_projection.axis_size}."
+                )
+            contextualized_slices = []
+            for slice_index in range(output_value.slice_count):
+                item = output_value.value_for_slice(slice_index)
+                contextualized_slices.append(
+                    self.contextualize(
+                        RuntimeSliceProjection.value_for_slice(
+                            source_payload,
+                            RuntimePlaneAxisValueProjection.from_selected_plane(
+                                axis=plane_projection.axis,
+                                plane_index=slice_index,
+                                axis_size=plane_projection.axis_size,
+                            ),
+                        ),
+                        item.data if isinstance(item, RuntimeValue) else item,
+                        output_plan,
+                        None,
+                    )
+                )
+            return RuntimeSliceAlignedValues(tuple(contextualized_slices))
+        source_ref = (
+            None if output_plan is None else output_plan.source_context_source()
+        )
+        if (
+            output_plan is not None
+            and output_plan.variable_components
+            and plane_projection is not None
+            and plane_projection.plane_index is None
+        ):
+            output_metadata = image_payload_metadata(output_value)
+            if (
+                output_metadata.plane_axis is None
+                and output_metadata.source_provenance.source_plane_count
+                == plane_projection.axis_size
+                and plane_projection.dense_shape_carries_axis(
+                    np.shape(image_payload_data(output_value))
+                )
+            ):
+                output_value = output_metadata.replace_fields(
+                    plane_axis=plane_projection.axis,
+                ).attach_to(output_value)
+        if output_plan is not None and not output_plan.variable_components:
+            output_metadata = image_payload_metadata(output_value)
+            if output_metadata.plane_axis is RuntimePlaneAxis.RUNTIME_SLICE:
+                output_value = RuntimeSliceProjection.value_for_singleton_slice(
+                    output_value,
+                    source_description=f"Image output {output_plan.ref()!r}",
+                )
+            source_metadata = image_payload_metadata(source_payload)
+            if source_metadata.plane_axis is RuntimePlaneAxis.RUNTIME_SLICE:
+                if source_ref is None:
+                    raise ValueError(
+                        f"Image output {output_plan.ref()!r} consumes a runtime "
+                        "stack without a declared source-context relation."
+                    )
+                collapsed_metadata = source_metadata.collapse_leading_plane_axis()
+                source_payload = collapsed_metadata.with_source_provenance(
+                    collapsed_metadata.source_provenance.with_source_image_names(
+                        (source_ref.name,)
+                    )
+                ).attach_source_context_to(output_value)
+            plane_projection = None
+        source_context_strategy = ImageOutputSourceContextStrategy.for_source_payload(
             source_payload,
-        ).contextualize(source_payload, output_value)
+        )
+        if self.output_owns_source_context(
+            source_payload,
+            output_value,
+            output_plan,
+            plane_projection,
+        ) and not source_context_strategy.requires_plane_contextualization(
+            source_payload,
+            output_value,
+            plane_projection,
+        ):
+            if isinstance(output_value, AlignedImageStack):
+                return output_value
+            output_metadata = image_payload_metadata(output_value)
+            source_metadata = image_payload_metadata(source_payload)
+            contextualized_output = output_metadata.with_source_context_from(
+                source_metadata
+            ).attach_source_context_to(
+                output_value,
+            )
+            if image_payload_metadata(contextualized_output) == output_metadata:
+                return output_value
+            return contextualized_output
+        return source_context_strategy.contextualize(
+            source_payload,
+            output_value,
+            plane_projection,
+        )
+
+
+class MeasurementsFunctionOutputContextStrategy(FunctionOutputContextStrategy):
+    """Own schema-bearing rows as one compiled measurement table."""
+
+    artifact_type = MeasurementsArtifactType
+
+    @staticmethod
+    def _declared_subject(output_plan: ArtifactOutputPlan | None) -> MeasurementSubject:
+        if output_plan is None:
+            raise ValueError("Measurement outputs require a compiled output plan.")
+        subject = output_plan.measurement_subject()
+        if subject is None:
+            raise ValueError(
+                f"Measurement output {output_plan.ref()!r} has no declared "
+                "measurement subject relation."
+            )
+        return subject
+
+    @staticmethod
+    def _validate_nominal_table(
+        output_value: MeasurementTable,
+        output_plan: ArtifactOutputPlan,
+        subject: MeasurementSubject,
+    ) -> None:
+        output_value.validate_artifact_name(output_plan.name)
+        if output_value.subject != subject:
+            raise ValueError(
+                f"Measurement output {output_plan.ref()!r} declares subject "
+                f"{subject!r}, but returned {output_value.subject!r}."
+            )
+
+    def contextualize_from_projector(
+        self,
+        source_payload: RuntimePayload,
+        output_value: RuntimePayload,
+        output_plan: ArtifactOutputPlan | None,
+        plane_projector: RuntimePlaneAxisProjector | None,
+    ) -> FunctionOutputContextualizedValue:
+        """Validate nominal identity before generic plane projection inspects it."""
+
+        subject = self._declared_subject(output_plan)
+        if isinstance(output_value, MeasurementTable):
+            assert output_plan is not None
+            self._validate_nominal_table(output_value, output_plan, subject)
+        return super().contextualize_from_projector(
+            source_payload,
+            output_value,
+            output_plan,
+            plane_projector,
+        )
+
+    def contextualize(
+        self,
+        source_payload: RuntimePayload,
+        output_value: RuntimePayload,
+        output_plan: ArtifactOutputPlan | None,
+        plane_projection: RuntimePlaneAxisValueProjection | None,
+    ) -> FunctionOutputContextualizedValue:
+        del plane_projection
+        subject = self._declared_subject(output_plan)
+        assert output_plan is not None
+        if isinstance(output_value, MeasurementTable):
+            self._validate_nominal_table(output_value, output_plan, subject)
+            return output_value
+        if not isinstance(output_value, ColumnarRows):
+            raise TypeError(
+                f"Measurement output {output_plan.ref()!r} requires ColumnarRows "
+                f"or MeasurementTable, got {type(output_value).__name__}."
+            )
+        return MeasurementTable(
+            name=output_plan.name,
+            rows=output_value,
+            source_image_name=subject.source_image_name,
+            subject=subject,
+            source_provenance=image_payload_metadata(source_payload).source_provenance,
+        )
+
+
+@singledispatch
+def project_declared_source_identity(
+    source_payload: RuntimePayload,
+    source_ref: ArtifactSpecRef,
+) -> RuntimePayload:
+    """Project an image payload to one exact declared source identity."""
+
+    metadata = image_payload_metadata(source_payload)
+    return metadata.project_declared_source_image(source_payload, source_ref.name)
+
+
+@project_declared_source_identity.register(RuntimeSliceAlignedValueSet)
+def project_aligned_declared_source_identity(
+    source_payload: RuntimeSliceAlignedValueSet,
+    source_ref: ArtifactSpecRef,
+) -> RuntimeSliceAlignedValues:
+    """Project each runtime-aligned image slice to the declared source identity."""
+
+    return RuntimeSliceAlignedValues(
+        tuple(
+            project_declared_source_identity(
+                source_payload.value_for_slice(slice_index),
+                source_ref,
+            )
+            for slice_index in range(source_payload.slice_count)
+        )
+    )
+
+
+@project_declared_source_identity.register(ObjectLabelValue)
+def project_object_label_declared_source_identity(
+    source_payload: ObjectLabelValue,
+    source_ref: ArtifactSpecRef,
+) -> ObjectLabelValue:
+    """Preserve object-label context without applying image-axis projection."""
+
+    if (
+        isinstance(source_payload, ObjectLabelSet)
+        and source_payload.name != source_ref.name
+    ):
+        raise ValueError(
+            f"Object-label payload {source_payload.name!r} cannot resolve declared "
+            f"source {source_ref!r}."
+        )
+    return source_payload
 
 
 class ImageOutputSourceContextStrategy(
@@ -332,11 +712,23 @@ class ImageOutputSourceContextStrategy(
             return DefaultImageOutputSourceContextStrategy()
         return strategy
 
+    def requires_plane_contextualization(
+        self,
+        source_payload: RuntimePayload,
+        output_value: RuntimePayload,
+        plane_projection: RuntimePlaneAxisValueProjection | None,
+    ) -> bool:
+        """Return whether this source type must bind an undeclared output axis."""
+
+        del source_payload, output_value, plane_projection
+        return False
+
     @abstractmethod
     def contextualize(
         self,
         source_payload: RuntimePayload,
         output_value: RuntimePayload,
+        plane_projection: RuntimePlaneAxisValueProjection | None,
     ) -> RuntimePayload:
         """Return image output with source semantics attached."""
 
@@ -348,13 +740,15 @@ class DefaultImageOutputSourceContextStrategy(ImageOutputSourceContextStrategy):
         self,
         source_payload: RuntimePayload,
         output_value: RuntimePayload,
+        plane_projection: RuntimePlaneAxisValueProjection | None,
     ) -> RuntimePayload:
         if isinstance(output_value, AlignedImageStack):
             return output_value
-        return DerivedImagePayloadContext(
+        return image_payload_metadata(source_payload).derive_payload(
             source_payload,
             output_value,
-        ).payload()
+            plane_projection=plane_projection,
+        )
 
 
 class AlignedImageStackOutputSourceContextStrategy(ImageOutputSourceContextStrategy):
@@ -366,8 +760,9 @@ class AlignedImageStackOutputSourceContextStrategy(ImageOutputSourceContextStrat
         self,
         source_payload: RuntimePayload,
         output_value: RuntimePayload,
+        plane_projection: RuntimePlaneAxisValueProjection | None,
     ) -> RuntimePayload:
-        del source_payload
+        del source_payload, plane_projection
         return output_value
 
 
@@ -382,6 +777,7 @@ class RuntimeSliceAlignedImageOutputSourceContextStrategy(
         self,
         source_payload: RuntimePayload,
         output_value: RuntimePayload,
+        plane_projection: RuntimePlaneAxisValueProjection | None,
     ) -> RuntimePayload:
         source_values = source_payload
         if not isinstance(source_values, RuntimeSliceAlignedValueSet):
@@ -392,7 +788,76 @@ class RuntimeSliceAlignedImageOutputSourceContextStrategy(
         return RuntimeSliceAlignedImageOutputContext(
             source_values=source_values,
             output_value=output_value,
+            plane_projection=plane_projection,
         ).payload()
+
+
+class ObjectLabelImageOutputSourceContextStrategy(
+    ImageOutputSourceContextStrategy
+):
+    """Project an image rendered from labels onto the invocation plane axis."""
+
+    value_type = ObjectLabelValue
+
+    def requires_plane_contextualization(
+        self,
+        source_payload: RuntimePayload,
+        output_value: RuntimePayload,
+        plane_projection: RuntimePlaneAxisValueProjection | None,
+    ) -> bool:
+        """Require projection for a volume label payload, including depth one."""
+
+        del output_value
+        if not isinstance(source_payload, ObjectLabelValue):
+            raise TypeError(
+                "Object-label image output context requires ObjectLabelValue, got "
+                f"{type(source_payload).__name__}."
+            )
+        return (
+            plane_projection is not None
+            and plane_projection.plane_index is None
+            and image_payload_metadata(source_payload).plane_axis is None
+            and np.ndim(object_label_dense_array(source_payload)) >= 3
+        )
+
+    def contextualize(
+        self,
+        source_payload: RuntimePayload,
+        output_value: RuntimePayload,
+        plane_projection: RuntimePlaneAxisValueProjection | None,
+    ) -> RuntimePayload:
+        if not isinstance(source_payload, ObjectLabelValue):
+            raise TypeError(
+                "Object-label image output context requires ObjectLabelValue, got "
+                f"{type(source_payload).__name__}."
+            )
+        source_metadata = image_payload_metadata(source_payload)
+        if plane_projection is None or plane_projection.plane_index is not None:
+            return source_metadata.derive_payload(
+                source_payload,
+                output_value,
+                plane_projection=plane_projection,
+            )
+        plane_count = source_metadata.source_provenance.source_plane_count
+        if plane_count != plane_projection.axis_size:
+            raise ValueError(
+                "Object-label image output source-plane provenance must match the "
+                "declared runtime plane axis: "
+                f"{plane_count} != {plane_projection.axis_size}."
+            )
+        plane_projection.validate_shape(
+            np.shape(image_payload_data(output_value)),
+            value_name="Object-label image output payload",
+        )
+        output_metadata = image_payload_metadata(output_value)
+        contextualized_output = output_metadata.replace_fields(
+            plane_axis=plane_projection.axis,
+        ).attach_to(output_value)
+        return source_metadata.derive_payload(
+            source_payload,
+            contextualized_output,
+            plane_projection=plane_projection,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -401,30 +866,69 @@ class RuntimeSliceAlignedImageOutputContext:
 
     source_values: RuntimeSliceAlignedValueSet
     output_value: RuntimePayload
+    plane_projection: RuntimePlaneAxisValueProjection | None
 
     def payload(self) -> RuntimePayload:
         output_data = image_payload_data(self.output_value)
+        if self.plane_projection is None:
+            if self.source_values.slice_count != 1:
+                raise ValueError(
+                    "Runtime-slice-aligned image output has multiple source values "
+                    "but no declared runtime plane projection."
+                )
+            source_value = self.source_values.value_for_aligned_slice(0, 1)
+            return image_payload_metadata(source_value).derive_payload(
+                source_value,
+                self.output_value,
+            )
         output_slices = self.output_slices(output_data)
-        contextualized_slices = tuple(
-            DerivedImagePayloadContext(
-                self.source_values.value_for_aligned_slice(
-                    slice_index,
-                    len(output_slices),
-                ),
-                output_slice,
-            ).payload()
-            for slice_index, output_slice in enumerate(output_slices)
+        contextualized_slices = []
+        for slice_index, output_slice in enumerate(output_slices):
+            source_value = self.source_values.value_for_aligned_slice(
+                slice_index,
+                len(output_slices),
+            )
+            contextualized_slices.append(
+                image_payload_metadata(source_value).derive_payload(
+                    source_value,
+                    output_slice,
+                )
+            )
+        return stack_image_payload_context(
+            tuple(contextualized_slices),
+            output_data,
+            metadata_mode=ImagePayloadMetadataCompositionMode.STACK,
         )
-        return stack_image_payload_context(contextualized_slices, output_data)
 
-    @staticmethod
-    def output_slices(output_data: RuntimeArrayData) -> tuple[RuntimeArrayData, ...]:
-        if is_color_image_slice(output_data):
-            return (output_data,)
-        output_shape = np.shape(output_data)
-        if len(output_shape) < 3:
-            return (output_data,)
-        return tuple(output_data[slice_index] for slice_index in range(output_shape[0]))
+    def output_slices(
+        self,
+        output_data: RuntimeArrayData,
+    ) -> tuple[RuntimeArrayData, ...]:
+        output_array = np.asarray(output_data)
+        projection = self.plane_projection
+        if projection is None:
+            raise RuntimeError(
+                "Runtime-slice output splitting requires a plane projection."
+            )
+        if projection.axis_size != self.source_values.slice_count:
+            raise ValueError(
+                "Runtime-slice image output projection must exactly match its "
+                f"aligned source count: {projection.axis_size} != "
+                f"{self.source_values.slice_count}."
+            )
+        projection.validate_shape(
+            output_array.shape,
+            value_name="Runtime-slice-aligned image output",
+        )
+        return tuple(
+            image_payload_slice_context(
+                self.output_value,
+                output_array[slice_index],
+                slice_index,
+                plane_axis=projection.axis,
+            )
+            for slice_index in range(projection.axis_size)
+        )
 
 
 class ObjectLabelsFunctionOutputContextStrategy(FunctionOutputContextStrategy):
@@ -437,11 +941,11 @@ class ObjectLabelsFunctionOutputContextStrategy(FunctionOutputContextStrategy):
         source_payload: RuntimePayload,
         output_value: RuntimePayload,
         output_plan: ArtifactOutputPlan | None,
-    ) -> ObjectLabelContextualizedOutput:
-        del output_plan
+        plane_projection: RuntimePlaneAxisValueProjection | None,
+    ) -> FunctionOutputContextualizedValue:
         return ObjectLabelOutputValueContextStrategy.for_output_value(
             output_value,
-        ).contextualize(source_payload, output_value)
+        ).contextualize(source_payload, output_value, plane_projection)
 
 
 class ObjectLabelOutputValueContextStrategy(
@@ -459,17 +963,18 @@ class ObjectLabelOutputValueContextStrategy(
         cls,
         output_value: ObjectLabelContextualizableOutput,
     ) -> "ObjectLabelOutputValueContextStrategy":
-        strategy = cls.for_nominal_value(output_value)
-        if strategy is None:
-            return RawObjectLabelOutputValueContextStrategy()
-        return strategy
+        return cls.require_nominal_value(
+            output_value,
+            context="Object-label function output",
+        )
 
     @abstractmethod
     def contextualize(
         self,
         source_payload: RuntimePayload,
         output_value: ObjectLabelContextualizableOutput,
-    ) -> ObjectLabelContextualizedOutput:
+        plane_projection: RuntimePlaneAxisValueProjection | None,
+    ) -> FunctionOutputContextualizedValue:
         """Return the output with source-image context attached when possible."""
 
 
@@ -484,23 +989,45 @@ class RuntimeSliceAlignedObjectLabelOutputValueContextStrategy(
         self,
         source_payload: RuntimePayload,
         output_value: ObjectLabelContextualizableOutput,
-    ) -> ObjectLabelContextualizedOutput:
+        plane_projection: RuntimePlaneAxisValueProjection | None,
+    ) -> FunctionOutputContextualizedValue:
         aligned_values = output_value
         if not isinstance(aligned_values, RuntimeSliceAlignedValueSet):
             raise TypeError(
                 "Runtime-slice-aligned object-label output strategy requires "
                 f"RuntimeSliceAlignedValueSet, got {type(aligned_values).__name__}."
             )
+        if plane_projection is None:
+            raise ValueError(
+                "Runtime-slice-aligned object-label output requires a declared "
+                "runtime plane projection."
+            )
+        if plane_projection.axis is not RuntimePlaneAxis.RUNTIME_SLICE:
+            raise ValueError(
+                "Runtime-slice-aligned object-label output requires the "
+                f"runtime-slice axis, got {plane_projection.axis.value!r}."
+            )
+        if plane_projection.axis_size != aligned_values.slice_count:
+            raise ValueError(
+                "Runtime-slice-aligned object-label output count must exactly "
+                "match the declared runtime plane axis: "
+                f"{aligned_values.slice_count} != {plane_projection.axis_size}."
+            )
         return RuntimeSliceAlignedValues(
             tuple(
                 ObjectLabelOutputValueContextStrategy.for_output_value(
                     aligned_values.value_for_slice(slice_index)
                 ).contextualize(
-                    SourceImagePayloadSlice(
+                    RuntimeSliceProjection.value_for_slice(
                         source_payload,
-                        slice_index,
-                    ).payload(),
+                        RuntimePlaneAxisValueProjection.from_selected_plane(
+                            axis=plane_projection.axis,
+                            plane_index=slice_index,
+                            axis_size=plane_projection.axis_size,
+                        ),
+                    ),
                     aligned_values.value_for_slice(slice_index),
+                    None,
                 )
                 for slice_index in range(aligned_values.slice_count)
             )
@@ -518,7 +1045,9 @@ class ContextualObjectLabelOutputValueContextStrategy(
         self,
         source_payload: RuntimePayload,
         output_value: ObjectLabelContextualizableOutput,
+        plane_projection: RuntimePlaneAxisValueProjection | None,
     ) -> ObjectLabelValue:
+        del plane_projection
         if not isinstance(output_value, ObjectLabelValue):
             raise TypeError(
                 "Contextual object-label output strategy requires "
@@ -527,125 +1056,172 @@ class ContextualObjectLabelOutputValueContextStrategy(
         return output_value.with_source_image_context(source_payload)
 
 
-class RawObjectLabelOutputValueContextStrategy(ObjectLabelOutputValueContextStrategy):
-    """Build object-label payload context for raw array-like label outputs."""
+class NumpyArrayObjectLabelOutputValueContextStrategy(
+    ObjectLabelOutputValueContextStrategy
+):
+    """Build object-label context for declared NumPy array outputs."""
+
+    value_type = np.ndarray
 
     def contextualize(
         self,
         source_payload: RuntimePayload,
         output_value: ObjectLabelContextualizableOutput,
+        plane_projection: RuntimePlaneAxisValueProjection | None,
     ) -> ObjectLabelValue:
-        if not is_array_payload(output_value):
+        if not isinstance(output_value, np.ndarray):
             raise TypeError(
-                "Object-label output must be an OpenHCS object-label value, "
-                "runtime-slice-aligned value, or array payload; got "
-                f"{type(output_value).__name__}."
+                "Runtime-array object-label output strategy requires a NumPy "
+                f"array, got {type(output_value).__name__}."
             )
         return SourceImageObjectLabelBuildRequest(
             image=source_payload,
             labels=output_value,
+            plane_projection=plane_projection,
         ).payload()
 
 
 @dataclass(frozen=True)
-class ComponentArtifactPlans:
+class ComponentArtifactPlans(Generic[ArtifactInputPlanKeyT, ArtifactInputPlanT]):
     """Artifact plans selected for one grouped component execution."""
 
-    inputs: ArtifactInputPlans
+    inputs: ArtifactInputPlans[ArtifactInputPlanKeyT, ArtifactInputPlanT]
     outputs: ArtifactOutputPlans
 
     @classmethod
     def from_step_component(
         cls,
-        plan: FunctionStepExecutionPlan,
+        plan: CompiledStepPlan,
         component_key: str | None,
-    ) -> "ComponentArtifactPlans":
+    ) -> "ComponentArtifactPlans[ArtifactSpecRef, ArtifactInputPlan]":
+        ArtifactInputPlan.require_exact_map(
+            plan.artifact_inputs,
+            boundary="Component artifact input",
+        )
         return cls(
-            inputs=cls._select_input_plans_for_component(
-                plan.artifact_inputs_by_group,
-                component_key,
-                plan.artifact_inputs,
-            ),
+            inputs=dict(plan.artifact_inputs),
             outputs=cls._select_output_plans_for_component(
-                plan.artifact_outputs_by_group,
-                component_key,
                 plan.artifact_outputs,
+                plan.execution_group_scope,
+                component_key,
             ),
         )
 
     def select_for_invocation(
-        self,
+        self: "ComponentArtifactPlans[ArtifactSpecRef, ArtifactInputPlan]",
         invocation: CompiledFunctionInvocation,
-        declared_inputs: ArtifactInputPlans | None = None,
-        declared_outputs: ArtifactOutputPlans | None = None,
-    ) -> "ComponentArtifactPlans":
-        input_plans = self.inputs
-        if (
-            invocation.runtime_domain.adapter_manages_artifact_inputs
-            and declared_inputs is not None
-        ):
-            input_plans = declared_inputs
-        output_plans = self.outputs
-        if (
-            invocation.adapter_records_artifact_outputs
-            and declared_outputs is not None
-        ):
-            output_plans = declared_outputs
-        return ComponentArtifactPlans(
-            inputs=invocation.select_inputs(input_plans),
-            outputs=invocation.select_outputs(output_plans),
+        *,
+        execution_scope: ComponentGroupScope,
+        component_key: str | None,
+    ) -> "ComponentArtifactPlans[InvocationArtifactInputProjectionKey, InvocationArtifactInputEdgePlan]":
+        active_compiled_outputs = tuple(
+            projected_plan
+            for output_plan in invocation.artifact_output_plans
+            if (
+                projected_plan := self._output_plan_for_component(
+                    output_plan,
+                    execution_scope,
+                    component_key,
+                )
+            )
+            is not None
+        )
+        active_outputs = replace(
+            invocation,
+            artifact_output_plans=active_compiled_outputs,
+        ).select_outputs(self.outputs)
+        compiled_group_scope_sources = frozenset(
+            source_ref
+            for output_plan in invocation.artifact_output_plans
+            for source_ref in output_plan.group_scope_sources()
+        )
+        active_group_scope_sources = frozenset(
+            source_ref
+            for output_plan in active_outputs.values()
+            for source_ref in output_plan.group_scope_sources()
+        )
+        active_inputs: ArtifactInputPlans[
+            InvocationArtifactInputProjectionKey,
+            InvocationArtifactInputEdgePlan,
+        ] = {}
+        for edge_key, edge in invocation.select_inputs(self.inputs).items():
+            edge_group_scope_sources = compiled_group_scope_sources.intersection(
+                (edge.spec.ref(), *edge.spec.dependency_refs())
+            )
+            if edge_group_scope_sources and edge_group_scope_sources.isdisjoint(
+                active_group_scope_sources
+            ):
+                continue
+            active_inputs[edge_key] = edge
+        return ComponentArtifactPlans(inputs=active_inputs, outputs=active_outputs)
+
+    def select_source_bound_inputs(
+        self: "ComponentArtifactPlans[InvocationArtifactInputProjectionKey, InvocationArtifactInputEdgePlan]",
+        *,
+        declared_source_bindings: CompiledSourceBindingPlan,
+        active_source_bindings: CompiledSourceBindingPlan,
+    ) -> "ComponentArtifactPlans[InvocationArtifactInputProjectionKey, InvocationArtifactInputEdgePlan]":
+        """Keep only source-bound main-flow occurrences active on this component."""
+
+        return replace(
+            self,
+            inputs={
+                edge_key: edge
+                for edge_key, edge in self.inputs.items()
+                if not (
+                    edge.consumes_main_flow
+                    and declared_source_bindings.declares_artifact_ref(
+                        edge.spec.ref()
+                    )
+                    and not active_source_bindings.declares_artifact_ref(
+                        edge.spec.ref()
+                    )
+                )
+            },
         )
 
-    @staticmethod
-    def _select_input_plans_for_component(
-        plan_by_group: Optional[Mapping[str | None, ArtifactOutputPlans | ArtifactInputPlans]],
-        component_key: Optional[str],
-        default_plan: ArtifactOutputPlans | ArtifactInputPlans,
-    ) -> ArtifactOutputPlans | ArtifactInputPlans:
-        return ComponentArtifactPlans._select_grouped_plans_for_component(
-            plan_by_group,
-            component_key,
-            default_plan,
-        )
-
-    @staticmethod
+    @classmethod
     def _select_output_plans_for_component(
-        plan_by_group: Optional[Mapping[str | None, ArtifactOutputPlans | ArtifactInputPlans]],
-        component_key: Optional[str],
-        default_plan: ArtifactOutputPlans | ArtifactInputPlans,
-    ) -> ArtifactOutputPlans | ArtifactInputPlans:
-        if component_key is None:
-            return default_plan
-        if plan_by_group and component_key not in plan_by_group and None not in plan_by_group:
-            return EMPTY_ARTIFACT_PLANS
-        return ComponentArtifactPlans._select_grouped_plans_for_component(
-            plan_by_group,
-            component_key,
-            default_plan,
+        cls,
+        plans: ArtifactOutputPlans,
+        execution_scope: ComponentGroupScope,
+        component_key: str | None,
+    ) -> ArtifactOutputPlans:
+        ArtifactOutputPlan.require_exact_map(
+            plans,
+            boundary="Component artifact output",
         )
+        return {
+            output_key: projected_plan
+            for output_key, output_plan in plans.items()
+            if (
+                projected_plan := cls._output_plan_for_component(
+                    output_plan,
+                    execution_scope,
+                    component_key,
+                )
+            )
+            is not None
+        }
 
     @staticmethod
-    def _select_grouped_plans_for_component(
-        plan_by_group: Optional[Mapping[str | None, ArtifactOutputPlans | ArtifactInputPlans]],
-        component_key: Optional[str],
-        default_plan: ArtifactOutputPlans | ArtifactInputPlans,
-    ) -> ArtifactOutputPlans | ArtifactInputPlans:
-        if not plan_by_group:
-            return default_plan
-
-        global_plan = (
-            plan_by_group[None]
-            if None in plan_by_group
-            else EMPTY_ARTIFACT_PLANS
-        )
-        if component_key in plan_by_group:
-            return {
-                **global_plan,
-                **plan_by_group[component_key],
-            }
-        if global_plan:
-            return global_plan
-        return default_plan
+    def _output_plan_for_component(
+        output_plan: ArtifactOutputPlan,
+        execution_scope: ComponentGroupScope,
+        component_key: str | None,
+    ) -> ArtifactOutputPlan | None:
+        output_scope = output_plan.group_scope()
+        if output_scope.is_ungrouped:
+            return output_plan
+        if output_scope.component is execution_scope.component:
+            if not output_scope.contains_runtime_key(component_key):
+                return None
+            return output_plan.for_group(
+                output_scope.resolve_runtime_key(component_key)
+            )
+        if not output_scope.is_dynamic and len(output_scope.keys) == 1:
+            return output_plan.for_invocation_group(None)
+        return output_plan
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -653,9 +1229,10 @@ class PatternGroupExecutionScope:
     """Shared pattern-group execution coordinates."""
 
     context: ProcessingContext
-    execution_plan: FunctionStepExecutionPlan
+    execution_plan: CompiledStepPlan
     compiled_group: CompiledFunctionGroup
     component_value: RuntimeComponentValue = None
+    fixed_component_values: RuntimeFixedComponentValues = ()
 
     @property
     def component_key(self) -> str | None:
@@ -664,14 +1241,50 @@ class PatternGroupExecutionScope:
         return str(self.component_value)
 
     @property
+    def main_flow_source_binding_plan(self) -> CompiledSourceBindingPlan:
+        """Return bindings that anchor and load this group's main-flow stack."""
+
+        declared_plan = self.execution_plan.source_binding_plan
+        main_flow_refs = self.compiled_group.main_flow_input_refs
+        main_flow_plan = (
+            declared_plan
+            if main_flow_refs is None
+            else declared_plan.for_artifact_refs(main_flow_refs)
+        )
+        return main_flow_plan.for_execution_axis_scope(self.axis_scope)
+
+    @property
+    def invocation_source_artifact_refs(self) -> tuple[ArtifactSpecRef, ...]:
+        """Return exact source artifacts consumed by this invocation group."""
+
+        declared_plan = self.execution_plan.source_binding_plan
+        return tuple(
+            dict.fromkeys(
+                spec.ref()
+                for invocation in self.compiled_group.invocations
+                for spec in invocation.contract.artifact_inputs
+                if declared_plan.binding_for_artifact_ref(spec.ref()) is not None
+            )
+        )
+
+    @property
     def source_binding_plan(self) -> CompiledSourceBindingPlan:
-        return self.execution_plan.source_binding_plan
+        """Return all source bindings visible to this invocation group."""
+
+        declared_plan = self.execution_plan.source_binding_plan
+        source_refs = self.invocation_source_artifact_refs
+        return (
+            declared_plan.for_artifact_refs(source_refs)
+            if source_refs
+            else self.main_flow_source_binding_plan
+        )
 
     @property
     def axis_component(self) -> str | None:
         if self.component_value is None:
             return None
-        return self.execution_plan.execution_group_value
+        component = self.execution_plan.execution_group_scope.component
+        return None if component is None else component.value
 
     @property
     def axis_component_value(self) -> str | None:
@@ -683,14 +1296,16 @@ class PatternGroupExecutionScope:
             self.execution_plan.axis_id,
             component=self.axis_component,
             value=self.axis_component_value,
+            fixed_component_values=self.fixed_component_values,
         )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class FunctionRuntimeScope(PatternGroupExecutionScope, SourceBindingRuntimeContext):
+class FunctionRuntimeScope(PatternGroupExecutionScope):
     """Generic runtime scope shared by chain, invocation, adapter, and debug code."""
 
-    artifacts: ComponentArtifactPlans
+    artifacts: ComponentArtifactPlans[ArtifactSpecRef, ArtifactInputPlan]
+    source_binding_context: SourceBindingRuntimeContext
     runtime_plane_index: int
     runtime_plane_count: int
 
@@ -709,15 +1324,40 @@ class FunctionRuntimeScope(PatternGroupExecutionScope, SourceBindingRuntimeConte
             request.component_key,
             artifacts.outputs,
         )
+        source_provenance = image_payload_metadata(
+            loaded.main_data_stack
+        ).source_provenance.with_common_scalar_identity_from_planes()
+        common_source_metadata = source_provenance.source_component_metadata or {}
+        variable_components = ComponentSet.coerce(
+            request.execution_plan.variable_components or ()
+        )
+        execution_group_component = (
+            request.execution_plan.execution_group_scope.component
+        )
+        fixed_components = tuple(
+            component
+            for component in AllComponents
+            if not component.is_multiprocessing_axis()
+            and component is not execution_group_component
+            and component not in variable_components
+            and source_component_metadata_value(
+                common_source_metadata,
+                component,
+            )
+            is not None
+        )
         return cls(
             context=request.context,
             execution_plan=request.execution_plan,
             compiled_group=request.compiled_group,
             artifacts=artifacts,
-            source_binding_context=loaded,
+            source_binding_context=loaded.source_binding_context,
             runtime_plane_index=request.component_index,
-            runtime_plane_count=request.component_count,
+            runtime_plane_count=len(loaded.matching_files),
             component_value=request.component_value,
+            fixed_component_values=source_provenance.require_common_component_values(
+                fixed_components
+            ),
         )
 
     def require_invocations(self) -> None:
@@ -734,31 +1374,35 @@ class FunctionRuntimeScope(PatternGroupExecutionScope, SourceBindingRuntimeConte
         current_stack: RuntimeArrayData | NoMainFlowOutput = initial_data_stack
         current_memory_type = self.execution_plan.input_memory_type
         debug_sink = debug_event_sink_from_context(self.context)
+        declared_source_bindings = self.execution_plan.source_binding_plan
+        active_main_flow_bindings = self.main_flow_source_binding_plan
         for invocation in self.compiled_group.invocations:
             group_key = invocation.key.runtime_group_key(self.component_value)
-            plane_index = None
-            projects_runtime_plane = self.execution_plan.group_projects_runtime_plane
-            if group_key is not None and projects_runtime_plane:
-                plane_index = self.runtime_plane_index
+            artifacts = self.artifacts.select_for_invocation(
+                invocation,
+                execution_scope=self.execution_plan.execution_group_scope,
+                component_key=self.component_key,
+            ).select_source_bound_inputs(
+                declared_source_bindings=declared_source_bindings,
+                active_source_bindings=active_main_flow_bindings,
+            )
+            if (
+                invocation.adapter_records_artifact_outputs
+                and invocation.contract.preserves_input_main_flow()
+                and not artifacts.outputs
+            ):
+                continue
+            runtime_invocation = invocation.for_runtime_outputs(
+                output_plans=tuple(artifacts.outputs.values()),
+            )
             executor = FunctionCoreExecutor(
                 main_data_arg=current_stack,
                 source_memory_type=current_memory_type,
                 runtime_scope=self,
-                invocation=invocation,
-                artifacts=self.artifacts.select_for_invocation(
-                    invocation,
-                    declared_inputs=self.execution_plan.artifact_inputs,
-                    declared_outputs=self.execution_plan.artifact_outputs,
-                ),
+                invocation=runtime_invocation,
+                artifacts=artifacts,
                 group_key=group_key,
-                plane_projection=RuntimePlaneProjection.for_execution_group(
-                    group_key,
-                    plane_index=plane_index,
-                    plane_count=(
-                        self.runtime_plane_count if projects_runtime_plane else None
-                    ),
-                    projects_runtime_plane=projects_runtime_plane,
-                ),
+                plane_projection=RuntimePlaneProjection.stack(self.runtime_plane_count),
             )
             captures_debug = debug_sink.captures_invocation_events()
             if captures_debug and debug_sink.should_skip_invocation(
@@ -767,10 +1411,10 @@ class FunctionRuntimeScope(PatternGroupExecutionScope, SourceBindingRuntimeConte
                 continue
 
             invocation_started_at = time.perf_counter()
-            if captures_debug:
-                debug_sink.record(executor.debug_event(DebugEventType.BEFORE_INVOCATION))
             try:
-                current_stack = executor.execute()
+                current_stack = executor.execute(
+                    debug_sink=debug_sink if captures_debug else None,
+                )
             except Exception as exc:
                 if captures_debug:
                     debug_sink.record(
@@ -799,7 +1443,13 @@ class FunctionRuntimeScope(PatternGroupExecutionScope, SourceBindingRuntimeConte
             if isinstance(current_stack, NoMainFlowOutput):
                 return current_stack
             current_memory_type = executor.memory_types().output_type
+        if self.compiled_group.preserves_input_main_flow() and all(
+            invocation.adapter_records_artifact_outputs
+            for invocation in self.compiled_group.invocations
+        ):
+            return NoMainFlowOutput()
         return current_stack
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PatternGroupExecutionRequest(PatternGroupExecutionScope):
@@ -811,12 +1461,14 @@ class PatternGroupExecutionRequest(PatternGroupExecutionScope):
 
 
 @dataclass(frozen=True, kw_only=True)
-class PatternGroupData(SourceBindingRuntimeContext):
+class PatternGroupData:
     """Loaded image data for one pattern group."""
 
     matching_files: list[str]
     main_data_stack: RuntimeArrayData
-    source_slice_shapes: tuple[tuple[int, ...], ...]
+    source_binding_context: SourceBindingRuntimeContext = field(
+        default_factory=SourceBindingRuntimeContext.empty
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -876,19 +1528,27 @@ def _save_artifact_value(
     value: RuntimePayload,
     source_payload: RuntimePayload,
     *,
+    execution_scope: RuntimeExecutionAxisScope,
     group_key: str | None,
-) -> None:
+    plane_projector: RuntimePlaneAxisProjector | None,
+    materialization_source_metadata: ImagePayloadMetadata | None = None,
+) -> RuntimePayload:
     """Validate and save one planned artifact value to the memory VFS."""
-    resolved_output_plan = output_plan.for_group(group_key)
+    resolved_output_plan = output_plan.for_invocation_group(group_key)
     vfs_path = resolved_output_plan.path
-    axis_id = _require_axis_id(context)
     contextualized_value = FunctionOutputContextStrategy.for_output_plan(
         resolved_output_plan
-    ).contextualize(source_payload, value, resolved_output_plan)
-    runtime_value = normalize_artifact_value(
+    ).contextualize_from_projector(
+        source_payload,
+        value,
+        resolved_output_plan,
+        plane_projector,
+    )
+    runtime_value = RuntimeValue.normalize_for_execution_scope(
         resolved_output_plan,
         contextualized_value,
-        axis_id=axis_id,
+        execution_scope=execution_scope,
+        materialization_source_metadata=materialization_source_metadata,
     )
 
     location = RuntimeArtifactLocation(
@@ -906,40 +1566,19 @@ def _save_artifact_value(
         runtime_value.data,
         location,
     )
+    return runtime_value.data
 
-
-def _require_axis_id(context: ProcessingContext) -> str:
-    axis_id = context.axis_id
-    if not axis_id:
-        raise RuntimeError(
-            f"{PROCESSING_CONTEXT_OWNER_NAME}.axis_id is required for artifact values."
-        )
-    return str(axis_id)
-
-
-def _load_artifact_input_value(
-    context: ProcessingContext,
-    input_plan: ArtifactInputPlan,
-) -> RuntimePayload:
-    """Load an artifact input from VFS through its typed runtime store record."""
-    store = context.runtime_value_store
-    axis_id = _require_axis_id(context)
-    query = RuntimeArtifactQuery.from_input_plan(
-        input_plan=input_plan,
-        axis_id=axis_id,
+def _load_artifact_input_values(
+    runtime_scope: FunctionRuntimeScope,
+    input_plan: InvocationArtifactInputEdgePlan,
+) -> tuple[RuntimeValue, ...]:
+    """Project producer-owned runtime records into one consumer invocation."""
+    context = runtime_scope.context
+    return RuntimeArtifactInput(
+        edge_plan=input_plan,
+        axis_scope=runtime_scope.axis_scope,
         backend=Backend.MEMORY.value,
-    )
-    try:
-        record = store.resolve(
-            query,
-            purpose="planned artifact input",
-        )
-    except RuntimeError as exc:
-        raise RuntimeError(
-            f"{exc} Refusing direct VFS fallback because this indicates a lost "
-            "typed runtime contract or an artifact not produced through the runtime."
-        ) from exc
-    return context.filemanager.load(record.path, record.backend)
+    ).projected_values(context.runtime_value_store)
 
 
 def prepare_compiled_function_group(group: CompiledFunctionGroup) -> None:
@@ -951,10 +1590,9 @@ def prepare_compiled_function_group(group: CompiledFunctionGroup) -> None:
 def prepare_compiled_context_callables(
     compiled_contexts: Mapping[str, ProcessingContext],
 ) -> None:
-    """Prepare every compiled callable and runtime adapter visible in contexts."""
+    """Prepare every compiled callable visible in the compiled contexts."""
     prepared_group_keys: set[tuple[str, int, str]] = set()
     prepared_invocation_count = 0
-    prepared_adapter_count = 0
     for context_key, context in compiled_contexts.items():
         step_plans = context.step_plans
         if not step_plans:
@@ -973,89 +1611,11 @@ def prepare_compiled_context_callables(
                     continue
                 prepare_compiled_function_group(group)
                 prepared_invocation_count += len(group.invocations)
-                prepared_adapter_count += prepare_compiled_runtime_adapters(
-                    context,
-                    step_plan,
-                    group,
-                )
                 prepared_group_keys.add(prepare_key)
     logger.info(
-        "Prepared %d compiled callable invocations and %d runtime adapters across %d groups.",
+        "Prepared %d compiled callable invocations across %d groups.",
         prepared_invocation_count,
-        prepared_adapter_count,
         len(prepared_group_keys),
-    )
-
-
-def prepare_compiled_runtime_adapters(
-    context: ProcessingContext,
-    compiled_plan: "CompiledStepPlan",
-    group: CompiledFunctionGroup,
-) -> int:
-    """Run compile-time preparation hooks for adapter-backed invocations."""
-    execution_plan = FunctionStepExecutionPlan.from_context(
-        context,
-        compiled_plan.step_index,
-    )
-    source_context = compiled_source_binding_context(context, execution_plan)
-    prepared_count = 0
-    for invocation in group.invocations:
-        runtime_adapter = invocation.contract.runtime_adapter
-        if runtime_adapter is None:
-            continue
-        runtime_adapter.prepare_request(
-            compile_runtime_adapter_request(
-                context,
-                execution_plan,
-                group,
-                invocation,
-                source_context,
-            )
-        )
-        prepared_count += 1
-    return prepared_count
-
-
-def compiled_source_binding_context(
-    context: ProcessingContext,
-    execution_plan: FunctionStepExecutionPlan,
-) -> SourceBindingRuntimeContext:
-    """Build the compile-owned source universe for runtime-adapter preparation."""
-    source_projection = (
-        VirtualWorkspaceSourceProjectionAuthority.from_context(
-            context,
-            cache=context.runtime_source_workspace_projection_cache,
-        ).projection_if_available()
-    )
-    return SourceBindingRuntimeContextRequest.from_context(
-        context=context,
-        plan=execution_plan,
-        matching_files=(),
-        source_projection=source_projection,
-    ).runtime_context()
-
-
-def compile_runtime_adapter_request(
-    context: ProcessingContext,
-    execution_plan: FunctionStepExecutionPlan,
-    group: CompiledFunctionGroup,
-    invocation: CompiledFunctionInvocation,
-    source_context: SourceBindingRuntimeContext,
-) -> RuntimeAdapterRequest:
-    """Return the typed adapter request available at compile preparation time."""
-    del group
-    artifacts = ComponentArtifactPlans.from_step_component(
-        execution_plan,
-        None,
-    ).select_for_invocation(invocation)
-    return RuntimeAdapterRequest.from_source_context(
-        context=context,
-        artifact_inputs=artifacts.inputs,
-        artifact_outputs=artifacts.outputs,
-        source_binding_plan=execution_plan.source_binding_plan,
-        source_binding_context=source_context,
-        plane_projection=RuntimePlaneProjection.stack(),
-        variable_components=tuple(execution_plan.variable_components),
     )
 
 
@@ -1065,19 +1625,37 @@ class FunctionCoreExecutor:
 
     runtime_scope: FunctionRuntimeScope
     invocation: CompiledFunctionInvocation
-    artifacts: ComponentArtifactPlans
+    artifacts: ComponentArtifactPlans[
+        InvocationArtifactInputProjectionKey,
+        InvocationArtifactInputEdgePlan,
+    ]
     group_key: str | None
     plane_projection: RuntimePlaneProjection
     main_data_arg: RuntimeArrayData
     source_memory_type: str
 
-    def runtime_adapter_request(self) -> RuntimeAdapterRequest:
+    @property
+    def selected_artifact_input_edges(
+        self,
+    ) -> tuple[InvocationArtifactInputEdgePlan, ...]:
+        """Return component-selected compiled occurrences in declaration order."""
+
+        return tuple(self.artifacts.inputs.values())
+
+    def runtime_adapter_request(
+        self,
+        source_payload: RuntimePayload,
+    ) -> RuntimeAdapterRequest:
         return RuntimeAdapterRequest.from_runtime_scope(
             runtime_scope=self.runtime_scope,
-            artifact_inputs=self.artifacts.inputs,
+            callable_contract=self.invocation.contract,
+            artifact_inputs={
+                edge.key: edge for edge in self.selected_artifact_input_edges
+            },
             artifact_outputs=self.artifacts.outputs,
             group_key=self.group_key,
             plane_projection=self.plane_projection,
+            source_payload=source_payload,
         )
 
     def debug_cursor(self) -> DebugCursor:
@@ -1090,11 +1668,15 @@ class FunctionCoreExecutor:
 
     def debug_artifacts(
         self,
-        artifact_plans: ArtifactInputPlans | ArtifactOutputPlans,
+        artifact_plans: (
+            ArtifactInputPlans | ArtifactOutputPlans
+        ),
+        artifact_values: Mapping[ArtifactSpecRef, object] | None = None,
     ) -> DebugArtifactRefProjection:
         return DebugArtifactRefProjection.from_artifact_plans(
             artifact_plans=artifact_plans,
             cursor=self.debug_cursor(),
+            artifact_values=artifact_values,
         )
 
     def debug_event(
@@ -1103,6 +1685,8 @@ class FunctionCoreExecutor:
         *,
         exception: Exception | None = None,
         timing_seconds: float | None = None,
+        invocation_parameters: tuple[DebugInvocationParameter, ...] = (),
+        input_artifact_values: Mapping[ArtifactSpecRef, object] | None = None,
     ) -> DebugEvent:
         return DebugEvent.for_invocation(
             event_type=event_type,
@@ -1110,13 +1694,18 @@ class FunctionCoreExecutor:
             step_name=self.runtime_scope.execution_plan.step_name,
             callable_name=self.invocation.key.function_name,
             axis_id=self.runtime_scope.execution_plan.axis_id,
-            input_artifacts=self.debug_artifacts(self.artifacts.inputs),
+            input_artifacts=self.debug_artifacts(
+                {
+                    edge.storage_plan.ref(): edge.storage_plan
+                    for edge in self.artifacts.inputs.values()
+                    if edge.storage_plan is not None
+                },
+                input_artifact_values,
+            ),
             output_artifacts=self.debug_artifacts(self.artifacts.outputs),
             exception=exception,
             timing_seconds=timing_seconds,
-            invocation_parameters=DebugInvocationParameter.from_kwargs(
-                self.invocation.kwargs_dict
-            ),
+            invocation_parameters=invocation_parameters,
         )
 
     @property
@@ -1129,9 +1718,23 @@ class FunctionCoreExecutor:
 
     @property
     def function_name(self) -> str:
-        return self.func_callable.__name__
+        return self.invocation.contract.function_name
 
-    def execute(self) -> RuntimePayload | NoMainFlowOutput:
+    def main_flow_output_source_payload(
+        self,
+        source_payload: RuntimePayload,
+    ) -> RuntimePayload:
+        """Project source context through the callable's nominal processing contract."""
+
+        return self.invocation.contract.require_processing_contract().declaration.main_flow_output_source_payload(
+            source_payload
+        )
+
+    def execute(
+        self,
+        *,
+        debug_sink: DebugEventSink | None = None,
+    ) -> RuntimePayload | NoMainFlowOutput:
         memory_types = self.memory_types()
         source_payload = MainFlowMemoryConversion(
             payload=self.main_data_arg,
@@ -1143,12 +1746,19 @@ class FunctionCoreExecutor:
         final_kwargs = dict(self.base_kwargs)
         self.bind_compiled_runtime_parameters(final_kwargs)
         loads_artifact_inputs = self.should_load_artifact_inputs()
-        loaded_artifact_payloads: dict[str, RuntimePayload] = {}
+        loaded_artifact_payloads: dict[ArtifactSpecRef, RuntimePayload] = {}
         if loads_artifact_inputs:
-            loaded_artifact_payloads = self.load_artifact_inputs(final_kwargs)
+            loaded_artifact_payloads = self.load_artifact_inputs(
+                final_kwargs,
+            )
         self.bind_runtime_owned_parameters(final_kwargs)
-        self.bind_runtime_adapter(final_kwargs)
-        raw_output = self.invoke(main_data_arg, final_kwargs)
+        self.bind_runtime_adapter(final_kwargs, source_payload)
+        raw_output = self.invoke(
+            main_data_arg,
+            final_kwargs,
+            loaded_artifact_payloads=loaded_artifact_payloads,
+            debug_sink=debug_sink,
+        )
         main_output = self.save_artifact_outputs(
             raw_output,
             source_payload,
@@ -1156,61 +1766,38 @@ class FunctionCoreExecutor:
         )
         if isinstance(main_output, NoMainFlowOutput):
             return main_output
-        if RuntimeImageSourceIdentityCompleteness(main_output).complete():
+        if self.invocation.adapter_records_artifact_outputs:
             return main_output
-        main_output_source = self.main_output_source_payload(
-            source_payload,
-            loaded_artifact_payloads=loaded_artifact_payloads,
+        output_source_payload = self.main_flow_output_source_payload(
+            self.execution_group_source_payload(source_payload)
         )
-        return FunctionOutputContextStrategy.for_output_plan(None).contextualize(
-            self.execution_group_source_payload(main_output_source),
+        return FunctionOutputContextStrategy.for_output_plan(
+            None
+        ).contextualize_from_projector(
+            output_source_payload,
             main_output,
             None,
+            self.plane_projection,
         )
 
-    def main_flow_call_argument(self, source_payload: RuntimePayload) -> RuntimeCallableArgument:
-        """Return the first argument for the user callable.
+    def main_flow_call_argument(
+        self, source_payload: RuntimePayload
+    ) -> RuntimeCallableArgument:
+        """Expose arrays to ordinary callables and carriers to adapter-backed calls."""
 
-        OpenHCS owns image payload metadata for identity, masks, and provenance.
-        Plain array callables should still receive the concrete array operand;
-        adapter-backed callables receive the payload because the adapter owns
-        source/artifact projection for that invocation.
-        """
-        if self.invocation.runtime_argument_plan.adapter_parameter_name is not None:
+        if self.invocation.contract.runtime_adapter is not None:
             return source_payload
         return image_payload_data(source_payload)
 
     def memory_types(self) -> "FunctionChainInvocationMemoryTypes":
         return FunctionChainInvocationMemoryTypes.from_invocation(self.invocation)
 
-    def main_output_source_payload(
-        self,
-        primary_source_payload: RuntimePayload,
-        *,
-        loaded_artifact_payloads: Mapping[str, RuntimePayload],
-    ) -> RuntimePayload:
-        if RuntimeImageSourceIdentityCompleteness(primary_source_payload).complete():
-            return primary_source_payload
-        object_label_sources = self.object_label_source_payloads(
-            loaded_artifact_payloads,
-        )
-        if not object_label_sources:
-            return primary_source_payload
-        if self.has_non_object_artifact_inputs(loaded_artifact_payloads):
-            return primary_source_payload
-        if len(object_label_sources) != 1:
-            raise NotImplementedError(
-                "Main-flow image output source context is ambiguous for multiple "
-                "object-label artifact inputs with no image artifact input."
-            )
-        return object_label_sources[0]
-
     def execution_group_source_payload(
         self,
         source_payload: RuntimePayload,
     ) -> RuntimePayload:
         """Return source payload metadata carrying the current grouped identity."""
-        component = self.runtime_scope.execution_plan.execution_group_component
+        component = self.runtime_scope.execution_plan.execution_group_scope.component
         if component is None or self.group_key is None:
             return source_payload
         metadata = image_payload_metadata(source_payload)
@@ -1220,85 +1807,121 @@ class FunctionCoreExecutor:
             component,
             self.group_key,
         )
-        return with_image_payload_metadata(
-            source_payload,
-            metadata.with_source_component_metadata(component_metadata),
+        return metadata.with_source_component_metadata(component_metadata).attach_to(
+            source_payload
         )
 
-    def object_label_source_payloads(
+    def declared_source_payload(
         self,
-        loaded_artifact_payloads: Mapping[str, RuntimePayload],
-    ) -> tuple[RuntimePayload, ...]:
-        return tuple(
-            self.require_artifact_runtime_payload(parameter_name, payload)
-            for parameter_name, payload in loaded_artifact_payloads.items()
-            if self.artifacts.inputs[parameter_name].artifact_type is ObjectLabelsArtifactType
-        )
-
-    def has_non_object_artifact_inputs(
-        self,
-        loaded_artifact_payloads: Mapping[str, RuntimePayload],
-    ) -> bool:
-        return any(
-            self.artifacts.inputs[parameter_name].artifact_type is not ObjectLabelsArtifactType
-            for parameter_name in loaded_artifact_payloads
-        )
-
-    @staticmethod
-    def require_artifact_runtime_payload(
-        parameter_name: str,
-        value: RuntimePayload,
+        source_ref: ArtifactSpecRef,
+        primary_source_payload: RuntimePayload,
+        *,
+        loaded_artifact_payloads: Mapping[ArtifactSpecRef, RuntimePayload],
     ) -> RuntimePayload:
-        if isinstance(value, (ObjectLabelValue, RuntimeSliceAlignedValueSet)):
-            return value
-        if is_array_payload(value):
-            return value
-        raise TypeError(
-            f"Artifact input {parameter_name!r} must be a runtime payload, "
-            f"got {type(value).__name__}."
+        input_spec = self.invocation.contract.artifact_inputs.by_ref(source_ref)
+        if input_spec is None:
+            raise ValueError(
+                f"Invocation {self.invocation.key!r} does not declare source artifact "
+                f"{source_ref!r}."
+            )
+        stored_payload = loaded_artifact_payloads.get(source_ref)
+        source_binding = self.runtime_scope.source_binding_plan.binding_for_artifact_ref(
+            source_ref
         )
+        uses_main_flow = bool(
+            stored_payload is None
+            and source_binding is None
+            and input_spec.participates_in_main_flow
+        )
+        resolved_origins = sum(
+            (
+                stored_payload is not None,
+                source_binding is not None,
+                uses_main_flow,
+            )
+        )
+        if resolved_origins != 1:
+            raise ValueError(
+                f"Invocation {self.invocation.key!r} source artifact {source_ref!r} "
+                "must resolve to exactly one compiled producer, source binding, or "
+                f"main-flow input; resolved {resolved_origins}."
+            )
+        if stored_payload is not None:
+            return stored_payload
+        if source_binding is not None:
+            return cast(
+                RuntimePayload,
+                self.runtime_adapter_request(
+                    primary_source_payload
+                ).source_artifact_payload(source_ref),
+            )
+        return project_declared_source_identity(primary_source_payload, source_ref)
 
     def load_artifact_inputs(
         self,
         final_kwargs: dict[str, RuntimeCallableArgument],
-    ) -> dict[str, RuntimePayload]:
+    ) -> dict[ArtifactSpecRef, RuntimePayload]:
         if not self.should_load_artifact_inputs():
             return {}
         logger.info(
             f"Artifact inputs for {self.function_name}: {self.artifacts.inputs}"
         )
-        loaded_artifact_payloads: dict[str, RuntimePayload] = {}
-        for arg_name, input_plan in self.artifacts.inputs.items():
-            loaded_value = self.load_artifact_input(arg_name, input_plan)
-            final_kwargs[arg_name] = loaded_value
-            loaded_artifact_payloads[arg_name] = loaded_value
+        loaded_artifact_payloads: dict[ArtifactSpecRef, RuntimePayload] = {}
+        parameter_values: dict[str, list[RuntimeValue]] = {}
+        for input_plan in self.selected_artifact_input_edges:
+            if input_plan.storage_plan is None:
+                continue
+            parameter_name = input_plan.spec.parameter_name
+            if parameter_name is None:
+                raise ValueError(
+                    f"Compiled invocation {self.invocation.key!r} runtime-loaded input "
+                    f"edge {input_plan.key!r} has no callable parameter."
+                )
+            artifact_ref = input_plan.spec.ref()
+            projected_values = self.load_artifact_input(
+                input_plan.spec.name,
+                input_plan,
+            )
+            loaded_value = RuntimeValue.compose(projected_values)
+            loaded_artifact_payloads[artifact_ref] = loaded_value
+            parameter_values.setdefault(parameter_name, []).extend(
+                projected_values
+            )
+        for parameter_name, projected_values in parameter_values.items():
+            final_kwargs[parameter_name] = RuntimeValue.compose(tuple(projected_values))
         return loaded_artifact_payloads
 
     def should_load_artifact_inputs(self) -> bool:
         return bool(
-            self.artifacts.inputs
-            and not self.invocation.runtime_domain.adapter_manages_artifact_inputs
+            any(
+                edge.storage_plan is not None
+                for edge in self.artifacts.inputs.values()
+            )
+            and not self.invocation.adapter_manages_artifact_inputs
         )
 
     def load_artifact_input(
         self,
         arg_name: str,
-        input_plan: ArtifactInputPlan,
-    ) -> RuntimePayload:
+        edge_plan: InvocationArtifactInputEdgePlan,
+    ) -> tuple[RuntimeValue, ...]:
+        storage_plan = edge_plan.storage_plan
+        if storage_plan is None:
+            raise ValueError("Artifact input loading requires a storage-backed edge.")
         logger.info(
-            f"Loading artifact input '{arg_name}' from path '{input_plan.path}' "
+            f"Loading artifact input '{arg_name}' from path '{storage_plan.path}' "
             "(memory backend)"
         )
         load_started_at = time.perf_counter()
         try:
-            loaded_value = _load_artifact_input_value(
-                self.runtime_scope.context,
-                input_plan,
+            loaded_values = _load_artifact_input_values(
+                self.runtime_scope,
+                edge_plan,
             )
         except Exception as exc:
             logger.error(
                 f"Failed to load artifact input '{arg_name}' from "
-                f"'{input_plan.path}': {exc}",
+                f"'{storage_plan.path}': {exc}",
                 exc_info=True,
             )
             raise
@@ -1307,21 +1930,17 @@ class FunctionCoreExecutor:
             time.perf_counter() - load_started_at,
             function=self.function_name,
             artifact=arg_name,
-            artifact_type=input_plan.artifact_type.value,
+            artifact_type=storage_plan.artifact_type.value,
         )
-        return loaded_value
+        return loaded_values
 
     def bind_runtime_owned_parameters(
         self,
         final_kwargs: dict[str, RuntimeCallableArgument],
     ) -> None:
-        argument_plan = self.invocation.runtime_argument_plan
-        context_parameter_name = argument_plan.context_parameter_name
+        context_parameter_name = self.invocation.contract.runtime_context_parameter
         if context_parameter_name is not None:
             final_kwargs[context_parameter_name] = self.runtime_scope.context
-        options_parameter_name = argument_plan.invocation_options_parameter_name
-        if options_parameter_name is not None:
-            final_kwargs[options_parameter_name] = self.invocation.invocation_options
 
     def bind_compiled_runtime_parameters(
         self,
@@ -1333,17 +1952,15 @@ class FunctionCoreExecutor:
     def bind_runtime_adapter(
         self,
         final_kwargs: dict[str, RuntimeCallableArgument],
+        source_payload: RuntimePayload,
     ) -> None:
-        argument_plan = self.invocation.runtime_argument_plan
-        adapter_parameter = argument_plan.adapter_parameter_name
-        if adapter_parameter is None:
-            return
         runtime_adapter = self.invocation.contract.runtime_adapter
         if runtime_adapter is None:
             return
+        adapter_parameter = runtime_adapter.require_parameter_name()
         adapter_started_at = time.perf_counter()
         final_kwargs[adapter_parameter] = runtime_adapter.factory(
-            self.runtime_adapter_request()
+            self.runtime_adapter_request(source_payload)
         )
         RuntimeProfileSink.record(
             "runtime_adapter_factory",
@@ -1354,15 +1971,78 @@ class FunctionCoreExecutor:
 
     def invoke(
         self,
-        main_data_arg: RuntimeArrayData,
+        main_data_arg: RuntimeCallableArgument,
         final_kwargs: dict[str, RuntimeCallableArgument],
+        *,
+        loaded_artifact_payloads: Mapping[ArtifactSpecRef, RuntimePayload],
+        debug_sink: DebugEventSink | None,
     ) -> RuntimeFunctionOutput:
         logger.info(f"Executing function: {self.function_name}")
+        func_callable = self.func_callable
+        contract = self.invocation.contract
+        primary_parameter = contract.primary_input_parameter_name
+        bound_parameters = dict(final_kwargs)
+        if primary_parameter is not None:
+            bound_parameters[primary_parameter] = main_data_arg
+        plane_projector: RuntimePlaneAxisProjector = self.plane_projection
+        runtime_adapter = self.invocation.contract.runtime_adapter
+        if runtime_adapter is not None:
+            adapter_parameter = runtime_adapter.require_parameter_name()
+            adapter_value = final_kwargs[adapter_parameter]
+            if isinstance(adapter_value, RuntimePlaneAxisProjector):
+                plane_projector = adapter_value
+        if debug_sink is not None:
+            if primary_parameter is None:
+                raise TypeError(
+                    f"Callable {self.function_name!r} has no declared primary input "
+                    "parameter for runtime invocation diagnostics."
+                )
+            debug_sink.record(
+                self.debug_event(
+                    DebugEventType.BEFORE_INVOCATION,
+                    invocation_parameters=DebugInvocationParameter.from_kwargs(
+                        bound_parameters,
+                        plane_projector=plane_projector,
+                    ),
+                    input_artifact_values=loaded_artifact_payloads,
+                )
+            )
         call_started_at = time.perf_counter()
-        raw_output = self.func_callable(
-            main_data_arg,
-            **final_kwargs,
-        )
+        try:
+            raw_output = func_callable(
+                main_data_arg,
+                **final_kwargs,
+            )
+        except RuntimeSliceProjectionDeclarationError as exc:
+            cursor = self.debug_cursor()
+            invocation_parameters = DebugInvocationParameter.from_kwargs(
+                bound_parameters,
+                plane_projector=plane_projector,
+            )
+            selected_plane = plane_projector.runtime_slice_plane_index()
+            selected_plane_status = (
+                "preserved_stack" if selected_plane is None else str(selected_plane)
+            )
+            artifact_refs = (
+                *(edge.spec.ref() for edge in self.selected_artifact_input_edges),
+                *(plan.ref() for plan in self.invocation.artifact_output_plans),
+            )
+            raise type(exc)(
+                f"{exc} Invocation boundary: step_index={cursor.step_index}; "
+                f"step_name={self.runtime_scope.execution_plan.step_name!r}; "
+                f"function_invocation_key={self.invocation.key!r}; "
+                f"module={contract.module_name!r}; "
+                f"callable={contract.function_name!r}; "
+                f"artifact_spec_refs={artifact_refs!r}; "
+                f"kwarg_names={tuple(sorted(final_kwargs))!r}; "
+                f"nominal_values={tuple((parameter.name, parameter.value_repr) for parameter in invocation_parameters)!r}; "
+                f"selected_runtime_plane={selected_plane_status}; "
+                "execution_axis_cardinality="
+                f"{plane_projector.runtime_slice_axis_size()!r}; "
+                "image_payload_execution_mode="
+                f"{contract.runtime_image_execution_mode}; "
+                f"processing_contract={contract.processing_contract}."
+            ) from exc
         RuntimeProfileSink.record(
             "function_call",
             time.perf_counter() - call_started_at,
@@ -1375,38 +2055,63 @@ class FunctionCoreExecutor:
         raw_output: RuntimeFunctionOutput,
         source_payload: RuntimePayload,
         *,
-        loaded_artifact_payloads: Mapping[str, RuntimePayload],
+        loaded_artifact_payloads: Mapping[ArtifactSpecRef, RuntimePayload],
     ) -> RuntimePayload | NoMainFlowOutput:
-        if self.module_runtime_records_artifact_outputs():
+        if self.invocation.adapter_records_artifact_outputs:
             return self.save_module_recorded_output(raw_output)
-        if isinstance(raw_output, StepResult):
-            self.save_step_result_artifacts(
-                raw_output,
-                source_payload,
-                loaded_artifact_payloads=loaded_artifact_payloads,
-            )
-            return raw_output.image
-        if isinstance(raw_output, tuple):
-            return self.save_tuple_output(
-                raw_output,
-                source_payload,
-                loaded_artifact_payloads=loaded_artifact_payloads,
-            )
-        return self.save_single_output(
-            raw_output,
-            source_payload,
-            loaded_artifact_payloads=loaded_artifact_payloads,
-        )
+        output_plans = tuple(self.artifacts.outputs.values())
+        declared_specs = self.invocation.contract.artifact_outputs
+        if not declared_specs:
+            if isinstance(raw_output, tuple):
+                raise TypeError(
+                    "Tuple returns require declared special-output slots; multiple "
+                    "main-flow images must be packed as AlignedImageStack."
+                )
+            return raw_output
 
-    def module_runtime_records_artifact_outputs(self) -> bool:
-        """Return whether this module invocation records its own artifact outputs."""
-        contract = self.invocation.contract.module_artifact_contract
-        return bool(
-            self.artifacts.outputs
-            and self.invocation.contract.runtime_adapter is not None
-            and contract is not None
-            and contract.outputs
+        output_matcher = RuntimeReturnedOutputMatcher(
+            callable_contract=self.invocation.contract,
+            returned_output=raw_output,
         )
+        _returned_values, matched_outputs = output_matcher.resolve_plan_values(
+            output_plans
+        )
+        saved_values = {
+            output_plan.ref(): self.save_artifact_output(
+                output_plan.name,
+                output_plan,
+                output_value,
+                source_payload,
+                loaded_artifact_payloads=loaded_artifact_payloads,
+            )
+            for output_plan, _output_spec, output_value in matched_outputs
+        }
+        canonical_refs = frozenset(
+            spec.ref()
+            for spec in self.invocation.contract.canonical_return_output_specs
+        )
+        main_outputs = tuple(
+            (output_plan, output_spec, saved_values[output_plan.ref()])
+            for output_plan, output_spec, _output_value in matched_outputs
+            if output_plan.ref() in canonical_refs
+        )
+        if main_outputs:
+            output_values = tuple(
+                output_value for _output_plan, _output_spec, output_value in main_outputs
+            )
+            if len(output_values) == 1:
+                return output_values[0]
+            return ImageOutputBundle(
+                output_values,
+                tuple(
+                    AlignedImageSliceContext.main_flow(
+                        output_key=output_plan.name,
+                        artifact_kind=output_plan.artifact_type.value,
+                    )
+                    for output_plan, _output_spec, _output_value in main_outputs
+                ),
+            )
+        return output_matcher.canonical_output
 
     def save_module_recorded_output(
         self,
@@ -1415,12 +2120,6 @@ class FunctionCoreExecutor:
         """Return the main-flow value from a module that records outputs internally."""
         if isinstance(raw_output, NoMainFlowOutput):
             return raw_output
-        if isinstance(raw_output, StepResult):
-            raise TypeError(
-                "Module artifact contracts with runtime adapters record declared "
-                "outputs internally; they must return the main-flow payload directly, "
-                "not StepResult."
-            )
         if isinstance(raw_output, tuple):
             raise TypeError(
                 "Module artifact contracts with runtime adapters record declared "
@@ -1429,145 +2128,6 @@ class FunctionCoreExecutor:
             )
         return raw_output
 
-    def save_single_output(
-        self,
-        raw_output: RuntimePayload,
-        source_payload: RuntimePayload,
-        *,
-        loaded_artifact_payloads: Mapping[str, RuntimePayload],
-    ) -> RuntimePayload:
-        artifact_outputs = tuple(self.artifacts.outputs.items())
-        artifact_count = len(artifact_outputs)
-        if artifact_count == 0:
-            return raw_output
-        if artifact_count > 1:
-            raise ValueError(
-                f"Function returned one value for {artifact_count} planned artifact "
-                "output(s). Multiple declared artifacts require a tuple output or "
-                "StepResult with named artifacts."
-            )
-        output_key, output_plan = artifact_outputs[0]
-        self.save_artifact_output(
-            output_key,
-            output_plan,
-            raw_output,
-            source_payload,
-            loaded_artifact_payloads=loaded_artifact_payloads,
-        )
-        if output_plan.artifact_type.participates_in_main_flow_output:
-            return raw_output
-        raise ValueError(
-            "Function returned one declared artifact output, but the planned "
-            f"artifact type {output_plan.artifact_type.value!r} does not "
-            "participate in main-flow output."
-        )
-
-    def save_tuple_output(
-        self,
-        raw_output: tuple[RuntimePayload, ...],
-        source_payload: RuntimePayload,
-        *,
-        loaded_artifact_payloads: Mapping[str, RuntimePayload],
-    ) -> RuntimePayload:
-        artifact_outputs = tuple(self.artifacts.outputs.values())
-        artifact_count = len(artifact_outputs)
-        if artifact_count == 0:
-            return AlignedImageStack(raw_output)
-        if len(raw_output) == artifact_count:
-            self.save_tuple_artifacts(
-                raw_output,
-                source_payload,
-                loaded_artifact_payloads=loaded_artifact_payloads,
-            )
-            return self.main_flow_output_from_artifacts(raw_output, artifact_outputs)
-        if len(raw_output) == artifact_count + 1:
-            self.save_tuple_artifacts(
-                raw_output[1:],
-                source_payload,
-                loaded_artifact_payloads=loaded_artifact_payloads,
-            )
-            return raw_output[0]
-        raise ValueError(
-            f"Function returned {len(raw_output)} tuple values for "
-            f"{artifact_count} planned artifact output(s). Tuple outputs must either "
-            "match the declared artifact outputs exactly or include one primary "
-            "main-flow value followed by all declared artifacts."
-        )
-
-    @staticmethod
-    def main_flow_output_from_artifacts(
-        raw_output: tuple[RuntimePayload, ...],
-        artifact_outputs: tuple[ArtifactOutputPlan, ...],
-    ) -> RuntimePayload:
-        main_flow_output_items = tuple(
-            (value, output_plan)
-            for value, output_plan in zip(raw_output, artifact_outputs, strict=True)
-            if output_plan.artifact_type.participates_in_main_flow_output
-        )
-        if not main_flow_output_items:
-            raise ValueError(
-                "Function returned only declared artifact outputs, but none of the "
-                "planned artifact types participates in main-flow output."
-            )
-        return AlignedImageStack(
-            slices=tuple(value for value, _output_plan in main_flow_output_items),
-            slice_contexts=tuple(
-                AlignedImageSliceContext.main_flow(
-                    output_key=output_plan.name,
-                    artifact_kind=output_plan.artifact_type.value,
-                )
-                for _value, output_plan in main_flow_output_items
-            ),
-        )
-
-    def save_step_result_artifacts(
-        self,
-        step_result: StepResult,
-        source_payload: RuntimePayload,
-        *,
-        loaded_artifact_payloads: Mapping[str, RuntimePayload],
-    ) -> None:
-        for output_key, output_plan in self.artifacts.outputs.items():
-            if output_key not in step_result.artifacts:
-                raise ValueError(
-                    f"Function returned StepResult without planned artifact "
-                    f"'{output_key}'."
-                )
-            self.save_artifact_output(
-                output_key,
-                output_plan,
-                step_result.artifacts[output_key],
-                source_payload,
-                loaded_artifact_payloads=loaded_artifact_payloads,
-            )
-
-    def save_tuple_artifacts(
-        self,
-        returned_artifact_values: tuple[RuntimePayload, ...],
-        source_payload: RuntimePayload,
-        *,
-        loaded_artifact_payloads: Mapping[str, RuntimePayload],
-    ) -> None:
-        for index, (output_key, output_plan) in enumerate(
-            self.artifacts.outputs.items()
-        ):
-            if index >= len(returned_artifact_values):
-                logger.error(
-                    f"Artifact output plan wants to save '{output_key}', but function "
-                    f"only returned {len(returned_artifact_values)} artifact values."
-                )
-                raise ValueError(
-                    "Function did not return enough values for all planned artifact "
-                    f"outputs. Missing value for '{output_key}'."
-                )
-            self.save_artifact_output(
-                output_key,
-                output_plan,
-                returned_artifact_values[index],
-                source_payload,
-                loaded_artifact_payloads=loaded_artifact_payloads,
-            )
-
     def save_artifact_output(
         self,
         output_key: str,
@@ -1575,8 +2135,8 @@ class FunctionCoreExecutor:
         value: RuntimePayload,
         source_payload: RuntimePayload,
         *,
-        loaded_artifact_payloads: Mapping[str, RuntimePayload],
-    ) -> None:
+        loaded_artifact_payloads: Mapping[ArtifactSpecRef, RuntimePayload],
+    ) -> RuntimePayload:
         logger.info(
             f"Saving artifact output '{output_key}' to VFS path '{output_plan.path}' "
             "(memory backend)"
@@ -1584,16 +2144,35 @@ class FunctionCoreExecutor:
         save_started_at = time.perf_counter()
         artifact_source_payload = self.artifact_output_source_payload(
             output_plan,
-            value,
             source_payload,
             loaded_artifact_payloads=loaded_artifact_payloads,
         )
-        _save_artifact_value(
+        output_source_payload = self.main_flow_output_source_payload(
+            self.execution_group_source_payload(artifact_source_payload)
+        )
+        materialization_source_metadata = None
+        materialization_source_ref = output_plan.materialization_source()
+        if (
+            materialization_source_ref is not None
+            and materialization_source_ref != output_plan.source_context_source()
+        ):
+            materialization_source_payload = self.declared_source_payload(
+                materialization_source_ref,
+                source_payload,
+                loaded_artifact_payloads=loaded_artifact_payloads,
+            )
+            materialization_source_metadata = image_payload_metadata(
+                materialization_source_payload
+            )
+        saved_value = _save_artifact_value(
             self.runtime_scope.context,
             output_plan,
             value,
-            self.execution_group_source_payload(artifact_source_payload),
+            output_source_payload,
+            execution_scope=self.runtime_scope.axis_scope,
             group_key=self.group_key,
+            materialization_source_metadata=materialization_source_metadata,
+            plane_projector=self.plane_projection,
         )
         RuntimeProfileSink.record(
             "artifact_output_save",
@@ -1602,33 +2181,23 @@ class FunctionCoreExecutor:
             artifact=output_key,
             artifact_type=output_plan.artifact_type.value,
         )
+        return saved_value
 
     def artifact_output_source_payload(
         self,
         output_plan: ArtifactOutputPlan,
-        output_value: RuntimePayload,
         primary_source_payload: RuntimePayload,
         *,
-        loaded_artifact_payloads: Mapping[str, RuntimePayload],
+        loaded_artifact_payloads: Mapping[ArtifactSpecRef, RuntimePayload],
     ) -> RuntimePayload:
-        if (
-            output_plan.artifact_type is ImageArtifactType
-            and not RuntimeImageSourceIdentityCompleteness(output_value).complete()
-        ):
-            object_label_sources = self.object_label_source_payloads(
-                loaded_artifact_payloads,
-            )
-            if object_label_sources and not self.has_non_object_artifact_inputs(
-                loaded_artifact_payloads
-            ):
-                if len(object_label_sources) != 1:
-                    raise NotImplementedError(
-                        "Image artifact output source context is ambiguous for "
-                        "multiple object-label artifact inputs with no image "
-                        "artifact input."
-                    )
-                return object_label_sources[0]
-        return primary_source_payload
+        source_ref = output_plan.source_context_source()
+        if source_ref is None:
+            return primary_source_payload
+        return self.declared_source_payload(
+            source_ref,
+            primary_source_payload,
+            loaded_artifact_payloads=loaded_artifact_payloads,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1643,7 +2212,10 @@ class FunctionChainInvocationMemoryTypes:
         cls,
         invocation: CompiledFunctionInvocation,
     ) -> "FunctionChainInvocationMemoryTypes":
-        if invocation.input_memory_type is None or invocation.output_memory_type is None:
+        if (
+            invocation.input_memory_type is None
+            or invocation.output_memory_type is None
+        ):
             raise ValueError(
                 f"Compiled invocation {invocation.key} is missing memory types."
             )
@@ -1670,7 +2242,7 @@ class MainFlowMemoryConversion:
     payload: RuntimeArrayData
     source_type: str
     target_type: str
-    gpu_id: int
+    gpu_id: int | None
 
     def converted_payload(self) -> RuntimeArrayData:
         data = image_payload_data(self.payload)
@@ -1694,8 +2266,7 @@ class PatternGroupOutputData:
     def __post_init__(self) -> None:
         if not self.slice_contexts:
             self.slice_contexts = tuple(
-                AlignedImageSliceContext.anonymous_main_flow()
-                for _slice in self.slices
+                AlignedImageSliceContext.anonymous_main_flow() for _slice in self.slices
             )
         if len(self.slice_contexts) != len(self.slices):
             raise ValueError(
@@ -1730,7 +2301,9 @@ class PatternGroupRuntime:
         self.request = request
         self.pattern_repr = str(request.pattern_group_info)[:100]
 
-    def source_workspace_projection_cache(self) -> VirtualWorkspaceSourceProjectionCache:
+    def source_workspace_projection_cache(
+        self,
+    ) -> VirtualWorkspaceSourceProjectionCache:
         """Return the per-context source-workspace projection cache."""
         return self.request.context.runtime_source_workspace_projection_cache
 
@@ -1771,9 +2344,7 @@ class PatternGroupRuntime:
     def run(self) -> None:
         start_time = time.time()
         plan = self.request.execution_plan
-        logger.debug(
-            f"Processing pattern {self.pattern_repr} for axis {plan.axis_id}"
-        )
+        logger.debug(f"Processing pattern {self.pattern_repr} for axis {plan.axis_id}")
 
         try:
             load_started_at = time.perf_counter()
@@ -1848,6 +2419,9 @@ class PatternGroupRuntime:
             step_output_manifest(self.request.context).record_outputs(
                 plan,
                 output_records,
+                collapsed_input_domain=(
+                    len(output_data.slices) < len(loaded.matching_files)
+                ),
             )
             RuntimeProfileSink.record(
                 "pattern_cleanup",
@@ -1880,15 +2454,35 @@ class PatternGroupRuntime:
             return
         plan = self.request.execution_plan
         parser = self.request.context.microscope_handler.parser
+        output_contexts = self._producer_output_contexts(matching_files)
         records = tuple(
             ProducedOutputSemantics.from_existing_main_flow_path(
                 plan,
                 self._input_memory_path(plan.input_dir, matching_file),
                 parser,
+                output_context=output_context,
             )
-            for matching_file in matching_files
+            for matching_file, output_context in zip(
+                matching_files,
+                output_contexts,
+                strict=True,
+            )
         )
         step_output_manifest(self.request.context).record_outputs(plan, records)
+
+    def _producer_output_contexts(
+        self,
+        matching_files: Sequence[str],
+    ) -> tuple[AlignedImageSliceContext, ...]:
+        """Resolve exact producer contexts for the loaded main-flow paths."""
+
+        return step_output_manifest(
+            self.request.context
+        ).producer_output_contexts_for_paths(
+            self.request.execution_plan,
+            matching_files,
+            self.request.context.microscope_handler.parser,
+        )
 
     def _load_input_stack(self) -> PatternGroupData:
         context = self.request.context
@@ -1931,9 +2525,7 @@ class PatternGroupRuntime:
             )
 
         matching_files = self._filter_matching_files_for_group(matching_files)
-        matching_files = self._filter_matching_files_for_source_bindings(
-            matching_files
-        )
+        matching_files = self._filter_matching_files_for_source_bindings(matching_files)
 
         logger.debug(
             "Pattern %s matched %d files: %s",
@@ -1951,6 +2543,26 @@ class PatternGroupRuntime:
             self._input_memory_path(plan.input_dir, file_path)
             for file_path in matching_files
         ]
+        workspace_path_lookups = tuple(
+            VirtualWorkspacePathLookup.from_paths(
+                virtual_path,
+                full_virtual_path,
+            )
+            for virtual_path, full_virtual_path in zip(
+                matching_files,
+                full_file_paths,
+                strict=True,
+            )
+        )
+        workspace_source_lookups = (
+            tuple(
+                lookup
+                for lookup in workspace_path_lookups
+                if source_projection.source_projection_for(lookup) is not None
+            )
+            if source_projection is not None
+            else ()
+        )
         source_binding_context = SourceBindingRuntimeContextRequest.from_context(
             context=self.request.context,
             plan=self.request.execution_plan,
@@ -1975,13 +2587,14 @@ class PatternGroupRuntime:
                 full_file_paths,
                 Backend.MEMORY.value,
             )
-            raw_slices = self._apply_source_image_loading_semantics(
-                raw_slices,
-                matching_files,
-                full_file_paths,
-                source_binding_context,
-                source_projection,
-            )
+            if source_projection is not None or not producer_matching_files:
+                raw_slices = self._apply_source_image_loading_semantics(
+                    raw_slices,
+                    workspace_path_lookups,
+                    workspace_source_lookups,
+                    source_binding_context,
+                    source_projection,
+                )
 
             if not raw_slices:
                 raise ValueError(
@@ -1992,25 +2605,36 @@ class PatternGroupRuntime:
                     f"Check file integrity and format compatibility."
                 )
 
-            raw_slice_data = tuple(image_payload_data(slice_data) for slice_data in raw_slices)
-            main_data_stack = ImageStackLayout.for_slices(raw_slice_data).stack(
-                slices=raw_slice_data,
-                memory_type=plan.input_memory_type,
-                gpu_id=plan.device_id,
-            )
-            main_data_stack = stack_image_payload_context(raw_slices, main_data_stack)
-            source_slice_shapes = tuple(
-                tuple(slice_data.shape)
-                for slice_data in raw_slice_data
-            )
+            metadata_mode = ImagePayloadMetadataCompositionMode.STACK
+            if source_projection is not None and workspace_source_lookups:
+                metadata_mode = source_projection.payload_composition_mode(
+                    workspace_source_lookups
+                )
+            if metadata_mode is ImagePayloadMetadataCompositionMode.STACK:
+                raw_slice_data = tuple(
+                    image_payload_data(slice_data) for slice_data in raw_slices
+                )
+                main_data_stack = stack_runtime_slices(
+                    raw_slice_data,
+                    plan.input_memory_type,
+                    plan.device_id,
+                )
+                main_data_stack = stack_image_payload_context(
+                    raw_slices,
+                    main_data_stack,
+                    metadata_mode=metadata_mode,
+                )
+            elif metadata_mode is ImagePayloadMetadataCompositionMode.BUNDLE:
+                main_data_stack = ImagePayloadBundleContext.from_payloads(
+                    tuple(raw_slices),
+                    metadata_mode=metadata_mode,
+                ).compose()
         else:
             main_data_stack = cached_stack.stack
-            source_slice_shapes = cached_stack.source_slice_shapes
 
         return PatternGroupData(
             matching_files=matching_files,
             main_data_stack=main_data_stack,
-            source_slice_shapes=source_slice_shapes,
             source_binding_context=source_binding_context,
         )
 
@@ -2019,6 +2643,14 @@ class PatternGroupRuntime:
         matching_files: list[str],
     ) -> list[str]:
         """Constrain grouped executions to files from the current component."""
+        if (
+            self.request.execution_plan.main_input_dependency.kind
+            is StepInputDependencyKind.STEP_OUTPUT
+            or self.request.compiled_group.runtime_domain
+            is RuntimeInvocationDomain.ARTIFACT_MANAGED
+        ):
+            return matching_files
+
         group_component = self.request.execution_plan.execution_group_value
         component_value = self.request.component_value
         if group_component is None or component_value is None:
@@ -2028,9 +2660,7 @@ class PatternGroupRuntime:
         filtered = [
             filename
             for filename in matching_files
-            if (
-                metadata := parser.parse_filename(Path(filename).name)
-            )
+            if (metadata := parser.parse_filename(Path(filename).name))
             and str(metadata.get(group_component)) == str(component_value)
         ]
         if not filtered:
@@ -2053,10 +2683,13 @@ class PatternGroupRuntime:
         ):
             return matching_files
 
+        source_binding_plan = self.request.main_flow_source_binding_plan
+        if not source_binding_plan.has_primary_content:
+            return matching_files
         bindings = tuple(
             binding
-            for binding in self.request.execution_plan.source_binding_plan.bindings
-            if binding.participates_in_execution_anchoring
+            for binding in source_binding_plan.bindings
+            if binding.projection_role is SourceProjectionRole.PRIMARY_PLANE
         )
         selector_bindings = SourceBindingCandidateMatcher.selector_bindings(bindings)
         if not selector_bindings:
@@ -2066,11 +2699,9 @@ class PatternGroupRuntime:
         compatible = list(
             SourceBindingMatchedImageSet.from_plan(
                 bindings=selector_bindings,
-                match_plan=self.request.execution_plan.source_binding_plan.match_plan,
+                match_plan=source_binding_plan.match_plan,
                 source_context=source_context,
-                plane_member_fields=frozenset(
-                    self.request.execution_plan.variable_component_values
-                ),
+                identity_policy=(self.request.context.source_image_set_identity_policy),
             ).expand(
                 matching_files,
                 source_universe=self._source_binding_load_universe(),
@@ -2108,39 +2739,33 @@ class PatternGroupRuntime:
                 projection,
                 axis_id=self.request.execution_plan.axis_id,
             ),
-            metadata_rules=self.request.execution_plan.source_binding_plan.metadata_rules,
+            metadata_rules=self.request.source_binding_plan.metadata_rules,
         )
 
     def _apply_source_image_loading_semantics(
         self,
         raw_slices: Sequence[RuntimeArrayData],
-        matching_files: Sequence[str],
-        full_file_paths: Sequence[str],
+        workspace_path_lookups: Sequence[VirtualWorkspacePathLookup],
+        workspace_source_lookups: Sequence[VirtualWorkspacePathLookup],
         source_binding_context: SourceBindingRuntimeContext,
         source_projection: VirtualWorkspaceSourceProjection | None,
     ) -> list[RuntimeArrayData]:
         if source_projection is not None:
+            source_lookups = frozenset(workspace_source_lookups)
             return [
-                SourceImagePayloadSemantics.from_source_metadata(
-                    source_projection.source_metadata_for(
-                        VirtualWorkspacePathLookup.from_paths(
-                            virtual_path,
-                            full_virtual_path,
-                        )
-                    ),
-                    source_projection.source_path_for(
-                        VirtualWorkspacePathLookup.from_paths(
-                            virtual_path,
-                            full_virtual_path,
-                        )
-                    ),
-                    Backend.DISK.value,
-                    self.request.context.filemanager,
-                ).apply(payload)
-                for payload, virtual_path, full_virtual_path in zip(
+                (
+                    self._apply_workspace_source_binding_payload(
+                        payload,
+                        source_projection=source_projection,
+                        lookup=lookup,
+                    )
+                    if lookup in source_lookups
+                    else payload
+                )
+                for payload, lookup in zip(
                     raw_slices,
-                    matching_files,
-                    full_file_paths,
+                    workspace_path_lookups,
+                    strict=True,
                 )
             ]
 
@@ -2148,26 +2773,85 @@ class PatternGroupRuntime:
             parser=self.request.context.microscope_handler.parser,
             source_paths_by_virtual_path=source_binding_context.step_input_source_paths,
             source_metadata_by_path=source_binding_context.source_metadata_by_path,
-            metadata_rules=self.request.execution_plan.source_binding_plan.metadata_rules,
+            metadata_rules=self.request.source_binding_plan.metadata_rules,
         )
         return [
-            SourceImagePayloadSemantics.from_source_metadata(
-                source_context.merged_metadata_for_paths(
+            self._apply_source_binding_payload(
+                payload,
+                source_metadata=source_context.merged_metadata_for_paths(
                     (
-                        virtual_path,
-                        full_virtual_path,
+                        lookup.virtual_path,
+                        lookup.full_virtual_path,
                     )
                 ),
-                source_context.source_path_for(full_virtual_path),
-                source_binding_context.step_input_source_backend,
-                self.request.context.filemanager,
-            ).apply(payload)
-            for payload, virtual_path, full_virtual_path in zip(
+                source_path=source_context.source_path_for(lookup.full_virtual_path),
+                read_backend=source_binding_context.step_input_source_backend,
+            )
+            for payload, lookup in zip(
                 raw_slices,
-                matching_files,
-                full_file_paths,
+                workspace_path_lookups,
+                strict=True,
             )
         ]
+
+    def _apply_workspace_source_binding_payload(
+        self,
+        payload: RuntimeArrayData,
+        *,
+        source_projection: VirtualWorkspaceSourceProjection,
+        lookup: VirtualWorkspacePathLookup,
+    ) -> RuntimeArrayData:
+        projection = source_projection.require_source_projection_for(lookup)
+        payload = source_projection.project_payload(lookup, payload)
+        return self._apply_source_binding_payload(
+            payload,
+            source_metadata=source_projection.source_metadata_for(lookup),
+            source_path=lookup.full_virtual_path,
+            source_address=projection.ref.backend_address,
+            read_backend=projection.ref.backend,
+        )
+
+    def _apply_source_binding_payload(
+        self,
+        payload: RuntimeArrayData,
+        *,
+        source_metadata: Mapping[str, object] | None,
+        source_path: str,
+        source_address: str | None = None,
+        read_backend: str | None,
+    ) -> RuntimeArrayData:
+        source_context = ImagePayloadSourceMetadataContext(
+            SourceImageIdentity(source_path, source_metadata),
+            read_backend,
+            self.request.context.filemanager,
+            source_address,
+        )
+        source_bindings = self.request.source_binding_plan
+        if not source_bindings.binding_declarations:
+            metadata = source_context.metadata(payload)
+            return metadata.payload_with(
+                image_payload_data(payload),
+                image_payload_mask(payload),
+            )
+        alias = (
+            None
+            if source_metadata is None
+            else source_metadata_value(
+                source_metadata,
+                SOURCE_BINDING_ALIAS_METADATA_FIELD,
+            )
+        )
+        if alias is None:
+            raise ValueError(
+                f"Source-bound payload {source_path!r} has no declared source alias."
+            )
+        binding = source_bindings.binding_for_alias(alias)
+        if binding is None:
+            raise ValueError(
+                f"Source-bound payload {source_path!r} declares unknown alias "
+                f"{alias!r}."
+            )
+        return apply_source_binding_payload(payload, binding, source_context)
 
     def _execute_pattern(
         self,
@@ -2182,20 +2866,71 @@ class PatternGroupRuntime:
         processed_stack: RuntimeArrayData,
         loaded: PatternGroupData,
     ) -> PatternGroupOutputData:
-        if isinstance(processed_stack, AlignedImageStack):
-            return PatternGroupOutputData(
-                slices=list(flatten_aligned_image_payload_slices(processed_stack)),
-                slice_contexts=flatten_aligned_image_slice_contexts(processed_stack),
+        if (
+            isinstance(processed_stack, ImagePayloadMetadataCarrier)
+            and processed_stack.metadata.plane_axis is None
+        ):
+            output_context = self._unwrapped_main_flow_output_context()
+            scalar_data = image_payload_data(processed_stack)
+            stacked_data = stack_runtime_slices(
+                (scalar_data,),
+                self.request.execution_plan.output_memory_type,
+                self.request.execution_plan.device_id,
             )
-        processed_data = image_payload_data(processed_stack)
-        try:
+            return PatternGroupOutputData(
+                slices=(processed_stack,),
+                slice_contexts=(
+                    (output_context,)
+                    if output_context is not None
+                    else (
+                        self._producer_output_contexts(loaded.matching_files)
+                        if len(loaded.matching_files) == 1
+                        else ()
+                    )
+                ),
+                stack_payload=stack_image_payload_context(
+                    (processed_stack,),
+                    stacked_data,
+                    metadata_mode=ImagePayloadMetadataCompositionMode.STACK,
+                ),
+            )
+        if isinstance(processed_stack, AlignedImageStack):
+            output_payloads = list(
+                flatten_aligned_image_payload_slices(processed_stack)
+            )
+            output_data = tuple(
+                image_payload_data(payload) for payload in output_payloads
+            )
+            stack_payload = None
+            if len({tuple(np.shape(value)) for value in output_data}) == 1:
+                stacked_data = stack_runtime_slices(
+                    output_data,
+                    self.request.execution_plan.output_memory_type,
+                    self.request.execution_plan.device_id,
+                )
+                stack_payload = stack_image_payload_context(
+                    output_payloads,
+                    stacked_data,
+                    metadata_mode=ImagePayloadMetadataCompositionMode.STACK,
+                )
+            return PatternGroupOutputData(
+                slices=output_payloads,
+                slice_contexts=flatten_aligned_image_slice_contexts(processed_stack),
+                stack_payload=stack_payload,
+            )
+        output_context = self._unwrapped_main_flow_output_context()
+        output_projection = RuntimeSliceProjection.preserved_context_for_value(
+            processed_stack
+        )
+        if output_projection is not None:
             unstack_started_at = time.perf_counter()
-            output_slices = SourceSliceUnstackRequest(
-                array=processed_data,
-                source_slice_shapes=loaded.source_slice_shapes,
-                memory_type=self.request.execution_plan.output_memory_type,
-                gpu_id=self.request.execution_plan.device_id,
-            ).slices()
+            output_slices = list(
+                RuntimeSliceProjection.value_for_slice(
+                    processed_stack,
+                    output_projection.selected_plane(slice_index),
+                )
+                for slice_index in range(output_projection.axis_size)
+            )
             RuntimeProfileSink.record(
                 "pattern_source_unstack",
                 time.perf_counter() - unstack_started_at,
@@ -2203,31 +2938,91 @@ class PatternGroupRuntime:
                 step_name=self.request.execution_plan.step_name,
                 slices=len(output_slices),
             )
-        except ValueError as exc:
-            output_shape = np.shape(processed_data)
-            output_ndim = np.ndim(processed_data)
-            logger.error("Function output is not an OpenHCS image stack.")
-            logger.error(f"Output type: {type(processed_stack)}")
-            logger.error("Output shape: %s", output_shape)
-            logger.error("Output ndim: %s", output_ndim)
-            raise ValueError(
-                "Main processing must result in an image stack shaped "
-                f"(N, H, W) or (N, H, W, C), got "
-                f"{output_shape}"
-            ) from exc
+            output_payloads = output_slices
+        else:
+            processed_data = image_payload_data(processed_stack)
+            try:
+                unstack_started_at = time.perf_counter()
+                output_slices = list(
+                    unstack_runtime_slices(
+                        processed_data,
+                        self.request.execution_plan.output_memory_type,
+                        self.request.execution_plan.device_id,
+                        expected_count=len(loaded.matching_files),
+                    )
+                )
+                RuntimeProfileSink.record(
+                    "pattern_source_unstack",
+                    time.perf_counter() - unstack_started_at,
+                    step=self.request.execution_plan.step_index,
+                    step_name=self.request.execution_plan.step_name,
+                    slices=len(output_slices),
+                )
+            except ValueError as exc:
+                output_shape = np.shape(processed_data)
+                output_ndim = np.ndim(processed_data)
+                logger.error("Function output is not an OpenHCS image stack.")
+                logger.error(f"Output type: {type(processed_stack)}")
+                logger.error("Output shape: %s", output_shape)
+                logger.error("Output ndim: %s", output_ndim)
+                raise ValueError(
+                    "Main processing must result in an image stack shaped "
+                    f"(N, H, W) or (N, H, W, C), got "
+                    f"{output_shape}"
+                ) from exc
 
-        context_started_at = time.perf_counter()
-        output_payloads = unstack_image_payload_context(processed_stack, output_slices)
-        RuntimeProfileSink.record(
-            "pattern_payload_context_unstack",
-            time.perf_counter() - context_started_at,
-            step=self.request.execution_plan.step_index,
-            step_name=self.request.execution_plan.step_name,
-            slices=len(output_payloads),
+            context_started_at = time.perf_counter()
+            output_payloads = unstack_image_payload_context(
+                processed_stack,
+                output_slices,
+                default_plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+            )
+            RuntimeProfileSink.record(
+                "pattern_payload_context_unstack",
+                time.perf_counter() - context_started_at,
+                step=self.request.execution_plan.step_index,
+                step_name=self.request.execution_plan.step_name,
+                slices=len(output_payloads),
+            )
+        slice_contexts = (
+            (output_context,) * len(output_payloads)
+            if output_context is not None
+            else ()
         )
+        if not slice_contexts and len(output_payloads) == len(loaded.matching_files):
+            slice_contexts = self._producer_output_contexts(loaded.matching_files)
         return PatternGroupOutputData(
             slices=output_payloads,
+            slice_contexts=slice_contexts,
             stack_payload=processed_stack,
+        )
+
+    def _unwrapped_main_flow_output_context(
+        self,
+    ) -> AlignedImageSliceContext | None:
+        declared_refs = frozenset(
+            plan.ref()
+            for plan in self.request.compiled_group.resulting_main_flow_output_plans()
+        )
+        refs = tuple(
+            output_plan.ref()
+            for output_plan in ComponentArtifactPlans.from_step_component(
+                self.request.execution_plan,
+                self.request.component_key,
+            ).outputs.values()
+            if output_plan.ref() in declared_refs
+        )
+        if not refs:
+            return None
+        if len(refs) != 1:
+            raise ValueError(
+                "Multiple named main-flow outputs require AlignedImageStack "
+                f"contexts; got {tuple(refs)!r}."
+            )
+        ref = refs[0]
+        return AlignedImageSliceContext.main_flow(
+            output_key=ref.name,
+            artifact_kind=ref.artifact_type.value,
         )
 
     def _save_outputs(
@@ -2309,21 +3104,22 @@ class PatternGroupRuntime:
                     identity=output_identity,
                 )
             )
+            img_slice = output_context.contextualize_image_payload(img_slice)
             output_metadata = image_payload_metadata(img_slice)
-            output_component_metadata = output_identity.component_metadata()
+            output_component_metadata = output_identity.component_metadata(
+                output_metadata.source_component_metadata,
+            )
             if output_metadata.source_component_metadata != output_component_metadata:
                 output_metadata = output_metadata.with_source_component_metadata(
                     output_component_metadata
                 )
-                img_slice = with_image_payload_metadata(
-                    img_slice,
-                    metadata=output_metadata,
-                )
+                img_slice = output_metadata.attach_to(img_slice)
             output_record = ProducedOutputSemantics.from_output(
                 self.request.execution_plan,
                 output_path_text,
                 output_identity,
                 output_context=output_context,
+                image_metadata=output_metadata,
             )
 
             if output_directory_exists and context.filemanager.exists(
@@ -2366,24 +3162,23 @@ class PatternGroupRuntime:
             if output_data.stack_payload is not None
             else None
         )
-        if (
-            output_data.stack_payload is not None
-            and np.shape(stack_payload_data)[:1] == (len(output_payloads),)
-        ):
-            source_slice_shapes = tuple(
-                tuple(image_payload_data(payload).shape)
-                for payload in output_payloads
-            )
+        if output_data.stack_payload is not None:
+            if np.shape(stack_payload_data)[:1] != (len(output_payloads),):
+                raise ValueError(
+                    "PatternGroupOutputData.stack_payload must match its declared "
+                    f"output slice count: stack shape {np.shape(stack_payload_data)!r}, "
+                    f"slice count {len(output_payloads)}."
+                )
             stack_payload = stack_image_payload_context_from_metadata(
                 output_payloads,
                 stack_payload_data,
                 output_payload_metadata,
+                metadata_mode=ImagePayloadMetadataCompositionMode.STACK,
             )
             context.runtime_image_stack_cache.store(
                 tuple(output_paths_batch),
                 memory_type=self.request.execution_plan.output_memory_type,
                 stack=stack_payload,
-                source_slice_shapes=source_slice_shapes,
             )
             RuntimeProfileSink.record(
                 "runtime_stack_cache_store",
@@ -2408,7 +3203,10 @@ class PatternGroupRuntime:
         if num_outputs >= num_inputs:
             return
 
-        if self.request.execution_plan.input_dir == self.request.execution_plan.output_dir:
+        if (
+            self.request.execution_plan.input_dir
+            == self.request.execution_plan.output_dir
+        ):
             return
 
         retained_paths = {Path(path).as_posix() for path in output_paths}

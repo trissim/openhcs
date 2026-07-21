@@ -7,7 +7,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import ClassVar
+from typing import cast, ClassVar
 
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 import numpy as np
@@ -38,33 +38,36 @@ from openhcs.core.equivalence.policy import (
     RuntimeEquivalencePolicy,
     normalize_runtime_identifier,
 )
-from openhcs.core.runtime_semantics import (
+from openhcs.core.runtime_measurements import (
     MeasurementScope,
     MeasurementStatistic,
     ObjectCoreMeasurementFeature,
     ObjectCountFeatureMarker,
     ObjectIdentifierFeatureMarker,
     ObjectLocationFeatureMarker,
-    ObjectInstanceKey,
-    ObjectLabelDomain,
-    ObjectLabelDomainScope,
-    ObjectLabelIdDomainStrategy,
-    ObjectLabelInstanceDomains,
     ObjectLocationCoordinateValues,
-    RuntimePlaneAxis,
-    dense_object_label_id_domain,
-    dense_object_label_identity_domains,
-    dense_object_label_plane_id_domains,
     object_location_coordinate_arrays,
 )
+from openhcs.core.runtime_relationships import (
+    ObjectInstanceKey,
+    ObjectLabelInstanceDomains,
+)
+from openhcs.core.runtime_object_label_domains import (
+    ObjectLabelDomain,
+    ObjectLabelDomainScope,
+    dense_object_label_identity_domains,
+    dense_object_label_plane_id_domains,
+)
 from openhcs.core.runtime_stores import StoredRuntimeValue
-from openhcs.core.runtime_values import (
-    DenseObjectLabelPlaneDomainStackRequest,
+from openhcs.core.runtime_object_labels import (
     ObjectLabelData,
     ObjectLabelSet,
     ObjectLabelValue,
-    RuntimeValue,
     object_label_dense_array,
+    object_label_project_plane,
+)
+from openhcs.core.runtime_artifact_values import (
+    RuntimeValue,
 )
 
 
@@ -83,9 +86,9 @@ class ObjectLabelMeasurementState:
     object_location_subjects: frozenset[RuntimeMeasurementSubjectKey]
     object_count_subjects: frozenset[RuntimeMeasurementSubjectKey]
     required_keys: RuntimeRequiredMeasurementKeys
-    object_location_aggregate_subjects: frozenset[
-        RuntimeMeasurementSubjectKey
-    ] = frozenset()
+    object_location_aggregate_subjects: frozenset[RuntimeMeasurementSubjectKey] = (
+        frozenset()
+    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -107,10 +110,10 @@ class ObjectLabelMeasurementContext(ObjectLabelMeasurementState):
             RuntimeMeasurementSubjectKey
         ] = frozenset(),
     ) -> "ObjectLabelMeasurementContext":
-        label_set = ObjectLabelSet.from_runtime_value(value)
+        label_set = cast(ObjectLabelSet, value.data)
         return cls.from_object_labels(
             label_set,
-            value.schema.object_name or label_set.name,
+            label_set.name,
             policy,
             object_identifier_subjects,
             object_location_subjects,
@@ -157,23 +160,11 @@ class ObjectLabelMeasurementContext(ObjectLabelMeasurementState):
 
     def dense_identity_domains(self) -> tuple[tuple[int, ...], ...]:
         """Return dense object identity domains for this object-label payload."""
-        return dense_object_label_identity_domains(
-            self.labels,
-            declared_object_count=self.domain.declared_object_count,
-            declared_object_ids=self.domain.declared_object_ids,
-            declared_object_id_domains=self.domain.declared_object_id_domains,
-            domain_scope=self.domain.scope,
-        )
+        return dense_object_label_identity_domains(self.object_labels)
 
     def dense_plane_id_domains(self) -> tuple[tuple[int, ...], ...]:
         """Return dense object ID domains aligned to measurement planes."""
-        return dense_object_label_plane_id_domains(
-            self.labels,
-            declared_object_count=self.domain.declared_object_count,
-            declared_object_ids=self.domain.declared_object_ids,
-            declared_object_id_domains=self.domain.declared_object_id_domains,
-            domain_scope=self.domain.scope,
-        )
+        return dense_object_label_plane_id_domains(self.object_labels)
 
     def has_declared_object_domain(self) -> bool:
         """Return whether this context carries explicit object-domain metadata."""
@@ -324,7 +315,7 @@ class RuntimeObjectLabelMeasurementAuthority:
         identifier_subjects: set[RuntimeMeasurementSubjectKey] = set()
         location_subjects: set[RuntimeMeasurementSubjectKey] = set()
         for record in records:
-            object_labels = ObjectLabelSet.from_runtime_value(record.value)
+            object_labels = cast(ObjectLabelSet, record.value.data)
             subject = RuntimeMeasurementSubjectKey(
                 MeasurementScope.OBJECT,
                 object_labels.name,
@@ -411,24 +402,23 @@ class RuntimeObjectLabelInstanceCatalog:
         counts: dict[RuntimeMeasurementSubjectKey, int] = {}
         named_plane_domains: list[tuple[str, tuple[tuple[int, ...], ...]]] = []
         for record in records:
-            object_labels = ObjectLabelSet.from_runtime_value(record.value)
+            object_labels = cast(ObjectLabelSet, record.value.data)
             subject = RuntimeMeasurementSubjectKey(
                 MeasurementScope.OBJECT,
                 object_labels.name,
             )
+            identity_domains = dense_object_label_identity_domains(object_labels)
             counts[subject] = max(
                 counts.get(subject, 0),
-                ObjectLabelIdDomainStrategy.for_value(
-                    object_labels.labels
-                ).max_present_id(object_labels.labels),
+                max(
+                    (object_id for domain in identity_domains for object_id in domain),
+                    default=0,
+                ),
             )
             named_plane_domains.append(
                 (
                     object_labels.name,
-                    dense_object_label_identity_domains(
-                        object_labels.labels,
-                        domain_scope=ObjectLabelDomainScope.PLANE,
-                    ),
+                    identity_domains,
                 )
             )
         domains = ObjectLabelInstanceDomains.from_named_plane_domains(
@@ -473,9 +463,7 @@ class ObjectLabelMeasurementCompletion(ObjectLabelMeasurementState):
         required_keys: RuntimeRequiredMeasurementKeys,
         object_identifier_subjects: frozenset[RuntimeMeasurementSubjectKey]
         | None = None,
-        object_location_subjects: frozenset[
-            RuntimeMeasurementSubjectKey
-        ] | None = None,
+        object_location_subjects: frozenset[RuntimeMeasurementSubjectKey] | None = None,
         object_location_aggregate_subjects: frozenset[
             RuntimeMeasurementSubjectKey
         ] = frozenset(),
@@ -651,13 +639,8 @@ class ObjectLabelMeasurementProjectionStrategy(ABC, metaclass=AutoRegisterMeta):
         context: ObjectLabelMeasurementContext,
     ) -> bool:
         """Return whether this label domain represents semantic ObjectNumber IDs."""
-        if context.object_labels.domain.scope is not ObjectLabelDomainScope.PLANE:
-            return True
-        if context.object_labels.plane_axis is not RuntimePlaneAxis.RUNTIME_SLICE:
-            return True
-        if len(context.object_labels.source_image_names) <= 1:
-            return True
-        return object_label_dense_array(context.object_labels).ndim < 4
+        del context
+        return True
 
     def identifier_domains(
         self,
@@ -673,14 +656,10 @@ class ObjectLabelMeasurementProjectionStrategy(ABC, metaclass=AutoRegisterMeta):
         context: ObjectLabelMeasurementContext,
     ) -> tuple[tuple[int, ...], ...]:
         """Return declared ObjectNumber domains aligned to measurement planes."""
-        domain_stack = DenseObjectLabelPlaneDomainStackRequest(
-            context.object_labels,
-            allow_single_plane=True,
-            collapse_repeated=True,
-        ).stack()
-        if domain_stack is not None:
-            return domain_stack.object_id_domains
-        return context.dense_plane_id_domains()
+        domain = context.object_labels.domain
+        if domain.scope is ObjectLabelDomainScope.PAYLOAD:
+            return context.dense_identity_domains()
+        return domain.declared_object_id_domains
 
 
 class PayloadObjectLabelMeasurementProjectionStrategy(
@@ -719,34 +698,26 @@ class PlaneObjectLabelMeasurementProjectionStrategy(
         self,
         context: ObjectLabelMeasurementContext,
     ) -> tuple[ObjectLabelMeasurementProjection, ...]:
-        domain_stack = DenseObjectLabelPlaneDomainStackRequest(
-            context.object_labels,
-            allow_single_plane=True,
-            collapse_repeated=True,
-        ).stack()
-        if domain_stack is not None:
-            return tuple(
-                ObjectLabelMeasurementProjection(
-                    domain_stack.labels[index],
-                    object_ids,
-                    index,
-                )
-                for index, object_ids in enumerate(domain_stack.object_id_domains)
+        labels = context.object_labels
+        plane_count = labels.declared_plane_count()
+        if plane_count is None:
+            raise ValueError(
+                "Plane-scoped object-label measurements require a declared label-plane stack."
             )
-        label_array = context.label_array()
-        if label_array is None:
-            return ()
-        planes = (label_array,) if label_array.ndim <= 2 else tuple(label_array)
-        plane_indexes = (None,) if label_array.ndim <= 2 else tuple(range(len(planes)))
-        domains = context.dense_plane_id_domains()
+        domains = labels.domain.declared_object_id_domains
         return tuple(
-            ObjectLabelMeasurementProjection(plane, object_ids, plane_index)
-            for plane, object_ids, plane_index in zip(
-                planes,
-                domains,
-                plane_indexes,
-                strict=True,
+            ObjectLabelMeasurementProjection(
+                object_label_dense_array(
+                    object_label_project_plane(
+                        labels.labels,
+                        plane_index,
+                        plane_count=plane_count,
+                    )
+                ),
+                domains[plane_index],
+                plane_index,
             )
+            for plane_index in range(plane_count)
         )
 
 
@@ -769,7 +740,7 @@ def object_location_measurement_facts_for_plane(
     *,
     required_feature_names: frozenset[str] | None = None,
     required_mean_feature_names: frozenset[str] | None = None,
-    object_ids: tuple[int, ...] | None = None,
+    object_ids: tuple[int, ...],
     include_missing: bool = True,
 ) -> RuntimeMeasurementFacts:
     if (
@@ -815,14 +786,12 @@ def object_location_measurement_facts_for_plane(
 def _object_label_location_coordinate_arrays(
     labels: np.ndarray,
     *,
-    object_ids: tuple[int, ...] | None = None,
+    object_ids: tuple[int, ...],
 ) -> tuple[tuple[int, ...], tuple[tuple[str, ObjectLocationCoordinateValues], ...]]:
     if labels.size == 0:
         return (), ()
     integer_labels = np.asarray(labels)
-    resolved_object_ids = (
-        object_ids if object_ids is not None else dense_object_label_id_domain(integer_labels)
-    )
+    resolved_object_ids = object_ids
     if not resolved_object_ids:
         return (), ()
 
@@ -916,7 +885,7 @@ def object_label_measurement_values_for_name(
 
     values_by_feature: RuntimeObjectValuesByLabel = {}
     for record in records:
-        object_labels = ObjectLabelSet.from_runtime_value(record.value)
+        object_labels = cast(ObjectLabelSet, record.value.data)
         if normalize_runtime_identifier(object_labels.name) != subject.name:
             continue
         for key, values in object_label_location_values_by_label(
@@ -975,7 +944,7 @@ def _object_label_location_values_by_label_for_plane(
     subject: RuntimeMeasurementSubjectKey,
     *,
     required_feature_names: frozenset[str] | None = None,
-    object_ids: tuple[int, ...] | None = None,
+    object_ids: tuple[int, ...],
     slice_index: int | None = None,
 ) -> RuntimeObjectValuesByLabel:
     if required_feature_names is not None and not required_feature_names:

@@ -1,110 +1,59 @@
 """Median-filter backends for CellProfiler-compatible processing."""
 
 from __future__ import annotations
-from typing import Any, Callable
-from openhcs.interop.cellprofiler.semantic_defaults import (
-    SourceCallKeyword,
-    SourceCallKeywordDefaultContract,
-    SourceVolumetricPixelDataExecutionContract,
-)
-from openhcs.interop.cellprofiler.settings_binder import (
-    SettingToKeywordBinding,
-    parse_cellprofiler_int,
-)
-from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
-    BinderSettingsSourceModule,
-    BoundModuleSettings,
-    CellProfilerModule,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
-    ModuleSettingsSourceModule,
-    ScopedMeasurementModule,
-    StructuringElementSettingsModule,
-)
-from openhcs.interop.cellprofiler.setting_names import (
-    optional_setting_value,
-    required_setting_value,
-    setting_values,
-    split_symbol_names,
-)
-from openhcs.interop.cellprofiler.cellprofiler_literals import (
-    cellprofiler_enum_from_literal,
-)
-from openhcs.processing.backends.cellprofiler.thresholding import (
-    ThresholdSettingsModule,
-)
-
-
-class MedianFilterSemanticDefaultContract(SourceCallKeywordDefaultContract):
-    contract_key = "MedianFilter.semantic_defaults"
-    source_filename = "medianfilter.py"
-
-    def source_call_keywords(self) -> tuple[SourceCallKeyword, ...]:
-        return (
-            SourceCallKeyword(
-                callable_name="medianfilter",
-                keyword_name="mode",
-                absorbed_callable=medianfilter,
-            ),
-        )
-
-
-class MedianFilterExecutionDomainContract(SourceVolumetricPixelDataExecutionContract):
-    contract_key = "MedianFilter.execution_domain"
-    source_filename = "medianfilter.py"
-    callable_name = "medianfilter"
-
-    @property
-    def absorbed_callable(self) -> Callable[..., Any]:
-        return medianfilter
-
-
-class MedianfilterModule(
-    ImageArtifactInputModule, ImageArtifactOutputModule, CellProfilerModule
-):
-    module_name = "Medianfilter"
-    function_name = "medianfilter"
-    validated = True
-    confidence = 1.0
-    image_input_settings = ("Select the input image",)
-    image_output_settings = ("Name the output image",)
-    semantic_default_contract_types = (
-        MedianFilterSemanticDefaultContract,
-        MedianFilterExecutionDomainContract,
-    )
-    semantic_default_contract_module_name = "MedianFilter"
-    setting_bindings = (
-        SettingToKeywordBinding("Window", "window_size", parse_cellprofiler_int),
-    )
-
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import ClassVar
-import numpy as np
+
 from metaclass_registry import AutoRegisterMeta
+import numpy as np
+
 from openhcs.constants.constants import MemoryType
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.core.artifacts import ImageArtifactType
 from openhcs.core.callable_contract import runtime_image_execution_mode
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import (
+from openhcs.core.public_api import public_names_from_objects
+from openhcs.core.runtime_batch_contracts import (
     RuntimePure2DSliceBatchRequest,
     pure_2d_batch_executor,
 )
-from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.runtime_values import image_payload_data, with_image_payload_data
+from openhcs.core.runtime_image_values import (
+    image_payload_data,
+    with_image_payload_data,
+)
+from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    parse_cellprofiler_int,
+)
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendAuthority,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.cellprofiler.perf_fixtures import (
     capture_array_fixture,
 )
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.backends.lib_registry.unified_registry import (
+    ProcessingContract,
+)
+
+
+class MedianFilterModule(CellProfilerModule):
+    module_name = "MedianFilter"
+    function_name = "medianfilter"
+    validated = True
+    confidence = 1.0
+    setting_bindings = (
+        SettingToKeywordBinding.input("Select the input image", ImageArtifactType),
+        SettingToKeywordBinding.output("Name the output image", ImageArtifactType),
+        SettingToKeywordBinding("Window", "window_size", parse_cellprofiler_int),
+    )
+
 
 CONSTANT_PADDING_MODE = "constant"
 REFLECT_PADDING_MODE = "reflect"
@@ -237,16 +186,6 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
         if normalized_window <= 1:
             return data
         if np.issubdtype(data.dtype, np.floating):
-            large_constant_volume = (
-                data.ndim == 3
-                and mode == CONSTANT_PADDING_MODE
-                and data.size >= np.iinfo(np.uint16).max
-            )
-            if large_constant_volume:
-                accelerated = self.rank_order_filter(data, normalized_window, mode)
-                if accelerated is not None:
-                    return accelerated
-                return self.scipy_filter(data, normalized_window, mode)
             accelerated = self.vectorized_window_filter(data, normalized_window, mode)
             if accelerated is not None:
                 return accelerated
@@ -405,7 +344,12 @@ def median_filter_backend(
 def medianfilter(
     image: np.ndarray, window_size: int = 3, mode: str = CONSTANT_PADDING_MODE
 ) -> np.ndarray:
-    """Apply CellProfiler-compatible median filtering."""
+    """Apply CellProfiler-compatible median filtering.
+
+    Args:
+        mode: Boundary-padding mode used where the median window crosses an image
+            edge.
+    """
     pixel_data = image_payload_data(image)
     filtered = median_filter_backend().filter(
         np.asarray(pixel_data), window_size=int(window_size), mode=str(mode)

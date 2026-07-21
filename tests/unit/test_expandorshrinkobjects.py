@@ -1,23 +1,27 @@
 import numpy as np
 from scipy.ndimage import binary_erosion, generate_binary_structure
 
-from benchmark.cellprofiler_library.functions.expandorshrinkobjects import (
+from openhcs.core.config import DtypeConfig
+from openhcs.core.runtime_object_label_domains import ObjectLabelDomain
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelPayload,
+    ObjectLabelVariantData,
+)
+from openhcs.processing.backends.cellprofiler.morphology import (
+    ExpandShrinkMode,
     expand_or_shrink_objects,
 )
-from openhcs.core.config import DtypeConfig
-from openhcs.core.runtime_semantics import ObjectLabelDomain
-from openhcs.core.runtime_values import ObjectLabelPayload
 
 
-def test_expand_or_shrink_objects_accepts_generated_mode_literals():
+def test_expand_or_shrink_objects_accepts_declared_mode():
     image = np.zeros((5, 5), dtype=float)
     labels = np.zeros((5, 5), dtype=np.int32)
     labels[1:4, 1:4] = 1
 
-    _, result = expand_or_shrink_objects(
+    _, _, result = expand_or_shrink_objects(
         image,
         labels,
-        mode="shrink_defined_pixels",
+        mode=ExpandShrinkMode.SHRINK_DEFINED_PIXELS,
         iterations=1,
         fill_holes=False,
         dtype_config=DtypeConfig(),
@@ -33,10 +37,10 @@ def test_expand_or_shrink_objects_expands_by_euclidean_distance():
     labels = np.zeros((9, 9), dtype=np.int32)
     labels[4, 4] = 1
 
-    _, result = expand_or_shrink_objects(
+    _, _, result = expand_or_shrink_objects(
         image,
         labels,
-        mode="expand_defined_pixels",
+        mode=ExpandShrinkMode.EXPAND_DEFINED_PIXELS,
         iterations=3,
         dtype_config=DtypeConfig(),
     )
@@ -53,10 +57,10 @@ def test_expand_or_shrink_objects_expands_stacked_labels_planewise():
     labels[0, 4, 4] = 1
     labels[1, 2, 6] = 2
 
-    _, result = expand_or_shrink_objects(
+    _, _, result = expand_or_shrink_objects(
         image,
         labels,
-        mode="expand_defined_pixels",
+        mode=ExpandShrinkMode.EXPAND_DEFINED_PIXELS,
         iterations=2,
         dtype_config=DtypeConfig(),
     )
@@ -73,17 +77,20 @@ def test_expand_or_shrink_objects_declares_output_label_extent():
     image = np.zeros((9, 9), dtype=float)
     labels = np.zeros((9, 9), dtype=np.int32)
     labels[4, 4] = 4
-    payload = ObjectLabelPayload(labels=labels, domain=ObjectLabelDomain(declared_object_count=9))
+    payload = ObjectLabelPayload(
+        variant_data=ObjectLabelVariantData(labels=labels),
+        domain=ObjectLabelDomain(declared_object_count=9),
+    )
 
-    _, result = expand_or_shrink_objects(
+    _, _, result = expand_or_shrink_objects(
         image,
         payload,
-        mode="expand_defined_pixels",
+        mode=ExpandShrinkMode.EXPAND_DEFINED_PIXELS,
         iterations=1,
         dtype_config=DtypeConfig(),
     )
 
-    assert result.domain.declared_object_count == 4
+    assert result.domain.declared_object_count == 9
     assert result.domain.declared_object_ids == ()
 
 
@@ -94,10 +101,10 @@ def test_expand_or_shrink_objects_shrinks_labels_like_per_object_erosion():
     labels[2:7, 6:8] = 2
     labels[0:2, 0:2] = 3
 
-    _, result = expand_or_shrink_objects(
+    _, _, result = expand_or_shrink_objects(
         image,
         labels,
-        mode="shrink_defined_pixels",
+        mode=ExpandShrinkMode.SHRINK_DEFINED_PIXELS,
         iterations=2,
         fill_holes=False,
         dtype_config=DtypeConfig(),

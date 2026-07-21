@@ -1,1943 +1,1046 @@
-import ast
-import importlib.util
-import sys
-from dataclasses import dataclass, replace
-from pathlib import Path
-from types import SimpleNamespace
-from collections.abc import Callable, Mapping
+"""Public CellProfiler pipeline compilation and module-contract coverage."""
 
-import imageio.v3 as imageio
+from __future__ import annotations
+
+import inspect
+from pathlib import Path
+from queue import SimpleQueue
+
 import numpy as np
 import pytest
 import tifffile
 
-from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
-    materialize_generated_pipeline_import_module,
-    pipeline_from_generated_module,
-)
-from openhcs.interop.cellprofiler.runtime.module_execution import (
-    CellProfilerGroupedRuntimeCallable,
-    CellProfilerRuntimeCallable,
-    cellprofiler_runtime_adapter_factory,
-)
-from openhcs.processing.backends.cellprofiler.primary_objects import (
-    IdentifyPrimaryObjectsModule,
-    PrimaryObjectStats,
-)
-from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
-from openhcs.interop.cellprofiler.pipeline_generator import (
-    GeneratedPipeline,
-    PipelineGenerator,
-)
-from openhcs.constants import Backend
-from openhcs.constants.constants import MEMORY_TYPE_NUMPY
+from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from openhcs.constants.constants import AllComponents, Microscope
 from openhcs.constants.input_source import InputSource
-from openhcs.core.callable_contract import CallableContract, CallableMetadata
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
     ArtifactOutputPlan,
     ArtifactSpec,
     ArtifactSpecCollection,
+    ArtifactSpecRelation,
+    ArtifactType,
+    GroupLineageSourceRelation,
     ImageArtifactType,
-    ObjectLabelsArtifactType,
+    InputStackBroadcastSourceRelation,
     MeasurementsArtifactType,
+    ObjectLabelsArtifactType,
+    ObjectLineageArtifactType,
     RelationshipsArtifactType,
+    SpecialArtifactType,
 )
-from openhcs.core.module_artifact_contract import (
-    DeclaredArtifactOutputPartition,
-    ModuleArtifactContract,
-    ModuleArtifactContractItem,
-    RecordedArtifactOutputPartition,
-    RuntimeArtifactInputPartition,
-    SourceArtifactInputPartition,
+from openhcs.core.callable_contract import (
+    CallableContract,
+    FunctionStepExecutionScope,
 )
-from openhcs.core.function_reference import FunctionReferenceTransportAuthority
-from openhcs.core.config import DtypeConfig
-from openhcs.core.runtime_adapters import runtime_adapter_spec_from_callable
-from openhcs.core.runtime_stores import RuntimeValueStore
-from openhcs.core.steps.function_output_identity import FunctionOutputIdentityCache
-from openhcs.core.runtime_semantics import (
-    RuntimePlaneProjection,
-    parent_child_relationship_artifact_name,
+from openhcs.core.config import (
+    GlobalPipelineConfig,
+    LazyProcessingConfig,
+    LazySourceBindingsConfig,
+    PipelineConfig,
 )
+from openhcs.core.function_patterns import (
+    FunctionInvocationKey,
+    get_core_callable,
+    normalize_function_pattern,
+)
+from openhcs.core.function_step_transport import FunctionStepTransportAuthority
+from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
+from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.core.pipeline.artifact_planning import (
+    ArtifactProducer,
+    artifact_producers_for_outputs,
+)
+from openhcs.core.pipeline.function_contracts import (
+    validate_artifact_input_parameter_bindings,
+)
+from openhcs.core.progress import set_progress_queue
+from openhcs.core.runtime_relationships import ObjectRelationshipDeclaration
 from openhcs.core.source_bindings import (
     ComponentSelector,
-    CompiledSourceBindingPlan,
-    CompiledSourceUniversePlan,
     NamedSourceBinding,
-    SourceBindingsConfig,
-    SourceBindingRuntimeContext,
+    SourceFilterClause,
+    SourceFilterMatchType,
+    SourceFilterSubject,
     SourceSelector,
     StepSourceBindingsConfig,
 )
-from openhcs.core.runtime_adapters import runtime_adapter
-from openhcs.core.runtime_values import (
-    ImagePayloadMetadata,
-    ObjectLabelSet,
-    ObjectRelationship,
-    RuntimeImagePayloadContext,
-    image_payload_data,
-)
-from openhcs.core.function_patterns import (
-    CompiledFunctionGroup,
-    CompiledFunctionInvocation,
-    CompiledFunctionPattern,
-    FunctionInvocationKey,
-    compile_function_pattern,
-)
-from openhcs.core.invocation_artifacts import (
-    ArtifactDeclarationStepContext,
-    PipelineInvocationContractProviderAuthority,
-)
-from openhcs.core.runtime_invocation import RuntimeParameterBinding
-from openhcs.core.compiled_step_plan import (
-    RuntimeArtifactMaterializationPlan,
-    SequentialRuntimeFilterPlan,
-)
-from openhcs.core.source_load_plan import SourceLoadPlan
-from openhcs.core.step_dependencies import StepInputDependency
-from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.core.steps.function_runtime import (
-    ComponentArtifactPlans,
-    FunctionCoreExecutor,
-    FunctionRuntimeScope,
+from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
+from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock, ModuleSetting
+from openhcs.interop.cellprofiler.pipeline_import import import_cellprofiler_pipeline
+from openhcs.interop.cellprofiler.runtime.module_execution import (
+    CellProfilerModuleExecutor,
 )
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.backends.cellprofiler import (
     correct_illumination_calculate,
-    identify_primary_objects,
 )
-from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
-from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
+from openhcs.processing.backends.cellprofiler.object_filtering import (
+    FilterMode,
+    FilterObjectsModule,
+    FilterObjectsRemovedObjectSourceRelation,
+    filter_objects,
+)
 
-AXIS_ID = "A01"
-SOURCE_IMAGE = "OrigBlue"
-NUCLEI = "Nuclei"
-CELLS = "Cells"
-NUCLEI_IMAGE = "NucleiImage"
-OPENED_NUCLEI_IMAGE = "OpenedNucleiImage"
-OVERLAY_IMAGE = "OverlayImage"
-COLOR_IMAGE = "ColorImage"
-IDENTIFY_PRIMARY_OBJECTS = "IdentifyPrimaryObjects"
-IDENTIFY_SECONDARY_OBJECTS = "IdentifySecondaryObjects"
-MEASURE_OBJECT_SIZE_SHAPE = "MeasureObjectSizeShape"
-THRESHOLD = "Threshold"
-CONVERT_OBJECTS_TO_IMAGE = "ConvertObjectsToImage"
-OPENING = "Opening"
-EROSION = "Erosion"
-OVERLAY_OUTLINES = "OverlayOutlines"
-GRAY_TO_COLOR = "GrayToColor"
-RELATE_OBJECTS = "RelateObjects"
-MASK_OBJECTS = "MaskObjects"
-MASKED_NUCLEI = "MaskedNuclei"
-FILTER_OBJECTS = "FilterObjects"
-FILTERED_NUCLEI = "FilteredNuclei"
-FILTERED_CELLS = "FilteredCells"
-UNTANGLE_WORMS = "UntangleWorms"
-GENERATED_RUNTIME_SMOKE_PIPELINE_NAME = "cellprofiler_generated_runtime_smoke"
-GENERATED_RUNTIME_SMOKE_CPIPE = Path(f"{GENERATED_RUNTIME_SMOKE_PIPELINE_NAME}.cppipe")
+PUBLIC_IMPORT_CPIPE = """CellProfiler Pipeline: https://cellprofiler.org
+NamesAndTypes:[module_num:1|enabled:True]
+    Assignments count:1
+    Select the image type:Grayscale image
+    Name to assign these images:DNA
+    Select the rule criteria:and (file does contain "DNA")
+MedianFilter:[module_num:2|enabled:True]
+    Select the input image:DNA
+    Name the output image:FilteredDNA
+    Window:5
+SaveImages:[module_num:3|enabled:True]
+    Select the image to save:FilteredDNA
+"""
 
 
-def test_identify_objects_threshold_measurements_keep_source_payload():
-    source_payload = RuntimeImagePayloadContext(
-        data=np.ones((4, 4), dtype=np.float32),
-        mask=None,
-        metadata=ImagePayloadMetadata(
-            source_path="/input/A02_s002_w5_z001_t001.tif",
-            source_component_metadata={
-                "well": "A02",
-                "site": "2",
-                "channel": "5",
-                "extension": ".tif",
+def _write_public_import_cppipe(tmp_path: Path) -> Path:
+    cppipe_path = tmp_path / "public-import.cppipe"
+    cppipe_path.write_text(PUBLIC_IMPORT_CPIPE, encoding="utf-8")
+    return cppipe_path
+
+
+def _transport_round_trip(steps: list[FunctionStep]) -> tuple[str, list[FunctionStep]]:
+    source = FunctionStepTransportAuthority.source_from_pipeline(steps)
+    namespace: dict[str, object] = {}
+    exec(compile(source, "<cellprofiler-pipeline>", "exec"), namespace)
+    reconstructed = FunctionStepTransportAuthority.pipeline_steps_from_namespace(
+        namespace
+    )
+    return source, reconstructed
+
+
+def test_pure_import_returns_only_public_steps_and_pipeline_config(
+    tmp_path: Path,
+) -> None:
+    steps, pipeline_config = import_cellprofiler_pipeline(
+        _write_public_import_cppipe(tmp_path)
+    )
+
+    assert type(steps) is list
+    assert isinstance(pipeline_config, PipelineConfig)
+    assert [step.name for step in steps] == ["MedianFilter", "SaveImages"]
+    assert all(isinstance(step, FunctionStep) for step in steps)
+    assert all(get_core_callable(step.func) is not None for step in steps)
+    assert all(
+        not isinstance(get_core_callable(step.func), CellProfilerModuleExecutor)
+        for step in steps
+    )
+    assert tuple(
+        binding.alias for binding in pipeline_config.source_bindings_config.bindings
+    ) == ("DNA",)
+
+
+def test_generic_function_step_transport_round_trips_imported_declarations(
+    tmp_path: Path,
+) -> None:
+    steps, _pipeline_config = import_cellprofiler_pipeline(
+        _write_public_import_cppipe(tmp_path)
+    )
+
+    source, reconstructed = _transport_round_trip(steps)
+
+    assert FunctionStepTransportAuthority.source_from_pipeline(reconstructed) == source
+    assert [step.name for step in reconstructed] == [step.name for step in steps]
+
+
+def test_compiler_derives_runtime_executor_after_generic_transport(
+    tmp_path: Path,
+) -> None:
+    tifffile.imwrite(
+        tmp_path / "A01_s001_OrigStain1.tif",
+        np.ones((4, 4), dtype=np.uint16),
+    )
+    source_binding = NamedSourceBinding(
+        alias="OrigStain1",
+        selector=SourceSelector(
+            filters=(
+                SourceFilterClause(
+                    subject=SourceFilterSubject.FILE,
+                    match_type=SourceFilterMatchType.CONTAINS,
+                    value="OrigStain1",
+                ),
+            )
+        ),
+        component_identity=(
+            ComponentSelector(
+                component=AllComponents.CHANNEL,
+                value="1",
+            ),
+        ),
+    )
+    declared_step = FunctionStep(
+        func=(
+            correct_illumination_calculate,
+            {"name_the_output_image": "IllumStain1"},
+        ),
+        name="CorrectIlluminationCalculate",
+        processing_config=LazyProcessingConfig(
+            input_source=InputSource.PIPELINE_START,
+        ),
+        source_bindings=StepSourceBindingsConfig(enabled=True),
+    )
+    _source, transported_steps = _transport_round_trip([declared_step])
+    transported_callable = get_core_callable(transported_steps[0].func)
+    assert transported_callable is correct_illumination_calculate
+    assert not isinstance(transported_callable, CellProfilerModuleExecutor)
+
+    global_config = GlobalPipelineConfig()
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    orchestrator = PipelineOrchestrator(
+        tmp_path,
+        pipeline_config=PipelineConfig(
+            microscope=Microscope.SOURCE_BINDINGS,
+            source_bindings_config=LazySourceBindingsConfig(
+                bindings=(source_binding,),
+            ),
+        ),
+    )
+    set_progress_queue(SimpleQueue())
+    try:
+        orchestrator.initialize()
+        compilation = orchestrator.compile_pipelines(
+            pipeline_definition=transported_steps,
+            well_filter=["A01"],
+            is_zmq_execution=True,
+        )
+        context = compilation["execution_bundle"].runtime_contexts["A01"]
+        compiled_pattern = context.step_plans[0].compiled_function_pattern
+    finally:
+        set_progress_queue(None)
+
+    assert compiled_pattern is not None
+    invocation = next(compiled_pattern.iter_invocations())
+    contract = invocation.contract
+    runtime_callable = contract.resolve_runtime_callable()
+    module_type = CellProfilerModule.for_function_name(contract.function_name)
+
+    assert invocation.kwargs == ()
+    assert module_type is not None
+    assert module_type.require_module_name() == "CorrectIlluminationCalculate"
+    assert contract.artifact_inputs.names() == ("OrigStain1",)
+    assert contract.artifact_outputs.names() == ("IllumStain1",)
+    assert isinstance(runtime_callable, CellProfilerModuleExecutor)
+    assert runtime_callable.raw_func is correct_illumination_calculate
+    assert runtime_callable.callable_contract is contract
+    assert (
+        module_type.require_callable(contract.function_name)
+        is runtime_callable.raw_func
+    )
+
+
+def _target_module_block(
+    name: str,
+    records: tuple[tuple[str, str], ...],
+) -> ModuleBlock:
+    setting_records = [ModuleSetting(key, value) for key, value in records]
+    return ModuleBlock(
+        name=name,
+        module_num=47,
+        enabled=True,
+        setting_records=setting_records,
+    )
+
+
+def _target_module_contract(
+    module: ModuleBlock,
+    *,
+    available: tuple[ArtifactSpec, ...],
+    main_flow: tuple[ArtifactSpec, ...] = (),
+    available_artifact_producers: tuple[ArtifactProducer, ...] | None = None,
+    step_index: int = 3,
+) -> CallableContract:
+    module_type = CellProfilerModule.require_module(module.name)
+    source_aliases = tuple(
+        spec.name
+        for spec in available
+        if spec.plan_type is ArtifactInputPlan
+        and spec.artifact_type is ImageArtifactType
+    )
+    source_bindings = StepSourceBindingsConfig(
+        enabled=bool(source_aliases),
+        bindings=tuple(
+            NamedSourceBinding(alias=alias, artifact_kind=ImageArtifactType)
+            for alias in source_aliases
+        ),
+    )
+    invocation_key = FunctionInvocationKey(
+        function_name=module_type.require_callable().__name__,
+        group_key="default",
+        position=0,
+    )
+    producers = available_artifact_producers
+    if producers is None:
+        producers = artifact_producers_for_outputs(
+            tuple(spec for spec in available if spec.plan_type is ArtifactOutputPlan),
+            groups=(None,),
+            invocation_keys=(
+                FunctionInvocationKey(
+                    function_name=f"fixture_step_{step_index}_producer",
+                    group_key=invocation_key.group_key,
+                    position=0,
+                ),
+            ),
+        )
+    return module_type.callable_contract(
+        module=module,
+        invocation_key=invocation_key,
+        step_context=ArtifactDeclarationStepContext(
+            step_name=module.name,
+            step_index=step_index,
+            source_bindings=source_bindings,
+            available_artifact_producers=producers,
+            available_artifacts=ArtifactSpecCollection(available),
+            main_flow_artifacts=ArtifactSpecCollection(
+                spec.for_plan_type(ArtifactInputPlan) for spec in main_flow
+            ),
+        ),
+    )
+
+
+def _artifact_names(
+    specs: ArtifactSpecCollection,
+    artifact_type: type[ArtifactType] | None = None,
+) -> tuple[str, ...]:
+    if artifact_type is not None:
+        specs = tuple(spec for spec in specs if spec.artifact_type is artifact_type)
+    return tuple(spec.name for spec in specs)
+
+
+def _relationship_declarations(
+    contract: CallableContract,
+    artifact_type: type[ObjectLineageArtifactType],
+) -> tuple[ObjectRelationshipDeclaration, ...]:
+    return tuple(
+        declaration
+        for spec, declaration in contract.artifact_outputs.relation_refs(
+            ObjectRelationshipDeclaration
+        )
+        if spec.artifact_type is artifact_type
+    )
+
+
+def test_cellprofiler_module_contract_boundary_has_exact_existing_value_inputs() -> (
+    None
+):
+    signature = inspect.signature(CellProfilerModule.callable_contract)
+
+    assert tuple(signature.parameters) == (
+        "module",
+        "invocation_key",
+        "step_context",
+    )
+    assert all(
+        parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        for parameter in signature.parameters.values()
+    )
+
+
+def test_illumination_contracts_derive_canonical_image_flow_from_artifacts() -> None:
+    original = ArtifactSpec.input("OrigStain1", ImageArtifactType)
+    calculate = _target_module_contract(
+        _target_module_block(
+            "CorrectIlluminationCalculate",
+            (
+                ("Select the input image", "OrigStain1"),
+                ("Name the output image", "IllumStain1"),
+                (
+                    "Calculate function for each image individually, or based on all images?",
+                    "Each",
+                ),
+            ),
+        ),
+        available=(original,),
+        main_flow=(original,),
+    )
+    illumination = next(
+        spec
+        for spec in calculate.artifact_outputs
+        if spec.artifact_type is ImageArtifactType
+    )
+    apply = _target_module_contract(
+        _target_module_block(
+            "CorrectIlluminationApply",
+            (
+                ("Select the input image", "OrigStain1"),
+                ("Select the illumination function", "IllumStain1"),
+                ("Name the output image", "CorrectedStain1"),
+            ),
+        ),
+        available=(original, illumination),
+        main_flow=(original,),
+    )
+
+    assert _artifact_names(calculate.artifact_inputs, ImageArtifactType) == (
+        "OrigStain1",
+    )
+    assert _artifact_names(calculate.artifact_outputs, ImageArtifactType) == (
+        "IllumStain1",
+    )
+    assert _artifact_names(apply.artifact_inputs, ImageArtifactType) == (
+        "OrigStain1",
+        "IllumStain1",
+    )
+    assert apply.artifact_inputs[1].relations == (
+        InputStackBroadcastSourceRelation(source=original.ref()),
+    )
+    assert _artifact_names(apply.artifact_outputs, ImageArtifactType) == (
+        "CorrectedStain1",
+    )
+
+
+def test_align_contract_preserves_ordered_multi_image_inputs_and_outputs() -> None:
+    inputs = (
+        ArtifactSpec.input("OrigStain1", ImageArtifactType),
+        ArtifactSpec.input("OrigStain2", ImageArtifactType),
+    )
+    contract = _target_module_contract(
+        _target_module_block(
+            "Align",
+            (
+                ("Select the first input image", "OrigStain1"),
+                ("Name the first output image", "Stain1"),
+                ("Select the second input image", "OrigStain2"),
+                ("Name the second output image", "Stain2"),
+            ),
+        ),
+        available=inputs,
+        main_flow=inputs,
+    )
+
+    assert _artifact_names(contract.artifact_inputs, ImageArtifactType) == (
+        "OrigStain1",
+        "OrigStain2",
+    )
+    assert _artifact_names(contract.artifact_outputs, ImageArtifactType) == (
+        "Stain1",
+        "Stain2",
+    )
+    assert len(contract.artifact_outputs) == 3
+
+
+def test_measure_colocalization_contract_consumes_pair_and_emits_measurements() -> None:
+    images = (
+        ArtifactSpec.output("Stain1", ImageArtifactType),
+        ArtifactSpec.output("Stain2", ImageArtifactType),
+    )
+    contract = _target_module_contract(
+        _target_module_block(
+            "MeasureColocalization",
+            (
+                ("Select images to measure", "Stain1"),
+                ("Select images to measure", "Stain2"),
+                ("Select where to measure correlation", "Across entire image"),
+            ),
+        ),
+        available=images,
+        main_flow=images,
+    )
+
+    assert _artifact_names(contract.artifact_inputs, ImageArtifactType) == (
+        "Stain1",
+        "Stain2",
+    )
+    measurement_names = _artifact_names(
+        contract.artifact_outputs, MeasurementsArtifactType
+    )
+    assert measurement_names == ("MeasureColocalization_47_measurements",)
+
+
+def test_object_topology_contracts_derive_from_declared_object_artifacts() -> None:
+    image = ArtifactSpec.output("Stain1", ImageArtifactType)
+    identify = _target_module_contract(
+        _target_module_block(
+            "IdentifyPrimaryObjects",
+            (
+                ("Select the input image", "Stain1"),
+                ("Name the primary objects to be identified", "Objects1"),
+            ),
+        ),
+        available=(image,),
+        main_flow=(image,),
+    )
+    objects1 = next(
+        spec
+        for spec in identify.artifact_outputs
+        if spec.artifact_type is ObjectLabelsArtifactType
+    )
+    objects2 = ArtifactSpec.output("Objects2", ObjectLabelsArtifactType)
+    relate = _target_module_contract(
+        _target_module_block(
+            "RelateObjects",
+            (
+                ("Select the parent objects", "Objects1"),
+                ("Select the child objects", "Objects2"),
+                ("Calculate child-parent distances?", "None"),
+                ("Calculate distances to other parents?", "No"),
+            ),
+        ),
+        available=(objects1, objects2),
+    )
+
+    assert _artifact_names(identify.artifact_outputs, ObjectLabelsArtifactType) == (
+        "Objects1",
+    )
+    assert _artifact_names(relate.artifact_inputs, ObjectLabelsArtifactType) == (
+        "Objects1",
+        "Objects2",
+    )
+    assert tuple(
+        (
+            declaration.relationship_type,
+            declaration.source.name,
+            declaration.target.name,
+        )
+        for declaration in _relationship_declarations(
+            relate,
+            RelationshipsArtifactType,
+        )
+    ) == (
+        ("Parent", "Objects1", "Objects2"),
+        ("Child", "Objects2", "Objects1"),
+    )
+    assert len(_artifact_names(relate.artifact_outputs, MeasurementsArtifactType)) == 1
+
+
+def test_filter_objects_contract_declares_lineage_without_topology_kwargs() -> None:
+    objects = ArtifactSpec.output("Objects1", ObjectLabelsArtifactType)
+    measurements = ArtifactSpec.output(
+        "MeasureObjectSizeShape_measurements",
+        MeasurementsArtifactType,
+        relations=(
+            GroupLineageSourceRelation(
+                source=objects.for_plan_type(ArtifactInputPlan).ref()
+            ),
+        ),
+    )
+    object_producer, measurement_producer = artifact_producers_for_outputs(
+        (objects, measurements),
+        groups=(None,),
+        invocation_keys=(
+            FunctionInvocationKey(
+                function_name="measure_object_size_shape",
+                group_key="default",
+                position=0,
+            ),
+        ),
+    )
+    contract = _target_module_contract(
+        _target_module_block(
+            "FilterObjects",
+            (
+                ("Select the object to filter", "Objects1"),
+                ("Name the output objects", "FilteredObjects"),
+                ("Filter using classifier rules or measurements?", "Measurements"),
+                ("Select the filtering method", "Limits"),
+                ("Additional object count", "0"),
+                ("Select the measurement to filter by", "AreaShape_Area"),
+            ),
+        ),
+        available=(objects, measurements),
+        available_artifact_producers=(object_producer, measurement_producer),
+    )
+
+    assert _artifact_names(contract.artifact_inputs, ObjectLabelsArtifactType) == (
+        "Objects1",
+    )
+    assert _artifact_names(contract.artifact_inputs, MeasurementsArtifactType) == (
+        "MeasureObjectSizeShape_measurements",
+    )
+    assert _artifact_names(contract.artifact_outputs, ObjectLabelsArtifactType) == (
+        "FilteredObjects",
+    )
+    assert tuple(
+        (declaration.source.name, declaration.target.name)
+        for declaration in _relationship_declarations(
+            contract,
+            ObjectLineageArtifactType,
+        )
+    ) == (("Objects1", "FilteredObjects"),)
+
+
+def test_filter_objects_child_count_consumes_exact_declared_relationship() -> None:
+    parent_output = ArtifactSpec.output("Objects1", ObjectLabelsArtifactType)
+    child_output = ArtifactSpec.output("Objects2", ObjectLabelsArtifactType)
+    parent_input = parent_output.for_plan_type(ArtifactInputPlan)
+    child_input = child_output.for_plan_type(ArtifactInputPlan)
+    relationship_declaration = ObjectRelationshipDeclaration.parent_child(
+        source=parent_input.ref(),
+        target=child_input.ref(),
+        producer_module_number=12,
+    )
+    relationship_output = ArtifactSpec.output(
+        relationship_declaration.artifact_name(),
+        RelationshipsArtifactType,
+        relations=(relationship_declaration,),
+    )
+    measurement_output = ArtifactSpec.output(
+        "RelateObjects_12_measurements",
+        MeasurementsArtifactType,
+        relations=(
+            GroupLineageSourceRelation(source=parent_input.ref()),
+            ArtifactSpecRelation(source=relationship_output.ref()),
+        ),
+    )
+    object_producers = artifact_producers_for_outputs(
+        (parent_output, child_output),
+        groups=(None,),
+        invocation_keys=(
+            FunctionInvocationKey(
+                function_name="identify_primary_objects",
+                group_key="default",
+                position=0,
+            ),
+        ),
+    )
+    relationship_producers = artifact_producers_for_outputs(
+        (relationship_output, measurement_output),
+        groups=(None,),
+        invocation_keys=(
+            FunctionInvocationKey(
+                function_name="relate_objects",
+                group_key="default",
+                position=0,
+            ),
+        ),
+    )
+
+    contract = _target_module_contract(
+        _target_module_block(
+            "FilterObjects",
+            (
+                ("Select the object to filter", parent_output.name),
+                ("Name the output objects", "FilteredObjects"),
+                ("Filter using classifier rules or measurements?", "Measurements"),
+                ("Select the filtering method", "Limits"),
+                ("Additional object count", "0"),
+                ("Select the measurement to filter by", "Children_Objects2_Count"),
+                ("Filter using a minimum measurement value?", "Yes"),
+                ("Minimum value", "1"),
+                ("Filter using a maximum measurement value?", "No"),
+                ("Maximum value", "1"),
+            ),
+        ),
+        available=(
+            parent_output,
+            child_output,
+            relationship_output,
+            measurement_output,
+        ),
+        available_artifact_producers=(
+            *object_producers,
+            *relationship_producers,
+        ),
+    )
+
+    assert _artifact_names(
+        contract.artifact_inputs,
+        RelationshipsArtifactType,
+    ) == (relationship_output.name,)
+    validate_artifact_input_parameter_bindings(
+        filter_objects,
+        contract.artifact_inputs,
+        adapter_manages_inputs=True,
+    )
+
+
+def test_filter_objects_contract_declares_removed_object_topology() -> None:
+    objects = ArtifactSpec.output("Objects1", ObjectLabelsArtifactType)
+    contract = _target_module_contract(
+        _target_module_block(
+            "FilterObjects",
+            (
+                ("Select the object to filter", "Objects1"),
+                ("Name the output objects", "FilteredObjects"),
+                ("Filter using classifier rules or measurements?", "Border"),
+                ("Select the filtering method", "Limits"),
+                ("Additional object count", "0"),
+                ("Keep removed objects as a separate set?", "Yes"),
+                ("Name the objects removed by the filter", "RemovedObjects"),
+            ),
+        ),
+        available=(objects,),
+    )
+
+    output_objects = ArtifactSpecCollection(contract.artifact_outputs).of_artifact_type(
+        ObjectLabelsArtifactType
+    )
+    assert tuple(spec.name for spec in output_objects) == (
+        "FilteredObjects",
+        "RemovedObjects",
+    )
+    assert tuple(
+        (spec.name, relation.source.name)
+        for spec, relation in ArtifactSpecCollection(output_objects).relation_refs(
+            FilterObjectsRemovedObjectSourceRelation
+        )
+    ) == (("RemovedObjects", "Objects1"),)
+    assert tuple(
+        (declaration.source.name, declaration.target.name)
+        for declaration in _relationship_declarations(
+            contract,
+            ObjectLineageArtifactType,
+        )
+    ) == (
+        ("Objects1", "FilteredObjects"),
+        ("Objects1", "RemovedObjects"),
+    )
+
+
+@pytest.mark.parametrize(
+    "primary_object_name",
+    ("Nuclei", "Prespots", "Tile_of_grid"),
+)
+def test_filter_objects_function_step_reconstructs_exact_public_topology(
+    primary_object_name: str,
+) -> None:
+    primary = ArtifactSpec.output(primary_object_name, ObjectLabelsArtifactType)
+    additional = ArtifactSpec.output("Additional", ObjectLabelsArtifactType)
+    step = FunctionStep(
+        func=(
+            filter_objects,
+            {
+                "mode": FilterMode.BORDER,
+                "additional_object_count": 1,
+                "emit_removed_objects": True,
             },
         ),
-    ).payload()
-    request = SimpleNamespace(
-        output_value=[
-            PrimaryObjectStats(
-                slice_index=0,
-                object_count=1,
-                mean_area=1.0,
-                median_area=1.0,
-                total_area=1.0,
-                final_threshold=0.25,
-            )
-        ],
-        source=SimpleNamespace(payload=source_payload),
-        single_output_object_name=lambda: "Mitochondria",
-        module_name=IDENTIFY_PRIMARY_OBJECTS,
+        name="FilterObjects",
     )
-
-    record = IdentifyPrimaryObjectsModule.measurement_record(request)
-
-    assert record.source_context.source_image_payload is source_payload
-
-
-@dataclass(frozen=True)
-class _CoreExecutionRequest:
-    func_callable: Callable
-    main_data_arg: object
-    base_kwargs: Mapping[str, object]
-    context: object
-    artifact_inputs: Mapping[str, ArtifactInputPlan]
-    artifact_outputs: Mapping[str, ArtifactOutputPlan]
-    compiled_function_pattern: CompiledFunctionPattern | None = None
-    compiled_group: CompiledFunctionGroup | None = None
-    compiled_invocation: CompiledFunctionInvocation | None = None
-    source_binding_plan: CompiledSourceBindingPlan = CompiledSourceBindingPlan.empty()
-    source_binding_context: SourceBindingRuntimeContext = (
-        SourceBindingRuntimeContext.empty()
-    )
-    group_key: str = "default"
-
-
-def _execute_function_core(request: _CoreExecutionRequest):
-    invocation = request.compiled_invocation
-    compiled_group = request.compiled_group
-    compiled_pattern = request.compiled_function_pattern
-    if invocation is None:
-        contract = CallableContract.from_callable(request.func_callable)
-    else:
-        contract = invocation.contract
-    if contract.input_memory_type is None or contract.output_memory_type is None:
-        contract = replace(
-            contract,
-            metadata=CallableMetadata(
-                input_memory_type=MEMORY_TYPE_NUMPY,
-                output_memory_type=MEMORY_TYPE_NUMPY,
-                artifact_inputs=contract.artifact_inputs,
-                artifact_outputs=contract.artifact_outputs,
-                runtime_adapter=contract.runtime_adapter,
-                processing_contract=contract.processing_contract,
-                declared_processing_contract=contract.declared_processing_contract,
-                module_artifact_contract=contract.module_artifact_contract,
-                raw_processing_function=contract.raw_processing_function,
-                runtime_image_execution_mode=contract.runtime_image_execution_mode,
-                request_binding=contract.request_binding,
+    (invocation,) = tuple(normalize_function_pattern(step.func).iter_items())
+    step_context = ArtifactDeclarationStepContext(
+        step_name=step.name,
+        step_index=4,
+        available_artifact_producers=artifact_producers_for_outputs(
+            (primary, additional),
+            groups=(None,),
+            invocation_keys=(
+                FunctionInvocationKey(
+                    "fixture_producer",
+                    invocation.key.group_key,
+                    0,
+                ),
             ),
-        )
-        if invocation is not None:
-            invocation = replace(invocation, contract=contract)
-    if invocation is None:
-        invocation = CompiledFunctionInvocation(
-            key=FunctionInvocationKey.from_contract(
-                contract,
-                request.group_key,
-                0,
-            ),
-            contract=contract,
-            kwargs=tuple(request.base_kwargs.items()),
-            artifact_input_keys=tuple(request.artifact_inputs),
-            artifact_output_keys=tuple(request.artifact_outputs),
-        )
-    if compiled_group is None:
-        compiled_group = CompiledFunctionGroup(
-            group_key=request.group_key,
-            invocations=(invocation,),
-        )
-    if compiled_pattern is None:
-        compiled_pattern = CompiledFunctionPattern(
-            groups=(compiled_group,),
-            is_grouped=False,
-        )
-    execution_plan = FunctionStepExecutionPlan(
-        step_index=0,
-        step_scope_id="test::function_step",
-        step_name="test",
-        axis_id=request.context.axis_id,
-        input_dir=Path("/plate/Images"),
-        output_dir=Path("/plate/Output"),
-        variable_components=(),
-        group_by=None,
-        execution_group_component=None,
-        sequential_filter_plan=SequentialRuntimeFilterPlan.disabled(),
-        main_input_dependency=StepInputDependency.unresolved(),
-        source_binding_plan=request.source_binding_plan,
-        source_universe_plan=CompiledSourceUniversePlan.empty(),
-        source_load_plan=SourceLoadPlan(),
-        artifact_inputs=request.artifact_inputs,
-        artifact_outputs=request.artifact_outputs,
-        read_backend=Backend.MEMORY.value,
-        write_backend=Backend.MEMORY.value,
-        input_memory_type=contract.input_memory_type,
-        output_memory_type=contract.output_memory_type,
-        zarr_config=None,
-        device_id=0,
-        get_paths_for_axis=lambda _input_dir, _axis_id: [],
-        pipeline_position=0,
-        output_plate_root="/plate",
-        sub_dir="Output",
-        analysis_results_dir=None,
-        input_conversion=None,
-        materialized_output=None,
-        runtime_artifact_materialization=RuntimeArtifactMaterializationPlan.disabled(),
-        streaming_configs=(),
-        compiled_function_pattern=compiled_pattern,
-        artifact_inputs_by_group={},
-        artifact_outputs_by_group={},
-    )
-    runtime_scope = FunctionRuntimeScope(
-        context=request.context,
-        execution_plan=execution_plan,
-        compiled_group=compiled_group,
-        artifacts=ComponentArtifactPlans(
-            inputs=request.artifact_inputs,
-            outputs=request.artifact_outputs,
         ),
-        source_binding_context=request.source_binding_context,
-        runtime_plane_index=0,
-        runtime_plane_count=1,
+        available_artifacts=ArtifactSpecCollection((primary, additional)),
+        main_flow_artifacts=ArtifactSpecCollection(()),
     )
-    group_key = invocation.key.runtime_group_key(runtime_scope.component_value)
-    return FunctionCoreExecutor(
-        main_data_arg=request.main_data_arg,
-        source_memory_type=contract.input_memory_type,
-        runtime_scope=runtime_scope,
+
+    blocks, consumed = FilterObjectsModule.module_blocks_for_invocation(
         invocation=invocation,
-        artifacts=runtime_scope.artifacts.select_for_invocation(invocation),
-        group_key=group_key,
-        plane_projection=RuntimePlaneProjection.for_execution_group(
-            group_key,
-            plane_index=None,
-            projects_runtime_plane=False,
-        ),
-    ).execute()
-
-
-def _object_labels(record):
-    return ObjectLabelSet.from_runtime_value(record.value).labels
-
-
-class MemoryBackend:
-    def __init__(self):
-        self._memory_store = {}
-
-
-class FileManagerStub:
-    def __init__(self):
-        self.memory = MemoryBackend()
-        self.saved = {}
-        self.loaded = []
-        self.directories = set()
-
-    def _get_backend(self, backend):
-        return self.memory
-
-    def ensure_directory(self, path, backend):
-        self.directories.add((path, backend))
-
-    def save(self, value, path, backend):
-        self.saved[(path, backend)] = value
-        self.memory._memory_store[path] = value
-
-    def exists(self, path, backend):
-        return path in self.memory._memory_store
-
-    def delete(self, path, backend):
-        del self.memory._memory_store[path]
-        self.saved.pop((path, backend), None)
-
-    def load(self, path, backend):
-        self.loaded.append((path, backend))
-        return self.memory._memory_store[path]
-
-
-class ContextStub:
-    def __init__(self):
-        self.axis_id = AXIS_ID
-        self.filemanager = FileManagerStub()
-        self.runtime_value_store = RuntimeValueStore()
-        self.runtime_function_output_identity_cache = FunctionOutputIdentityCache()
-        self.input_dir = "/plate/Images"
-        self.global_config = SimpleNamespace(zarr_config=None)
-        self.microscope_handler = SimpleNamespace(
-            parser=ImageXpressFilenameParser(),
-            get_primary_backend=lambda plate_path, filemanager: "memory",
+        step_context=step_context,
+    )
+    assert len(blocks) == 1
+    (numbered_blocks,), _next_module_num = (
+        FilterObjectsModule.number_step_invocation_blocks(
+            (blocks,),
+            first_module_num=1,
         )
-
-
-def _module(module_num: int, name: str, settings: dict[str, str]) -> ModuleBlock:
-    return ModuleBlock(name=name, module_num=module_num, settings=settings)
-
-
-def _module_with_records(
-    module_num: int,
-    name: str,
-    records: list[tuple[str, str]],
-) -> ModuleBlock:
-    return ModuleBlock(
-        name=name,
-        module_num=module_num,
-        settings=dict(records),
-        setting_records=[ModuleSetting(key, value) for key, value in records],
+    )
+    contract = FilterObjectsModule.callable_contract(
+        module=numbered_blocks[0],
+        invocation_key=invocation.key,
+        step_context=step_context,
+    )
+    validate_artifact_input_parameter_bindings(
+        filter_objects,
+        contract.artifact_inputs,
+        adapter_manages_inputs=True,
     )
 
-
-def _module_from_cppipe(
-    module_num: int,
-    name: str,
-    settings: dict[str, str],
-    cppipe_path: Path,
-) -> ModuleBlock:
-    return ModuleBlock(
-        name=name,
-        module_num=module_num,
-        settings=settings,
-        cppipe_path=cppipe_path,
+    assert consumed == ()
+    assert _artifact_names(contract.artifact_inputs, ObjectLabelsArtifactType) == (
+        primary_object_name,
+        "Additional",
     )
-
-
-def _generated_pipeline(
-    modules: list[ModuleBlock],
-    *,
-    prune_dead_unmaterialized_artifact_steps: bool = False,
-    materialize_terminal_images: bool = True,
-) -> GeneratedPipeline:
-    return PipelineGenerator().generate_from_registry(
-        pipeline_name=GENERATED_RUNTIME_SMOKE_PIPELINE_NAME,
-        source_cppipe=GENERATED_RUNTIME_SMOKE_CPIPE,
-        modules=modules,
-        skipped_modules=_source_setup_modules(),
-        prune_dead_unmaterialized_artifact_steps=(
-            prune_dead_unmaterialized_artifact_steps
-        ),
-        materialize_terminal_images=materialize_terminal_images,
-    )
-
-
-def _source_setup_modules() -> list[ModuleBlock]:
-    return [
-        _module_with_records(
-            0,
-            "Groups",
-            [
-                ("Do you want to group your images?", "Yes"),
-                ("Metadata category", "Site"),
-            ],
+    assert {
+        spec.parameter_name
+        for spec in contract.artifact_inputs.of_artifact_type(
+            ObjectLabelsArtifactType
         )
-    ]
-
-
-def _pipeline_namespace(generated: GeneratedPipeline) -> dict:
-    namespace: dict = {"__name__": "test_generated_cellprofiler_pipeline"}
-    exec(
-        compile(generated.code, "<generated-cellprofiler-pipeline>", "exec"),
-        namespace,
+    } == {"object_labels"}
+    object_outputs = ArtifactSpecCollection(contract.artifact_outputs).of_artifact_type(
+        ObjectLabelsArtifactType
     )
-    return namespace
-
-
-def _effective_processing_config(generated: GeneratedPipeline, step: FunctionStep):
-    step_config = step.processing_config
-    pipeline_config = generated.pipeline_config.processing_config
-    return SimpleNamespace(
-        variable_components=(
-            step_config.variable_components
-            if step_config.variable_components is not None
-            else pipeline_config.variable_components
-        ),
-        group_by=(
-            step_config.group_by
-            if step_config.group_by is not None
-            else pipeline_config.group_by
-        ),
+    assert len(object_outputs) == 3
+    assert not ArtifactSpecCollection(contract.artifact_outputs).of_artifact_type(
+        ImageArtifactType
     )
+    assert tuple(
+        relation.source.name
+        for _spec, relation in ArtifactSpecCollection(object_outputs).relation_refs(
+            FilterObjectsRemovedObjectSourceRelation
+        )
+    ) == (primary_object_name,)
 
 
-def test_generated_pipeline_omits_legacy_artifact_type_enum_import():
-    generated = _generated_pipeline(_image_artifact_pipeline_modules())
-
-    assert "from openhcs.core.artifacts import ArtifactType" not in generated.code
-
-
-def test_generated_runtime_contract_attachment_preserves_backend_callable_identity() -> None:
-    generated = _generated_pipeline(
-        [
-            _module(
-                1,
-                "IdentifyPrimaryObjects",
-                {
-                    "Select the input image": SOURCE_IMAGE,
-                    "Name the primary objects to be identified": NUCLEI,
-                },
+def test_filter_objects_parsed_cppipe_reconstructs_additional_and_removed_outputs(
+    tmp_path: Path,
+) -> None:
+    cppipe = tmp_path / "filter-objects-topology.cppipe"
+    cppipe.write_text(
+        "\n".join(
+            (
+                "CellProfiler Pipeline: https://cellprofiler.org",
+                "FilterObjects:[module_num:7|enabled:True]",
+                "    Select the object to filter:Primary",
+                "    Name the output objects:FilteredPrimary",
+                "    Filter using classifier rules or measurements?:Border",
+                "    Select the filtering method:Limits",
+                "    Additional object count:1",
+                "    Select additional object to relabel:Additional",
+                "    Name the relabeled objects:FilteredAdditional",
+                "    Keep removed objects as a separate set?:Yes",
+                "    Name the objects removed by the filter:RemovedPrimary",
             )
-        ]
-    )
-    namespace = _pipeline_namespace(generated)
-    step_func = namespace["pipeline_steps"][0].func
-    raw_func, _kwargs = _step_function_and_kwargs(namespace["pipeline_steps"][0])
-
-    assert not isinstance(step_func, CellProfilerRuntimeCallable)
-    assert raw_func.__name__ == "identify_primary_objects"
-    assert raw_func.__module__ == "openhcs.processing.backends.cellprofiler"
-    assert "benchmark_generated" not in raw_func.__name__
-    assert "_runtime" not in raw_func.__name__
-    assert runtime_adapter_spec_from_callable(raw_func) is None
-
-    compiled_pattern = _compile_generated_step_pattern(
-        namespace["pipeline_steps"][0],
-        generated.artifact_contracts[0],
-        pipeline_steps=namespace["pipeline_steps"],
-        pipeline_config=generated.pipeline_config,
-        step_index=0,
-    )
-    compiled_func = compiled_pattern.default_group.invocations[0].contract.func
-    assert compiled_func.__name__ == "identify_primary_objects"
-    assert compiled_func.__module__ == "openhcs.processing.backends.cellprofiler"
-    assert runtime_adapter_spec_from_callable(compiled_func) is not None
-
-
-def test_generated_pipeline_imports_public_steps_without_runtime_contract_binding() -> None:
-    generated = _generated_pipeline(_relationship_pipeline_modules())
-    namespace: dict = {"__name__": "test_generated_cellprofiler_public_pipeline"}
-    exec(
-        compile(generated.code, "<generated-cellprofiler-pipeline>", "exec"),
-        namespace,
-    )
-    pipeline_steps = namespace["pipeline_steps"]
-
-    assert pipeline_steps
-    assert all(not step.invocation_contracts.bindings for step in pipeline_steps)
-    assert all(not isinstance(step.func, CellProfilerRuntimeCallable) for step in pipeline_steps)
-
-
-def test_generated_pipeline_save_can_use_explicit_filemanager_vfs(
-    tmp_path: Path,
-) -> None:
-    generated = GeneratedPipeline(
-        name="Example",
-        code="# generated",
-        source_cppipe="example.cppipe",
-        converted_modules=[],
-        failed_modules=[],
-    )
-    filemanager = FileManagerStub()
-    output_path = tmp_path / "generated.py"
-
-    generated.save(output_path, filemanager=filemanager, backend=Backend.MEMORY)
-
-    assert filemanager.directories == {(str(tmp_path), "memory")}
-    assert filemanager.saved[(str(output_path), "memory")] == "# generated"
-    assert not output_path.exists()
-
-
-def test_materialized_generated_pipeline_import_module_does_not_bind_artifact_contracts(
-    tmp_path: Path,
-) -> None:
-    generated = _generated_pipeline(_image_artifact_pipeline_modules())
-    module_name = "test_generated_inline_contracts"
-    output_dir = tmp_path / "nested" / "generated"
-
-    import_module_path = materialize_generated_pipeline_import_module(
-        generated.code,
-        module_name=module_name,
-        output_dir=output_dir,
-        artifact_contracts=generated.runtime_module_contracts_by_module_num,
-    )
-
-    assert not (output_dir / f"{module_name}.cellprofiler_contracts.py").exists()
-    assert not (output_dir / f"{module_name}.cellprofiler_contracts.json").exists()
-    assert not (output_dir / f"{module_name}.cellprofiler_contracts.pkl").exists()
-
-    import_source_tree = ast.parse(import_module_path.read_text(encoding="utf-8"))
-    assigned_names = {
-        target.id
-        for node in ast.walk(import_source_tree)
-        if isinstance(node, ast.Assign)
-        for target in node.targets
-        if isinstance(target, ast.Name)
-    }
-    imported_names = {
-        alias.name
-        for node in ast.walk(import_source_tree)
-        if isinstance(node, ast.ImportFrom)
-        for alias in node.names
-    }
-    call_names = {
-        node.func.id
-        if isinstance(node.func, ast.Name)
-        else node.func.attr
-        for node in ast.walk(import_source_tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name | ast.Attribute)
-    }
-    assert "_openhcs_cp_contract_values" not in assigned_names
-    assert "pipeline_config" not in assigned_names
-    assert "ModuleArtifactContract" not in call_names
-    assert "MaterializationSpec" not in call_names
-    assert "GeneratedPipelineRuntimeBindings" not in imported_names
-    assert "GeneratedPipelineContractSidecar" not in imported_names
-
-    spec = importlib.util.spec_from_file_location(module_name, import_module_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    assert "pipeline_steps" in vars(module)
-    assert "pipeline_config" not in vars(module)
-    assert not isinstance(module.pipeline_steps[0].func, CellProfilerRuntimeCallable)
-    assert all(not step.invocation_contracts.bindings for step in module.pipeline_steps)
-    pipeline = pipeline_from_generated_module(
-        module,
-        pipeline_name="inline-contract-smoke",
-    )
-    assert "_openhcs_cp_contract_values" not in pipeline.metadata
-    assert "CELLPROFILER_SEMANTIC_CONTRACTS" not in pipeline.metadata
-    from pycodify import Assignment, generate_python_source
-
-    import openhcs.serialization.pycodify_formatters  # noqa: F401
-
-    pipeline_source = generate_python_source(
-        Assignment("pipeline_steps", pipeline.steps),
-        clean_mode=True,
-    )
-    assert "CellProfilerModuleSettingsKwarg" not in pipeline_source
-    assert "CellProfilerModuleSettingsPayload" not in pipeline_source
-    assert "compile_time_kwargs" not in pipeline_source
-    assert "cellprofiler_module_callable" not in pipeline_source
-    assert "ModuleArtifactContract(" not in pipeline_source
-
-
-def test_materialized_generated_pipeline_does_not_export_semantic_contracts(
-    tmp_path: Path,
-) -> None:
-    generated = _generated_pipeline(_image_artifact_pipeline_modules())
-    module_name = "test_generated_no_semantic_contract_sidecar"
-    output_dir = tmp_path / "nested" / "generated"
-
-    import_module_path = materialize_generated_pipeline_import_module(
-        generated.code,
-        module_name=module_name,
-        output_dir=output_dir,
-        artifact_contracts=generated.runtime_module_contracts_by_module_num,
-        semantic_contracts=generated.artifact_contracts,
-    )
-
-    sidecar_path = output_dir / f"{module_name}.cellprofiler_semantic_contracts.py"
-    assert not sidecar_path.exists()
-    assert not (
-        output_dir / f"{module_name}.cellprofiler_semantic_contracts.json"
-    ).exists()
-
-    spec = importlib.util.spec_from_file_location(module_name, import_module_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    assert "CELLPROFILER_SEMANTIC_CONTRACTS" not in vars(module)
-    assert "CELLPROFILER_SEMANTIC_CONTRACT_FINGERPRINT" not in vars(module)
-
-
-def _synthetic_nuclei_image() -> np.ndarray:
-    image = np.zeros((64, 64), dtype=np.float32)
-    image[18:28, 18:28] = 0.95
-    image[40:50, 40:50] = 0.85
-    return image
-
-
-def test_generator_uses_absorbed_function_contract_for_unknown_registry_contract():
-    generated = _generated_pipeline(_image_artifact_pipeline_modules())
-
-    assert (
-        "from openhcs.processing.backends.cellprofiler import "
-        "CellProfilerFunctionCatalog"
-    ) in generated.code
-    assert (
-        "opening = CellProfilerFunctionCatalog.get_function('opening')"
-        in generated.code
-    )
-
-
-def test_generator_scopes_artifact_managed_callables_to_pattern_group():
-    generated = _generated_pipeline(_image_artifact_pipeline_modules())
-
-    assert "CellProfilerModuleRuntimeBinding" not in generated.code
-    assert "func=(opening," in generated.code
-
-
-def test_generator_scopes_runtime_artifact_only_step_once_per_axis():
-    generated = _generated_pipeline(_measurement_pipeline_modules())
-    namespace = _pipeline_namespace(generated)
-    measurement_step = namespace["pipeline_steps"][1]
-    processing_config = _effective_processing_config(generated, measurement_step)
-
-    assert measurement_step.name == MEASURE_OBJECT_SIZE_SHAPE
-    assert processing_config.variable_components == [VariableComponents.SITE]
-    assert processing_config.group_by is GroupBy.CHANNEL
-
-
-def test_generator_scopes_runtime_artifact_object_outputs_per_image_set():
-    generated = _generated_pipeline(_filter_objects_pipeline_modules())
-    namespace = _pipeline_namespace(generated)
-    filter_step = namespace["pipeline_steps"][2]
-    processing_config = _effective_processing_config(generated, filter_step)
-
-    assert filter_step.name == FILTER_OBJECTS
-    assert processing_config.variable_components == [VariableComponents.SITE]
-    assert processing_config.group_by is GroupBy.CHANNEL
-
-
-def test_generator_scopes_runtime_artifact_relationship_outputs_per_image_set():
-    generated = _generated_pipeline(_relationship_pipeline_modules())
-    namespace = _pipeline_namespace(generated)
-    relate_step = namespace["pipeline_steps"][2]
-    processing_config = _effective_processing_config(generated, relate_step)
-
-    assert relate_step.name == RELATE_OBJECTS
-    assert processing_config.variable_components == [VariableComponents.SITE]
-    assert processing_config.group_by is GroupBy.CHANNEL
-
-
-def test_generator_scopes_grid_guided_object_outputs_per_image_set():
-    generated = _generated_pipeline(_grid_guided_object_pipeline_modules())
-    namespace = _pipeline_namespace(generated)
-    identify_grid_step = namespace["pipeline_steps"][2]
-    processing_config = _effective_processing_config(generated, identify_grid_step)
-
-    assert identify_grid_step.name == "IdentifyObjectsInGrid"
-    assert processing_config.variable_components == [VariableComponents.SITE]
-    assert processing_config.group_by is GroupBy.CHANNEL
-
-
-def test_generator_scopes_multi_object_measurements_per_image_set():
-    generated = _generated_pipeline(_multi_object_area_occupied_pipeline_modules())
-    namespace = _pipeline_namespace(generated)
-    area_occupied_step = namespace["pipeline_steps"][2]
-    processing_config = _effective_processing_config(generated, area_occupied_step)
-
-    assert area_occupied_step.name == "MeasureImageAreaOccupied"
-    assert processing_config.variable_components == [VariableComponents.SITE]
-    assert processing_config.group_by is GroupBy.CHANNEL
-
-
-def test_generator_propagates_pairwise_object_scope_to_measurement_consumers():
-    generated = _generated_pipeline(_multi_object_area_math_pipeline_modules())
-    namespace = _pipeline_namespace(generated)
-    calculate_math_step = namespace["pipeline_steps"][3]
-    processing_config = _effective_processing_config(generated, calculate_math_step)
-
-    assert calculate_math_step.name == "CalculateMath"
-    assert processing_config.variable_components == [VariableComponents.SITE]
-    assert processing_config.group_by is GroupBy.CHANNEL
-
-
-def test_generator_does_not_propagate_pairwise_scope_to_direct_object_measurements():
-    generated = _generated_pipeline(_filtered_object_measurement_pipeline_modules())
-    namespace = _pipeline_namespace(generated)
-    measurement_step = namespace["pipeline_steps"][3]
-    processing_config = _effective_processing_config(generated, measurement_step)
-
-    assert measurement_step.name == MEASURE_OBJECT_SIZE_SHAPE
-    assert processing_config.variable_components == [VariableComponents.SITE]
-    assert processing_config.group_by is GroupBy.CHANNEL
-
-
-def test_generator_binds_canonical_morphology_alias_structuring_element():
-    generated = _generated_pipeline(
-        [
-            _module(
-                1,
-                IDENTIFY_PRIMARY_OBJECTS,
-                {
-                    "Select the input image": SOURCE_IMAGE,
-                    "Name the primary objects to be identified": NUCLEI,
-                },
-            ),
-            _module(
-                2,
-                CONVERT_OBJECTS_TO_IMAGE,
-                {
-                    "Select the input objects": NUCLEI,
-                    "Name the output image": NUCLEI_IMAGE,
-                },
-            ),
-            _module(
-                3,
-                EROSION,
-                {
-                    "Select the input image": NUCLEI_IMAGE,
-                    "Name the output image": "ErodedNucleiImage",
-                    "Structuring element": "disk,5",
-                },
-            ),
-        ]
-    )
-
-    assert "erode_image," in generated.code
-    assert "CellProfilerModuleRuntimeBinding" not in generated.code
-    assert "'structuring_element': StructuringElement.DISK" in generated.code
-    assert "'size': 5" in generated.code
-
-
-def test_generator_binds_untangle_worms_overlap_style():
-    generated = _generated_pipeline(
-        [
-            _module(
-                1,
-                UNTANGLE_WORMS,
-                {
-                    "Select the input binary image": SOURCE_IMAGE,
-                    "Overlap style": "Both",
-                    "Name the output overlapping worm objects": "OverlappingWorms",
-                    "Name the output non-overlapping worm objects": (
-                        "NonOverlappingWorms"
-                    ),
-                },
-            ),
-        ]
-    )
-
-    assert "'overlap_style': OverlapStyle.BOTH" in generated.code
-
-
-def test_generator_binds_untangle_worms_training_xml(tmp_path: Path):
-    images = tmp_path / "images"
-    images.mkdir()
-    (images / "WormModel.xml").write_text(
-        """<?xml version="1.0"?>
-<training-set>
-  <min-area>12.5</min-area>
-  <max-area>30.0</max-area>
-  <cost-threshold>4.5</cost-threshold>
-  <num-control-points>9</num-control-points>
-  <min-path-length>6.5</min-path-length>
-  <max-path-length>70.0</max-path-length>
-  <overlap-weight>2.0</overlap-weight>
-  <leftover-weight>8.0</leftover-weight>
-</training-set>
-""",
+        ),
         encoding="utf-8",
     )
-
-    generated = PipelineGenerator().generate_from_registry(
-        pipeline_name=GENERATED_RUNTIME_SMOKE_PIPELINE_NAME,
-        source_cppipe=tmp_path / "worm.cppipe",
-        modules=[
-            _module_from_cppipe(
-                1,
-                UNTANGLE_WORMS,
-                {
-                    "Select the input binary image": SOURCE_IMAGE,
-                    "Overlap style": "Both",
-                    "Name the output overlapping worm objects": "OverlappingWorms",
-                    "Name the output non-overlapping worm objects": (
-                        "NonOverlappingWorms"
-                    ),
-                    "Training set file name": "WormModel.xml",
-                    "Number of control points": "21",
-                },
-                tmp_path / "worm.cppipe",
-            )
-        ],
-        skipped_modules=_source_setup_modules(),
-    )
-
-    assert "'min_worm_area': 12.5" in generated.code
-    assert "'max_worm_area': 30.0" in generated.code
-    assert "'num_control_points': 9" in generated.code
-
-
-def _artifact_output_plans(contract) -> dict[str, ArtifactOutputPlan]:
-    return {
-        spec.name: ArtifactOutputPlan(
-            name=spec.name,
-            path=_artifact_path(spec.name),
-            artifact_type=spec.artifact_type,
-        )
-        for spec in contract.outputs
-    }
-
-
-def _artifact_input_plans(contract) -> dict[str, ArtifactInputPlan]:
-    return {
-        spec.name: ArtifactInputPlan(
-            name=spec.name,
-            path=_artifact_path(spec.name),
-            artifact_type=spec.artifact_type,
-        )
-        for spec in contract.runtime_artifact_inputs
-    }
-
-
-def _artifact_path(name: str) -> str:
-    return f"/memory/{name}.pkl"
-
-
-def _step_function_and_kwargs(step) -> tuple:
-    if isinstance(step.func, tuple):
-        return step.func[0], dict(step.func[1])
-    return step.func, {}
-
-
-def _step_config_universe_for_step(step):
-    from openhcs.core.pipeline.step_config_universe import (
-        StepConfigRoot,
-        StepConfigUniverse,
-        step_config_declarations,
-    )
-
-    declarations = step_config_declarations()
-    roots = []
-    for config in (
-        step.source_bindings,
-        step.processing_config,
-        step.step_materialization_config,
-    ):
-        declaration = next(
-            declaration
-            for declaration in declarations
-            if isinstance(config, declaration.config_type)
-        )
-        roots.append(StepConfigRoot(declaration=declaration, value=config))
-    return StepConfigUniverse(tuple(roots))
-
-
-def _public_invocation_contract_provider(pipeline_steps, pipeline_config):
-    from openhcs.core.compiled_step_plan import CompiledStepPlan
-    from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
-    from openhcs.core.context.processing_context import ProcessingContext
-    from openhcs.core.pipeline.compilation_session import CompilationSession
-    from openhcs.core.pipeline.step_snapshot import StepSnapshot
-
-    steps = tuple(pipeline_steps)
-    snapshots = tuple(
-        StepSnapshot(
-            index=index,
-            scope_id=f"generated-runtime::functionstep_{index}",
-            name=step.name,
-            step_type=step.__class__.__name__,
-            enabled=bool(step.enabled),
-            is_function_step=True,
-            func=step.func,
-            invocation_contracts=step.invocation_contracts,
-            configs=_step_config_universe_for_step(step),
-        )
-        for index, step in enumerate(steps)
-    )
-    session = CompilationSession.from_context(
-        context=ProcessingContext(
-            step_plans={
-                index: CompiledStepPlan(
-                    step_index=index,
-                    step_name=step.name,
-                    step_type=step.__class__.__name__,
-                    axis_id=AXIS_ID,
-                )
-                for index, step in enumerate(steps)
-            },
-            axis_id=AXIS_ID,
-        ),
-        steps=steps,
-        orchestrator=SimpleNamespace(
-            pipeline_config=pipeline_config or PipelineConfig(),
-        ),
-        global_config=GlobalPipelineConfig(),
-        step_state_map={index: object() for index in range(len(steps))},
-        snapshots=snapshots,
-    )
-    return PipelineInvocationContractProviderAuthority.provider_for_session(session)
-
-
-def _compile_generated_step_pattern(
-    step,
-    contract,
-    *,
-    pipeline_steps,
-    pipeline_config,
-    step_index: int,
-) -> CompiledFunctionPattern:
-    provider = _public_invocation_contract_provider(pipeline_steps, pipeline_config)
-    assert provider is not None
-    return compile_function_pattern(
-        step.func,
-        _artifact_input_plans(contract),
-        _artifact_output_plans(contract),
-        invocation_contract_provider=provider,
-        step_context=ArtifactDeclarationStepContext(
-            step_index=step_index,
-            step_name=step.name,
-            source_bindings=step.source_bindings,
-        ),
-        runtime_parameter_bindings=(
-            RuntimeParameterBinding(
-                DtypeConfig.runtime_parameter_declaration(),
-                DtypeConfig(),
-            ),
+    (module,) = CPPipeParser(cppipe).parse()
+    contract = _target_module_contract(
+        module,
+        available=(
+            ArtifactSpec.output("Primary", ObjectLabelsArtifactType),
+            ArtifactSpec.output("Additional", ObjectLabelsArtifactType),
         ),
     )
 
-
-def _run_generated_step(
-    step,
-    contract,
-    image,
-    context,
-    *,
-    pipeline_steps,
-    pipeline_config,
-    step_index: int,
-    source_binding_context=SourceBindingRuntimeContext.empty(),
-):
-    compiled_pattern = _compile_generated_step_pattern(
-        step,
-        contract,
-        pipeline_steps=pipeline_steps,
-        pipeline_config=pipeline_config,
-        step_index=step_index,
+    assert _artifact_names(contract.artifact_inputs, ObjectLabelsArtifactType) == (
+        "Primary",
+        "Additional",
     )
-    compiled_group = compiled_pattern.default_group
-    assert len(compiled_group.invocations) == 1
-    invocation = compiled_group.invocations[0]
-    func, kwargs = _step_function_and_kwargs(step)
-    return _execute_function_core(
-        _CoreExecutionRequest(
-            func_callable=func,
-            main_data_arg=image,
-            base_kwargs=kwargs,
-            context=context,
-            artifact_inputs=_artifact_input_plans(contract),
-            artifact_outputs=_artifact_output_plans(contract),
-            compiled_function_pattern=compiled_pattern,
-            compiled_group=compiled_group,
-            compiled_invocation=invocation,
-            source_binding_plan=CompiledSourceBindingPlan.from_config(
-                step.source_bindings
-            ),
-            source_binding_context=source_binding_context,
-        )
+    assert _artifact_names(contract.artifact_outputs, ObjectLabelsArtifactType) == (
+        "FilteredPrimary",
+        "FilteredAdditional",
+        "RemovedPrimary",
     )
+    assert not ArtifactSpecCollection(contract.artifact_outputs).of_artifact_type(
+        ImageArtifactType
+    )
+    assert tuple(
+        (spec.name, relation.source.name)
+        for spec, relation in ArtifactSpecCollection(
+            contract.artifact_outputs
+        ).relation_refs(FilterObjectsRemovedObjectSourceRelation)
+    ) == (("RemovedPrimary", "Primary"),)
 
 
-def _measurement_pipeline_modules() -> list[ModuleBlock]:
-    return [
-        _module(
-            1,
-            IDENTIFY_PRIMARY_OBJECTS,
-            {
-                "Select the input image": SOURCE_IMAGE,
-                "Name the primary objects to be identified": NUCLEI,
-            },
-        ),
-        _module(
-            2,
-            MEASURE_OBJECT_SIZE_SHAPE,
-            {"Select object sets to measure": NUCLEI},
-        ),
-    ]
-
-
-def _image_artifact_pipeline_modules() -> list[ModuleBlock]:
-    return [
-        _module(
-            1,
-            IDENTIFY_PRIMARY_OBJECTS,
-            {
-                "Select the input image": SOURCE_IMAGE,
-                "Name the primary objects to be identified": NUCLEI,
-            },
-        ),
-        _module(
-            2,
-            CONVERT_OBJECTS_TO_IMAGE,
-            {
-                "Select the input objects": NUCLEI,
-                "Name the output image": NUCLEI_IMAGE,
-            },
-        ),
-        _module(
-            3,
-            OPENING,
-            {
-                "Select the input image": NUCLEI_IMAGE,
-                "Name the output image": OPENED_NUCLEI_IMAGE,
-                "Size": "2",
-            },
-        ),
-        _module(
-            4,
-            OVERLAY_OUTLINES,
-            {
-                "Select image on which to display outlines": OPENED_NUCLEI_IMAGE,
-                "Select objects to display": NUCLEI,
-                "Name the output image": OVERLAY_IMAGE,
-            },
-        ),
-    ]
-
-
-def _gray_to_color_pipeline_modules() -> list[ModuleBlock]:
-    return [
-        _module(
-            1,
-            IDENTIFY_PRIMARY_OBJECTS,
-            {
-                "Select the input image": SOURCE_IMAGE,
-                "Name the primary objects to be identified": NUCLEI,
-            },
-        ),
-        _module(
-            2,
-            CONVERT_OBJECTS_TO_IMAGE,
-            {
-                "Select the input objects": NUCLEI,
-                "Name the output image": NUCLEI_IMAGE,
-            },
-        ),
-        _module(
-            3,
-            GRAY_TO_COLOR,
-            {
-                "Select a color scheme": "RGB",
-                "Select the image to be colored red": "Leave this black",
-                "Select the image to be colored green": NUCLEI_IMAGE,
-                "Select the image to be colored blue": SOURCE_IMAGE,
-                "Name the output image": COLOR_IMAGE,
-                "Relative weight for the red image": "1.0",
-                "Relative weight for the green image": "1.0",
-                "Relative weight for the blue image": "1.0",
-            },
-        ),
-    ]
-
-
-def _relationship_pipeline_modules() -> list[ModuleBlock]:
-    return [
-        _module(
-            1,
-            IDENTIFY_PRIMARY_OBJECTS,
-            {
-                "Select the input image": "OrigBlue",
-                "Name the primary objects to be identified": NUCLEI,
-            },
-        ),
-        _module(
-            2,
-            IDENTIFY_SECONDARY_OBJECTS,
-            {
-                "Select the input objects": NUCLEI,
-                "Select the input image": "OrigGreen",
-                "Name the objects to be identified": CELLS,
-                "Name the new primary objects": "FilteredNuclei",
-            },
-        ),
-        _module(
-            3,
-            RELATE_OBJECTS,
-            {
-                "Select the parent objects": CELLS,
-                "Select the child objects": NUCLEI,
-            },
-        ),
-    ]
-
-
-def _grid_guided_object_pipeline_modules() -> list[ModuleBlock]:
-    return [
-        _module(
-            1,
-            IDENTIFY_PRIMARY_OBJECTS,
-            {
-                "Select the input image": SOURCE_IMAGE,
-                "Name the primary objects to be identified": NUCLEI,
-            },
-        ),
-        _module(
-            2,
-            "DefineGrid",
-            {
-                "Name the grid": "Grid",
-                "Number of rows": "8",
-                "Number of columns": "12",
-                "Select the method to define the grid": "Automatic",
-                "Select the previously identified objects": NUCLEI,
-                "Retain an image of the grid?": "No",
-                "Select the image on which to display the grid": SOURCE_IMAGE,
-            },
-        ),
-        _module(
-            3,
-            "IdentifyObjectsInGrid",
-            {
-                "Select the defined grid": "Grid",
-                "Name the objects to be identified": "GridObjects",
-                "Select object shapes and locations": "Natural Shape and Location",
-                "Specify the circle diameter automatically?": "Automatic",
-                "Circle diameter": "20",
-                "Select the guiding objects": NUCLEI,
-            },
-        ),
-    ]
-
-
-def _multi_object_area_occupied_pipeline_modules() -> list[ModuleBlock]:
-    return [
-        _module(
-            1,
-            IDENTIFY_PRIMARY_OBJECTS,
-            {
-                "Select the input image": SOURCE_IMAGE,
-                "Name the primary objects to be identified": NUCLEI,
-            },
-        ),
-        _module(
-            2,
-            IDENTIFY_PRIMARY_OBJECTS,
-            {
-                "Select the input image": SOURCE_IMAGE,
-                "Name the primary objects to be identified": CELLS,
-            },
-        ),
-        _module_with_records(
-            3,
+def test_area_occupied_and_calculate_math_chain_measurement_artifacts() -> None:
+    objects = (
+        ArtifactSpec.output("Objects1", ObjectLabelsArtifactType),
+        ArtifactSpec.output("Objects2", ObjectLabelsArtifactType),
+    )
+    area = _target_module_contract(
+        _target_module_block(
             "MeasureImageAreaOccupied",
-            [
+            (
                 (
                     "Measure the area occupied in a binary image, or in objects?",
                     "Objects",
                 ),
-                ("Select objects to measure", NUCLEI),
-                ("Retain a binary image of the object regions?", "No"),
-                ("Name the output binary image", "IgnoredNuclei"),
-                ("Select a binary image to measure", "None"),
+                ("Select objects to measure", "Objects1"),
                 (
                     "Measure the area occupied in a binary image, or in objects?",
                     "Objects",
                 ),
-                ("Select objects to measure", CELLS),
-                ("Retain a binary image of the object regions?", "No"),
-                ("Name the output binary image", "IgnoredCells"),
-                ("Select a binary image to measure", "None"),
-            ],
+                ("Select objects to measure", "Objects2"),
+            ),
         ),
-    ]
-
-
-def _multi_object_area_math_pipeline_modules() -> list[ModuleBlock]:
-    return [
-        *_multi_object_area_occupied_pipeline_modules(),
-        _module(
-            4,
+        available=objects,
+    )
+    area_measurement = next(
+        spec
+        for spec in area.artifact_outputs
+        if spec.artifact_type is MeasurementsArtifactType
+    )
+    (area_producer,) = artifact_producers_for_outputs(
+        (area_measurement,),
+        groups=(None,),
+        invocation_keys=(
+            FunctionInvocationKey(
+                function_name="measure_image_area_occupied",
+                group_key="default",
+                position=0,
+            ),
+        ),
+    )
+    math = _target_module_contract(
+        _target_module_block(
             "CalculateMath",
-            {
-                "Name the output measurement": "NucleiCellAreaRatio",
-                "Operation": "Divide",
-                "Select the numerator measurement": "AreaOccupied_AreaOccupied_Nuclei",
-                "Select the denominator measurement": "AreaOccupied_AreaOccupied_Cells",
-                "Select the numerator objects": "None",
-                "Select the denominator objects": "None",
-            },
-        ),
-    ]
-
-
-def _filtered_object_measurement_pipeline_modules() -> list[ModuleBlock]:
-    return [
-        *_filter_objects_pipeline_modules(),
-        _module(
-            4,
-            MEASURE_OBJECT_SIZE_SHAPE,
-            {"Select object sets to measure": FILTERED_NUCLEI},
-        ),
-    ]
-
-
-def _mask_objects_pipeline_modules() -> list[ModuleBlock]:
-    return [
-        _module(
-            1,
-            IDENTIFY_PRIMARY_OBJECTS,
-            {
-                "Select the input image": SOURCE_IMAGE,
-                "Name the primary objects to be identified": NUCLEI,
-            },
-        ),
-        _module(
-            2,
-            MASK_OBJECTS,
-            {
-                "Select the input objects": NUCLEI,
-                "Select the masking image": SOURCE_IMAGE,
-                "Name the output objects": MASKED_NUCLEI,
-                "Handling of objects that are partially masked": (
-                    "Keep overlapping region"
+            (
+                ("Name the output measurement", "ObjectAreaRatio"),
+                ("Operation", "Divide"),
+                (
+                    "Select the numerator measurement",
+                    "AreaOccupied_AreaOccupied_Objects1",
                 ),
-            },
-        ),
-    ]
-
-
-def _filter_objects_pipeline_modules() -> list[ModuleBlock]:
-    return [
-        _module(
-            1,
-            IDENTIFY_PRIMARY_OBJECTS,
-            {
-                "Select the input image": SOURCE_IMAGE,
-                "Name the primary objects to be identified": NUCLEI,
-            },
-        ),
-        _module(
-            2,
-            IDENTIFY_PRIMARY_OBJECTS,
-            {
-                "Select the input image": SOURCE_IMAGE,
-                "Name the primary objects to be identified": CELLS,
-            },
-        ),
-        _module(
-            3,
-            FILTER_OBJECTS,
-            {
-                "Name the output objects": FILTERED_NUCLEI,
-                "Select the object to filter": NUCLEI,
-                "Filter using classifier rules or measurements?": "Measurements",
-                "Select the filtering method": "Limits",
-                "Filter using a minimum measurement value?": "No",
-                "Filter using a maximum measurement value?": "No",
-                "Select additional object to relabel": CELLS,
-                "Name the relabeled objects": FILTERED_CELLS,
-                "Save outlines of relabeled objects?": "No",
-            },
-        ),
-    ]
-
-
-def _filter_objects_measurement_pipeline_modules() -> list[ModuleBlock]:
-    return [
-        _module(
-            1,
-            IDENTIFY_PRIMARY_OBJECTS,
-            {
-                "Select the input image": SOURCE_IMAGE,
-                "Name the primary objects to be identified": NUCLEI,
-            },
-        ),
-        _module(
-            2,
-            MEASURE_OBJECT_SIZE_SHAPE,
-            {"Select object sets to measure": NUCLEI},
-        ),
-        _module(
-            3,
-            FILTER_OBJECTS,
-            {
-                "Name the output objects": FILTERED_NUCLEI,
-                "Select the object to filter": NUCLEI,
-                "Filter using classifier rules or measurements?": "Measurements",
-                "Select the filtering method": "Limits",
-                "Select the measurement to filter by": "AreaShape_Area",
-                "Filter using a minimum measurement value?": "Yes",
-                "Minimum value": "200",
-                "Filter using a maximum measurement value?": "No",
-                "Maximum value": "10000",
-            },
-        ),
-    ]
-
-
-def _single_channel_source_binding_context() -> SourceBindingRuntimeContext:
-    return SourceBindingRuntimeContext(step_input_files=("A01_s001_w1_z001_t001.tif",))
-
-
-def test_generated_cellprofiler_pipeline_executes_runtime_artifact_flow():
-    generated = _generated_pipeline(_measurement_pipeline_modules())
-    namespace = _pipeline_namespace(generated)
-    context = ContextStub()
-    image = _synthetic_nuclei_image()
-    pipeline_start_image = image
-    source_binding_context = _single_channel_source_binding_context()
-
-    pipeline_steps = tuple(namespace["pipeline_steps"])
-    for step_index, (step, contract) in enumerate(zip(
-        namespace["pipeline_steps"],
-        generated.artifact_contracts,
-        strict=True,
-    )):
-        image = _run_generated_step(
-            step,
-            contract,
-            image,
-            context,
-            pipeline_steps=pipeline_steps,
-            pipeline_config=generated.pipeline_config,
-            step_index=step_index,
-            source_binding_context=source_binding_context,
-        )
-
-    nuclei_records = context.runtime_value_store.find(
-        name=NUCLEI,
-        artifact_type=ObjectLabelsArtifactType,
-        axis_id=AXIS_ID,
-    )
-    measurement_name = generated.artifact_contracts[1].outputs[0].name
-    measurement_records = context.runtime_value_store.find(
-        name=measurement_name,
-        artifact_type=MeasurementsArtifactType,
-        axis_id=AXIS_ID,
-    )
-
-    assert len(nuclei_records) == 1
-    assert _object_labels(nuclei_records[0]).max() == 2
-    assert len(measurement_records) == 1
-    assert measurement_records[0].value.schema.object_name == NUCLEI
-    assert len(measurement_records[0].value.data) == 2
-    assert context.filemanager.loaded == []
-
-
-def test_generated_cellprofiler_pipeline_executes_runtime_image_artifact_flow():
-    generated = _generated_pipeline(_image_artifact_pipeline_modules())
-    namespace = _pipeline_namespace(generated)
-    context = ContextStub()
-    image = _synthetic_nuclei_image()
-    pipeline_start_image = image
-    source_binding_context = _single_channel_source_binding_context()
-
-    pipeline_steps = tuple(namespace["pipeline_steps"])
-    for step_index, (step, contract) in enumerate(zip(
-        namespace["pipeline_steps"],
-        generated.artifact_contracts,
-        strict=True,
-    )):
-        image = _run_generated_step(
-            step,
-            contract,
-            image,
-            context,
-            pipeline_steps=pipeline_steps,
-            pipeline_config=generated.pipeline_config,
-            step_index=step_index,
-            source_binding_context=source_binding_context,
-        )
-
-    nuclei_image_records = context.runtime_value_store.find(
-        name=NUCLEI_IMAGE,
-        artifact_type=ImageArtifactType,
-        axis_id=AXIS_ID,
-    )
-    opened_image_records = context.runtime_value_store.find(
-        name=OPENED_NUCLEI_IMAGE,
-        artifact_type=ImageArtifactType,
-        axis_id=AXIS_ID,
-    )
-    overlay_image_records = context.runtime_value_store.find(
-        name=OVERLAY_IMAGE,
-        artifact_type=ImageArtifactType,
-        axis_id=AXIS_ID,
-    )
-
-    assert len(nuclei_image_records) == 1
-    assert nuclei_image_records[0].value.schema.source_image_name == SOURCE_IMAGE
-    assert len(opened_image_records) == 1
-    assert opened_image_records[0].value.schema.source_image_name == SOURCE_IMAGE
-    assert len(overlay_image_records) == 1
-    assert overlay_image_records[0].value.schema.source_image_name == SOURCE_IMAGE
-    assert overlay_image_records[0].value.data.shape[-1] == 3
-
-
-def test_generator_prunes_dead_unmaterialized_image_artifacts_when_requested():
-    generated = _generated_pipeline(
-        _image_artifact_pipeline_modules(),
-        prune_dead_unmaterialized_artifact_steps=True,
-    )
-
-    assert 'name="IdentifyPrimaryObjects"' in generated.code
-    assert 'name="ConvertObjectsToImage"' in generated.code
-    assert 'name="Opening"' in generated.code
-    assert 'name="OverlayOutlines"' in generated.code
-    assert [contract.module_name for contract in generated.artifact_contracts] == [
-        IDENTIFY_PRIMARY_OBJECTS,
-        CONVERT_OBJECTS_TO_IMAGE,
-        OPENING,
-        OVERLAY_OUTLINES,
-    ]
-
-
-def test_generator_can_prune_terminal_images_for_value_only_runs():
-    generated = _generated_pipeline(
-        _image_artifact_pipeline_modules(),
-        prune_dead_unmaterialized_artifact_steps=True,
-        materialize_terminal_images=False,
-    )
-
-    assert 'name="IdentifyPrimaryObjects"' in generated.code
-    assert 'name="ConvertObjectsToImage"' not in generated.code
-    assert 'name="Opening"' not in generated.code
-    assert 'name="OverlayOutlines"' not in generated.code
-    assert [contract.module_name for contract in generated.artifact_contracts] == [
-        IDENTIFY_PRIMARY_OBJECTS,
-    ]
-
-
-def test_generator_prunes_dead_outputs_from_retained_modules():
-    generated = _generated_pipeline(
-        [
-            _module(
-                1,
-                THRESHOLD,
-                {
-                    "Select the input image": SOURCE_IMAGE,
-                    "Name the output image": "UnusedThresholdImage",
-                },
+                (
+                    "Select the denominator measurement",
+                    "AreaOccupied_AreaOccupied_Objects2",
+                ),
+                ("Select the numerator objects", "None"),
+                ("Select the denominator objects", "None"),
             ),
-        ],
-        prune_dead_unmaterialized_artifact_steps=True,
+        ),
+        available=(*objects, area_measurement),
+        available_artifact_producers=(area_producer,),
     )
 
-    (contract,) = generated.artifact_contracts
+    assert _artifact_names(area.artifact_inputs, ObjectLabelsArtifactType) == (
+        "Objects1",
+        "Objects2",
+    )
+    assert len(_artifact_names(area.artifact_outputs, MeasurementsArtifactType)) == 1
+    assert _artifact_names(math.artifact_inputs, MeasurementsArtifactType) == (
+        area_measurement.name,
+    )
+    assert len(_artifact_names(math.artifact_outputs, MeasurementsArtifactType)) == 1
 
-    assert contract.module_name == THRESHOLD
-    assert [output.artifact_type for output in contract.outputs] == [
-        ImageArtifactType,
-        MeasurementsArtifactType,
-    ]
-    assert "image:UnusedThresholdImage" in generated.code
 
-
-def test_generator_retains_observable_object_label_outputs_when_pruning():
-    generated = _generated_pipeline(
-        _filter_objects_measurement_pipeline_modules(),
-        prune_dead_unmaterialized_artifact_steps=True,
+def test_track_objects_contract_derives_object_identity_and_retained_image() -> None:
+    objects = ArtifactSpec.output("Nuclei", ObjectLabelsArtifactType)
+    contract = _target_module_contract(
+        _target_module_block(
+            "TrackObjects",
+            (
+                ("Choose a tracking method", "Overlap"),
+                ("Select the objects to track", "Nuclei"),
+                ("Save color-coded image?", "Yes"),
+                ("Name the output image", "TrackedCells"),
+            ),
+        ),
+        available=(objects,),
     )
 
-    filter_contract = next(
-        contract
-        for contract in generated.artifact_contracts
-        if contract.module_name == FILTER_OBJECTS
+    assert _artifact_names(contract.artifact_inputs, ObjectLabelsArtifactType) == (
+        "Nuclei",
     )
-
-    assert 'name="FilterObjects"' in generated.code
+    assert _artifact_names(contract.artifact_outputs, ImageArtifactType) == (
+        "TrackedCells",
+    )
     assert (
-        ArtifactSpecCollection(filter_contract.outputs).by_name_and_artifact_type(
-            FILTERED_NUCLEI,
-            ObjectLabelsArtifactType,
-        )
-        is not None
+        len(_artifact_names(contract.artifact_outputs, MeasurementsArtifactType)) == 1
     )
 
 
-def test_generator_keeps_unmaterialized_image_artifacts_required_by_saveimages():
-    generated = PipelineGenerator().generate_from_registry(
-        pipeline_name=GENERATED_RUNTIME_SMOKE_PIPELINE_NAME,
-        source_cppipe=GENERATED_RUNTIME_SMOKE_CPIPE,
-        modules=_image_artifact_pipeline_modules(),
-        skipped_modules=_source_setup_modules()
-        + [
-            _module(
-                5,
-                "SaveImages",
-                {"Select the image to save": OVERLAY_IMAGE},
-            )
-        ],
-        prune_dead_unmaterialized_artifact_steps=True,
-    )
-
-    assert 'name="ConvertObjectsToImage"' in generated.code
-    assert 'name="Opening"' in generated.code
-    assert 'name="OverlayOutlines"' in generated.code
-    overlay_contract = generated.runtime_module_contracts_by_module_num[4]
-    assert overlay_contract.outputs[0].name == OVERLAY_IMAGE
-    assert overlay_contract.outputs[0].materialization is not None
-    assert "tiff_stack(" not in generated.code
-    assert [contract.module_name for contract in generated.artifact_contracts] == [
-        IDENTIFY_PRIMARY_OBJECTS,
-        CONVERT_OBJECTS_TO_IMAGE,
-        OPENING,
-        OVERLAY_OUTLINES,
-    ]
-
-
-def test_generator_can_ignore_saveimages_artifacts_for_value_only_runs():
-    generated = PipelineGenerator().generate_from_registry(
-        pipeline_name=GENERATED_RUNTIME_SMOKE_PIPELINE_NAME,
-        source_cppipe=GENERATED_RUNTIME_SMOKE_CPIPE,
-        modules=_image_artifact_pipeline_modules(),
-        skipped_modules=_source_setup_modules()
-        + [
-            _module(
-                5,
-                "SaveImages",
-                {"Select the image to save": OVERLAY_IMAGE},
-            )
-        ],
-        prune_dead_unmaterialized_artifact_steps=True,
-        materialize_skipped_save_images=False,
-        materialize_terminal_images=False,
-    )
-
-    assert 'name="ConvertObjectsToImage"' not in generated.code
-    assert 'name="Opening"' not in generated.code
-    assert 'name="OverlayOutlines"' not in generated.code
-    assert [contract.module_name for contract in generated.artifact_contracts] == [
-        IDENTIFY_PRIMARY_OBJECTS,
-    ]
-
-
-def test_generated_cellprofiler_pipeline_executes_gray_to_color_module():
-    generated = _generated_pipeline(_gray_to_color_pipeline_modules())
-    namespace = _pipeline_namespace(generated)
-    context = ContextStub()
-    image = _synthetic_nuclei_image()
-    pipeline_start_image = image
-    source_binding_context = _single_channel_source_binding_context()
-
-    pipeline_steps = tuple(namespace["pipeline_steps"])
-    for step_index, (step, contract) in enumerate(zip(
-        namespace["pipeline_steps"],
-        generated.artifact_contracts,
-        strict=True,
-    )):
-        step_input = (
-            pipeline_start_image
-            if step.processing_config.input_source is InputSource.PIPELINE_START
-            else image
-        )
-        image = _run_generated_step(
-            step,
-            contract,
-            step_input,
-            context,
-            pipeline_steps=pipeline_steps,
-            pipeline_config=generated.pipeline_config,
-            step_index=step_index,
-            source_binding_context=source_binding_context,
-        )
-
-    color_image_records = context.runtime_value_store.find(
-        name=COLOR_IMAGE,
-        artifact_type=ImageArtifactType,
-        axis_id=AXIS_ID,
-    )
-
-    assert len(color_image_records) == 1
-    assert color_image_records[0].value.schema.source_image_name == (
-        f"{NUCLEI_IMAGE}__{SOURCE_IMAGE}"
-    )
-    assert color_image_records[0].value.data.shape == (64, 64, 3)
-    assert image_payload_data(image).shape == (1, 64, 64, 3)
-    np.testing.assert_allclose(
-        image_payload_data(image)[0],
-        color_image_records[0].value.data,
-    )
-
-
-def test_identify_primary_objects_uses_runtime_image_intensity_scale():
-    from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
-        UnclumpMethod,
-        WatershedMethod,
-        identify_primary_objects,
-    )
-    from openhcs.interop.cellprofiler.thresholding import (
-        CellProfilerThresholdMethod as ThresholdMethod,
-    )
-
-    image = np.full((16, 16), 128, dtype=np.uint16)
-    image[4:12, 4:12] = 512
-    source_scaled_image = RuntimeImagePayloadContext(
-        image,
-        metadata=ImagePayloadMetadata(
-            intensity_scale=4095.0,
-            source_dtype="uint16",
-        ),
-        mask=None,
-    ).payload()
-
-    _raw_image, stats, labels = identify_primary_objects(
-        source_scaled_image,
-        min_diameter=2,
-        max_diameter=20,
-        exclude_size=False,
-        exclude_border_objects=False,
-        unclump_method=UnclumpMethod.NONE,
-        watershed_method=WatershedMethod.NONE,
-        use_advanced_settings=True,
-        threshold_method=ThresholdMethod.OTSU,
-        threshold_smoothing_scale=0.0,
-        dtype_config=DtypeConfig(),
-    )
-
-    assert stats.object_count == 1
-    assert labels.labels[8, 8] == 1
-
-
-def test_runtime_image_metadata_uses_declared_tiff_intensity_scale(tmp_path):
-    from openhcs.core.runtime_values import (
-        ImagePayloadSourceMetadataContext,
-        SourceImageIdentity,
-    )
-
-    path = tmp_path / "source_12bit.tif"
-    image = np.array([[0, 4095]], dtype=np.uint16)
-    tifffile.imwrite(
-        path,
-        image,
-        extratags=(
-            (280, "H", 1, 0, False),
-            (281, "H", 1, 4095, False),
-        ),
-    )
-    readback = imageio.imread(path)
-
-    metadata = (
-        ImagePayloadSourceMetadataContext(SourceImageIdentity(str(path)))
-        .metadata_request(readback)
-        .metadata()
-    )
-
-    assert metadata.source_dtype == "uint16"
-    assert metadata.intensity_scale == 4095.0
-
-
-def test_runtime_adapter_receives_step_input_source_binding_context():
-    @runtime_adapter(
-        "cellprofiler_runtime",
-        cellprofiler_runtime_adapter_factory,
-        manages_artifact_inputs=True,
-    )
-    def select_named_input(image, *, cellprofiler_runtime):
-        return cellprofiler_runtime.resolve_source_image(SOURCE_IMAGE, image)
-
-    context = ContextStub()
-    input_stack = np.stack(
-        [
-            np.full((8, 8), 4.0, dtype=np.float32),
-            np.full((8, 8), 2.0, dtype=np.float32),
-        ]
-    )
-    source_binding_context = SourceBindingRuntimeContext(
-        step_input_files=(
-            "A01_s001_w1_z001_t001.tif",
-            "A01_s001_w2_z001_t001.tif",
-        )
-    )
-    source_binding_plan = CompiledSourceBindingPlan.from_config(
-        StepSourceBindingsConfig(
-            bindings=(
-                NamedSourceBinding(
-                    alias=SOURCE_IMAGE,
-                    selector=SourceSelector(
-                        components=(ComponentSelector(AllComponents.CHANNEL, "1"),),
-                    ),
-                ),
+def test_area_occupied_object_rows_declare_measurements_only() -> None:
+    objects = ArtifactSpec.output("Objects1", ObjectLabelsArtifactType)
+    contract = _target_module_contract(
+        _target_module_block(
+            "MeasureImageAreaOccupied",
+            (
+                ("Measure the area occupied by", "Objects"),
+                ("Select object sets to measure", "Objects1"),
             ),
-            enabled=True,
+        ),
+        available=(objects,),
+    )
+
+    assert _artifact_names(contract.artifact_inputs, ObjectLabelsArtifactType) == (
+        "Objects1",
+    )
+    assert _artifact_names(contract.artifact_outputs, ImageArtifactType) == ()
+
+
+def test_tile_contract_uses_declared_images_in_order_without_group_wrapper() -> None:
+    images = (
+        ArtifactSpec.input("OrigColor", ImageArtifactType),
+        ArtifactSpec.output("OutlineImage", ImageArtifactType),
+        ArtifactSpec.output("TrackedCells", ImageArtifactType),
+    )
+    contract = _target_module_contract(
+        _target_module_block(
+            "Tile",
+            (
+                ("Select an input image", "OrigColor"),
+                ("Select an additional image to tile", "OutlineImage"),
+                ("Select an additional image to tile", "TrackedCells"),
+                ("Name the output image", "TiledImage"),
+            ),
+        ),
+        available=images,
+        main_flow=(images[0],),
+    )
+
+    assert _artifact_names(contract.artifact_inputs, ImageArtifactType) == (
+        "OrigColor",
+        "OutlineImage",
+        "TrackedCells",
+    )
+    assert _artifact_names(contract.artifact_outputs, ImageArtifactType) == (
+        "TiledImage",
+    )
+
+
+def test_save_images_is_axis_step_with_declared_only_materialized_output() -> None:
+    image = ArtifactSpec.output("TiledImage", ImageArtifactType)
+    module = _target_module_block(
+        "SaveImages",
+        (
+            ("Select the image to save", "TiledImage"),
+            ("Saved file format", "tiff"),
+            ("Image bit depth", "8-bit integer"),
+        ),
+    )
+    module_type = CellProfilerModule.require_module(module.name)
+    contract = _target_module_contract(module, available=(image,), main_flow=(image,))
+    callable_contract = CallableContract.from_callable(module_type.require_callable())
+
+    assert callable_contract.execution_scope is FunctionStepExecutionScope.AXIS
+    assert _artifact_names(contract.artifact_inputs, ImageArtifactType) == (
+        "TiledImage",
+    )
+    (materialized_output,) = contract.artifact_outputs
+    assert materialized_output.artifact_type is ImageArtifactType
+    assert materialized_output.materialization is not None
+
+
+@pytest.mark.parametrize("module_name", ("ExportToSpreadsheet", "ExportToDatabase"))
+def test_aggregate_exporters_are_plate_steps_over_exact_runtime_artifacts(
+    module_name: str,
+) -> None:
+    available = (
+        ArtifactSpec.output("Images_measurements", MeasurementsArtifactType),
+        ArtifactSpec.output("Nuclei_measurements", MeasurementsArtifactType),
+        ArtifactSpec.output("Nuclei_Cells_relationships", RelationshipsArtifactType),
+        ArtifactSpec.output("DNA", ImageArtifactType),
+    )
+    records = (
+        (
+            ("Database type", "SQLite"),
+            ("Name the SQLite database file", "analysis.db"),
+            ("Experiment name", "Example"),
+            ("Add a prefix to table names?", "No"),
+            ("Create a CellProfiler Analyst properties file?", "Yes"),
+            ("Export measurements for all objects to the database?", "All"),
+            ("Export object relationships?", "Yes"),
+            (
+                "Create one table per object, a single object table or a single object view?",
+                "Single object table",
+            ),
         )
+        if module_name == "ExportToDatabase"
+        else ()
     )
-    selected_output = _execute_function_core(
-        _CoreExecutionRequest(
-            func_callable=select_named_input,
-            main_data_arg=input_stack,
-            base_kwargs={},
-            context=context,
-            artifact_inputs={},
-            artifact_outputs={},
-            source_binding_plan=source_binding_plan,
-            source_binding_context=source_binding_context,
-        )
+    module = _target_module_block(module_name, records)
+    module_type = CellProfilerModule.require_module(module_name)
+    contract = _target_module_contract(module, available=available)
+    callable_contract = CallableContract.from_callable(module_type.require_callable())
+
+    assert callable_contract.execution_scope is FunctionStepExecutionScope.PLATE
+    assert set(_artifact_names(contract.artifact_inputs)).issuperset(
+        {
+            "Images_measurements",
+            "Nuclei_measurements",
+            "Nuclei_Cells_relationships",
+        }
     )
-
-    assert selected_output.shape == (8, 8)
-
-
-def test_generated_cellprofiler_pipeline_records_relationship_artifacts():
-    generated = _generated_pipeline(_relationship_pipeline_modules())
-    namespace = _pipeline_namespace(generated)
-    context = ContextStub()
-    input_stack = np.stack(
-        [
-            _synthetic_nuclei_image(),
-            np.clip(_synthetic_nuclei_image() + 0.05, 0.0, 1.0),
-        ]
+    (bundle_output,) = contract.artifact_outputs
+    assert bundle_output.artifact_type is SpecialArtifactType
+    assert bundle_output.materialization is not None
+    assert tuple(relation.source for relation in bundle_output.relations) == tuple(
+        spec.ref() for spec in contract.artifact_inputs
     )
-    source_binding_context = SourceBindingRuntimeContext(
-        step_input_files=(
-            "A01_s001_w1_z001_t001.tif",
-            "A01_s001_w2_z001_t001.tif",
-        )
-    )
-
-    image = input_stack
-    pipeline_steps = tuple(namespace["pipeline_steps"])
-    for step_index, (step, contract) in enumerate(zip(
-        namespace["pipeline_steps"],
-        generated.artifact_contracts,
-        strict=True,
-    )):
-        step_input = (
-            input_stack
-            if step.processing_config.input_source is InputSource.PIPELINE_START
-            else image
-        )
-        image = _run_generated_step(
-            step,
-            contract,
-            step_input,
-            context,
-            pipeline_steps=pipeline_steps,
-            pipeline_config=generated.pipeline_config,
-            step_index=step_index,
-            source_binding_context=source_binding_context,
-        )
-
-    relationship_name = generated.artifact_contracts[2].outputs[0].name
-    measurement_name = generated.artifact_contracts[2].outputs[1].name
-    relationship_records = context.runtime_value_store.find(
-        name=relationship_name,
-        artifact_type=RelationshipsArtifactType,
-        axis_id=AXIS_ID,
-    )
-    measurement_records = context.runtime_value_store.find(
-        name=measurement_name,
-        artifact_type=MeasurementsArtifactType,
-        axis_id=AXIS_ID,
-    )
-
-    assert len(relationship_records) == 1
-    assert relationship_records[0].value.schema.relationship is not None
-    assert len(measurement_records) == 1
-
-
-def test_generated_cellprofiler_pipeline_executes_generic_mask_objects_contract():
-    generated = _generated_pipeline(_mask_objects_pipeline_modules())
-    namespace = _pipeline_namespace(generated)
-    context = ContextStub()
-    image = _synthetic_nuclei_image()
-    source_binding_context = _single_channel_source_binding_context()
-
-    pipeline_steps = tuple(namespace["pipeline_steps"])
-    for step_index, (step, contract) in enumerate(zip(
-        namespace["pipeline_steps"],
-        generated.artifact_contracts,
-        strict=True,
-    )):
-        image = _run_generated_step(
-            step,
-            contract,
-            image,
-            context,
-            pipeline_steps=pipeline_steps,
-            pipeline_config=generated.pipeline_config,
-            step_index=step_index,
-            source_binding_context=source_binding_context,
-        )
-
-    masked_records = context.runtime_value_store.find(
-        name=MASKED_NUCLEI,
-        artifact_type=ObjectLabelsArtifactType,
-        axis_id=AXIS_ID,
-    )
-    measurement_records = context.runtime_value_store.find(
-        name="MaskObjects_2_measurements",
-        artifact_type=MeasurementsArtifactType,
-        axis_id=AXIS_ID,
-    )
-    relationship_records = context.runtime_value_store.find(
-        name=f"{NUCLEI}_{MASKED_NUCLEI}_relationships",
-        artifact_type=RelationshipsArtifactType,
-        axis_id=AXIS_ID,
-    )
-
-    assert len(masked_records) == 1
-    assert _object_labels(masked_records[0]).max() > 0
-    assert len(measurement_records) == 1
-    assert len(relationship_records) == 1
-    assert relationship_records[0].value.schema.relationship is not None
-
-
-def test_generated_cellprofiler_pipeline_executes_filterobjects_relabel_outputs():
-    generated = _generated_pipeline(_filter_objects_pipeline_modules())
-    namespace = _pipeline_namespace(generated)
-    context = ContextStub()
-    image = _synthetic_nuclei_image()
-    source_binding_context = _single_channel_source_binding_context()
-
-    pipeline_steps = tuple(namespace["pipeline_steps"])
-    for step_index, (step, contract) in enumerate(zip(
-        namespace["pipeline_steps"],
-        generated.artifact_contracts,
-        strict=True,
-    )):
-        image = _run_generated_step(
-            step,
-            contract,
-            image,
-            context,
-            pipeline_steps=pipeline_steps,
-            pipeline_config=generated.pipeline_config,
-            step_index=step_index,
-            source_binding_context=source_binding_context,
-        )
-
-    filtered_nuclei_records = context.runtime_value_store.find(
-        name=FILTERED_NUCLEI,
-        artifact_type=ObjectLabelsArtifactType,
-        axis_id=AXIS_ID,
-    )
-    filtered_cells_records = context.runtime_value_store.find(
-        name=FILTERED_CELLS,
-        artifact_type=ObjectLabelsArtifactType,
-        axis_id=AXIS_ID,
-    )
-    measurement_records = context.runtime_value_store.find(
-        name="FilterObjects_3_measurements",
-        artifact_type=MeasurementsArtifactType,
-        axis_id=AXIS_ID,
-    )
-    relationship_records = context.runtime_value_store.find(
-        name=parent_child_relationship_artifact_name(NUCLEI, FILTERED_NUCLEI),
-        artifact_type=RelationshipsArtifactType,
-        axis_id=AXIS_ID,
-    )
-
-    assert len(filtered_nuclei_records) == 1
-    assert _object_labels(filtered_nuclei_records[0]).max() > 0
-    assert len(filtered_cells_records) == 1
-    assert _object_labels(filtered_cells_records[0]).max() > 0
-    assert len(measurement_records) == 1
-    assert len(relationship_records) == 1
-    relationship = ObjectRelationship.from_runtime_value(relationship_records[0].value)
-    assert relationship.source_ids
-    assert relationship.target_ids
-
-
-def test_generated_cellprofiler_pipeline_filters_objects_by_prior_measurements():
-    generated = _generated_pipeline(_filter_objects_measurement_pipeline_modules())
-    namespace = _pipeline_namespace(generated)
-    context = ContextStub()
-    image = _synthetic_nuclei_image()
-    source_binding_context = _single_channel_source_binding_context()
-
-    pipeline_steps = tuple(namespace["pipeline_steps"])
-    for step_index, (step, contract) in enumerate(zip(
-        namespace["pipeline_steps"],
-        generated.artifact_contracts,
-        strict=True,
-    )):
-        image = _run_generated_step(
-            step,
-            contract,
-            image,
-            context,
-            pipeline_steps=pipeline_steps,
-            pipeline_config=generated.pipeline_config,
-            step_index=step_index,
-            source_binding_context=source_binding_context,
-        )
-
-    filtered_records = context.runtime_value_store.find(
-        name=FILTERED_NUCLEI,
-        artifact_type=ObjectLabelsArtifactType,
-        axis_id=AXIS_ID,
-    )
-    relationship_records = context.runtime_value_store.find(
-        name=parent_child_relationship_artifact_name(NUCLEI, FILTERED_NUCLEI),
-        artifact_type=RelationshipsArtifactType,
-        axis_id=AXIS_ID,
-    )
-
-    assert len(filtered_records) == 1
-    assert _object_labels(filtered_records[0]).max() == 0
-    assert len(relationship_records) == 1
-    relationship = ObjectRelationship.from_runtime_value(relationship_records[0].value)
-    assert tuple(relationship.source_ids) == ()
-    assert tuple(relationship.target_ids) == ()

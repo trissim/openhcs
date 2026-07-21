@@ -7,29 +7,27 @@ from openhcs.processing.backends.cellprofiler.measurement_math import (
     MathOperationStrategy,
     RoundingStrategy,
 )
-from benchmark.cellprofiler_library.functions.convertobjectstoimage import (
-    ImageModeRenderer,
-)
-from benchmark.cellprofiler_library.functions.correctilluminationapply import (
+from openhcs.processing.backends.cellprofiler.object_images import ImageModeRenderer
+from openhcs.processing.backends.cellprofiler.illumination import (
     IlluminationCorrectionStrategy,
 )
-from benchmark.cellprofiler_library.functions.correctilluminationcalculate import (
+from openhcs.processing.backends.cellprofiler.illumination import (
     SmoothingFilterSizeStrategy,
     SmoothingPlaneStrategy,
 )
-from benchmark.cellprofiler_library.functions.crop import CropShapeMaskStrategy
-from benchmark.cellprofiler_library.functions.enhanceedges import (
-    EdgeEnhancementStrategy,
-)
-from benchmark.cellprofiler_library.functions.filterobjects import (
+from openhcs.processing.backends.cellprofiler.crop import CropShapeMaskStrategy
+from openhcs.processing.backends.cellprofiler.edge import EdgeEnhancementStrategy
+from openhcs.processing.backends.cellprofiler.object_filtering import (
     FilterSelectionStrategy,
     PerObjectAssignmentStrategy,
 )
-from benchmark.cellprofiler_library.functions.graytocolor import GrayToColorSchemeRunner
+from openhcs.processing.backends.cellprofiler.color import GrayToColorSchemeRunner
 from openhcs.processing.backends.cellprofiler.image_math import (
     ImageMathOperationStrategy,
 )
-from openhcs.interop.cellprofiler.parser import ModuleBlock
+from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
+from openhcs.core.callable_contract import CallableContract
+from openhcs.core.source_bindings import EMPTY_SOURCE_BINDINGS
 from openhcs.processing.backends.cellprofiler.grid import (
     DefineGridManualModule,
     IdentifyObjectsInGridModule,
@@ -38,10 +36,8 @@ from openhcs.processing.backends.cellprofiler.secondary import (
     SecondarySegmentationStrategy,
     ThresholdCalculator,
 )
-from benchmark.cellprofiler_library.functions.measureobjectneighbors import (
-    NeighborDistancePlanner,
-)
-from benchmark.cellprofiler_library.functions.smooth import SmoothingStrategy
+from openhcs.processing.backends.cellprofiler.neighbors import NeighborDistancePlanner
+from openhcs.processing.backends.cellprofiler.smoothing import SmoothingStrategy
 from openhcs.processing.backends.cellprofiler.structuring_elements import (
     StructuringElementFactory,
 )
@@ -53,27 +49,19 @@ from openhcs.processing.backends.cellprofiler.watershed import (
     WatershedSeedStrategy,
     WatershedRuntimeStrategy,
 )
-from openhcs.interop.cellprofiler.runtime.module_execution import (
-    CellProfilerObjectMeasurementLabelArgumentPolicy,
-    CellProfilerObjectMeasurementLabelArgumentRequest,
-)
 from openhcs.interop.cellprofiler.runtime.object_measurement_execution import (
-    MeasurementLabelExecutionModeStrategy,
+    CellProfilerObjectMeasurementExecutionPolicy,
 )
-from openhcs.core.aligned_image_payload import (
-    AlignedImageStack,
-    ImagePayloadExecutionMode,
-)
+from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.pipeline.function_contracts import (
-    ObjectLabelMeasurementExecution,
-    object_label_measurement_execution,
+    ObjectLabelInputExecutionMode,
 )
-from openhcs.core.runtime_semantics import (
-    ObjectLabelDomain,
-    ObjectLabelDomainScope,
-    RuntimePlaneAxis,
+from openhcs.core.runtime_object_label_domains import ObjectLabelDomain, ObjectLabelDomainScope
+from openhcs.core.runtime_plane_projection import RuntimePlaneAxis
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelVariantData,
+    ObjectLabelPayload,
 )
-from openhcs.core.runtime_values import ObjectLabelPayload
 
 
 JSON_SAFE_REGISTRY_KEY_TYPES = (str, int, float, bool, type(None))
@@ -103,8 +91,7 @@ def test_cellprofiler_strategy_registry_keys_are_json_safe():
         WatershedMethodStrategy,
         WatershedSeedStrategy,
         WatershedRuntimeStrategy,
-        MeasurementLabelExecutionModeStrategy,
-        CellProfilerObjectMeasurementLabelArgumentPolicy,
+        CellProfilerObjectMeasurementExecutionPolicy,
     )
 
     for registry_class in registry_classes:
@@ -115,171 +102,186 @@ def test_cellprofiler_strategy_registry_keys_are_json_safe():
         ), registry_class.__name__
 
 
-def test_grid_function_name_variants_resolve_from_module_declarations() -> None:
+def test_grid_callable_selection_resolves_from_module_declarations() -> None:
     define_grid = ModuleBlock(
         name="DefineGrid",
         module_num=1,
-        settings={"Select the method to define the grid": "Automatic"},
+        setting_records=[
+            ModuleSetting("Select the method to define the grid", "Automatic")
+        ],
     )
     identify_without_guides = ModuleBlock(
         name="IdentifyObjectsInGrid",
         module_num=2,
-        settings={"Select the guiding objects": "None"},
+        setting_records=[
+            ModuleSetting(
+                "Select object shapes and locations", "Rectangle Forced Location"
+            ),
+            ModuleSetting("Select the guiding objects", "None"),
+        ],
     )
     identify_with_guides = ModuleBlock(
         name="IdentifyObjectsInGrid",
         module_num=3,
-        settings={"Select the guiding objects": "Nuclei"},
-    )
-
-    assert DefineGridManualModule.resolve_function(define_grid).function_name == (
-        "define_grid_automatic"
-    )
-    assert IdentifyObjectsInGridModule.resolve_function(
-        identify_without_guides
-    ).function_name == "identify_objects_in_grid"
-    assert IdentifyObjectsInGridModule.resolve_function(
-        identify_with_guides
-    ).function_name == "identify_objects_in_grid_with_guides"
-
-
-def test_measurement_label_execution_mode_follows_object_label_domain():
-    def slice_aligned_measurement(image, labels):
-        return image, labels
-
-    @object_label_measurement_execution(ObjectLabelMeasurementExecution.FULL_STACK)
-    def full_stack_measurement(image, labels):
-        return image, labels
-
-    assert (
-        MeasurementLabelExecutionModeStrategy.resolve(
-            slice_aligned_measurement,
-            np.zeros((3, 8, 8), dtype=np.int32),
-            ImagePayloadExecutionMode.NATURAL,
-        )
-        is ImagePayloadExecutionMode.NATURAL
-    )
-    assert (
-        MeasurementLabelExecutionModeStrategy.resolve(
-            full_stack_measurement,
-            np.zeros((3, 8, 8), dtype=np.int32),
-            ImagePayloadExecutionMode.NATURAL,
-        )
-        is ImagePayloadExecutionMode.FULL_STACK
-    )
-    assert (
-        MeasurementLabelExecutionModeStrategy.resolve(
-            full_stack_measurement,
-            np.zeros((3, 8, 8), dtype=np.int32),
-            ImagePayloadExecutionMode.FULL_STACK,
-        )
-        is ImagePayloadExecutionMode.FULL_STACK
-    )
-    assert (
-        MeasurementLabelExecutionModeStrategy.resolve(
-            full_stack_measurement,
-            np.zeros((8, 8), dtype=np.int32),
-            ImagePayloadExecutionMode.NATURAL,
-        )
-        is ImagePayloadExecutionMode.NATURAL
-    )
-    assert (
-        MeasurementLabelExecutionModeStrategy.resolve(
-            full_stack_measurement,
-            ObjectLabelPayload(
-                labels=np.zeros((3, 8, 8), dtype=np.int32),
-                plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-                domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE),
+        setting_records=[
+            ModuleSetting(
+                "Select object shapes and locations", "Natural Shape and Location"
             ),
-            ImagePayloadExecutionMode.FULL_STACK,
-            runtime_slice_count=1,
+            ModuleSetting("Select the guiding objects", "Nuclei"),
+        ],
+    )
+
+    contract = CallableContract.from_callable(
+        IdentifyObjectsInGridModule.require_callable()
+    )
+    assert DefineGridManualModule.resolve_function(
+        define_grid,
+        contract=contract,
+        source_bindings=EMPTY_SOURCE_BINDINGS,
+    ) is DefineGridManualModule.require_callable(
+        DefineGridManualModule.function_variants[0]
+    )
+    assert (
+        IdentifyObjectsInGridModule.resolve_function(
+            identify_without_guides,
+            contract=contract,
+            source_bindings=EMPTY_SOURCE_BINDINGS,
         )
-        is ImagePayloadExecutionMode.FULL_STACK
+        is IdentifyObjectsInGridModule.require_callable()
     )
     assert (
-        MeasurementLabelExecutionModeStrategy.resolve(
-            full_stack_measurement,
-            ObjectLabelPayload(
-                labels=np.zeros((3, 8, 8), dtype=np.int32),
-                plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            ),
-            ImagePayloadExecutionMode.NATURAL,
-            runtime_slice_count=3,
+        IdentifyObjectsInGridModule.resolve_function(
+            identify_with_guides,
+            contract=contract,
+            source_bindings=EMPTY_SOURCE_BINDINGS,
         )
-        is ImagePayloadExecutionMode.NATURAL
-    )
-    assert (
-        MeasurementLabelExecutionModeStrategy.resolve(
-            full_stack_measurement,
-            ObjectLabelPayload(
-                labels=np.zeros((3, 8, 8), dtype=np.int32),
-                plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            ),
-            ImagePayloadExecutionMode.FULL_STACK,
-            runtime_slice_count=3,
-        )
-        is ImagePayloadExecutionMode.NATURAL
-    )
-    assert (
-        MeasurementLabelExecutionModeStrategy.resolve(
-            full_stack_measurement,
-            ObjectLabelPayload(
-                labels=np.zeros((3, 8, 8), dtype=np.int32),
-                plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
-                domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE),
-            ),
-            ImagePayloadExecutionMode.FULL_STACK,
-        )
-        is ImagePayloadExecutionMode.NATURAL
+        is IdentifyObjectsInGridModule.require_callable()
     )
 
 
-def test_measurement_label_argument_policy_follows_execution_contract() -> None:
-    dense_labels = np.zeros((8, 8), dtype=np.int32)
-    payload = object()
-    request = CellProfilerObjectMeasurementLabelArgumentRequest(
-        dense_labels=dense_labels,
-        label_payload=payload,
-        measurement_image_payload=np.zeros((8, 8), dtype=np.float32),
+def test_measurement_execution_mode_follows_callable_declaration():
+    slice_aligned_policy = CellProfilerObjectMeasurementExecutionPolicy.for_enum_member(
+        ObjectLabelInputExecutionMode.SLICE_ALIGNED
+    )
+    full_stack_policy = CellProfilerObjectMeasurementExecutionPolicy.for_enum_member(
+        ObjectLabelInputExecutionMode.FULL_STACK
     )
 
-    assert (
-        CellProfilerObjectMeasurementLabelArgumentPolicy.for_enum_member(
-            ObjectLabelMeasurementExecution.SLICE_ALIGNED
-        ).label_argument(request)
-        is dense_labels
-    )
-    assert (
-        CellProfilerObjectMeasurementLabelArgumentPolicy.for_enum_member(
-            ObjectLabelMeasurementExecution.FULL_STACK
-        ).label_argument(request)
-        is payload
-    )
-
-
-def test_measurement_label_argument_policy_defers_aligned_stack_label_projection() -> (
-    None
-):
-    dense_labels = np.zeros((8, 8), dtype=np.int32)
-    label_payload = ObjectLabelPayload(
-        labels=np.zeros((2, 8, 8), dtype=np.int32),
+    labels = ObjectLabelPayload(
+        variant_data=ObjectLabelVariantData(labels=np.zeros((3, 8, 8), dtype=np.int32)),
         plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-    domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE,
-        ))
-    request = CellProfilerObjectMeasurementLabelArgumentRequest(
-        dense_labels=dense_labels,
-        label_payload=label_payload,
-        measurement_image_payload=AlignedImageStack(
-            (
-                np.zeros((8, 8), dtype=np.float32),
-                np.ones((8, 8), dtype=np.float32),
-            )
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((), (), ()),
+            scope=ObjectLabelDomainScope.PLANE,
         ),
     )
 
     assert (
-        CellProfilerObjectMeasurementLabelArgumentPolicy.for_enum_member(
-            ObjectLabelMeasurementExecution.SLICE_ALIGNED
-        ).label_argument(request)
-        is label_payload
+        slice_aligned_policy.image_execution_mode(
+            labels,
+            ImagePayloadExecutionMode.NATURAL,
+        )
+        is ImagePayloadExecutionMode.NATURAL
+    )
+    assert (
+        full_stack_policy.image_execution_mode(
+            labels,
+            ImagePayloadExecutionMode.NATURAL,
+        )
+        is ImagePayloadExecutionMode.FULL_STACK
+    )
+    assert (
+        full_stack_policy.image_execution_mode(
+            ObjectLabelPayload(
+                variant_data=ObjectLabelVariantData(
+                    labels=np.zeros((3, 8, 8), dtype=np.int32)
+                ),
+                plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+                domain=ObjectLabelDomain(
+                    declared_object_id_domains=((), (), ()),
+                    scope=ObjectLabelDomainScope.PLANE,
+                ),
+            ),
+            ImagePayloadExecutionMode.NATURAL,
+            runtime_slice_count=3,
+        )
+        is ImagePayloadExecutionMode.FULL_STACK
+    )
+    assert (
+        full_stack_policy.image_execution_mode(
+            ObjectLabelPayload(
+                variant_data=ObjectLabelVariantData(
+                    labels=np.zeros((3, 8, 8), dtype=np.int32)
+                ),
+                plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+                domain=ObjectLabelDomain(
+                    declared_object_id_domains=((), (), ()),
+                    scope=ObjectLabelDomainScope.PLANE,
+                ),
+            ),
+            ImagePayloadExecutionMode.FULL_STACK,
+            runtime_slice_count=3,
+        )
+        is ImagePayloadExecutionMode.FULL_STACK
+    )
+    assert (
+        full_stack_policy.image_execution_mode(
+            ObjectLabelPayload(
+                variant_data=ObjectLabelVariantData(
+                    labels=np.zeros((3, 8, 8), dtype=np.int32)
+                ),
+                plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+                domain=ObjectLabelDomain(
+                    declared_object_id_domains=((), (), ()),
+                    scope=ObjectLabelDomainScope.PLANE,
+                ),
+            ),
+            ImagePayloadExecutionMode.FULL_STACK,
+        )
+        is ImagePayloadExecutionMode.FULL_STACK
+    )
+
+
+def test_measurement_execution_policy_preserves_nominal_label_payloads() -> None:
+    source_payload = ObjectLabelPayload(
+        variant_data=ObjectLabelVariantData(
+            labels=np.zeros((8, 8), dtype=np.int32),
+        ),
+    )
+    completion_payload = ObjectLabelPayload(
+        variant_data=ObjectLabelVariantData(
+            labels=np.ones((8, 8), dtype=np.int32),
+        ),
+    )
+
+    assert (
+        CellProfilerObjectMeasurementExecutionPolicy.for_enum_member(
+            ObjectLabelInputExecutionMode.SLICE_ALIGNED
+        ).semantic_label_payload(source_payload, completion_payload)
+        is completion_payload
+    )
+    assert (
+        CellProfilerObjectMeasurementExecutionPolicy.for_enum_member(
+            ObjectLabelInputExecutionMode.FULL_STACK
+        ).semantic_label_payload(source_payload, completion_payload)
+        is source_payload
+    )
+
+
+def test_slice_aligned_measurement_preserves_payload_scoped_volume() -> None:
+    policy = CellProfilerObjectMeasurementExecutionPolicy.for_enum_member(
+        ObjectLabelInputExecutionMode.SLICE_ALIGNED
+    )
+    labels = ObjectLabelPayload(
+        variant_data=ObjectLabelVariantData(labels=np.zeros((3, 8, 8), dtype=np.int32)),
+        domain=ObjectLabelDomain(scope=ObjectLabelDomainScope.PAYLOAD),
+    )
+
+    assert (
+        policy.image_execution_mode(
+            labels,
+            ImagePayloadExecutionMode.NATURAL,
+            runtime_slice_count=3,
+        )
+        is ImagePayloadExecutionMode.FULL_STACK
     )

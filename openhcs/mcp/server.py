@@ -2,22 +2,34 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time
-from collections.abc import Mapping
 from abc import ABC, abstractmethod
-from dataclasses import MISSING, dataclass, fields as dataclass_fields, is_dataclass, replace
+from collections.abc import Callable, Mapping
+from dataclasses import (
+    MISSING,
+    dataclass,
+    fields as dataclass_fields,
+    is_dataclass,
+    replace,
+)
+from enum import Enum
 from functools import wraps
 from inspect import Parameter, Signature, getsourcefile, signature as inspect_signature
 from pathlib import Path
-from typing import ClassVar, Generic, Self, TypeVar, get_type_hints
+from typing import Any, ClassVar, Generic, Self, TypeVar, get_type_hints
 
 import openhcs as openhcs_package
-from openhcs.agent.knowledge_manifest import knowledge_base_source_paths_from_manifest
 from metaclass_registry import AutoRegisterMeta
+
+from openhcs.agent.authoring_contexts import AuthoringContextDeclaration
+from openhcs.agent.knowledge_manifest import knowledge_base_source_paths_from_manifest
 from openhcs.agent.capabilities import (
+    AgentCapabilitySurfaceSelection,
     AgentCapabilityDeclaration,
+    AgentCapabilityRegistry,
     AgentCapabilitySpec,
     AgentConfigPatchServiceInvocation,
     AgentConnectionScalarServiceInvocation,
@@ -26,6 +38,7 @@ from openhcs.agent.capabilities import (
     AgentDataclassRequestServiceInvocation,
     AgentFromFieldsServiceInvocation,
     CapabilityKind,
+    CapabilityTransport,
     AgentScalarInputContract,
     AgentScalarServiceInvocation,
     AgentViewerWindowRequestServiceInvocation,
@@ -35,6 +48,8 @@ from openhcs.agent.capabilities import (
     agent_capability_declarations,
     get_agent_capability_declaration,
     get_capability_registry,
+    FullLocalCapabilitySurfaceProfile,
+    LocalCapabilitySurfaceProfile,
     require_agent_type_contract,
 )
 from openhcs.agent.dto.common import (
@@ -61,7 +76,7 @@ from openhcs.agent.dto.viewer import (
     ViewerWindowValidationPolicy,
     ViewerWindowValidationRequest,
 )
-from openhcs.agent.serialization import to_jsonable
+from openhcs.serialization.json import to_jsonable
 from openhcs.mcp.context import (
     OpenHCSAgentContext,
     create_agent_context,
@@ -80,6 +95,60 @@ from openhcs.runtime.viewer_controls import (
 )
 
 RequestT = TypeVar("RequestT")
+
+_AUTHORING_CONTEXT_KINDS = ", ".join(AuthoringContextDeclaration.allowed_values())
+MCP_SERVER_INSTRUCTIONS = (
+    "OpenHCS tools inspect, author, compile, execute, and validate high-content "
+    "microscopy workflows. "
+    f"Call {agent_capabilities.health_check.name} first. If OpenHCS is unfamiliar, call "
+    f"{agent_capabilities.get_authoring_context.name} with kind='first_use' before choosing "
+    "tools. That context is a compact orientation and intent router: follow it with the one "
+    "task-specific context relevant to the request instead of loading every guide. Then call "
+    f"{agent_capabilities.list_capabilities.name}; its surface profile, workflow groups, "
+    "target contexts, side effects, and security metadata are the authority for selecting "
+    "the safe tool for that route. Registered context "
+    f"kinds are: {_AUTHORING_CONTEXT_KINDS}. "
+    "Start read-only. Inspect the source model and take bounded representative samples "
+    "before authoring or loading image data. Keep ingestion and semantic selection "
+    "separate: recognized HCS layouts retain their native handler; CZI, OME-TIFF, and "
+    "other supported rich containers retain Bio-Formats/store decoding. "
+    "SourceBindingsConfig may name or select the planes emitted after discovery; "
+    "SourceBindingsHandler is the fallback ingestion owner only for an otherwise "
+    "unrecognized arbitrary-file folder. "
+    "Choose the state owner from user intent. A UI-visible request uses capabilities for "
+    "the already-running OpenHCS GUI; use a headless route only when UI visibility is not "
+    "required. Both routes project the same typed declarations. One pipeline is a "
+    "PipelineDocument containing PipelineConfig and an ordered list[FunctionStep]. Use "
+    f"{agent_capabilities.describe_config_schema.name} to obtain authoritative nested "
+    "configuration fields and valid values. Search/read focused knowledge with "
+    f"{agent_capabilities.search_knowledge.name} and "
+    f"{agent_capabilities.get_knowledge_document.name} before inventing pipeline "
+    "structure. Review the target mutation, refresh revision/request tokens, compile "
+    "before running, then validate structured execution results and bounded viewer "
+    "evidence. Local file access remains restricted by AgentPathPolicy."
+)
+MCP_HOSTED_SERVER_INSTRUCTIONS = (
+    "OpenHCS hosted tools expose only the capability declarations audited for "
+    "server-side use. Call openhcs_list_capabilities before choosing a tool. This "
+    "surface provides read-only packaged knowledge, architecture, processing-function, "
+    "and configuration-schema discovery. It cannot access client-local files, GUI "
+    "bridges, viewer windows, runtime processes, draft state, or execution sessions."
+)
+
+
+class McpInvocationOutcome(str, Enum):
+    """Transport-neutral result observed for one MCP capability invocation."""
+
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    BLOCKED_STALE = "blocked_stale"
+
+
+McpInvocationObserver = Callable[
+    [AgentCapabilitySpec, McpInvocationOutcome],
+    None,
+]
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +189,7 @@ def _package_python_source_paths(package) -> tuple[Path, ...]:
     )
 
 
+MCP_SERVER_PACKAGED_RESOURCE_PATHS = knowledge_base_source_paths_from_manifest()
 MCP_SERVER_SOURCE_PATHS = _deduplicate_source_paths(
     (
         Path(__file__).resolve(),
@@ -127,7 +197,7 @@ MCP_SERVER_SOURCE_PATHS = _deduplicate_source_paths(
         Path(get_capability_registry.__code__.co_filename).resolve(),
         Path(to_jsonable.__code__.co_filename).resolve(),
         *_package_python_source_paths(openhcs_package),
-        *knowledge_base_source_paths_from_manifest(),
+        *MCP_SERVER_PACKAGED_RESOURCE_PATHS,
     )
 )
 MCP_SERVER_IMPORT_SOURCE_SNAPSHOTS = {
@@ -140,6 +210,7 @@ MCP_SERVER_IMPORT_SOURCE_MTIMES_NS = {
     if snapshot.mtime_ns is not None
 }
 MCP_SERVER_SOURCE_PATH = MCP_SERVER_SOURCE_PATHS[0]
+MCP_SERVER_OPENHCS_VERSION = openhcs_package.__version__
 
 
 def _required_mcp_source_mtime_ns(source_path: Path) -> int:
@@ -303,6 +374,86 @@ def _mcp_server_restart_command() -> tuple[str, ...]:
     return (sys.executable, "-m", "openhcs.mcp")
 
 
+def _mcp_server_missing_packaged_resource_paths() -> tuple[Path, ...]:
+    """Return declared knowledge resources absent from this installation."""
+    return tuple(
+        resource_path
+        for resource_path in MCP_SERVER_PACKAGED_RESOURCE_PATHS
+        if not resource_path.is_file()
+    )
+
+
+def _mcp_tool_annotations(capability: AgentCapabilitySpec):
+    """Project standard MCP hints from the authoritative capability metadata."""
+    from mcp.types import ToolAnnotations
+
+    read_only = not capability.mutating and not capability.side_effects
+    open_world = bool(
+        capability.side_effects
+        or capability.requires_network
+        or capability.data_exposure
+        or capability.security_requirements
+    )
+    return ToolAnnotations(
+        title=capability.title,
+        readOnlyHint=read_only,
+        destructiveHint=not read_only,
+        idempotentHint=read_only,
+        openWorldHint=open_world,
+    )
+
+
+def _mcp_tool_meta(capability: AgentCapabilitySpec) -> dict[str, str]:
+    """Advertise the nominal result owner alongside the JSON object schema."""
+    output_contract = require_agent_type_contract(capability.output_contract)
+    return {"openhcs/outputContract": output_contract.__name__}
+
+
+def _mcp_server_instructions(transport: CapabilityTransport) -> str:
+    if transport is CapabilityTransport.LOCAL_STDIO:
+        return MCP_SERVER_INSTRUCTIONS
+    if transport is CapabilityTransport.HOSTED_STREAMABLE_HTTP:
+        return MCP_HOSTED_SERVER_INSTRUCTIONS
+    raise ValueError(f"Unsupported MCP capability transport: {transport!r}")
+
+
+def _mcp_exposed_binding_types(
+    binding_types,
+    selection: AgentCapabilitySurfaceSelection,
+):
+    """Return registered binding types permitted by transport and visibility."""
+    return tuple(
+        binding_type
+        for binding_type in binding_types
+        if selection.includes(binding_type.capability)
+    )
+
+
+def _mcp_exposed_declarations(
+    declarations: tuple[type[AgentCapabilityDeclaration], ...],
+    selection: AgentCapabilitySurfaceSelection,
+) -> tuple[type[AgentCapabilityDeclaration], ...]:
+    """Return nominal declarations permitted by transport and visibility."""
+    return tuple(
+        declaration
+        for declaration in declarations
+        if selection.includes(declaration.to_spec())
+    )
+
+
+def _mcp_transport_projected_result(
+    capability: AgentCapabilitySpec,
+    result,
+    selection: AgentCapabilitySurfaceSelection,
+):
+    """Project transport-sensitive nominal results without capability-name checks."""
+    if capability.output_contract is AgentCapabilityRegistry:
+        return to_jsonable(
+            get_capability_registry(selection.transport, selection.local_profile)
+        )
+    return result
+
+
 class McpNoArgumentToolBindingABC(ABC, metaclass=AutoRegisterMeta):
     """Declaration-owned FastMCP binding for no-argument agent tools."""
 
@@ -318,9 +469,9 @@ class McpNoArgumentToolBindingABC(ABC, metaclass=AutoRegisterMeta):
     @classmethod
     def execute(cls, ctx: OpenHCSAgentContext) -> dict:
         """Execute the bound capability against the current agent context."""
-        return get_agent_capability_declaration(cls.capability.name).execute_no_argument(
-            ctx
-        )
+        return get_agent_capability_declaration(
+            cls.capability.name
+        ).execute_no_argument(ctx)
 
     @classmethod
     def bind_no_argument_tool(
@@ -340,7 +491,10 @@ class McpNoArgumentToolBindingABC(ABC, metaclass=AutoRegisterMeta):
         tool.__doc__ = capability.description
         tool.__annotations__ = {"return": dict}
         tool.__signature__ = Signature(return_annotation=dict)
-        openhcs_tool(allow_stale_server=allow_stale_server)(tool)
+        openhcs_tool(
+            capability=capability,
+            allow_stale_server=allow_stale_server,
+        )(tool)
 
     @classmethod
     def bind_to_server(
@@ -376,13 +530,11 @@ class GeneratedMcpNoArgumentToolBinding:
 
 
 def generated_no_argument_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration],
-    ...
+    type[AgentCapabilityDeclaration], ...
 ]:
     """Return declaration-owned no-argument MCP tools without custom bindings."""
     explicit_capability_names = frozenset(
-        capability.name
-        for capability in McpNoArgumentToolBindingABC.__registry__
+        capability.name for capability in McpNoArgumentToolBindingABC.__registry__
     )
     return tuple(
         declaration
@@ -411,11 +563,36 @@ class GeneratedMcpResourceBinding:
         declaration: type[AgentCapabilityDeclaration],
         ctx: OpenHCSAgentContext,
         server,
+        capability_surface_selection: AgentCapabilitySurfaceSelection,
+        observe_invocation,
     ) -> None:
+        capability = declaration.to_spec()
+
         def resource() -> dict:
             if _mcp_server_source_changed_since_import():
+                observe_invocation(
+                    capability,
+                    McpInvocationOutcome.BLOCKED_STALE,
+                )
                 return _mcp_server_stale_error(declaration.name)
-            return to_jsonable(declaration.execute_no_argument(ctx))
+            try:
+                result = to_jsonable(declaration.execute_no_argument(ctx))
+                projected_result = _mcp_transport_projected_result(
+                    capability,
+                    result,
+                    capability_surface_selection,
+                )
+            except Exception:
+                observe_invocation(
+                    capability,
+                    McpInvocationOutcome.FAILED,
+                )
+                raise
+            observe_invocation(
+                capability,
+                McpInvocationOutcome.SUCCEEDED,
+            )
+            return projected_result
 
         resource.__name__ = _mcp_resource_function_name(declaration.name)
         resource.__qualname__ = resource.__name__
@@ -426,8 +603,7 @@ class GeneratedMcpResourceBinding:
 
 
 def generated_resource_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration],
-    ...
+    type[AgentCapabilityDeclaration], ...
 ]:
     """Return declaration-owned MCP resources."""
     return tuple(
@@ -448,6 +624,7 @@ class HealthCheckMcpToolBinding(McpNoArgumentToolBindingABC):
         current_source_mtime_ns = _mcp_server_current_source_mtime_ns()
         stale_source_paths = _mcp_server_stale_source_paths()
         restart_required = bool(stale_source_paths)
+        missing_packaged_resource_paths = _mcp_server_missing_packaged_resource_paths()
         restart_command: tuple[str, ...] = ()
         restart_hint: str | None = None
         if restart_required:
@@ -458,14 +635,19 @@ class HealthCheckMcpToolBinding(McpNoArgumentToolBindingABC):
             status="ok",
             started_at_unix=MCP_SERVER_IMPORTED_AT_UNIX,
             service="openhcs.mcp",
+            openhcs_version=MCP_SERVER_OPENHCS_VERSION,
+            packaged_resources_ready=not missing_packaged_resource_paths,
+            packaged_resource_count=len(MCP_SERVER_PACKAGED_RESOURCE_PATHS),
+            missing_packaged_resource_paths=tuple(
+                str(resource_path) for resource_path in missing_packaged_resource_paths
+            ),
             server_process_id=MCP_SERVER_PROCESS_ID,
             server_source_path=str(MCP_SERVER_SOURCE_PATH),
             server_import_mtime_ns=MCP_SERVER_IMPORT_MTIME_NS,
             server_current_mtime_ns=current_source_mtime_ns,
             server_source_changed_since_import=restart_required,
             stale_source_paths=tuple(
-                str(source_path)
-                for source_path in stale_source_paths
+                str(source_path) for source_path in stale_source_paths
             ),
             restart_required=restart_required,
             restart_command=restart_command,
@@ -542,7 +724,8 @@ class McpUiConnectionToolBindingABC(ABC, metaclass=AutoRegisterMeta):
             ],
             return_annotation=dict,
         )
-        openhcs_tool()(tool)
+        openhcs_tool(capability=capability)(tool)
+
 
 class GeneratedMcpUiConnectionToolBinding:
     """Generated FastMCP binding for declaration-owned UI connection tools."""
@@ -563,13 +746,11 @@ class GeneratedMcpUiConnectionToolBinding:
 
 
 def generated_ui_connection_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration],
-    ...
+    type[AgentCapabilityDeclaration], ...
 ]:
     """Return declaration-owned UI connection tools without request DTOs."""
     explicit_capability_names = frozenset(
-        capability.name
-        for capability in McpUiConnectionToolBindingABC.__registry__
+        capability.name for capability in McpUiConnectionToolBindingABC.__registry__
     )
     return tuple(
         declaration
@@ -743,7 +924,9 @@ class McpUiRequestToolBindingABC(
                 connection
             ).resolve(ctx, timeout_policy=timeout_policy)
             result = execute_request(ctx, request, connection_spec)
-            result_projector = cls.project_result if project_result is None else project_result
+            result_projector = (
+                cls.project_result if project_result is None else project_result
+            )
             return to_jsonable(
                 result_projector(result, extra_bound_arguments.arguments)
             )
@@ -756,7 +939,7 @@ class McpUiRequestToolBindingABC(
             for parameter in tool_signature.parameters.values()
         } | {"return": dict}
         tool.__signature__ = tool_signature
-        openhcs_tool()(tool)
+        openhcs_tool(capability=capability)(tool)
 
     @classmethod
     def bind_to_server(
@@ -821,13 +1004,11 @@ class GeneratedMcpUiRequestToolBinding:
 
 
 def generated_ui_request_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration],
-    ...
+    type[AgentCapabilityDeclaration], ...
 ]:
     """Return declaration-owned UI request tools."""
     explicit_capability_names = frozenset(
-        capability.name
-        for capability in McpUiRequestToolBindingABC.__registry__
+        capability.name for capability in McpUiRequestToolBindingABC.__registry__
     )
     return tuple(
         declaration
@@ -840,9 +1021,7 @@ def generated_ui_request_capability_declarations() -> tuple[
     )
 
 
-class UiGetWidgetTreeMcpToolBinding(
-    McpUiRequestToolBindingABC[UiWidgetTreeRequest]
-):
+class UiGetWidgetTreeMcpToolBinding(McpUiRequestToolBindingABC[UiWidgetTreeRequest]):
     capability = agent_capabilities.ui_get_widget_tree
 
     @classmethod
@@ -950,7 +1129,7 @@ class McpScalarInputToolBindingABC(ABC, metaclass=AutoRegisterMeta):
             ],
             return_annotation=dict,
         )
-        openhcs_tool()(tool)
+        openhcs_tool(capability=capability)(tool)
 
 
 class GeneratedMcpScalarInputToolBinding:
@@ -986,13 +1165,11 @@ class GeneratedMcpScalarInputToolBinding:
 
 
 def generated_scalar_input_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration],
-    ...
+    type[AgentCapabilityDeclaration], ...
 ]:
     """Return declaration-owned one-scalar tools."""
     explicit_capability_names = frozenset(
-        capability.name
-        for capability in McpScalarInputToolBindingABC.__registry__
+        capability.name for capability in McpScalarInputToolBindingABC.__registry__
     )
     return tuple(
         declaration
@@ -1100,7 +1277,7 @@ class McpUiScalarInputToolBindingABC(ABC, metaclass=AutoRegisterMeta):
             ],
             return_annotation=dict,
         )
-        openhcs_tool()(tool)
+        openhcs_tool(capability=capability)(tool)
 
 
 class GeneratedMcpUiScalarInputToolBinding:
@@ -1137,13 +1314,11 @@ class GeneratedMcpUiScalarInputToolBinding:
 
 
 def generated_ui_scalar_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration],
-    ...
+    type[AgentCapabilityDeclaration], ...
 ]:
     """Return declaration-owned UI scalar tools."""
     explicit_capability_names = frozenset(
-        capability.name
-        for capability in McpUiScalarInputToolBindingABC.__registry__
+        capability.name for capability in McpUiScalarInputToolBindingABC.__registry__
     )
     return tuple(
         declaration
@@ -1229,7 +1404,7 @@ class McpConfigPatchToolBindingABC(ABC, metaclass=AutoRegisterMeta):
             ],
             return_annotation=dict,
         )
-        openhcs_tool()(tool)
+        openhcs_tool(capability=capability)(tool)
 
 
 class GeneratedMcpConfigPatchToolBinding:
@@ -1251,13 +1426,11 @@ class GeneratedMcpConfigPatchToolBinding:
 
 
 def generated_config_patch_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration],
-    ...
+    type[AgentCapabilityDeclaration], ...
 ]:
     """Return declaration-owned ConfigPatch tools."""
     explicit_capability_names = frozenset(
-        capability.name
-        for capability in McpConfigPatchToolBindingABC.__registry__
+        capability.name for capability in McpConfigPatchToolBindingABC.__registry__
     )
     return tuple(
         declaration
@@ -1334,7 +1507,7 @@ class McpFromFieldsToolBindingABC(
             ],
             return_annotation=dict,
         )
-        openhcs_tool()(tool)
+        openhcs_tool(capability=capability)(tool)
 
     @classmethod
     def bind_to_server(
@@ -1378,13 +1551,11 @@ class GeneratedMcpFromFieldsToolBinding:
 
 
 def generated_from_fields_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration],
-    ...
+    type[AgentCapabilityDeclaration], ...
 ]:
     """Return declaration-owned from_fields MCP tools without custom bindings."""
     explicit_capability_names = frozenset(
-        capability.name
-        for capability in McpFromFieldsToolBindingABC.__registry__
+        capability.name for capability in McpFromFieldsToolBindingABC.__registry__
     )
     return tuple(
         declaration
@@ -1491,7 +1662,7 @@ class McpDataclassRequestToolBindingABC(
             parameter.name: parameter.annotation for parameter in parameters
         } | {"return": dict}
         tool.__signature__ = request_signature
-        openhcs_tool()(tool)
+        openhcs_tool(capability=capability)(tool)
 
 
 class GeneratedMcpDataclassRequestToolBinding:
@@ -1527,13 +1698,11 @@ class GeneratedMcpDataclassRequestToolBinding:
 
 
 def generated_dataclass_request_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration],
-    ...
+    type[AgentCapabilityDeclaration], ...
 ]:
     """Return declaration-owned dataclass request tools."""
     explicit_capability_names = frozenset(
-        capability.name
-        for capability in McpDataclassRequestToolBindingABC.__registry__
+        capability.name for capability in McpDataclassRequestToolBindingABC.__registry__
     )
     return tuple(
         declaration
@@ -1619,7 +1788,7 @@ class McpViewerRequestToolBindingABC(ABC, metaclass=AutoRegisterMeta):
             for parameter in request_signature.parameters.values()
         } | {"return": dict}
         tool.__signature__ = request_signature
-        openhcs_tool()(tool)
+        openhcs_tool(capability=capability)(tool)
 
     @classmethod
     def connection_parameters(cls) -> tuple[Parameter, ...]:
@@ -1805,15 +1974,9 @@ class GeneratedMcpViewerRequestToolBinding:
             raise TypeError(
                 f"{declaration.__name__} requires AgentViewerWindowRequestServiceInvocation."
             )
-        if (
-            invocation.timeout_profile
-            is CapabilityViewerControlTimeoutProfile.COMMAND
-        ):
+        if invocation.timeout_profile is CapabilityViewerControlTimeoutProfile.COMMAND:
             return McpViewerCommandTimeoutPolicy
-        if (
-            invocation.timeout_profile
-            is CapabilityViewerControlTimeoutProfile.DEFAULT
-        ):
+        if invocation.timeout_profile is CapabilityViewerControlTimeoutProfile.DEFAULT:
             return McpViewerTimeoutPolicy
         raise TypeError(
             f"Unsupported viewer timeout profile: {invocation.timeout_profile!r}"
@@ -1821,13 +1984,11 @@ class GeneratedMcpViewerRequestToolBinding:
 
 
 def generated_viewer_request_capability_declarations() -> tuple[
-    type[AgentCapabilityDeclaration],
-    ...
+    type[AgentCapabilityDeclaration], ...
 ]:
     """Return declaration-owned viewer request tools."""
     explicit_capability_names = frozenset(
-        capability.name
-        for capability in McpViewerRequestToolBindingABC.__registry__
+        capability.name for capability in McpViewerRequestToolBindingABC.__registry__
     )
     return tuple(
         declaration
@@ -1866,115 +2027,245 @@ class ViewerProbeMcpToolBinding(McpViewerRequestToolBindingABC):
         return ctx.viewer_window_service.probe_window(request)
 
 
-def build_server(context: OpenHCSAgentContext | None = None):
-    """Build a FastMCP server without importing PyQt or GUI services."""
-    try:
-        from mcp.server.fastmcp import FastMCP
-    except ImportError as exc:
-        raise RuntimeError(
-            "The OpenHCS MCP server requires the optional 'mcp' dependency. "
-            "Install with `pip install -e .[mcp]`."
-        ) from exc
+def build_server(
+    context: OpenHCSAgentContext | None = None,
+    *,
+    fastmcp_factory=None,
+    capability_transport: CapabilityTransport = CapabilityTransport.LOCAL_STDIO,
+    capability_surface_profile: LocalCapabilitySurfaceProfile | None = None,
+    invocation_observer: McpInvocationObserver | None = None,
+):
+    """Build the transport-neutral FastMCP surface without importing GUI services.
+
+    ``fastmcp_factory`` is the construction seam for a separately configured
+    transport wrapper. It must accept the canonical server name and instructions;
+    authentication and transport security remain the wrapper's responsibility.
+    """
+    if fastmcp_factory is None:
+        try:
+            from mcp.server.fastmcp import FastMCP
+        except ImportError as exc:
+            raise RuntimeError(
+                "The OpenHCS MCP server requires the optional 'mcp' dependency. "
+                "Install with `pip install -e .[mcp]`."
+            ) from exc
+        fastmcp_factory = FastMCP
 
     ctx = context or create_agent_context()
-    server = FastMCP("OpenHCS")
+    capability_surface_selection = AgentCapabilitySurfaceSelection(
+        transport=capability_transport,
+        local_profile=(
+            FullLocalCapabilitySurfaceProfile()
+            if capability_surface_profile is None
+            else capability_surface_profile
+        ),
+    )
+    server = fastmcp_factory(
+        "OpenHCS",
+        instructions=_mcp_server_instructions(capability_transport),
+    )
 
-    def openhcs_tool(*, allow_stale_server: bool = False):
+    def observe_invocation(
+        capability: AgentCapabilitySpec,
+        outcome: McpInvocationOutcome,
+    ) -> None:
+        if invocation_observer is None:
+            return
+        try:
+            invocation_observer(capability, outcome)
+        except Exception:
+            _LOGGER.exception(
+                "OpenHCS MCP invocation observer failed for %s",
+                capability.name,
+            )
+
+    def openhcs_tool(
+        *,
+        capability: AgentCapabilitySpec,
+        allow_stale_server: bool = False,
+    ):
         def decorator(fn):
             @wraps(fn)
             def guarded_tool(*args, **kwargs):
-                if (
-                    not allow_stale_server
-                    and _mcp_server_source_changed_since_import()
-                ):
+                if not allow_stale_server and _mcp_server_source_changed_since_import():
+                    observe_invocation(
+                        capability,
+                        McpInvocationOutcome.BLOCKED_STALE,
+                    )
                     return _mcp_server_stale_error(fn.__name__)
                 try:
-                    return fn(*args, **kwargs)
+                    result = fn(*args, **kwargs)
+                    projected_result = _mcp_transport_projected_result(
+                        capability,
+                        result,
+                        capability_surface_selection,
+                    )
+                    observe_invocation(
+                        capability,
+                        McpInvocationOutcome.SUCCEEDED,
+                    )
+                    return projected_result
                 except Exception as exc:
+                    observe_invocation(
+                        capability,
+                        McpInvocationOutcome.FAILED,
+                    )
                     return _mcp_tool_error(fn.__name__, exc)
 
-            server.tool()(guarded_tool)
+            guarded_tool.__annotations__ = dict(fn.__annotations__)
+            result_contract = _mcp_tool_result_contract(capability)
+            guarded_tool.__annotations__["return"] = result_contract
+            guarded_tool.__signature__ = inspect_signature(fn).replace(
+                return_annotation=result_contract
+            )
+            server.tool(
+                name=capability.name,
+                title=capability.title,
+                description=capability.description,
+                annotations=_mcp_tool_annotations(capability),
+                meta=_mcp_tool_meta(capability),
+                structured_output=True,
+            )(guarded_tool)
             return guarded_tool
 
         return decorator
 
-    for tool_binding_type in McpNoArgumentToolBindingABC.__registry__.values():
+    for tool_binding_type in _mcp_exposed_binding_types(
+        McpNoArgumentToolBindingABC.__registry__.values(),
+        capability_surface_selection,
+    ):
         tool_binding_type.bind_to_server(ctx, openhcs_tool)
-    for capability_declaration in generated_no_argument_capability_declarations():
+    for capability_declaration in _mcp_exposed_declarations(
+        generated_no_argument_capability_declarations(),
+        capability_surface_selection,
+    ):
         GeneratedMcpNoArgumentToolBinding.bind_to_server(
             capability_declaration,
             ctx,
             openhcs_tool,
         )
-    for tool_binding_type in McpUiConnectionToolBindingABC.__registry__.values():
+    for tool_binding_type in _mcp_exposed_binding_types(
+        McpUiConnectionToolBindingABC.__registry__.values(),
+        capability_surface_selection,
+    ):
         tool_binding_type.bind_to_server(ctx, openhcs_tool)
-    for capability_declaration in generated_ui_connection_capability_declarations():
+    for capability_declaration in _mcp_exposed_declarations(
+        generated_ui_connection_capability_declarations(),
+        capability_surface_selection,
+    ):
         GeneratedMcpUiConnectionToolBinding.bind_to_server(
             capability_declaration,
             ctx,
             openhcs_tool,
         )
-    for tool_binding_type in McpUiRequestToolBindingABC.__registry__.values():
+    for tool_binding_type in _mcp_exposed_binding_types(
+        McpUiRequestToolBindingABC.__registry__.values(),
+        capability_surface_selection,
+    ):
         tool_binding_type.bind_to_server(ctx, openhcs_tool)
-    for capability_declaration in generated_ui_request_capability_declarations():
+    for capability_declaration in _mcp_exposed_declarations(
+        generated_ui_request_capability_declarations(),
+        capability_surface_selection,
+    ):
         GeneratedMcpUiRequestToolBinding.bind_to_server(
             capability_declaration,
             ctx,
             openhcs_tool,
         )
-    for tool_binding_type in McpScalarInputToolBindingABC.__registry__.values():
+    for tool_binding_type in _mcp_exposed_binding_types(
+        McpScalarInputToolBindingABC.__registry__.values(),
+        capability_surface_selection,
+    ):
         tool_binding_type.bind_to_server(ctx, openhcs_tool)
-    for capability_declaration in generated_scalar_input_capability_declarations():
+    for capability_declaration in _mcp_exposed_declarations(
+        generated_scalar_input_capability_declarations(),
+        capability_surface_selection,
+    ):
         GeneratedMcpScalarInputToolBinding.bind_to_server(
             capability_declaration,
             ctx,
             openhcs_tool,
         )
-    for tool_binding_type in McpUiScalarInputToolBindingABC.__registry__.values():
+    for tool_binding_type in _mcp_exposed_binding_types(
+        McpUiScalarInputToolBindingABC.__registry__.values(),
+        capability_surface_selection,
+    ):
         tool_binding_type.bind_to_server(ctx, openhcs_tool)
-    for capability_declaration in generated_ui_scalar_capability_declarations():
+    for capability_declaration in _mcp_exposed_declarations(
+        generated_ui_scalar_capability_declarations(),
+        capability_surface_selection,
+    ):
         GeneratedMcpUiScalarInputToolBinding.bind_to_server(
             capability_declaration,
             ctx,
             openhcs_tool,
         )
-    for tool_binding_type in McpConfigPatchToolBindingABC.__registry__.values():
+    for tool_binding_type in _mcp_exposed_binding_types(
+        McpConfigPatchToolBindingABC.__registry__.values(),
+        capability_surface_selection,
+    ):
         tool_binding_type.bind_to_server(ctx, openhcs_tool)
-    for capability_declaration in generated_config_patch_capability_declarations():
+    for capability_declaration in _mcp_exposed_declarations(
+        generated_config_patch_capability_declarations(),
+        capability_surface_selection,
+    ):
         GeneratedMcpConfigPatchToolBinding.bind_to_server(
             capability_declaration,
             ctx,
             openhcs_tool,
         )
-    for tool_binding_type in McpFromFieldsToolBindingABC.__registry__.values():
+    for tool_binding_type in _mcp_exposed_binding_types(
+        McpFromFieldsToolBindingABC.__registry__.values(),
+        capability_surface_selection,
+    ):
         tool_binding_type.bind_to_server(ctx, openhcs_tool)
-    for capability_declaration in generated_from_fields_capability_declarations():
+    for capability_declaration in _mcp_exposed_declarations(
+        generated_from_fields_capability_declarations(),
+        capability_surface_selection,
+    ):
         GeneratedMcpFromFieldsToolBinding.bind_to_server(
             capability_declaration,
             ctx,
             openhcs_tool,
         )
-    for tool_binding_type in McpDataclassRequestToolBindingABC.__registry__.values():
+    for tool_binding_type in _mcp_exposed_binding_types(
+        McpDataclassRequestToolBindingABC.__registry__.values(),
+        capability_surface_selection,
+    ):
         tool_binding_type.bind_to_server(ctx, openhcs_tool)
-    for capability_declaration in generated_dataclass_request_capability_declarations():
+    for capability_declaration in _mcp_exposed_declarations(
+        generated_dataclass_request_capability_declarations(),
+        capability_surface_selection,
+    ):
         GeneratedMcpDataclassRequestToolBinding.bind_to_server(
             capability_declaration,
             ctx,
             openhcs_tool,
         )
-    for tool_binding_type in McpViewerRequestToolBindingABC.__registry__.values():
+    for tool_binding_type in _mcp_exposed_binding_types(
+        McpViewerRequestToolBindingABC.__registry__.values(),
+        capability_surface_selection,
+    ):
         tool_binding_type.bind_to_server(ctx, openhcs_tool)
-    for capability_declaration in generated_viewer_request_capability_declarations():
+    for capability_declaration in _mcp_exposed_declarations(
+        generated_viewer_request_capability_declarations(),
+        capability_surface_selection,
+    ):
         GeneratedMcpViewerRequestToolBinding.bind_to_server(
             capability_declaration,
             ctx,
             openhcs_tool,
         )
-    for capability_declaration in generated_resource_capability_declarations():
+    for capability_declaration in _mcp_exposed_declarations(
+        generated_resource_capability_declarations(),
+        capability_surface_selection,
+    ):
         GeneratedMcpResourceBinding.bind_to_server(
             capability_declaration,
             ctx,
             server,
+            capability_surface_selection,
+            observe_invocation,
         )
 
     return server
@@ -2004,6 +2295,12 @@ class McpServerStaleErrorResult:
     restart_required: bool
     restart_command: tuple[str, ...]
     restart_hint: str
+
+
+def _mcp_tool_result_contract(capability: AgentCapabilitySpec):
+    """Return the JSON-object wire contract for one nominal capability result."""
+    require_agent_type_contract(capability.output_contract)
+    return dict[str, Any]
 
 
 def _mcp_tool_error(tool_name: str, exception: Exception) -> JsonValue:
@@ -2051,7 +2348,9 @@ def _mcp_server_stale_error(tool_name: str) -> JsonValue:
             ),
             server_process_id=MCP_SERVER_PROCESS_ID,
             server_started_at_unix=MCP_SERVER_IMPORTED_AT_UNIX,
-            stale_source_paths=tuple(str(source_path) for source_path in stale_source_paths),
+            stale_source_paths=tuple(
+                str(source_path) for source_path in stale_source_paths
+            ),
             restart_required=True,
             restart_command=_mcp_server_restart_command(),
             restart_hint=MCP_SERVER_RESTART_HINT,

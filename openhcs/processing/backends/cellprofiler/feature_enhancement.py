@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from enum import Enum
 from abc import ABC, abstractmethod
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 import numpy as np
 import scipy.ndimage
 import skimage.exposure
@@ -17,24 +17,26 @@ from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     coerce_cellprofiler_enum,
 )
-from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.interop.cellprofiler.module_settings import (
     BoundModuleSettings,
+)
+from openhcs.interop.cellprofiler.module_declarations import (
     CellProfilerModule,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
 )
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.runtime_values import (
-    RuntimeImagePayloadContext,
+from openhcs.core.runtime_image_values import (
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
 )
-from openhcs.core.measurement_image_alignment import (
-    ReplicatedChannelMonochromeProjection,
-)
+from openhcs.core.artifacts import ImageArtifactType
+
+if TYPE_CHECKING:
+    from openhcs.interop.cellprofiler.parser import ModuleBlock
+
+
 class OperationMethod(Enum):
     ENHANCE = "Enhance"
     SUPPRESS = "Suppress"
@@ -77,14 +79,21 @@ def enhance_or_suppress_features(
     dic_angle: float = 0.0,
     dic_decay: float = 0.95,
 ) -> np.ndarray:
-    """Enhance or suppress image features using independent CP-compatible semantics."""
+    """Enhance or suppress image features using independent CP-compatible semantics.
+
+    Args:
+        radius: Characteristic feature radius in pixels for speckles, circles,
+            or related enhancement filters.
+        neurite_rescale: Rescale neurite-filter responses to the input intensity
+            range when enabled.
+        dark_hole_radius_min: Smallest dark-hole radius to enhance, in pixels.
+        dark_hole_radius_max: Largest dark-hole radius to enhance, in pixels.
+    """
     method = coerce_cellprofiler_enum(OperationMethod, method)
     enhance_method = coerce_cellprofiler_enum(EnhanceMethod, enhance_method)
     speckle_accuracy = coerce_cellprofiler_enum(SpeckleAccuracy, speckle_accuracy)
     neurite_method = coerce_cellprofiler_enum(NeuriteMethod, neurite_method)
-    image_data = ReplicatedChannelMonochromeProjection().plane(
-        image_payload_data(image), name="enhancement image"
-    )
+    image_data = np.asarray(image_payload_data(image))
     if image_data.dtype != np.float32 and image_data.dtype != np.float64:
         image_data = image_data.astype(np.float32)
     mask_context = FeatureEnhancementMaskContext(
@@ -105,29 +114,21 @@ def enhance_or_suppress_features(
             dic_decay=dic_decay,
         )
     )
-    return RuntimeImagePayloadContext(
-        np.asarray(result, dtype=np.float32),
-        mask=image_payload_mask(image),
-        metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
-    ).payload()
+    return (
+        image_payload_metadata(image)
+        .without_unit_interval_intensity_scale()
+        .payload_with(np.asarray(result, dtype=np.float32), image_payload_mask(image))
+    )
 
 
 class EnhanceOrSuppressFeaturesModule(
-    ImageArtifactInputModule, ImageArtifactOutputModule, CellProfilerModule
+    CellProfilerModule
 ):
     module_name = "EnhanceOrSuppressFeatures"
     function_name = "enhance_or_suppress_features"
     validated = True
     confidence = 1.0
-    image_input_settings = ("Select the input image",)
-    image_output_settings = ("Name the output image",)
-    ignored_settings = (
-        "Select the input image",
-        "Name the output image",
-        "Rescale result image",
-    )
-    setting_bindings = (
-        SettingToKeywordBinding("Select the operation", "method"),
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (SettingToKeywordBinding.input("Select the input image", ImageArtifactType),SettingToKeywordBinding.output("Name the output image", ImageArtifactType),SettingToKeywordBinding("Select the operation", "method"),
         SettingToKeywordBinding("Feature type", "enhance_method"),
         SettingToKeywordBinding("Smoothing scale", "smoothing_value"),
         SettingToKeywordBinding("Shear angle", "dic_angle"),
@@ -135,8 +136,8 @@ class EnhanceOrSuppressFeaturesModule(
         SettingToKeywordBinding("Enhancement method", "neurite_method"),
         SettingToKeywordBinding("Speed and accuracy", "speckle_accuracy"),
         SettingToKeywordBinding("Range of hole sizes", "dark_hole_radius_range"),
-        SettingToKeywordBinding("Feature size", "feature_size"),
-    )
+        SettingToKeywordBinding("Feature size", "feature_size"),)
+    ignored_settings = ("Rescale result image",)
 
     @classmethod
     def postprocess_bound_settings(
@@ -156,7 +157,6 @@ class EnhanceOrSuppressFeaturesModule(
         return BoundModuleSettings(
             kwargs,
             bound.unmapped_kwargs,
-            bound.invocation_options,
             bound.setting_coverage,
         )
 
@@ -165,7 +165,13 @@ class EnhanceOrSuppressFeaturesModule(
 def match_template(
     image: np.ndarray, template: np.ndarray | None = None, pad_input: bool = True
 ) -> np.ndarray:
-    """Match an image template using normalized cross-correlation."""
+    """Match an image template using normalized cross-correlation.
+
+    Args:
+        template: Reference pattern to locate; when omitted, the second input
+            slice is used as the template.
+        pad_input: Preserve the input spatial size by padding correlation edges.
+    """
     from skimage.feature import match_template as skimage_match_template
 
     if template is None:
@@ -455,5 +461,4 @@ class MatchTemplateModule(CellProfilerModule):
     module_name = "MatchTemplate"
     function_name = "match_template"
     validated = True
-    contract = ProcessingContract.PURE_3D
     confidence = 1.0

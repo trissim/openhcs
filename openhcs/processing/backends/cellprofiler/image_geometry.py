@@ -1,29 +1,22 @@
 """Shared CellProfiler image-plane geometry semantics."""
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING, ClassVar
+
+from openhcs.core.steps.function_runtime import RuntimeCallableKwargs
+from collections.abc import Callable
 from dataclasses import replace
 from enum import Enum
 from openhcs.core.artifacts import (
-    ArtifactSpecRef,
+    ArtifactSpecCollection,
     GroupLineageSourceRelation,
-    ArtifactSpec,
     ImageArtifactType,
+    InputStackBroadcastSourceRelation,
     ObjectLabelsArtifactType,
+    SourceStackLineageSourceRelation,
 )
-from openhcs.interop.cellprofiler.runtime.artifact_binding import (
-    RuntimeImageInputOrigin,
-)
-from openhcs.interop.cellprofiler.runtime.payload_types import (
-    CellProfilerKwargDict,
-    CellProfilerRuntimeValue,
-)
-from openhcs.interop.cellprofiler.runtime.runtime_profile import (
-    CellProfilerRuntimeProfileLogger,
-)
-from openhcs.interop.cellprofiler.runtime.special_input_policies import (
-    CellProfilerSpecialInputPolicyMixin,
-    SpecialInputBindingRequest,
-)
+from openhcs.core.source_bindings import StepSourceBindingsConfig
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
 from openhcs.interop.cellprofiler.settings_binder import (
@@ -34,254 +27,208 @@ from openhcs.interop.cellprofiler.settings_binder import (
     parse_cellprofiler_float,
     parse_cellprofiler_int,
 )
-from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
-    BinderSettingsSourceModule,
+from openhcs.interop.cellprofiler.module_settings import (
     BoundModuleSettings,
+)
+from openhcs.interop.cellprofiler.module_declarations import (
     CellProfilerModule,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
-    ModuleSettingsSourceModule,
+)
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
     ObjectArtifactInputModule,
-    ScopedMeasurementModule,
-    StructuringElementSettingsModule,
 )
 from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
     required_setting_value,
-    setting_name_matches,
-    setting_names,
     setting_values,
-    split_symbol_names,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import (
-    cellprofiler_enum_from_literal,
-)
-from openhcs.processing.backends.cellprofiler.thresholding import (
-    ThresholdSettingsModule,
-)
+from openhcs.core.callable_contract import CallableContract
+
+if TYPE_CHECKING:
+    from openhcs.core.function_patterns import FunctionInvocationKey
+    from openhcs.interop.cellprofiler.parser import ModuleBlock
+    from openhcs.interop.cellprofiler.settings_binder import SettingsBinder
 
 
-class MaskImageSource(Enum):
+class MaskSource(Enum):
     """Mask source domains exposed by MaskImage settings."""
 
     OBJECTS = "objects"
     IMAGE = "image"
 
 
-class MaskImageSpecialInputPolicy(CellProfilerSpecialInputPolicyMixin):
-    """Bind mask object labels in the current runtime plane."""
+class ResizeDimensionSpecification(Enum):
+    """Resize target-size authorities exposed by CellProfiler settings."""
 
-    def binding_current_image(
-        self,
-        *,
-        current_image: CellProfilerRuntimeValue,
-        primary_image: CellProfilerRuntimeValue | None,
-    ) -> CellProfilerRuntimeValue:
-        """Align mask labels to the image being masked."""
-        return primary_image if primary_image is not None else current_image
-
-    def bind(self, request: SpecialInputBindingRequest) -> CellProfilerKwargDict:
-        if len(request.parameter_names) != len(request.special_input_specs):
-            raise NotImplementedError(
-                f"{request.module_name} declares special_inputs {list(request.parameter_names)}, but compiled runtime inputs are {[spec.name for spec in request.special_input_specs]}."
-            )
-        bound: CellProfilerKwargDict = {}
-        alignment_image: CellProfilerRuntimeValue | None = None
-        deferred_object_specs: list[tuple[str, ArtifactSpec]] = []
-        CellProfilerRuntimeProfileLogger.log_module_profile(
-            "mask_image_special_input_specs",
-            0.0,
-            special_specs=tuple(
-                (
-                    (spec.artifact_type.value, spec.name)
-                    for spec in request.special_input_specs
-                )
-            ),
-            runtime_specs=tuple(
-                (
-                    (spec.artifact_type.value, spec.name)
-                    for spec in request.runtime_inputs
-                )
-            ),
-        )
-        for parameter_name, spec in zip(
-            request.parameter_names, request.special_input_specs, strict=True
-        ):
-            if spec.artifact_type is ObjectLabelsArtifactType:
-                deferred_object_specs.append((parameter_name, spec))
-                continue
-            value = (
-                request.runtime_value_without_current_image_projection(spec)
-                if spec.artifact_type is ImageArtifactType
-                and request.binding_scope.image_origin(spec)
-                is RuntimeImageInputOrigin.RUNTIME
-                else request.runtime_value(spec)
-            )
-            bound[parameter_name] = value
-            if spec.artifact_type is ImageArtifactType and alignment_image is None:
-                alignment_image = value
-        if alignment_image is None:
-            for spec in request.runtime_inputs:
-                if (
-                    spec.artifact_type is ImageArtifactType
-                    and request.binding_scope.image_origin(spec)
-                    is RuntimeImageInputOrigin.RUNTIME
-                ):
-                    alignment_image = (
-                        request.runtime_value_without_current_image_projection(spec)
-                    )
-                    break
-        for parameter_name, spec in deferred_object_specs:
-            bound[parameter_name] = (
-                request.current_image_aligned_object_label_runtime_value(
-                    spec, alignment_image=alignment_image
-                )
-            )
-        return bound
+    MANUAL = "Manual"
+    IMAGE = "Image"
 
 
 class MaskImageModule(
-    MaskImageSpecialInputPolicy,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
     ObjectArtifactInputModule,
     CellProfilerModule,
 ):
     module_name = "MaskImage"
     function_name = "mask_image"
     validated = True
-    contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
-    image_input_settings = ("Select the input image", "Select image for mask")
-    object_input_settings = ("Select object for mask",)
-    image_output_settings = ("Name the output image",)
-    ignored_settings = (
-        "Select the input image",
-        "Name the output image",
-        "Select object for mask",
-        "Select image for mask",
+    input_image_setting = SettingNameFamily("Select the input image")
+    masking_image_setting = SettingNameFamily("Select image for mask")
+    masking_objects_setting = SettingNameFamily("Select object for mask")
+    output_image_setting = SettingNameFamily("Name the output image")
+    mask_source_setting = SettingNameFamily("Use objects or an image as a mask?")
+    input_image_binding = SettingToKeywordBinding.input(
+        input_image_setting, ImageArtifactType
     )
-    setting_bindings = (
-        SettingToKeywordBinding(
-            "Use objects or an image as a mask?",
-            "mask_source",
-            cellprofiler_enum_value_setting_parser(MaskImageSource),
-        ),
+    masking_image_binding = SettingToKeywordBinding.input(
+        masking_image_setting,
+        ImageArtifactType,
+        runtime_parameter_name="mask",
+    )
+    masking_objects_binding = SettingToKeywordBinding.input(
+        masking_objects_setting,
+        ObjectLabelsArtifactType,
+        runtime_parameter_name="mask",
+    )
+    output_image_binding = SettingToKeywordBinding.output(
+        output_image_setting, ImageArtifactType
+    )
+    mask_source_binding = SettingToKeywordBinding(
+        mask_source_setting,
+        "mask_source",
+        cellprofiler_enum_value_setting_parser(MaskSource),
+    )
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (input_image_binding, masking_image_binding, masking_objects_binding,output_image_binding,mask_source_binding,
         SettingToKeywordBinding(
             "Invert the mask?", "invert_mask", parse_cellprofiler_bool
-        ),
-    )
+        ),)
 
     @classmethod
-    def compile_time_public_setting_records(cls, module, source_schema=None):
-        from openhcs.interop.cellprofiler.parser import ModuleSetting
+    def active_artifact_bindings(
+        cls,
+        module: "ModuleBlock | None" = None,
+        *,
+        invocation_key: "FunctionInvocationKey | None" = None,
+    ) -> tuple[SettingToKeywordBinding, ...]:
+        """Return the image or object mask selected by this module."""
 
-        records = [*super().compile_time_public_setting_records(module, source_schema)]
-        mask_source = coerce_cellprofiler_enum(
-            MaskImageSource,
-            optional_setting_value(module, "Use objects or an image as a mask?")
-            or MaskImageSource.IMAGE.value,
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
         )
-        if mask_source is not MaskImageSource.IMAGE:
-            return tuple(records)
-        records.extend(
-            ModuleSetting(setting_names(setting)[0], value)
-            for setting in cls.image_input_settings
-            for value in setting_values(module, setting)
+        if module is None:
+            return bindings
+        if cls._mask_source(module) is MaskSource.IMAGE:
+            inactive = cls.masking_objects_binding
+        else:
+            inactive = cls.masking_image_binding
+        return tuple(
+            binding for binding in bindings if binding is not inactive
         )
-        return tuple(records)
 
     @classmethod
-    def compile_time_main_flow_input_setting_records(cls, request, *, existing_records):
-        """Infer only the primary image from main flow for object-mask mode."""
-        if cls._compile_time_mask_source(existing_records) is not MaskImageSource.OBJECTS:
-            return super().compile_time_main_flow_input_setting_records(
-                request,
-                existing_records=existing_records,
-            )
-        from openhcs.interop.cellprofiler.parser import ModuleSetting
-
-        primary_setting = cls.image_input_setting_names()[0]
-        primary_setting_name = setting_names(primary_setting)[0]
-        if any(setting_name_matches(record.name, primary_setting) for record in existing_records):
-            return ()
-
-        flow_image_names = request.artifact_flow.image_names_for_group(
-            request.group_key
-        )
-        if not flow_image_names and request.main_flow_image_name is not None:
-            flow_image_names = (request.main_flow_image_name,)
-        if len(flow_image_names) != 1:
+    def _mask_source(cls, module: "ModuleBlock") -> MaskSource:
+        values = setting_values(module, cls.mask_source_setting)
+        if len(values) > 1:
             raise ValueError(
-                f"Module {request.module_name}({request.module_num}) object-mask "
-                "mode requires exactly one OpenHCS main-flow image input; "
-                f"group {request.group_key!r} has {flow_image_names!r}."
+                f"MaskImage declares multiple mask-source rows: {values!r}."
             )
-        return (ModuleSetting(primary_setting_name, flow_image_names[0]),)
+        return coerce_cellprofiler_enum(
+            MaskSource,
+            values[0] if values else MaskSource.IMAGE.value,
+        )
 
     @classmethod
-    def _compile_time_mask_source(
-        cls, existing_records: tuple["ModuleSetting", ...]
-    ) -> MaskImageSource:
-        for record in existing_records:
-            if setting_name_matches(record.name, "Use objects or an image as a mask?"):
-                return coerce_cellprofiler_enum(MaskImageSource, record.value)
-        return MaskImageSource.IMAGE
+    def finalize_artifact_contract_inputs(
+        cls,
+        module,
+        *,
+        invocation_key,
+        step_context,
+        artifact_inputs: ArtifactSpecCollection,
+    ):
+        inputs = ArtifactSpecCollection(
+            super().finalize_artifact_contract_inputs(
+                module,
+                invocation_key=invocation_key,
+                step_context=step_context,
+                artifact_inputs=artifact_inputs,
+            )
+        )
+        if cls._mask_source(module) is not MaskSource.IMAGE:
+            return inputs.specs
 
-    @classmethod
-    def artifact_contract_outputs(cls, builder, module):
-        primary_image_names = cls._mask_image_primary_image_names(module)
-        outputs = []
-        for output in super().artifact_contract_outputs(builder, module):
-            output_spec = output.artifact_spec
-            if (
-                output_spec.artifact_type is ImageArtifactType
-                and len(primary_image_names) == 1
-            ):
-                output_spec = replace(
-                    output_spec,
-                    relations=(
-                        *output_spec.relations,
-                        GroupLineageSourceRelation(
-                            source=ArtifactSpecRef.input(
-                                primary_image_names[0],
-                                ImageArtifactType,
-                            )
-                        ),
-                    ),
-                )
-                output = builder.declare_artifact(output_spec, module)
-            outputs.append(output)
-        return tuple(outputs)
-
-    @classmethod
-    def _mask_image_primary_image_names(cls, module):
-        primary_setting = cls.image_input_setting_names()[0]
-        declared_setting = cls.declared_setting_name(
-            cls.declared_setting_value(primary_setting)
+        image_names = setting_values(module, cls.input_image_setting)
+        mask_names = setting_values(module, cls.masking_image_setting)
+        if len(image_names) != 1 or len(mask_names) != 1:
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) requires exactly one "
+                "primary image and one image-mask input to declare stack broadcast; "
+                f"got primary={image_names!r}, mask={mask_names!r}."
+            )
+        image = inputs.require_by_name_and_artifact_type(
+            image_names[0],
+            ImageArtifactType,
+        )
+        mask = inputs.require_by_name_and_artifact_type(
+            mask_names[0],
+            ImageArtifactType,
+        )
+        if mask.ref() == image.ref():
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) cannot declare image "
+                f"{image.name!r} as both the primary image and image-mask input; "
+                "stack broadcast requires an exact distinct source."
+            )
+        related_mask = mask.with_group_scope_relation(
+            InputStackBroadcastSourceRelation(source=image.ref())
         )
         return tuple(
-            name
-            for value in setting_values(module, declared_setting)
-            for name in split_symbol_names(value)
+            related_mask if spec.ref() == mask.ref() else spec for spec in inputs.specs
         )
+
+
+def _parse_resize_method_setting(value: str) -> str:
+    normalized = value.strip().lower()
+    if "fraction" in normalized or "multiple" in normalized:
+        return "by_factor"
+    if "specific" in normalized or "dimension" in normalized or "manual" in normalized:
+        return "to_size"
+    return coerce_cellprofiler_enum(ResizeMethod, value).value
+
+
+def _parse_resize_interpolation_setting(value: str) -> str:
+    return coerce_cellprofiler_enum(InterpolationMethod, value).value
+
+
+def _parse_tile_first_corner_setting(value: str) -> str:
+    return coerce_cellprofiler_enum(PlaceFirst, value).value
+
+
+def _parse_tile_direction_setting(value: str) -> str:
+    return coerce_cellprofiler_enum(TileStyle, value).value
 
 
 class ResizeModule(
-    ImageArtifactInputModule, ImageArtifactOutputModule, BinderSettingsSourceModule
-):
+    CellProfilerModule):
     module_name = "Resize"
     function_name = "resize"
     validated = True
     function_variants = ("resize_volumetric",)
-    contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
-    image_input_settings = (
-        "Select the input image",
-        "Select the image with the desired dimensions",
+    input_image_setting = SettingNameFamily("Select the input image")
+    desired_dimensions_image_setting = SettingNameFamily(
+        "Select the image with the desired dimensions"
     )
-    image_output_settings = ("Name the output image",)
+    output_image_setting = SettingNameFamily("Name the output image")
+    input_image_binding = SettingToKeywordBinding.input(
+        input_image_setting, ImageArtifactType
+    )
+    desired_dimensions_image_binding = SettingToKeywordBinding.input(
+        desired_dimensions_image_setting, ImageArtifactType
+    )
+    output_image_binding = SettingToKeywordBinding.output(
+        output_image_setting, ImageArtifactType
+    )
     method_setting = SettingNameFamily("Resizing method")
     factor_setting = SettingNameFamily("Resizing factor")
     factor_x_setting = SettingNameFamily("X Resizing factor")
@@ -295,12 +242,83 @@ class ResizeModule(
     )
     planes_setting = SettingNameFamily("# of planes (z) in the final image")
     interpolation_setting = SettingNameFamily("Interpolation method")
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (input_image_binding,
+        desired_dimensions_image_binding,output_image_binding,SettingToKeywordBinding(
+            method_setting,
+            "resize_method",
+            _parse_resize_method_setting,
+        ),
+        SettingToKeywordBinding(
+            factor_x_setting,
+            "resizing_factor_x",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            factor_y_setting,
+            "resizing_factor_y",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            factor_z_setting,
+            "resizing_factor_z",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            width_setting,
+            "specific_width",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            height_setting,
+            "specific_height",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            planes_setting,
+            "specific_planes",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            interpolation_setting,
+            "interpolation",
+            _parse_resize_interpolation_setting,
+        ),)
+    dimension_specification_setting = SettingNameFamily(
+        "Method to specify the dimensions"
+    )
+    additional_image_count_setting = SettingNameFamily("Additional image count")
     volumetric_settings = (factor_z_setting, planes_setting)
 
     @classmethod
-    def settings_source(
+    def bind_settings(cls, module, *, binder):
+        """Bind scalar rows and the legacy shared X/Y factor row."""
+
+        dimension_method = optional_setting_value(
+            module, cls.dimension_specification_setting
+        )
+        resizing_method = optional_setting_value(module, cls.method_setting)
+        if (
+            dimension_method is not None
+            and resizing_method is not None
+            and cls.resize_method(resizing_method) is ResizeMethod.TO_SIZE
+            and "manual" not in dimension_method.casefold()
+        ):
+            raise NotImplementedError(
+                "Resize-to-size currently requires manually declared dimensions."
+            )
+        bound = cls._bind_declared_settings(module, binder=binder)
+        bound = bound.with_kwargs(cls._resize_kwargs(module, binder))
+        bound = bound.with_consumed_settings(
+            cls.factor_setting,
+            cls.dimension_specification_setting,
+            cls.additional_image_count_setting,
+        )
+        return cls._finalize_bound_settings(module, binder=binder, bound=bound)
+
+    @classmethod
+    def _resize_kwargs(
         cls, module: "ModuleBlock", binder: "SettingsBinder"
-    ) -> "CellProfilerKwargs":
+    ) -> "RuntimeCallableKwargs":
         del binder
         kwargs: dict[str, Any] = {}
         resizing_method = optional_setting_value(module, cls.method_setting)
@@ -338,22 +356,17 @@ class ResizeModule(
 
     @staticmethod
     def resize_method(value: str) -> ResizeMethod:
-        normalized = value.strip().lower()
-        if "fraction" in normalized or "multiple" in normalized:
-            return ResizeMethod.BY_FACTOR
-        if (
-            "specific" in normalized
-            or "dimension" in normalized
-            or "manual" in normalized
-        ):
-            return ResizeMethod.TO_SIZE
-        return coerce_cellprofiler_enum(ResizeMethod, value)
+        return ResizeMethod(_parse_resize_method_setting(value))
 
     @classmethod
     def resolve_function(
-        cls, module: "ModuleBlock", *, default_function_name: str | None = None
-    ) -> "ResolvedModuleFunction":
-        del default_function_name
+        cls,
+        module: "ModuleBlock",
+        *,
+        contract: "CallableContract",
+        source_bindings: "StepSourceBindingsConfig",
+    ) -> Callable[..., object]:
+        del contract, source_bindings
         function_name = (
             cls.function_variants[0]
             if any(
@@ -361,140 +374,217 @@ class ResizeModule(
             )
             else str(cls.function_name)
         )
-        return super().resolve_function(module, default_function_name=function_name)
+        return cls.require_callable(function_name)
 
     @classmethod
-    def compile_time_required_artifact_input_settings_for_records(
-        cls, existing_records
-    ):
-        del existing_records
-        primary_setting = cls.image_input_settings[0]
-        primary_names = set(setting_names(primary_setting))
-        return tuple(
-            (setting, capability_type)
-            for setting, capability_type in super().compile_time_required_artifact_input_settings()
-            if any(name in primary_names for name in setting_names(setting))
+    def active_artifact_bindings(
+        cls,
+        module: "ModuleBlock | None" = None,
+        *,
+        invocation_key: "FunctionInvocationKey | None" = None,
+    ) -> tuple[SettingToKeywordBinding, ...]:
+        """Declare the size-reference role selected by Resize behavior."""
+
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
         )
+        if module is None:
+            return bindings
+        resize_method = optional_setting_value(module, cls.method_setting)
+        dimension_specification = optional_setting_value(
+            module,
+            cls.dimension_specification_setting,
+        )
+        uses_dimensions_image = (
+            resize_method is not None
+            and cls.resize_method(resize_method) is ResizeMethod.TO_SIZE
+            and dimension_specification is not None
+            and coerce_cellprofiler_enum(
+                ResizeDimensionSpecification,
+                dimension_specification,
+            )
+            is ResizeDimensionSpecification.IMAGE
+        )
+        return tuple(
+            binding
+            for binding in bindings
+            if uses_dimensions_image
+            or binding is not cls.desired_dimensions_image_binding
+        )
+
+    @classmethod
+    def artifact_output_relations(
+        cls,
+        module,
+        *,
+        invocation_key,
+        step_context,
+        binding,
+        name,
+        artifact_inputs: ArtifactSpecCollection,
+        output_position: int,
+    ):
+        """Preserve plane identity unless volumetric resizing changes that axis."""
+
+        del invocation_key, step_context, binding, name, output_position
+        source = artifact_inputs.require_by_name_and_artifact_type(
+            required_setting_value(module, cls.input_image_setting),
+            ImageArtifactType,
+        )
+        relation_type = SourceStackLineageSourceRelation
+        if any(setting_values(module, item) for item in cls.volumetric_settings):
+            resize_method = cls.resize_method(
+                required_setting_value(module, cls.method_setting)
+            )
+            if (
+                resize_method is ResizeMethod.TO_SIZE
+                or parse_cellprofiler_float(
+                    required_setting_value(module, cls.factor_z_setting)
+                )
+                != 1.0
+            ):
+                relation_type = GroupLineageSourceRelation
+        return (relation_type(source=source.ref()),)
+
+
+def _parse_tile_assembly_method(value: str) -> str:
+    normalized = normalize_cellprofiler_setting_name(value)
+    if normalized != "within_cycles":
+        raise NotImplementedError(
+            f"Tile assembly method is not supported by the converter: {value!r}"
+        )
+    return normalized
 
 
 class TileModule(
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
-    ModuleSettingsSourceModule,
-):
+    CellProfilerModule):
     module_name = "Tile"
     function_name = "tile"
     validated = True
-    contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
-    image_input_settings = (
-        "Select an input image",
-        "Select an additional image to tile",
+    input_image_setting = SettingNameFamily("Select an input image")
+    additional_image_setting = SettingNameFamily("Select an additional image to tile")
+    output_image_setting = SettingNameFamily("Name the output image")
+    assembly_method_setting = SettingNameFamily("Tile assembly method")
+    rows_setting = SettingNameFamily("Final number of rows")
+    columns_setting = SettingNameFamily("Final number of columns")
+    first_corner_setting = SettingNameFamily("Image corner to begin tiling")
+    direction_setting = SettingNameFamily("Direction to begin tiling")
+    meander_setting = SettingNameFamily("Use meander mode?")
+    auto_rows_setting = SettingNameFamily("Automatically calculate number of rows?")
+    auto_columns_setting = SettingNameFamily(
+        "Automatically calculate number of columns?"
     )
-    image_output_settings = ("Name the output image",)
+    input_image_binding = SettingToKeywordBinding.input(
+        input_image_setting, ImageArtifactType
+    )
+    additional_image_binding = SettingToKeywordBinding.input(
+        additional_image_setting,
+        ImageArtifactType,
+        repeated=True,
+    )
+    output_image_binding = SettingToKeywordBinding.output(
+        output_image_setting, ImageArtifactType
+    )
+    assembly_method_binding = SettingToKeywordBinding(
+        assembly_method_setting,
+        "tile_assembly_method",
+        _parse_tile_assembly_method,
+    )
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (input_image_binding, additional_image_binding, output_image_binding,assembly_method_binding,
+        SettingToKeywordBinding(rows_setting, "rows", parse_cellprofiler_int),
+        SettingToKeywordBinding(columns_setting, "columns", parse_cellprofiler_int),
+        SettingToKeywordBinding(
+            first_corner_setting,
+            "place_first",
+            _parse_tile_first_corner_setting,
+        ),
+        SettingToKeywordBinding(
+            direction_setting,
+            "tile_style",
+            _parse_tile_direction_setting,
+        ),
+        SettingToKeywordBinding(
+            meander_setting,
+            "meander",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            auto_rows_setting,
+            "auto_rows",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            auto_columns_setting,
+            "auto_columns",
+            parse_cellprofiler_bool,
+        ),)
 
     @classmethod
-    def compile_time_main_flow_input_setting_records(
+    def artifact_output_relations(
         cls,
-        request,
+        module,
         *,
-        existing_records,
+        invocation_key,
+        step_context,
+        binding,
+        name,
+        artifact_inputs: ArtifactSpecCollection,
+        output_position: int,
     ):
-        """Infer repeated tile image inputs from available compiler artifacts."""
-        from openhcs.interop.cellprofiler.parser import ModuleSetting
+        """Preserve the primary tiled image's source-stack identity."""
+        del module, invocation_key, step_context, binding, name, output_position
+        image_inputs = artifact_inputs.for_artifact_type(ImageArtifactType).specs
+        if not image_inputs:
+            raise ValueError("Tile requires a primary image input.")
+        return (SourceStackLineageSourceRelation(source=image_inputs[0].ref()),)
 
-        primary_setting, additional_setting = cls.image_input_settings
-        primary_names = setting_names(primary_setting)
-        additional_names = setting_names(additional_setting)
-
-        existing_primary = tuple(
-            record.value
-            for record in existing_records
-            if any(setting_name_matches(record.name, name) for name in primary_names)
-        )
-        existing_additional = tuple(
-            record.value
-            for record in existing_records
-            if any(setting_name_matches(record.name, name) for name in additional_names)
-        )
-        available_images = request.artifact_flow.available_image_names_for_group(
-            request.group_key
-        )
-        consumed_images = {*existing_primary, *existing_additional}
-        remaining_images = tuple(
-            image_name for image_name in available_images if image_name not in consumed_images
+    @classmethod
+    def postprocess_bound_settings(
+        cls, module: "ModuleBlock", bound: "BoundModuleSettings"
+    ) -> "BoundModuleSettings":
+        additional_names = setting_values(module, cls.additional_image_setting)
+        if not additional_names:
+            return bound
+        return bound.with_kwargs(
+            {cls.additional_image_binding.require_parameter_name(): additional_names}
         )
 
-        records: list[ModuleSetting] = []
-        if not existing_primary and remaining_images:
-            records.append(ModuleSetting(primary_setting, remaining_images[0]))
-            consumed_images.add(remaining_images[0])
-            remaining_images = remaining_images[1:]
 
-        if existing_additional:
-            return tuple(records)
-        records.extend(
-            ModuleSetting(additional_setting, image_name)
-            for image_name in remaining_images
-            if image_name not in consumed_images
-        )
-        return tuple(records)
-
-    @staticmethod
-    def settings_source(module: "ModuleBlock") -> "CellProfilerKwargs":
-        assembly_method = module.get_setting(
-            "Tile assembly method", "Within cycles"
-        ).strip()
-        normalized_method = normalize_cellprofiler_setting_name(assembly_method)
-        if normalized_method != "within_cycles":
-            raise NotImplementedError(
-                f"Tile assembly method is not supported by the converter: {assembly_method!r}"
-            )
-        return {
-            "rows": 1,
-            "columns": 1,
-            "place_first": "top_left",
-            "tile_style": "row",
-            "meander": False,
-            "auto_rows": False,
-            "auto_columns": True,
-        }
-
-
-from dataclasses import replace
 from dataclasses import dataclass
 from enum import Enum
-import warnings
 from typing import Any
-from typing import Tuple
 import numpy as np
 from openhcs.core.aligned_image_payload import (
-    aligned_payload_slice,
+    AlignedImageStack,
     payload_slices_for_alignment,
 )
 from openhcs.core.image_shapes import (
-    is_color_image_slice,
-    is_color_image_stack,
-    is_grayscale_image_stack,
-    is_grayscale_volume_slice,
     trailing_spatial_target_shape,
 )
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.runtime_values import image_mask_for_data_domain
-from openhcs.core.runtime_values import image_payload_data
-from openhcs.core.runtime_values import image_payload_mask
-from openhcs.core.runtime_values import image_payload_metadata
-from openhcs.core.runtime_values import RuntimeImagePayloadContext
-from openhcs.core.source_matching import SourceImageSetIdentity
-from openhcs.core.source_plane_alignment import (
-    SourcePayloadPlaneIdentitySequence,
-    SourcePlaneIdentitySequenceAlignment,
+from openhcs.core.runtime_image_values import (
+    image_mask_for_data_domain,
 )
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.runtime_image_values import (
+    image_payload_data,
+)
+from openhcs.core.runtime_image_values import (
+    image_payload_mask,
+)
+from openhcs.core.runtime_image_values import (
+    image_payload_metadata,
+)
+from openhcs.core.runtime_array_values import RuntimeArrayData
+from openhcs.core.runtime_object_labels import (
+    object_label_dense_array,
+)
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelValue,
+)
 from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.materialization import csv_materializer
 
 
 class TileMethod(Enum):
@@ -531,13 +621,6 @@ class InterpolationMethod(Enum):
     NEAREST_NEIGHBOR = "nearest_neighbor"
     BILINEAR = "bilinear"
     BICUBIC = "bicubic"
-
-
-class MaskSource(Enum):
-    """CellProfiler MaskImage source type."""
-
-    OBJECTS = "objects"
-    IMAGE = "image"
 
 
 class FlipMethod(Enum):
@@ -720,8 +803,6 @@ class ResizeGeometry:
         self, mask: Any | None, *, input_shape: tuple[int, ...] | None = None
     ) -> np.ndarray | None:
         """Resize CP image validity masks using the same geometry as pixels."""
-        import scipy.ndimage as ndi
-
         if mask is None:
             if input_shape is None:
                 return None
@@ -729,41 +810,44 @@ class ResizeGeometry:
         else:
             mask_array = np.asarray(mask, dtype=bool)
         output_shape = self.output_shape[-mask_array.ndim :]
-        zoom = tuple(
-            (
-                output_size / input_size
-                for output_size, input_size in zip(
-                    output_shape, mask_array.shape, strict=True
-                )
+        resized = mask_array
+        valid_axes: list[np.ndarray] = []
+        for axis, (input_size, output_size) in enumerate(
+            zip(mask_array.shape, output_shape, strict=True)
+        ):
+            grid_positions = (
+                (np.arange(output_size, dtype=np.float64) + 0.5)
+                * input_size
+                / output_size
             )
-        )
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message="It is recommended to use mode = grid-constant instead of constant when grid_mode is True.",
-                category=UserWarning,
+            source_indices = np.clip(
+                np.floor(grid_positions).astype(np.intp), 0, input_size - 1
             )
-            resized = ndi.zoom(
-                mask_array.astype(np.float32),
-                zoom,
-                order=0,
-                mode="constant",
-                grid_mode=True,
+            resized = np.take(resized, source_indices, axis=axis)
+            valid_axes.append(
+                (grid_positions >= 0.5) & (grid_positions <= input_size - 0.5)
             )
-        return resized.astype(bool, copy=False)
+        for axis, valid in enumerate(valid_axes):
+            axis_shape = [1] * resized.ndim
+            axis_shape[axis] = valid.size
+            resized &= valid.reshape(axis_shape)
+        return resized
 
     def resize_payload(self, image: Any) -> Any:
         pixels = image_payload_data(image)
         output_pixels = self.resize_pixels(pixels)
         mask = image_mask_for_data_domain(source_payload=image, data=pixels)
-        metadata = image_payload_metadata(image).without_spatial_domain()
+        metadata = image_payload_metadata(image)
+        output_spatial_shape = metadata.spatial_shape_yx(output_pixels)
+        if output_spatial_shape is None:
+            raise ValueError("Resize output does not declare two spatial axes.")
+        metadata = metadata.with_spatial_resize(output_spatial_shape)
         if self.interpolation_order != 0:
             metadata = metadata.without_unit_interval_intensity_scale()
-        return RuntimeImagePayloadContext(
+        return metadata.payload_with(
             output_pixels,
-            mask=self.resize_mask(mask, input_shape=tuple(np.asarray(pixels).shape)),
-            metadata=metadata,
-        ).payload()
+            self.resize_mask(mask, input_shape=tuple(np.asarray(pixels).shape)),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -777,47 +861,54 @@ class CellProfilerPlaneGeometry:
     """One CellProfiler XY plane coordinate system."""
 
     shape: tuple[int, int]
-    spatial_rank: int = 2
 
     @classmethod
-    def from_image_plane(cls, image: np.ndarray) -> "CellProfilerPlaneGeometry":
-        image_array = collapse_singleton_plane_stack(
-            np.asarray(image_payload_data(image))
-        )
-        if image_array.ndim not in {2, 3}:
+    def from_image_plane(cls, image: Any) -> "CellProfilerPlaneGeometry":
+        image_array = np.asarray(image_payload_data(image))
+        metadata = image_payload_metadata(image)
+        if metadata.plane_axis is not None:
             raise ValueError(
-                f"CellProfiler image planes must be 2D grayscale, ZYX grayscale, or HWC color; got shape {image_array.shape!r}."
+                "CellProfiler plane geometry requires an already-projected image; "
+                f"got declared {metadata.plane_axis.value!r} plane axis."
             )
-        if is_grayscale_volume_slice(image_array):
-            return cls(
-                tuple((int(axis) for axis in image_array.shape[-2:])), spatial_rank=3
-            )
-        if image_array.ndim == 3 and (not is_color_image_slice(image_array)):
+        channel_axis = metadata.normalized_source_channel_axis(image_array)
+        expected_rank = 2 if channel_axis is None else 3
+        if image_array.ndim != expected_rank:
             raise ValueError(
-                f"CellProfiler 3D image planes must be HWC color; got shape {image_array.shape!r}."
+                "CellProfiler XY plane storage does not match its declared channel "
+                f"layout: shape {image_array.shape!r}, channel axis {channel_axis!r}."
             )
-        return cls(tuple((int(axis) for axis in image_array.shape[:2])))
+        spatial_shape = metadata.spatial_shape_yx(image_array)
+        if spatial_shape is None:
+            raise ValueError(
+                "CellProfiler XY plane metadata does not declare two spatial axes."
+            )
+        return cls(spatial_shape)
 
     @property
     def spatial_shape(self) -> tuple[int, ...]:
-        if self.spatial_rank == 2:
-            return self.shape
-        if self.spatial_rank == 3:
-            return self.shape
-        raise ValueError(f"Unsupported CellProfiler spatial rank {self.spatial_rank}.")
+        return self.shape
 
     def binary_mask(
-        self, mask: np.ndarray, *, threshold: float = 0.5, labels: bool = False
+        self,
+        mask: np.ndarray | ObjectLabelValue,
+        *,
+        threshold: float = 0.5,
+        labels: bool = False,
     ) -> np.ndarray:
         mask_array = binary_mask_plane(mask, threshold=threshold, labels=labels)
-        if self.spatial_rank == 3 and mask_array.ndim == 3:
-            return align_volume_mask_to_shape(mask_array, self.shape)
-        if self.spatial_rank == 3 and mask_array.ndim == 2:
-            return align_binary_mask_to_shape(mask_array, self.shape)
-        return align_binary_mask_to_shape(mask_array, self.shape)
+        if tuple(mask_array.shape) != self.spatial_shape:
+            raise ValueError(
+                "CellProfiler mask shape must exactly match the selected image "
+                f"domain; got {mask_array.shape!r} for {self.spatial_shape!r}."
+            )
+        return mask_array.astype(bool, copy=False)
 
     def label_plane(self, labels: np.ndarray) -> np.ndarray:
-        return align_label_plane_to_shape(labels.astype(np.int32), self.shape)
+        return align_label_plane_to_shape(
+            labels.astype(np.int32),
+            self.spatial_shape,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -829,361 +920,145 @@ class CellProfilerImageMaskPlane:
 
     def __post_init__(self) -> None:
         geometry = CellProfilerPlaneGeometry.from_image_plane(self.image)
-        if tuple(self.mask.shape[-2:]) != geometry.shape:
+        if tuple(self.mask.shape) != geometry.spatial_shape:
             raise ValueError(
                 f"CellProfilerImageMaskPlane mask shape must match image spatial shape; got mask {self.mask.shape!r} for image {geometry.shape!r}."
-            )
-        if geometry.spatial_rank == 2 and self.mask.ndim != 2:
-            raise ValueError(
-                f"CellProfilerImageMaskPlane 2D images require 2D masks; got mask {self.mask.shape!r}."
             )
 
 
 def aligned_image_mask_planes(
-    image: np.ndarray, mask: np.ndarray, *, threshold: float = 0.5, labels: bool = False
+    image: np.ndarray,
+    mask: np.ndarray | ObjectLabelValue,
+    *,
+    threshold: float = 0.5,
+    labels: bool = False,
 ) -> tuple[CellProfilerImageMaskPlane, ...]:
-    """Align a mask payload to each image plane using CellProfiler slice rules."""
+    """Pair image and mask planes with exact declared runtime cardinality."""
     image_planes = payload_slices_for_alignment(image)
     mask_planes = payload_slices_for_alignment(mask)
-    source_aligned_mask_planes = source_aligned_target_planes(image_planes, mask_planes)
-    if source_aligned_mask_planes is not None:
-        mask_planes = source_aligned_mask_planes
-    if len(image_planes) == 1 and len(mask_planes) > 1:
-        image_plane = image_planes[0]
-        geometry = CellProfilerPlaneGeometry.from_image_plane(image_plane)
-        matched_mask_plane = single_source_aligned_target_plane(
-            image_plane, mask_planes
+    if len(image_planes) != len(mask_planes):
+        raise ValueError(
+            "CellProfiler image and mask cardinalities must exactly match after "
+            f"typed runtime projection; got {len(image_planes)} image plane(s) "
+            f"and {len(mask_planes)} mask plane(s)."
         )
-        if matched_mask_plane is not None:
-            return (
-                CellProfilerImageMaskPlane(
-                    image=image_plane,
-                    mask=geometry.binary_mask(
-                        matched_mask_plane, threshold=threshold, labels=labels
-                    ),
-                ),
-            )
-        if geometry.spatial_rank == 3:
-            projected_volume_mask = np.stack(
-                tuple(
-                    (
-                        geometry.binary_mask(
-                            mask_plane, threshold=threshold, labels=labels
-                        )
-                        for mask_plane in mask_planes
-                    )
-                ),
-                axis=0,
-            )
-            return (
-                CellProfilerImageMaskPlane(
-                    image=image_plane, mask=projected_volume_mask
-                ),
-            )
-        projected_mask = np.any(
-            np.stack(
-                tuple(
-                    (
-                        geometry.binary_mask(
-                            mask_plane, threshold=threshold, labels=labels
-                        )
-                        for mask_plane in mask_planes
-                    )
-                )
+    return tuple(
+        CellProfilerImageMaskPlane(
+            image=image_plane,
+            mask=CellProfilerPlaneGeometry.from_image_plane(image_plane).binary_mask(
+                mask_plane,
+                threshold=threshold,
+                labels=labels,
             ),
-            axis=0,
         )
-        return (CellProfilerImageMaskPlane(image=image_plane, mask=projected_mask),)
-    if len(mask_planes) not in {1, len(image_planes)}:
-        projected_mask_planes = _project_volume_mask_planes(
-            image_planes, mask_planes, threshold=threshold, labels=labels
-        )
-        if projected_mask_planes is not None:
-            return projected_mask_planes
-        projected_mask_planes = _project_flat_mask_plane_groups(
-            image_planes, mask_planes, threshold=threshold, labels=labels
-        )
-        if projected_mask_planes is not None:
-            return projected_mask_planes
-        raise ValueError(
-            f"CellProfiler mask payload must have one plane or match image plane count; got image count {len(image_planes)} and mask count {len(mask_planes)}."
-        )
-    return tuple(
-        (
-            CellProfilerImageMaskPlane(
-                image=image_plane,
-                mask=CellProfilerPlaneGeometry.from_image_plane(
-                    image_plane
-                ).binary_mask(
-                    aligned_payload_slice(mask_planes, plane_index),
-                    threshold=threshold,
-                    labels=labels,
-                ),
-            )
-            for plane_index, image_plane in enumerate(image_planes)
-        )
-    )
-
-
-def source_aligned_target_planes(
-    image_planes: tuple[Any, ...], target_planes: tuple[Any, ...]
-) -> tuple[Any, ...] | None:
-    """Return target planes ordered by shared source-plane identity."""
-    target_indexes = SourcePlaneIdentitySequenceAlignment(
-        SourcePayloadPlaneIdentitySequence.from_payloads(
-            image_planes, SourceImageSetIdentity.DEFAULT_POLICY
-        ),
-        SourcePayloadPlaneIdentitySequence.from_payloads(
-            target_planes, SourceImageSetIdentity.DEFAULT_POLICY
-        ),
-    ).target_indexes_for_image_planes()
-    if target_indexes is None:
-        return None
-    return tuple((target_planes[index] for index in target_indexes))
-
-
-def single_source_aligned_target_plane(
-    image_plane: Any, target_planes: tuple[Any, ...]
-) -> Any | None:
-    """Return one target plane matching a single image plane by source identity."""
-    aligned = source_aligned_target_planes((image_plane,), target_planes)
-    if aligned is None:
-        return None
-    if len(aligned) != 1:
-        raise ValueError(
-            "Source-plane alignment returned an invalid single-plane result."
-        )
-    return aligned[0]
-
-
-def _project_volume_mask_planes(
-    image_planes: tuple[Any, ...],
-    mask_planes: tuple[Any, ...],
-    *,
-    threshold: float,
-    labels: bool,
-) -> tuple[CellProfilerImageMaskPlane, ...] | None:
-    """Project stacked volume masks onto each image plane when ranks permit."""
-    image_count = len(image_planes)
-    if image_count <= 1:
-        return None
-    mask_arrays = tuple((np.asarray(image_payload_data(mask)) for mask in mask_planes))
-    if not mask_arrays or any((mask.ndim < 3 for mask in mask_arrays)):
-        return None
-    if any((mask.shape[0] != image_count for mask in mask_arrays)):
-        return _project_all_volume_masks_to_image_planes(
-            image_planes, mask_arrays, threshold=threshold, labels=labels
-        )
-    return tuple(
-        (
-            CellProfilerImageMaskPlane(
-                image=image_plane,
-                mask=np.any(
-                    np.stack(
-                        tuple(
-                            (
-                                CellProfilerPlaneGeometry.from_image_plane(
-                                    image_plane
-                                ).binary_mask(
-                                    mask_array[plane_index],
-                                    threshold=threshold,
-                                    labels=labels,
-                                )
-                                for mask_array in mask_arrays
-                            )
-                        )
-                    ),
-                    axis=0,
-                ),
-            )
-            for plane_index, image_plane in enumerate(image_planes)
-        )
-    )
-
-
-def _project_flat_mask_plane_groups(
-    image_planes: tuple[Any, ...],
-    mask_planes: tuple[Any, ...],
-    *,
-    threshold: float,
-    labels: bool,
-) -> tuple[CellProfilerImageMaskPlane, ...] | None:
-    """Project flattened grouped mask stacks onto matching image-plane indices."""
-    image_count = len(image_planes)
-    mask_count = len(mask_planes)
-    if image_count <= 1 or mask_count <= image_count:
-        return None
-    if mask_count % image_count != 0:
-        return None
-    group_count = mask_count // image_count
-    return tuple(
-        (
-            CellProfilerImageMaskPlane(
-                image=image_plane,
-                mask=np.any(
-                    np.stack(
-                        tuple(
-                            (
-                                CellProfilerPlaneGeometry.from_image_plane(
-                                    image_plane
-                                ).binary_mask(
-                                    mask_planes[
-                                        group_index * image_count + plane_index
-                                    ],
-                                    threshold=threshold,
-                                    labels=labels,
-                                )
-                                for group_index in range(group_count)
-                            )
-                        )
-                    ),
-                    axis=0,
-                ),
-            )
-            for plane_index, image_plane in enumerate(image_planes)
-        )
-    )
-
-
-def _project_all_volume_masks_to_image_planes(
-    image_planes: tuple[Any, ...],
-    mask_arrays: tuple[np.ndarray, ...],
-    *,
-    threshold: float,
-    labels: bool,
-) -> tuple[CellProfilerImageMaskPlane, ...]:
-    """Collapse all mask leading axes, then broadcast the XY mask to each image."""
-    return tuple(
-        (
-            CellProfilerImageMaskPlane(
-                image=image_plane,
-                mask=np.any(
-                    np.stack(
-                        tuple(
-                            (
-                                _project_mask_array_to_geometry(
-                                    mask_array,
-                                    CellProfilerPlaneGeometry.from_image_plane(
-                                        image_plane
-                                    ),
-                                    threshold=threshold,
-                                    labels=labels,
-                                )
-                                for mask_array in mask_arrays
-                            )
-                        )
-                    ),
-                    axis=0,
-                ),
-            )
-            for image_plane in image_planes
-        )
-    )
-
-
-def _project_mask_array_to_geometry(
-    mask_array: np.ndarray,
-    geometry: CellProfilerPlaneGeometry,
-    *,
-    threshold: float,
-    labels: bool,
-) -> np.ndarray:
-    """Project every leading-axis mask plane into one XY geometry."""
-    mask_planes = mask_array.reshape((-1, *mask_array.shape[-2:]))
-    return np.any(
-        np.stack(
-            tuple(
-                (
-                    geometry.binary_mask(mask_plane, threshold=threshold, labels=labels)
-                    for mask_plane in mask_planes
-                )
-            )
-        ),
-        axis=0,
+        for image_plane, mask_plane in zip(image_planes, mask_planes, strict=True)
     )
 
 
 def restore_image_mask_planes(
     original_image: np.ndarray, masked_planes: tuple[np.ndarray, ...]
-) -> np.ndarray:
-    """Restore masked image planes to the original image payload rank."""
+) -> Any:
+    """Restore masked planes through the image payload's declared owner."""
     if not masked_planes:
         raise ValueError("Cannot restore an empty CellProfiler image plane set.")
-    if not _is_stack_payload(original_image) and len(masked_planes) == 1:
+    if isinstance(original_image, AlignedImageStack):
+        if len(masked_planes) != len(original_image.slices):
+            raise ValueError(
+                "Aligned image result cardinality must exactly match its owner: "
+                f"{len(masked_planes)} != {len(original_image.slices)}."
+            )
+        return original_image.with_slices(masked_planes)
+    if len(masked_planes) == 1:
         return masked_planes[0]
-    return np.stack(masked_planes).astype(masked_planes[0].dtype, copy=False)
+    raise ValueError(
+        "Multiple masked image planes require an AlignedImageStack owner; "
+        f"got {len(masked_planes)} unowned planes."
+    )
 
 
 def binary_mask_plane(
-    mask: np.ndarray, *, threshold: float = 0.5, labels: bool = False
+    mask: np.ndarray | ObjectLabelValue,
+    *,
+    threshold: float = 0.5,
+    labels: bool = False,
 ) -> np.ndarray:
     """Convert one CellProfiler mask/label plane to a 2D boolean mask."""
-    mask = collapse_singleton_plane_stack(np.asarray(mask))
+    mask_array = np.asarray(
+        object_label_dense_array(mask)
+        if isinstance(mask, ObjectLabelValue)
+        else image_payload_data(mask)
+    )
     if labels:
-        return mask > 0
-    if is_color_image_slice(mask):
-        return np.any(mask > threshold, axis=-1)
-    unique_values = np.unique(mask)
-    if len(unique_values) <= 2 and set(unique_values).issubset({0, 1, False, True}):
-        return mask > 0
-    return mask > threshold
+        if mask_array.ndim != 2:
+            raise ValueError(
+                "CellProfiler object masks require one projected 2-D label plane, "
+                f"got shape {mask_array.shape!r}."
+            )
+        return mask_array > 0
+    channel_axis = image_payload_metadata(mask).normalized_source_channel_axis(mask)
+    if channel_axis is not None:
+        return np.any(mask_array > threshold, axis=channel_axis)
+    if mask_array.ndim != 2:
+        raise ValueError(
+            "CellProfiler image masks require a projected 2-D image or an "
+            "explicit source channel axis; "
+            f"got shape {mask_array.shape!r}."
+        )
+    return mask_array > threshold
 
 
-def align_binary_mask_to_shape(mask: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
-    """Nearest-neighbor align a boolean mask to an XY shape."""
-    if mask.shape == shape:
-        return mask.astype(bool, copy=False)
-    return resize_nearest(mask.astype(np.uint8), shape).astype(bool)
+def align_binary_mask_to_shape(mask: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
+    """Validate a boolean mask against an explicitly selected image domain."""
+    if tuple(mask.shape) != tuple(shape):
+        raise ValueError(
+            "CellProfiler binary mask shape must exactly match the selected "
+            f"image domain; got {mask.shape!r} for {shape!r}."
+        )
+    return mask.astype(bool, copy=False)
 
 
 def align_volume_mask_to_shape(
     mask: np.ndarray, shape_yx: tuple[int, int]
 ) -> np.ndarray:
-    """Nearest-neighbor align every Z plane of a ZYX boolean mask."""
-    if mask.shape[-2:] == shape_yx:
-        return mask.astype(bool, copy=False)
-    return np.stack(
-        tuple((align_binary_mask_to_shape(plane, shape_yx) for plane in mask)), axis=0
-    )
+    """Validate a volume mask's spatial shape after domain selection."""
+    if mask.ndim != 3 or tuple(mask.shape[-2:]) != tuple(shape_yx):
+        raise ValueError(
+            "CellProfiler volume mask must be ZYX with the selected XY shape; "
+            f"got {mask.shape!r} for {shape_yx!r}."
+        )
+    return mask.astype(bool, copy=False)
 
 
 def align_label_plane_to_shape(
-    labels: np.ndarray, shape: tuple[int, int]
+    labels: np.ndarray, shape: tuple[int, ...]
 ) -> np.ndarray:
-    """Nearest-neighbor align a dense label plane to an XY shape."""
-    labels = collapse_singleton_plane_stack(np.asarray(labels))
-    if 0 in labels.shape:
-        return np.zeros(shape, dtype=np.int32)
-    if labels.shape == shape:
-        return labels.astype(np.int32, copy=False)
-    return resize_nearest(labels, shape).astype(np.int32)
-
-
-def resize_nearest(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
-    """Resize a discrete 2D payload without interpolation artifacts."""
-    from skimage.transform import resize
-
-    return resize(image, shape, order=0, preserve_range=True, anti_aliasing=False)
-
-
-def collapse_singleton_plane_stack(payload: Any) -> Any:
-    """Collapse one-plane label/mask stacks to CellProfiler's 2D plane form."""
-    payload_array = np.asarray(payload)
-    if payload_array.ndim == 3 and payload_array.shape[0] == 1:
-        return payload_array[0]
-    return payload
+    """Validate dense labels against an explicitly selected image domain."""
+    labels = np.asarray(labels)
+    if tuple(labels.shape) != tuple(shape):
+        raise ValueError(
+            "CellProfiler label shape must exactly match the selected image "
+            f"domain; got {labels.shape!r} for {shape!r}."
+        )
+    return labels.astype(np.int32, copy=False)
 
 
 @numpy(contract=ProcessingContract.FLEXIBLE)
 @special_inputs("mask")
 def mask_image(
     image: np.ndarray,
-    mask: np.ndarray,
+    mask: np.ndarray | ObjectLabelValue,
     mask_source: MaskSource = MaskSource.IMAGE,
     invert_mask: bool = False,
     binary_threshold: float = 0.5,
 ) -> np.ndarray:
-    """Mask an image using CellProfiler image/object mask semantics."""
+    """Mask an image using CellProfiler image/object mask semantics.
+
+    Args:
+        mask: Mask image when ``mask_source`` is ``Image``, or object-label value
+            when it is ``Objects``; its spatial shape must match the input image.
+        binary_threshold: Image-mask pixels above this value are foreground;
+            ignored when masking from object labels.
+    """
     mask_source = coerce_cellprofiler_enum(MaskSource, mask_source)
     masked_plane_results = tuple(
         (
@@ -1202,17 +1077,15 @@ def mask_image(
     output_mask = restore_image_mask_planes(
         image_payload_data(image), tuple((result[1] for result in masked_plane_results))
     )
-    return RuntimeImagePayloadContext(
-        masked_data,
-        mask=output_mask,
-        metadata=replace(image_payload_metadata(image), mask_defines_border=True),
-    ).payload()
+    return replace(
+        image_payload_metadata(image), mask_defines_border=True
+    ).payload_with(masked_data, output_mask)
 
 
 def masked_image_plane(
     image: np.ndarray, binary_mask: np.ndarray, *, invert_mask: bool
 ) -> tuple[np.ndarray, np.ndarray]:
-    image_data = collapse_singleton_plane_stack(image_payload_data(image))
+    image_data = image_payload_data(image)
     if invert_mask:
         binary_mask = ~binary_mask
     projected_mask = image_mask_for_data_domain(
@@ -1228,7 +1101,7 @@ def masked_image_plane(
         existing_projected_mask = image_mask_for_data_domain(
             source_payload=image_data,
             data=image_data,
-            explicit_mask=collapse_singleton_plane_stack(existing_mask),
+            explicit_mask=existing_mask,
         )
         if existing_projected_mask is not None:
             binary_mask = binary_mask & np.asarray(existing_projected_mask, dtype=bool)
@@ -1238,27 +1111,17 @@ def masked_image_plane(
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
-def mask_image_with_binary(image: np.ndarray, invert_mask: bool = False) -> np.ndarray:
+def mask_image_with_binary(
+    image: np.ndarray, invert_mask: bool = False
+) -> RuntimeArrayData:
     """Return a binary mask plane, optionally inverted."""
-    binary_mask = image > 0.5
+    binary_mask = image_payload_data(image) > 0.5
     if invert_mask:
         binary_mask = ~binary_mask
-    return binary_mask.astype(np.float32)
-
-
-@numpy(contract=ProcessingContract.PURE_3D)
-def mask_image_stacked(
-    image: np.ndarray, invert_mask: bool = False, binary_threshold: float = 0.5
-) -> np.ndarray:
-    """Mask an image where image[0] is pixels and image[1] is mask."""
-    img = image[0]
-    mask = image[1]
-    binary_mask = binary_mask_plane(mask, threshold=binary_threshold)
-    if invert_mask:
-        binary_mask = ~binary_mask
-    result = img.copy()
-    result[~binary_mask] = 0
-    return result[np.newaxis, ...]
+    return image_payload_metadata(image).payload_with(
+        binary_mask.astype(np.float32),
+        image_payload_mask(image),
+    )
 
 
 def tile_grid_dimensions(
@@ -1318,13 +1181,15 @@ def tile(
     meander: bool = False,
     auto_rows: bool = False,
     auto_columns: bool = False,
-) -> np.ndarray:
+) -> RuntimeArrayData:
     """Tile multiple images together to form a CellProfiler montage image."""
-    if image.ndim not in {3, 4}:
+    image_data = image_payload_data(image)
+    if image_data.ndim not in {3, 4}:
         raise ValueError(
-            f"Tile expects an image stack shaped (N, H, W) or (N, H, W, C), got {image.shape!r}."
+            "Tile expects an image stack shaped (N, H, W) or (N, H, W, C), "
+            f"got {image_data.shape!r}."
         )
-    num_images = image.shape[0]
+    num_images = image_data.shape[0]
     if num_images == 0:
         raise ValueError("No images provided for tiling")
     geometry = TileSettings(
@@ -1340,16 +1205,26 @@ def tile(
         raise ValueError(
             f"Grid size ({geometry.rows}x{geometry.columns}={geometry.tile_count}) is too small for {num_images} images"
         )
-    tile_height = image.shape[1]
-    tile_width = image.shape[2]
+    tile_height = image_data.shape[1]
+    tile_width = image_data.shape[2]
     output_height = tile_height * geometry.rows
     output_width = tile_width * geometry.columns
     output_pixels = np.zeros(
-        tile_output_shape(image, output_height, output_width), dtype=image.dtype
+        tile_output_shape(image_data, output_height, output_width),
+        dtype=image_data.dtype,
     )
     for image_index in range(num_images):
-        put_tile(image[image_index], output_pixels, image_index, geometry)
-    return output_pixels[np.newaxis, ...]
+        put_tile(image_data[image_index], output_pixels, image_index, geometry)
+    metadata = image_payload_metadata(image)
+    if metadata.plane_axis is not None:
+        metadata = metadata.collapse_leading_plane_axis()
+    return (
+        metadata.replace_fields(
+            source_channel_axis=-1 if image_data.ndim == 4 else None
+        )
+        .with_spatial_resize((output_height, output_width))
+        .payload_with(output_pixels, None)
+    )
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -1403,14 +1278,6 @@ def resize_volumetric(
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
-@special_outputs(
-    (
-        "rotation_results",
-        csv_materializer(
-            fields=["slice_index", "rotation_angle"], analysis_type="rotation"
-        ),
-    )
-)
 def flip_and_rotate(
     image: np.ndarray,
     flip_method: FlipMethod = FlipMethod.NONE,
@@ -1422,11 +1289,27 @@ def flip_and_rotate(
     second_pixel_y: int = 100,
     alignment_direction: AlignmentDirection = AlignmentDirection.HORIZONTALLY,
     crop_rotated_edges: bool = True,
-) -> Tuple[np.ndarray, RotationResult]:
-    """Flip and/or rotate a CellProfiler image plane."""
+) -> tuple[RuntimeArrayData, RotationResult]:
+    """Flip and/or rotate a CellProfiler image plane.
+
+    Args:
+        flip_method: Reflection to apply before any rotation.
+        rotate_method: Choose no rotation, a direct angle, or alignment from two
+            pixel coordinates.
+        rotation_angle: Counterclockwise rotation in degrees for angle mode.
+        first_pixel_x: Horizontal coordinate of the first alignment point.
+        first_pixel_y: Vertical coordinate of the first alignment point.
+        second_pixel_x: Horizontal coordinate of the second alignment point.
+        second_pixel_y: Vertical coordinate of the second alignment point.
+        alignment_direction: Orient the line through the two alignment points
+            horizontally or vertically in coordinate mode.
+        crop_rotated_edges: Remove padded rotation borders by retaining the
+            largest centered rectangular image region.
+    """
     from scipy.ndimage import rotate as scipy_rotate
 
-    pixel_data = image.copy()
+    image_data = image_payload_data(image)
+    pixel_data = image_data.copy()
     if flip_method != FlipMethod.NONE:
         if flip_method == FlipMethod.LEFT_TO_RIGHT:
             pixel_data = np.flip(pixel_data, axis=1)
@@ -1449,7 +1332,8 @@ def flip_and_rotate(
             pixel_data = scipy_rotate(pixel_data, angle, reshape=True, order=1)
             if crop_rotated_edges:
                 crop_mask = (
-                    scipy_rotate(np.ones(image.shape[:2]), angle, reshape=True) > 0.5
+                    scipy_rotate(np.ones(image_data.shape[:2]), angle, reshape=True)
+                    > 0.5
                 )
                 half = (np.array(crop_mask.shape) // 2).astype(int)
                 quartercrop = crop_mask[half[0] :, half[1] :]
@@ -1476,13 +1360,11 @@ def flip_and_rotate(
                         max_j = max_area_idx[1] + 1
                         pixel_data = pixel_data[min_i:max_i, min_j:max_j]
     return (
-        pixel_data.astype(np.float32),
+        image_payload_metadata(image)
+        .with_spatial_resize(pixel_data.shape[:2])
+        .payload_with(pixel_data.astype(np.float32), None),
         RotationResult(slice_index=0, rotation_angle=angle),
     )
-
-
-def _is_stack_payload(payload: Any) -> bool:
-    return is_grayscale_image_stack(payload) or is_color_image_stack(payload)
 
 
 class FlipAndRotateModule(CellProfilerModule):

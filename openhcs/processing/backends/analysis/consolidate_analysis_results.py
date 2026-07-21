@@ -25,14 +25,15 @@ import numpy as np
 import pandas as pd
 
 from openhcs.core.memory import numpy as numpy_func
+from openhcs.core.config import (
+    AnalysisConsolidationConfig,
+    PlateMetadataConfig,
+)
 from openhcs.core.pipeline.function_contracts import artifact_outputs
+from openhcs.core.vfs_protocol import PlateInputDirectory
 from openhcs.processing.materialization import CsvOptions, MaterializationSpec
 
 if TYPE_CHECKING:
-    from openhcs.core.config import (
-        AnalysisConsolidationConfig,
-        PlateMetadataConfig,
-    )
     from openhcs.microscopes.microscope_interfaces import FilenameParser
 
 logger = logging.getLogger(__name__)
@@ -136,7 +137,7 @@ class CsvAnalysisTableSource(AnalysisTableSource):
 
     results_directory: Path
     well_resolver: AnalysisWellResolver
-    consolidation_config: "AnalysisConsolidationConfig"
+    analysis_consolidation_config: "AnalysisConsolidationConfig"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "results_directory", Path(self.results_directory))
@@ -160,10 +161,10 @@ class CsvAnalysisTableSource(AnalysisTableSource):
     def _candidate_files(self) -> tuple[Path, ...]:
         files = tuple(
             file_path
-            for extension in self.consolidation_config.file_extensions
+            for extension in self.analysis_consolidation_config.file_extensions
             for file_path in self.results_directory.glob(f"*{extension}")
         )
-        exclude_patterns = _exclude_patterns(self.consolidation_config)
+        exclude_patterns = _exclude_patterns(self.analysis_consolidation_config)
         if not exclude_patterns:
             return files
         return tuple(
@@ -197,10 +198,10 @@ class CsvAnalysisTableSource(AnalysisTableSource):
 
 
 def _exclude_patterns(
-    consolidation_config: "AnalysisConsolidationConfig",
+    analysis_consolidation_config: "AnalysisConsolidationConfig",
 ) -> tuple[str, ...]:
     """Return typed exclude regex patterns from consolidation config."""
-    patterns = consolidation_config.exclude_patterns
+    patterns = analysis_consolidation_config.exclude_patterns
     if patterns is None:
         return ()
     if isinstance(patterns, str):
@@ -491,7 +492,7 @@ def summarize_analysis_file(
 
 def consolidate_analysis_table_records(
     records: tuple[AnalysisTableRecord, ...],
-    consolidation_config: "AnalysisConsolidationConfig",
+    analysis_consolidation_config: "AnalysisConsolidationConfig",
 ) -> pd.DataFrame:
     """Create the per-well summary table from typed analysis records."""
     records_by_well: dict[str, dict[str, AnalysisTableRecord]] = {}
@@ -524,7 +525,7 @@ def consolidate_analysis_table_records(
 
     return order_consolidated_summary_columns(
         pd.DataFrame(summary_rows),
-        metaxpress_style=consolidation_config.metaxpress_style,
+        metaxpress_style=analysis_consolidation_config.metaxpress_style,
     )
 
 
@@ -585,11 +586,11 @@ def write_consolidated_analysis_summary(
     summary_df: pd.DataFrame,
     output_path: str,
     results_dir: Path,
-    consolidation_config: "AnalysisConsolidationConfig",
+    analysis_consolidation_config: "AnalysisConsolidationConfig",
     plate_metadata_config: "PlateMetadataConfig",
 ) -> None:
     """Persist one consolidated analysis summary."""
-    if consolidation_config.metaxpress_style:
+    if analysis_consolidation_config.metaxpress_style:
         save_with_metaxpress_header(
             summary_df,
             output_path,
@@ -621,7 +622,7 @@ def analysis_well_resolver(
 
 def consolidate_analysis_results(
     results_directory: str,
-    consolidation_config: "AnalysisConsolidationConfig",
+    analysis_consolidation_config: "AnalysisConsolidationConfig",
     plate_metadata_config: "PlateMetadataConfig",
     *,
     well_ids: list[str] | None = None,
@@ -633,7 +634,7 @@ def consolidate_analysis_results(
 
     Args:
         results_directory: Directory containing analysis CSV files
-        consolidation_config: Configuration for consolidation behavior
+        analysis_consolidation_config: Configuration for consolidation behavior
         plate_metadata_config: Configuration for plate metadata
         output_path: Optional path to save consolidated CSV
 
@@ -642,10 +643,13 @@ def consolidate_analysis_results(
     """
     results_dir = Path(results_directory)
     logger.info("Consolidating analysis results from: %s", results_dir)
-    logger.debug("consolidation_config type: %s", type(consolidation_config))
-    logger.debug("well_pattern: %r", consolidation_config.well_pattern)
-    logger.debug("file_extensions: %r", consolidation_config.file_extensions)
-    logger.debug("exclude_patterns: %r", consolidation_config.exclude_patterns)
+    logger.debug(
+        "analysis_consolidation_config type: %s",
+        type(analysis_consolidation_config),
+    )
+    logger.debug("well_pattern: %r", analysis_consolidation_config.well_pattern)
+    logger.debug("file_extensions: %r", analysis_consolidation_config.file_extensions)
+    logger.debug("exclude_patterns: %r", analysis_consolidation_config.exclude_patterns)
 
     source = CsvAnalysisTableSource(
         results_directory=results_dir,
@@ -653,7 +657,7 @@ def consolidate_analysis_results(
             filename_parser=filename_parser,
             well_ids=tuple(well_ids or ()),
         ),
-        consolidation_config=consolidation_config,
+        analysis_consolidation_config=analysis_consolidation_config,
     )
     records = source.records()
     logger.info(
@@ -663,7 +667,7 @@ def consolidate_analysis_results(
     )
     summary_df = consolidate_analysis_table_records(
         records,
-        consolidation_config,
+        analysis_consolidation_config,
     )
     logger.info(
         "Created summary table with %d wells and %d metrics",
@@ -674,13 +678,13 @@ def consolidate_analysis_results(
     resolved_output_path = (
         output_path
         if output_path is not None
-        else str(results_dir / consolidation_config.output_filename)
+        else str(results_dir / analysis_consolidation_config.output_filename)
     )
     write_consolidated_analysis_summary(
         summary_df,
         resolved_output_path,
         results_dir,
-        consolidation_config,
+        analysis_consolidation_config,
         plate_metadata_config,
     )
     return summary_df
@@ -695,19 +699,23 @@ def consolidate_analysis_results(
 )
 def consolidate_analysis_results_pipeline(
     image_stack: np.ndarray,
-    results_directory: str,
-    consolidation_config: "AnalysisConsolidationConfig",
+    results_directory: PlateInputDirectory,
+    analysis_consolidation_config: "AnalysisConsolidationConfig",
     plate_metadata_config: "PlateMetadataConfig",
 ) -> tuple[np.ndarray, pd.DataFrame]:
     """
     Pipeline-compatible version of consolidate_analysis_results.
 
     This function can be used as a FunctionStep in OpenHCS pipelines.
+
+    Args:
+        results_directory: Plate-relative directory containing the analysis CSV
+            files to combine into one well-level summary.
     """
     # Call the main consolidation function
     summary_df = consolidate_analysis_results(
         results_directory=results_directory,
-        consolidation_config=consolidation_config,
+        analysis_consolidation_config=analysis_consolidation_config,
         plate_metadata_config=plate_metadata_config,
         output_path=None,  # Will be handled by materialization
     )
@@ -966,7 +974,7 @@ def consolidate_results_directories(
         try:
             consolidate_fn(
                 results_directory=str(results_dir),
-                consolidation_config=analysis_consolidation_config,
+                analysis_consolidation_config=analysis_consolidation_config,
                 plate_metadata_config=plate_metadata_config,
                 filename_parser=filename_parser,
             )

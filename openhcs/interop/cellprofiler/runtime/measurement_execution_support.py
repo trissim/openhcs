@@ -4,45 +4,40 @@ from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass
+from functools import partial
 import time
+from typing import TYPE_CHECKING
 
-from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode, payload_slice_count
-from openhcs.core.artifacts import ArtifactSpec
+from openhcs.core.aligned_image_payload import (
+    ImagePayloadExecutionMode,
+    payload_slice_count,
+)
+from openhcs.core.artifacts import ArtifactOutputPlan, ArtifactSpec
+from openhcs.core.callable_contract import CallableContract
 from openhcs.core.pipeline.function_contracts import (
-    ObjectLabelMeasurementExecution,
-    object_label_measurement_execution_from_callable,
+    ObjectLabelInputExecutionMode,
 )
 from openhcs.core.runtime_profile import RuntimeProfileTimer
-from openhcs.core.runtime_values import (
+from openhcs.core.runtime_tabular_values import (
     ColumnarRows,
+)
+from openhcs.core.runtime_object_labels import (
     ObjectLabelValue,
 )
-from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
+from openhcs.core.runtime_batch_contracts import RuntimeBatchInvocationRequest
 from openhcs.interop.cellprofiler.runtime.adapter import CellProfilerRuntimeAdapter
 from openhcs.interop.cellprofiler.runtime.function_contract_execution import (
     _execute_runtime_batch_invocation,
 )
 from openhcs.interop.cellprofiler.runtime.invocation import CellProfilerMeasurementImage
-from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-    CellProfilerMeasurementRecord,
-    MeasurementRowColumnarMaterialization,
-)
 from openhcs.interop.cellprofiler.runtime.object_measurement_execution import (
-    CellProfilerObjectMeasurementExecutionDomainPolicy,
-    CellProfilerObjectMeasurementLabelArgumentPolicy,
-    CellProfilerObjectMeasurementLabelArgumentRequest,
+    CellProfilerObjectMeasurementExecutionPolicy,
 )
 from openhcs.interop.cellprofiler.runtime.measurement_rows import (
-    _measurement_rows_from_output,
-    _split_cellprofiler_output,
+    measurement_table_rows,
 )
-from openhcs.interop.cellprofiler.runtime.payload_types import (
-    CellProfilerFunction,
-    CellProfilerRuntimeValue,
-    CellProfilerRuntimeValues,
-    CellProfilerRuntimeValueSequence,
-    MeasurementRowsInput,
-)
+from openhcs.core.runtime_output_matching import RuntimeReturnedOutputMatcher
+from openhcs.core.steps.function_runtime import RuntimeCallableArgument, RuntimeFunctionOutput
 from openhcs.interop.cellprofiler.runtime.profile_fields import (
     dense_label_argument_stage_profile_fields,
     object_label_stage_profile_fields,
@@ -52,43 +47,37 @@ from openhcs.interop.cellprofiler.runtime.runtime_profile import (
     CellProfilerRuntimeProfileLogger,
 )
 
+if TYPE_CHECKING:
+    from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
+    from openhcs.interop.cellprofiler.runtime.object_measurement_row_policies import (
+        CellProfilerObjectMeasurementRowPolicy,
+        ObjectMeasurementInvocation,
+    )
+
 ObjectMeasurementBatchExecutor = Callable[
     [
-        CellProfilerFunction,
+        Callable[..., RuntimeFunctionOutput],
         tuple[RuntimeBatchInvocationRequest, ...],
-        Callable[[CellProfilerFunction, RuntimeBatchInvocationRequest], CellProfilerRuntimeValue],
+        Callable[
+            [Callable[..., RuntimeFunctionOutput], RuntimeBatchInvocationRequest],
+            RuntimeCallableArgument,
+        ],
     ],
-    Sequence[CellProfilerRuntimeValue],
+    Sequence[RuntimeCallableArgument],
 ]
-
-
-def project_object_label_payload_for_measurement_image(
-    measurement_image: CellProfilerMeasurementImage,
-    payload: CellProfilerRuntimeValue,
-    *,
-    adapter: CellProfilerRuntimeAdapter | None = None,
-) -> CellProfilerRuntimeValue:
-    """Return payload labels aligned to the measurement image's local pixels."""
-    if isinstance(payload, ObjectLabelValue):
-        return measurement_image.prepare_object_labels(
-            payload,
-            plane_projector=adapter,
-        ).source_projected_payload
-    return payload
 
 
 def object_measurement_runtime_inputs(
     *,
-    module_name: str,
-    func: CellProfilerFunction,
+    object_label_execution: ObjectLabelInputExecutionMode,
     measurement_image: CellProfilerMeasurementImage,
     object_spec: ArtifactSpec,
-    label_payload: CellProfilerRuntimeValue,
+    label_payload: RuntimeCallableArgument,
     adapter: CellProfilerRuntimeAdapter,
 ) -> tuple[
-    CellProfilerRuntimeValue,
-    CellProfilerRuntimeValue,
-    CellProfilerRuntimeValue,
+    CellProfilerMeasurementImage,
+    RuntimeCallableArgument,
+    RuntimeCallableArgument,
     ImagePayloadExecutionMode,
     tuple["CellProfilerRuntimeProfileEvent", ...],
     float,
@@ -136,7 +125,13 @@ def object_measurement_runtime_inputs(
                 prepared_labels.source_projected_labels,
             )
         )
-    aligned_image = prepared_labels.aligned_image
+    aligned_measurement_image = prepared_labels.aligned_source
+    if not isinstance(aligned_measurement_image, CellProfilerMeasurementImage):
+        raise TypeError(
+            "CellProfiler object measurement preparation must preserve "
+            "CellProfilerMeasurementImage, got "
+            f"{type(aligned_measurement_image).__name__}."
+        )
     measurement_labels = prepared_labels.measurement_labels
     if profile_enabled:
         profile_events.append(
@@ -157,23 +152,14 @@ def object_measurement_runtime_inputs(
                 completion_label_payload,
             )
         )
-    object_label_execution = object_label_measurement_execution_from_callable(func)
-    semantic_label_payload = (
-        prepared_labels.source_projected_payload
-        if object_label_execution is ObjectLabelMeasurementExecution.FULL_STACK
-        else completion_label_payload
+    execution_policy = CellProfilerObjectMeasurementExecutionPolicy.for_enum_member(
+        object_label_execution
     )
-    executable_labels = (
-        CellProfilerObjectMeasurementLabelArgumentPolicy.for_enum_member(
-            object_label_execution
-        ).label_argument(
-            CellProfilerObjectMeasurementLabelArgumentRequest(
-                dense_labels=measurement_labels,
-                label_payload=semantic_label_payload,
-                measurement_image_payload=measurement_image.payload,
-            )
-        )
+    semantic_label_payload = execution_policy.semantic_label_payload(
+        prepared_labels.source_projected_payload,
+        completion_label_payload,
     )
+    executable_labels = semantic_label_payload
     if profile_enabled:
         profile_events.append(
             dense_label_stage_event(
@@ -184,18 +170,13 @@ def object_measurement_runtime_inputs(
             )
         )
     label_align_seconds = label_align_timer.elapsed()
-    execution_mode = (
-        CellProfilerObjectMeasurementExecutionDomainPolicy.for_module(
-            module_name
-        ).execution_mode(
-            func,
-            semantic_label_payload,
-            measurement_image.execution_mode,
-            runtime_slice_count=payload_slice_count(measurement_image.payload),
-        )
+    execution_mode = execution_policy.image_execution_mode(
+        semantic_label_payload,
+        measurement_image.execution_mode,
+        runtime_slice_count=payload_slice_count(aligned_measurement_image.payload),
     )
     return (
-        aligned_image,
+        aligned_measurement_image,
         executable_labels,
         completion_label_payload,
         execution_mode,
@@ -208,13 +189,13 @@ def object_measurement_runtime_inputs(
 def object_measurement_batch_group_key(
     *,
     object_spec: ArtifactSpec,
-    labels: CellProfilerRuntimeValue,
+    labels: RuntimeCallableArgument,
 ) -> tuple[Hashable, ...] | None:
     """Return a batch key only for labels with explicit object-label semantics."""
     if not isinstance(labels, ObjectLabelValue):
         return None
     return (
-        ("object_artifact", (object_spec.name, object_spec.artifact_type)),
+        ("object_artifact", object_spec.ref()),
         ("object_labels", labels.object_label_semantic_identity()),
     )
 
@@ -226,12 +207,12 @@ class PreparedObjectMeasurementInvocation(RuntimeBatchInvocationRequest):
     measurement_image: CellProfilerMeasurementImage
     object_spec: ArtifactSpec
     invocation: "ObjectMeasurementInvocation"
-    completion_label_payload: CellProfilerRuntimeValue
+    completion_label_payload: RuntimeCallableArgument
 
     def record_output(
         self,
         output_recorder: "ObjectMeasurementOutputRecorder",
-        raw_output: CellProfilerRuntimeValue,
+        raw_output: RuntimeCallableArgument,
     ) -> None:
         """Record one raw invocation output through the shared recorder."""
         output_recorder.record(
@@ -247,7 +228,8 @@ class PreparedObjectMeasurementInvocation(RuntimeBatchInvocationRequest):
 class PreparedObjectMeasurementInvocationBatch:
     """Execute prepared object-measurement invocations in declared batch order."""
 
-    func: CellProfilerFunction
+    callable_contract: CallableContract
+    func: Callable[..., RuntimeFunctionOutput]
     function_name: str
     invocations: tuple[PreparedObjectMeasurementInvocation, ...]
     batch_executor: ObjectMeasurementBatchExecutor | None
@@ -269,6 +251,7 @@ class PreparedObjectMeasurementInvocationBatch:
         for prepared_invocation in self.invocations:
             contract_started_at = time.perf_counter()
             raw_output = _execute_runtime_batch_invocation(
+                self.callable_contract,
                 self.func,
                 prepared_invocation,
             )
@@ -285,7 +268,10 @@ class PreparedObjectMeasurementInvocationBatch:
             self.require_batch_executor()(
                 self.func,
                 self.invocations,
-                _execute_runtime_batch_invocation,
+                partial(
+                    _execute_runtime_batch_invocation,
+                    self.callable_contract,
+                ),
             )
         )
         contract_execute_seconds = time.perf_counter() - contract_started_at
@@ -325,7 +311,7 @@ def object_label_stage_event(
     stage: str,
     measurement_image: CellProfilerMeasurementImage,
     object_spec: ArtifactSpec,
-    value: CellProfilerRuntimeValue,
+    value: RuntimeCallableArgument,
 ) -> "CellProfilerRuntimeProfileEvent":
     return CellProfilerRuntimeProfileEvent(
         "cp_per_object_label_stage",
@@ -343,7 +329,7 @@ def dense_label_stage_event(
     stage: str,
     measurement_image: CellProfilerMeasurementImage,
     object_spec: ArtifactSpec,
-    value: CellProfilerRuntimeValue,
+    value: RuntimeCallableArgument,
 ) -> "CellProfilerRuntimeProfileEvent":
     return CellProfilerRuntimeProfileEvent(
         "cp_per_object_label_stage",
@@ -364,7 +350,9 @@ class CellProfilerRuntimeProfiler:
     module_name: str
     function_name: str
 
-    def record(self, event: str, elapsed: float, **fields: CellProfilerRuntimeValue) -> None:
+    def record(
+        self, event: str, elapsed: float, **fields: RuntimeCallableArgument
+    ) -> None:
         CellProfilerRuntimeProfileLogger.log_module_profile(
             event,
             elapsed,
@@ -381,40 +369,6 @@ class CellProfilerRuntimeProfiler:
             self.record(event.name, event.elapsed, **dict(event.fields))
 
 
-@dataclass(frozen=True, slots=True)
-class PerImageMeasurementProfile:
-    """Profile event facade for per-image measurement execution."""
-
-    profiler: CellProfilerRuntimeProfiler
-
-    def measurement_images(self, elapsed: float, images: int) -> None:
-        self.profiler.record(
-            "cp_per_image_measurement_images",
-            elapsed,
-            images=images,
-        )
-
-    def prepare_kwargs(self, elapsed: float) -> None:
-        self.profiler.record("cp_per_image_prepare_kwargs", elapsed)
-
-    def contract_execute(self, elapsed: float) -> None:
-        self.profiler.record("cp_per_image_contract_execute", elapsed)
-
-    def split_rows(self, elapsed: float, rows: int) -> None:
-        self.profiler.record(
-            "cp_per_image_split_rows",
-            elapsed,
-            rows=rows,
-        )
-
-    def record_measurements(self, elapsed: float, rows: int) -> None:
-        self.profiler.record(
-            "cp_per_image_record_measurements",
-            elapsed,
-            rows=rows,
-        )
-
-
 @dataclass(slots=True)
 class ObjectMeasurementOutputTimings:
     """Mutable timings for per-object measurement output handling."""
@@ -428,31 +382,39 @@ class ObjectMeasurementOutputTimings:
 class ObjectMeasurementOutputRecorder:
     """Record one per-object CellProfiler measurement output."""
 
+    callable_contract: CallableContract
+    measurement_output_plan: ArtifactOutputPlan
     row_policy: "CellProfilerObjectMeasurementRowPolicy"
-    func: CellProfilerFunction
+    module_type: type["CellProfilerModule"]
+    func: Callable[..., RuntimeFunctionOutput]
     adapter: CellProfilerRuntimeAdapter
     measurement_images: tuple["CellProfilerMeasurementImage", ...]
     object_inputs: tuple[ArtifactSpec, ...]
-    contains_image_measurement_rows: bool
-    combined_rows: list[CellProfilerRuntimeValue]
+    image_measurement_rows: list[ColumnarRows]
     columnar_rows: list[ColumnarRows]
     timings: ObjectMeasurementOutputTimings
 
     def record(
         self,
-        raw_output: CellProfilerRuntimeValue,
+        raw_output: RuntimeCallableArgument,
         *,
         measurement_image: "CellProfilerMeasurementImage",
         object_spec: ArtifactSpec,
-        completion_label_payload: CellProfilerRuntimeValue,
+        completion_label_payload: RuntimeCallableArgument,
         invocation: "ObjectMeasurementInvocation",
     ) -> None:
-        artifact_values = self.artifact_values(raw_output)
-        emitted_measurement_rows = _measurement_rows_from_output(artifact_values)
+        split_started_at = time.perf_counter()
+        _returned_values, matched_outputs = RuntimeReturnedOutputMatcher(
+            callable_contract=self.callable_contract,
+            returned_output=raw_output,
+        ).resolve_plan_values((self.measurement_output_plan,))
+        self.timings.split_seconds += time.perf_counter() - split_started_at
+        _output_plan, _output_spec, output_value = matched_outputs[0]
+        emitted_measurement_rows = measurement_table_rows(output_value)
         CellProfilerRuntimeProfileLogger.log_module_profile(
             "cp_per_object_output_rows",
             0.0,
-            artifact_count=len(artifact_values),
+            artifact_count=len(matched_outputs),
             emitted_type=type(emitted_measurement_rows).__name__,
             emitted_rows=len(emitted_measurement_rows),
         )
@@ -477,25 +439,15 @@ class ObjectMeasurementOutputRecorder:
             measurement_image,
         )
 
-    def artifact_values(
-        self,
-        raw_output: CellProfilerRuntimeValue,
-    ) -> CellProfilerRuntimeValues:
-        split_started_at = time.perf_counter()
-        _ignored_main_output, artifact_values = _split_cellprofiler_output(raw_output)
-        self.timings.split_seconds += time.perf_counter() - split_started_at
-        return artifact_values
-
     def completed_measurement_rows(
         self,
-        object_measurement_rows: MeasurementRowsInput,
-        completion_label_payload: CellProfilerRuntimeValue,
-    ) -> MeasurementRowsInput:
+        object_measurement_rows: ColumnarRows,
+        completion_label_payload: RuntimeCallableArgument,
+    ) -> ColumnarRows:
         complete_rows_started_at = time.perf_counter()
         measurement_rows = self.row_policy.complete_rows(
             object_measurement_rows,
             label_payload=completion_label_payload,
-            func=self.func,
         )
         self.timings.complete_rows_seconds += (
             time.perf_counter() - complete_rows_started_at
@@ -504,62 +456,52 @@ class ObjectMeasurementOutputRecorder:
 
     def project_owned_rows(
         self,
-        rows: MeasurementRowsInput,
+        rows: ColumnarRows,
         *,
         measurement_image: "CellProfilerMeasurementImage",
         row_object_name: str | None,
-        record_object_name: str | None,
-    ) -> MeasurementRowsInput:
+    ) -> ColumnarRows:
         ownership = self.row_policy.row_ownership(
             measurement_image=measurement_image,
             measurement_images=self.measurement_images,
             object_name=row_object_name,
             object_inputs=self.object_inputs,
-            contains_image_measurement_rows=self.contains_image_measurement_rows,
+            contains_image_measurement_rows=bool(self.image_measurement_rows),
         )
         owned_rows = ownership.annotate_rows(rows)
-        if isinstance(rows, ColumnarRows) and not isinstance(owned_rows, ColumnarRows):
-            raise TypeError(
-                "Columnar measurement ownership annotation must preserve "
-                f"ColumnarRows, got {type(owned_rows).__name__}."
-            )
+        owned_rows = self.module_type.prepare_measurement_record_rows(
+            owned_rows,
+            source_image_name=measurement_image.source_image_name,
+        )
         return owned_rows
 
     def record_non_object_rows(
         self,
-        rows: CellProfilerRuntimeValueSequence,
+        rows: ColumnarRows,
         measurement_image: "CellProfilerMeasurementImage",
     ) -> None:
-        if not rows:
+        if not rows.row_count():
             return
         annotate_started_at = time.perf_counter()
         projected_rows = self.project_owned_rows(
             rows,
             measurement_image=measurement_image,
             row_object_name=None,
-            record_object_name=None,
         )
-        self.combined_rows.extend(projected_rows)
+        self.image_measurement_rows.append(projected_rows)
         self.timings.annotate_seconds += time.perf_counter() - annotate_started_at
 
     def record_object_rows(
         self,
-        rows: MeasurementRowsInput,
+        rows: ColumnarRows,
         object_spec: ArtifactSpec,
         measurement_image: "CellProfilerMeasurementImage",
     ) -> None:
         annotate_started_at = time.perf_counter()
-        if not isinstance(rows, ColumnarRows):
-            rows, _fields = MeasurementRowColumnarMaterialization.from_rows(rows).table()
         projected_rows = self.project_owned_rows(
             rows,
             measurement_image=measurement_image,
             row_object_name=object_spec.name,
-            record_object_name=object_spec.name,
         )
-        if isinstance(projected_rows, ColumnarRows):
-            self.columnar_rows.append(projected_rows)
-            self.timings.annotate_seconds += time.perf_counter() - annotate_started_at
-            return
-        self.combined_rows.extend(projected_rows)
+        self.columnar_rows.append(projected_rows)
         self.timings.annotate_seconds += time.perf_counter() - annotate_started_at

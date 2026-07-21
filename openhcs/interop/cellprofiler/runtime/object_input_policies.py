@@ -2,270 +2,240 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
-from metaclass_registry import RegistryFamily, RegistryKeyAttribute
-
-from openhcs.core.artifacts import ArtifactSpec, ArtifactType
-from openhcs.interop.cellprofiler.runtime.bound_parameters import (
-    MeasurementTableCollectionParameterName,
-    RuntimeBoundParameterName,
-    RuntimeSliceSequenceParameterName,
-    declared_measurement_table_parameter_names,
-    declared_runtime_bound_parameter_names,
-    declared_runtime_slice_sequence_parameter_names,
+from openhcs.core.artifacts import ArtifactSpec
+from openhcs.core.callable_contract import KeywordRuntimeParameter
+from openhcs.core.pipeline.function_contracts import (
+    annotation_accepts_runtime_type,
+    resolved_callable_parameter,
 )
-from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
-    ObjectInputBindingRequest,
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelSet,
+    ObjectLabelValue,
 )
-from openhcs.interop.cellprofiler.runtime.payload_types import CellProfilerKwargDict
-from openhcs.interop.cellprofiler.runtime.policy_registry import (
-    CellProfilerModulePolicyAutoRegisterMeta,
-    CellProfilerModulePolicyLookupMixin,
-    CellProfilerModulePolicyRegistryKey,
+from openhcs.interop.cellprofiler.module_measurement_features import (
+    CellProfilerModuleAuthority,
 )
+from collections.abc import Callable
+from openhcs.core.steps.function_runtime import RuntimeCallableArgument, RuntimeFunctionOutput
+from openhcs.interop.cellprofiler.runtime.artifact_binding import RuntimeInputBindingRequest
 
-class CellProfilerObjectInputPolicyMixin(ABC):
-    """Declaration-owned object-label input binding behavior."""
+if TYPE_CHECKING:
+    from openhcs.interop.cellprofiler.settings_binder import SettingToKeywordBinding
 
-    binds_without_declared_inputs: ClassVar[bool] = False
-    supported_non_object_input_kinds: ClassVar[frozenset[ArtifactType]] = frozenset()
 
-    @abstractmethod
-    def bind(
-        self,
-        request: ObjectInputBindingRequest,
-    ) -> CellProfilerKwargDict:
-        """Return absorbed-function kwargs for object-label runtime inputs."""
+class CellProfilerObjectInputPolicyMixin(CellProfilerModuleAuthority):
+    """Nominal owner for declared object-label input binding."""
 
-    def bound_parameter_names(
-        self,
-        plan: "CellProfilerModuleRuntimePlan",
-    ) -> tuple[str, ...]:
-        """Return callable parameters supplied by this runtime input policy."""
-        names = self.declared_bound_parameter_names()
-        if names:
-            return names if plan.object_inputs or type(self).binds_without_declared_inputs else ()
-        if plan.object_inputs or type(self).binds_without_declared_inputs:
-            raise NotImplementedError(
-                f"{type(self).__name__} must declare its runtime-bound callable "
-                "parameters through an inherited binding contract."
+    @classmethod
+    def validate_declared_object_inputs(
+        cls,
+        *,
+        module_name: str,
+        object_inputs: tuple[ArtifactSpec, ...],
+    ) -> None:
+        del cls, module_name, object_inputs
+
+    @classmethod
+    def validate_object_label_parameter_abi(
+        cls,
+        func: Callable[..., RuntimeFunctionOutput],
+    ) -> None:
+        """Terminate object-label ABI validation for policies without bindings."""
+
+        del cls, func
+
+    @classmethod
+    def _validate_object_label_parameters(
+        cls,
+        func: Callable[..., RuntimeFunctionOutput],
+        parameter_names: tuple[str, ...],
+    ) -> None:
+        """Require policy-owned object-label parameters to expose their payload ABI."""
+
+        for parameter_name in parameter_names:
+            parameter = resolved_callable_parameter(func, parameter_name)
+            if annotation_accepts_runtime_type(
+                parameter.annotation,
+                ObjectLabelSet,
+            ):
+                continue
+            raise TypeError(
+                f"{cls.module_name} object-label parameter {parameter.name!r} "
+                "must explicitly accept ObjectLabelValue, "
+                f"got {parameter.annotation!r}."
             )
-        return ()
-
-    def validate_declared_object_inputs(
-        self,
-        *,
-        module_name: str,
-        object_inputs: tuple[ArtifactSpec, ...],
-    ) -> None:
-        """Validate object-input semantics while building the runtime plan."""
-
-    def validate_runtime_plan_object_inputs(
-        self,
-        *,
-        module_name: str,
-        object_label_inputs: tuple[ArtifactSpec, ...],
-        special_input_names: tuple[str, ...],
-    ) -> None:
-        """Validate the object inputs visible to this runtime plan."""
-        self.validate_declared_object_inputs(
-            module_name=module_name,
-            object_inputs=self.runtime_plan_validation_object_inputs(
-                object_label_inputs=object_label_inputs,
-                special_input_names=special_input_names,
-            ),
-        )
-
-    def runtime_plan_validation_object_inputs(
-        self,
-        *,
-        object_label_inputs: tuple[ArtifactSpec, ...],
-        special_input_names: tuple[str, ...],
-    ) -> tuple[ArtifactSpec, ...]:
-        """Return object-label inputs owned by object-input validation."""
-        if special_input_names:
-            return ()
-        return object_label_inputs
-
-    def declared_bound_parameter_names(self) -> tuple[str, ...]:
-        """Return bound parameter names from policy role declarations."""
-        return declared_runtime_bound_parameter_names(type(self))
-
-    def runtime_slice_sequence_parameter_names(
-        self,
-        plan: "CellProfilerModuleRuntimePlan",
-    ) -> tuple[str, ...]:
-        """Return bound tuple parameters that project item-wise per slice."""
-        if plan.object_inputs or type(self).binds_without_declared_inputs:
-            return declared_runtime_slice_sequence_parameter_names(type(self))
-        return ()
-
-    def measurement_table_parameter_names(
-        self,
-        plan: "CellProfilerModuleRuntimePlan",
-    ) -> tuple[str, ...]:
-        """Return bound parameters carrying measurement-table collections."""
-        if plan.object_inputs or type(self).binds_without_declared_inputs:
-            return declared_measurement_table_parameter_names(type(self))
-        return ()
 
 
-class CellProfilerObjectInputPolicy(
-    CellProfilerObjectInputPolicyMixin,
-    CellProfilerModulePolicyLookupMixin,
-    ABC,
-    metaclass=CellProfilerModulePolicyAutoRegisterMeta,
-):
-    """Registered fallback policy root for CellProfiler object-label inputs."""
+class ObjectLabelsRuntimeParameter(KeywordRuntimeParameter):
+    """Runtime-bound ordered object-label inputs for one invocation."""
 
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
-    declaration_policy_bases = (CellProfilerObjectInputPolicyMixin,)
-
-
-class UnsupportedObjectInputPolicy(CellProfilerObjectInputPolicy):
-    """Reject undeclared object-input semantics instead of guessing."""
-
-    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
-
-    def bound_parameter_names(
-        self,
-        plan: "CellProfilerModuleRuntimePlan",
-    ) -> tuple[str, ...]:
-        del plan
-        return ()
-
-    def validate_declared_object_inputs(
-        self,
-        *,
-        module_name: str,
-        object_inputs: tuple[ArtifactSpec, ...],
-    ) -> None:
-        if not object_inputs:
-            return
-        raise NotImplementedError(
-            f"{module_name} has object runtime inputs "
-            f"{[spec.name for spec in object_inputs]}, but no nominal input "
-            "binding policy has been declared for this CellProfiler module."
-        )
-
-    def bind(
-        self,
-        request: ObjectInputBindingRequest,
-    ) -> CellProfilerKwargDict:
-        self.validate_declared_object_inputs(
-            module_name=request.module_name,
-            object_inputs=request.object_inputs,
-        )
-        return {}
+    parameter_name = "object_labels"
+    annotation_type = tuple[ObjectLabelValue, ...]
+    parameter_default = ()
 
 
 class SingleObjectLabelInputPolicy(CellProfilerObjectInputPolicyMixin):
     """Bind one object-label input into a module-specific parameter."""
 
-    label_kwarg: ClassVar[RuntimeBoundParameterName]
+    label_kwarg: ClassVar[str]
 
-    def bind(
-        self,
-        request: ObjectInputBindingRequest,
-    ) -> CellProfilerKwargDict:
-        request.require_exact_object_count(1)
-        return {
-            self.label_kwarg: request.label_argument_for(
-                request.object_inputs[0],
-                self.label_kwarg,
+    @classmethod
+    def validate_object_label_parameter_abi(
+        cls,
+        func: Callable[..., RuntimeFunctionOutput],
+    ) -> None:
+        cls._validate_object_label_parameters(func, (cls.label_kwarg,))
+
+    @classmethod
+    def validate_declared_object_inputs(
+        cls,
+        *,
+        module_name: str,
+        object_inputs: tuple[ArtifactSpec, ...],
+    ) -> None:
+        del cls
+        if len(object_inputs) > 1:
+            raise ValueError(
+                f"{module_name} accepts at most one object runtime input, "
+                f"got {[spec.name for spec in object_inputs]}."
             )
-        }
+
+    @classmethod
+    def bind_runtime_inputs(
+        cls,
+        request: RuntimeInputBindingRequest,
+    ) -> dict[str, RuntimeCallableArgument]:
+        bound = super().bind_runtime_inputs(request)
+        object_inputs = request.unbound_object_inputs
+        if not object_inputs:
+            return bound
+        cls.validate_declared_object_inputs(
+            module_name=request.adapter.request.require_callable_contract().module_name,
+            object_inputs=object_inputs,
+        )
+        bound[cls.label_kwarg] = request.label_argument_for(
+            object_inputs[0],
+            cls.label_kwarg,
+        )
+        return bound
 
 
 class PrimaryObjectLabelInputPolicy(SingleObjectLabelInputPolicy):
     """Bind one primary-object label input."""
 
-    label_kwarg = RuntimeBoundParameterName("primary_labels")
+    label_kwarg = "primary_labels"
 
 
-class PairedPrimarySecondaryObjectInputPolicy(CellProfilerObjectInputPolicyMixin):
+class TwoObjectLabelInputPolicy(CellProfilerObjectInputPolicyMixin):
+    """Require the exact pair consumed by two-object binding policies."""
+
+    @classmethod
+    def validate_declared_object_inputs(
+        cls,
+        *,
+        module_name: str,
+        object_inputs: tuple[ArtifactSpec, ...],
+    ) -> None:
+        del cls
+        if len(object_inputs) != 2:
+            raise ValueError(
+                f"{module_name} requires 2 object runtime inputs, "
+                f"got {[spec.name for spec in object_inputs]}."
+            )
+
+
+class PairedPrimarySecondaryObjectInputPolicy(TwoObjectLabelInputPolicy):
     """Bind two object-label inputs as primary/secondary label kwargs."""
 
-    smaller_label_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName("primary_labels")
-    )
-    larger_label_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName("secondary_labels")
-    )
+    smaller_label_kwarg: ClassVar[str] = "primary_labels"
+    larger_label_kwarg: ClassVar[str] = "secondary_labels"
+    larger_objects_binding: ClassVar["SettingToKeywordBinding"]
 
-    def bind(
-        self,
-        request: ObjectInputBindingRequest,
-    ) -> CellProfilerKwargDict:
-        request.require_exact_object_count(2)
-        larger, smaller = request.object_inputs
-        return {
-            self.smaller_label_kwarg: request.label_argument_for(
-                smaller,
-                self.smaller_label_kwarg,
-            ),
-            self.larger_label_kwarg: request.label_argument_for(
-                larger,
-                self.larger_label_kwarg,
-            ),
-        }
+    @classmethod
+    def primary_image_domain_input_binding(cls) -> "SettingToKeywordBinding":
+        """Use the larger-object input as the paired-label invocation domain."""
 
+        return cls.larger_objects_binding
 
-class CroppingObjectLabelInputPolicy(SingleObjectLabelInputPolicy):
-    """Bind one object-label input as a crop mask."""
+    @classmethod
+    def validate_object_label_parameter_abi(
+        cls,
+        func: Callable[..., RuntimeFunctionOutput],
+    ) -> None:
+        cls._validate_object_label_parameters(
+            func,
+            (cls.smaller_label_kwarg, cls.larger_label_kwarg),
+        )
 
-    label_kwarg = RuntimeBoundParameterName("cropping_labels")
+    @classmethod
+    def bind_runtime_inputs(
+        cls,
+        request: RuntimeInputBindingRequest,
+    ) -> dict[str, RuntimeCallableArgument]:
+        bound = super().bind_runtime_inputs(request)
+        object_inputs = request.unbound_object_inputs
+        if not object_inputs:
+            return bound
+        cls.validate_declared_object_inputs(
+            module_name=request.adapter.request.require_callable_contract().module_name,
+            object_inputs=object_inputs,
+        )
+        larger, smaller = object_inputs
+        bound[cls.smaller_label_kwarg] = request.label_argument_for(
+            smaller,
+            cls.smaller_label_kwarg,
+        )
+        bound[cls.larger_label_kwarg] = request.label_argument_for(
+            larger,
+            cls.larger_label_kwarg,
+        )
+        return bound
 
 
 class LabelsObjectInputPolicy(SingleObjectLabelInputPolicy):
     """Bind one object-label input to the conventional labels kwarg."""
 
-    label_kwarg = RuntimeBoundParameterName("labels")
+    label_kwarg = "labels"
+    input_objects_binding: ClassVar["SettingToKeywordBinding"]
+
+    @classmethod
+    def primary_image_domain_input_binding(cls) -> "SettingToKeywordBinding":
+        """Use the conventional input-object binding as the invocation domain."""
+
+        return cls.input_objects_binding
 
 
-class ObjectLabelsInputBindingMixin:
+class ObjectLabelsInputBindingMixin(CellProfilerObjectInputPolicyMixin):
     """Bind object-label inputs under CellProfiler's object_labels kwarg."""
 
-    object_labels_kwarg: ClassVar[RuntimeSliceSequenceParameterName] = (
-        RuntimeSliceSequenceParameterName("object_labels")
-    )
+    @classmethod
+    def validate_object_label_parameter_abi(
+        cls,
+        func: Callable[..., RuntimeFunctionOutput],
+    ) -> None:
+        cls._validate_object_label_parameters(
+            func,
+            (ObjectLabelsRuntimeParameter.require_parameter_name(),),
+        )
 
-    def bind(
-        self,
-        request: ObjectInputBindingRequest,
-    ) -> CellProfilerKwargDict:
-        return {self.object_labels_kwarg: request.labels_for_inputs()}
-
-
-class OverlayOutlinesInputPolicy(
-    ObjectLabelsInputBindingMixin,
-    CellProfilerObjectInputPolicyMixin,
-):
-    """Bind ordered object outline rows for the generic overlay runner."""
-
-
-class ObjectRowsInputPolicy(
-    ObjectLabelsInputBindingMixin,
-    CellProfilerObjectInputPolicyMixin,
-):
-    """Bind ordered object rows to object-label payloads."""
-
-
-class ObjectRowsWithMeasurementsInputPolicy(ObjectRowsInputPolicy):
-    """Bind ordered object rows plus prior measurements for the primary object."""
-
-    measurement_tables_kwarg: ClassVar[MeasurementTableCollectionParameterName] = (
-        MeasurementTableCollectionParameterName("measurement_tables")
-    )
-
-    def bind(
-        self,
-        request: ObjectInputBindingRequest,
-    ) -> CellProfilerKwargDict:
-        bound = super().bind(request)
-        bound[self.measurement_tables_kwarg] = (
-            request.measurement_tables_for_primary_object()
+    @classmethod
+    def bind_runtime_inputs(
+        cls,
+        request: RuntimeInputBindingRequest,
+    ) -> dict[str, RuntimeCallableArgument]:
+        bound = super().bind_runtime_inputs(request)
+        object_inputs = request.unbound_object_inputs
+        if not object_inputs:
+            return bound
+        cls.validate_declared_object_inputs(
+            module_name=request.adapter.request.require_callable_contract().module_name,
+            object_inputs=object_inputs,
+        )
+        parameter_name = ObjectLabelsRuntimeParameter.require_parameter_name()
+        bound[parameter_name] = tuple(
+            request.label_argument_for(spec, parameter_name)
+            for spec in object_inputs
         )
         return bound

@@ -1,63 +1,95 @@
 """Relationship backends for CellProfiler-compatible processing."""
 
 from __future__ import annotations
-from abc import ABC
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from enum import Enum
-from typing import ClassVar
+from typing import TYPE_CHECKING, Annotated
 from openhcs.core.alias_property import AliasProperty
-from openhcs.core.artifacts import ArtifactSpec, ArtifactType, ObjectLabelsArtifactType
-from openhcs.core.callable_contract import CallableContract
-from openhcs.core.pipeline.function_contracts import runtime_bound_parameters
-from openhcs.core.runtime_invocation import SliceIndexRuntimeParameter
-from openhcs.interop.cellprofiler.runtime.bound_parameters import (
-    RuntimeBoundParameterName,
+from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ArtifactOutputPlan,
+    ArtifactSpec,
+    ArtifactSpecCollection,
+    ArtifactSpecRelation,
+    InputGroupLineageSourceRelation,
+    MeasurementsArtifactType,
+    ObjectLabelsArtifactType,
+    RelationshipsArtifactType,
+    SourceStackLineageSourceRelation,
 )
-from openhcs.interop.cellprofiler.runtime.payload_types import CellProfilerKwargDict
-from openhcs.interop.cellprofiler.runtime.special_input_policies import (
-    CellProfilerSpecialInputPolicyMixin,
-    SpecialInputBindingRequest,
+from openhcs.core.equivalence.relationships import (
+    GenericRelationshipAggregateFeatureSemantics,
+    RelationshipAggregateFeatureContext,
+)
+from openhcs.core.pipeline.function_contracts import runtime_bound_parameters
+from openhcs.core.runtime_batch_contracts import (
+    SliceIndexRuntimeParameter,
+    runtime_callable_defaults,
+)
+from openhcs.core.runtime_relationships import ObjectRelationshipDeclaration
+from openhcs.core.runtime_identifier import normalize_runtime_identifier
+from openhcs.core.runtime_measurements import (
+    MeasurementScalarLiteral,
+    MeasurementStatistic,
+    RuntimeMeasurementFeatureDeclaration,
+    RuntimeMeasurementFeatureSemanticMarker,
 )
 from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
-    BoundModuleSettings,
     CellProfilerModule,
+)
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
     MeasurementArtifactOutputModule,
     ObjectArtifactInputModule,
     ObjectArtifactOutputModule,
-    ObjectLabelArtifactInputCapability,
-    ObjectLabelArtifactOutputCapability,
     PlaneRuntimeArtifactModule,
-    RelationshipArtifactOutputModule,
+    ParentChildLineageArtifactOutputModule,
 )
 from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
     optional_setting_value,
     required_setting_value,
     setting_values,
-    split_symbol_names,
 )
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     cellprofiler_enum_value_setting_parser,
+    coerce_cellprofiler_enum,
     parse_cellprofiler_bool,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import (
-    cellprofiler_enum_from_literal,
-)
 from openhcs.interop.cellprofiler.runtime.measurement_recording import (
-    ColumnarFieldsMeasurementRecordMixin,
     NoObjectNameMeasurementRecordMixin,
-    RelationshipMeasurementRecordRowsMixin,
-    SourceNameOnlyMeasurementRecordMixin,
-    TableMeasurementRecordRowsMixin,
 )
-from openhcs.interop.cellprofiler.runtime.relationship_endpoints import (
-    RelationshipEndpointContract,
-    RelationshipEndpointResolver,
+from openhcs.interop.cellprofiler.runtime.primary_image_input_policies import (
+    ObjectLabelDrivenPrimaryImageInputPolicy,
+)
+from openhcs.interop.cellprofiler.database_column_dialect import (
+    CellProfilerObjectCoreMeasurementFeature,
 )
 from openhcs.interop.cellprofiler.runtime.measurement_rows import (
     FormattingMeasurementFeatureTemplate,
+    ObjectLocationMeasurementRows,
 )
+from openhcs.interop.cellprofiler.runtime.relationship_measurement_rows import (
+    DirectParentReferenceFeatureMarker,
+    RelationshipMeasurementRows,
+)
+
+if TYPE_CHECKING:
+    from openhcs.core.callable_contract import CallableContract
+    from openhcs.core.function_patterns import FunctionInvocationKey
+    from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
+    from openhcs.core.source_bindings import StepSourceBindingsConfig
+    from openhcs.interop.cellprofiler.parser import ModuleBlock
+
+
+@dataclass(frozen=True)
+class RelateObjectsDistanceParentInputRelation(ArtifactSpecRelation):
+    """Mark an object input as a repeated distance-parent role."""
+
+    relation_key = "relate_objects_distance_parent_input"
+    target_plan_type = ArtifactInputPlan
+    target_artifact_type = ObjectLabelsArtifactType
 
 
 class RelateObjectsDistanceMethod(Enum):
@@ -94,118 +126,141 @@ class RelateObjectsDistanceMethod(Enum):
 DistanceMethod = RelateObjectsDistanceMethod
 
 
-class PrimaryObjectInputRelationshipModule(ABC):
-    """Relationship module declaration with indexed primary endpoints."""
+class RelateObjectsChildMeanFeatureMarker(RuntimeMeasurementFeatureSemanticMarker):
+    """Semantic marker for a RelateObjects aggregate over child measurements."""
 
-    primary_relationship_object_input_indices: ClassVar[tuple[int, int]] = (0, 1)
-    primary_relationship_output_index: ClassVar[int] = 0
 
-    @classmethod
-    def relationship_endpoint_contract(
-        cls, resolver: RelationshipEndpointResolver, relationship_spec: ArtifactSpec
-    ) -> RelationshipEndpointContract | None:
-        if relationship_spec != resolver.relationship_output_at(
-            cls.primary_relationship_output_index
+@dataclass(frozen=True, slots=True)
+class RelateObjectsChildMeanMeasurementFeature:
+    """Nominal identity encoded by a ``Mean_<child>_<feature>`` name."""
+
+    qualified_child_feature_parts: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if len(self.qualified_child_feature_parts) < 2 or any(
+            not isinstance(part, str) or not part
+            for part in self.qualified_child_feature_parts
         ):
-            return None
-        return resolver.indexed_object_input_contract(
-            cls.primary_relationship_object_input_indices
-        )
-
-
-class PrimaryObjectInputRelationshipDistanceModule(
-    PrimaryObjectInputRelationshipModule, ABC
-):
-    """Relationship module declaration whose primary relationship owns distances."""
-
-    @classmethod
-    def relationship_distance_measurements_apply(
-        cls, resolver: RelationshipEndpointResolver, relationship_spec: ArtifactSpec
-    ) -> bool:
-        return relationship_spec == resolver.relationship_output_at(
-            cls.primary_relationship_output_index
-        )
-
-
-class RelateObjectsSpecialInputPolicy(CellProfilerSpecialInputPolicyMixin):
-    """Bind parent/child object labels in the current runtime plane."""
-
-    slice_index_parameter_type: ClassVar[type[SliceIndexRuntimeParameter]] = (
-        SliceIndexRuntimeParameter
-    )
-    slice_index_kwarg: ClassVar[RuntimeBoundParameterName] = RuntimeBoundParameterName(
-        SliceIndexRuntimeParameter.require_parameter_name()
-    )
-
-    def extra_bound_parameter_names(
-        self, plan: CellProfilerModuleRuntimePlan
-    ) -> tuple[str, ...]:
-        """Return the optional runtime slice index kwarg."""
-        if (
-            self.slice_index_parameter_type
-            in plan.callable_contract.runtime_bound_parameter_types
-        ):
-            return (self.slice_index_kwarg,)
-        return ()
-
-    def bind(self, request: SpecialInputBindingRequest) -> CellProfilerKwargDict:
-        if len(request.parameter_names) != len(request.special_input_specs):
-            raise NotImplementedError(
-                f"{request.module_name} declares special_inputs {list(request.parameter_names)}, but compiled runtime inputs are {[spec.name for spec in request.special_input_specs]}."
+            raise ValueError(
+                "RelateObjects child-mean identity requires child and feature parts."
             )
-        bound = {
-            parameter_name: (
-                request.current_plane_object_label_runtime_value(spec)
-                if spec.artifact_type is ObjectLabelsArtifactType
-                else request.runtime_value(spec)
-            )
-            for parameter_name, spec in zip(
-                request.parameter_names, request.special_input_specs, strict=True
-            )
-        }
-        plane_index = request.relationship_runtime_slice_index()
-        if (
-            plane_index is not None
-            and request.func is not None
-            and (
-                self.slice_index_parameter_type
-                in CallableContract.from_callable(
-                    request.func
-                ).runtime_bound_parameter_types
-            )
-        ):
-            if self.slice_index_kwarg not in bound:
-                bound[self.slice_index_kwarg] = plane_index
-        return bound
 
 
 class RelateObjectsModule(
+    ObjectLabelDrivenPrimaryImageInputPolicy,
     PlaneRuntimeArtifactModule,
-    TableMeasurementRecordRowsMixin,
-    RelationshipMeasurementRecordRowsMixin,
     NoObjectNameMeasurementRecordMixin,
-    SourceNameOnlyMeasurementRecordMixin,
-    ColumnarFieldsMeasurementRecordMixin,
-    RelateObjectsSpecialInputPolicy,
-    PrimaryObjectInputRelationshipDistanceModule,
     ObjectArtifactInputModule,
     ObjectArtifactOutputModule,
-    RelationshipArtifactOutputModule,
+    ParentChildLineageArtifactOutputModule,
     MeasurementArtifactOutputModule,
     CellProfilerModule,
 ):
     module_name = "RelateObjects"
     function_name = "relate_objects"
+    function_variants = ("relate_objects_with_saved_children",)
     validated = True
     confidence = 1.0
     measurement_category_prefixes = (("children",), ("parent",))
+    parent_relationship_type = "Parent"
+    child_relationship_type = "Child"
 
-    class RelationshipMeasurementFeature(FormattingMeasurementFeatureTemplate):
-        """Templated measurement features emitted by RelateObjects."""
+    @classmethod
+    def main_flow_output_specs(
+        cls,
+        main_flow_candidates: tuple[ArtifactSpec, ...],
+    ) -> tuple[ArtifactSpec, ...]:
+        """Publish the saved-child object set returned in the canonical slot."""
 
-        DISTANCE_CENTROID = "Distance_Centroid_{parent_object_name}"
-        DISTANCE_MINIMUM = "Distance_Minimum_{parent_object_name}"
-        MEAN_CHILD = "Mean_{child_object_name}_{child_feature_name}"
+        del cls
+        object_outputs = tuple(
+            spec
+            for spec in main_flow_candidates
+            if spec.artifact_type is ObjectLabelsArtifactType
+        )
+        if len(object_outputs) > 1:
+            raise ValueError(
+                "RelateObjects declares more than one canonical object output: "
+                f"{tuple(spec.ref() for spec in object_outputs)!r}."
+            )
+        return object_outputs
+
+    @classmethod
+    def aggregates_child_measurement_feature(cls, feature_name: str) -> bool:
+        """Return whether CellProfiler derives a per-parent mean for this feature."""
+
+        if RuntimeMeasurementFeatureDeclaration.feature_has_semantic_marker(
+            feature_name,
+            DirectParentReferenceFeatureMarker,
+        ):
+            return False
+        return not RuntimeMeasurementFeatureDeclaration.feature_has_semantic_marker(
+            feature_name,
+            RelateObjectsChildMeanFeatureMarker,
+        )
+
+    @staticmethod
+    def aggregate_child_measurement_value_is_qualified(value: object) -> bool:
+        """Retain explicit missing values so child means propagate them."""
+
+        return not MeasurementScalarLiteral(value).is_absent
+
+    class DistanceMeasurementFeature(FormattingMeasurementFeatureTemplate):
+        """Parent-qualified distance features emitted by RelateObjects."""
+
+        DISTANCE_CENTROID = ("Distance_Centroid_{parent_object_name}", float)
+        DISTANCE_MINIMUM = ("Distance_Minimum_{parent_object_name}", float)
+
+        @classmethod
+        def database_measurement_dtype(cls) -> type[object]:
+            """Match CellProfiler's integer SQLite declaration for distances."""
+
+            return int
+
+        @property
+        def unqualified_feature_name(self) -> str:
+            """Return this declaration's parent-neutral feature identity."""
+
+            suffix = "_{parent_object_name}"
+            if not self.value.endswith(suffix):
+                raise ValueError(
+                    f"{type(self).__name__}.{self.name} must end with {suffix!r}."
+                )
+            return normalize_runtime_identifier(self.value.removesuffix(suffix))
+
+        @classmethod
+        def matching_feature(
+            cls,
+            feature_name: str,
+            *,
+            parent_object_name: str,
+        ) -> "RelateObjectsModule.DistanceMeasurementFeature | None":
+            """Resolve a raw or parent-qualified name to its declaration."""
+
+            normalized_feature_name = normalize_runtime_identifier(feature_name)
+            normalized_parent_name = normalize_runtime_identifier(parent_object_name)
+            matching = tuple(
+                feature
+                for feature in cls
+                if normalized_feature_name
+                in (
+                    feature.unqualified_feature_name,
+                    normalize_runtime_identifier(
+                        feature.feature_name(parent_object_name=normalized_parent_name)
+                    ),
+                )
+            )
+            if len(matching) > 1:
+                raise ValueError(
+                    "RelateObjects distance declarations overlap for feature "
+                    f"{feature_name!r}."
+                )
+            return matching[0] if matching else None
+
+    class AggregateMeasurementFeature(FormattingMeasurementFeatureTemplate):
+        """Per-parent aggregate features emitted by RelateObjects."""
+
+        MEAN_CHILD = ("Mean_{child_object_name}_{child_feature_name}", float)
 
     distance_setting = SettingNameFamily("Calculate child-parent distances?")
     parent_objects_setting = SettingNameFamily(
@@ -217,29 +272,30 @@ class RelateObjectsModule(
     per_parent_means_setting = SettingNameFamily(
         "Calculate per-parent means for all child measurements?"
     )
+    other_parent_distances_setting = SettingNameFamily(
+        "Calculate distances to other parents?"
+    )
+    other_parent_objects_setting = SettingNameFamily("Parent name")
     save_children_setting = SettingNameFamily(
         "Do you want to save the children with parents as a new object set?"
     )
     output_object_setting = SettingNameFamily("Name the output object")
-    object_input_settings = (parent_objects_setting, child_objects_setting)
-    object_output_settings = (output_object_setting,)
-
-    @classmethod
-    def relationship_measurement_rows(cls, request):
-        """Return RelateObjects relationship rows including distance features."""
-        return RelateObjectsRelationshipMeasurementRows(request)
-
-    ignored_settings = (
-        distance_setting,
-        parent_objects_setting,
-        child_objects_setting,
-        per_parent_means_setting,
-        "Calculate distances to other parents?",
-        "Parent name",
-        save_children_setting,
-        output_object_setting,
+    parent_objects_binding = SettingToKeywordBinding.input(
+        parent_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="parent_labels"
+    )
+    child_objects_binding = SettingToKeywordBinding.input(
+        child_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="child_labels"
+    )
+    other_parent_objects_binding = SettingToKeywordBinding.input(
+        other_parent_objects_setting,
+        ObjectLabelsArtifactType,
+        repeated=True,
     )
     setting_bindings = (
+        parent_objects_binding,
+        child_objects_binding,
+        other_parent_objects_binding,
+        SettingToKeywordBinding.output(output_object_setting, ObjectLabelsArtifactType),
         SettingToKeywordBinding(
             distance_setting,
             "calculate_distances",
@@ -251,69 +307,526 @@ class RelateObjectsModule(
             parse_cellprofiler_bool,
         ),
         SettingToKeywordBinding(
+            other_parent_distances_setting,
+            "calculate_distances_to_other_parents",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
             save_children_setting, "save_children_with_parents", parse_cellprofiler_bool
         ),
     )
 
     @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        parent = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(required_setting_value(module, cls.parent_objects_setting)))
-        child = ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(required_setting_value(module, cls.child_objects_setting)))
-        outputs = [
-            cls.parent_child_relationship_output_artifact(
-                builder, module, parent_name=parent.name, child_name=child.name
-            ),
-            cls.measurement_output_artifact(builder, module),
-        ]
+    def primary_image_domain_input_binding(cls) -> SettingToKeywordBinding:
+        """Use the child objects as the relationship invocation domain."""
+
+        return cls.child_objects_binding
+
+    @classmethod
+    def active_artifact_bindings(
+        cls,
+        module: "ModuleBlock | None" = None,
+        *,
+        invocation_key: "FunctionInvocationKey | None" = None,
+    ) -> tuple[SettingToKeywordBinding, ...]:
+        """Expose optional distance parents and saved-child output exactly."""
+
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
+        )
+        if module is None:
+            return bindings
+        other_parents = cls.other_parent_distances_enabled(module)
         save_children = optional_setting_value(module, cls.save_children_setting)
-        if save_children is not None and save_children.strip().lower() == "yes":
-            output_objects = ObjectLabelArtifactOutputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactOutputCapability.spec(required_setting_value(module, cls.output_object_setting)))
-            outputs.insert(0, output_objects)
-            outputs.insert(
-                2,
-                cls.parent_child_relationship_output_artifact(
-                    builder,
-                    module,
-                    parent_name=child.name,
-                    child_name=output_objects.name,
-                ),
+        save_children = save_children is not None and parse_cellprofiler_bool(
+            save_children
+        )
+        return tuple(
+            binding
+            for binding in bindings
+            if other_parents or binding is not cls.other_parent_objects_binding
+            if save_children
+            or not (
+                binding.require_artifact_plan_type() is ArtifactOutputPlan
+                and binding.require_artifact_type() is ObjectLabelsArtifactType
             )
-        return assembler.assemble_contract(
-            module, builder, inputs=[parent, child], outputs=outputs
         )
 
     @classmethod
-    def compile_time_public_setting_names(cls):
+    def distance_method(
+        cls,
+        module: "ModuleBlock",
+    ) -> RelateObjectsDistanceMethod:
+        """Return the nominal distance method declared by one module."""
+
+        return coerce_cellprofiler_enum(
+            RelateObjectsDistanceMethod,
+            required_setting_value(module, cls.distance_setting),
+        )
+
+    @classmethod
+    def other_parent_distances_enabled(cls, module: "ModuleBlock") -> bool:
+        """Return whether repeated step-parent distance inputs are active."""
+
+        requested = parse_cellprofiler_bool(
+            required_setting_value(
+                module,
+                cls.other_parent_distances_setting,
+            )
+        )
+        method = cls.distance_method(module)
+        return requested and (
+            method.calculates_centroid_distance or method.calculates_minimum_distance
+        )
+
+    @classmethod
+    def relationship_measurement_rows(cls, request):
+        """Return RelateObjects relationship rows including distance features."""
+        return RelateObjectsRelationshipMeasurementRows(request)
+
+    @classmethod
+    def relationship_distance_measurements_apply(
+        cls,
+        callable_contract: "CallableContract",
+        relationship_spec: ArtifactSpec,
+    ) -> bool:
+        """Return whether this is the explicit parent-to-child result."""
+
+        declared_spec = callable_contract.artifact_outputs.by_ref(
+            relationship_spec.ref()
+        )
+        if declared_spec != relationship_spec:
+            raise ValueError(
+                f"Callable {callable_contract.function_name!r} does not declare "
+                f"exact relationship output {relationship_spec.ref()!r}."
+            )
+        declarations = tuple(
+            relation
+            for relation in relationship_spec.relations
+            if isinstance(relation, ObjectRelationshipDeclaration)
+        )
+        if len(declarations) != 1:
+            raise ValueError(
+                f"Callable {callable_contract.function_name!r} relationship output "
+                f"{relationship_spec.name!r} requires exactly one "
+                "ObjectRelationshipDeclaration."
+            )
         return (
-            *super().compile_time_public_setting_names(),
-            cls.save_children_setting,
+            relationship_spec.artifact_type is RelationshipsArtifactType
+            and declarations[0].projects_parent_child_measurements()
+        )
+
+    ignored_settings = ()
+
+    @classmethod
+    def resolve_function(
+        cls,
+        module: "ModuleBlock",
+        *,
+        contract: "CallableContract",
+        source_bindings: "StepSourceBindingsConfig",
+    ) -> Callable[..., object]:
+        """Select the callable whose return ABI matches saved-child topology."""
+
+        del contract, source_bindings
+        save_children = optional_setting_value(module, cls.save_children_setting)
+        function_name = (
+            cls.function_variants[0]
+            if save_children is not None and parse_cellprofiler_bool(save_children)
+            else str(cls.function_name)
+        )
+        return cls.require_callable(function_name)
+
+    @classmethod
+    def relationship_inputs(
+        cls,
+        module: "ModuleBlock",
+        artifact_inputs: ArtifactSpecCollection,
+    ) -> tuple[ArtifactSpec, ArtifactSpec]:
+        """Return the main relationship endpoints from their setting-owned roles."""
+
+        return (
+            artifact_inputs.require_by_name_and_artifact_type(
+                required_setting_value(module, cls.parent_objects_setting),
+                ObjectLabelsArtifactType,
+            ),
+            artifact_inputs.require_by_name_and_artifact_type(
+                required_setting_value(module, cls.child_objects_setting),
+                ObjectLabelsArtifactType,
+            ),
+        )
+
+    @classmethod
+    def other_parent_inputs(
+        cls,
+        module: "ModuleBlock",
+        artifact_inputs: ArtifactSpecCollection,
+    ) -> tuple[ArtifactSpec, ...]:
+        """Return active repeated parents in their declared setting order."""
+
+        if not cls.other_parent_distances_enabled(module):
+            return ()
+        parent_names = setting_values(module, cls.other_parent_objects_setting)
+        if not parent_names:
+            raise ValueError(
+                "RelateObjects enables distances to other parents but declares "
+                f"no {cls.other_parent_objects_setting.canonical!r} setting row."
+            )
+        return tuple(
+            artifact_inputs.require_by_name_and_artifact_type(
+                name,
+                ObjectLabelsArtifactType,
+            )
+            for name in parent_names
+        )
+
+    @classmethod
+    def artifact_contract_inputs(
+        cls,
+        module,
+        *,
+        invocation_key,
+        step_context,
+    ):
+        """Add exact relationship inputs supporting each repeated parent role."""
+
+        inputs = ArtifactSpecCollection(
+            super().artifact_contract_inputs(
+                module,
+                invocation_key=invocation_key,
+                step_context=step_context,
+            )
+        )
+        main_parent, _child = cls.relationship_inputs(module, inputs)
+        other_parents = cls.other_parent_inputs(module, inputs)
+        if not other_parents:
+            return inputs.specs
+
+        other_parent_refs = frozenset(parent.ref() for parent in other_parents)
+        declared_inputs = tuple(
+            replace(
+                spec,
+                relations=(
+                    *spec.relations,
+                    RelateObjectsDistanceParentInputRelation(source=main_parent.ref()),
+                ),
+            )
+            if spec.ref() in other_parent_refs
+            else spec
+            for spec in inputs.specs
+        )
+
+        available = ArtifactSpecCollection(
+            ArtifactSpecCollection(
+                (
+                    *step_context.main_flow_artifacts.specs,
+                    *step_context.available_artifacts.specs,
+                )
+            ).unique(conflict_context="RelateObjects step-parent relationship")
+        )
+        declarations = available.relation_refs(ObjectRelationshipDeclaration)
+        supporting_relationships: list[ArtifactSpec] = []
+        main_ref = main_parent.ref().for_plan_type(ArtifactInputPlan)
+        for other_parent in other_parents:
+            other_ref = other_parent.ref().for_plan_type(ArtifactInputPlan)
+            matches = tuple(
+                spec
+                for spec, declaration in declarations
+                if declaration.projects_parent_child_measurements()
+                and {
+                    declaration.source.for_plan_type(ArtifactInputPlan),
+                    declaration.target.for_plan_type(ArtifactInputPlan),
+                }
+                == {main_ref, other_ref}
+            )
+            if len(matches) != 1:
+                raise ValueError(
+                    "RelateObjects repeated parent requires exactly one active "
+                    "parent-child relationship with the main parent: "
+                    f"{main_parent.name!r} <-> {other_parent.name!r}; got "
+                    f"{tuple(spec.name for spec in matches)!r}."
+                )
+            supporting_relationships.append(matches[0].for_plan_type(ArtifactInputPlan))
+        return (*declared_inputs, *supporting_relationships)
+
+    @classmethod
+    def prior_child_measurement_artifact_inputs(
+        cls,
+        module: "ModuleBlock",
+        *,
+        step_context: "ArtifactDeclarationStepContext",
+        child_input: ArtifactSpec,
+    ) -> tuple[ArtifactSpec, ...]:
+        """Return prior measurement outputs declared against the child objects."""
+
+        enabled = optional_setting_value(module, cls.per_parent_means_setting)
+        if enabled is None or not parse_cellprofiler_bool(enabled):
+            return ()
+        child_ref = child_input.ref()
+        return tuple(
+            dict.fromkeys(
+                producer.spec.for_plan_type(ArtifactInputPlan)
+                for producer in step_context.available_artifact_producers
+                if producer.spec.plan_type is ArtifactOutputPlan
+                and producer.spec.artifact_type is MeasurementsArtifactType
+                and any(
+                    relation.source == child_ref for relation in producer.spec.relations
+                )
+            )
+        )
+
+    @classmethod
+    def finalize_artifact_contract_inputs(
+        cls,
+        module,
+        *,
+        invocation_key,
+        step_context,
+        artifact_inputs: ArtifactSpecCollection,
+    ):
+        """Run parent labels in the child object's declared invocation group."""
+
+        inputs = ArtifactSpecCollection(
+            super().finalize_artifact_contract_inputs(
+                module,
+                invocation_key=invocation_key,
+                step_context=step_context,
+                artifact_inputs=artifact_inputs,
+            )
+        )
+        parent_input, child_input = cls.relationship_inputs(module, inputs)
+        grouped_parent_refs = frozenset(
+            parent.ref()
+            for parent in (
+                parent_input,
+                *cls.other_parent_inputs(module, inputs),
+            )
+        )
+        relationship_inputs = tuple(
+            spec.with_group_scope_relation(
+                InputGroupLineageSourceRelation(source=child_input.ref()),
+            )
+            if spec.ref() in grouped_parent_refs and spec.ref() != child_input.ref()
+            else spec
+            for spec in inputs.specs
+        )
+        return (
+            *relationship_inputs,
+            *cls.prior_child_measurement_artifact_inputs(
+                module,
+                step_context=step_context,
+                child_input=child_input,
+            ),
+        )
+
+    @classmethod
+    def artifact_contract_outputs(
+        cls,
+        module,
+        *,
+        invocation_key,
+        step_context,
+        artifact_inputs: ArtifactSpecCollection,
+    ):
+        parent_input, child_input = cls.relationship_inputs(module, artifact_inputs)
+        parent_relationship = ObjectRelationshipDeclaration(
+            source=parent_input.ref(),
+            target=child_input.ref(),
+            relationship_type=cls.parent_relationship_type,
+            source_role="parent",
+            target_role="child",
+            source_id_field="parent_id",
+            target_id_field="child_id",
+            producer_module_number=module.module_num,
+        )
+        child_relationship = ObjectRelationshipDeclaration(
+            source=child_input.ref(),
+            target=parent_input.ref(),
+            relationship_type=cls.child_relationship_type,
+            source_role="child",
+            target_role="parent",
+            source_id_field="child_id",
+            target_id_field="parent_id",
+            producer_module_number=module.module_num,
+        )
+        outputs = [
+            ArtifactSpec.output(
+                parent_relationship.artifact_name(),
+                RelationshipsArtifactType,
+                relations=(
+                    SourceStackLineageSourceRelation(source=child_input.ref()),
+                    parent_relationship,
+                ),
+            ),
+            ArtifactSpec.output(
+                child_relationship.artifact_name(),
+                RelationshipsArtifactType,
+                relations=(
+                    SourceStackLineageSourceRelation(source=child_input.ref()),
+                    child_relationship,
+                ),
+            ),
+            cls.measurement_output_artifact(
+                module,
+                invocation_key=invocation_key,
+                step_context=step_context,
+                artifact_inputs=artifact_inputs,
+            ),
+        ]
+        save_children = optional_setting_value(module, cls.save_children_setting)
+        if save_children is not None and parse_cellprofiler_bool(save_children):
+            output_objects = ArtifactSpec.output(
+                required_setting_value(module, cls.output_object_setting),
+                ObjectLabelsArtifactType,
+                relations=(SourceStackLineageSourceRelation(source=child_input.ref()),),
+            )
+            outputs.insert(0, output_objects)
+            outputs.insert(
+                3,
+                cls.parent_child_relationship_output_artifact(
+                    module,
+                    step_context=step_context,
+                    parent=child_input,
+                    child=output_objects,
+                    lineage_source=child_input,
+                ),
+            )
+        return tuple(outputs)
+
+
+class RelateObjectsChildMeanFeatureDeclaration(RuntimeMeasurementFeatureDeclaration):
+    """Parse and render RelateObjects child means at their measurement owner."""
+
+    declaration_key = "relate_objects_child_mean"
+    semantic_marker_types = (RelateObjectsChildMeanFeatureMarker,)
+
+    @classmethod
+    def from_feature_name(
+        cls,
+        feature_name: str,
+    ) -> RelateObjectsChildMeanMeasurementFeature | None:
+        template = RelateObjectsModule.AggregateMeasurementFeature.MEAN_CHILD
+        aggregate_prefix, separator, _remainder = template.value.partition("_")
+        parts = tuple(feature_name.split("_"))
+        if (
+            not separator
+            or len(parts) < 3
+            or parts[0] != aggregate_prefix
+            or any(not part for part in parts[1:])
+        ):
+            return None
+        return RelateObjectsChildMeanMeasurementFeature(parts[1:])
+
+    @classmethod
+    def feature_name(cls, identity: object) -> str:
+        if not isinstance(identity, RelateObjectsChildMeanMeasurementFeature):
+            raise TypeError(
+                f"{cls.__name__}.feature_name requires "
+                "RelateObjectsChildMeanMeasurementFeature."
+            )
+        parts = identity.qualified_child_feature_parts
+        return RelateObjectsModule.AggregateMeasurementFeature.MEAN_CHILD.feature_name(
+            child_object_name=parts[0],
+            child_feature_name="_".join(parts[1:]),
         )
 
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Any
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
 from openhcs.constants.constants import MemoryType
-from openhcs.core.memory import stack_slices
 from openhcs.core.memory.decorators import numpy as numpy_decorator
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.measurement_feature_queries import (
+    MeasurementAxisValueProjection,
+    MeasurementFeatureQuery,
+    MeasurementFeatureValueIndex,
+    MeasurementTableObjectFeatureSemantics,
+)
+from openhcs.core.measurement_row_materialization import (
+    ConcatenatedColumnarRows,
+    MeasurementSparseColumnarRows,
+    measurement_object_label,
+)
+from openhcs.core.runtime_measurements import MeasurementTable
+from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.runtime_invocation import RuntimeOutputBundle
-from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
-from openhcs.interop.cellprofiler.relationship_measurements import (
-    RelationshipMeasurements,
+from openhcs.core.runtime_output_matching import (
+    RuntimeOutputBundle,
 )
-from openhcs.interop.cellprofiler.runtime.mapping_lookup import MappingValueLookup
-from openhcs.interop.cellprofiler.runtime.relationship_measurement_rows import (
-    CellProfilerRelationshipMeasurementPayloads,
-    RelationshipDistanceRowTuple,
-    RelationshipMeasurementRowList,
-    RelationshipMeasurementRows,
+from openhcs.core.source_plane_alignment import (
+    SourcePayloadPlaneIdentitySequence,
+    SourcePlaneIdentitySequenceAlignment,
 )
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
+from openhcs.interop.cellprofiler.measurement_dialect import (
+    CELLPROFILER_MEASUREMENT_DIALECT,
+    CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+)
+
+
+class RelateObjectsDistanceAggregateFeatureSemantics(
+    GenericRelationshipAggregateFeatureSemantics
+):
+    """RelateObjects parent qualification for child-distance aggregates."""
+
+    strategy_key = "relate_objects_parent_qualified_distance"
+
+    @staticmethod
+    def _matching_feature(
+        context: RelationshipAggregateFeatureContext,
+    ) -> RelateObjectsModule.DistanceMeasurementFeature | None:
+        if context.dialect is not CELLPROFILER_MEASUREMENT_DIALECT:
+            return None
+        return RelateObjectsModule.DistanceMeasurementFeature.matching_feature(
+            context.feature_name,
+            parent_object_name=context.source_name,
+        )
+
+    def matches(self, context: RelationshipAggregateFeatureContext) -> bool:
+        return self._matching_feature(context) is not None
+
+    def required_child_feature_names(
+        self,
+        context: RelationshipAggregateFeatureContext,
+    ) -> tuple[str, ...]:
+        feature = self._matching_feature(context)
+        assert feature is not None
+        return (
+            feature.unqualified_feature_name,
+            normalize_runtime_identifier(
+                feature.feature_name(parent_object_name=context.source_name)
+            ),
+        )
+
+    def aggregate_feature_name(
+        self,
+        context: RelationshipAggregateFeatureContext,
+        *,
+        aggregate: str = MeasurementStatistic.MEAN.value,
+    ) -> str:
+        feature = self._matching_feature(context)
+        assert feature is not None
+        return self.target_aggregate_feature_name(
+            context.target_name,
+            feature.unqualified_feature_name,
+            aggregate=aggregate,
+        )
+
+    def aggregate_child_feature_name(
+        self,
+        context: RelationshipAggregateFeatureContext,
+    ) -> str:
+        feature = self._matching_feature(context)
+        assert feature is not None
+        return feature.unqualified_feature_name
+
+
+from openhcs.interop.cellprofiler.runtime.object_measurement_tables import (
+    ObjectMeasurementTableIndex,
+)
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -321,18 +834,44 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     CellProfilerBackendAuthority,
 )
-from openhcs.core.runtime_semantics import (
-    DenseObjectLabelPairAligner,
+from openhcs.core.source_spatial_domain import SourceSpatialDomainAdapter
+from openhcs.core.runtime_relationships import (
+    DirectedObjectRelationshipPayload,
     ObjectRelationshipPayloadKernel,
-    ParentChildRelationshipPayload,
     object_label_parent_child_payload,
 )
-from openhcs.core.runtime_values import object_label_dense_array
-from openhcs.core.runtime_values import object_label_value_with_dense_labels
+from openhcs.core.runtime_tabular_values import (
+    FieldSpec,
+    measurement_row_mapping,
+)
+from openhcs.core.runtime_measurements import (
+    MeasurementRowAxisField,
+    MeasurementRowValueField,
+    measurement_axis_integer_domain,
+    measurement_axis_integer_value,
+)
+from openhcs.core.runtime_object_label_domains import (
+    ObjectLabelDomainScope,
+)
+from openhcs.core.runtime_tabular_values import ColumnarRows
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelValue,
+    object_label_value_with_dense_labels,
+)
+from openhcs.core.runtime_relationships import (
+    ObjectRelationship,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.materialization import csv_dataclass_materializer
 
 
+ParentObjectLabelsInput = Annotated[
+    ObjectLabelValue,
+    "Parent-object labels whose regions receive assigned child objects.",
+]
+ChildObjectLabelsInput = Annotated[
+    ObjectLabelValue,
+    "Child-object labels to assign to their containing parent regions.",
+]
 
 
 class ObjectRelationshipBackendStrategy(
@@ -376,19 +915,19 @@ class ObjectRelationshipBackendStrategy(
 
     def parent_child_payload_from_labels(
         self, parent_labels: Any, child_labels: Any
-    ) -> ParentChildRelationshipPayload:
+    ) -> DirectedObjectRelationshipPayload:
         """Return parent-child ids using the labels' nominal representation."""
         return object_label_parent_child_payload(
             parent_labels, child_labels, kernel=self
         )
 
     def parents_of_from_payload(
-        self, payload: ParentChildRelationshipPayload, child_count: int
+        self, payload: DirectedObjectRelationshipPayload, child_count: int
     ) -> np.ndarray:
         """Return a dense parents-of-child vector from a relationship payload."""
         parents_of = np.zeros(child_count, dtype=np.int32)
         for parent_id, child_id in zip(
-            payload.parent_ids, payload.child_ids, strict=True
+            payload.source_ids, payload.target_ids, strict=True
         ):
             if 0 < child_id <= child_count:
                 parents_of[child_id - 1] = int(parent_id)
@@ -398,101 +937,368 @@ class ObjectRelationshipBackendStrategy(
 class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
     """RelateObjects additionally projects configured child-parent distances."""
 
-    def rows(self) -> RelationshipMeasurementRowList:
-        rows: RelationshipMeasurementRowList = list(super().rows())
-        endpoint_resolver = RelationshipEndpointResolver.for_request(self.request)
-        for relationship_spec, payload in self.output_entries():
-            endpoint_contract = endpoint_resolver.endpoint_contract(relationship_spec)
-            if not endpoint_resolver.distance_measurements_apply(relationship_spec):
+    def rows(self) -> ColumnarRows:
+        row_batches: list[ColumnarRows] = [super().rows()]
+        callable_contract = self.request.callable_contract
+        module_type = CellProfilerModule.for_function_name(
+            callable_contract.function_name
+        )
+        if module_type is None:
+            raise KeyError(
+                "No CellProfiler module declaration owns callable "
+                f"{callable_contract.function_name!r}."
+            )
+        declared_artifacts = callable_contract.artifact_specs
+        for relationship_spec, declaration, payload in self.output_entries():
+            if not module_type.relationship_distance_measurements_apply(
+                callable_contract,
+                relationship_spec,
+            ):
                 continue
-            rows.extend(
+            parent_spec = declared_artifacts.by_ref(declaration.source)
+            child_spec = declared_artifacts.by_ref(declaration.target)
+            if parent_spec is None or child_spec is None:
+                raise ValueError(
+                    f"Callable {callable_contract.function_name!r} relationship "
+                    f"output {relationship_spec.name!r} references undeclared "
+                    f"endpoints {declaration.source!r}, {declaration.target!r}."
+                )
+            if self.per_parent_means_enabled():
+                row_batches.append(
+                    self.parent_mean_upstream_measurement_rows(
+                        parent_spec=parent_spec,
+                        child_spec=child_spec,
+                        payload=payload,
+                    )
+                )
+            row_batches.append(
                 self.distance_rows(
-                    parent_object_name=endpoint_contract.parent.name,
-                    child_object_name=endpoint_contract.child.name,
+                    parent_spec=parent_spec,
+                    child_spec=child_spec,
                     payload=payload,
                 )
             )
-        return rows
+            for (
+                other_parent,
+                supporting_relationship,
+                supporting_declaration,
+            ) in self.other_parent_relationship_inputs(
+                callable_contract,
+                main_parent_spec=parent_spec,
+                child_spec=child_spec,
+            ):
+                other_parent_payload = self.compose_other_parent_payload(
+                    main_parent_spec=parent_spec,
+                    main_payload=payload,
+                    other_parent_spec=other_parent,
+                    supporting_relationship_spec=supporting_relationship,
+                    supporting_declaration=supporting_declaration,
+                )
+                row_batches.append(
+                    self.distance_rows(
+                        parent_spec=other_parent,
+                        child_spec=child_spec,
+                        payload=other_parent_payload,
+                        parent_mean_spec=parent_spec,
+                        parent_mean_payload=payload,
+                    )
+                )
+        return ConcatenatedColumnarRows(tuple(row_batches))
+
+    @staticmethod
+    def other_parent_relationship_inputs(
+        callable_contract: "CallableContract",
+        *,
+        main_parent_spec: ArtifactSpec,
+        child_spec: ArtifactSpec,
+    ) -> tuple[
+        tuple[ArtifactSpec, ArtifactSpec, ObjectRelationshipDeclaration], ...
+    ]:
+        """Return each repeated parent with its exact supporting relationship."""
+
+        endpoint_refs = {main_parent_spec.ref(), child_spec.ref()}
+        other_parents = tuple(
+            spec
+            for spec in callable_contract.artifact_inputs.of_artifact_type(
+                ObjectLabelsArtifactType
+            )
+            if spec.ref() not in endpoint_refs
+        )
+        relationship_inputs = callable_contract.artifact_inputs.relation_refs(
+            ObjectRelationshipDeclaration
+        )
+        resolved: list[
+            tuple[ArtifactSpec, ArtifactSpec, ObjectRelationshipDeclaration]
+        ] = []
+        for other_parent in other_parents:
+            matches = tuple(
+                (spec, declaration)
+                for spec, declaration in relationship_inputs
+                if declaration.projects_parent_child_measurements()
+                and {declaration.source, declaration.target}
+                == {main_parent_spec.ref(), other_parent.ref()}
+            )
+            if len(matches) != 1:
+                raise ValueError(
+                    "RelateObjects active repeated parent requires one exact "
+                    "supporting relationship input: "
+                    f"{main_parent_spec.name!r} <-> {other_parent.name!r}; got "
+                    f"{tuple(spec.name for spec, _declaration in matches)!r}."
+                )
+            supporting_spec, supporting_declaration = matches[0]
+            resolved.append(
+                (other_parent, supporting_spec, supporting_declaration)
+            )
+        return tuple(resolved)
+
+    def compose_other_parent_payload(
+        self,
+        *,
+        main_parent_spec: ArtifactSpec,
+        main_payload: ObjectRelationship,
+        other_parent_spec: ArtifactSpec,
+        supporting_relationship_spec: ArtifactSpec,
+        supporting_declaration: ObjectRelationshipDeclaration,
+    ) -> DirectedObjectRelationshipPayload:
+        """Compose child-to-main and main-to-step-parent declarations exactly."""
+
+        supporting_value = self.request.adapter.get_relationship(
+            supporting_relationship_spec.name,
+            artifact_type=supporting_relationship_spec.artifact_type,
+        )
+        main_slices, main_slice_count = self.relationship_pairs_by_slice(main_payload)
+        supporting_slices, supporting_slice_count = self.relationship_pairs_by_slice(
+            supporting_value
+        )
+        if (
+            main_slice_count is not None
+            and supporting_slice_count is not None
+            and main_slice_count != supporting_slice_count
+        ):
+            raise ValueError(
+                "RelateObjects repeated-parent relationship axis does not align "
+                f"with the main relationship: {supporting_slice_count} != "
+                f"{main_slice_count}."
+            )
+        if tuple(main_slices) != tuple(supporting_slices):
+            raise ValueError(
+                "RelateObjects repeated-parent relationship slices do not align "
+                f"with the main relationship: {tuple(supporting_slices)!r} != "
+                f"{tuple(main_slices)!r}."
+            )
+
+        main_ref = main_parent_spec.ref()
+        other_ref = other_parent_spec.ref()
+        parent_ids: list[int] = []
+        child_ids: list[int] = []
+        slice_indices: list[int] = []
+        for slice_index, main_pairs in main_slices.items():
+            step_parent_by_main: dict[int, int] = {}
+            for source_id, target_id in supporting_slices[slice_index]:
+                if (
+                    supporting_declaration.source == other_ref
+                    and supporting_declaration.target == main_ref
+                ):
+                    step_parent_by_main[int(target_id)] = int(source_id)
+                elif (
+                    supporting_declaration.source == main_ref
+                    and supporting_declaration.target == other_ref
+                ):
+                    step_parent_by_main[int(source_id)] = int(target_id)
+                else:
+                    raise ValueError(
+                        "RelateObjects supporting relationship declaration does not "
+                        "match its repeated-parent endpoints."
+                    )
+            for main_parent_id, child_id in main_pairs:
+                other_parent_id = step_parent_by_main.get(int(main_parent_id), 0)
+                if other_parent_id <= 0:
+                    continue
+                parent_ids.append(other_parent_id)
+                child_ids.append(int(child_id))
+                if slice_index is not None:
+                    slice_indices.append(slice_index)
+        return DirectedObjectRelationshipPayload(
+            source_ids=tuple(parent_ids),
+            target_ids=tuple(child_ids),
+            slice_indices=tuple(slice_indices),
+            slice_count=main_slice_count,
+        )
+
+    @staticmethod
+    def relationship_pairs_by_slice(
+        value: ObjectRelationship | RuntimeSliceAlignedValues[ObjectRelationship],
+    ) -> tuple[
+        dict[int | None, tuple[tuple[int, int], ...]],
+        int | None,
+    ]:
+        """Project one exact relationship value into ordered per-slice pairs."""
+
+        if isinstance(value, RuntimeSliceAlignedValues):
+            return (
+                {
+                    slice_index: tuple(
+                        zip(
+                            relationship.payload.source_ids,
+                            relationship.payload.target_ids,
+                            strict=True,
+                        )
+                    )
+                    for slice_index, relationship in enumerate(value.slices)
+                },
+                value.slice_count,
+            )
+        payload = value.payload
+        sliced_pairs = payload.runtime_slice_pairs()
+        if sliced_pairs is None:
+            return (
+                {
+                    None: tuple(
+                        zip(payload.source_ids, payload.target_ids, strict=True)
+                    )
+                },
+                None,
+            )
+        return (dict(sliced_pairs), payload.slice_count)
 
     def distance_rows(
         self,
         *,
-        parent_object_name: str,
-        child_object_name: str,
-        payload: ParentChildRelationshipPayload,
-    ) -> RelationshipDistanceRowTuple:
+        parent_spec: ArtifactSpec,
+        child_spec: ArtifactSpec,
+        payload: ObjectRelationship | DirectedObjectRelationshipPayload,
+        parent_mean_spec: ArtifactSpec | None = None,
+        parent_mean_payload: ObjectRelationship | None = None,
+    ) -> ColumnarRows:
         if not self.distance_measurements_declared():
-            return ()
-        sliced_pairs = self.payload_pairs_by_slice(
-            payload, child_object_name=child_object_name
+            return MeasurementSparseColumnarRows.from_rows((), fields=())
+        directed_payload = (
+            payload.payload if isinstance(payload, ObjectRelationship) else payload
         )
+        sliced_pairs = directed_payload.runtime_slice_pairs()
+        parent_mean_slices = (
+            None
+            if parent_mean_payload is None
+            else parent_mean_payload.payload.runtime_slice_pairs()
+        )
+        if parent_mean_payload is None:
+            parent_mean_pairs_by_slice = {}
+        elif parent_mean_slices is None:
+            parent_mean_pairs_by_slice = {
+                None: tuple(
+                    zip(
+                        parent_mean_payload.payload.source_ids,
+                        parent_mean_payload.payload.target_ids,
+                        strict=True,
+                    )
+                )
+            }
+        else:
+            parent_mean_pairs_by_slice = dict(parent_mean_slices)
         if sliced_pairs is not None:
             slice_count = len(sliced_pairs)
-            rows: RelationshipMeasurementRowList = []
+            row_batches: list[ColumnarRows] = []
             for slice_index, pairs in sliced_pairs:
-                rows.extend(
+                row_batches.append(
                     self.distance_rows_for_pairs(
-                        parent_object_name=parent_object_name,
-                        child_object_name=child_object_name,
+                        parent_spec=parent_spec,
+                        child_spec=child_spec,
                         pairs=pairs,
                         slice_index=slice_index,
                         slice_count=slice_count,
+                        parent_mean_spec=parent_mean_spec,
+                        parent_mean_pairs=parent_mean_pairs_by_slice.get(slice_index),
                     )
                 )
-            return tuple(rows)
+            return ConcatenatedColumnarRows(tuple(row_batches))
+        unsliced_parent_mean_pairs = (
+            None
+            if parent_mean_payload is None
+            else parent_mean_pairs_by_slice.get(None)
+        )
         return self.distance_rows_for_pairs(
-            parent_object_name=parent_object_name,
-            child_object_name=child_object_name,
+            parent_spec=parent_spec,
+            child_spec=child_spec,
             pairs=tuple(
                 (
                     (int(parent_id), int(child_id))
                     for parent_id, child_id in zip(
-                        payload.parent_ids, payload.child_ids, strict=True
+                        directed_payload.source_ids,
+                        directed_payload.target_ids,
+                        strict=True,
                     )
                 )
             ),
             slice_index=None,
+            parent_mean_spec=parent_mean_spec,
+            parent_mean_pairs=unsliced_parent_mean_pairs,
+        )
+
+    def distance_method(self) -> RelateObjectsDistanceMethod:
+        callable_contract = self.request.callable_contract
+        module_type = CellProfilerModule.for_function_name(
+            callable_contract.function_name
+        )
+        if module_type is None:
+            raise KeyError(
+                "No CellProfiler module declaration owns callable "
+                f"{callable_contract.function_name!r}."
+            )
+        func = module_type.require_callable(callable_contract.function_name)
+        call_kwargs = {
+            **runtime_callable_defaults(func),
+            **self.request.call_kwargs,
+        }
+        return coerce_cellprofiler_enum(
+            RelateObjectsDistanceMethod,
+            call_kwargs["calculate_distances"],
         )
 
     def distance_measurements_declared(self) -> bool:
-        return CellProfilerRelationshipMeasurementPayloads.from_value(
-            self.request.output_value
-        ).declares_distance_measurements
+        distance_method = self.distance_method()
+        return bool(
+            distance_method.calculates_centroid_distance
+            or distance_method.calculates_minimum_distance
+        )
 
-    def per_parent_distance_means_enabled(self) -> bool:
-        value = MappingValueLookup(
-            self.request.call_kwargs, "calculate_per_parent_means"
-        ).value_or(False)
+    def per_parent_means_enabled(self) -> bool:
+        value = (
+            self.request.call_kwargs["calculate_per_parent_means"]
+            if "calculate_per_parent_means" in self.request.call_kwargs
+            else False
+        )
         return bool(value)
 
     def distance_rows_for_pairs(
         self,
         *,
-        parent_object_name: str,
-        child_object_name: str,
+        parent_spec: ArtifactSpec,
+        child_spec: ArtifactSpec,
         pairs: tuple[tuple[int, int], ...],
         slice_index: int | None,
         slice_count: int | None = None,
-    ) -> RelationshipDistanceRowTuple:
+        parent_mean_spec: ArtifactSpec | None = None,
+        parent_mean_pairs: tuple[tuple[int, int], ...] | None = None,
+    ) -> ColumnarRows:
         if not pairs:
-            return ()
+            return MeasurementSparseColumnarRows.from_rows((), fields=())
         parent_labels = self.object_labels(
-            parent_object_name, slice_index=slice_index, slice_count=slice_count
+            parent_spec, slice_index=slice_index, slice_count=slice_count
         )
         child_labels = self.object_labels(
-            child_object_name, slice_index=slice_index, slice_count=slice_count
+            child_spec, slice_index=slice_index, slice_count=slice_count
         )
-        if parent_labels is None or child_labels is None:
-            return ()
-        parent_array = RuntimeSliceProjection.object_label_endpoint_dense_array(
-            parent_labels, dtype=np.int32
+        (aligned_parent, aligned_child), _adapters = (
+            SourceSpatialDomainAdapter.aligned_values(
+                (parent_labels, child_labels)
+            )
         )
-        child_array = RuntimeSliceProjection.object_label_endpoint_dense_array(
-            child_labels, dtype=np.int32
-        )
-        parent_array, child_array = DenseObjectLabelPairAligner(
-            parent_array, child_array
-        ).aligned()
+        parent_array = np.asarray(aligned_parent, dtype=np.int32)
+        child_array = np.asarray(aligned_child, dtype=np.int32)
+        if parent_array.ndim != 2 or child_array.ndim != 2:
+            raise ValueError(
+                "RelateObjects distance rows require runtime-projected 2-D label planes."
+            )
         parent_count = 0
         if child_array.size:
             parent_count = int(child_array.max())
@@ -501,49 +1307,101 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
             if 0 < child_id <= len(parents_of):
                 parents_of[child_id - 1] = parent_id
         backend = ObjectRelationshipBackendStrategy.for_memory_type()
-        centroid_distances = backend.centroid_distances(
-            parent_array, child_array, parents_of
+        method = self.distance_method()
+        centroid_distances = (
+            backend.centroid_distances(parent_array, child_array, parents_of)
+            if method.calculates_centroid_distance
+            else None
         )
-        minimum_distances = backend.minimum_distances(
-            parent_array, child_array, parents_of
+        minimum_distances = (
+            backend.minimum_distances(parent_array, child_array, parents_of)
+            if method.calculates_minimum_distance
+            else None
         )
         centroid_feature = (
-            RelateObjectsModule.RelationshipMeasurementFeature.DISTANCE_CENTROID.feature_name(
-                parent_object_name=parent_object_name
+            RelateObjectsModule.DistanceMeasurementFeature.DISTANCE_CENTROID.feature_name(
+                parent_object_name=parent_spec.name
             )
+            if centroid_distances is not None
+            else None
         )
         minimum_feature = (
-            RelateObjectsModule.RelationshipMeasurementFeature.DISTANCE_MINIMUM.feature_name(
-                parent_object_name=parent_object_name
+            RelateObjectsModule.DistanceMeasurementFeature.DISTANCE_MINIMUM.feature_name(
+                parent_object_name=parent_spec.name
             )
+            if minimum_distances is not None
+            else None
         )
-        child_distance_rows = tuple(
-            (
-                self.object_feature_values_row(
-                    object_name=child_object_name,
-                    object_label=child_id,
-                    feature_values={
-                        centroid_feature: float(centroid_distances[child_id - 1]),
-                        minimum_feature: float(minimum_distances[child_id - 1]),
-                    },
-                    slice_index=slice_index,
-                )
+        child_distance_rows = MeasurementSparseColumnarRows.from_rows(
+            tuple(
+                {
+                    MeasurementRowAxisField.OBJECT_NAME.value: child_spec.name,
+                    MeasurementRowAxisField.OBJECT_LABEL.value: child_id,
+                    **(
+                        {}
+                        if slice_index is None
+                        else {MeasurementRowAxisField.SLICE_INDEX.value: slice_index}
+                    ),
+                    **(
+                        {}
+                        if centroid_feature is None or centroid_distances is None
+                        else {centroid_feature: float(centroid_distances[child_id - 1])}
+                    ),
+                    **(
+                        {}
+                        if minimum_feature is None or minimum_distances is None
+                        else {minimum_feature: float(minimum_distances[child_id - 1])}
+                    ),
+                }
                 for _parent_id, child_id in pairs
                 if 0 < child_id <= len(parents_of)
-            )
-        )
-        if not self.per_parent_distance_means_enabled():
-            return child_distance_rows
-        return (
-            *child_distance_rows,
-            *self.parent_mean_distance_rows(
-                parent_object_name=parent_object_name,
-                child_object_name=child_object_name,
-                pairs=pairs,
-                centroid_distances=centroid_distances,
-                minimum_distances=minimum_distances,
-                slice_index=slice_index,
             ),
+            fields=(
+                FieldSpec(MeasurementRowAxisField.OBJECT_NAME.value, str),
+                FieldSpec(MeasurementRowAxisField.OBJECT_LABEL.value, int),
+                *(
+                    ()
+                    if slice_index is None
+                    else (FieldSpec(MeasurementRowAxisField.SLICE_INDEX.value, int),)
+                ),
+                *(
+                    ()
+                    if centroid_feature is None
+                    else (
+                        RelateObjectsModule.DistanceMeasurementFeature.DISTANCE_CENTROID.field_spec(
+                            centroid_feature,
+                            required=True,
+                        ),
+                    )
+                ),
+                *(
+                    ()
+                    if minimum_feature is None
+                    else (
+                        RelateObjectsModule.DistanceMeasurementFeature.DISTANCE_MINIMUM.field_spec(
+                            minimum_feature,
+                            required=True,
+                        ),
+                    )
+                ),
+            ),
+        )
+        if not self.per_parent_means_enabled():
+            return child_distance_rows
+        return ConcatenatedColumnarRows(
+            (
+                child_distance_rows,
+                self.parent_mean_distance_rows(
+                    parent_object_name=(parent_mean_spec or parent_spec).name,
+                    child_object_name=child_spec.name,
+                    centroid_child_feature_name=centroid_feature,
+                    minimum_child_feature_name=minimum_feature,
+                    pairs=(pairs if parent_mean_pairs is None else parent_mean_pairs),
+                    centroid_distances=centroid_distances,
+                    minimum_distances=minimum_distances,
+                    slice_index=slice_index,
+                ),
+            )
         )
 
     def parent_mean_distance_rows(
@@ -551,54 +1409,375 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
         *,
         parent_object_name: str,
         child_object_name: str,
+        centroid_child_feature_name: str | None,
+        minimum_child_feature_name: str | None,
         pairs: tuple[tuple[int, int], ...],
-        centroid_distances: np.ndarray,
-        minimum_distances: np.ndarray,
+        centroid_distances: np.ndarray | None,
+        minimum_distances: np.ndarray | None,
         slice_index: int | None,
-    ) -> RelationshipDistanceRowTuple:
-        distances_by_parent: dict[int, list[tuple[float, float]]] = {}
+    ) -> MeasurementSparseColumnarRows:
+        feature_values = tuple(
+            (feature_name, values)
+            for feature_name, values in (
+                (centroid_child_feature_name, centroid_distances),
+                (minimum_child_feature_name, minimum_distances),
+            )
+            if feature_name is not None and values is not None
+        )
+        distances_by_parent: dict[int, dict[str, list[float]]] = {}
         for parent_id, child_id in pairs:
-            if child_id <= 0 or child_id > len(centroid_distances):
+            if child_id <= 0:
                 continue
-            if parent_id not in distances_by_parent:
-                distances_by_parent[parent_id] = []
-            distances_by_parent[parent_id].append(
-                (
-                    float(centroid_distances[child_id - 1]),
-                    float(minimum_distances[child_id - 1]),
-                )
-            )
-        centroid_feature = (
-            RelateObjectsModule.RelationshipMeasurementFeature.MEAN_CHILD.feature_name(
-                child_object_name=child_object_name,
-                child_feature_name="Distance_Centroid",
-            )
-        )
-        minimum_feature = (
-            RelateObjectsModule.RelationshipMeasurementFeature.MEAN_CHILD.feature_name(
-                child_object_name=child_object_name,
-                child_feature_name="Distance_Minimum",
-            )
-        )
-        return tuple(
+            for feature_name, values in feature_values:
+                if child_id > len(values):
+                    continue
+                distances_by_parent.setdefault(parent_id, {}).setdefault(
+                    feature_name,
+                    [],
+                ).append(float(values[child_id - 1]))
+        mean_features = tuple(
             (
-                self.object_feature_values_row(
-                    object_name=parent_object_name,
-                    object_label=parent_id,
-                    feature_values={
-                        centroid_feature: float(
-                            np.mean([value[0] for value in distances])
-                        ),
-                        minimum_feature: float(
-                            np.mean([value[1] for value in distances])
-                        ),
-                    },
-                    slice_index=slice_index,
-                )
-                for parent_id, distances in sorted(distances_by_parent.items())
-                if distances
+                feature_name,
+                RelateObjectsModule.AggregateMeasurementFeature.MEAN_CHILD.feature_name(
+                    child_object_name=child_object_name,
+                    child_feature_name=feature_name,
+                ),
+            )
+            for feature_name, _values in feature_values
+        )
+        rows = tuple(
+            {
+                MeasurementRowAxisField.OBJECT_NAME.value: parent_object_name,
+                MeasurementRowAxisField.OBJECT_LABEL.value: parent_id,
+                **(
+                    {}
+                    if slice_index is None
+                    else {MeasurementRowAxisField.SLICE_INDEX.value: slice_index}
+                ),
+                **{
+                    mean_feature: float(np.mean(distances[child_feature]))
+                    for child_feature, mean_feature in mean_features
+                    if distances.get(child_feature)
+                },
+            }
+            for parent_id, distances in sorted(distances_by_parent.items())
+            if distances
+        )
+        return MeasurementSparseColumnarRows.from_rows(
+            rows,
+            fields=(
+                FieldSpec(MeasurementRowAxisField.OBJECT_NAME.value, str),
+                FieldSpec(MeasurementRowAxisField.OBJECT_LABEL.value, int),
+                *(
+                    ()
+                    if slice_index is None
+                    else (FieldSpec(MeasurementRowAxisField.SLICE_INDEX.value, int),)
+                ),
+                *(
+                    RelateObjectsModule.AggregateMeasurementFeature.MEAN_CHILD.field_spec(
+                        mean_feature,
+                        required=False,
+                    )
+                    for _child_feature, mean_feature in mean_features
+                ),
+            ),
+        )
+
+    def parent_mean_upstream_measurement_rows(
+        self,
+        *,
+        parent_spec: ArtifactSpec,
+        child_spec: ArtifactSpec,
+        payload: ObjectRelationship,
+    ) -> MeasurementSparseColumnarRows:
+        """Return CellProfiler per-parent means over prior child measurements."""
+        values_by_child = self.upstream_child_measurement_values(child_spec)
+        if not values_by_child:
+            return MeasurementSparseColumnarRows.from_rows((), fields=())
+        sliced_pairs = payload.payload.runtime_slice_pairs()
+        relationship_slices = (
+            sliced_pairs
+            if sliced_pairs is not None
+            else (
+                (
+                    None,
+                    tuple(
+                        zip(
+                            payload.payload.source_ids,
+                            payload.payload.target_ids,
+                            strict=True,
+                        )
+                    ),
+                ),
             )
         )
+        rows: list[dict[str, object]] = []
+        fields: list[FieldSpec] = [
+            FieldSpec(MeasurementRowAxisField.OBJECT_NAME.value, str),
+            FieldSpec(MeasurementRowAxisField.OBJECT_LABEL.value, int),
+        ]
+        if sliced_pairs is not None:
+            fields.append(FieldSpec(MeasurementRowAxisField.SLICE_INDEX.value, int))
+        for slice_index, pairs in relationship_slices:
+            value_slice_index = 0 if slice_index is None else slice_index
+            feature_values_by_parent: dict[int, dict[str, list[float]]] = {}
+            for parent_id, child_id in pairs:
+                if int(parent_id) <= 0:
+                    continue
+                child_values = values_by_child.get(
+                    (value_slice_index, int(child_id)),
+                    {},
+                )
+                if not child_values:
+                    continue
+                parent_feature_values = feature_values_by_parent.setdefault(
+                    int(parent_id),
+                    {},
+                )
+                for feature_name, value in child_values.items():
+                    parent_feature_values.setdefault(feature_name, []).append(value)
+            for parent_id, feature_values in sorted(feature_values_by_parent.items()):
+                means = {
+                    RelateObjectsModule.AggregateMeasurementFeature.MEAN_CHILD.feature_name(
+                        child_object_name=child_spec.name,
+                        child_feature_name=feature_name,
+                    ): float(np.mean(values))
+                    for feature_name, values in sorted(feature_values.items())
+                    if values
+                }
+                if means:
+                    rows.append(
+                        {
+                            MeasurementRowAxisField.OBJECT_NAME.value: parent_spec.name,
+                            MeasurementRowAxisField.OBJECT_LABEL.value: parent_id,
+                            **(
+                                {}
+                                if slice_index is None
+                                else {
+                                    MeasurementRowAxisField.SLICE_INDEX.value: slice_index
+                                }
+                            ),
+                            **means,
+                        }
+                    )
+                    fields.extend(
+                        RelateObjectsModule.AggregateMeasurementFeature.MEAN_CHILD.field_spec(
+                            feature_name,
+                            required=False,
+                        )
+                        for feature_name in means
+                    )
+        return MeasurementSparseColumnarRows.from_rows(
+            rows,
+            fields=FieldSpec.merge_exact(
+                (fields,),
+                context="RelateObjects upstream mean fields",
+            ),
+        )
+
+    def upstream_child_measurement_values(
+        self,
+        child_spec: ArtifactSpec,
+    ) -> dict[tuple[int, int], dict[str, float]]:
+        """Index upstream child values on the relationship's declared plane axis."""
+        declared_tables: list[MeasurementTable] = []
+        for spec in self.request.callable_contract.artifact_inputs.specs:
+            if spec.artifact_type is not MeasurementsArtifactType:
+                continue
+            for record in self.request.adapter.artifact_input_records(
+                spec.name,
+                MeasurementsArtifactType,
+            ):
+                table = record.value.data
+                if not isinstance(table, MeasurementTable):
+                    raise TypeError(
+                        f"Declared measurement input {spec.name!r} carries "
+                        f"{type(table).__name__}, not MeasurementTable."
+                    )
+                declared_tables.append(table)
+        tables = ObjectMeasurementTableIndex.from_tables(
+            tuple(declared_tables)
+        ).for_object(child_spec.name)
+        if tables is None:
+            raise RuntimeError(
+                "A complete object-measurement table index returned an unknown "
+                "selection."
+            )
+        child_labels = self.unprojected_object_labels(child_spec)
+        core_rows = ObjectLocationMeasurementRows(
+            child_labels,
+            child_spec.name,
+        )
+        values_by_child: dict[tuple[int, int], dict[str, float]] = {}
+        for raw_row in core_rows.rows().iter_row_mappings():
+            row = measurement_row_mapping(raw_row)
+            slice_index = measurement_axis_integer_value(
+                row[MeasurementRowAxisField.SLICE_INDEX.value],
+                MeasurementRowAxisField.SLICE_INDEX,
+            )
+            object_label = measurement_object_label(row)
+            if slice_index is None or object_label is None:
+                raise ValueError(
+                    "CellProfiler core object rows require slice and object-label "
+                    "identity."
+                )
+            values_by_child.setdefault((slice_index, object_label), {})[
+                str(row[MeasurementRowAxisField.FEATURE_NAME.value])
+            ] = float(row[MeasurementRowValueField.RESULT_VALUE.value])
+
+        plane_domains = core_rows.label_plane_domains()
+        payload_scoped = (
+            child_labels.object_label_domain().scope is ObjectLabelDomainScope.PAYLOAD
+        )
+        for slice_index, _plane_domain in enumerate(plane_domains):
+            object_numbers = self.object_numbers_by_label_id(
+                child_spec,
+                slice_index=None if payload_scoped else slice_index,
+                slice_count=None if payload_scoped else len(plane_domains),
+            )
+            for object_label, object_number in object_numbers.items():
+                values_by_child.setdefault((slice_index, object_label), {})[
+                    CellProfilerObjectCoreMeasurementFeature.OBJECT_NUMBER.value
+                ] = float(object_number)
+
+        if not tables:
+            return values_by_child
+        identity_policy = (
+            self.request.adapter.request.context.source_image_set_identity_policy
+        )
+        child_axis = SourcePayloadPlaneIdentitySequence(
+            child_labels,
+            identity_policy,
+        ).runtime_axis_identities()
+        if not child_axis:
+            raise ValueError(
+                f"RelateObjects child measurements for {child_spec.name!r} require "
+                "source-addressable object-label planes."
+            )
+
+        row_axis = MeasurementRowAxisField.SLICE_INDEX
+        for table in tables:
+            semantics = MeasurementTableObjectFeatureSemantics.from_table(table)
+            table_axis = table.source_provenance.image_set_axis(identity_policy)
+            if not table_axis:
+                raise ValueError(
+                    "RelateObjects upstream measurement tables require complete "
+                    "source image-set identity."
+                )
+            aligned_axis = SourcePlaneIdentitySequenceAlignment(
+                table_axis,
+                child_axis,
+            ).target_indexes_for_image_planes()
+            if aligned_axis is None:
+                raise ValueError(
+                    f"RelateObjects measurement table {table.name!r} does not align "
+                    f"to child object planes for {child_spec.name!r}."
+                )
+            aggregate_features = tuple(
+                sorted(
+                    feature_name
+                    for feature_name in semantics.feature_names
+                    if RelateObjectsModule.aggregates_child_measurement_feature(
+                        feature_name
+                    )
+                )
+            )
+            row_axis_values = (
+                table.rows.column_values(row_axis.value)
+                if row_axis.value in {field.name for field in table.rows.fields}
+                else None
+            )
+            local_slice_indexes = (
+                ()
+                if row_axis_values is None
+                else measurement_axis_integer_domain(row_axis_values, row_axis)
+            )
+            if row_axis_values is None or not local_slice_indexes:
+                if len(aligned_axis) != 1:
+                    raise ValueError(
+                        f"RelateObjects measurement table {table.name!r} has "
+                        "multi-plane source identity but axisless object rows."
+                    )
+                slice_projections = ((0, aligned_axis[0], None),)
+            else:
+                if len(aligned_axis) != 1 and any(
+                    measurement_axis_integer_value(value, row_axis) is None
+                    for value in row_axis_values
+                ):
+                    raise ValueError(
+                        f"RelateObjects measurement table {table.name!r} has "
+                        "multi-plane source identity but axisless object rows."
+                    )
+                invalid_slice_indexes = tuple(
+                    slice_index
+                    for slice_index in local_slice_indexes
+                    if slice_index >= len(aligned_axis)
+                )
+                if invalid_slice_indexes:
+                    raise ValueError(
+                        f"RelateObjects measurement table {table.name!r} row axes "
+                        f"{invalid_slice_indexes!r} exceed its source axis of "
+                        f"{len(aligned_axis)} plane(s)."
+                    )
+                slice_projections = tuple(
+                    (
+                        local_slice_index,
+                        aligned_axis[local_slice_index],
+                        MeasurementAxisValueProjection(
+                            row_axis,
+                            local_slice_index,
+                        ).mask(row_axis_values),
+                    )
+                    for local_slice_index in local_slice_indexes
+                )
+
+            queries = tuple(
+                (
+                    feature_name,
+                    MeasurementFeatureQuery(
+                        feature_name,
+                        object_name=child_spec.name,
+                        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+                    ),
+                )
+                for feature_name in aggregate_features
+            )
+            for _local_slice_index, target_slice_index, row_mask in slice_projections:
+                for feature_name, query in queries:
+                    feature_indexes = (
+                        MeasurementFeatureValueIndex.from_columnar_table_by_object(
+                            table,
+                            query,
+                            {child_spec.name: query.query_object_name},
+                            row_mask=row_mask,
+                            measurement_value_qualifier=(
+                                RelateObjectsModule.aggregate_child_measurement_value_is_qualified
+                            ),
+                        )
+                    )
+                    feature_index = feature_indexes.get(child_spec.name)
+                    if feature_index is None:
+                        continue
+                    for object_label, numeric_value in (
+                        feature_index.values_by_label.items()
+                    ):
+                        child_values = values_by_child.setdefault(
+                            (target_slice_index, object_label),
+                            {},
+                        )
+                        previous = child_values.get(feature_name)
+                        if previous is not None and not (
+                            previous == numeric_value
+                            or (np.isnan(previous) and np.isnan(numeric_value))
+                        ):
+                            raise ValueError(
+                                f"RelateObjects child measurement {feature_name!r} "
+                                f"has conflicting values for slice "
+                                f"{target_slice_index}, object {object_label}: "
+                                f"{previous!r} != {numeric_value!r}."
+                            )
+                        child_values[feature_name] = numeric_value
+        return values_by_child
 
 
 class NumbaNumpyObjectRelationshipBackendStrategy(ObjectRelationshipBackendStrategy):
@@ -678,8 +1857,10 @@ class NumbaNumpyObjectRelationshipBackendStrategy(ObjectRelationshipBackendStrat
         )
 
     def label_centers(self, labels: np.ndarray) -> np.ndarray:
-        if labels.ndim > 2:
-            labels = np.max(labels, axis=tuple(range(labels.ndim - 2)))
+        if labels.ndim != 2:
+            raise ValueError(
+                "RelateObjects requires one runtime-projected 2-D label plane."
+            )
         label_count = int(labels.max())
         if label_count == 0:
             return np.empty((0, 2), dtype=np.float64)
@@ -691,20 +1872,27 @@ class NumbaNumpyObjectRelationshipBackendStrategy(ObjectRelationshipBackendStrat
 class RelateObjectsResult(RuntimeOutputBundle):
     """Nominal result bundle emitted by RelateObjects."""
 
-    output_labels: np.ndarray
-    parent_child_relationship: ParentChildRelationshipPayload
-    relationship_measurements: RelationshipMeasurements
-    saved_child_relationship: ParentChildRelationshipPayload | None = None
+    output_labels: ObjectLabelValue
+    parent_child_relationship: DirectedObjectRelationshipPayload
+    child_parent_relationship: DirectedObjectRelationshipPayload
+    relationship_measurements: ColumnarRows
+    saved_child_relationship: DirectedObjectRelationshipPayload | None = None
 
     def as_runtime_tuple(
         self,
     ) -> (
-        tuple[np.ndarray, ParentChildRelationshipPayload, RelationshipMeasurements]
+        tuple[
+            ObjectLabelValue,
+            DirectedObjectRelationshipPayload,
+            DirectedObjectRelationshipPayload,
+            ColumnarRows,
+        ]
         | tuple[
-            np.ndarray,
-            ParentChildRelationshipPayload,
-            ParentChildRelationshipPayload,
-            RelationshipMeasurements,
+            ObjectLabelValue,
+            DirectedObjectRelationshipPayload,
+            DirectedObjectRelationshipPayload,
+            DirectedObjectRelationshipPayload,
+            ColumnarRows,
         ]
     ):
         """Lower to the current positional function-contract ABI."""
@@ -712,94 +1900,21 @@ class RelateObjectsResult(RuntimeOutputBundle):
             return (
                 self.output_labels,
                 self.parent_child_relationship,
+                self.child_parent_relationship,
                 self.relationship_measurements,
             )
         return (
             self.output_labels,
             self.parent_child_relationship,
+            self.child_parent_relationship,
             self.saved_child_relationship,
             self.relationship_measurements,
         )
 
-    def __iter__(self):
-        """Preserve direct tuple-unpacking compatibility for function tests."""
-        return iter(self.as_runtime_tuple())
-
-
-def _combine_parent_child_payloads(
-    payloads: tuple[ParentChildRelationshipPayload | None, ...],
-) -> ParentChildRelationshipPayload | None:
-    """Combine per-slice relationship payloads while preserving slice identity."""
-    present_payloads = tuple((payload for payload in payloads if payload is not None))
-    if not present_payloads:
-        return None
-    parent_ids: list[int] = []
-    child_ids: list[int] = []
-    slice_indices: list[int] = []
-    for fallback_slice_index, payload in enumerate(payloads):
-        if payload is None:
-            continue
-        parent_ids.extend(payload.parent_ids)
-        child_ids.extend(payload.child_ids)
-        if payload.slice_indices:
-            slice_indices.extend(payload.slice_indices)
-        else:
-            slice_indices.extend([fallback_slice_index] * len(payload.parent_ids))
-    return ParentChildRelationshipPayload(
-        parent_ids=tuple(parent_ids),
-        child_ids=tuple(child_ids),
-        slice_indices=tuple(slice_indices),
-        slice_count=len(payloads),
-    )
-
-
-def _aggregate_relate_objects_slice_results(
-    slice_results: tuple[RelateObjectsResult, ...], *, memory_type: str
-) -> RelateObjectsResult:
-    """Aggregate manual 2D RelateObjects slices for object-only stack inputs."""
-    output_labels = stack_slices(
-        [
-            object_label_dense_array(result.output_labels, dtype=np.float32)
-            for result in slice_results
-        ],
-        memory_type,
-        0,
-    )
-    parent_child_relationship = _combine_parent_child_payloads(
-        tuple((result.parent_child_relationship for result in slice_results))
-    )
-    if parent_child_relationship is None:
-        parent_child_relationship = ParentChildRelationshipPayload(
-            parent_ids=(), child_ids=(), slice_count=len(slice_results)
-        )
-    saved_child_relationship = _combine_parent_child_payloads(
-        tuple((result.saved_child_relationship for result in slice_results))
-    )
-    return RelateObjectsResult(
-        output_labels=output_labels,
-        parent_child_relationship=parent_child_relationship,
-        relationship_measurements=tuple(
-            (result.relationship_measurements for result in slice_results)
-        ),
-        saved_child_relationship=saved_child_relationship,
-    )
-
-
-@numpy_decorator(contract=ProcessingContract.PURE_2D)
-@runtime_bound_parameters(SliceIndexRuntimeParameter)
-@special_inputs("parent_labels", "child_labels")
-@special_outputs(
-    (
-        "relationship_measurements",
-        csv_dataclass_materializer(
-            RelationshipMeasurements, analysis_type="relate_objects"
-        ),
-    )
-)
-def relate_objects(
+def _relate_objects_result(
     image: np.ndarray,
-    parent_labels: np.ndarray,
-    child_labels: np.ndarray,
+    parent_labels: ObjectLabelValue,
+    child_labels: ObjectLabelValue,
     calculate_distances: (
         RelateObjectsDistanceMethod | str
     ) = RelateObjectsDistanceMethod.BOTH,
@@ -809,82 +1924,36 @@ def relate_objects(
     slice_index: int | None = None,
 ) -> RelateObjectsResult:
     """Relate CellProfiler child objects to parent objects by spatial overlap."""
-    parent_array = object_label_dense_array(parent_labels, dtype=np.int32)
-    child_array = object_label_dense_array(child_labels, dtype=np.int32)
-    if (
-        slice_index is None
-        and np.asarray(image).ndim == 2
-        and (parent_array.ndim == 3)
-        and (child_array.ndim == 3)
-        and (parent_array.shape[0] == child_array.shape[0])
-        and (parent_array.shape[-2:] == np.asarray(image).shape)
-        and (child_array.shape[-2:] == np.asarray(image).shape)
+    del calculate_distances, calculate_per_parent_means
+    if not isinstance(parent_labels, ObjectLabelValue) or not isinstance(
+        child_labels, ObjectLabelValue
     ):
-        slice_results = tuple(
-            (
-                relate_objects(
-                    image,
-                    parent_array[index],
-                    child_array[index],
-                    calculate_distances=calculate_distances,
-                    calculate_per_parent_means=calculate_per_parent_means,
-                    save_children_with_parents=save_children_with_parents,
-                    relationship_backend_provider=relationship_backend_provider,
-                    slice_index=index,
-                )
-                for index in range(parent_array.shape[0])
-            )
-        )
-        return _aggregate_relate_objects_slice_results(
-            slice_results, memory_type=MemoryType.NUMPY.value
+        raise TypeError(
+            "RelateObjects requires runtime-projected ObjectLabelValue inputs."
         )
     slice_index = 0 if slice_index is None else int(slice_index)
     raw_parent_labels = parent_labels
     raw_child_labels = child_labels
-    calculate_distances = coerce_cellprofiler_enum(
-        RelateObjectsDistanceMethod, calculate_distances
-    )
     relationship_backend = ObjectRelationshipBackendStrategy.for_memory_type(
         backend_provider=relationship_backend_provider
     )
     parent_child_relationship = relationship_backend.parent_child_payload_from_labels(
         raw_parent_labels, raw_child_labels
     )
-    parent_labels = object_label_dense_array(raw_parent_labels, dtype=np.int32)
-    child_labels = object_label_dense_array(raw_child_labels, dtype=np.int32)
-    parent_labels, child_labels = DenseObjectLabelPairAligner(
-        parent_labels, child_labels
-    ).aligned()
-    parent_count = int(parent_labels.max()) if parent_labels.max() > 0 else 0
+    (parent_labels, child_labels), _adapters = (
+        SourceSpatialDomainAdapter.aligned_values(
+            (raw_parent_labels, raw_child_labels)
+        )
+    )
+    parent_labels = np.asarray(parent_labels, dtype=np.int32)
+    child_labels = np.asarray(child_labels, dtype=np.int32)
+    if parent_labels.ndim != 2 or child_labels.ndim != 2:
+        raise ValueError("RelateObjects requires runtime-projected 2-D label planes.")
     child_count = int(child_labels.max()) if child_labels.max() > 0 else 0
     parents_of = relationship_backend.parents_of_from_payload(
         parent_child_relationship, child_count
     )
-    child_counts_per_parent = np.zeros(parent_count, dtype=np.int32)
-    for parent_idx in parents_of:
-        if parent_idx > 0 and parent_idx <= parent_count:
-            child_counts_per_parent[parent_idx - 1] += 1
-    children_with_parents = np.sum(parents_of > 0)
-    mean_children = np.mean(child_counts_per_parent) if parent_count > 0 else 0.0
-    mean_centroid_dist = np.nan
-    mean_minimum_dist = np.nan
-    if calculate_distances.calculates_centroid_distance:
-        centroid_distances = relationship_backend.centroid_distances(
-            parent_labels, child_labels, parents_of
-        )
-        valid_dists = centroid_distances[~np.isnan(centroid_distances)]
-        mean_centroid_dist = (
-            float(np.mean(valid_dists)) if len(valid_dists) > 0 else np.nan
-        )
-    if calculate_distances.calculates_minimum_distance:
-        minimum_distances = relationship_backend.minimum_distances(
-            parent_labels, child_labels, parents_of
-        )
-        valid_dists = minimum_distances[~np.isnan(minimum_distances)]
-        mean_minimum_dist = (
-            float(np.mean(valid_dists)) if len(valid_dists) > 0 else np.nan
-        )
-    saved_child_relationship: ParentChildRelationshipPayload | None = None
+    saved_child_relationship: DirectedObjectRelationshipPayload | None = None
     if save_children_with_parents:
         retained_child_ids = np.flatnonzero(
             np.concatenate((np.zeros(1, dtype=bool), parents_of > 0))
@@ -902,15 +1971,7 @@ def relate_objects(
         )
     else:
         output_labels = child_labels.copy()
-    measurements = RelationshipMeasurements(
-        slice_index=slice_index,
-        parent_object_count=parent_count,
-        child_object_count=child_count,
-        children_with_parents_count=int(children_with_parents),
-        mean_children_per_parent=float(mean_children),
-        mean_centroid_distance=mean_centroid_dist,
-        mean_minimum_distance=mean_minimum_dist,
-    )
+    measurements = MeasurementSparseColumnarRows.from_rows((), fields=())
     related_child_ids = tuple(
         (
             child_idx
@@ -927,9 +1988,9 @@ def relate_objects(
     ):
         related_relationship = parent_child_relationship
     else:
-        related_relationship = ParentChildRelationshipPayload(
-            parent_ids=related_parent_ids,
-            child_ids=related_child_ids,
+        related_relationship = DirectedObjectRelationshipPayload(
+            source_ids=related_parent_ids,
+            target_ids=related_child_ids,
             slice_indices=tuple((slice_index for _child_id in related_child_ids)),
             slice_count=slice_index + 1,
         )
@@ -939,8 +2000,104 @@ def relate_objects(
     return RelateObjectsResult(
         output_labels,
         related_relationship,
+        DirectedObjectRelationshipPayload(
+            source_ids=related_child_ids,
+            target_ids=related_parent_ids,
+            slice_indices=tuple(slice_index for _child_id in related_child_ids),
+            slice_count=slice_index + 1,
+        ),
         measurements,
         saved_child_relationship=saved_child_relationship,
+    )
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@runtime_bound_parameters(SliceIndexRuntimeParameter)
+@special_inputs("parent_labels", "child_labels")
+def relate_objects(
+    image: np.ndarray,
+    parent_labels: ParentObjectLabelsInput,
+    child_labels: ChildObjectLabelsInput,
+    calculate_distances: (
+        RelateObjectsDistanceMethod | str
+    ) = RelateObjectsDistanceMethod.BOTH,
+    calculate_per_parent_means: bool = False,
+    calculate_distances_to_other_parents: bool = False,
+    relationship_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    slice_index: int | None = None,
+) -> tuple[
+    ObjectLabelValue,
+    DirectedObjectRelationshipPayload,
+    DirectedObjectRelationshipPayload,
+    ColumnarRows,
+]:
+    """Relate child objects to parents without declaring a saved object set."""
+
+    del calculate_distances_to_other_parents
+
+    result = _relate_objects_result(
+        image,
+        parent_labels,
+        child_labels,
+        calculate_distances=calculate_distances,
+        calculate_per_parent_means=calculate_per_parent_means,
+        save_children_with_parents=False,
+        relationship_backend_provider=relationship_backend_provider,
+        slice_index=slice_index,
+    )
+    return (
+        result.output_labels,
+        result.parent_child_relationship,
+        result.child_parent_relationship,
+        result.relationship_measurements,
+    )
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@runtime_bound_parameters(SliceIndexRuntimeParameter)
+@special_inputs("parent_labels", "child_labels")
+def relate_objects_with_saved_children(
+    image: np.ndarray,
+    parent_labels: ParentObjectLabelsInput,
+    child_labels: ChildObjectLabelsInput,
+    calculate_distances: (
+        RelateObjectsDistanceMethod | str
+    ) = RelateObjectsDistanceMethod.BOTH,
+    calculate_per_parent_means: bool = False,
+    calculate_distances_to_other_parents: bool = False,
+    relationship_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    slice_index: int | None = None,
+) -> tuple[
+    ObjectLabelValue,
+    DirectedObjectRelationshipPayload,
+    DirectedObjectRelationshipPayload,
+    DirectedObjectRelationshipPayload,
+    ColumnarRows,
+]:
+    """Relate child objects to parents and emit the saved-child topology."""
+
+    del calculate_distances_to_other_parents
+
+    result = _relate_objects_result(
+        image,
+        parent_labels,
+        child_labels,
+        calculate_distances=calculate_distances,
+        calculate_per_parent_means=calculate_per_parent_means,
+        save_children_with_parents=True,
+        relationship_backend_provider=relationship_backend_provider,
+        slice_index=slice_index,
+    )
+    if result.saved_child_relationship is None:
+        raise RuntimeError(
+            "RelateObjects saved-child execution omitted its relationship."
+        )
+    return (
+        result.output_labels,
+        result.parent_child_relationship,
+        result.child_parent_relationship,
+        result.saved_child_relationship,
+        result.relationship_measurements,
     )
 
 
@@ -1201,7 +2358,7 @@ __all__ = public_names_from_objects(
     DistanceMethod,
     NumbaNumpyObjectRelationshipBackendStrategy,
     ObjectRelationshipBackendStrategy,
-    RelationshipMeasurements,
     RelateObjectsResult,
     relate_objects,
+    relate_objects_with_saved_children,
 )

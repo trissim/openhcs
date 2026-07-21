@@ -1,156 +1,220 @@
-"""Generic CellProfiler measurement-record declarations."""
+"""Generic CellProfiler measurement-table declarations."""
 
 from __future__ import annotations
 from abc import ABC
 from collections.abc import Mapping
-from dataclasses import asdict, fields as dataclass_fields, is_dataclass
+from dataclasses import (
+    asdict,
+    fields as dataclass_fields,
+    is_dataclass,
+    replace as dataclass_replace,
+)
 import math
-from typing import Annotated, ClassVar, get_args, get_origin, get_type_hints
-
-from openhcs.core.runtime_semantics import (
-    MeasurementRowAxisField,
-    MeasurementRowValueField,
-    measurement_row_mapping,
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    ClassVar,
+    Self,
+    get_args,
+    get_origin,
+    get_type_hints,
 )
 
+from openhcs.core.runtime_tabular_values import (
+    FieldSpec,
+)
+from openhcs.core.runtime_measurements import (
+    MeasurementScope,
+    MeasurementRowAxisField,
+    MeasurementRowValueField,
+    MeasurementSubject,
+)
+from openhcs.core.runtime_plane_projection import (
+    RuntimeSliceIdentityProjectableValue,
+)
+from openhcs.core.measurement_row_materialization import (
+    ConcatenatedColumnarRows,
+    MeasurementProjectedColumnarRows,
+    MeasurementRowsAxisProjection,
+    MeasurementSparseColumnarRows,
+)
+from openhcs.core.runtime_image_values import (
+    ImagePayloadMetadata,
+    image_payload_metadata,
+)
+from openhcs.core.runtime_measurements import MeasurementTable
+from openhcs.core.runtime_tabular_values import ColumnarRows
+from openhcs.core.source_image_provenance import SourceImageProvenance
 
-def measurement_record_for_module(
-    request: CellProfilerOutputRecordRequest,
-) -> CellProfilerMeasurementRecord:
-    """Return the measurement record declared by the backend module."""
-    from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-        CellProfilerMeasurementRecord,
+if TYPE_CHECKING:
+    from openhcs.core.artifacts import ArtifactSpec
+    from openhcs.interop.cellprofiler.runtime.measurement_rows import (
+        CellProfilerResultMeasurementRows,
     )
+    from openhcs.interop.cellprofiler.runtime.output_record_request import (
+        CellProfilerOutputRecordRequest,
+    )
+    from openhcs.core.steps.function_runtime import RuntimeCallableKwargs
+
+
+def measurement_table_for_module(
+    request: CellProfilerOutputRecordRequest,
+) -> MeasurementTable:
+    """Return the native measurement table declared by the backend module."""
     from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
-    module_type = CellProfilerModule.for_module(request.module_name)
-    if module_type is None:
-        return DefaultMeasurementRecordModule.measurement_record(request)
-    record = module_type.measurement_record(request)
-    if not isinstance(record, CellProfilerMeasurementRecord):
-        raise TypeError(
-            f"{module_type.__name__}.measurement_record() must return a CellProfilerMeasurementRecord."
-        )
-    return record
-
-
-def filter_measurement_record_rows_by_fields(
-    rows: MeasurementRowsInput,
-    excluded_fields: frozenset[str],
-) -> MeasurementRowsInput:
-    """Remove backend-only fields from measurement-record rows."""
-    if not excluded_fields:
-        return rows
-
-    from openhcs.core.measurement_row_materialization import (
-        MeasurementProjectedColumnarRows,
+    module_type = CellProfilerModule.for_function_name(
+        request.callable_contract.function_name
     )
-    from openhcs.core.runtime_values import ColumnarRows
-
-    if isinstance(rows, ColumnarRows):
-        return MeasurementProjectedColumnarRows(
-            {
-                str(column): rows.column_values(column)
-                for column in rows.columns
-                if str(column) not in excluded_fields
-            },
-            declared_object_measurement_domain_covered=(
-                rows.covers_declared_object_measurement_domain
-            ),
+    if module_type is None:
+        raise KeyError(
+            "No CellProfiler module declaration owns callable "
+            f"{request.callable_contract.function_name!r}."
         )
-
-    filtered_rows: list[CellProfilerKwargs] = []
-    for row in rows:
-        row_mapping = measurement_row_mapping(row)
-        filtered_rows.append(
-            {
-                field_name: value
-                for field_name, value in row_mapping.items()
-                if field_name not in excluded_fields
-            }
+    table = module_type.measurement_table(request)
+    if not isinstance(table, MeasurementTable):
+        raise TypeError(
+            f"{module_type.__name__}.measurement_table() must return MeasurementTable."
         )
-    return filtered_rows
+    return table
 
 
-class CellProfilerMeasurementRecordModule(ABC):
-    """Generic measurement-record assembly contract for module declarations."""
+class CellProfilerMeasurementTableModule(ABC):
+    """Generic measurement-table assembly contract for module declarations."""
 
     measurement_record_excluded_fields: ClassVar[frozenset[str]] = frozenset()
 
     @classmethod
-    def measurement_record(
+    def measurement_table(
         cls, request: CellProfilerOutputRecordRequest
-    ) -> CellProfilerMeasurementRecord:
-        from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-            CellProfilerMeasurementFieldSchema,
-            CellProfilerMeasurementRecord,
-        )
-
+    ) -> MeasurementTable:
         rows = cls.measurement_record_rows(request)
-        rows = cls.filter_measurement_record_rows(request, rows)
         object_name = cls.measurement_record_object_name(request, rows)
-        source_context = cls.measurement_record_source_context(request, rows)
-        clear_source = cls.clear_source_when_rows_declare_object_name()
+        source_image_name = cls.measurement_record_source_image_name(request, rows)
+        source_metadata = cls.measurement_record_source_metadata(request, rows)
+        rows = cls.prepare_measurement_record_rows(
+            rows,
+            source_image_name=source_image_name,
+        )
         if (
-            clear_source
-            and CellProfilerMeasurementFieldSchema.rows_declare_object_name(rows)
+            cls.clear_source_when_rows_declare_object_name()
+            and cls.rows_only_declare_object_name(rows)
         ):
-            object_name = None
-            source_context = source_context.without_source()
-        rows, fields = cls.measurement_record_fields(request, rows)
-        return CellProfilerMeasurementRecord(
+            source_image_name = None
+        return cls.build_measurement_table(
+            name=request.spec.name,
             rows=rows,
             object_name=object_name,
-            source_context=source_context,
-            fields=fields,
-            clear_source_when_rows_declare_object_name=clear_source,
+            source_image_name=source_image_name,
+            source_metadata=source_metadata,
+        )
+
+    @classmethod
+    def prepare_measurement_record_rows(
+        cls,
+        rows: ColumnarRows,
+        *,
+        source_image_name: str | None,
+    ) -> ColumnarRows:
+        """Apply module-owned row semantics before field materialization."""
+        rows = cls.filter_measurement_record_rows(rows)
+        return cls.project_measurement_record_rows(
+            rows,
+            source_image_name=source_image_name,
+        )
+
+    @classmethod
+    def project_measurement_record_rows(
+        cls,
+        rows: ColumnarRows,
+        *,
+        source_image_name: str | None,
+    ) -> ColumnarRows:
+        """Project producer-owned feature identities into emitted rows."""
+        del cls, source_image_name
+        return rows
+
+    @classmethod
+    def build_measurement_table(
+        cls,
+        *,
+        name: str,
+        rows: ColumnarRows,
+        object_name: str | None,
+        source_image_name: str | None,
+        source_metadata: ImagePayloadMetadata,
+    ) -> MeasurementTable:
+        """Build one canonical module-owned native measurement table."""
+        subject = (
+            MeasurementSubject(MeasurementScope.OBJECT, object_name)
+            if object_name is not None
+            else MeasurementSubject(
+                MeasurementScope.IMAGE,
+                source_image_name or MeasurementScope.IMAGE.value,
+            )
+        )
+        return MeasurementTable(
+            name=name,
+            rows=rows,
+            source_image_name=source_image_name,
+            subject=subject,
+            measurement_feature_owner=cls,
+            source_provenance=cls.measurement_source_provenance_for_rows(
+                rows,
+                source_metadata,
+            ),
         )
 
     @classmethod
     def measurement_record_rows(
         cls, request: CellProfilerOutputRecordRequest
-    ) -> list[CellProfilerKwargs]:
-        rows: list[CellProfilerKwargs] = []
+    ) -> ColumnarRows:
+        row_batches = []
         for projection_type in cls.measurement_row_projection_types():
-            rows.extend(projection_type.for_request(cls, request).rows())
+            row_batches.append(projection_type.for_request(cls, request).rows())
+        if not row_batches:
+            return MeasurementSparseColumnarRows.from_rows((), fields=())
+        if len(row_batches) == 1:
+            return row_batches[0]
+        return ConcatenatedColumnarRows(tuple(row_batches))
+
+    @classmethod
+    def complete_table_measurement_rows(
+        cls,
+        request: CellProfilerOutputRecordRequest,
+        rows: ColumnarRows,
+    ) -> ColumnarRows:
+        """Return raw table rows unchanged unless the module declares completion."""
+        del cls, request
         return rows
 
     @classmethod
     def filter_measurement_record_rows(
         cls,
-        request: CellProfilerOutputRecordRequest,
-        rows: MeasurementRowsInput,
-    ) -> MeasurementRowsInput:
+        rows: ColumnarRows,
+    ) -> ColumnarRows:
         """Remove module-declared backend-only fields before CP materialization."""
-        excluded_fields = cls.measurement_record_excluded_field_names(request)
-        return filter_measurement_record_rows_by_fields(rows, excluded_fields)
-
-    @classmethod
-    def measurement_record_excluded_field_names(
-        cls, request: CellProfilerOutputRecordRequest
-    ) -> frozenset[str]:
-        """Return backend-only fields declared by the record class or module."""
-        from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
-
-        module_type = CellProfilerModule.for_module(request.module_name)
-        module_excluded_fields: frozenset[str] = frozenset()
-        if module_type is not None and issubclass(
-            module_type, CellProfilerMeasurementRecordModule
-        ):
-            module_excluded_fields = module_type.measurement_record_excluded_fields
-        return frozenset(
-            (
-                *cls.measurement_record_excluded_fields,
-                *module_excluded_fields,
-            )
+        excluded_fields = cls.measurement_record_excluded_fields
+        if not excluded_fields:
+            return rows
+        retained_fields = tuple(
+            field for field in rows.fields if field.name not in excluded_fields
+        )
+        return MeasurementProjectedColumnarRows(
+            {field.name: rows.column_values(field.name) for field in retained_fields},
+            fields=retained_fields,
+            declared_object_measurement_domain_covered=(
+                rows.covers_declared_object_measurement_domain
+            ),
+            object_row_identity=rows.object_row_identity,
         )
 
     @classmethod
     def measurement_row_projection_types(
         cls,
-    ) -> tuple[type["CellProfilerMeasurementRows"], ...]:
+    ) -> tuple[type["CellProfilerResultMeasurementRows"], ...]:
         from openhcs.interop.cellprofiler.runtime.measurement_rows import (
-            CellProfilerMeasurementRows,
+            CellProfilerResultMeasurementRows,
         )
 
         return tuple(
@@ -159,51 +223,89 @@ class CellProfilerMeasurementRecordModule(ABC):
                 for owner_type in cls.__mro__
                 for projection_type in owner_type.__dict__.values()
                 if isinstance(projection_type, type)
-                and issubclass(projection_type, CellProfilerMeasurementRows)
-                and projection_type is not CellProfilerMeasurementRows
+                and issubclass(projection_type, CellProfilerResultMeasurementRows)
+                and projection_type is not CellProfilerResultMeasurementRows
             )
         )
 
     @classmethod
     def measurement_record_object_name(
-        cls, request: CellProfilerOutputRecordRequest, rows: list[CellProfilerKwargs]
+        cls, request: CellProfilerOutputRecordRequest, rows: ColumnarRows
     ) -> str | None:
-        from openhcs.interop.cellprofiler.runtime.measurement_rows import (
-            _measurement_object_name,
-        )
-
         del rows
-        return _measurement_object_name(request.declared_input_specs)
+        return cls.runtime_object_measurement_row_policy().table_object_owner(
+            request.callable_contract.artifact_inputs.specs
+        )
 
     @classmethod
-    def measurement_record_source_context(
-        cls, request: CellProfilerOutputRecordRequest, rows: list[CellProfilerKwargs]
-    ) -> CellProfilerMeasurementSourceContext | None:
-        from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-            CellProfilerMeasurementSourceContext,
-        )
+    def measurement_record_source_image_name(
+        cls, request: CellProfilerOutputRecordRequest, rows: ColumnarRows
+    ) -> str | None:
+        from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
         from openhcs.interop.cellprofiler.runtime.measurement_source_names import (
             measurement_source_name_for_specs,
         )
 
         del rows
-        source_image_name = request.source.source_image_name
-        if source_image_name is None:
-            source_image_name = measurement_source_name_for_specs(
-                request.runtime_plan.primary_image_inputs
-            )
-        return CellProfilerMeasurementSourceContext(
-            source_image_name=source_image_name,
-            source_image_payload=request.source.payload,
+        module_type = CellProfilerModule.for_function_name(
+            request.callable_contract.function_name
         )
+        if module_type is None:
+            raise KeyError(
+                "No CellProfiler module declaration owns callable "
+                f"{request.callable_contract.function_name!r}."
+            )
+        primary_image_inputs = module_type.primary_image_inputs(
+            request.callable_contract.resolve_canonical_raw_callable(),
+            request.callable_contract.artifact_inputs.specs,
+        )
+        current_source_name = request.source.source_image_name
+        declared_source_names = frozenset(spec.name for spec in primary_image_inputs)
+        source_image_name = (
+            current_source_name
+            if current_source_name in declared_source_names
+            else measurement_source_name_for_specs(primary_image_inputs)
+        )
+        return source_image_name
 
     @classmethod
-    def measurement_record_fields(
-        cls, request: CellProfilerOutputRecordRequest, rows: list[CellProfilerKwargs]
-    ) -> tuple[
-        list[CellProfilerKwargs], tuple[CellProfilerMeasurementFieldSchema, ...] | None
-    ]:
-        return (rows, request.fields_for_rows(rows))
+    def measurement_record_source_metadata(
+        cls, request: CellProfilerOutputRecordRequest, rows: ColumnarRows
+    ) -> ImagePayloadMetadata:
+        del cls, rows
+        return request.source.composed_source_metadata(
+            (request.source,)
+        ) or image_payload_metadata(request.source.payload)
+
+    @staticmethod
+    def rows_only_declare_object_name(rows: ColumnarRows) -> bool:
+        object_field = MeasurementRowAxisField.OBJECT_NAME.value
+        if object_field not in {field.name for field in rows.fields}:
+            return False
+        return rows.row_count() > 0 and all(
+            object_field in row for row in rows.iter_row_mappings()
+        )
+
+    @staticmethod
+    def measurement_source_provenance_for_rows(
+        rows: ColumnarRows,
+        source_metadata: ImagePayloadMetadata,
+    ) -> SourceImageProvenance:
+        source_plane_count = source_metadata.source_provenance.source_plane_count
+        if source_plane_count <= 1:
+            return source_metadata.source_provenance
+        slice_indices = MeasurementRowsAxisProjection.from_rows(
+            rows
+        ).present_axis_values(MeasurementRowAxisField.SLICE_INDEX.value)
+        if len(slice_indices) != 1:
+            return source_metadata.source_provenance
+        slice_index = slice_indices[0]
+        if slice_index >= source_plane_count:
+            raise ValueError(
+                f"Measurement slice_index {slice_index} exceeds source plane count "
+                f"{source_plane_count}."
+            )
+        return source_metadata.for_source_plane(slice_index).source_provenance
 
     @classmethod
     def clear_source_when_rows_declare_object_name(cls) -> bool:
@@ -211,15 +313,54 @@ class CellProfilerMeasurementRecordModule(ABC):
         return True
 
 
-class MeasurementFeatureRecord:
+class MeasurementFeatureRecord(RuntimeSliceIdentityProjectableValue):
     """Dataclass mixin for CP feature rows derived from record fields."""
 
     measurement_value_field: ClassVar[MeasurementRowValueField] = (
         MeasurementRowValueField.RESULT_VALUE
     )
+    measurement_value_dtype: ClassVar[type[object]] = float
+
+    @staticmethod
+    def axis_annotation(field_type: object) -> MeasurementRowAxisField | None:
+        """Return the nominal measurement axis declared on one record field."""
+        if get_origin(field_type) is not Annotated:
+            return None
+        for annotation in get_args(field_type)[1:]:
+            if isinstance(annotation, MeasurementRowAxisField):
+                return annotation
+        return None
+
+    def with_runtime_slice_identity(
+        self,
+        *,
+        slice_index: int,
+        slice_count: int,
+    ) -> Self:
+        """Stamp the record field declared as the runtime-slice axis."""
+        del slice_count
+        if not is_dataclass(self):
+            raise TypeError(
+                f"{type(self).__name__} must be a dataclass measurement record."
+            )
+        field_types = get_type_hints(type(self), include_extras=True)
+        slice_fields = tuple(
+            field.name
+            for field in dataclass_fields(self)
+            if self.axis_annotation(field_types[field.name])
+            is MeasurementRowAxisField.SLICE_INDEX
+        )
+        if not slice_fields:
+            return self
+        if len(slice_fields) != 1:
+            raise TypeError(
+                f"{type(self).__name__} must declare at most one runtime-slice "
+                f"measurement axis field, got {slice_fields!r}."
+            )
+        return dataclass_replace(self, **{slice_fields[0]: int(slice_index)})
 
 
-class FieldDerivedMeasurementFeatureModule(CellProfilerMeasurementRecordModule):
+class FieldDerivedMeasurementFeatureModule(CellProfilerMeasurementTableModule):
     """Derives CP measurement feature names from module-owned result fields."""
 
     measurement_feature_family: ClassVar[str | None] = None
@@ -239,10 +380,26 @@ class FieldDerivedMeasurementFeatureModule(CellProfilerMeasurementRecordModule):
         return str(module_name)
 
     @classmethod
+    def declared_measurement_feature_family_parts(
+        cls,
+    ) -> tuple[tuple[str, ...], ...]:
+        """Add the field-derived family to inherited finite feature families."""
+
+        inherited = super().declared_measurement_feature_family_parts()
+        family = tuple(
+            part for part in cls.measurement_feature_family_name().split("_") if part
+        )
+        return tuple(dict.fromkeys((family, *inherited)))
+
+    @classmethod
     def measurement_feature_stem(cls, field_name: str) -> str:
         token_aliases = dict(cls.measurement_feature_token_aliases)
         return "".join(
-            token_aliases[part] if part in token_aliases else part[:1].upper() + part[1:]
+            (
+                token_aliases[part]
+                if part in token_aliases
+                else part[:1].upper() + part[1:]
+            )
             for part in str(field_name).split("_")
             if part
         )
@@ -269,15 +426,6 @@ class FieldDerivedMeasurementFeatureModule(CellProfilerMeasurementRecordModule):
         del cls
         return f"Mean_{object_name}_{feature_name}"
 
-    @staticmethod
-    def measurement_record_axis_annotation(field_type: object) -> MeasurementRowAxisField | None:
-        if get_origin(field_type) is not Annotated:
-            return None
-        for annotation in get_args(field_type)[1:]:
-            if isinstance(annotation, MeasurementRowAxisField):
-                return annotation
-        return None
-
     @classmethod
     def measurement_feature_rows(
         cls,
@@ -286,7 +434,7 @@ class FieldDerivedMeasurementFeatureModule(CellProfilerMeasurementRecordModule):
         feature_values: Mapping[str, object],
         qualified_parts: tuple[object, ...] = (),
         value_field: MeasurementRowValueField,
-    ) -> list[CellProfilerKwargs]:
+    ) -> list[RuntimeCallableKwargs]:
         return [
             {
                 **dict(axis_values),
@@ -300,33 +448,37 @@ class FieldDerivedMeasurementFeatureModule(CellProfilerMeasurementRecordModule):
         ]
 
     @classmethod
-    def measurement_record_axis_values(cls, record: MeasurementFeatureRecord) -> dict[str, object]:
+    def measurement_record_axis_values(
+        cls, record: MeasurementFeatureRecord
+    ) -> dict[str, object]:
         field_types = get_type_hints(type(record), include_extras=True)
         record_values = asdict(record)
         return {
             axis.value: record_values[field.name]
             for field in dataclass_fields(record)
             for axis in (
-                cls.measurement_record_axis_annotation(field_types[field.name]),
+                MeasurementFeatureRecord.axis_annotation(field_types[field.name]),
             )
             if axis is not None
         }
 
     @classmethod
-    def measurement_record_field_values(cls, record: MeasurementFeatureRecord) -> dict[str, object]:
+    def measurement_record_field_values(
+        cls, record: MeasurementFeatureRecord
+    ) -> dict[str, object]:
         field_types = get_type_hints(type(record), include_extras=True)
         record_values = asdict(record)
         return {
             field.name: record_values[field.name]
             for field in dataclass_fields(record)
-            if cls.measurement_record_axis_annotation(field_types[field.name]) is None
+            if MeasurementFeatureRecord.axis_annotation(field_types[field.name]) is None
         }
 
     @classmethod
     def measurement_feature_row_fields(
         cls,
         record_type: type[MeasurementFeatureRecord],
-    ) -> tuple[str, ...]:
+    ) -> tuple[FieldSpec, ...]:
         if not is_dataclass(record_type):
             raise TypeError(
                 f"{cls.__name__}.measurement_feature_row_fields() requires a "
@@ -339,14 +491,21 @@ class FieldDerivedMeasurementFeatureModule(CellProfilerMeasurementRecordModule):
         field_types = get_type_hints(record_type, include_extras=True)
         return (
             *(
-                axis.value
+                FieldSpec.from_annotation(
+                    axis.value,
+                    field_types[field.name],
+                )
                 for field in dataclass_fields(record_type)
                 for axis in (
-                    cls.measurement_record_axis_annotation(field_types[field.name]),
+                    MeasurementFeatureRecord.axis_annotation(field_types[field.name]),
                 )
                 if axis is not None
             ),
-            record_type.measurement_value_field.value,
+            FieldSpec(MeasurementRowAxisField.FEATURE_NAME.value, str),
+            FieldSpec(
+                record_type.measurement_value_field.value,
+                record_type.measurement_value_dtype,
+            ),
         )
 
     @classmethod
@@ -355,8 +514,8 @@ class FieldDerivedMeasurementFeatureModule(CellProfilerMeasurementRecordModule):
         records: tuple[MeasurementFeatureRecord, ...],
         *,
         qualified_parts: tuple[object, ...] = (),
-    ) -> list[CellProfilerKwargs]:
-        rows: list[CellProfilerKwargs] = []
+    ) -> list[RuntimeCallableKwargs]:
+        rows: list[RuntimeCallableKwargs] = []
         for record in records:
             rows.extend(
                 cls.measurement_feature_rows(
@@ -364,23 +523,6 @@ class FieldDerivedMeasurementFeatureModule(CellProfilerMeasurementRecordModule):
                     feature_values=cls.measurement_record_field_values(record),
                     qualified_parts=qualified_parts,
                     value_field=type(record).measurement_value_field,
-                )
-            )
-        return rows
-
-    @classmethod
-    def source_qualified_measurement_feature_rows_from_records(
-        cls,
-        records: tuple[MeasurementFeatureRecord, ...],
-    ) -> list[CellProfilerKwargs]:
-        rows: list[CellProfilerKwargs] = []
-        source_field = MeasurementRowAxisField.SOURCE_IMAGE_NAME.value
-        for record in records:
-            source_name = cls.measurement_record_axis_values(record).get(source_field)
-            rows.extend(
-                cls.measurement_feature_rows_from_records(
-                    (record,),
-                    qualified_parts=(source_name,),
                 )
             )
         return rows
@@ -394,7 +536,7 @@ class FieldDerivedMeasurementFeatureModule(CellProfilerMeasurementRecordModule):
         object_name: str,
         qualified_parts: tuple[object, ...] = (),
         value_field: MeasurementRowValueField,
-    ) -> list[CellProfilerKwargs]:
+    ) -> list[RuntimeCallableKwargs]:
         return [
             {
                 **dict(axis_values),
@@ -415,12 +557,14 @@ class FieldDerivedMeasurementFeatureModule(CellProfilerMeasurementRecordModule):
         axis_values: Mapping[str, object],
         object_name: str,
         qualified_parts: tuple[object, ...] = (),
-    ) -> list[CellProfilerKwargs]:
+    ) -> list[RuntimeCallableKwargs]:
         if not records:
             return []
         values_by_field: dict[str, list[float]] = {}
         for record in records:
-            for field_name, value in cls.measurement_record_field_values(record).items():
+            for field_name, value in cls.measurement_record_field_values(
+                record
+            ).items():
                 values_by_field.setdefault(field_name, []).append(float(value))
         mean_values = {
             field_name: (
@@ -429,9 +573,7 @@ class FieldDerivedMeasurementFeatureModule(CellProfilerMeasurementRecordModule):
                 else float("nan")
             )
             for field_name, values in values_by_field.items()
-            for finite_values in (
-                [value for value in values if math.isfinite(value)],
-            )
+            for finite_values in ([value for value in values if math.isfinite(value)],)
         }
         return cls.mean_measurement_feature_rows(
             axis_values=axis_values,
@@ -442,163 +584,78 @@ class FieldDerivedMeasurementFeatureModule(CellProfilerMeasurementRecordModule):
         )
 
 
-class TableMeasurementRecordRowsMixin(CellProfilerMeasurementRecordModule):
+class TableMeasurementRecordRowsMixin(CellProfilerMeasurementTableModule):
     """Adds raw CellProfiler measurement table rows."""
 
     @classmethod
     def measurement_record_rows(
         cls, request: CellProfilerOutputRecordRequest
-    ) -> list[CellProfilerKwargs]:
+    ) -> ColumnarRows:
         from openhcs.interop.cellprofiler.runtime.measurement_rows import (
             measurement_table_rows,
         )
-        from openhcs.interop.cellprofiler.runtime.object_measurement_row_policies import (
-            CellProfilerObjectMeasurementRowPolicy,
+
+        rows = (
+            MeasurementSparseColumnarRows.from_rows((), fields=())
+            if cls.measurement_row_projection_types()
+            else measurement_table_rows(request.output_value)
+        )
+        rows = cls.complete_table_measurement_rows(request, rows)
+        return ConcatenatedColumnarRows(
+            (rows, super().measurement_record_rows(request))
         )
 
-        rows = measurement_table_rows(request.output_value)
-        if issubclass(cls, CellProfilerObjectMeasurementRowPolicy):
-            object_inputs = request.runtime_plan.object_label_inputs
-            if len(object_inputs) == 1:
-                row_policy = request.runtime_plan.object_measurement_row_policy
-                rows = row_policy.complete_rows(
-                    rows,
-                    label_payload=request.object_label_source_payload_for_spec(
-                        object_inputs[0]
-                    ),
-                    func=request.func,
-                )
-        return [*rows, *super().measurement_record_rows(request)]
 
-
-class RelationshipMeasurementRecordRowsMixin(CellProfilerMeasurementRecordModule):
+class RelationshipMeasurementRecordRowsMixin(CellProfilerMeasurementTableModule):
     """Adds relationship rows derived from the module relationship declaration."""
 
     @classmethod
     def measurement_record_rows(
         cls, request: CellProfilerOutputRecordRequest
-    ) -> list[CellProfilerKwargs]:
+    ) -> ColumnarRows:
         from openhcs.interop.cellprofiler.runtime.relationship_measurement_rows import (
             RelationshipMeasurementRows,
         )
 
-        return [
-            *RelationshipMeasurementRows.for_request(request).rows(),
-            *super().measurement_record_rows(request),
-        ]
-
-
-class OutputObjectLocationMeasurementRecordRowsMixin(
-    CellProfilerMeasurementRecordModule
-):
-    """Adds location rows for the emitted object artifact."""
-
-    @classmethod
-    def measurement_record_rows(
-        cls, request: CellProfilerOutputRecordRequest
-    ) -> list[CellProfilerKwargs]:
-        from openhcs.interop.cellprofiler.runtime.measurement_rows import (
-            ObjectLocationMeasurementRows,
+        return ConcatenatedColumnarRows(
+            (
+                RelationshipMeasurementRows.for_request(request).rows(),
+                super().measurement_record_rows(request),
+            )
         )
 
-        object_name = request.single_output_object_name()
-        return [
-            *ObjectLocationMeasurementRows(
-                request.output_values[object_name],
-                object_name=object_name,
-                domain_scope=request.object_label_output_domain_scope(),
-            ).rows(),
-            *super().measurement_record_rows(request),
-        ]
 
-
-class TrackingMeasurementRecordRowsMixin(CellProfilerMeasurementRecordModule):
-    """Adds tracking rows annotated through the runtime row policy."""
-
-    @classmethod
-    def measurement_record_rows(
-        cls, request: CellProfilerOutputRecordRequest
-    ) -> list[CellProfilerKwargs]:
-        from openhcs.core.runtime_semantics import MeasurementScope
-        from openhcs.interop.cellprofiler.runtime.measurement_rows import (
-            _measurement_object_name,
-            measurement_table_rows,
-        )
-
-        row_policy = request.runtime_plan.object_measurement_row_policy
-        return [
-            *row_policy.annotate_record_rows(
-                measurement_table_rows(request.output_value),
-                object_name=_measurement_object_name(request.declared_input_specs),
-                source_image_name=request.source.source_image_name
-                or MeasurementScope.IMAGE.value,
-            ),
-            *super().measurement_record_rows(request),
-        ]
-
-
-class NoObjectNameMeasurementRecordMixin(CellProfilerMeasurementRecordModule):
+class NoObjectNameMeasurementRecordMixin(CellProfilerMeasurementTableModule):
     """Suppresses object ownership for emitted measurement rows."""
 
     @classmethod
     def measurement_record_object_name(
-        cls, request: CellProfilerOutputRecordRequest, rows: list[CellProfilerKwargs]
+        cls, request: CellProfilerOutputRecordRequest, rows: ColumnarRows
     ) -> str | None:
         del request, rows
         return None
 
 
-class NoSourceMeasurementRecordMixin(CellProfilerMeasurementRecordModule):
-    """Suppresses image-source qualification for emitted measurement rows."""
+class PayloadOnlyMeasurementRecordMixin(CellProfilerMeasurementTableModule):
+    """Use payload provenance without a table-level source-image owner."""
 
     @classmethod
-    def measurement_record_source_context(
-        cls, request: CellProfilerOutputRecordRequest, rows: list[CellProfilerKwargs]
-    ) -> CellProfilerMeasurementSourceContext | None:
-        from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-            CellProfilerMeasurementSourceContext,
-        )
-
-        del request, rows
-        return CellProfilerMeasurementSourceContext()
+    def measurement_record_source_image_name(
+        cls, request: CellProfilerOutputRecordRequest, rows: ColumnarRows
+    ) -> None:
+        del cls, request, rows
+        return None
 
 
-class CurrentSourceMeasurementRecordMixin(CellProfilerMeasurementRecordModule):
-    """Uses the current runtime source image and payload."""
-
-    @classmethod
-    def measurement_record_source_context(
-        cls, request: CellProfilerOutputRecordRequest, rows: list[CellProfilerKwargs]
-    ) -> CellProfilerMeasurementSourceContext | None:
-        from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-            CellProfilerMeasurementSourceContext,
-        )
-
-        del rows
-        return CellProfilerMeasurementSourceContext(
-            source_image_name=request.source.source_image_name,
-            source_image_payload=request.source.payload,
-        )
-
-
-class CurrentPayloadMeasurementRecordMixin(CellProfilerMeasurementRecordModule):
+class CurrentPayloadMeasurementRecordMixin(PayloadOnlyMeasurementRecordMixin):
     """Uses the current runtime payload without an image-source name."""
 
     @classmethod
-    def measurement_record_source_context(
-        cls, request: CellProfilerOutputRecordRequest, rows: list[CellProfilerKwargs]
-    ) -> CellProfilerMeasurementSourceContext | None:
-        from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-            CellProfilerMeasurementSourceContext,
-        )
-        from openhcs.core.runtime_values import image_payload_metadata
-
-        del rows
-        return CellProfilerMeasurementSourceContext(
-            source_image_name=None,
-            source_image_payload=request.source.payload,
-            source_metadata=image_payload_metadata(request.source.payload),
-        )
+    def measurement_record_source_metadata(
+        cls, request: CellProfilerOutputRecordRequest, rows: ColumnarRows
+    ) -> ImagePayloadMetadata:
+        del cls, rows
+        return image_payload_metadata(request.source.payload)
 
     @classmethod
     def clear_source_when_rows_declare_object_name(cls) -> bool:
@@ -606,184 +663,180 @@ class CurrentPayloadMeasurementRecordMixin(CellProfilerMeasurementRecordModule):
         return False
 
 
-class ObjectLabelOutputSourceMeasurementRecordMixin(
-    CellProfilerMeasurementRecordModule
-):
-    """Uses the declared object-label output source payload as row provenance."""
-
-    @classmethod
-    def measurement_record_source_context(
-        cls, request: CellProfilerOutputRecordRequest, rows: list[CellProfilerKwargs]
-    ) -> CellProfilerMeasurementSourceContext | None:
-        from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-            CellProfilerMeasurementSourceContext,
-        )
-        from openhcs.core.runtime_values import image_payload_metadata
-
-        del rows
-        source_payload = (
-            request.output_values[request.single_output_object_name()]
-            if request.adapter is None
-            else request.runtime_plan.object_label_output_source_context_policy.source_context(
-                request
-            ).source_payload
-        )
-        return CellProfilerMeasurementSourceContext(
-            source_metadata=image_payload_metadata(source_payload)
-        )
-
-
-class ProducedImageMeasurementRecordMixin(CellProfilerMeasurementRecordModule):
+class ProducedImageMeasurementRecordMixin(CellProfilerMeasurementTableModule):
     """Uses a declared image output as measurement source."""
 
     @classmethod
-    def primary_image_measurement_source(
+    def primary_image_output_spec(
         cls, request: CellProfilerOutputRecordRequest
-    ) -> CellProfilerImageMeasurementSource:
-        from openhcs.core.artifacts import ArtifactType, ImageArtifactType
-        from openhcs.interop.cellprofiler.runtime.measurement_image_sources import (
-            ProducedArtifactImageMeasurementSource,
-            UnqualifiedRuntimeImageMeasurementSource,
-        )
-        from openhcs.interop.cellprofiler.runtime.pure2d_output_aggregation import (
-            ImagePayloadPure2DOutputAggregator,
-        )
+    ) -> ArtifactSpec | None:
+        from openhcs.core.artifacts import ImageArtifactType
 
         image_specs = tuple(
-            (
-                spec
-                for spec in request.contract.declared_output_collection().of_artifact_type(
-                    ImageArtifactType
-                )
-                if spec.sidecar_role is None
+            spec
+            for spec in request.callable_contract.artifact_outputs.of_artifact_type(
+                ImageArtifactType
             )
+            if spec.sidecar_role is None
         )
         if not image_specs:
-            return UnqualifiedRuntimeImageMeasurementSource()
+            return None
         if len(image_specs) == 1:
-            return ProducedArtifactImageMeasurementSource(image_specs[0])
-        accepted_image_output_types = (
-            ImagePayloadPure2DOutputAggregator.accepted_output_types()
-        )
-        retained_image_names = {
-            name
-            for name, value in request.output_values.items()
-            if accepted_image_output_types
-            and isinstance(value, accepted_image_output_types)
-        }
-        retained_specs = tuple(
-            (spec for spec in image_specs if spec.name in retained_image_names)
-        )
-        if len(retained_specs) == 1:
-            return ProducedArtifactImageMeasurementSource(retained_specs[0])
+            return image_specs[0]
         raise ValueError(
             f"Produced-image measurement ownership requires exactly one primary image output spec, got {[spec.name for spec in image_specs]!r}."
         )
 
     @classmethod
-    def measurement_record_source_context(
-        cls, request: CellProfilerOutputRecordRequest, rows: list[CellProfilerKwargs]
-    ) -> CellProfilerMeasurementSourceContext | None:
-        from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-            CellProfilerMeasurementSourceContext,
-        )
+    def require_primary_image_output_spec(
+        cls,
+        request: CellProfilerOutputRecordRequest,
+    ) -> ArtifactSpec:
+        spec = cls.primary_image_output_spec(request)
+        if spec is None:
+            raise ValueError("Measurement ownership requires an image output.")
+        return spec
 
+    @classmethod
+    def measurement_record_source_image_name(
+        cls, request: CellProfilerOutputRecordRequest, rows: ColumnarRows
+    ) -> str | None:
         del rows
-        source_image = cls.primary_image_measurement_source(request)
-        return CellProfilerMeasurementSourceContext(
-            source_image_name=source_image.source_image_name(request),
-            source_image_payload=source_image.source_image_payload(request),
+        source_spec = cls.primary_image_output_spec(request)
+        return None if source_spec is None else source_spec.name
+
+    @classmethod
+    def measurement_record_source_metadata(
+        cls, request: CellProfilerOutputRecordRequest, rows: ColumnarRows
+    ) -> ImagePayloadMetadata:
+        del rows
+        source_spec = cls.primary_image_output_spec(request)
+        return image_payload_metadata(
+            request.source.payload
+            if source_spec is None
+            else request.artifact_output_value(source_spec)
         )
 
 
-class ProducedImagePayloadMeasurementRecordMixin(ProducedImageMeasurementRecordMixin):
+class ProducedImagePayloadMeasurementRecordMixin(
+    PayloadOnlyMeasurementRecordMixin,
+    ProducedImageMeasurementRecordMixin,
+):
     """Uses a declared image output payload without an image-source name."""
 
-    @classmethod
-    def measurement_record_source_context(
-        cls, request: CellProfilerOutputRecordRequest, rows: list[CellProfilerKwargs]
-    ) -> CellProfilerMeasurementSourceContext | None:
-        from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-            CellProfilerMeasurementSourceContext,
-        )
 
-        del rows
-        source_image = cls.primary_image_measurement_source(
-            request
-        ).require_produced_artifact()
-        return CellProfilerMeasurementSourceContext(
-            source_image_name=None,
-            source_image_payload=source_image.source_image_payload(request),
-        )
-
-
-class DeclaredImageOutputPayloadMeasurementRecordMixin(CellProfilerMeasurementRecordModule):
-    """Uses current payload provenance renamed to declared image outputs."""
+class DeclaredImageOutputPayloadMeasurementRecordMixin(
+    PayloadOnlyMeasurementRecordMixin,
+):
+    """Uses exact declared image-output provenance as measurement context."""
 
     @classmethod
-    def measurement_record_source_context(
-        cls, request: CellProfilerOutputRecordRequest, rows: list[CellProfilerKwargs]
-    ) -> CellProfilerMeasurementSourceContext | None:
+    def measurement_record_source_metadata(
+        cls, request: CellProfilerOutputRecordRequest, rows: ColumnarRows
+    ) -> ImagePayloadMetadata:
         from openhcs.core.artifacts import ImageArtifactType
-        from openhcs.core.runtime_values import image_payload_metadata
-        from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-            CellProfilerMeasurementSourceContext,
+        from openhcs.core.runtime_image_values import (
+            ImagePayloadMetadata,
+            image_payload_metadata,
+        )
+        from openhcs.core.source_matching import SourceImageSetIdentityPolicy
+        from openhcs.core.source_plane_alignment import (
+            SourcePayloadPlaneIdentitySequence,
+            SourcePlaneIdentitySequenceAlignment,
         )
 
         del rows
-        image_output_names = tuple(
-            spec.name
-            for spec in request.contract.declared_output_collection().of_artifact_type(
+        image_output_specs = tuple(
+            spec
+            for spec in request.callable_contract.artifact_outputs.of_artifact_type(
                 ImageArtifactType
             )
             if spec.sidecar_role is None
         )
-        source_metadata = image_payload_metadata(request.source.payload)
-        if image_output_names:
-            source_metadata = source_metadata.with_source_provenance(
-                source_metadata.source_provenance.with_source_image_names(
-                    image_output_names
-                )
+        if not image_output_specs:
+            raise ValueError(
+                f"{cls.__name__} requires at least one declared image output."
             )
-        return CellProfilerMeasurementSourceContext(
-            source_image_name=None,
-            source_image_payload=request.source.payload,
-            source_metadata=source_metadata,
+        source_payloads = tuple(
+            request.artifact_output_value(spec) for spec in image_output_specs
         )
+        identity_policy = SourceImageSetIdentityPolicy.from_source_bindings(
+            request.adapter.request.source_binding_plan
+        )
+        identity_axes = tuple(
+            SourcePayloadPlaneIdentitySequence(
+                payload,
+                identity_policy,
+            ).runtime_axis_identities()
+            for payload in source_payloads
+        )
+        missing_identity_specs = tuple(
+            image_output_specs[index].ref()
+            for index, identity_axis in enumerate(identity_axes)
+            if not identity_axis
+        )
+        if missing_identity_specs:
+            raise ValueError(
+                f"{cls.__name__} image outputs do not carry producer-declared "
+                f"source identity: {missing_identity_specs!r}."
+            )
+        unaligned_indexes = SourcePlaneIdentitySequenceAlignment.unaligned_axis_indexes(
+            identity_axes
+        )
+        if unaligned_indexes:
+            raise ValueError(
+                f"{cls.__name__} image outputs do not share one source image-set "
+                "axis: "
+                f"reference={image_output_specs[0].ref()!r}; "
+                f"unaligned={tuple(image_output_specs[index].ref() for index in unaligned_indexes)!r}."
+            )
+        source_metadata = ImagePayloadMetadata.compose(
+            source_payloads,
+            source_metadata=tuple(
+                image_payload_metadata(payload) for payload in source_payloads
+            ),
+        ).collapse_leading_plane_axis()
+        return source_metadata
 
 
-class SourceQualifiedInputPayloadMeasurementRecordMixin(CellProfilerMeasurementRecordModule):
-    """Uses row-declared input artifacts as source-qualified measurement provenance."""
+class SourceQualifiedInputPayloadMeasurementRecordMixin(
+    CellProfilerMeasurementTableModule
+):
+    """Uses the aligned source axis of row-declared input artifacts."""
 
     @classmethod
-    def measurement_record_source_context(
-        cls, request: CellProfilerOutputRecordRequest, rows: list[CellProfilerKwargs]
-    ) -> CellProfilerMeasurementSourceContext | None:
-        from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
-        from openhcs.core.runtime_semantics import MeasurementRowAxisField
-        from openhcs.core.runtime_values import (
-            ImagePayloadMetadataCompositionRequest,
-            image_payload_metadata,
-        )
-        from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-            CellProfilerMeasurementSourceContext,
-        )
+    def measurement_record_source_image_name(
+        cls, request: CellProfilerOutputRecordRequest, rows: ColumnarRows
+    ) -> str | None:
+        if cls.measurement_record_source_names(rows):
+            return None
+        return super().measurement_record_source_image_name(request, rows)
 
+    @staticmethod
+    def measurement_record_source_names(rows: ColumnarRows) -> tuple[str, ...]:
         source_field = MeasurementRowAxisField.SOURCE_IMAGE_NAME.value
-        source_names = tuple(
+        return tuple(
             dict.fromkeys(
                 str(row_mapping[source_field])
-                for row in rows
-                for row_mapping in (measurement_row_mapping(row),)
+                for row_mapping in rows.iter_row_mappings()
                 if source_field in row_mapping
             )
         )
-        if not source_names:
-            return super().measurement_record_source_context(request, rows)
 
-        declared_inputs = request.contract.declared_input_collection()
-        source_payloads = []
-        source_metadata = []
+    @classmethod
+    def measurement_record_source_metadata(
+        cls, request: CellProfilerOutputRecordRequest, rows: ColumnarRows
+    ) -> ImagePayloadMetadata:
+        from openhcs.core.artifacts import (
+            ArtifactSpecCollection,
+        )
+
+        source_names = cls.measurement_record_source_names(rows)
+        if not source_names:
+            return super().measurement_record_source_metadata(request, rows)
+
+        declared_inputs = ArtifactSpecCollection(request.callable_contract.artifact_inputs.specs)
+        source_specs = []
         for source_name in source_names:
             spec = declared_inputs.by_name(source_name)
             if spec is None:
@@ -791,111 +844,11 @@ class SourceQualifiedInputPayloadMeasurementRecordMixin(CellProfilerMeasurementR
                     f"{cls.__name__} emitted source-qualified measurement rows for "
                     f"{source_name!r}, but no declared input artifact has that name."
                 )
-            if spec.artifact_type is ImageArtifactType:
-                payload = request.input_image_source_payload(spec)
-            elif spec.artifact_type is ObjectLabelsArtifactType:
-                payload = request.object_label_source_payload_for_spec(spec)
-            else:
-                raise ValueError(
-                    f"{cls.__name__} emitted source-qualified measurement rows for "
-                    f"{source_name!r}, but declared input {spec.name!r} has unsupported "
-                    f"artifact type {spec.artifact_type.value!r}."
-                )
-            if payload is None:
-                raise ValueError(
-                    f"{cls.__name__} could not resolve source payload for declared "
-                    f"input artifact {source_name!r}."
-                )
-            metadata = image_payload_metadata(payload)
-            source_payloads.append(payload)
-            source_metadata.append(
-                metadata.with_source_provenance(
-                    metadata.source_provenance.with_source_image_names((source_name,))
-                )
-            )
+            source_specs.append(spec)
 
-        return CellProfilerMeasurementSourceContext(
-            source_image_name=None,
-            source_image_payload=request.source.payload,
-            source_metadata=ImagePayloadMetadataCompositionRequest(
-                source_payloads,
-                source_metadata_override=source_metadata,
-            ).metadata(),
-        )
+        return request.measurement_source_metadata(tuple(source_specs))
 
     @classmethod
     def clear_source_when_rows_declare_object_name(cls) -> bool:
         """Source-qualified object rows keep their declared provenance."""
         return False
-
-
-class SourceNameOnlyMeasurementRecordMixin(CellProfilerMeasurementRecordModule):
-    """Uses only the runtime source image name."""
-
-    @classmethod
-    def measurement_record_source_context(
-        cls, request: CellProfilerOutputRecordRequest, rows: list[CellProfilerKwargs]
-    ) -> CellProfilerMeasurementSourceContext | None:
-        from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-            CellProfilerMeasurementSourceContext,
-        )
-
-        del rows
-        return CellProfilerMeasurementSourceContext(
-            source_image_name=request.source.source_image_name
-        )
-
-
-class NoFieldsMeasurementRecordMixin(CellProfilerMeasurementRecordModule):
-    """Suppresses explicit measurement field schema."""
-
-    @classmethod
-    def measurement_record_fields(
-        cls, request: CellProfilerOutputRecordRequest, rows: list[CellProfilerKwargs]
-    ) -> tuple[
-        list[CellProfilerKwargs], tuple[CellProfilerMeasurementFieldSchema, ...] | None
-    ]:
-        del request
-        return (rows, None)
-
-
-class ColumnarFieldsMeasurementRecordMixin(CellProfilerMeasurementRecordModule):
-    """Derives field schema from columnar materialization."""
-
-    @classmethod
-    def measurement_record_fields(
-        cls, request: CellProfilerOutputRecordRequest, rows: list[CellProfilerKwargs]
-    ) -> tuple[
-        list[CellProfilerKwargs], tuple[CellProfilerMeasurementFieldSchema, ...] | None
-    ]:
-        from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-            MeasurementRowColumnarMaterialization,
-        )
-
-        del request
-        return MeasurementRowColumnarMaterialization.from_rows(rows).table()
-
-
-class FieldsFromRowsMeasurementRecordMixin(CellProfilerMeasurementRecordModule):
-    """Derives field schema directly from declared row carriers."""
-
-    @classmethod
-    def measurement_record_fields(
-        cls, request: CellProfilerOutputRecordRequest, rows: list[CellProfilerKwargs]
-    ) -> tuple[
-        list[CellProfilerKwargs], tuple[CellProfilerMeasurementFieldSchema, ...] | None
-    ]:
-        from openhcs.interop.cellprofiler.runtime.measurement_materialization import (
-            CellProfilerMeasurementFieldSchema,
-        )
-
-        del request
-        return (rows, CellProfilerMeasurementFieldSchema.from_rows(rows))
-
-
-class DefaultMeasurementRecordModule(
-    TableMeasurementRecordRowsMixin,
-    RelationshipMeasurementRecordRowsMixin,
-    CellProfilerMeasurementRecordModule,
-):
-    """Default measurement-record declaration used by most modules."""

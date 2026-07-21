@@ -1,34 +1,75 @@
 """CellProfiler measurement-name dialect for semantic output equivalence."""
 
 from __future__ import annotations
+
+from enum import Enum
+from functools import lru_cache
 from types import MappingProxyType
+
 from openhcs.core.equivalence import (
     RuntimeEquivalencePolicy,
     RuntimeMeasurementDialect,
     RuntimeMeasurementSourceNameEncoding,
+    measurement_row_qualifiers,
 )
 from openhcs.core.measurement_lookup_dialect import (
     RuntimeMeasurementFeatureLookup,
     RuntimeMeasurementLookupDialect,
     RuntimeMeasurementObjectDomainPolicy,
 )
-from openhcs.core.runtime_semantics import (
-    MeasurementScope,
-    ObjectCoreMeasurementFeature,
-    RuntimeMeasurementIndexedDescriptorDeclaration,
+from openhcs.core.runtime_measurements import MeasurementRowAxisField, MeasurementScope, ObjectCoreMeasurementFeature, RuntimeMeasurementRowIdentityContract, RuntimeMeasurementFeatureDeclaration
+from openhcs.interop.cellprofiler import (
+    measurement_semantic_profiles as _measurement_semantic_profiles,  # noqa: F401
+)
+from openhcs.interop.cellprofiler.database_column_dialect import (
+    CellProfilerDatabaseColumnDialect,
+    CellProfilerObjectCoreMeasurementFeature,
 )
 from openhcs.interop.cellprofiler.measurement_lookup import (
     child_count_feature_child_name,
 )
-from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
-from openhcs.interop.cellprofiler import (
-    measurement_semantic_profiles as _measurement_semantic_profiles,
+from openhcs.interop.cellprofiler.module_declarations import (
+    CellProfilerModule,
 )
 
-BENCHMARK_CACHE_DOMAINS = frozenset({"parity"})
+
+class CellProfilerSpatialGridMeasurementFeature(Enum):
+    """CellProfiler field names for canonical spatial-grid geometry."""
+
+    COLUMNS = ("columns", "Columns")
+    ROWS = ("rows", "Rows")
+    X_ORIGIN = ("x_origin", "XLocationOfLowestXSpot")
+    X_SPACING = ("x_spacing", "XSpacing")
+    Y_ORIGIN = ("y_origin", "YLocationOfLowestYSpot")
+    Y_SPACING = ("y_spacing", "YSpacing")
+
+    def __init__(self, canonical_field_name: str, cellprofiler_field_name: str) -> None:
+        self.canonical_field_name = canonical_field_name
+        self.cellprofiler_field_name = cellprofiler_field_name
+
+    @classmethod
+    def render(cls, grid_name: str, field_name: str) -> str:
+        """Render the exact CellProfiler feature for one canonical grid field."""
+
+        matching = tuple(
+            feature
+            for feature in cls
+            if feature.canonical_field_name == field_name
+        )
+        if len(matching) != 1:
+            raise ValueError(
+                "CellProfiler spatial-grid measurement does not declare canonical "
+                f"field {field_name!r}."
+            )
+        return f"DefinedGrid_{grid_name}_{matching[0].cellprofiler_field_name}"
+
+CELLPROFILER_OBJECT_NUMBER_FEATURE_PARTS = tuple(
+    part.casefold()
+    for part in CellProfilerObjectCoreMeasurementFeature.OBJECT_NUMBER.value.split("_")
+)
 CELLPROFILER_CORE_MEASUREMENT_FEATURE_PART_ALIASES = MappingProxyType(
     {
-        ("number", "object", "number"): ("object", "number"),
+        CELLPROFILER_OBJECT_NUMBER_FEATURE_PARTS: ("object", "number"),
         **{
             tuple(feature.value.split("_")): tuple(feature.value.split("_"))
             for feature in (
@@ -63,6 +104,9 @@ CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT = RuntimeMeasurementLookupDialect(
 )
 CELLPROFILER_MEASUREMENT_DIALECT = RuntimeMeasurementDialect(
     category_prefixes_provider=CellProfilerModule.measurement_category_prefix_declarations,
+    primary_category_prefixes_provider=(
+        CellProfilerModule.primary_measurement_category_prefix_declarations
+    ),
     feature_part_aliases=CELLPROFILER_CORE_MEASUREMENT_FEATURE_PART_ALIASES,
     feature_part_aliases_provider=CellProfilerModule.measurement_feature_part_rewrite_declarations,
     source_feature_prefixes_provider=CellProfilerModule.measurement_source_feature_prefix_declarations,
@@ -82,8 +126,14 @@ CELLPROFILER_MEASUREMENT_DIALECT = RuntimeMeasurementDialect(
     measurement_feature_marker_provider=(
         CellProfilerModule.measurement_feature_marker_types_for_key
     ),
+    row_identity_contract=RuntimeMeasurementRowIdentityContract(
+        object_identity_fields=(
+            "_".join(CELLPROFILER_OBJECT_NUMBER_FEATURE_PARTS),
+            *MeasurementRowAxisField.object_id_field_names(),
+        )
+    ),
     indexed_descriptor_suffix_width_provider=(
-        RuntimeMeasurementIndexedDescriptorDeclaration.indexed_suffix_token_width_for
+        RuntimeMeasurementFeatureDeclaration.indexed_suffix_token_width_for
     ),
     threshold_qualifier_tokens=frozenset(
         {
@@ -101,6 +151,12 @@ CELLPROFILER_MEASUREMENT_DIALECT = RuntimeMeasurementDialect(
     source_qualifier_suffix_tokens=frozenset(
         {"red", "green", "blue", "gray", "grey", "dna", "gfp", "rfp"}
     ),
+    non_measurement_field_prefixes_provider=(
+        CellProfilerDatabaseColumnDialect.structural_field_prefixes
+    ),
+    spatial_grid_measurement_feature_name_provider=(
+        CellProfilerSpatialGridMeasurementFeature.render
+    ),
     numbered_feature_prefix_aliases_provider=(
         CellProfilerModule.numbered_measurement_feature_prefix_alias_declarations
     ),
@@ -112,6 +168,25 @@ CELLPROFILER_MEASUREMENT_DIALECT = RuntimeMeasurementDialect(
     ),
     measurement_feature_relation_provider=CellProfilerModule.measurement_feature_relation_declarations,
 )
+
+
+@lru_cache(maxsize=8192)
+def cellprofiler_projected_measurement_feature_name(
+    feature_name: str,
+    qualifier_values: tuple[tuple[str, object], ...],
+) -> str:
+    """Append declared descriptor axes to an exact producer feature name."""
+
+    qualifiers = measurement_row_qualifiers(
+        dict(qualifier_values),
+        CELLPROFILER_MEASUREMENT_DIALECT,
+        feature_name,
+    )
+    if not qualifiers:
+        return feature_name
+    return "_".join((feature_name, *qualifiers))
+
+
 def cellprofiler_runtime_equivalence_policy(
     **overrides: object,
 ) -> RuntimeEquivalencePolicy:

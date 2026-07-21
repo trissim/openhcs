@@ -30,52 +30,78 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from functools import lru_cache, wraps
-from typing import Any, Callable, ClassVar, Dict, Iterable, List, Mapping, MutableMapping, Optional, Tuple, Type, get_type_hints
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Tuple,
+    get_type_hints,
+)
 
 
 import numpy as np
+from openhcs.core.aligned_image_payload import AlignedImageStack
 from openhcs.core.xdg_paths import get_cache_file_path
-from openhcs.core.memory import unstack_slices, stack_slices
-from openhcs.core.image_shapes import is_color_image_slice
-from openhcs.core.image_stack_layout import ImageStackLayout
-from openhcs.core.runtime_semantics import ParentChildRelationshipPayload
+from openhcs.core.memory import (
+    stack_slices,
+    stack_runtime_slices,
+    unstack_runtime_slices,
+)
+from openhcs.core.runtime_relationships import (
+    DirectedObjectRelationshipPayload,
+)
+from openhcs.core.runtime_plane_projection import (
+    RuntimePlaneAxis,
+    RuntimePlaneAxisValueProjection,
+)
 from openhcs.core.measurement_row_materialization import MeasurementRowsAxisProjection
 from openhcs.core.measurement_row_materialization import ConcatenatedColumnarRows
-from openhcs.core.runtime_values import (
+from openhcs.core.runtime_tabular_values import (
     ColumnarRows,
+)
+from openhcs.core.runtime_image_values import (
     ImageMetadataPayload,
-    ImagePayloadMetadataCompositionRequest,
+    ImagePayloadMetadata,
+    ImagePayloadMetadataCompositionMode,
     MaskedImagePayload,
-    NativeRuntimeValue,
-    ObjectLabelDenseDataStrategy,
-    ObjectLabelMeasurementPayloadStrategy,
-    ObjectLabelPayload,
-    ObjectLabelPure2DSliceAggregator,
-    ObjectLabelSet,
-    RuntimeArrayPayload,
-    RuntimeImagePayloadContext,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
     image_payload_slice_context,
     with_image_payload_data,
 )
-from openhcs.core.runtime_invocation import RuntimeOutputBundle
-from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
-from openhcs.core.runtime_slice_projection import RuntimeProjectionAxis, RuntimeSliceProjection
+from openhcs.core.runtime_array_values import RuntimeArrayPayload
+from openhcs.core.runtime_object_labels import ObjectLabelPayload, ObjectLabelSet
+from openhcs.core.runtime_object_label_aggregation import (
+    ObjectLabelPure2DSliceAggregator,
+)
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
+from openhcs.core.runtime_spatial_grid import SpatialGrid
+from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
+from openhcs.core.runtime_output_matching import (
+    RuntimeOutputBundle,
+    runtime_output_tuple,
+)
 from openhcs.core.runtime_batch_contracts import (
     Pure2DSliceBatchExecutor,
     RuntimeBatchExecutionDomain,
     RuntimePure2DSliceBatchRequest,
     runtime_batch_executors_from_callable,
 )
+from openhcs.core.callable_contract import KeywordRuntimeParameter
 from openhcs.core.variable_component_stack_requirement import (
     AlwaysRequiresVariableComponentStack,
     SemanticControlVariableComponentStackRequirement,
     VariableComponentStackRequirement,
 )
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
-from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict
+from metaclass_registry import AutoRegisterMeta
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +157,9 @@ class RawRuntimeCallableViewStrategy(RuntimeCallableViewStrategy):
     view = RuntimeCallableView.RAW
 
     def resolve(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        return inspect.unwrap(func)
+        from openhcs.core.callable_contract import CallableContract
+
+        return CallableContract.from_callable(func).resolve_raw_runtime_callable()
 
 
 class RuntimeInvocationKwargPolicyStrategy(
@@ -195,11 +223,7 @@ class SignatureFilteredRuntimeInvocationKwargPolicyStrategy(
             for parameter in parameters.values()
         ):
             return dict(kwargs)
-        return {
-            name: value
-            for name, value in kwargs.items()
-            if name in parameters
-        }
+        return {name: value for name, value in kwargs.items() if name in parameters}
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,6 +273,7 @@ class RuntimeCallablePolicy:
             kwarg_policy=self.kwarg_policy,
         )
 
+
 @lru_cache(maxsize=256)
 def _runtime_callable_parameters(
     func: Callable[..., Any],
@@ -258,34 +283,32 @@ def _runtime_callable_parameters(
 
 def _registry_runtime_parameter_exclusions(
     signature: inspect.Signature,
-    parameter_types: tuple[type, ...],
+    parameter_names: tuple[str, ...],
 ) -> tuple[str, ...]:
     """Return registry-owned injected parameter names present in a signature."""
-    parameter_names = signature.parameters
     return tuple(
-        parameter_type.require_parameter_name()
-        for parameter_type in parameter_types
-        if parameter_type.require_parameter_name() in parameter_names
+        parameter_name
+        for parameter_name in parameter_names
+        if parameter_name in signature.parameters
     )
 
 
 def _set_registry_runtime_parameter_exclusions(
     target: object,
     signature: inspect.Signature,
-    parameter_types: tuple[type, ...],
+    parameter_names: tuple[str, ...],
     *,
     source: object | None = None,
 ) -> None:
     """Merge registry-owned injected parameter names into analysis exclusions."""
-    from python_introspect import parameter_exclusions, set_parameter_exclusions
+    from python_introspect import add_parameter_exclusions, parameter_exclusions
 
     source_exclusions = () if source is None else parameter_exclusions(source)
-    set_parameter_exclusions(
+    add_parameter_exclusions(
         target,
         (
             *source_exclusions,
-            *parameter_exclusions(target),
-            *_registry_runtime_parameter_exclusions(signature, parameter_types),
+            *_registry_runtime_parameter_exclusions(signature, parameter_names),
         ),
     )
 
@@ -330,13 +353,6 @@ class Pure2DSliceResultBatch:
         return cls(main_outputs=main_outputs, auxiliary_groups=tuple(auxiliary_groups))
 
 
-def runtime_output_tuple(value: Any) -> Any:
-    """Lower nominal runtime output bundles to the tuple ABI used by contracts."""
-    if isinstance(value, RuntimeOutputBundle):
-        return value.as_runtime_tuple()
-    return value
-
-
 def contextualize_main_image_output(source_image: Any, result: Any) -> Any:
     """Preserve source image context when plain array callables return plain arrays."""
     if isinstance(result, RuntimeOutputBundle):
@@ -352,9 +368,10 @@ def contextualize_main_image_output(source_image: Any, result: Any) -> Any:
         return result
     if not isinstance(result, np.ndarray):
         return result
-    if image_payload_mask(source_image) is None and not image_payload_metadata(
-        source_image
-    ).has_values:
+    if (
+        image_payload_mask(source_image) is None
+        and not image_payload_metadata(source_image).has_values
+    ):
         return result
     return with_image_payload_data(source_image, result)
 
@@ -421,10 +438,7 @@ class Pure2DRegisteredStrategyFamily(ABC):
         return tuple(
             strategy_type.value_type
             for strategy_type in root_type.__registry__.values()
-            if (
-                strategy_type.value_type is not None
-                and issubclass(strategy_type, cls)
-            )
+            if (strategy_type.value_type is not None and issubclass(strategy_type, cls))
         )
 
     def type_distance(self, value: Any) -> int:
@@ -477,24 +491,18 @@ class Pure2DInputSlicer(Pure2DRegisteredStrategyFamily, metaclass=AutoRegisterMe
         """Return whether this value should bypass slice/restack execution."""
 
 
-class RegisteredImageLayoutPure2DInputSlicer(Pure2DInputSlicer):
-    """Slice plain arrays through the registered OpenHCS image-stack layouts."""
+class NumPyPure2DInputSlicer(Pure2DInputSlicer):
+    """Treat an unannotated ndarray as one image plane."""
 
     value_type = np.ndarray
 
     def is_single_plane_value(self, value: np.ndarray) -> bool:
-        return value.ndim == 2 or is_color_image_slice(value)
+        del value
+        return True
 
     def slice_value(self, value: np.ndarray, memory_type: str) -> tuple[Any, ...]:
-        if self.is_single_plane_value(value):
-            return (value,)
-        return tuple(
-            ImageStackLayout.for_stack(value).unstack(
-                array=value,
-                memory_type=memory_type,
-                gpu_id=0,
-            )
-        )
+        del memory_type
+        return (value,)
 
 
 class ImagePayloadPure2DInputSlicer(Pure2DInputSlicer):
@@ -503,17 +511,18 @@ class ImagePayloadPure2DInputSlicer(Pure2DInputSlicer):
     value_type = None
 
     def is_single_plane_value(self, value: Any) -> bool:
-        data = image_payload_data(value)
-        return data.ndim == 2 or is_color_image_slice(data)
+        return image_payload_metadata(value).plane_axis is None
 
     def slice_value(self, value: Any, memory_type: str) -> tuple[Any, ...]:
         data = image_payload_data(value)
         if self.is_single_plane_value(value):
             return (value,)
-        slices = ImageStackLayout.for_stack(data).unstack(
-            array=data,
-            memory_type=memory_type,
-            gpu_id=0,
+        metadata = image_payload_metadata(value)
+        slices = unstack_runtime_slices(
+            data,
+            memory_type,
+            0,
+            expected_count=metadata.source_provenance.source_plane_count or None,
         )
         return tuple(
             image_payload_slice_context(value, slice_data, slice_index)
@@ -547,25 +556,33 @@ class Pure2DAuxiliaryOutputAggregator(
         return Pure2DAuxiliaryOutputAggregator
 
     @classmethod
-    def aggregate(cls, values: list[Any], memory_type: str) -> Any:
+    def aggregate(
+        cls,
+        values: list[Any],
+        memory_type: str,
+        *,
+        plane_axis: RuntimePlaneAxis = RuntimePlaneAxis.RUNTIME_SLICE,
+    ) -> Any:
         if not values:
-            return []
+            raise ValueError("PURE_2D auxiliary aggregation requires output values.")
         aggregator = cls.nearest_registered_strategy(
             Pure2DAuxiliaryOutputAggregator,
             supports=lambda strategy: strategy.supports(values),
             distance=lambda strategy: strategy.type_distance(values),
         )
         if aggregator is not None:
-            return aggregator.aggregate_values(values, memory_type)
-        measurement_rows = (
-            FlatSequencePure2DAuxiliaryOutputAggregator()
-            .aggregate_measurement_row_sequences(values)
-        )
-        if measurement_rows is not None:
-            return measurement_rows
+            return aggregator.aggregate_values(
+                values,
+                memory_type,
+                plane_axis=plane_axis,
+            )
         if len(values) == 1:
             return values[0]
-        return list(values)
+        raise TypeError(
+            "PURE_2D auxiliary outputs spanning multiple slices require a "
+            "registered nominal aggregator, got "
+            f"{type(values[0]).__name__}."
+        )
 
     def supports(self, values: list[Any]) -> bool:
         accepted_types = self.accepted_value_types()
@@ -590,18 +607,91 @@ class Pure2DAuxiliaryOutputAggregator(
         )
 
     @abstractmethod
-    def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
+    def aggregate_values(
+        self,
+        values: list[Any],
+        memory_type: str,
+        *,
+        plane_axis: RuntimePlaneAxis,
+    ) -> Any:
         """Aggregate compatible per-slice auxiliary values."""
 
 
-class RuntimeValuePure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregator):
-    """Preserve non-array runtime values as slice-aligned payloads."""
+class DirectedRelationshipPure2DOutputAggregator(Pure2DAuxiliaryOutputAggregator):
+    """Aggregate directed relationships over one declared PURE_2D plane axis."""
 
-    value_type = NativeRuntimeValue
+    value_type = DirectedObjectRelationshipPayload
 
-    def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
-        del memory_type
-        return RuntimeSliceAlignedValues(slices=tuple(values))
+    def aggregate_values(
+        self,
+        values: list[Any],
+        memory_type: str,
+        *,
+        plane_axis: RuntimePlaneAxis,
+    ) -> DirectedObjectRelationshipPayload:
+        del memory_type, plane_axis
+        return DirectedObjectRelationshipPayload(
+            source_ids=tuple(
+                source_id for value in values for source_id in value.source_ids
+            ),
+            target_ids=tuple(
+                target_id for value in values for target_id in value.target_ids
+            ),
+            slice_indices=tuple(
+                slice_index
+                for slice_index, value in enumerate(values)
+                for _target_id in value.target_ids
+            ),
+            slice_count=len(values),
+        )
+
+
+class SpatialGridPure2DOutputAggregator(Pure2DAuxiliaryOutputAggregator):
+    """Preserve one declared spatial grid for each PURE_2D runtime slice."""
+
+    value_type = SpatialGrid
+
+    def aggregate_values(
+        self,
+        values: list[Any],
+        memory_type: str,
+        *,
+        plane_axis: RuntimePlaneAxis,
+    ) -> RuntimeSliceAlignedValues[SpatialGrid]:
+        del memory_type, plane_axis
+        return RuntimeSliceAlignedValues(tuple(values))
+
+
+class AlignedImageStackPure2DOutputAggregator(Pure2DAuxiliaryOutputAggregator):
+    """Transpose aligned image surfaces into declared output-plane stacks."""
+
+    value_type = AlignedImageStack
+
+    def aggregate_values(
+        self,
+        values: list[Any],
+        memory_type: str,
+        *,
+        plane_axis: RuntimePlaneAxis,
+    ) -> AlignedImageStack:
+        aligned_values = tuple(values)
+        first = aligned_values[0]
+        output_count = len(first.slices)
+        if any(len(value.slices) != output_count for value in aligned_values):
+            raise ValueError(
+                "Aligned main outputs must expose the same image surface count "
+                "across every PURE_2D slice."
+            )
+        return first.with_slices(
+            tuple(
+                Pure2DAuxiliaryOutputAggregator.aggregate(
+                    [value.slices[index] for value in aligned_values],
+                    memory_type,
+                    plane_axis=plane_axis,
+                )
+                for index in range(output_count)
+            )
+        )
 
 
 class RuntimeArrayPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregator):
@@ -615,9 +705,11 @@ class RuntimeArrayPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregato
 
     def owns_mixed_values(self, values: list[Any]) -> bool:
         accepted_types = self.accepted_value_types()
-        return bool(accepted_types) and any(
-            isinstance(value, accepted_types) for value in values
-        ) and all(self._accepts_mixed_value(value) for value in values)
+        return (
+            bool(accepted_types)
+            and any(isinstance(value, accepted_types) for value in values)
+            and all(self._accepts_mixed_value(value) for value in values)
+        )
 
     def type_distance(self, values: list[Any]) -> int:
         if self.owns_mixed_values(values):
@@ -627,32 +719,27 @@ class RuntimeArrayPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregato
     def _accepts_mixed_value(self, value: Any) -> bool:
         return isinstance(value, np.ndarray)
 
-    def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
-        del values, memory_type
+    def aggregate_values(
+        self,
+        values: list[Any],
+        memory_type: str,
+        *,
+        plane_axis: RuntimePlaneAxis,
+    ) -> Any:
+        del values, memory_type, plane_axis
         raise NotImplementedError(
             "Concrete runtime-array aggregators must implement aggregate_values."
         )
 
     def stack_array_slices(self, values: list[Any], memory_type: str) -> Any:
-        """Stack dense slice arrays through OpenHCS image-layout semantics."""
-        layout = next(
-            (
-                layout_type()
-                for layout_type in ImageStackLayout.__registry__.values()
-                if all(layout_type.shape_role.matches_slice(value) for value in values)
-            ),
-            None,
-        )
-        if layout is not None:
-            return layout.stack(
-                slices=values,
-                memory_type=memory_type,
-                gpu_id=0,
-            )
-        return np.stack(tuple(np.asarray(value) for value in values), axis=0)
+        """Stack an explicitly collected dense runtime-slice sequence."""
+
+        return stack_runtime_slices(values, memory_type, 0)
 
 
-class ImagePayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxiliaryOutputAggregator):
+class ImagePayloadPure2DAuxiliaryOutputAggregator(
+    RuntimeArrayPure2DAuxiliaryOutputAggregator
+):
     """Stack image payload slices and reattach composed runtime image context."""
 
     value_type = None
@@ -661,52 +748,54 @@ class ImagePayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxiliaryOut
     def _accepts_mixed_value(self, value: Any) -> bool:
         accepted_types = self.accepted_value_types()
         return (
-            bool(accepted_types)
-            and isinstance(value, accepted_types)
+            bool(accepted_types) and isinstance(value, accepted_types)
         ) or super()._accepts_mixed_value(value)
 
-    def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
+    def aggregate_values(
+        self,
+        values: list[Any],
+        memory_type: str,
+        *,
+        plane_axis: RuntimePlaneAxis,
+    ) -> Any:
         data_values = [image_payload_data(value) for value in values]
-        data = ImageStackLayout.stack_slices_or_single_stack(
-            data_values,
-            memory_type=memory_type,
-            gpu_id=0,
-        )
+        data = stack_runtime_slices(data_values, memory_type, 0)
         masks = [image_payload_mask(value) for value in values]
         present_masks = [mask for mask in masks if mask is not None]
         if present_masks and len(present_masks) != len(masks):
-            raise ValueError("Cannot aggregate a mix of masked and unmasked image payloads.")
+            raise ValueError(
+                "Cannot aggregate a mix of masked and unmasked image payloads."
+            )
         mask = (
             None
             if not present_masks
-            else present_masks[0]
-            if len(present_masks) == 1
-            else ImageStackLayout.stack_slices_or_single_stack(
-                present_masks,
-                memory_type=memory_type,
-                gpu_id=0,
-            )
+            else stack_runtime_slices(present_masks, memory_type, 0)
         )
-        return RuntimeImagePayloadContext(
-            data,
-            mask=mask,
-            metadata=ImagePayloadMetadataCompositionRequest(tuple(values)).metadata(),
-        ).payload()
+        return ImagePayloadMetadata.compose(
+            tuple(values),
+            mode=ImagePayloadMetadataCompositionMode.for_plane_axis(plane_axis),
+        ).payload_with(data, mask)
 
 
-class MaskedImagePayloadPure2DAuxiliaryOutputAggregator(ImagePayloadPure2DAuxiliaryOutputAggregator):
+class MaskedImagePayloadPure2DAuxiliaryOutputAggregator(
+    ImagePayloadPure2DAuxiliaryOutputAggregator
+):
     """Register masked image payloads for PURE_2D auxiliary aggregation."""
 
     value_type = MaskedImagePayload
 
 
-class ImageMetadataPayloadPure2DAuxiliaryOutputAggregator(ImagePayloadPure2DAuxiliaryOutputAggregator):
+class ImageMetadataPayloadPure2DAuxiliaryOutputAggregator(
+    ImagePayloadPure2DAuxiliaryOutputAggregator
+):
     """Register image metadata payloads for PURE_2D auxiliary aggregation."""
 
     value_type = ImageMetadataPayload
 
 
-class ObjectLabelPayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxiliaryOutputAggregator):
+class ObjectLabelPayloadPure2DAuxiliaryOutputAggregator(
+    RuntimeArrayPure2DAuxiliaryOutputAggregator
+):
     """Delegate object-label slice aggregation to the runtime-value authority."""
 
     value_type = ObjectLabelPayload
@@ -715,8 +804,18 @@ class ObjectLabelPayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxili
     def _accepts_mixed_value(self, value: Any) -> bool:
         return isinstance(value, self.value_type)
 
-    def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
-        return ObjectLabelPure2DSliceAggregator.aggregate(values, memory_type)
+    def aggregate_values(
+        self,
+        values: list[Any],
+        memory_type: str,
+        *,
+        plane_axis: RuntimePlaneAxis,
+    ) -> Any:
+        return ObjectLabelPure2DSliceAggregator.aggregate(
+            values,
+            memory_type,
+            plane_axis=plane_axis,
+        )
 
 
 class ObjectLabelSetPure2DAuxiliaryOutputAggregator(
@@ -727,16 +826,20 @@ class ObjectLabelSetPure2DAuxiliaryOutputAggregator(
     value_type = ObjectLabelSet
 
 
-class RegisteredImageLayoutPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregator):
-    """Stack arrays that are accepted by the registered OpenHCS image layout."""
+class NumPyPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregator):
+    """Stack ndarray outputs from an explicitly declared PURE_2D slice batch."""
 
     value_type = np.ndarray
 
-    def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
-        return ImageStackLayout.for_slices(values).stack(
-            slices=values,
-            memory_type=memory_type,
-            gpu_id=0,
+    def aggregate_values(
+        self,
+        values: list[Any],
+        memory_type: str,
+        *,
+        plane_axis: RuntimePlaneAxis,
+    ) -> Any:
+        return ImagePayloadMetadata(plane_axis=plane_axis).payload_with(
+            stack_runtime_slices(values, memory_type, 0)
         )
 
 
@@ -745,8 +848,14 @@ class ColumnarRowsPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregato
 
     value_type = ColumnarRows
 
-    def aggregate_values(self, values: list[Any], memory_type: str) -> ColumnarRows:
-        del memory_type
+    def aggregate_values(
+        self,
+        values: list[Any],
+        memory_type: str,
+        *,
+        plane_axis: RuntimePlaneAxis,
+    ) -> ColumnarRows:
+        del memory_type, plane_axis
         if len(values) == 1:
             return self.slice_aggregated_rows(values[0], 0)
         return ConcatenatedColumnarRows(
@@ -782,7 +891,7 @@ class ColumnarRowsPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregato
             )
         projected_rows = MeasurementRowsAxisProjection.from_rows(
             rows
-        ).aggregate_runtime_slice_index(slice_index)
+        ).project_runtime_slice_index(slice_index)
         if not isinstance(projected_rows, ColumnarRows):
             raise TypeError(
                 "ColumnarRows axis projection must return ColumnarRows, got "
@@ -792,7 +901,7 @@ class ColumnarRowsPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregato
 
 
 class FlatSequencePure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregator):
-    """Concatenate flat tuple/list auxiliary outputs."""
+    """Concatenate explicitly sequence-valued tuple/list auxiliary outputs."""
 
     value_type = None
 
@@ -803,61 +912,18 @@ class FlatSequencePure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregato
             for item in value
         )
 
-    def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
-        del memory_type
-        measurement_rows = self.aggregate_measurement_row_sequences(values)
-        if measurement_rows is not None:
-            return measurement_rows
+    def aggregate_values(
+        self,
+        values: list[Any],
+        memory_type: str,
+        *,
+        plane_axis: RuntimePlaneAxis,
+    ) -> Any:
+        del memory_type, plane_axis
         flattened: list[Any] = []
         for value in values:
             flattened.extend(value)
         return flattened
-
-    def aggregate_measurement_row_sequences(
-        self,
-        values: list[Any],
-    ) -> list[Any] | None:
-        row_sequences = tuple(self.row_sequence_for_value(value) for value in values)
-        if any(row_sequence is None for row_sequence in row_sequences):
-            return None
-        rows: list[Any] = []
-        for slice_index, row_sequence in enumerate(row_sequences):
-            if row_sequence is None:
-                return None
-            projection = MeasurementRowsAxisProjection.from_rows(
-                row_sequence,
-            )
-            rows.extend(projection.aggregate_runtime_slice_index(slice_index))
-        return rows
-
-    @staticmethod
-    def row_sequence_for_value(value: Any) -> tuple[Any, ...] | None:
-        if isinstance(
-            value,
-            (
-                str,
-                bytes,
-                np.ndarray,
-                ColumnarRows,
-                RuntimeSliceAlignedValues,
-                NativeRuntimeValue,
-                RuntimeArrayPayload,
-                ObjectLabelPayload,
-                ObjectLabelSet,
-                ParentChildRelationshipPayload,
-            ),
-        ):
-            return None
-        row_sequence = tuple(value) if isinstance(value, (list, tuple)) else (value,)
-        if not row_sequence:
-            return row_sequence
-        try:
-            MeasurementRowsAxisProjection.from_rows(
-                row_sequence,
-            )
-        except (TypeError, ValueError):
-            return None
-        return row_sequence
 
 
 class ListPure2DAuxiliaryOutputAggregator(FlatSequencePure2DAuxiliaryOutputAggregator):
@@ -875,6 +941,7 @@ class TuplePure2DAuxiliaryOutputAggregator(FlatSequencePure2DAuxiliaryOutputAggr
 # Enums for OpenHCS principle compliance (replace magic strings)
 class ModuleFilterComponents(Enum):
     """Components to filter out when generating tags from module paths."""
+
     BACKENDS = "backends"
     PROCESSING = "processing"
     OPENHCS = "openhcs"
@@ -915,6 +982,11 @@ class ProcessingContractDeclaration(ABC):
             for parameter_type in self.runtime_parameter_types()
             if parameter_type.is_semantic_control
         )
+
+    def main_flow_output_source_payload(self, source_payload: Any) -> Any:
+        """Return source context projected through this contract's output domain."""
+
+        return source_payload
 
     def injected_semantic_control_parameter_names(self) -> frozenset[str]:
         """Semantic controls that this contract may inject into public callables."""
@@ -986,7 +1058,9 @@ class Pure2DProcessingContract(ProcessingContractDeclaration):
         return registry.execute_pure_2d(func, image, *args, **kwargs)
 
 
-class FlexibleProcessingContract(SemanticControlVariableComponentStackProcessingContract):
+class FlexibleProcessingContract(
+    SemanticControlVariableComponentStackProcessingContract
+):
     """Choose 2D or full-stack semantics using this contract's control hook."""
 
     def runtime_parameter_types(
@@ -1020,8 +1094,29 @@ class FlexibleProcessingContract(SemanticControlVariableComponentStackProcessing
 class VolumetricToSliceProcessingContract(VariableComponentStackProcessingContract):
     """Execute a volumetric-to-slice callable through its declared hook."""
 
+    def main_flow_output_source_payload(self, source_payload: Any) -> Any:
+        """Consume the declared leading plane axis while preserving provenance."""
+
+        metadata = image_payload_metadata(source_payload)
+        if not metadata.has_values:
+            return source_payload
+        if metadata.plane_axis is None:
+            raise ValueError(
+                "VOLUMETRIC_TO_SLICE output requires a declared input plane axis."
+            )
+        return metadata.collapse_leading_plane_axis().attach_to(source_payload)
+
     def execute(self, registry, func, image, *args, **kwargs):
-        return registry.execute_volumetric_to_slice(func, image, *args, **kwargs)
+        result = registry.execute_volumetric_to_slice(
+            func,
+            image,
+            *args,
+            **kwargs,
+        )
+        return contextualize_main_image_output(
+            self.main_flow_output_source_payload(image),
+            result,
+        )
 
 
 class ProcessingContract(Enum):
@@ -1079,7 +1174,7 @@ class FunctionMetadata:
     name: str
     func: Callable
     contract: ProcessingContract
-    registry: 'LibraryRegistryBase'  # Reference to the registry that registered this function - REQUIRED
+    registry: "LibraryRegistryBase"  # Reference to the registry that registered this function - REQUIRED
     module: str = ""
     doc: str = ""
     tags: List[str] = field(default_factory=list)
@@ -1117,21 +1212,19 @@ class FunctionMetadata:
         return self.registry.library_name
 
 
-class ContractRuntimeParameter(ABC, metaclass=AutoRegisterMeta):
+class ContractRuntimeParameter(
+    KeywordRuntimeParameter,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Nominal declaration for parameters owned by ProcessingContract execution."""
 
     __registry_key__ = "parameter_name"
     __skip_if_no_key__ = True
 
-    parameter_name: ClassVar[str | None] = None
     annotation_type: ClassVar[type]
     preserve_for_execution: ClassVar[bool] = False
     is_semantic_control: ClassVar[bool] = False
-
-    @classmethod
-    @abstractmethod
-    def default_value(cls):
-        """Return the public signature default for this injected parameter."""
 
     @classmethod
     def registered_parameter_types(
@@ -1151,34 +1244,15 @@ class ContractRuntimeParameter(ABC, metaclass=AutoRegisterMeta):
         visit(cls)
         return tuple(ordered)
 
-    @classmethod
-    def require_parameter_name(cls) -> str:
-        parameter_name = cls.parameter_name
-        if parameter_name is None:
-            raise ValueError(f"{cls.__name__} must declare parameter_name.")
-        return parameter_name
-
-    @classmethod
-    def parameter(cls) -> inspect.Parameter:
-        return inspect.Parameter(
-            cls.require_parameter_name(),
-            inspect.Parameter.KEYWORD_ONLY,
-            default=cls.default_value(),
-            annotation=cls.annotation_type,
-        )
-
 
 class SliceBySliceRuntimeParameter(ContractRuntimeParameter):
     """Flexible-contract semantic selector for plane-wise execution."""
 
     parameter_name = "slice_by_slice"
     annotation_type = bool
+    parameter_default = False
     preserve_for_execution = True
     is_semantic_control = True
-
-    @classmethod
-    def default_value(cls) -> bool:
-        return False
 
 
 class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
@@ -1191,21 +1265,40 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
     Registry auto-created and stored as LibraryRegistryBase.__registry__.
     Subclasses auto-register by setting _registry_name class attribute.
     """
-    __registry_key__ = '_registry_name'
 
-    _registry_name: Optional[str] = None  # Override in subclasses (e.g., 'pyclesperanto', 'cupy')
+    __registry_key__ = "_registry_name"
+
+    _registry_name: Optional[str] = (
+        None  # Override in subclasses (e.g., 'pyclesperanto', 'cupy')
+    )
 
     # Common exclusions across all libraries
     COMMON_EXCLUSIONS = {
-        'imread', 'imsave', 'load', 'save', 'read', 'write',
-        'show', 'imshow', 'plot', 'display', 'view', 'visualize',
-        'info', 'help', 'version', 'test', 'benchmark'
+        "imread",
+        "imsave",
+        "load",
+        "save",
+        "read",
+        "write",
+        "show",
+        "imshow",
+        "plot",
+        "display",
+        "view",
+        "visualize",
+        "info",
+        "help",
+        "version",
+        "test",
+        "benchmark",
     }
     EXCLUSIONS = COMMON_EXCLUSIONS
 
     # Abstract class attributes - each implementation must define these
     MODULES_TO_SCAN: List[str]
-    MEMORY_TYPE: str  # Memory type string value (e.g., "pyclesperanto", "cupy", "numpy")
+    MEMORY_TYPE: (
+        str  # Memory type string value (e.g., "pyclesperanto", "cupy", "numpy")
+    )
     FLOAT_DTYPE: Any  # Library-specific float32 type (np.float32, cp.float32, etc.)
 
     def __init__(self, library_name: str):
@@ -1241,15 +1334,17 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         pass
 
     # ===== CONTRACT HANDLING =====
-    def apply_contract_wrapper(self, func: Callable, contract: ProcessingContract) -> Callable:
+    def apply_contract_wrapper(
+        self, func: Callable, contract: ProcessingContract
+    ) -> Callable:
         """Apply contract wrapper with nominal runtime parameter injection."""
         from functools import wraps
         import inspect
-        from python_introspect import Enableable
-        from openhcs.core.config import CallableRuntimeConfig
+        from python_introspect import Enableable, set_signature_analysis_target
+        from openhcs.core.config import runtime_config_parameter
 
         declaration = contract.declaration
-        original_sig = inspect.signature(func)
+        original_sig = inspect.signature(func, eval_str=True)
         allowed_semantic_control_names = (
             declaration.injected_semantic_control_parameter_names()
         )
@@ -1259,38 +1354,52 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             if parameter_type.is_semantic_control
         }
         params_to_strip = semantic_control_names - allowed_semantic_control_names
-        public_original_parameters = tuple(
-            parameter
-            for parameter in original_sig.parameters.values()
-            if parameter.name not in params_to_strip
-        )
+        runtime_config_parameters: list[inspect.Parameter] = []
+        public_original_parameters: list[inspect.Parameter] = []
+        for parameter in original_sig.parameters.values():
+            if parameter.name in params_to_strip:
+                continue
+            normalized_parameter = runtime_config_parameter(parameter)
+            if normalized_parameter is None:
+                public_original_parameters.append(parameter)
+                continue
+            runtime_config_parameters.append(normalized_parameter)
+            public_original_parameters.append(normalized_parameter)
+        public_original_parameters = tuple(public_original_parameters)
         public_sig = original_sig.replace(parameters=public_original_parameters)
         param_names = {p.name for p in public_sig.parameters.values()}
 
-        runtime_parameter_types = (
-            *CallableRuntimeConfig.runtime_parameter_types(),
-            *declaration.injected_runtime_parameter_types(),
+        runtime_parameter_types = declaration.injected_runtime_parameter_types()
+        runtime_parameter_names = (
+            *(parameter.name for parameter in runtime_config_parameters),
+            *(
+                parameter_type.require_parameter_name()
+                for parameter_type in runtime_parameter_types
+            ),
         )
-        signature_parameter_types = (
-            Enableable,
-            *runtime_parameter_types,
+        injected_signature_parameters = (
+            Enableable.parameter(),
+            *(
+                parameter_type.parameter()
+                for parameter_type in declaration.injected_runtime_parameter_types()
+            ),
         )
 
         # Filter out already-existing parameters and declaration-name collisions.
         params_to_add: list[inspect.Parameter] = []
         seen_param_names = set(param_names)
-        for parameter_type in signature_parameter_types:
-            parameter = parameter_type.parameter()
+        for parameter in injected_signature_parameters:
             if parameter.name in seen_param_names:
                 continue
             params_to_add.append(parameter)
             seen_param_names.add(parameter.name)
 
         # If nothing to inject, return original function
-        if not params_to_add and not params_to_strip:
+        if not params_to_add and not params_to_strip and public_sig == original_sig:
             # Still brand the callable as Enableable metadata.
             from python_introspect import mark_enableable
             from openhcs.core.callable_contract import attach_callable_contract_metadata
+
             mark_enableable(func, enabled_default=True)
             attach_callable_contract_metadata(
                 func,
@@ -1299,7 +1408,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             _set_registry_runtime_parameter_exclusions(
                 func,
                 inspect.signature(func),
-                runtime_parameter_types,
+                runtime_parameter_names,
             )
             return func
 
@@ -1332,9 +1441,14 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             # This is critical for internal calls between OpenHCS functions where
             # wrapper controls may not be explicitly passed (e.g., create_projection calling max_projection)
             from python_introspect import SignatureAnalyzer
+
             sig_params = SignatureAnalyzer.analyze(wrapper)
-            for parameter_type in signature_parameter_types:
-                param_name = parameter_type.require_parameter_name()
+            signature_parameters = (
+                *runtime_config_parameters,
+                *injected_signature_parameters,
+            )
+            for parameter in signature_parameters:
+                param_name = parameter.name
                 if param_name not in kwargs and param_name in sig_params:
                     default_value = sig_params[param_name].default_value
                     if default_value is not inspect.Parameter.empty:
@@ -1342,30 +1456,32 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
 
             # Keep only declared controls that participate in execution.
             execution_parameter_names = (
-                CallableRuntimeConfig.execution_parameter_names()
+                frozenset(parameter.name for parameter in runtime_config_parameters)
                 | declaration.execution_parameter_names()
             )
             params_to_filter = {
-                parameter_type.require_parameter_name()
-                for parameter_type in signature_parameter_types
-                if (
-                    parameter_type.require_parameter_name()
-                    not in execution_parameter_names
-                )
+                parameter.name
+                for parameter in signature_parameters
+                if parameter.name not in execution_parameter_names
             }
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k not in params_to_filter}
+            filtered_kwargs = {
+                k: v for k, v in kwargs.items() if k not in params_to_filter
+            }
 
             return contract.execute(self, func, image, *args, **filtered_kwargs)
 
         wrapper.__signature__ = public_sig.replace(parameters=new_params)
         wrapper.__annotations__ = inspect.get_annotations(func, eval_str=False).copy()
-        for parameter_type in signature_parameter_types:
-            parameter = parameter_type.parameter()
+        for parameter in (
+            *runtime_config_parameters,
+            *injected_signature_parameters,
+        ):
             wrapper.__annotations__[parameter.name] = parameter.annotation
+        set_signature_analysis_target(wrapper, func)
         _set_registry_runtime_parameter_exclusions(
             wrapper,
             wrapper.__signature__,
-            runtime_parameter_types,
+            runtime_parameter_names,
             source=func,
         )
 
@@ -1388,6 +1504,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         # Nominal enable semantics: decorated callables are Enableable.
         # (Enableable is metadata only; enabled remains owned by python_introspect.)
         from python_introspect import mark_enableable
+
         mark_enableable(wrapper, enabled_default=True)
 
         return wrapper
@@ -1411,11 +1528,15 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
     # ===== PROCESSING CONTRACT EXECUTION METHODS =====
     def execute_pure_3d(self, func, image, *args, **kwargs):
         """Execute a full-stack callable once and restore payload context."""
-        result = RuntimeCallablePolicy().invocation(
-            func,
-            (image, *args),
-            kwargs,
-        ).call()
+        result = (
+            RuntimeCallablePolicy()
+            .invocation(
+                func,
+                (image, *args),
+                kwargs,
+            )
+            .call()
+        )
         return contextualize_main_image_output(image, result)
 
     def execute_pure_2d(self, func, image, *args, **kwargs):
@@ -1429,9 +1550,21 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             image,
             {**positional_kwargs, **kwargs},
         ):
-            return RuntimeCallablePolicy().invocation(func, (image, *args), kwargs).call()
+            return (
+                RuntimeCallablePolicy().invocation(func, (image, *args), kwargs).call()
+            )
         if slicer.is_single_plane_value(image):
-            return RuntimeCallablePolicy().invocation(func, (image, *args), kwargs).call()
+            return (
+                RuntimeCallablePolicy().invocation(func, (image, *args), kwargs).call()
+            )
+        input_metadata = image_payload_metadata(image)
+        plane_axis = input_metadata.plane_axis
+        if plane_axis is None:
+            raise ValueError(
+                "PURE_2D multi-plane execution requires the input payload to "
+                "declare its runtime plane axis."
+            )
+        source_aliases = input_metadata.source_image_names
         if args:
             signature = inspect.signature(func)
             parameters = tuple(signature.parameters.values())
@@ -1452,7 +1585,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
                 )
             for parameter, value in zip(positional_parameters, args):
                 kwargs.setdefault(parameter.name, value)
-            args = args[len(positional_parameters):]
+            args = args[len(positional_parameters) :]
         slices = slicer.slice_value(image, memory_type)
         declared_batch_executor = runtime_batch_executors_from_callable(func).get(
             RuntimeBatchExecutionDomain.PURE_2D_SLICES
@@ -1472,16 +1605,22 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         ) -> Any:
             projected_kwargs = RuntimeSliceProjection.kwargs_for_slice(
                 slice_kwargs,
-                RuntimeProjectionAxis(
-                    slice_index=slice_index,
-                    extent=slice_count,
+                RuntimePlaneAxisValueProjection.from_selected_plane(
+                    axis=plane_axis,
+                    source_aliases=source_aliases,
+                    plane_index=slice_index,
+                    axis_size=slice_count,
                 ),
             )
-            return RuntimeCallablePolicy().invocation(
-                slice_func,
-                (slice_2d, *args),
-                projected_kwargs,
-            ).call()
+            return (
+                RuntimeCallablePolicy()
+                .invocation(
+                    slice_func,
+                    (slice_2d, *args),
+                    projected_kwargs,
+                )
+                .call()
+            )
 
         slice_results = batch_executor(
             RuntimePure2DSliceBatchRequest(
@@ -1495,11 +1634,16 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         stacked_main_output = Pure2DAuxiliaryOutputAggregator.aggregate(
             result_batch.main_outputs,
             memory_type,
+            plane_axis=plane_axis,
         )
         if not result_batch.auxiliary_groups:
             return stacked_main_output
         aggregated_auxiliary_outputs = tuple(
-            Pure2DAuxiliaryOutputAggregator.aggregate(values, memory_type)
+            Pure2DAuxiliaryOutputAggregator.aggregate(
+                values,
+                memory_type,
+                plane_axis=plane_axis,
+            )
             for values in result_batch.auxiliary_groups
         )
         return (stacked_main_output, *aggregated_auxiliary_outputs)
@@ -1538,35 +1682,34 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         """Return whether a PURE_2D wrapper must preserve a full object volume."""
 
         from openhcs.core.pipeline.function_contracts import (
-            ObjectLabelMeasurementExecution,
-            object_label_measurement_execution_from_callable,
+            ObjectLabelInputExecutionMode,
+            object_label_input_execution_mode_from_callable,
         )
 
         if (
-            object_label_measurement_execution_from_callable(func)
-            is not ObjectLabelMeasurementExecution.FULL_STACK
+            object_label_input_execution_mode_from_callable(func)
+            is not ObjectLabelInputExecutionMode.FULL_STACK
         ):
             return False
         labels = kwargs.get("labels")
         if labels is None:
             return False
-        image_array = np.asarray(image)
-        label_array = np.asarray(ObjectLabelDenseDataStrategy.for_payload(labels).data(labels))
-        return (
-            image_array.ndim >= 3
-            and label_array.ndim == image_array.ndim
-            and tuple(label_array.shape) == tuple(image_array.shape)
-        )
+        del image
+        return True
 
     def execute_volumetric_to_slice(self, func, image, *args, **kwargs):
         """Execute 3D→2D function returning slice 3D array."""
         # Get memory type from the decorated function
         memory_type = func.output_memory_type
-        result_2d = RuntimeCallablePolicy().invocation(
-            func,
-            (image, *args),
-            kwargs,
-        ).call()
+        result_2d = (
+            RuntimeCallablePolicy()
+            .invocation(
+                func,
+                (image, *args),
+                kwargs,
+            )
+            .call()
+        )
         return stack_slices([result_2d], memory_type, 0)
 
     # ===== LIBRARY WARM-UP HOOK =====
@@ -1606,12 +1749,16 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
 
         cached_functions = self._load_from_cache()
         if cached_functions is not None:
-            logger.info(f"✅ Loaded {len(cached_functions)} {self.library_name} functions from cache")
+            logger.info(
+                f"✅ Loaded {len(cached_functions)} {self.library_name} functions from cache"
+            )
             self._function_metadata_cache = cached_functions
             self._function_metadata_cache_modules = module_signature
             return cached_functions
 
-        logger.info(f"🔍 Cache miss for {self.library_name} - performing full discovery")
+        logger.info(
+            f"🔍 Cache miss for {self.library_name} - performing full discovery"
+        )
         functions = self.discover_functions()
         self._save_to_cache(functions)
         self._function_metadata_cache = functions
@@ -1627,46 +1774,52 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         logger.debug(f"📂 LOAD FROM CACHE: Checking cache for {self.library_name}")
 
         if not self._cache_path.exists():
-            logger.debug(f"📂 LOAD FROM CACHE: No cache file exists at {self._cache_path}")
+            logger.debug(
+                f"📂 LOAD FROM CACHE: No cache file exists at {self._cache_path}"
+            )
             return None
 
         try:
-            with open(self._cache_path, 'r') as f:
+            with open(self._cache_path, "r") as f:
                 cache_data = json.load(f)
         except json.JSONDecodeError:
             logger.warning(f"Corrupt cache file {self._cache_path}, rebuilding")
             self._cache_path.unlink(missing_ok=True)
             return None
 
-        if 'functions' not in cache_data:
+        if "functions" not in cache_data:
             return None
 
-        cached_version = cache_data.get('library_version', 'unknown')
+        cached_version = cache_data.get("library_version", "unknown")
         current_version = self.get_library_version()
         if cached_version != current_version:
-            logger.info(f"{self.library_name} version changed ({cached_version} → {current_version}) - cache invalid")
+            logger.info(
+                f"{self.library_name} version changed ({cached_version} → {current_version}) - cache invalid"
+            )
             return None
 
-        cached_signature = cache_data.get('discovery_signature')
+        cached_signature = cache_data.get("discovery_signature")
         current_signature = self.get_discovery_signature()
         if cached_signature != current_signature:
             logger.info(f"{self.library_name} discovery inputs changed - cache invalid")
             return None
 
-        cache_timestamp = cache_data.get('timestamp', 0)
+        cache_timestamp = cache_data.get("timestamp", 0)
         cache_age_days = (time.time() - cache_timestamp) / (24 * 3600)
         if cache_age_days > 7:
             logger.debug(f"Cache is {cache_age_days:.1f} days old - rebuilding")
             return None
 
-        logger.debug(f"📂 LOAD FROM CACHE: Loading {len(cache_data['functions'])} functions for {self.library_name}")
+        logger.debug(
+            f"📂 LOAD FROM CACHE: Loading {len(cache_data['functions'])} functions for {self.library_name}"
+        )
 
         functions = {}
-        for func_name, cached_data in cache_data['functions'].items():
-            original_name = cached_data.get('original_name', func_name)
+        for func_name, cached_data in cache_data["functions"].items():
+            original_name = cached_data.get("original_name", func_name)
             try:
                 func = self._get_function_by_name(
-                    cached_data['module'],
+                    cached_data["module"],
                     original_name,
                 )
             except (AttributeError, ImportError, ModuleNotFoundError) as exc:
@@ -1690,7 +1843,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
                 )
                 self._discard_stale_cache()
                 return None
-            contract = ProcessingContract[cached_data['contract']]
+            contract = ProcessingContract[cached_data["contract"]]
 
             adapted_func = self.create_library_adapter(func, contract)
             final_func = self.apply_contract_wrapper(adapted_func, contract)
@@ -1700,11 +1853,11 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
                 func=final_func,
                 contract=contract,
                 registry=self,
-                module=cached_data.get('module', ''),
-                doc=cached_data.get('doc', ''),
-                tags=cached_data.get('tags', []),
-                original_name=cached_data.get('original_name', func_name),
-                memory_type=cached_data.get('memory_type', self.get_memory_type()),
+                module=cached_data.get("module", ""),
+                doc=cached_data.get("doc", ""),
+                tags=cached_data.get("tags", []),
+                original_name=cached_data.get("original_name", func_name),
+                memory_type=cached_data.get("memory_type", self.get_memory_type()),
             )
             functions[func_name] = metadata
 
@@ -1713,9 +1866,9 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
     def get_discovery_signature(self) -> str:
         """Return the existing JSON cache's discovery-input signature."""
         signature = {
-            'registry_class': f"{type(self).__module__}.{type(self).__qualname__}",
-            'modules_to_scan': list(self.MODULES_TO_SCAN),
-            'source_mtimes': self.cache_source_mtimes(),
+            "registry_class": f"{type(self).__module__}.{type(self).__qualname__}",
+            "modules_to_scan": list(self.MODULES_TO_SCAN),
+            "source_mtimes": self.cache_source_mtimes(),
         }
         return json.dumps(signature, sort_keys=True)
 
@@ -1736,26 +1889,26 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             return
 
         cache_data = {
-            'cache_version': '1.0',
-            'library_version': self.get_library_version(),
-            'discovery_signature': self.get_discovery_signature(),
-            'timestamp': time.time(),
-            'functions': {
+            "cache_version": "1.0",
+            "library_version": self.get_library_version(),
+            "discovery_signature": self.get_discovery_signature(),
+            "timestamp": time.time(),
+            "functions": {
                 func_name: {
-                    'name': metadata.name,
-                    'original_name': metadata.original_name,
-                    'module': metadata.module,
-                    'memory_type': metadata.get_memory_type(),
-                    'contract': metadata.contract.name,
-                    'doc': metadata.doc,
-                    'tags': metadata.tags
+                    "name": metadata.name,
+                    "original_name": metadata.original_name,
+                    "module": metadata.module,
+                    "memory_type": metadata.get_memory_type(),
+                    "contract": metadata.contract.name,
+                    "doc": metadata.doc,
+                    "tags": metadata.tags,
                 }
                 for func_name, metadata in functions.items()
-            }
+            },
         }
 
         self._cache_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self._cache_path, 'w') as f:
+        with open(self._cache_path, "w") as f:
             json.dump(cache_data, f, indent=2)
 
         logger.info(f"💾 Saved {len(functions)} {self.library_name} functions to cache")
@@ -1888,7 +2041,7 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
             (True, True): self._classify_dual_support(result_3d),
             (True, False): ProcessingContract.PURE_3D,
             (False, True): ProcessingContract.PURE_2D,
-            (False, False): None  # Invalid function
+            (False, False): None,  # Invalid function
         }
 
         contract = classification_map[(works_3d, works_2d)]
@@ -1903,10 +2056,16 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
             if isinstance(result_3d, tuple):
                 # Check the first element if it's a tuple
                 first_result = result_3d[0] if len(result_3d) > 0 else None
-                if isinstance(first_result, (RuntimeArrayPayload, np.ndarray)) and first_result.ndim == 2:
+                if (
+                    isinstance(first_result, (RuntimeArrayPayload, np.ndarray))
+                    and first_result.ndim == 2
+                ):
                     return ProcessingContract.VOLUMETRIC_TO_SLICE
             # Handle single array results
-            elif isinstance(result_3d, (RuntimeArrayPayload, np.ndarray)) and result_3d.ndim == 2:
+            elif (
+                isinstance(result_3d, (RuntimeArrayPayload, np.ndarray))
+                and result_3d.ndim == 2
+            ):
                 return ProcessingContract.VOLUMETRIC_TO_SLICE
         return ProcessingContract.FLEXIBLE
 
@@ -1920,9 +2079,12 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         """Compare arrays. Library-specific implementation required."""
         pass
 
-    def create_library_adapter(self, original_func: Callable, contract: ProcessingContract) -> Callable:
+    def create_library_adapter(
+        self, original_func: Callable, contract: ProcessingContract
+    ) -> Callable:
         """Create adapter with library-specific processing only."""
         import inspect
+
         func_name = original_func.__name__
 
         logger.debug(
@@ -1939,9 +2101,12 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         if self.MEMORY_TYPE is not None:
             from arraybridge.decorators import _create_dtype_wrapper
             from arraybridge.types import MemoryType as ABMemoryType
+
             # Map memory type string to ArrayBridge MemoryType enum
             mem_type = ABMemoryType(self.MEMORY_TYPE)
-            arraybridge_wrapped_func = _create_dtype_wrapper(original_func, mem_type, func_name)
+            arraybridge_wrapped_func = _create_dtype_wrapper(
+                original_func, mem_type, func_name
+            )
 
         def adapter(image, *args, **kwargs):
             processed_image = self._preprocess_input(image, func_name)
@@ -1969,25 +2134,48 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
 
         return wrapped_adapter
 
-    def _enhance_annotations_from_docstring(self, wrapped_func: Callable, original_func: Callable):
+    def _enhance_annotations_from_docstring(
+        self, wrapped_func: Callable, original_func: Callable
+    ):
         """Extract type hints from docstring using mathematical simplification approach."""
         try:
             # Import from shared UI utilities (no circular dependency)
             from openhcs.introspection import SignatureAnalyzer
             import numpy as np
 
-            logger.debug(f"🔍 ENHANCE ANNOTATIONS: {original_func.__name__} from {original_func.__module__}")
+            logger.debug(
+                f"🔍 ENHANCE ANNOTATIONS: {original_func.__name__} from {original_func.__module__}"
+            )
 
             # Unified type extraction with compatibility validation (mathematical simplification)
-            TYPE_PATTERNS = {'ndarray': np.ndarray, 'array': np.ndarray, 'array_like': np.ndarray,
-                           'int': int, 'integer': int, 'float': float, 'scalar': float,
-                           'bool': bool, 'boolean': bool, 'str': str, 'string': str,
-                           'tuple': tuple, 'list': list, 'dict': dict, 'sequence': list}
+            TYPE_PATTERNS = {
+                "ndarray": np.ndarray,
+                "array": np.ndarray,
+                "array_like": np.ndarray,
+                "int": int,
+                "integer": int,
+                "float": float,
+                "scalar": float,
+                "bool": bool,
+                "boolean": bool,
+                "str": str,
+                "string": str,
+                "tuple": tuple,
+                "list": list,
+                "dict": dict,
+                "sequence": list,
+            }
 
-            COMPATIBLE_DEFAULTS = {float: (int, float, range), int: (int, float),
-                                 list: (list, tuple, range), tuple: (list, tuple, range)}
+            COMPATIBLE_DEFAULTS = {
+                float: (int, float, range),
+                int: (int, float),
+                list: (list, tuple, range),
+                tuple: (list, tuple, range),
+            }
 
-            param_info = SignatureAnalyzer.analyze(original_func, skip_first_param=False)
+            param_info = SignatureAnalyzer.analyze(
+                original_func, skip_first_param=False
+            )
 
             # Inline type extraction and validation (single-use function inlining rule)
             enhanced_count = 0
@@ -1995,29 +2183,60 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
                 if param_name not in wrapped_func.__annotations__ and info.description:
                     # Extract first line of description (NumPy/SciPy convention: type is always on first line)
                     # This avoids false matches from type keywords appearing later in the description
-                    first_line = info.description.split('\n')[0].strip().lower()
+                    first_line = info.description.split("\n")[0].strip().lower()
                     # Remove optional markers and split on 'or' for union types
-                    first_line = first_line.replace(', optional', '').replace(' optional', '').split(' or ')[0].strip()
+                    first_line = (
+                        first_line.replace(", optional", "")
+                        .replace(" optional", "")
+                        .split(" or ")[0]
+                        .strip()
+                    )
 
                     # Type extraction with priority patterns
-                    python_type = (str if first_line.startswith('{') and '}' in first_line
-                                 else list if any(p in first_line for p in ['sequence', 'iterable', 'array of', 'list of'])
-                                 else next((t for pattern, t in TYPE_PATTERNS.items() if pattern in first_line), None))
+                    python_type = (
+                        str
+                        if first_line.startswith("{") and "}" in first_line
+                        else list
+                        if any(
+                            p in first_line
+                            for p in ["sequence", "iterable", "array of", "list of"]
+                        )
+                        else next(
+                            (
+                                t
+                                for pattern, t in TYPE_PATTERNS.items()
+                                if pattern in first_line
+                            ),
+                            None,
+                        )
+                    )
 
                     # Inline compatibility check (single-use function inlining rule)
-                    if python_type and (info.default_value is None or
-                                      type(info.default_value) in COMPATIBLE_DEFAULTS.get(python_type, (python_type,))):
-                        logger.debug(f"  ✓ Enhanced {param_name}: {python_type} (from first_line='{first_line[:50]}')")
+                    if python_type and (
+                        info.default_value is None
+                        or type(info.default_value)
+                        in COMPATIBLE_DEFAULTS.get(python_type, (python_type,))
+                    ):
+                        logger.debug(
+                            f"  ✓ Enhanced {param_name}: {python_type} (from first_line='{first_line[:50]}')"
+                        )
                         wrapped_func.__annotations__[param_name] = python_type
                         enhanced_count += 1
                     elif info.description:
-                        logger.debug(f"  ✗ Could not enhance {param_name}: first_line='{first_line[:50]}', extracted_type={python_type}")
+                        logger.debug(
+                            f"  ✗ Could not enhance {param_name}: first_line='{first_line[:50]}', extracted_type={python_type}"
+                        )
 
             if enhanced_count > 0:
-                logger.debug(f"  📝 Enhanced {enhanced_count} annotations for {original_func.__name__}")
+                logger.debug(
+                    f"  📝 Enhanced {enhanced_count} annotations for {original_func.__name__}"
+                )
                 logger.debug(f"  Final annotations: {wrapped_func.__annotations__}")
         except Exception as e:
-            logger.error(f"  ❌ Error enhancing annotations for {original_func.__name__}: {e}", exc_info=True)
+            logger.error(
+                f"  ❌ Error enhancing annotations for {original_func.__name__}: {e}",
+                exc_info=True,
+            )
 
     @abstractmethod
     def _preprocess_input(self, image, func_name: str):
@@ -2033,7 +2252,7 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
     def should_include_function(self, func: Callable, func_name: str) -> bool:
         """Single method for all filtering logic (blacklist, signature, etc.)"""
         # Skip private functions
-        if func_name.startswith('_'):
+        if func_name.startswith("_"):
             return False
 
         # Skip exclusions (check both common and library-specific)
@@ -2074,7 +2293,9 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
             return True
         except NameError as e:
             # Type hint references a missing dependency (e.g., 'torch' not defined)
-            logger.warning(f"Skipping function '{func_name}' due to unresolvable type hints: {e}")
+            logger.warning(
+                f"Skipping function '{func_name}' due to unresolvable type hints: {e}"
+            )
             return False
         except Exception:
             # Other type hint resolution errors - be conservative and allow the function
@@ -2092,7 +2313,9 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         functions = {}
         modules = self.get_modules_to_scan()
         logger.info(f"🔍 Starting function discovery for {self.library_name}")
-        logger.info(f"📦 Scanning {len(modules)} modules: {[name for name, _ in modules]}")
+        logger.info(
+            f"📦 Scanning {len(modules)} modules: {[name for name, _ in modules]}"
+        )
 
         total_tested = 0
         total_accepted = 0
@@ -2120,7 +2343,9 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
 
                 contract, is_valid = self.classify_function_behavior(func)
                 logger.debug(f"    🧪 Testing {full_path}")
-                logger.debug(f"       Classification: {contract.name if contract else contract}")
+                logger.debug(
+                    f"       Classification: {contract.name if contract else contract}"
+                )
 
                 if not is_valid:
                     logger.debug("       ❌ Rejected: Invalid classification")
@@ -2157,9 +2382,13 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
                 total_accepted += 1
                 logger.debug(f"       ✅ Accepted as '{func_name}'")
 
-            logger.debug(f"  📊 Module {module_name}: {module_accepted}/{module_tested} functions accepted")
+            logger.debug(
+                f"  📊 Module {module_name}: {module_accepted}/{module_tested} functions accepted"
+            )
 
-        logger.info(f"✅ Discovery complete: {total_accepted}/{total_tested} functions accepted")
+        logger.info(
+            f"✅ Discovery complete: {total_accepted}/{total_tested} functions accepted"
+        )
         return functions
 
     def _get_full_function_path(self, module, func_name: str, module_name: str) -> str:
@@ -2178,7 +2407,7 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
     def _get_rejection_reason(self, func: Callable, func_name: str) -> str:
         """Get detailed reason why a function was rejected."""
         # Check each rejection criteria in order
-        if func_name.startswith('_'):
+        if func_name.startswith("_"):
             return "private"
 
         if func_name.lower() in self.EXCLUSIONS:

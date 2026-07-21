@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, fields as dataclass_fields
 from typing import ClassVar, Self, cast
 
 from metaclass_registry import AutoRegisterMeta
+from polystore.streaming.identity import StreamProducerIdentity
 
 from openhcs.agent.dto.common import (
     AgentError,
@@ -21,10 +22,9 @@ from openhcs.agent.dto.execution import (
     ExecutionConnectionSpec,
 )
 from openhcs.agent.path_policy import DEFAULT_AGENT_WINDOW_SNAPSHOT_DIR
-from openhcs.agent.serialization import to_jsonable
+from openhcs.serialization.json import to_jsonable
 from openhcs.runtime.viewer_controls import (
     ViewerNavigationControlOptions,
-    ViewerControlWireValue,
     ViewerPayloadControlOptions,
     ViewerStateControlOptions,
 )
@@ -32,7 +32,6 @@ from openhcs.runtime.window_snapshot import (
     WindowSnapshotCaptureScope,
     WindowSnapshotCaptureSpec,
 )
-
 
 VIEWER_WINDOW_CONTROL_TIMEOUT_MS_DEFAULT = 5000
 
@@ -100,7 +99,9 @@ class ViewerWindowControlRequest(ExecutionConnectionProjection):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ViewerWindowSnapshotRequest(WindowSnapshotCaptureSpec, ViewerWindowControlRequest):
+class ViewerWindowSnapshotRequest(
+    WindowSnapshotCaptureSpec, ViewerWindowControlRequest
+):
     @classmethod
     def from_connection(
         cls,
@@ -205,13 +206,12 @@ class ViewerWindowStateRequest(ViewerWindowControlRequest):
     def as_tool_arguments(self) -> dict[str, JsonValue]:
         payload = self.connection_tool_arguments()
         payload.update(
-            cast(dict[str, JsonValue], to_jsonable(self.state_controls.to_wire_payload()))
+            cast(
+                dict[str, JsonValue], to_jsonable(self.state_controls)
+            )
         )
         payload["include_response"] = self.include_response
         return payload
-
-    def to_wire_payload(self) -> dict[str, ViewerControlWireValue]:
-        return self.state_controls.to_wire_payload()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -222,7 +222,9 @@ class ViewerWindowPayloadRequest(ViewerWindowControlRequest):
 
     @staticmethod
     def array_slices_from_fields(
-        value: tuple[tuple[int, int], ...] | list[tuple[int, int]] | list[list[int]] | None,
+        value: (
+            tuple[tuple[int, int], ...] | list[tuple[int, int]] | list[list[int]] | None
+        ),
     ) -> tuple[tuple[int, int], ...] | None:
         if value is None:
             return None
@@ -265,14 +267,11 @@ class ViewerWindowPayloadRequest(ViewerWindowControlRequest):
         payload.update(
             cast(
                 dict[str, JsonValue],
-                to_jsonable(self.payload_controls.to_wire_payload()),
+                to_jsonable(self.payload_controls),
             )
         )
         payload["include_response"] = self.include_response
         return payload
-
-    def to_wire_payload(self) -> dict[str, ViewerControlWireValue]:
-        return self.payload_controls.to_wire_payload()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -304,17 +303,9 @@ class ViewerWindowNavigationRequest(ViewerWindowControlRequest):
     def as_tool_arguments(self) -> dict[str, JsonValue]:
         payload = self.connection_tool_arguments()
         payload.update(
-            {
-                "route_key": self.navigation.route_key,
-                "axis_indices": dict(self.navigation.axis_indices),
-                "visible": self.navigation.visible,
-                "selected": self.navigation.selected,
-            }
+            cast(dict[str, JsonValue], to_jsonable(self.navigation))
         )
         return payload
-
-    def to_wire_payload(self) -> dict[str, ViewerControlWireValue]:
-        return self.navigation.to_wire_payload()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -408,12 +399,16 @@ class ViewerWindowImageSampleRequest(ViewerWindowControlRequest):
     width: int = 32
     include_array_values: bool = False
     max_array_elements: int = 4096
+    max_records: int = 3
+    """Maximum matched image records returned in the MCP result."""
 
     def __post_init__(self) -> None:
         if self.y < 0 or self.x < 0:
             raise ValueError("Sample origin y/x must be nonnegative.")
         if self.height <= 0 or self.width <= 0:
             raise ValueError("Sample height/width must be positive.")
+        if self.max_records < 0:
+            raise ValueError("max_records must be nonnegative.")
 
     @classmethod
     def from_fields(
@@ -429,6 +424,7 @@ class ViewerWindowImageSampleRequest(ViewerWindowControlRequest):
         width: int = 32,
         include_array_values: bool = False,
         max_array_elements: int = 4096,
+        max_records: int = 3,
     ) -> Self:
         return cls(
             connection=connection,
@@ -441,6 +437,7 @@ class ViewerWindowImageSampleRequest(ViewerWindowControlRequest):
             width=width,
             include_array_values=include_array_values,
             max_array_elements=max_array_elements,
+            max_records=max_records,
         )
 
     def as_tool_arguments(self) -> dict[str, JsonValue]:
@@ -455,6 +452,7 @@ class ViewerWindowImageSampleRequest(ViewerWindowControlRequest):
                 "width": self.width,
                 "include_array_values": self.include_array_values,
                 "max_array_elements": self.max_array_elements,
+                "max_records": self.max_records,
             }
         )
         return payload
@@ -644,6 +642,7 @@ class ViewerWindowLayerDescriptor:
     title: str | None
     mounted: bool
     item_count: int
+    producer_identities: tuple[StreamProducerIdentity, ...] = ()
     axis_labels: tuple[str, ...] = ()
     stack_axes: tuple[str, ...] = ()
     pending_update: bool = False
@@ -896,6 +895,8 @@ class ViewerWindowImageSampleResult(AgentResultEnvelope):
     axis_indices: tuple[int, ...] | dict[str, int] | None = None
     array_slices: tuple[tuple[int, int], tuple[int, int]] = ((0, 0), (0, 0))
     record_count: int = 0
+    returned_record_count: int = 0
+    records_truncated_count: int = 0
     total_payload_record_count: int = 0
     raw_image_record_count: int = 0
     filtered_out_image_record_count: int = 0
@@ -937,7 +938,6 @@ class ViewerWindowValidationCounters:
     missing_payload_coordinate_count: int = 0
     duplicate_payload_coordinate_count: int = 0
     payload_without_coordinate_count: int = 0
-    spatial_mismatch_count: int = 0
     valid: bool = False
 
 
@@ -968,6 +968,8 @@ class ViewerWindowValidationSummaryResult(
     layer_count: int = 0
     mounted_layer_count: int = 0
     pending_update_count: int = 0
+    active_dimension_label_route: str | None = None
+    active_dimension_label_route_valid: bool = False
     validation_policy: ViewerWindowValidationPolicy = field(
         default_factory=ViewerWindowValidationPolicy
     )

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, is_dataclass
 import math
-from typing import Any
+from typing import cast, Any
 
 import numpy as np
 
@@ -14,8 +14,10 @@ from openhcs.core.measurement_row_materialization import (
     is_structural_missing_measurement_cell,
 )
 from openhcs.core.runtime_stores import RuntimeArtifactAddress, StoredRuntimeValue
-from openhcs.core.runtime_values import (
+from openhcs.core.runtime_tabular_values import (
     ColumnarRows,
+)
+from openhcs.core.runtime_measurements import (
     MeasurementTable,
 )
 
@@ -63,8 +65,12 @@ class LiveMeasurementTablePreview:
         if record.key.artifact_type is not MeasurementsArtifactType:
             return None
 
-        table = MeasurementTable.from_runtime_value(record.value)
-        row_preview = _measurement_row_preview(table.rows, row_limit)
+        table = cast(MeasurementTable, record.value.data)
+        row_preview = _measurement_row_preview(
+            table.rows,
+            row_limit,
+            column_limit,
+        )
         all_columns = _ordered_columns(table=table, rows=row_preview.rows)
         columns = all_columns[:column_limit]
         preview_rows = tuple(
@@ -78,7 +84,7 @@ class LiveMeasurementTablePreview:
             row_count=row_preview.row_count,
             truncated_rows=row_preview.row_count > row_limit,
             truncated_columns=len(all_columns) > len(columns),
-            object_name=table.object_name,
+            object_name=table.subject.object_name,
             source_image_name=table.source_image_name,
         )
 
@@ -210,10 +216,11 @@ def live_measurement_context_for_records(
 def _measurement_row_preview(
     rows: Any,
     row_limit: int,
+    column_limit: int,
 ) -> LiveMeasurementRowPreview:
     row_limit = max(0, row_limit)
     if isinstance(rows, ColumnarRows):
-        return _columnar_row_preview(rows, row_limit)
+        return _columnar_row_preview(rows, row_limit, column_limit)
     if isinstance(rows, Mapping):
         return _mapping_columns_to_row_preview(rows, row_limit)
     if not _is_row_sequence(rows):
@@ -231,8 +238,9 @@ def _measurement_row_preview(
 def _columnar_row_preview(
     rows: ColumnarRows,
     row_limit: int,
+    column_limit: int,
 ) -> LiveMeasurementRowPreview:
-    columns = tuple(str(column) for column in rows.columns)
+    columns = tuple(str(column) for column in rows.columns)[:column_limit]
     column_values = tuple((column, rows.column_values(column)) for column in columns)
     row_count = rows.row_count()
     return LiveMeasurementRowPreview(
@@ -303,15 +311,8 @@ def _ordered_columns(
             seen.add(name)
             ordered.append(name)
 
-    for field in table.fields:
+    for field in table.rows.fields:
         add_column(field.name)
-    column_names = table.column_names()
-    if column_names is not None:
-        for column in column_names:
-            add_column(column)
-    elif isinstance(table.rows, Mapping):
-        for column in table.rows:
-            add_column(column)
     for row in rows:
         for column in row:
             add_column(column)

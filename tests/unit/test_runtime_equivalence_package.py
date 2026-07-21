@@ -1,6 +1,9 @@
 """Runtime equivalence package boundary tests."""
 
+import ast
 from collections import Counter
+from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -27,8 +30,17 @@ from openhcs.core.equivalence import (
     runtime_cell_signature_counters_equivalent,
 )
 from openhcs.core.equivalence.arrays import semantic_array_payload
-from openhcs.core.equivalence.cells import measurement_table_cell_payload
-from openhcs.core.runtime_semantics import MeasurementScope
+from openhcs.core.equivalence.cells import (
+    measurement_table_cell_payload,
+    runtime_measurement_cell_is_present,
+    runtime_measurement_cell_signature,
+    runtime_measurement_cell_signature_if_present,
+)
+from openhcs.core.equivalence.keys import RuntimeMeasurementSourcePair
+from openhcs.core.runtime_measurements import MeasurementScope
+
+
+PROJECT_ROOT = Path(__file__).parents[2]
 
 
 def test_runtime_equivalence_report_types_have_package_owner() -> None:
@@ -52,6 +64,51 @@ def test_runtime_equivalence_policy_types_have_package_owner() -> None:
     assert normalize_runtime_source_name("OrigBlue__CorrGray") == (
         "orig_blue__corr_gray"
     )
+
+
+def test_default_measurement_dialect_renders_backend_neutral_spatial_grid_names() -> (
+    None
+):
+    dialect = RuntimeMeasurementDialect()
+
+    assert dialect.spatial_grid_measurement_feature_name("Grid", "x_origin") == (
+        "spatial_grid_grid_x_origin"
+    )
+
+
+def test_generic_equivalence_sources_do_not_own_cellprofiler_leaf_semantics() -> None:
+    source_paths = (
+        *(PROJECT_ROOT / "openhcs/core/equivalence").glob("*.py"),
+        PROJECT_ROOT / "openhcs/core/runtime_equivalence.py",
+    )
+    forbidden_literals = {
+        "cellprofiler",
+        "defined_grid",
+        "distance_centroid",
+        "distance_minimum",
+        "x_location_of_lowest_x_spot",
+        "y_location_of_lowest_y_spot",
+    }
+
+    for path in source_paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imported_modules = tuple(
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module is not None
+        )
+        literals = {
+            node.value.lower()
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+
+        assert not any(
+            module.startswith("openhcs.interop.cellprofiler")
+            or module.startswith("openhcs.processing.backends.cellprofiler")
+            for module in imported_modules
+        ), path
+        assert forbidden_literals.isdisjoint(literals), path
 
 
 def test_runtime_equivalence_policy_non_negative_fields_are_annotation_driven() -> None:
@@ -94,6 +151,13 @@ def test_runtime_equivalence_measurement_keys_have_package_owner() -> None:
     )
     assert feature.subject.name == "orig_blue"
     assert feature.source_name == "orig_blue__corr_gray"
+
+
+def test_runtime_measurement_source_pair_requires_canonical_separator() -> None:
+    assert RuntimeMeasurementSourcePair.from_source_name("orig_blue_corr_gray") is None
+    assert RuntimeMeasurementSourcePair.from_source_name(
+        "orig_blue__corr_gray"
+    ) == RuntimeMeasurementSourcePair("orig_blue", "corr_gray")
 
 
 def test_runtime_equivalence_cell_signatures_have_package_owner() -> None:
@@ -141,6 +205,102 @@ def test_runtime_equivalence_array_payloads_use_canonical_equivalence_surface() 
     assert semantic_array_payload(array)[:3] == ("array", "int16", (2, 2))
     assert measurement_table_cell_payload(np.float64(1.5)) == ("float", "1.5")
     assert measurement_table_cell_payload(array)[:3] == ("array", "int16", (2, 2))
+
+
+def test_runtime_measurement_scalar_cache_and_signatures_are_exact() -> None:
+    policy = RuntimeEquivalencePolicy()
+    cases = (
+        (None, None, None, False),
+        ("", ("str", ""), None, False),
+        ("value", ("str", "value"), ("text", "value"), True),
+        (False, ("bool", False), ("text", "False"), True),
+        (7, ("int", 7), ("number", "7.0"), True),
+        (1.5, ("float", "1.5"), ("number", "1.5"), True),
+        (float("nan"), ("float", "nan"), None, False),
+        (float("inf"), ("float", "inf"), ("number", "inf"), True),
+        (float("-inf"), ("float", "-inf"), ("number", "-inf"), True),
+        (np.str_(""), ("str", ""), None, False),
+        (np.bool_(False), ("bool", False), ("text", "False"), True),
+        (np.int64(7), ("int", 7), ("number", "7.0"), True),
+        (np.float64(1.5), ("float", "1.5"), ("number", "1.5"), True),
+        (np.float64("nan"), ("float", "nan"), None, False),
+        (np.float64("inf"), ("float", "inf"), ("number", "inf"), True),
+        (np.float64("-inf"), ("float", "-inf"), ("number", "-inf"), True),
+    )
+
+    with (
+        patch(
+            "openhcs.core.equivalence.cells.semantic_array_payload",
+            side_effect=AssertionError("scalar payload reached array classification"),
+        ),
+        patch(
+            "openhcs.core.equivalence.cells.semantic_array_shape",
+            side_effect=AssertionError("scalar presence reached array classification"),
+        ),
+    ):
+        for value, exact_payload, signature_payload, is_present in cases:
+            assert measurement_table_cell_payload(value) == exact_payload
+            present_signature = runtime_measurement_cell_signature_if_present(
+                value,
+                policy,
+            )
+            assert (
+                None
+                if present_signature is None
+                else present_signature.to_cache_payload()
+            ) == signature_payload
+            assert runtime_measurement_cell_is_present(value) is is_present
+
+
+def test_runtime_measurement_array_and_container_cache_and_signatures_are_exact() -> (
+    None
+):
+    policy = RuntimeEquivalencePolicy()
+    array_cases = (
+        (
+            np.array(7, dtype=np.uint8),
+            (
+                "array",
+                "uint8",
+                (1,),
+                "ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879",
+            ),
+            True,
+        ),
+        (
+            np.array([], dtype=np.uint8),
+            (
+                "array",
+                "uint8",
+                (0,),
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            ),
+            False,
+        ),
+    )
+    container_cases = (
+        (
+            {},
+            ("mapping", ()),
+            False,
+        ),
+        (
+            {"a": 1},
+            ("mapping", ((("str", "a"), ("int", 1)),)),
+            True,
+        ),
+        ([], ("list", ()), False),
+        ([1, "a"], ("list", (("int", 1), ("str", "a"))), True),
+        ((), ("tuple", ()), False),
+        ((1, "a"), ("tuple", (("int", 1), ("str", "a"))), True),
+    )
+
+    for value, exact_payload, is_present in (*array_cases, *container_cases):
+        assert measurement_table_cell_payload(value) == exact_payload
+        signature = runtime_measurement_cell_signature(value, policy)
+        present_signature = runtime_measurement_cell_signature_if_present(value, policy)
+        assert present_signature == (signature if is_present else None)
+        assert runtime_measurement_cell_is_present(value) is is_present
 
 
 def test_runtime_equivalence_table_snapshot_has_package_owner() -> None:

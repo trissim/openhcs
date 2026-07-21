@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-
-from openhcs.core.runtime_values import RuntimeArrayData
+from openhcs.core.runtime_array_values import RuntimeArrayData
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,10 +29,9 @@ class RuntimeImageStackCacheKey:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeImageStackCacheValue:
-    """Cached stack payload and the source slice shapes it represents."""
+    """Cached payload for an ordered runtime-slice path set."""
 
     stack: RuntimeArrayData
-    source_slice_shapes: tuple[tuple[int, ...], ...]
 
 
 @dataclass(slots=True)
@@ -61,15 +59,11 @@ class RuntimeImageStackCache:
         *,
         memory_type: str,
         stack: RuntimeArrayData,
-        source_slice_shapes: tuple[tuple[int, ...], ...],
     ) -> None:
         """Store a stack produced for a just-saved ordered path set."""
         self.stacks[
             RuntimeImageStackCacheKey.from_paths(paths, memory_type=memory_type)
-        ] = RuntimeImageStackCacheValue(
-            stack=stack,
-            source_slice_shapes=source_slice_shapes,
-        )
+        ] = RuntimeImageStackCacheValue(stack=stack)
 
     def discard_paths(self, paths: tuple[str, ...]) -> None:
         """Discard cached stacks that include any of the supplied paths."""

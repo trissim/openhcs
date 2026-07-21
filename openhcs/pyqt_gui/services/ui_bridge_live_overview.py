@@ -16,7 +16,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiStateSurfaceRequest,
     UiStateSurfaceSummary,
 )
-from openhcs.agent.serialization import to_jsonable
+from openhcs.serialization.json import to_jsonable
 from openhcs.agent.ui_bridge_identities import (
     UiLiveOverviewStateSurfaceIdentityDeclaration,
 )
@@ -33,7 +33,6 @@ from openhcs.pyqt_gui.services.ui_bridge_registry import (
     UiBridgeSurfaceRegistry,
 )
 
-
 LIVE_OVERVIEW_STATE_TITLE = "UI live overview"
 LIVE_OVERVIEW_STATE_PAYLOAD_SCHEMA = "openhcs.ui.live_overview_state.v1"
 LIVE_OVERVIEW_STATE_IDENTITY = UiStateSurfaceProviderIdentity.from_declaration(
@@ -46,6 +45,11 @@ class LiveOverviewBridgeProviderSet(UiBridgeProviderSetABC):
     """Register the live overview surface after its source providers exist."""
 
     registry_key = UiLiveOverviewStateSurfaceIdentityDeclaration.require_value()
+
+    @classmethod
+    def for_main_window(cls, main_window) -> "LiveOverviewBridgeProviderSet":
+        del main_window
+        return cls()
 
     def register(self, context: UiBridgeRegistrationContext) -> None:
         context.registry.register_state_surface_provider(
@@ -83,7 +87,9 @@ class UiLiveOverviewStateSurfaceProvider(UiStateSurfaceProviderABC):
         )
 
     def read(self, request: UiStateSurfaceRequest) -> UiStateSurfaceDocument:
-        selection_mode = request.resolved_selection_mode(UiCodeDocumentSelectionMode.ALL)
+        selection_mode = request.resolved_selection_mode(
+            UiCodeDocumentSelectionMode.ALL
+        )
         try:
             state = UiLiveOverviewState(
                 schema_version=SCHEMA_VERSION,
@@ -116,7 +122,9 @@ class UiLiveOverviewStateSurfaceProvider(UiStateSurfaceProviderABC):
             try:
                 sections.extend(provider.overview_sections())
             except Exception as exc:
-                sections.append(self._provider_error_section(provider.overview_identity, exc))
+                sections.append(
+                    self._provider_error_section(provider.overview_identity, exc)
+                )
         return tuple(sections)
 
     @staticmethod
@@ -160,7 +168,9 @@ class UiLiveOverviewStateSurfaceProvider(UiStateSurfaceProviderABC):
         request: UiStateSurfaceRequest,
         errors: tuple[AgentError, ...],
     ) -> UiStateSurfaceDocument:
-        selection_mode = request.resolved_selection_mode(UiCodeDocumentSelectionMode.ALL)
+        selection_mode = request.resolved_selection_mode(
+            UiCodeDocumentSelectionMode.ALL
+        )
         state = UiLiveOverviewState(
             schema_version=SCHEMA_VERSION,
             summary=self.summary(),

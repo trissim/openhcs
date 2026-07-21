@@ -1,51 +1,193 @@
 """Granularity numerics for CellProfiler-compatible texture measurement."""
 
 from __future__ import annotations
-from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
-from types import MappingProxyType
-from threading import Lock
-from typing import Any, ClassVar
 
-from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
-from openhcs.interop.cellprofiler.settings_binder import (
-    normalize_cellprofiler_setting_name,
-    parse_cellprofiler_float,
-    parse_cellprofiler_int,
+from abc import ABC, abstractmethod
+from collections import OrderedDict
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, fields as dataclass_fields
+import hashlib
+import logging
+import os
+import re
+from threading import Lock
+import time
+from types import MappingProxyType
+from typing import ClassVar
+
+import cv2
+from metaclass_registry import AutoRegisterMeta
+from numba import njit
+import numpy as np
+from scipy import ndimage as ndi
+from skimage import morphology
+
+from openhcs.constants.constants import MemoryType
+from openhcs.core.callable_contract import processing_prepare
+from openhcs.core.equivalence.cells import (
+    runtime_cell_signature_counters_equivalent,
 )
-from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
-    ArtifactContractModule,
-    BinderSettingsSourceModule,
+from openhcs.core.equivalence.keys import RuntimeMeasurementFeatureKey
+from openhcs.core.equivalence.measurement_features import (
+    RuntimeMeasurementIndexedDescriptorEquivalence,
+)
+from openhcs.core.equivalence.policy import RuntimeEquivalencePolicy
+from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.core.runtime_batch_contracts import (
+    RuntimeBatchInvocationRequest,
+    measurement_image_batch_executor,
+)
+from openhcs.core.runtime_image_values import image_payload_data
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelValue,
+    object_label_dense_array,
+)
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
+)
+from openhcs.core.runtime_profile import RuntimeProfileLogger
+from openhcs.core.runtime_tabular_values import (
+    FieldSpec,
+)
+from openhcs.core.runtime_measurements import (
+    RuntimeMeasurementFeature,
+    RuntimeMeasurementIndexedDescriptorDeclaration,
+)
+from openhcs.interop.cellprofiler.module_settings import (
     BoundModuleSettings,
-    CellProfilerModule,
+)
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
     ImageMeasurementInputModule,
-    ModuleSettingsSourceModule,
     ObjectMeasurementInputModule,
-    ScopedMeasurementModule,
-    StructuringElementSettingsModule,
-    ObjectMeasurementRowsModule,
     PerObjectMeasurementExecutionModule,
+    SourceQualifiedWideMeasurementRowsModule,
+)
+from openhcs.interop.cellprofiler.runtime.object_input_policies import (
+    LabelsObjectInputPolicy,
 )
 from openhcs.interop.cellprofiler.runtime.object_measurement_row_policies import (
     CellProfilerObjectMeasurementRowPolicy,
     DenseColumnarObjectMeasurementRowsMixin,
 )
-from openhcs.interop.cellprofiler.runtime.object_input_policies import (
-    LabelsObjectInputPolicy,
-)
+from openhcs.interop.cellprofiler.parser import ModuleBlock
 from openhcs.interop.cellprofiler.setting_names import (
-    optional_setting_value,
-    required_setting_value,
+    SettingNameFamily,
+    setting_names,
     setting_values,
-    split_symbol_names,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import (
-    cellprofiler_enum_from_literal,
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    SettingsBinder,
+    parse_cellprofiler_float,
+    parse_cellprofiler_int,
 )
-from openhcs.processing.backends.cellprofiler.thresholding import (
-    ThresholdSettingsModule,
+from openhcs.processing.backends.cellprofiler._backend import (
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    BackendProviderInput,
+    CellProfilerBackendAuthority,
+    CellProfilerBackendProvider,
+    CellProfilerBackendStrategyMixin,
 )
+from openhcs.processing.backends.cellprofiler.object_measurement_columnar_rows import (
+    ObjectMeasurementColumnarRows,
+)
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+
+GRANULARITY_SPECTRUM_LENGTH = 16
+
+
+@dataclass(frozen=True, slots=True)
+class GranularitySpectrumDescriptor:
+    """Nominal identity of one CellProfiler granularity spectrum index."""
+
+    spectrum_index: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.spectrum_index, int):
+            raise TypeError("Granularity spectrum index must be an integer.")
+        if not 1 <= self.spectrum_index <= GRANULARITY_SPECTRUM_LENGTH:
+            raise ValueError(
+                "Granularity spectrum index must be between 1 and "
+                f"{GRANULARITY_SPECTRUM_LENGTH}, got {self.spectrum_index}."
+            )
+
+
+class GranularitySpectrumDescriptorDeclaration(
+    RuntimeMeasurementIndexedDescriptorDeclaration,
+    RuntimeMeasurementIndexedDescriptorEquivalence,
+):
+    """Parse and render exact MeasureGranularity spectrum identities."""
+
+    declaration_key = "cellprofiler_granularity_spectrum"
+    feature_category = "Granularity"
+    _row_field_pattern = re.compile(r"gs([1-9]|1[0-6])\Z")
+    _feature_name_pattern = re.compile(r"Granularity_([1-9]|1[0-6])\Z", re.I)
+
+    @classmethod
+    def from_measurement_row_field_name(
+        cls,
+        field_name: str,
+    ) -> GranularitySpectrumDescriptor | None:
+        """Return the descriptor declared by one raw producer row field."""
+        match = cls._row_field_pattern.fullmatch(str(field_name))
+        if match is None:
+            return None
+        return GranularitySpectrumDescriptor(int(match.group(1)))
+
+    @classmethod
+    def from_feature_name(
+        cls,
+        feature_name: str,
+    ) -> GranularitySpectrumDescriptor | None:
+        """Parse one unqualified native CellProfiler granularity feature name."""
+        match = cls._feature_name_pattern.fullmatch(str(feature_name))
+        if match is None:
+            return None
+        return GranularitySpectrumDescriptor(int(match.group(1)))
+
+    @classmethod
+    def feature_name(cls, descriptor: object) -> str:
+        """Render one unqualified native CellProfiler granularity feature name."""
+        if not isinstance(descriptor, GranularitySpectrumDescriptor):
+            raise TypeError(
+                f"{cls.__name__}.feature_name requires GranularitySpectrumDescriptor."
+            )
+        return f"{cls.feature_category}_{descriptor.spectrum_index}"
+
+    @classmethod
+    def source_qualified_feature_name(
+        cls,
+        descriptor: GranularitySpectrumDescriptor,
+        *,
+        source_image_name: str,
+    ) -> str:
+        """Render one exact source-qualified producer feature identity."""
+        if not source_image_name:
+            raise ValueError("Granularity source image name cannot be empty.")
+        return f"{cls.feature_name(descriptor)}_{source_image_name}"
+
+    @classmethod
+    def indexed_suffix_token_width(
+        cls,
+        feature_tokens: tuple[str, ...],
+    ) -> int | None:
+        """Keep the native index before source identity, not as an export suffix."""
+        del feature_tokens
+        return None
+
+    @classmethod
+    def descriptor_values_equivalent(
+        cls,
+        descriptor: object,
+        key: RuntimeMeasurementFeatureKey,
+        left: object,
+        right: object,
+        policy: RuntimeEquivalencePolicy,
+    ) -> bool:
+        """Use ordinary numeric equivalence for granularity descriptor values."""
+        del cls, descriptor, key
+        return runtime_cell_signature_counters_equivalent(left, right, policy)
 
 
 class MeasureGranularityObjectMeasurementRowPolicy(
@@ -56,9 +198,9 @@ class MeasureGranularityObjectMeasurementRowPolicy(
 
 class MeasureGranularityModule(
     LabelsObjectInputPolicy,
-    PerObjectMeasurementExecutionModule,
-    ObjectMeasurementRowsModule,
     MeasureGranularityObjectMeasurementRowPolicy,
+    PerObjectMeasurementExecutionModule,
+    SourceQualifiedWideMeasurementRowsModule,
     ImageMeasurementInputModule,
     ObjectMeasurementInputModule,
 ):
@@ -66,36 +208,79 @@ class MeasureGranularityModule(
     function_name = "measure_granularity"
     validated = True
     function_variants = ("measure_granularity_objects",)
-    contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
-    numbered_measurement_feature_prefix_aliases = {"gs": ("granularity",)}
-    object_measurement_setting = SettingNameFamily(
-        "Select objects to measure", aliases=("Select an object to measure",)
+    measurement_category_prefixes = (("granularity",),)
+
+    class MeasurementFeature(RuntimeMeasurementFeature):
+        """Indexed granularity spectrum family emitted by MeasureGranularity."""
+
+        SPECTRUM = (
+            GranularitySpectrumDescriptorDeclaration.feature_category,
+            (),
+            (),
+            (GranularitySpectrumDescriptorDeclaration,),
+            "gs",
+        )
+
+    subsample_size_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
+        "Subsampling factor for granularity measurements"
+    )
+    background_subsample_size_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
+        "Subsampling factor for background reduction"
+    )
+    element_radius_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
+        "Radius of structuring element"
+    )
+    spectrum_length_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
+        "Range of the granular spectrum"
     )
     ignored_settings = ("Measure within objects?", "image_count", "object_count")
-    scalar_settings: ClassVar[Mapping[str, tuple[str, Callable[[str], Any]]]] = {
-        "Subsampling factor for granularity measurements": (
+    scalar_setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        SettingToKeywordBinding(
+            subsample_size_setting,
             "subsample_size",
             parse_cellprofiler_float,
         ),
-        "Subsampling factor for background reduction": (
+        SettingToKeywordBinding(
+            background_subsample_size_setting,
             "background_subsample_size",
             parse_cellprofiler_float,
         ),
-        "Radius of structuring element": ("element_radius", parse_cellprofiler_int),
-        "Range of the granular spectrum": ("spectrum_length", parse_cellprofiler_int),
-    }
+        SettingToKeywordBinding(
+            element_radius_setting,
+            "element_radius",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            spectrum_length_setting,
+            "spectrum_length",
+            parse_cellprofiler_int,
+        ),
+    )
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        scalar_setting_bindings
+    )
+
     @classmethod
-    def resolve_function(
-        cls, module: "ModuleBlock", *, default_function_name: str | None = None
-    ) -> "ResolvedModuleFunction":
-        object_values = setting_values(module, cls.object_measurement_setting)
-        if any((split_symbol_names(value) for value in object_values)):
-            return super().resolve_function(
-                module, default_function_name=cls.function_variants[0]
+    def source_qualified_feature_name(
+        cls,
+        field_name: str,
+        source_image_name: str,
+    ) -> str:
+        """Project one raw spectrum field to its exact native producer identity."""
+        descriptor = (
+            GranularitySpectrumDescriptorDeclaration.from_measurement_row_field_name(
+                field_name
             )
-        return super().resolve_function(
-            module, default_function_name=default_function_name
+        )
+        if descriptor is None:
+            raise ValueError(
+                f"{cls.__name__} has no declared granularity spectrum identity "
+                f"for raw field {field_name!r}."
+            )
+        return GranularitySpectrumDescriptorDeclaration.source_qualified_feature_name(
+            descriptor,
+            source_image_name=source_image_name,
         )
 
     @classmethod
@@ -104,77 +289,43 @@ class MeasureGranularityModule(
         module: "ModuleBlock",
         *,
         binder: "SettingsBinder",
-        param_mapping: Mapping[str, Any],
-        ignored_unmapped_settings: frozenset[str] = frozenset(),
     ) -> "BoundModuleSettings":
-        bound = cls._bind_generic_settings(
-            module, binder=binder, param_mapping=param_mapping
-        )
-        kwargs = dict(bound.kwargs)
-        unmapped_kwargs = dict(bound.unmapped_kwargs)
-        for setting_name, (parameter_name, parse) in cls.scalar_settings.items():
-            values = setting_values(module, setting_name)
+        bound = cls._bind_declared_settings(module, binder=binder)
+        for binding in cls.scalar_setting_bindings:
+            values = setting_values(module, binding.setting_name)
             if not values:
                 continue
-            parsed_values = tuple((parse(value) for value in values))
+            parsed_values = tuple(
+                (
+                    (
+                        binder.parse_value(
+                            setting_names(binding.setting_name)[0],
+                            value,
+                        )
+                        if binding.parse is None
+                        else binding.parse(value)
+                    )
+                    for value in values
+                )
+            )
             first_value = parsed_values[0]
             if any((value != first_value for value in parsed_values[1:])):
                 raise ValueError(
-                    f"Module {module.name}({module.module_num}) has per-row {setting_name!r} values {parsed_values!r}; OpenHCS currently binds one granularity setting set per module."
+                    f"Module {module.name}({module.module_num}) has per-row "
+                    f"{setting_names(binding.setting_name)[0]!r} values "
+                    f"{parsed_values!r}; OpenHCS currently binds one granularity "
+                    "setting set per module."
                 )
-            kwargs[parameter_name] = first_value
-            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
         return cls._finalize_bound_settings(
             module,
             binder=binder,
-            bound=BoundModuleSettings(kwargs, unmapped_kwargs),
-            ignored_unmapped_settings=ignored_unmapped_settings,
+            bound=BoundModuleSettings(dict(bound.kwargs), dict(bound.unmapped_kwargs)),
         )
 
-    @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        return cls.measurement_artifact_contract_from_declared_settings(
-            assembler, builder, module
-        )
-
-
-from collections import OrderedDict
-from dataclasses import dataclass, field, fields as dataclass_fields
-import hashlib
-import logging
-import os
-import time
-import cv2
-import numpy as np
-from numba import njit
-from scipy import ndimage as ndi
-from skimage import morphology
-from metaclass_registry import AutoRegisterMeta
-from openhcs.constants.constants import MemoryType
-from openhcs.core.callable_contract import processing_prepare
-from openhcs.core.runtime_profile import RuntimeProfileLogger
-from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import (
-    measurement_image_batch_executor,
-    special_inputs,
-    special_outputs,
-)
-from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
-from openhcs.core.runtime_values import image_payload_data, object_label_dense_array
-from openhcs.core.runtime_values import ColumnarRows
-from openhcs.processing.backends.cellprofiler._backend import (
-    BackendProviderInput,
-    CellProfilerBackendAuthority,
-    CellProfilerBackendProvider,
-    CellProfilerBackendStrategyMixin,
-    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-)
-from openhcs.processing.materialization import (
-    csv_dataclass_materializer,
-)
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
+
 
 def profile_enabled() -> bool:
     """Return whether per-function granularity runtime profiling is enabled."""
@@ -250,7 +401,7 @@ class ObjectGranularityMeasurement:
 
 
 def _granularity_measurement(gs_values: list[float]) -> GranularityMeasurement:
-    while len(gs_values) < 16:
+    while len(gs_values) < GRANULARITY_SPECTRUM_LENGTH:
         gs_values.append(0.0)
     return GranularityMeasurement(
         slice_index=0,
@@ -308,9 +459,12 @@ def object_granularity_measurement_value_fields() -> tuple[str, ...]:
 
 
 @dataclass(frozen=True, slots=True)
-class ObjectGranularityMeasurementRows(ColumnarRows):
+class ObjectGranularityMeasurementRows(ObjectMeasurementColumnarRows):
     """Columnar object granularity rows over the emitted label-id domain."""
 
+    fields: ClassVar[tuple[FieldSpec, ...]] = FieldSpec.from_dataclass_type(
+        ObjectGranularityMeasurement
+    )
     object_ids: np.ndarray
     gs_values: np.ndarray
     slice_index: int = 0
@@ -326,7 +480,9 @@ class ObjectGranularityMeasurementRows(ColumnarRows):
                 "Object granularity rows require one spectrum per object ID."
             )
         columns: dict[str, np.ndarray] = {
-            "slice_index": np.full(object_ids.size, int(self.slice_index), dtype=np.int32),
+            "slice_index": np.full(
+                object_ids.size, int(self.slice_index), dtype=np.int32
+            ),
             "object_id": object_ids,
         }
         for column_index, field_name in enumerate(
@@ -340,15 +496,11 @@ class ObjectGranularityMeasurementRows(ColumnarRows):
         object.__setattr__(self, "object_ids", object_ids)
         object.__setattr__(self, "gs_values", gs_values)
         object.__setattr__(self, "_columns", MappingProxyType(columns))
+        self.validate_fields()
 
     @property
     def columns(self) -> Mapping[str, np.ndarray]:
         return self._columns
-
-    @property
-    def covers_declared_object_measurement_domain(self) -> bool:
-        """Rows are emitted for every materially present label ID."""
-        return True
 
     def __len__(self) -> int:
         return int(self.object_ids.size)
@@ -374,13 +526,6 @@ class GranularityImageSeries:
 
 
 @dataclass(frozen=True, slots=True)
-class GranularityImageSeriesCacheEntry:
-    """Cache entry for one exact granularity image-series key."""
-
-    series: GranularityImageSeries
-
-
-@dataclass(frozen=True, slots=True)
 class GranularityBatchSettings:
     """Granularity settings that determine the reusable reconstruction series."""
 
@@ -390,10 +535,14 @@ class GranularityBatchSettings:
     spectrum_length: int
 
     @classmethod
-    def from_request(cls, request: RuntimeBatchInvocationRequest) -> "GranularityBatchSettings":
+    def from_request(
+        cls, request: RuntimeBatchInvocationRequest
+    ) -> "GranularityBatchSettings":
         return cls(
             subsample_size=float(request.kwargs["subsample_size"]),
-            background_subsample_size=float(request.kwargs["background_subsample_size"]),
+            background_subsample_size=float(
+                request.kwargs["background_subsample_size"]
+            ),
             element_radius=int(request.kwargs["element_radius"]),
             spectrum_length=int(request.kwargs["spectrum_length"]),
         )
@@ -430,7 +579,9 @@ class GranularityBatchInvocation:
             settings=GranularityBatchSettings.from_request(request),
         )
 
-    def series_key(self) -> tuple[
+    def series_key(
+        self,
+    ) -> tuple[
         str,
         tuple[int, ...],
         bytes,
@@ -445,7 +596,7 @@ class GranularityBatchInvocation:
                 self.request.image,
                 ObjectGranularityMeasurementRows(
                     np.empty(0, dtype=np.int32),
-                    np.empty((0, 16), dtype=np.float64),
+                    np.empty((0, GRANULARITY_SPECTRUM_LENGTH), dtype=np.float64),
                 ),
             )
         gs_per_object = object_granularity_values(
@@ -497,7 +648,7 @@ class GranularityImageSeriesRequest:
             if entry is not None:
                 GRANULARITY_IMAGE_SERIES_CACHE.move_to_end(key)
                 self.log_profile("granularity_series_cache_hit", 0.0)
-                return entry.series
+                return entry
         phase_started_at = time.perf_counter()
         pixels, new_shape = background_corrected_pixels(
             image_array,
@@ -523,9 +674,7 @@ class GranularityImageSeriesRequest:
             pixels=pixels, new_shape=new_shape, reconstructions=reconstructions
         )
         with GRANULARITY_IMAGE_SERIES_CACHE_LOCK:
-            GRANULARITY_IMAGE_SERIES_CACHE[key] = GranularityImageSeriesCacheEntry(
-                series=series
-            )
+            GRANULARITY_IMAGE_SERIES_CACHE[key] = series
             GRANULARITY_IMAGE_SERIES_CACHE.move_to_end(key)
             while (
                 len(GRANULARITY_IMAGE_SERIES_CACHE)
@@ -537,10 +686,11 @@ class GranularityImageSeriesRequest:
 
 GRANULARITY_IMAGE_SERIES_CACHE: dict[
     tuple[str, tuple[int, ...], bytes, float, float, int, int],
-    GranularityImageSeriesCacheEntry,
+    GranularityImageSeries,
 ] = OrderedDict()
 GRANULARITY_IMAGE_SERIES_CACHE_MAX_ENTRIES = 16
 GRANULARITY_IMAGE_SERIES_CACHE_LOCK = Lock()
+
 
 def granularity_array_content_key(
     array: np.ndarray,
@@ -1170,7 +1320,9 @@ class GranularityLabelPixels:
         present_mask = object_indexes >= 0
         flat_offsets = candidate_offsets[present_mask]
         object_indexes = object_indexes[present_mask].astype(np.int64, copy=False)
-        row_offsets = (flat_offsets // label_array.shape[1]).astype(np.int64, copy=False)
+        row_offsets = (flat_offsets // label_array.shape[1]).astype(
+            np.int64, copy=False
+        )
         column_offsets = (flat_offsets % label_array.shape[1]).astype(
             np.int64,
             copy=False,
@@ -1241,7 +1393,9 @@ def _granularity_label_pixel_means(
 ) -> np.ndarray:
     sums = np.zeros(object_counts.size, dtype=np.float64)
     for pixel_index in range(flat_offsets.size):
-        sums[object_indexes[pixel_index]] += float(image_values[flat_offsets[pixel_index]])
+        sums[object_indexes[pixel_index]] += float(
+            image_values[flat_offsets[pixel_index]]
+        )
     means = np.empty(object_counts.size, dtype=np.float64)
     for object_index in range(object_counts.size):
         if object_counts[object_index] > 0.0:
@@ -1315,9 +1469,9 @@ def resample_to_original_shape_cp(
     original_shape: tuple[int, int],
 ) -> np.ndarray:
     """Restore a CP-resampled image to the original grid."""
-    row_coords, col_coords = np.mgrid[0 : original_shape[0], 0 : original_shape[1]].astype(
-        float
-    )
+    row_coords, col_coords = np.mgrid[
+        0 : original_shape[0], 0 : original_shape[1]
+    ].astype(float)
     row_coords *= (
         float(logical_shape[0] - 1) / float(original_shape[0] - 1)
         if original_shape[0] > 1
@@ -1368,22 +1522,13 @@ def resample_between_cp_grids(
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
-@special_outputs(
-    (
-        "granularity_measurements",
-        csv_dataclass_materializer(
-            GranularityMeasurement,
-            analysis_type="granularity",
-        ),
-    )
-)
 def measure_granularity(
     image: np.ndarray,
     subsample_size: float = 0.25,
     background_subsample_size: float = 0.25,
     element_radius: int = 10,
     spectrum_length: int = 16,
-) -> tuple[np.ndarray, GranularityMeasurement]:
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows]:
     """Measure granularity spectrum of an image."""
     series = GranularityImageSeriesRequest(
         image=image,
@@ -1402,29 +1547,31 @@ def measure_granularity(
         currentmean = np.mean(reconstruction)
         gs = (prevmean - currentmean) * 100 / startmean
         gs_values.append(gs)
-    return (image, _granularity_measurement(gs_values))
+    return (
+        image,
+        DataclassMeasurementColumnarRows(
+            (_granularity_measurement(gs_values),),
+            row_type=GranularityMeasurement,
+        ),
+    )
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
-@special_outputs(
-    (
-        "object_granularity_measurements",
-        csv_dataclass_materializer(
-            ObjectGranularityMeasurement,
-            analysis_type="object_granularity",
-        ),
-    )
-)
 def measure_granularity_objects(
     image: np.ndarray,
-    labels: np.ndarray,
+    labels: ObjectLabelValue,
     subsample_size: float = 0.25,
     background_subsample_size: float = 0.25,
     element_radius: int = 10,
     spectrum_length: int = 16,
 ) -> tuple[np.ndarray, ObjectGranularityMeasurementRows]:
-    """Measure granularity spectrum within labeled objects."""
+    """Measure granularity spectrum within labeled objects.
+
+    Args:
+        labels: Object-label plane defining the regions for which separate
+            granularity spectra are measured.
+    """
     labels = object_label_dense_array(labels, dtype=np.int32)
     object_range = np.unique(labels[labels > 0]).astype(np.int32, copy=False)
     if object_range.size == 0:
@@ -1432,7 +1579,7 @@ def measure_granularity_objects(
             image,
             ObjectGranularityMeasurementRows(
                 np.empty(0, dtype=np.int32),
-                np.empty((0, 16), dtype=np.float64),
+                np.empty((0, GRANULARITY_SPECTRUM_LENGTH), dtype=np.float64),
             ),
         )
     series = GranularityImageSeriesRequest(
@@ -1502,14 +1649,8 @@ def measure_granularity_objects_batch(
     groups = tuple(invocations_by_series.values())
     for group in groups:
         grouped_outputs.extend(execute_group(group))
-    ordered_outputs = {
-        index: output
-        for index, output in grouped_outputs
-    }
-    return [
-        ordered_outputs[index]
-        for index in range(len(requests))
-    ]
+    ordered_outputs = {index: output for index, output in grouped_outputs}
+    return [ordered_outputs[index] for index in range(len(requests))]
 
 
 measurement_image_batch_executor(measure_granularity_objects_batch)(
@@ -1541,13 +1682,17 @@ def _prepare_granularity_backend() -> None:
             element_radius=10,
             spectrum_length=5,
         )
+
+
 __all__ = [
     "GRANULARITY_IMAGE_SERIES_CACHE",
     "GRANULARITY_IMAGE_SERIES_CACHE_MAX_ENTRIES",
+    "GRANULARITY_SPECTRUM_LENGTH",
     "GranularityImageSeries",
-    "GranularityImageSeriesCacheEntry",
     "GranularityImageSeriesRequest",
     "GranularityMeasurement",
+    "GranularitySpectrumDescriptor",
+    "GranularitySpectrumDescriptorDeclaration",
     "ObjectGranularityMeasurement",
     "ObjectGranularityMeasurementRows",
     "OpenCVGranularityReconstructionBackendStrategy",

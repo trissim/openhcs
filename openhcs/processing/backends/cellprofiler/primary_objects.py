@@ -3,42 +3,46 @@
 import logging
 import numpy as np
 import time
-from typing import Annotated, Tuple
-from dataclasses import dataclass
+from typing import TYPE_CHECKING, Tuple
 from enum import Enum
 from openhcs.core.memory import numpy
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
+)
 from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.runtime_values import (
+from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
-    SourceImageObjectLabelBuildRequest,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
 )
-from openhcs.core.runtime_semantics import MeasurementRowAxisField
+from openhcs.core.runtime_object_labels import ObjectLabelPayload
+from openhcs.core.runtime_object_label_building import (
+    SourceImageObjectLabelBuildRequest,
+)
 from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
-    required_setting_value,
+    optional_setting_value,
 )
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     cellprofiler_enum_value_setting_parser,
     coerce_cellprofiler_enum,
+    normalize_cellprofiler_setting_name,
     parse_cellprofiler_bool,
     parse_cellprofiler_float,
     parse_cellprofiler_int,
 )
-from openhcs.interop.cellprofiler.module_declarations import (
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.interop.cellprofiler.module_settings import (
     BoundModuleSettings,
-    ImageArtifactInputModule,
+)
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
     MeasurementArtifactOutputModule,
     ObjectArtifactOutputModule,
-    ProcessingContract,
 )
 from openhcs.interop.cellprofiler.runtime.measurement_recording import (
     CurrentPayloadMeasurementRecordMixin,
-    MeasurementFeatureRecord,
-    NoFieldsMeasurementRecordMixin,
     NoObjectNameMeasurementRecordMixin,
 )
 from openhcs.processing.backends.cellprofiler.thresholding import (
@@ -51,8 +55,6 @@ from openhcs.processing.backends.cellprofiler.thresholding import (
     CellProfilerThresholdSettings,
     CellProfilerVarianceMethod,
     OutputObjectThresholdMeasurementRecordRowsMixin,
-    ObjectThresholdResult,
-    ThresholdMeasurementFeatureRecord,
     ThresholdSettingsModule,
     cellprofiler_threshold_diagnostics,
     normalize_cellprofiler_image,
@@ -64,11 +66,9 @@ from openhcs.processing.backends.cellprofiler.watershed import (
     cellprofiler_legacy_watershed,
 )
 from openhcs.processing.backends.cellprofiler.morphology import (
-    CELLPROFILER_LOW_RES_AUTO_MAXIMA_SUPPRESSION_SIZE,
     CellProfilerDeclumpMethod,
     DeclumpingMaximaGeometry,
     FillHolesOption,
-    dense_label_area_statistics,
     filter_border_objects,
     filter_labels_by_area_numba,
     filter_labels_by_diameter_range,
@@ -82,11 +82,14 @@ from openhcs.processing.backends.cellprofiler.shape import shape_measurement_bac
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-    CellProfilerBackendProvider,
 )
 from openhcs.processing.backends.cellprofiler.enum_attributes import (
     CellProfilerEnumAttributeMixin,
 )
+from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
+
+if TYPE_CHECKING:
+    from openhcs.interop.cellprofiler.parser import ModuleBlock
 
 logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
@@ -109,28 +112,6 @@ class ExcessObjectHandling(CellProfilerEnumAttributeMixin, Enum):
     __cellprofiler_attribute_names__ = ("erase_excess",)
     CONTINUE = ("Continue", False)
     ERASE = ("Erase", True)
-
-
-@dataclass
-class PrimaryObjectStats(ThresholdMeasurementFeatureRecord):
-    slice_index: Annotated[int, MeasurementRowAxisField.SLICE_INDEX]
-    object_count: int
-    mean_area: float
-    median_area: float
-    total_area: float
-    final_threshold: float
-    original_threshold: float = 0.0
-    weighted_variance: float = 0.0
-    sum_of_entropies: float = 0.0
-
-    def threshold_measurement_record(self) -> MeasurementFeatureRecord:
-        return ObjectThresholdResult(
-            slice_index=self.slice_index,
-            final_threshold=self.final_threshold,
-            original_threshold=self.original_threshold,
-            weighted_variance=self.weighted_variance,
-            sum_of_entropies=self.sum_of_entropies,
-        )
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -170,7 +151,7 @@ def identify_primary_objects(
     morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     watershed_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     respect_source_border_metadata: bool = False,
-) -> Tuple[np.ndarray, PrimaryObjectStats, np.ndarray]:
+) -> Tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelPayload]:
     """
     CellProfiler Parameter Mapping:
     (CellProfiler setting -> Python parameter)
@@ -232,8 +213,7 @@ def identify_primary_objects(
             current image plane border.
 
     Returns:
-        Tuple of (original image, object statistics, labeled image)
-    """
+        Tuple of (original image, object statistics, labeled image)"""
     from openhcs.processing.backends.cellprofiler.morphology import (
         MorphologyBackendStrategy,
     )
@@ -494,8 +474,8 @@ def identify_primary_objects(
             function="identify_primary_objects",
         )
     phase_started_at = time.perf_counter()
-    unedited_labels = labeled_image.copy()
-    small_removed_labels = labeled_image.copy()
+    unedited_labels = labeled_image
+    small_removed_labels = labeled_image
     runtime_profiler.log(
         "ipo_copy_label_variants",
         time.perf_counter() - phase_started_at,
@@ -504,7 +484,9 @@ def identify_primary_objects(
     if exclude_border_objects and object_count > 0:
         phase_started_at = time.perf_counter()
         labeled_image = filter_border_objects(
-            labeled_image, image_mask=input_mask, image_metadata=input_metadata
+            labeled_image.copy(),
+            image_mask=input_mask,
+            image_metadata=input_metadata,
         )
         runtime_profiler.log(
             "ipo_filter_border",
@@ -531,7 +513,7 @@ def identify_primary_objects(
             function="identify_primary_objects",
         )
     phase_started_at = time.perf_counter()
-    accepted_labels_before_relabel = labeled_image.copy()
+    accepted_labels_before_relabel = labeled_image
     labeled_image, object_count = morphology.relabel_sequential(labeled_image)
     unedited_labels = _remap_object_label_variant_after_final_relabel(
         unedited_labels,
@@ -554,24 +536,7 @@ def identify_primary_objects(
     if limit_erase.erase_excess and object_count > maximum_object_count:
         labeled_image = np.zeros_like(labeled_image)
         object_count = 0
-    phase_started_at = time.perf_counter()
-    mean_area, median_area, total_area = dense_label_area_statistics(labeled_image)
-    runtime_profiler.log(
-        "ipo_statistics_diagnostics",
-        time.perf_counter() - phase_started_at,
-        function="identify_primary_objects",
-    )
-    stats = PrimaryObjectStats(
-        slice_index=0,
-        object_count=object_count,
-        mean_area=mean_area,
-        median_area=median_area,
-        total_area=total_area,
-        final_threshold=float(threshold.final_threshold),
-        original_threshold=threshold.original_threshold,
-        weighted_variance=threshold.weighted_variance,
-        sum_of_entropies=threshold.sum_of_entropies,
-    )
+    threshold_measurements = threshold.measurement_rows()
     phase_started_at = time.perf_counter()
     label_payload = SourceImageObjectLabelBuildRequest(
         image=image,
@@ -590,7 +555,7 @@ def identify_primary_objects(
         time.perf_counter() - profile_total_started_at,
         function="identify_primary_objects",
     )
-    return (image, stats, label_payload)
+    return (image, threshold_measurements, label_payload)
 
 
 def _remap_object_label_variant_after_final_relabel(
@@ -606,6 +571,9 @@ def _remap_object_label_variant_after_final_relabel(
     downstream modules can still use them as boundary blockers without treating
     them as accepted objects.
     """
+    if variant_labels is accepted_labels_before_relabel:
+        return np.asarray(final_labels, dtype=np.int32)
+
     variant = np.asarray(variant_labels, dtype=np.int32)
     accepted_before = np.asarray(accepted_labels_before_relabel, dtype=np.int32)
     final = np.asarray(final_labels, dtype=np.int32)
@@ -633,16 +601,15 @@ class IdentifyPrimaryObjectsModule(
     OutputObjectThresholdMeasurementRecordRowsMixin,
     NoObjectNameMeasurementRecordMixin,
     CurrentPayloadMeasurementRecordMixin,
-    NoFieldsMeasurementRecordMixin,
-    ImageArtifactInputModule,
-    ObjectArtifactOutputModule,
     MeasurementArtifactOutputModule,
+    ObjectArtifactOutputModule,
     ThresholdSettingsModule,
 ):
     module_name = "IdentifyPrimaryObjects"
     function_name = "identify_primary_objects"
     validated = True
     confidence = 1.0
+
     include_threshold_advanced_setting = True
     input_image_setting = SettingNameFamily(
         "Select the input image",
@@ -651,110 +618,124 @@ class IdentifyPrimaryObjectsModule(
     output_objects_setting = SettingNameFamily(
         "Name the primary objects to be identified", aliases=("Object",)
     )
-    image_input_settings = (input_image_setting,)
-    object_output_settings = (output_objects_setting,)
-    ignored_settings = (
-        input_image_setting,
-        output_objects_setting,
-        "Display accepted local maxima?",
-        "Select maxima color",
+    diameter_range_setting = SettingNameFamily(
+        "Typical diameter of objects, in pixel units (Min,Max)"
     )
-    setting_bindings = (
-        SettingToKeywordBinding(
-            "Typical diameter of objects, in pixel units (Min,Max)", "diameter_range"
-        ),
-        SettingToKeywordBinding(
-            "Discard objects outside the diameter range?",
+    exclude_size_setting = "Discard objects outside the diameter range?"
+    exclude_border_objects_setting = "Discard objects touching the border of the image?"
+    unclump_method_setting = "Method to distinguish clumped objects"
+    watershed_method_setting = "Method to draw dividing lines between clumped objects"
+    smoothing_filter_size_setting = "Size of smoothing filter"
+    maxima_suppression_size_setting = (
+        "Suppress local maxima that are closer than this minimum allowed distance"
+    )
+    low_res_maxima_setting = (
+        "Speed up by using lower-resolution image to find local maxima?"
+    )
+    fill_holes_setting = "Fill holes in identified objects?"
+    automatic_smoothing_setting = (
+        "Automatically calculate size of smoothing filter for declumping?"
+    )
+    automatic_suppression_setting = (
+        "Automatically calculate minimum allowed distance between local maxima?"
+    )
+    limit_erase_setting = (
+        "Handling of objects if excessive number of objects identified"
+    )
+    maximum_object_count_setting = "Maximum number of objects"
+    setting_bindings = (SettingToKeywordBinding.input(input_image_setting, ImageArtifactType),SettingToKeywordBinding.output(
+            output_objects_setting, ObjectLabelsArtifactType
+        ),SettingToKeywordBinding(
+            exclude_size_setting,
             "exclude_size",
             parse_cellprofiler_bool,
         ),
         SettingToKeywordBinding(
-            "Discard objects touching the border of the image?",
+            exclude_border_objects_setting,
             "exclude_border_objects",
             parse_cellprofiler_bool,
         ),
         SettingToKeywordBinding(
-            "Method to distinguish clumped objects",
+            unclump_method_setting,
             "unclump_method",
             cellprofiler_enum_value_setting_parser(UnclumpMethod),
         ),
         SettingToKeywordBinding(
-            "Method to draw dividing lines between clumped objects",
+            watershed_method_setting,
             "watershed_method",
             cellprofiler_enum_value_setting_parser(WatershedMethod),
         ),
         SettingToKeywordBinding(
-            "Size of smoothing filter", "smoothing_filter_size", parse_cellprofiler_int
+            smoothing_filter_size_setting,
+            "smoothing_filter_size",
+            parse_cellprofiler_int,
         ),
         SettingToKeywordBinding(
-            "Suppress local maxima that are closer than this minimum allowed distance",
+            maxima_suppression_size_setting,
             "maxima_suppression_size",
             parse_cellprofiler_float,
         ),
         SettingToKeywordBinding(
-            "Speed up by using lower-resolution image to find local maxima?",
+            low_res_maxima_setting,
             "low_res_maxima",
             parse_cellprofiler_bool,
         ),
         SettingToKeywordBinding(
-            "Fill holes in identified objects?",
+            fill_holes_setting,
             "fill_holes",
             cellprofiler_enum_value_setting_parser(FillHolesOption),
         ),
         SettingToKeywordBinding(
-            "Automatically calculate size of smoothing filter for declumping?",
+            automatic_smoothing_setting,
             "automatic_smoothing",
             parse_cellprofiler_bool,
         ),
         SettingToKeywordBinding(
-            "Automatically calculate minimum allowed distance between local maxima?",
+            automatic_suppression_setting,
             "automatic_suppression",
             parse_cellprofiler_bool,
         ),
         SettingToKeywordBinding(
-            "Handling of objects if excessive number of objects identified",
+            limit_erase_setting,
             "limit_erase",
             cellprofiler_enum_value_setting_parser(ExcessObjectHandling),
         ),
         SettingToKeywordBinding(
-            "Maximum number of objects", "maximum_object_count", parse_cellprofiler_int
-        ),
+            maximum_object_count_setting,
+            "maximum_object_count",
+            parse_cellprofiler_int,
+        ),)
+    ignored_settings = (
+        "Display accepted local maxima?",
+        "Select maxima color",
     )
-
-    @classmethod
-    def compile_time_public_setting_records(cls, module, source_schema=None):
-        del source_schema
-        from openhcs.interop.cellprofiler.parser import ModuleSetting
-        from openhcs.interop.cellprofiler.setting_names import (
-            setting_names,
-            setting_values,
-        )
-
-        setting_name = setting_names(cls.input_image_setting)[0]
-        return (
-            *super().compile_time_public_setting_records(module),
-            *(
-                ModuleSetting(setting_name, value)
-                for value in setting_values(module, cls.input_image_setting)
-            ),
-        )
 
     @classmethod
     def postprocess_bound_settings(
         cls, module: "ModuleBlock", bound: BoundModuleSettings
     ) -> BoundModuleSettings:
         kwargs = dict(bound.kwargs)
-        diameter_range = kwargs.pop("diameter_range", None)
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+        diameter_range = optional_setting_value(module, cls.diameter_range_setting)
         if diameter_range is not None:
-            if not isinstance(diameter_range, tuple) or len(diameter_range) != 2:
+            values = tuple(part.strip() for part in diameter_range.split(","))
+            if len(values) != 2 or not all(values):
                 raise ValueError(
-                    f"{module.name} diameter range must contain two values, got {diameter_range!r}."
+                    f"{module.name} diameter range must contain two values, got "
+                    f"{diameter_range!r}."
                 )
-            kwargs["min_diameter"], kwargs["max_diameter"] = diameter_range
+            kwargs["min_diameter"], kwargs["max_diameter"] = tuple(
+                parse_cellprofiler_int(value) for value in values
+            )
+            unmapped_kwargs.pop(
+                normalize_cellprofiler_setting_name(
+                    cls.diameter_range_setting.canonical
+                ),
+                None,
+            )
         return BoundModuleSettings(
             kwargs,
-            bound.unmapped_kwargs,
-            bound.invocation_options,
+            unmapped_kwargs,
             bound.setting_coverage,
         )
 
@@ -855,7 +836,6 @@ __all__ = public_names_from_objects(
     ExcessObjectHandling,
     FillHolesOption,
     IdentifyPrimaryObjectsModule,
-    PrimaryObjectStats,
     UnclumpMethod,
     WatershedMethod,
     identify_primary_objects,

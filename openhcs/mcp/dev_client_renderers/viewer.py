@@ -8,6 +8,7 @@ from pathlib import Path
 
 from openhcs.agent.dto.common import JsonObject, JsonValue
 from openhcs.agent.dto.execution import (
+    RuntimeDebugInspectionResult,
     RuntimeExecutionStatus,
     RuntimeServerInfo,
     RuntimeServerScanResult,
@@ -25,6 +26,7 @@ from openhcs.agent.dto.viewer import (
     ViewerWindowValidationSummaryResult,
 )
 from openhcs.mcp.dev_client_rendering import (
+    CatalogRenderOptions,
     McpDevOutputRenderer,
     McpDevOutputRendererBinding,
     McpDevPayloadProjection,
@@ -62,8 +64,7 @@ class ViewerValidationRenderer(McpDevOutputRenderer):
                 f"nonzero={McpDevPayloadProjection.text(payload.get('nonzero_payload_count'))} "
                 f"zero={McpDevPayloadProjection.text(payload.get('zero_payload_count'))} "
                 f"missing={McpDevPayloadProjection.text(payload.get('missing_payload_coordinate_count'))} "
-                f"duplicates={McpDevPayloadProjection.text(payload.get('duplicate_payload_coordinate_count'))} "
-                f"spatial_mismatch={McpDevPayloadProjection.text(payload.get('spatial_mismatch_count'))}"
+                f"duplicates={McpDevPayloadProjection.text(payload.get('duplicate_payload_coordinate_count'))}"
             ),
             (
                 "Policy: "
@@ -90,40 +91,10 @@ class ViewerValidationRenderer(McpDevOutputRenderer):
         layers = McpDevPayloadProjection.sequence_of_mappings(
             payload.get("layer_summaries")
         )
-        cls._append_spatial_mismatch_next_steps(lines, payload, layers, connection)
         if layers:
             lines.append("Layers:")
             lines.extend(cls._layer_lines(layers))
         return "\n".join(lines)
-
-    @classmethod
-    def _append_spatial_mismatch_next_steps(
-        cls,
-        lines: list[str],
-        payload: Mapping[str, JsonValue],
-        layers: tuple[Mapping[str, JsonValue], ...],
-        connection: Mapping[str, JsonValue],
-    ) -> None:
-        if not cls._has_spatial_mismatch(payload):
-            return
-
-        port = McpDevPayloadProjection.text(connection.get("port"))
-        if all(layer.get("valid") is True for layer in layers):
-            lines.append(
-                "Interpretation: individual layers are valid; mismatch is across "
-                "visible layers with different spatial shapes."
-            )
-        lines.append("Next:")
-        lines.append(
-            "- Choose one route from Layers below, then run "
-            f"`validate-viewer {port} --route-key <route_key>` or "
-            f"`isolate-viewer {port} <route_key> --selected-route-key <route_key>`."
-        )
-
-    @staticmethod
-    def _has_spatial_mismatch(payload: Mapping[str, JsonValue]) -> bool:
-        value = payload.get("spatial_mismatch_count")
-        return isinstance(value, int) and value > 0
 
     @classmethod
     def _layer_lines(
@@ -584,7 +555,8 @@ class ViewerRoiSummaryRenderer(McpDevOutputRenderer):
                 f"perimeter={cls._stats_text(roi_payload.get('perimeter'))} "
                 f"bounds={cls._json_summary(roi_payload.get('bounds_yx'))} "
                 f"coords={McpDevPayloadProjection.text(roi_payload.get('coordinate_count'))} "
-                f"source_shapes={cls._json_summary(roi_payload.get('source_spatial_shapes_yx'))} "
+                f"source_origin={cls._json_summary(roi_payload.get('spatial_origin_yx'))} "
+                f"source_shape={cls._json_summary(roi_payload.get('source_spatial_shape_yx'))} "
                 f"out_of_bounds={McpDevPayloadProjection.text(roi_payload.get('out_of_source_bounds_count'))}"
             )
             examples = McpDevPayloadProjection.sequence_of_mappings(
@@ -673,6 +645,8 @@ class ViewerImageSampleRenderer(McpDevOutputRenderer):
             (
                 "Records: "
                 f"matched={McpDevPayloadProjection.text(payload.get('record_count'))} "
+                f"returned={McpDevPayloadProjection.text(payload.get('returned_record_count'))} "
+                f"truncated={McpDevPayloadProjection.text(payload.get('records_truncated_count'))} "
                 f"image={McpDevPayloadProjection.text(payload.get('raw_image_record_count'))} "
                 f"total_payloads={McpDevPayloadProjection.text(payload.get('total_payload_record_count'))} "
                 f"sample_supported={McpDevPayloadProjection.text(payload.get('sample_protocol_supported'))} "
@@ -1050,6 +1024,300 @@ class RuntimeServerRenderer(McpDevOutputRenderer):
         if warnings:
             lines.append("Warnings:")
             lines.extend(ViewerValidationRenderer._error_lines(warnings))
+
+
+class RuntimeDebugInspectionRenderer(McpDevOutputRenderer):
+    """Compact renderer for one renderer-independent paused-worker view."""
+
+    output_contract = RuntimeDebugInspectionResult
+    render_options_type = CatalogRenderOptions
+    MAX_CELL_CHARS = 160
+    MAX_TEXT_CHARS = 500
+
+    @classmethod
+    def render_with_options(
+        cls,
+        response: JsonObject,
+        options: CatalogRenderOptions,
+    ) -> str:
+        return cls.render(
+            response,
+            contains=options.contains,
+            limit=options.limit,
+        )
+
+    @classmethod
+    def render(
+        cls,
+        response: JsonObject,
+        *,
+        contains: str | None = None,
+        limit: int = 20,
+    ) -> str:
+        error_lines = McpDiagnosticRenderer.response_error_lines(response)
+        if error_lines:
+            return "\n".join(("Runtime debug: unavailable", *error_lines))
+
+        payload = McpDevPayloadProjection.first_tool_payload(response)
+        if payload is None:
+            return json.dumps(response, indent=2, sort_keys=True)
+        connection = McpDevPayloadProjection.nested_mapping(payload, "connection")
+        view_model = McpDevPayloadProjection.nested_mapping(payload, "view_model")
+        sections = McpDevPayloadProjection.sequence_of_mappings(
+            view_model.get("sections")
+        )
+        matching_sections = tuple(
+            section
+            for section in sections
+            if cls._section_matches(section, contains)
+        )
+        total_items = sum(cls._section_item_count(section) for section in sections)
+        matched_items = sum(
+            cls._matched_item_count(section, contains)
+            for section in matching_sections
+        )
+        remaining = max(limit, 0)
+        shown_items = 0
+        shown_sections = 0
+        body_lines: list[str] = []
+        for section in matching_sections:
+            section_lines, section_shown_items = cls._section_lines(
+                section,
+                contains=contains,
+                remaining=remaining,
+            )
+            if not section_lines:
+                continue
+            shown_sections += 1
+            shown_items += section_shown_items
+            remaining -= section_shown_items
+            body_lines.extend(section_lines)
+
+        endpoint = (
+            f"{McpDevPayloadProjection.text(connection.get('host'))}:"
+            f"{McpDevPayloadProjection.text(connection.get('port'))}"
+        )
+        lines = [
+            (
+                "Runtime debug: "
+                f"session={McpDevPayloadProjection.text(payload.get('debug_session_id'))} "
+                f"endpoint={endpoint} "
+                f"transport={McpDevPayloadProjection.text(connection.get('transport_mode'))} "
+                f"persistent={McpDevPayloadProjection.text(connection.get('persistent'))} "
+                f"title={McpDevPayloadProjection.quoted_text(view_model.get('title'))}"
+            ),
+            (
+                "Sections: "
+                f"total={len(sections)} matched={len(matching_sections)} "
+                f"shown={shown_sections}"
+            ),
+            (
+                "Items: "
+                f"total={total_items} matched={matched_items} shown={shown_items} "
+                f"truncated={max(matched_items - shown_items, 0)} limit={max(limit, 0)}"
+            ),
+        ]
+        if contains:
+            lines.append(f"Filter: contains={contains}")
+        lines.extend(body_lines)
+        return "\n".join(lines)
+
+    @classmethod
+    def _section_lines(
+        cls,
+        section: Mapping[str, JsonValue],
+        *,
+        contains: str | None,
+        remaining: int,
+    ) -> tuple[list[str], int]:
+        table = cls._table(section)
+        rows = cls._rows(table)
+        matching_rows = cls._matching_rows(section, rows, contains)
+        visible_rows = matching_rows[:remaining]
+        text = section.get("text")
+        text_value = text if isinstance(text, str) and text else None
+        text_matches = cls._text_matches(section, text_value, contains)
+        show_text = text_matches and len(visible_rows) < remaining
+        shown_items = len(visible_rows) + int(show_text)
+        matching_items = len(matching_rows) + int(text_matches)
+        if matching_items > 0 and shown_items == 0:
+            return [], 0
+
+        lines = [
+            (
+                "Section: "
+                f"kind={cls._bounded_cell(section.get('kind'))} "
+                f"title={McpDevPayloadProjection.quoted_text(section.get('title'))} "
+                f"items={cls._section_item_count(section)} "
+                f"matched={matching_items} shown={shown_items} "
+                f"truncated={max(matching_items - shown_items, 0)}"
+            )
+        ]
+        if table is not None:
+            columns = cls._columns(table)
+            lines.append(
+                f"Columns ({len(columns)}): "
+                + (" | ".join(columns) if columns else "<none>")
+            )
+            lines.append(
+                "Rows: "
+                f"total={len(rows)} matched={len(matching_rows)} "
+                f"shown={len(visible_rows)} "
+                f"truncated={max(len(matching_rows) - len(visible_rows), 0)}"
+            )
+            lines.extend(cls._row_line(row) for row in visible_rows)
+            if not rows:
+                empty_message = table.get("empty_message")
+                if isinstance(empty_message, str) and empty_message:
+                    lines.append(
+                        f"Empty: {McpDevPayloadProjection.quoted_text(empty_message)}"
+                    )
+        if text_value is not None and text_matches:
+            compact_text = " ".join(text_value.split())
+            visible_text = cls._bounded_text(compact_text) if show_text else ""
+            shown_chars = len(visible_text)
+            lines.append(
+                "Text: "
+                f"chars={len(compact_text)} shown={shown_chars} "
+                f"truncated={max(len(compact_text) - shown_chars, 0)}"
+            )
+            if visible_text:
+                lines.append(f"- {visible_text}")
+        return lines, shown_items
+
+    @staticmethod
+    def _table(
+        section: Mapping[str, JsonValue],
+    ) -> Mapping[str, JsonValue] | None:
+        table = section.get("table")
+        return table if isinstance(table, Mapping) else None
+
+    @classmethod
+    def _columns(cls, table: Mapping[str, JsonValue] | None) -> tuple[str, ...]:
+        if table is None:
+            return ()
+        columns = table.get("columns")
+        if not isinstance(columns, list):
+            return ()
+        return tuple(cls._bounded_cell(column) for column in columns)
+
+    @classmethod
+    def _rows(
+        cls,
+        table: Mapping[str, JsonValue] | None,
+    ) -> tuple[tuple[str, ...], ...]:
+        if table is None:
+            return ()
+        rows = table.get("rows")
+        if not isinstance(rows, list):
+            return ()
+        return tuple(
+            tuple(cls._bounded_cell(cell) for cell in row)
+            for row in rows
+            if isinstance(row, list)
+        )
+
+    @classmethod
+    def _matching_rows(
+        cls,
+        section: Mapping[str, JsonValue],
+        rows: tuple[tuple[str, ...], ...],
+        contains: str | None,
+    ) -> tuple[tuple[str, ...], ...]:
+        if not contains or cls._section_metadata_matches(section, contains):
+            return rows
+        needle = contains.casefold()
+        return tuple(row for row in rows if needle in " | ".join(row).casefold())
+
+    @classmethod
+    def _text_matches(
+        cls,
+        section: Mapping[str, JsonValue],
+        text: str | None,
+        contains: str | None,
+    ) -> bool:
+        if text is None:
+            return False
+        if not contains or cls._section_metadata_matches(section, contains):
+            return True
+        return contains.casefold() in text.casefold()
+
+    @classmethod
+    def _section_matches(
+        cls,
+        section: Mapping[str, JsonValue],
+        contains: str | None,
+    ) -> bool:
+        if not contains or cls._section_metadata_matches(section, contains):
+            return True
+        table = cls._table(section)
+        rows = cls._rows(table)
+        text = section.get("text")
+        text_value = text if isinstance(text, str) and text else None
+        return bool(cls._matching_rows(section, rows, contains)) or cls._text_matches(
+            section,
+            text_value,
+            contains,
+        )
+
+    @classmethod
+    def _section_metadata_matches(
+        cls,
+        section: Mapping[str, JsonValue],
+        contains: str,
+    ) -> bool:
+        table = cls._table(section)
+        metadata = " ".join(
+            (
+                McpDevPayloadProjection.text(section.get("kind")),
+                McpDevPayloadProjection.text(section.get("title")),
+                " ".join(cls._columns(table)),
+                McpDevPayloadProjection.text(
+                    None if table is None else table.get("empty_message")
+                ),
+            )
+        )
+        return contains.casefold() in metadata.casefold()
+
+    @classmethod
+    def _section_item_count(cls, section: Mapping[str, JsonValue]) -> int:
+        rows = cls._rows(cls._table(section))
+        text = section.get("text")
+        return len(rows) + int(isinstance(text, str) and bool(text))
+
+    @classmethod
+    def _matched_item_count(
+        cls,
+        section: Mapping[str, JsonValue],
+        contains: str | None,
+    ) -> int:
+        rows = cls._rows(cls._table(section))
+        text = section.get("text")
+        text_value = text if isinstance(text, str) and text else None
+        return len(cls._matching_rows(section, rows, contains)) + int(
+            cls._text_matches(section, text_value, contains)
+        )
+
+    @classmethod
+    def _row_line(cls, row: tuple[str, ...]) -> str:
+        return "- " + " | ".join(row)
+
+    @classmethod
+    def _bounded_cell(cls, value: JsonValue) -> str:
+        text = (
+            str.__str__(value)
+            if isinstance(value, str)
+            else McpDevPayloadProjection.text(value)
+        )
+        if len(text) <= cls.MAX_CELL_CHARS:
+            return text
+        return f"{text[: cls.MAX_CELL_CHARS - 3]}..."
+
+    @classmethod
+    def _bounded_text(cls, value: str) -> str:
+        if len(value) <= cls.MAX_TEXT_CHARS:
+            return value
+        return f"{value[: cls.MAX_TEXT_CHARS - 3]}..."
 
 
 class ViewerProbeRenderer(McpDevOutputRenderer):

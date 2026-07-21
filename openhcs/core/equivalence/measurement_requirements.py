@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from openhcs.core.equivalence.keys import (
     RuntimeMeasurementFeatureKey,
+    RuntimeMeasurementSourcePair,
     RuntimeMeasurementSubjectKey,
 )
 from openhcs.core.equivalence.measurement_facts import (
@@ -16,7 +17,7 @@ from openhcs.core.equivalence.measurement_features import (
     object_measurement_feature_matches_marker,
 )
 from openhcs.core.equivalence.policy import RuntimeEquivalencePolicy
-from openhcs.core.runtime_semantics import (
+from openhcs.core.runtime_measurements import (
     MeasurementScope,
     MeasurementStatistic,
     ObjectCoreMeasurementFeature,
@@ -65,14 +66,14 @@ class RequiredRuntimeMeasurementProjection:
                 key.subject.scope is MeasurementScope.IMAGE
                 and key.subject.name is not None
             ):
-                source_parts = tuple(
-                    part for part in key.subject.name.split("__") if part
+                source_pair = RuntimeMeasurementSourcePair.from_source_name(
+                    key.subject.name
                 )
-                if len(source_parts) == 2:
+                if source_pair is not None:
                     subjects.add(
                         RuntimeMeasurementSubjectKey(
                             MeasurementScope.IMAGE,
-                            "__".join(reversed(source_parts)),
+                            source_pair.reversed_source_name,
                         )
                     )
         return frozenset(subjects)

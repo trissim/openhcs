@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
-from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from enum import Enum, auto
 from typing import ClassVar
 
 from metaclass_registry import RegistryFamily, RegistryKeyAttribute
 import numpy as np
 
-from openhcs.core.artifacts import ArtifactScope, ArtifactType
+from openhcs.core.component_group_scope import (
+    ComponentGroupScope,
+    RuntimeExecutionAxisScope,
+)
 from openhcs.core.equivalence.cells import runtime_cell_signature
 from openhcs.core.equivalence.keys import (
     RuntimeAggregateFeatureIdentity,
@@ -31,22 +32,18 @@ from openhcs.core.equivalence.measurement_requirements import (
     RequiredRuntimeMeasurementProjection,
 )
 from openhcs.core.equivalence.measurement_rows import (
-    RuntimeIndexedRowValues,
-    RuntimeCollapsedNumericQualifierCache,
     RuntimeImageNumberOffset,
     RuntimeMeasurementFeatureKeyCache,
-    RuntimeMeasurementLongFormKeyCache,
     RuntimeMeasurementPaddingGroupCache,
     RuntimeMeasurementQualifierRenderCache,
     RuntimeMeasurementRequiredKeyIndex,
     RuntimeMeasurementRowMapping,
     RuntimeMeasurementRowSchemaCache,
     RuntimeMeasurementRowSubjectProjection,
-    RuntimeMeasurementRowSubjectSchemaCache,
     RuntimeMeasurementWideFeatureIndexCache,
     RuntimeMeasurementWideFeaturePlanCache,
     RuntimeRowProjectionContext,
-    runtime_measurement_row_subject_schema,
+    runtime_measurement_row_schema_for_header,
 )
 from openhcs.core.equivalence.object_label_measurements import (
     RuntimeObjectLabelInstanceCatalog,
@@ -57,29 +54,38 @@ from openhcs.core.equivalence.policy import (
     RuntimeMeasurementDialect,
     normalize_runtime_identifier,
 )
-from openhcs.core.equivalence.tables import (
-    measurement_table_padding_group,
-    measurement_table_spans_multiple_transport_identities,
-)
+from openhcs.core.equivalence.tables import measurement_table_padding_group
 from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
 from openhcs.core.measurement_row_materialization import (
     columnar_row_values,
     iter_measurement_rows,
     measurement_object_label,
-    measurement_table_object_id_field,
-    measurement_table_object_name,
 )
-from openhcs.core.runtime_semantics import (
+from openhcs.core.runtime_measurements import (
     MeasurementRowAxisField,
     MeasurementScope,
     MeasurementStatistic,
     ObjectCoreMeasurementFeature,
+)
+from openhcs.core.runtime_relationships import (
     ObjectInstanceKey,
     ObjectInstanceRelationship,
+)
+from openhcs.core.runtime_tabular_values import (
     measurement_row_mapping,
 )
-from openhcs.core.runtime_stores import StoredRuntimeValue
-from openhcs.core.runtime_values import ColumnarRows, MeasurementTable, ObjectRelationship
+from openhcs.core.runtime_tabular_values import ColumnarRows
+from openhcs.core.runtime_measurements import MeasurementTable
+from openhcs.core.runtime_relationships import ObjectRelationship
+from openhcs.core.source_image_provenance import (
+    SourceImageProvenance,
+    SourceImageProvenanceIdentity,
+)
+from openhcs.core.source_matching import SourceImageSetIdentityPolicy
+from openhcs.core.source_plane_alignment import (
+    SourcePlaneIdentitySequence,
+    SourcePlaneIdentitySequenceAlignment,
+)
 
 _ObjectInstanceChildrenByParent = Mapping[
     ObjectInstanceKey,
@@ -89,86 +95,17 @@ _ObjectInstanceAggregateValues = dict[tuple[ObjectInstanceKey, ...], float]
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeRecordPlaneIdentity:
-    """Plane identity contributed by runtime record scope rather than row payload."""
-
-    slice_index: int
-    authority: "RuntimeRecordPlaneIdentityAuthority"
-
-    def object_instance_key(
-        self,
-        row: RuntimeMeasurementRowMapping,
-        object_id: int,
-        *,
-        image_number_offset: RuntimeImageNumberOffset,
-    ) -> ObjectInstanceKey:
-        if (
-            self.authority
-            is RuntimeRecordPlaneIdentityAuthority.OVERRIDE_ROW_IDENTITY
-        ):
-            return ObjectInstanceKey(object_id, slice_index=self.slice_index)
-        key = ObjectInstanceKey.from_measurement_row(
-            row.row,
-            object_id,
-            image_number_offset=image_number_offset.value,
-        )
-        if key.slice_index is None:
-            return ObjectInstanceKey(object_id, slice_index=self.slice_index)
-        return key
-
-    def relationship_for_projection(
-        self,
-        relationship: ObjectRelationship,
-    ) -> ObjectRelationship:
-        if (
-            object_relationship_spans_multiple_row_planes(relationship)
-            and self.authority
-            is RuntimeRecordPlaneIdentityAuthority.OVERRIDE_ROW_IDENTITY
-        ):
-            return relationship
-        if (
-            relationship.slice_indices
-            and self.authority
-            is RuntimeRecordPlaneIdentityAuthority.FILL_MISSING_ROW_IDENTITY
-        ):
-            return relationship
-        source_ids = tuple(
-            int(value) for value in np.asarray(relationship.source_ids).ravel()
-        )
-        relationship_slice_count = (
-            relationship.slice_count if relationship.slice_count is not None else 0
-        )
-        slice_count = max(
-            relationship_slice_count,
-            self.slice_index + 1,
-        )
-        return ObjectRelationship(
-            name=relationship.name,
-            source=relationship.source,
-            target=relationship.target,
-            source_ids=relationship.source_ids,
-            target_ids=relationship.target_ids,
-            relationship_type=relationship.relationship_type,
-            slice_indices=tuple(self.slice_index for _ in source_ids),
-            slice_count=slice_count,
-        )
-
-
-def object_relationship_spans_multiple_row_planes(
-    relationship: ObjectRelationship,
-) -> bool:
-    """Return whether a relationship already carries multiple row-plane identities."""
-    return len(frozenset(int(value) for value in relationship.slice_indices)) > 1
-
-
-@dataclass(frozen=True, slots=True)
 class RuntimeScopedMeasurementTable:
-    """Measurement table plus runtime record-plane identity used for joins."""
+    """Measurement table plus its nominal runtime execution scope."""
 
     table: MeasurementTable
-    plane_identity: RuntimeRecordPlaneIdentity | None = None
     record_identity: str | None = None
-    spans_multiple_transport_identities: bool = False
+    execution_scope: RuntimeExecutionAxisScope | None = None
+    occurrence_identity: object = field(
+        default_factory=object,
+        repr=False,
+        compare=False,
+    )
 
     def object_instance_key(
         self,
@@ -177,205 +114,59 @@ class RuntimeScopedMeasurementTable:
         *,
         image_number_offset: RuntimeImageNumberOffset,
     ) -> ObjectInstanceKey:
-        if (
-            self.plane_identity is None
-            or (
-                self.plane_identity.authority
-                is RuntimeRecordPlaneIdentityAuthority.OVERRIDE_ROW_IDENTITY
-                and self.spans_multiple_transport_identities
-            )
-        ):
-            return ObjectInstanceKey.from_measurement_row(
-                row.row,
-                object_id,
-                image_number_offset=image_number_offset.value,
-            )
-        return self.plane_identity.object_instance_key(
-            row,
+        return image_number_offset.object_instance_key(
+            row.row,
             object_id,
-            image_number_offset=image_number_offset,
         )
 
-
-class RuntimeRecordPlaneIdentityAuthority(Enum):
-    """How runtime record identity should interact with row-local identity."""
-
-    FILL_MISSING_ROW_IDENTITY = auto()
-    OVERRIDE_ROW_IDENTITY = auto()
-
-
-RuntimeRecordPlaneIdentityPayloadKey = tuple[tuple[str, str | None], ...]
-RuntimeRecordPlaneIdentityKey = tuple[
-    type[ArtifactType],
-    str,
-    RuntimeRecordPlaneIdentityPayloadKey,
-]
-
-
-def runtime_record_plane_identity_key(
-    record: StoredRuntimeValue,
-) -> RuntimeRecordPlaneIdentityKey:
-    """Return the semantic payload identity used for repeated-record plane scope."""
-    schema = record.value.schema
-    payload_key: list[tuple[str, str | None]] = []
-    if schema.measurement_subject is not None:
-        subject = schema.measurement_subject
-        payload_key.extend(
-            (
-                ("measurement_scope", subject.scope.value),
-                ("measurement_name", normalize_runtime_identifier(subject.name)),
-                ("measurement_id_field", subject.id_field),
-            )
-        )
-    if schema.object_name is not None:
-        payload_key.append(("object_name", normalize_runtime_identifier(schema.object_name)))
-    if schema.object_id_field is not None:
-        payload_key.append(("object_id_field", normalize_runtime_identifier(schema.object_id_field)))
-    if schema.source_image_name is not None:
-        payload_key.append(
-            (
-                "source_image_name",
-                normalize_runtime_identifier(schema.source_image_name),
-            )
-        )
-    if schema.relationship is not None:
-        relationship = schema.relationship
-        payload_key.extend(
-            (
-                (
-                    "relationship_source",
-                    normalize_runtime_identifier(relationship.source.name),
-                ),
-                (
-                    "relationship_target",
-                    normalize_runtime_identifier(relationship.target.name),
-                ),
-                (
-                    "relationship_type",
-                    normalize_runtime_identifier(relationship.relationship_type),
-                ),
-            )
-        )
-    return (
-        record.key.artifact_type,
-        record.key.name,
-        tuple(payload_key),
-    )
-
-
-@dataclass(slots=True)
-class RuntimeAxisGroupPlaneIndex:
-    """Stable per-axis mapping from runtime group scope to plane identity."""
-
-    indices_by_group_key: dict[str | None, int] = field(default_factory=dict)
-
-    def slice_index_for_scope(self, scope: ArtifactScope) -> int | None:
-        if scope.group_key is None:
+    def object_row_occurrence_scope(
+        self,
+        image_number_offset: RuntimeImageNumberOffset,
+    ) -> ComponentGroupScope | None:
+        """Return group identity only when this carrier owns one local row domain."""
+        if self.execution_scope is None or not self.execution_scope.has_value:
             return None
-        return self.indices_by_group_key.setdefault(
-            scope.group_key,
-            len(self.indices_by_group_key),
-        )
 
-
-@dataclass(slots=True)
-class RuntimeAxisRepeatedArtifactPlaneIndex:
-    """Assign plane identity to repeated records without distinct runtime scope."""
-
-    next_index_by_artifact_key: dict[RuntimeRecordPlaneIdentityKey, int] = field(
-        default_factory=dict
-    )
-
-    def plane_identity_for_record(
-        self,
-        *,
-        record_key: RuntimeRecordPlaneIdentityKey,
-    ) -> RuntimeRecordPlaneIdentity:
-        slice_index = self.next_index_by_artifact_key.get(record_key, 0)
-        self.next_index_by_artifact_key[record_key] = slice_index + 1
-        return RuntimeRecordPlaneIdentity(
-            slice_index,
-            RuntimeRecordPlaneIdentityAuthority.OVERRIDE_ROW_IDENTITY,
-        )
-
-
-@dataclass(slots=True)
-class RuntimeAxisRecordPlaneIdentityResolver:
-    """Resolve runtime record plane identity from scope and repeated artifacts."""
-
-    repeated_artifact_counts: Counter[RuntimeRecordPlaneIdentityKey]
-    group_plane_index: RuntimeAxisGroupPlaneIndex = field(
-        default_factory=RuntimeAxisGroupPlaneIndex
-    )
-    repeated_artifact_plane_index: RuntimeAxisRepeatedArtifactPlaneIndex = field(
-        default_factory=RuntimeAxisRepeatedArtifactPlaneIndex
-    )
-
-    @classmethod
-    def from_records(
-        cls,
-        records: Iterable[StoredRuntimeValue],
-    ) -> "RuntimeAxisRecordPlaneIdentityResolver":
-        return cls(
-            Counter(
-                runtime_record_plane_identity_key(record)
-                for record in records
-                if record.key.artifact_type.participates_in_axis_plane_identity
+        slice_indices: set[int | None] = set()
+        for raw_row in self.table.rows.iter_row_mappings():
+            row = RuntimeMeasurementRowMapping(
+                measurement_row_mapping(raw_row),
+                object_row_identity=self.table.rows.object_row_identity,
             )
-        )
-
-    def plane_identity_for_record(
-        self,
-        *,
-        kind: ArtifactType,
-        name: str,
-        scope: ArtifactScope,
-        payload_key: RuntimeRecordPlaneIdentityPayloadKey = (),
-    ) -> RuntimeRecordPlaneIdentity | None:
-        slice_index = self.group_plane_index.slice_index_for_scope(scope)
-        if slice_index is not None:
-            return RuntimeRecordPlaneIdentity(
-                slice_index,
-                RuntimeRecordPlaneIdentityAuthority.FILL_MISSING_ROW_IDENTITY,
+            object_id = row.object_label()
+            if object_id is None:
+                continue
+            slice_indices.add(
+                self.object_instance_key(
+                    row,
+                    object_id,
+                    image_number_offset=image_number_offset,
+                ).slice_index
             )
-        record_key = (kind, name, payload_key)
-        if self.repeated_artifact_counts[record_key] > 1:
-            return self.repeated_artifact_plane_index.plane_identity_for_record(
-                record_key=record_key,
-            )
-        return None
+            if len(slice_indices) > 1:
+                return None
+        return self.execution_scope.group_scope
 
-    def plane_identity_for_runtime_record(
+    def image_row_occurrence_identity(
         self,
-        record: StoredRuntimeValue,
-    ) -> RuntimeRecordPlaneIdentity | None:
-        """Resolve plane identity directly from a runtime artifact record."""
-        record_key = runtime_record_plane_identity_key(record)
-        return self.plane_identity_for_record(
-            kind=record_key[0],
-            name=record_key[1],
-            scope=record.key.scope,
-            payload_key=record_key[2],
-        )
+        axis_key: str | None,
+        dialect: RuntimeMeasurementDialect,
+    ) -> tuple[str | None, SourceImageProvenanceIdentity | None]:
+        """Return carrier identity only when rows do not identify a complete domain."""
 
-
-@dataclass(frozen=True, slots=True)
-class RuntimeScopedObjectRelationship:
-    """Object relationship plus runtime scope identity used for relationship joins."""
-
-    relationship: ObjectRelationship
-    plane_identity: RuntimeRecordPlaneIdentity | None = None
-
-    def relationship_for_projection(self) -> ObjectRelationship:
-        if self.plane_identity is None:
-            return self.relationship
-        return self.plane_identity.relationship_for_projection(self.relationship)
-
-    def identity_for_projection(self) -> "RuntimeObjectRelationshipIdentity":
-        """Return exact semantic identity after plane projection."""
-        return RuntimeObjectRelationshipIdentity.from_relationship(
-            self.relationship_for_projection()
-        )
+        image_identities: set[tuple[tuple[str, object], ...]] = set()
+        for raw_row in self.table.rows.iter_row_mappings():
+            row = RuntimeMeasurementRowMapping(
+                measurement_row_mapping(raw_row),
+                object_row_identity=self.table.rows.object_row_identity,
+            )
+            image_identity = row.image_identity_key(dialect)
+            if not image_identity:
+                continue
+            image_identities.add(image_identity)
+            if len(image_identities) > 1:
+                return None, None
+        return axis_key, self.table.source_provenance.equality_identity
 
 
 @dataclass(frozen=True, slots=True)
@@ -395,16 +186,26 @@ class RuntimeObjectRelationshipIdentity:
     ) -> "RuntimeObjectRelationshipIdentity":
         return cls(
             name=relationship.name,
-            source_name=normalize_runtime_identifier(relationship.source.name),
-            target_name=normalize_runtime_identifier(relationship.target.name),
+            source_name=normalize_runtime_identifier(
+                relationship.declaration.source.name
+            ),
+            target_name=normalize_runtime_identifier(
+                relationship.declaration.target.name
+            ),
             relationship_type=normalize_runtime_identifier(
-                relationship.relationship_type
+                relationship.declaration.relationship_type
             ),
             instance_relationship=ObjectInstanceRelationship.from_id_columns(
-                tuple(int(value) for value in np.asarray(relationship.source_ids).ravel()),
-                tuple(int(value) for value in np.asarray(relationship.target_ids).ravel()),
-                slice_indices=relationship.slice_indices,
-                slice_count=relationship.slice_count,
+                tuple(
+                    int(value)
+                    for value in np.asarray(relationship.payload.source_ids).ravel()
+                ),
+                tuple(
+                    int(value)
+                    for value in np.asarray(relationship.payload.target_ids).ravel()
+                ),
+                slice_indices=relationship.payload.slice_indices,
+                slice_count=relationship.payload.slice_count,
             ),
         )
 
@@ -416,6 +217,10 @@ def object_measurement_values_by_label(
     *,
     known_source_names: tuple[str, ...],
     required_keys: RuntimeRequiredMeasurementKeys = None,
+    target_source_provenance: SourceImageProvenance | None = None,
+    source_image_set_identity_policy: SourceImageSetIdentityPolicy = (
+        SourceImageSetIdentityPolicy()
+    ),
 ) -> RuntimeObjectValuesByLabel:
     object_subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, object_name)
     values_by_feature: RuntimeObjectValuesByLabel = {}
@@ -426,13 +231,10 @@ def object_measurement_values_by_label(
     ).input_keys()
     schema_cache: RuntimeMeasurementRowSchemaCache = {}
     key_cache: RuntimeMeasurementFeatureKeyCache = {}
-    long_form_key_cache: RuntimeMeasurementLongFormKeyCache = {}
     wide_feature_index_cache: RuntimeMeasurementWideFeatureIndexCache = {}
     wide_feature_plan_cache: RuntimeMeasurementWideFeaturePlanCache = {}
     qualifier_render_cache: RuntimeMeasurementQualifierRenderCache = {}
     padding_group_cache: RuntimeMeasurementPaddingGroupCache = {}
-    collapsed_numeric_qualifier_cache: RuntimeCollapsedNumericQualifierCache = {}
-    subject_schema_cache: RuntimeMeasurementRowSubjectSchemaCache = {}
     required_key_index = RuntimeMeasurementRequiredKeyIndex.from_required_keys(
         row_required_keys
     )
@@ -441,6 +243,11 @@ def object_measurement_values_by_label(
         known_source_names,
     ).required_keys_need_derivation(row_required_keys)
     normalized_object_name = normalize_runtime_identifier(object_name)
+    target_source_axis: SourcePlaneIdentitySequence = (
+        ()
+        if target_source_provenance is None
+        else target_source_provenance.image_set_axis(source_image_set_identity_policy)
+    )
     for scoped_table in measurement_tables:
         table = scoped_table.table
         if not measurement_table_may_contain_object_name(
@@ -449,12 +256,36 @@ def object_measurement_values_by_label(
         ):
             continue
         table_subject = RuntimeMeasurementSubjectKey.from_table_subject(table.subject)
-        object_id_field = measurement_table_object_id_field(table)
+        object_id_field = table.subject.object_id_field
         table_padding_group = measurement_table_padding_group(table.name)
         image_number_offset = RuntimeImageNumberOffset.from_measurement_table(table)
+        table_schema = runtime_measurement_row_schema_for_header(
+            tuple(field.name for field in table.rows.fields),
+            policy.measurement_dialect.row_qualifiers,
+            policy.measurement_dialect.row_identity_contract,
+            policy.measurement_dialect.non_measurement_field_prefixes,
+        )
+        aligned_slice_indices: tuple[int, ...] | None = None
+        if target_source_axis:
+            table_source_axis = table.source_provenance.image_set_axis(
+                source_image_set_identity_policy
+            )
+            if table_source_axis:
+                aligned_slice_indices = SourcePlaneIdentitySequenceAlignment(
+                    table_source_axis,
+                    target_source_axis,
+                ).target_indexes_for_image_planes()
+                if aligned_slice_indices is None:
+                    raise ValueError(
+                        f"Measurement table {table.name!r} source provenance does not "
+                        "align to its relationship source provenance."
+                    )
         for row in iter_measurement_rows((table,)):
             row_mapping = measurement_row_mapping(row)
-            runtime_row = RuntimeMeasurementRowMapping(row_mapping)
+            runtime_row = RuntimeMeasurementRowMapping(
+                row_mapping,
+                object_row_identity=table.rows.object_row_identity,
+            )
             try:
                 object_label = measurement_object_label(
                     row_mapping,
@@ -464,15 +295,11 @@ def object_measurement_values_by_label(
                 continue
             if object_label is None:
                 continue
-            row_values = RuntimeIndexedRowValues.from_row(runtime_row)
             row_subject_projection = RuntimeMeasurementRowSubjectProjection(
                 table_subject,
                 table.source_image_name,
-                row_values,
-                runtime_measurement_row_subject_schema(
-                    runtime_row.header,
-                    subject_schema_cache,
-                ),
+                runtime_row,
+                policy.measurement_dialect,
             )
             subject = row_subject_projection.subject()
             if subject != object_subject:
@@ -484,6 +311,7 @@ def object_measurement_values_by_label(
                 runtime_row,
                 subject,
                 policy,
+                measurement_feature_owner=table.measurement_feature_owner,
                 source_name=source_qualification.feature_source_name,
                 known_source_names=known_source_names,
                 required_keys=row_required_keys,
@@ -492,13 +320,12 @@ def object_measurement_values_by_label(
                 derive_directional_pair_facts=derive_directional_pair_facts,
                 schema_cache=schema_cache,
                 key_cache=key_cache,
-                long_form_key_cache=long_form_key_cache,
                 wide_feature_index_cache=wide_feature_index_cache,
                 wide_feature_plan_cache=wide_feature_plan_cache,
                 qualifier_render_cache=qualifier_render_cache,
                 padding_group_cache=padding_group_cache,
-                collapsed_numeric_qualifier_cache=collapsed_numeric_qualifier_cache,
                 required_key_index=required_key_index,
+                table_schema=table_schema,
             )
             for key, value in row_context.numeric_values():
                 if row_required_keys is not None and key not in row_required_keys:
@@ -512,6 +339,25 @@ def object_measurement_values_by_label(
                     object_label,
                     image_number_offset=image_number_offset,
                 )
+                if aligned_slice_indices is not None:
+                    local_slice_index = object_instance_key.slice_index
+                    if local_slice_index is None:
+                        if len(aligned_slice_indices) != 1:
+                            raise ValueError(
+                                f"Measurement table {table.name!r} has axisless object "
+                                "rows on a multi-plane source axis."
+                            )
+                        local_slice_index = 0
+                    if local_slice_index >= len(aligned_slice_indices):
+                        raise ValueError(
+                            f"Measurement table {table.name!r} row slice "
+                            f"{local_slice_index} exceeds its source axis of "
+                            f"{len(aligned_slice_indices)} plane(s)."
+                        )
+                    object_instance_key = ObjectInstanceKey(
+                        object_instance_key.object_id,
+                        slice_index=aligned_slice_indices[local_slice_index],
+                    )
                 values_by_feature[key][object_instance_key] = value
     return values_by_feature
 
@@ -521,9 +367,11 @@ def measurement_table_may_contain_object_name(
     normalized_object_name: str,
 ) -> bool:
     """Return whether table ownership can match a normalized object target."""
-    declared_object_name = measurement_table_object_name(table)
+    declared_object_name = table.subject.object_name
     if declared_object_name is not None:
-        return normalize_runtime_identifier(declared_object_name) == normalized_object_name
+        return (
+            normalize_runtime_identifier(declared_object_name) == normalized_object_name
+        )
     rows = table.rows
     if not isinstance(rows, ColumnarRows):
         return True
@@ -532,7 +380,9 @@ def measurement_table_may_contain_object_name(
         return True
     return any(
         normalize_runtime_identifier(str(value)) == normalized_object_name
-        for value in columnar_row_values(rows, MeasurementRowAxisField.OBJECT_NAME.value)
+        for value in columnar_row_values(
+            rows, MeasurementRowAxisField.OBJECT_NAME.value
+        )
         if value is not None
     )
 
@@ -678,7 +528,9 @@ class MultiSliceValueObjectInstanceKeyPlaneAlignmentStrategy(
     ) -> _ObjectInstanceChildrenByParent:
         value_keys_by_object_id: dict[int, list[ObjectInstanceKey]] = {}
         for value_key in context.values_by_child_id:
-            value_keys_by_object_id.setdefault(value_key.object_id, []).append(value_key)
+            value_keys_by_object_id.setdefault(value_key.object_id, []).append(
+                value_key
+            )
         return {
             parent_id: tuple(
                 value_key
@@ -709,7 +561,9 @@ class UnscopedValueObjectInstanceKeyPlaneAlignmentStrategy(
         self,
         context: ObjectInstanceKeyPlaneAlignmentContext,
     ) -> _ObjectInstanceChildrenByParent:
-        unscoped_children_by_parent: dict[ObjectInstanceKey, list[ObjectInstanceKey]] = {}
+        unscoped_children_by_parent: dict[
+            ObjectInstanceKey, list[ObjectInstanceKey]
+        ] = {}
         for parent_id, child_ids in context.child_ids_by_parent.items():
             parent_key = ObjectInstanceKey(parent_id.object_id)
             unscoped_children_by_parent.setdefault(parent_key, []).extend(
@@ -721,14 +575,6 @@ class UnscopedValueObjectInstanceKeyPlaneAlignmentStrategy(
         }
 
 
-RELATIONSHIP_DISTANCE_FEATURE_NAMES = frozenset(
-    (
-        "distance_centroid",
-        "distance_minimum",
-    )
-)
-
-
 @dataclass(frozen=True, slots=True)
 class RelationshipAggregateFeatureContext:
     """Semantic context for deriving parent-row aggregates from child rows."""
@@ -736,6 +582,7 @@ class RelationshipAggregateFeatureContext:
     source_name: str
     target_name: str
     feature_name: str
+    dialect: RuntimeMeasurementDialect
 
 
 @dataclass(frozen=True, slots=True)
@@ -756,6 +603,7 @@ class RelationshipAggregateFeatureKeyProjection:
             source_name=self.feature.subject.name or "",
             target_name=aggregate_identity.object_name,
             feature_name=aggregate_identity.feature_name,
+            dialect=self.dialect,
         )
         semantics = RelationshipAggregateFeatureSemantics.for_context(
             context,
@@ -826,19 +674,6 @@ class RelationshipAggregateFeatureSemantics(
         return normalize_runtime_identifier(context.feature_name)
 
     @staticmethod
-    def parent_qualified_feature_name(feature_name: str, parent_name: str) -> str:
-        return "_".join(
-            part for part in (feature_name, normalize_runtime_identifier(parent_name)) if part
-        )
-
-    @staticmethod
-    def parent_unqualified_feature_name(feature_name: str, parent_name: str) -> str:
-        parent_suffix = f"_{normalize_runtime_identifier(parent_name)}"
-        if feature_name.endswith(parent_suffix):
-            return feature_name[: -len(parent_suffix)]
-        return feature_name
-
-    @staticmethod
     def target_aggregate_feature_name(
         target_name: str,
         child_feature_name: str,
@@ -902,72 +737,20 @@ class GenericRelationshipAggregateFeatureSemantics(
         return normalize_runtime_identifier(context.feature_name)
 
 
-class ParentQualifiedDistanceAggregateFeatureSemantics(
-    GenericRelationshipAggregateFeatureSemantics
-):
-    """CellProfiler relationship distance rows qualify child features by parent."""
-
-    strategy_key = "parent_qualified_distance"
-
-    def matches(self, context: RelationshipAggregateFeatureContext) -> bool:
-        feature_name = normalize_runtime_identifier(context.feature_name)
-        return (
-            feature_name in RELATIONSHIP_DISTANCE_FEATURE_NAMES
-            or self.parent_unqualified_feature_name(
-                feature_name,
-                context.source_name,
-            )
-            in RELATIONSHIP_DISTANCE_FEATURE_NAMES
-        )
-
-    def required_child_feature_names(
-        self,
-        context: RelationshipAggregateFeatureContext,
-    ) -> tuple[str, ...]:
-        feature_name = normalize_runtime_identifier(context.feature_name)
-        return (
-            feature_name,
-            self.parent_qualified_feature_name(feature_name, context.source_name),
-        )
-
-    def aggregate_feature_name(
-        self,
-        context: RelationshipAggregateFeatureContext,
-        *,
-        aggregate: str = MeasurementStatistic.MEAN.value,
-    ) -> str:
-        return self.target_aggregate_feature_name(
-            context.target_name,
-            self.parent_unqualified_feature_name(
-                normalize_runtime_identifier(context.feature_name),
-                context.source_name,
-            ),
-            aggregate=aggregate,
-        )
-
-    def aggregate_child_feature_name(
-        self,
-        context: RelationshipAggregateFeatureContext,
-    ) -> str:
-        return self.parent_unqualified_feature_name(
-            normalize_runtime_identifier(context.feature_name),
-            context.source_name,
-        )
-
-
 @dataclass(frozen=True, slots=True)
 class RelationshipMeasurementSemantics:
     """Measurement identity contract for a directed object relationship."""
 
     relationship: ObjectRelationship
+    dialect: RuntimeMeasurementDialect
 
     @property
     def source_name(self) -> str:
-        return normalize_runtime_identifier(self.relationship.source.name)
+        return normalize_runtime_identifier(self.relationship.declaration.source.name)
 
     @property
     def target_name(self) -> str:
-        return normalize_runtime_identifier(self.relationship.target.name)
+        return normalize_runtime_identifier(self.relationship.declaration.target.name)
 
     @property
     def source_subject(self) -> RuntimeMeasurementSubjectKey:
@@ -986,10 +769,16 @@ class RelationshipMeasurementSemantics:
     @property
     def instance_relationship(self) -> ObjectInstanceRelationship:
         return ObjectInstanceRelationship.from_id_columns(
-            tuple(int(value) for value in np.asarray(self.relationship.source_ids).ravel()),
-            tuple(int(value) for value in np.asarray(self.relationship.target_ids).ravel()),
-            slice_indices=self.relationship.slice_indices,
-            slice_count=self.relationship.slice_count,
+            tuple(
+                int(value)
+                for value in np.asarray(self.relationship.payload.source_ids).ravel()
+            ),
+            tuple(
+                int(value)
+                for value in np.asarray(self.relationship.payload.target_ids).ravel()
+            ),
+            slice_indices=self.relationship.payload.slice_indices,
+            slice_count=self.relationship.payload.slice_count,
         )
 
     @property
@@ -1027,6 +816,7 @@ class RelationshipMeasurementSemantics:
             source_name=self.source_name,
             target_name=self.target_name,
             feature_name=child_feature_name,
+            dialect=self.dialect,
         )
         return RelationshipAggregateFeatureSemantics.for_context(
             context,
@@ -1056,6 +846,7 @@ class RelationshipMeasurementSemantics:
                 source_name=self.source_name,
                 target_name=self.target_name,
                 feature_name=aggregate_child_feature_name,
+                dialect=self.dialect,
             )
             semantics = RelationshipAggregateFeatureSemantics.for_context(
                 context,

@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import TypeAlias
+from typing import ClassVar, TypeAlias
+
+from metaclass_registry import AutoRegisterMeta
+
+from openhcs.constants.constants import AllComponents
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 
 ORIGINAL_SOURCE_METADATA_FIELD = "OpenHCSOriginalSourceMetadata"
 SOURCE_FILTER_PATHS_METADATA_FIELD = "OpenHCSSourceFilterPaths"
@@ -26,12 +32,47 @@ SourceMetadataIdentityItems: TypeAlias = tuple[
 ]
 
 
+def source_metadata_dict(
+    metadata: SourceMetadataMapping,
+) -> dict[str, SourceMetadataValue]:
+    """Return a detached JSON-compatible source-metadata mapping."""
+
+    detached: dict[str, SourceMetadataValue] = {}
+    for key, value in metadata.items():
+        field = str(key)
+        if field == ORIGINAL_SOURCE_METADATA_FIELD:
+            detached[field] = OriginalSourceMetadata.from_reserved_value(
+                value,
+                path=field,
+            ).as_dict()
+        elif field == SOURCE_FILTER_PATHS_METADATA_FIELD:
+            detached[field] = SourceFilterPathMetadata.from_reserved_value(
+                value,
+                path=field,
+            ).as_dict()
+        elif isinstance(value, Mapping):
+            detached[field] = {
+                str(nested_key): source_metadata_scalar(nested_value)
+                for nested_key, nested_value in value.items()
+            }
+        else:
+            detached[field] = source_metadata_scalar(value)
+    return detached
+
+
 def source_metadata_scalar(value: SourceMetadataScalar) -> SourceMetadataScalar:
     """Return the canonical scalar representation stored in source metadata."""
 
     if value is None:
         return None
-    return canonical_path_metadata_value(str(value))
+    if not isinstance(value, (str, int, float, bool)):
+        raise TypeError(
+            "Source metadata scalar values must be str, int, float, bool, or None, "
+            f"got {type(value).__name__}."
+        )
+    if isinstance(value, str):
+        return canonical_path_metadata_value(value)
+    return value
 
 
 def canonical_path_metadata_value(value: str) -> str:
@@ -73,7 +114,7 @@ def _cached_path_metadata_values_equivalent(left: str, right: str) -> bool:
 class OriginalSourceMetadata:
     """Source-literal metadata preserved separately from canonical axis fields."""
 
-    fields: tuple[tuple[str, str], ...]
+    fields: tuple[tuple[str, SourceMetadataScalar], ...]
 
     @classmethod
     def from_mapping(
@@ -82,7 +123,7 @@ class OriginalSourceMetadata:
     ) -> "OriginalSourceMetadata":
         return cls(
             tuple(
-                (str(key), str(source_metadata_scalar(value)))
+                (str(key), source_metadata_scalar(value))
                 for key, value in metadata.items()
             )
         )
@@ -97,11 +138,11 @@ class OriginalSourceMetadata:
         if not isinstance(value, Mapping):
             raise RuntimeError(
                 f"{ORIGINAL_SOURCE_METADATA_FIELD} for {path!r} must be a mapping, "
-                f"got {type(value).__name__}."
+                f"got {type(value).__name__}: {value!r}."
             )
         return cls.from_mapping(value)
 
-    def as_dict(self) -> dict[str, str]:
+    def as_dict(self) -> dict[str, SourceMetadataScalar]:
         return dict(self.fields)
 
     def merge_into(
@@ -124,7 +165,11 @@ class OriginalSourceMetadata:
             if (
                 existing_value is not None
                 and existing_value != value
-                and not path_metadata_values_equivalent(existing_value, value)
+                and not (
+                    isinstance(existing_value, str)
+                    and isinstance(value, str)
+                    and path_metadata_values_equivalent(existing_value, value)
+                )
             ):
                 raise RuntimeError(
                     f"Conflicting original source metadata field {key!r} "
@@ -132,6 +177,26 @@ class OriginalSourceMetadata:
                     f"{existing_value!r} != {value!r}."
                 )
             merged[key] = value
+        target[ORIGINAL_SOURCE_METADATA_FIELD] = merged
+
+    def overlay_into(
+        self,
+        target: dict[str, SourceMetadataValue],
+        *,
+        path: str,
+    ) -> None:
+        """Apply one later declared metadata stage over earlier literal fields."""
+
+        existing = target.get(ORIGINAL_SOURCE_METADATA_FIELD)
+        merged = (
+            {}
+            if existing is None
+            else OriginalSourceMetadata.from_reserved_value(
+                existing,
+                path=path,
+            ).as_dict()
+        )
+        merged.update(self.fields)
         target[ORIGINAL_SOURCE_METADATA_FIELD] = merged
 
 
@@ -192,6 +257,7 @@ class SourceVoxelSpacing:
     """Relative physical spacing for source pixels, ordered like arrays."""
 
     values_zyx: tuple[float, ...] = ()
+    """Positive y/x or z/y/x spacing values; an empty tuple means unspecified spacing."""
 
     def __post_init__(self) -> None:
         normalized = tuple(float(value) for value in self.values_zyx)
@@ -318,7 +384,7 @@ class SourceMetadataRoleView:
     def scalar_values(self) -> tuple[SourceMetadataScalar, ...]:
         return tuple(value for _key, value in self.scalar_items())
 
-    def original_items(self) -> tuple[tuple[str, str], ...]:
+    def original_items(self) -> tuple[tuple[str, SourceMetadataScalar], ...]:
         original_metadata = self.metadata.get(ORIGINAL_SOURCE_METADATA_FIELD)
         if original_metadata is None:
             return ()
@@ -361,3 +427,194 @@ class SourceMetadataIdentityProjection:
                 continue
             projected.append((str(key), value))
         return tuple(sorted(projected))
+
+
+@lru_cache(maxsize=4096)
+def source_metadata_field_identity(field: str) -> str:
+    """Return the canonical semantic identity of one source metadata field."""
+
+    normalized = "".join(character for character in field.lower() if character.isalnum())
+    return (
+        normalized.removeprefix("metadata")
+        if normalized.startswith("metadata")
+        else normalized
+    )
+
+
+class SourceComponentProjectionStrategy(
+    EnumKeyedStrategyMixin[AllComponents],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Project one OpenHCS component through its nominal enum-owned leaf."""
+
+    strategy_key: ClassVar[AllComponents | None] = None
+    metadata_collection_field: ClassVar[str]
+    metadata_field_groups: ClassVar[tuple[tuple[str, ...], ...]] = ()
+
+    @classmethod
+    def project_component(
+        cls,
+        component: AllComponents,
+        metadata: SourceMetadataMapping,
+        image_set_index: int,
+    ) -> str:
+        return cls.for_enum_member(component).project(metadata, image_set_index)
+
+    @classmethod
+    def metadata_component(
+        cls,
+        component: AllComponents,
+        metadata: SourceMetadataMapping,
+    ) -> str | None:
+        return cls.for_enum_member(component).metadata_value(metadata)
+
+    @classmethod
+    def component_for_metadata_field(
+        cls,
+        field: str,
+    ) -> AllComponents | None:
+        owners = tuple(
+            strategy_type.strategy_key
+            for strategy_type in cls.registered_strategy_types()
+            if strategy_type.owns_metadata_field(field)
+        )
+        if len(owners) > 1:
+            raise RuntimeError(
+                f"Source metadata field {field!r} has multiple component owners: "
+                f"{owners!r}."
+            )
+        return owners[0] if owners else None
+
+    @classmethod
+    def owns_metadata_field(cls, field: str) -> bool:
+        normalized = source_metadata_field_identity(field)
+        return any(
+            normalized == source_metadata_field_identity(alias)
+            for group in cls.metadata_field_groups
+            for alias in group
+        )
+
+    @classmethod
+    def _metadata_group_value(
+        cls,
+        metadata: SourceMetadataMapping,
+        group: tuple[str, ...],
+    ) -> str | None:
+        scalar_items = SourceMetadataRoleView(metadata).scalar_items()
+        for alias in group:
+            alias_identity = source_metadata_field_identity(alias)
+            for field_name, value in scalar_items:
+                if (
+                    value is not None
+                    and source_metadata_field_identity(field_name) == alias_identity
+                ):
+                    return str(value)
+        return None
+
+    def metadata_value(self, metadata: SourceMetadataMapping) -> str | None:
+        if len(self.metadata_field_groups) != 1:
+            raise RuntimeError(
+                f"{type(self).__name__} must implement metadata_value() for "
+                f"{len(self.metadata_field_groups)} metadata field groups."
+            )
+        return self._metadata_group_value(metadata, self.metadata_field_groups[0])
+
+    @abstractmethod
+    def project(
+        self,
+        metadata: SourceMetadataMapping,
+        image_set_index: int,
+    ) -> str:
+        """Return one canonical component value."""
+
+
+class WellSourceComponentProjection(SourceComponentProjectionStrategy):
+    strategy_key = AllComponents.WELL
+    metadata_collection_field = "wells"
+    metadata_field_groups = (
+        ("well",),
+        ("wellrow", "row"),
+        ("wellcolumn", "wellcol", "column", "col"),
+    )
+
+    def metadata_value(self, metadata: SourceMetadataMapping) -> str | None:
+        direct = self._metadata_group_value(metadata, self.metadata_field_groups[0])
+        if direct is not None:
+            return direct
+        row = self._metadata_group_value(metadata, self.metadata_field_groups[1])
+        column = self._metadata_group_value(metadata, self.metadata_field_groups[2])
+        if row is None or column is None:
+            return None
+        return f"{row.strip().upper()}{int(column):02d}"
+
+    def project(
+        self,
+        metadata: SourceMetadataMapping,
+        image_set_index: int,
+    ) -> str:
+        del image_set_index
+        return self.metadata_value(metadata) or "A01"
+
+
+class SiteSourceComponentProjection(SourceComponentProjectionStrategy):
+    strategy_key = AllComponents.SITE
+    metadata_collection_field = "sites"
+    metadata_field_groups = (("site", "imagenumber"),)
+
+    def project(
+        self,
+        metadata: SourceMetadataMapping,
+        image_set_index: int,
+    ) -> str:
+        direct = self.metadata_value(metadata)
+        if direct is not None:
+            return direct
+        if any(
+            SourceComponentProjectionStrategy.metadata_component(component, metadata)
+            is not None
+            for component in (AllComponents.Z_INDEX, AllComponents.TIMEPOINT)
+        ):
+            return "1"
+        return str(image_set_index + 1)
+
+
+class ChannelSourceComponentProjection(SourceComponentProjectionStrategy):
+    strategy_key = AllComponents.CHANNEL
+    metadata_collection_field = "channels"
+    metadata_field_groups = (("channel", "channelnumber"),)
+
+    def project(
+        self,
+        metadata: SourceMetadataMapping,
+        image_set_index: int,
+    ) -> str:
+        return self.metadata_value(metadata) or str(image_set_index + 1)
+
+
+class ZIndexSourceComponentProjection(SourceComponentProjectionStrategy):
+    strategy_key = AllComponents.Z_INDEX
+    metadata_collection_field = "z_indexes"
+    metadata_field_groups = (("zindex", "z", "zplane", "zslice", "plane", "slice"),)
+
+    def project(
+        self,
+        metadata: SourceMetadataMapping,
+        image_set_index: int,
+    ) -> str:
+        del image_set_index
+        return self.metadata_value(metadata) or "1"
+
+
+class TimepointSourceComponentProjection(SourceComponentProjectionStrategy):
+    strategy_key = AllComponents.TIMEPOINT
+    metadata_collection_field = "timepoints"
+    metadata_field_groups = (("timepoint", "time", "framenumber", "frame"),)
+
+    def project(
+        self,
+        metadata: SourceMetadataMapping,
+        image_set_index: int,
+    ) -> str:
+        del image_set_index
+        return self.metadata_value(metadata) or "1"

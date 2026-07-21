@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 import inspect
 import json
+import tempfile
 from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
@@ -32,7 +33,9 @@ from openhcs.agent.dto.execution import (
 from openhcs.mcp.dev_client_core import (
     DEFAULT_CALL_TIMEOUT_SECONDS,
     McpDevCliUsageError,
+    McpDevClientPhase,
     McpDevServerSpec,
+    McpDevStdioSession,
     McpDevToolBatchResponse,
     McpDevToolCall,
     McpDevToolListResponse,
@@ -42,8 +45,9 @@ from openhcs.mcp.dev_client_core import (
     add_ui_connection_options,
     add_viewer_connection_options,
     add_viewer_port_argument,
-    call_fresh_mcp_server,
-    list_fresh_mcp_tools,
+    call_mcp_session,
+    captured_server_stderr_tail,
+    list_mcp_session_tools,
     mcp_dev_command_key,
     ui_tool_arguments,
     viewer_connection_arguments,
@@ -54,12 +58,11 @@ from openhcs.mcp.dev_client_rendering import (
     ToolListRenderer,
 )
 
-class McpDevCommandSpec(ABC, metaclass=AutoRegisterMeta):
-    """Nominal command specification for the fresh-process MCP dev CLI."""
 
-    __registry__: ClassVar[
-        dict[str, type["McpDevCommandSpec"]]
-    ] = {}
+class McpDevCommandSpec(ABC, metaclass=AutoRegisterMeta):
+    """Nominal parser, execution, and rendering owner for one MCP dev command."""
+
+    __registry__: ClassVar[dict[str, type["McpDevCommandSpec"]]] = {}
     __registry_key__ = "command"
     __key_extractor__ = mcp_dev_command_key
     __skip_if_no_key__ = True
@@ -67,12 +70,12 @@ class McpDevCommandSpec(ABC, metaclass=AutoRegisterMeta):
     command: ClassVar[str]
     help: ClassVar[str | None] = None
     aliases: ClassVar[tuple[str, ...]] = ()
+    execution_phase: ClassVar[McpDevClientPhase] = McpDevClientPhase.CALL_TOOL
 
     @classmethod
     def all_specs(cls) -> tuple["McpDevCommandSpec", ...]:
         explicit_specs = tuple(
-            command_spec_type()
-            for command_spec_type in cls.__registry__.values()
+            command_spec_type() for command_spec_type in cls.__registry__.values()
         )
         return (*explicit_specs, *generated_mcp_dev_command_specs())
 
@@ -99,6 +102,7 @@ class McpDevCommandSpec(ABC, metaclass=AutoRegisterMeta):
         )
         parser.set_defaults(command=self.command)
         self.configure_parser(parser)
+        self.configure_reflected_parser(parser)
 
     def parser_help(self) -> str:
         return self.help or self.command
@@ -108,6 +112,9 @@ class McpDevCommandSpec(ABC, metaclass=AutoRegisterMeta):
 
     def configure_parser(self, parser: argparse.ArgumentParser) -> None:
         """Add command-specific CLI arguments."""
+
+    def configure_reflected_parser(self, parser: argparse.ArgumentParser) -> None:
+        """Add options reflected from declarations owned outside the command."""
 
     @abstractmethod
     def calls_from_args(
@@ -121,10 +128,61 @@ class McpDevCommandSpec(ABC, metaclass=AutoRegisterMeta):
         server_spec: McpDevServerSpec,
         args: argparse.Namespace,
     ) -> McpDevToolBatchResponse | McpDevToolListResponse:
-        return await call_fresh_mcp_server(
-            server_spec,
+        """Execute this command through one freshly initialized stdio session."""
+        phase = McpDevClientPhase.START_SERVER
+        with tempfile.TemporaryFile(
+            mode="w+",
+            encoding="utf-8",
+            errors="replace",
+        ) as server_stderr:
+            try:
+                async with McpDevStdioSession(server_spec, server_stderr) as session:
+                    phase = McpDevClientPhase.INITIALIZE
+                    await session.initialize(timeout_seconds=self.timeout_seconds(args))
+                    phase = self.execution_phase
+                    payload = await self.run_session(session, args)
+                    phase = McpDevClientPhase.TEARDOWN
+                    return payload
+            except McpDevCliUsageError:
+                raise
+            except Exception as exc:
+                return self.transport_failure_response(
+                    server_spec,
+                    phase,
+                    exc,
+                    server_stderr_tail=captured_server_stderr_tail(server_stderr),
+                )
+
+    async def run_session(
+        self,
+        session: McpDevStdioSession,
+        args: argparse.Namespace,
+    ) -> McpDevToolBatchResponse | McpDevToolListResponse:
+        """Execute this command through an already initialized stdio session."""
+        return await call_mcp_session(
+            session,
             self.calls_from_args(args),
-            args.timeout_seconds,
+            timeout_seconds=self.timeout_seconds(args),
+        )
+
+    def timeout_seconds(self, args: argparse.Namespace) -> float:
+        """Return the timeout shared by initialization and this command's calls."""
+        return args.timeout_seconds
+
+    def transport_failure_response(
+        self,
+        server_spec: McpDevServerSpec,
+        phase: McpDevClientPhase,
+        exception: BaseException,
+        *,
+        server_stderr_tail: str | None,
+    ) -> McpDevToolBatchResponse | McpDevToolListResponse:
+        """Project a transport exception into this command's response shape."""
+        return McpDevToolBatchResponse.from_transport_failure(
+            server_spec,
+            phase,
+            exception,
+            server_stderr_tail=server_stderr_tail,
         )
 
     def render_response(
@@ -134,6 +192,7 @@ class McpDevCommandSpec(ABC, metaclass=AutoRegisterMeta):
     ) -> str:
         del args
         return json.dumps(payload, indent=2, sort_keys=True)
+
 
 class CapabilityBackedCommandSpec(McpDevCommandSpec):
     """Command whose primary MCP tool capability is declared on the command."""
@@ -170,13 +229,28 @@ class CapabilityBackedCommandSpec(McpDevCommandSpec):
         tool_arguments: Mapping[str, JsonValue],
     ) -> argparse.Namespace:
         del tool_arguments
-        return argparse.Namespace(json=False)
+        argument_values: dict[str, object] = {"json": False}
+        renderer_binding = self.output_renderer_binding()
+        if renderer_binding is not None:
+            argument_values.update(renderer_binding.default_cli_argument_values())
+        return argparse.Namespace(**argument_values)
 
     def parser_help(self) -> str:
         return self.help or self.capability.title
 
     def parser_aliases(self) -> tuple[str, ...]:
         return self.aliases or self.capability.cli_aliases
+
+    def output_renderer_binding(self):
+        output_contract = self.capability.output_contract
+        return McpDevOutputRenderer.for_output_contract(
+            output_contract if isinstance(output_contract, type) else None
+        )
+
+    def configure_reflected_parser(self, parser: argparse.ArgumentParser) -> None:
+        renderer_binding = self.output_renderer_binding()
+        if renderer_binding is not None:
+            renderer_binding.configure_cli_parser(parser)
 
     def render_call_response(
         self,
@@ -192,8 +266,10 @@ class CapabilityBackedCommandSpec(McpDevCommandSpec):
         self,
         args: argparse.Namespace,
     ) -> McpDevOutputRenderOptions:
-        del args
-        return McpDevOutputRenderOptions()
+        renderer_binding = self.output_renderer_binding()
+        if renderer_binding is None:
+            return McpDevOutputRenderOptions()
+        return renderer_binding.options_from_cli_args(args)
 
     def render_response(
         self,
@@ -202,18 +278,18 @@ class CapabilityBackedCommandSpec(McpDevCommandSpec):
     ) -> str:
         if bool(vars(args).get("json", False)):
             return super().render_response(payload, args)
-        output_contract = self.capability.output_contract
-        renderer_binding = McpDevOutputRenderer.for_output_contract(
-            output_contract if isinstance(output_contract, type) else None
-        )
+        renderer_binding = self.output_renderer_binding()
         if renderer_binding is None:
             return super().render_response(payload, args)
-        return renderer_binding.render_with_options(payload, self.renderer_options(args))
+        return renderer_binding.render_with_options(
+            payload, self.renderer_options(args)
+        )
 
 
 class ToolsCommandSpec(McpDevCommandSpec):
     command = "tools"
     help = "List current-source MCP tools."
+    execution_phase = McpDevClientPhase.LIST_TOOLS
 
     def configure_parser(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--contains")
@@ -226,7 +302,10 @@ class ToolsCommandSpec(McpDevCommandSpec):
         parser.add_argument(
             "--json",
             action="store_true",
-            help="Render the complete MCP JSON response instead of a compact summary.",
+            help=(
+                "Render structured MCP JSON, preserving full metadata for entries "
+                "selected by --contains and --limit."
+            ),
         )
 
     def calls_from_args(
@@ -235,12 +314,30 @@ class ToolsCommandSpec(McpDevCommandSpec):
     ) -> tuple[McpDevToolCall, ...]:
         return ()
 
-    async def run(
+    async def run_session(
         self,
-        server_spec: McpDevServerSpec,
+        session: McpDevStdioSession,
         args: argparse.Namespace,
     ) -> McpDevToolListResponse:
-        return await list_fresh_mcp_tools(server_spec, args.timeout_seconds)
+        return await list_mcp_session_tools(
+            session,
+            timeout_seconds=self.timeout_seconds(args),
+        )
+
+    def transport_failure_response(
+        self,
+        server_spec: McpDevServerSpec,
+        phase: McpDevClientPhase,
+        exception: BaseException,
+        *,
+        server_stderr_tail: str | None,
+    ) -> McpDevToolListResponse:
+        return McpDevToolListResponse.from_transport_failure(
+            server_spec,
+            phase,
+            exception,
+            server_stderr_tail=server_stderr_tail,
+        )
 
     def render_response(
         self,
@@ -248,7 +345,14 @@ class ToolsCommandSpec(McpDevCommandSpec):
         args: argparse.Namespace,
     ) -> str:
         if args.json:
-            return super().render_response(payload, args)
+            return super().render_response(
+                ToolListRenderer.project_response(
+                    payload,
+                    contains=args.contains,
+                    limit=args.limit,
+                ),
+                args,
+            )
         return ToolListRenderer.render(
             payload,
             contains=args.contains,
@@ -287,16 +391,8 @@ class SingleToolCommandSpec(CapabilityBackedCommandSpec):
             ),
         )
 
-    async def run(
-        self,
-        server_spec: McpDevServerSpec,
-        args: argparse.Namespace,
-    ) -> McpDevToolBatchResponse:
-        return await call_fresh_mcp_server(
-            server_spec,
-            self.calls_from_args(args),
-            max(args.timeout_seconds, self.default_timeout_seconds),
-        )
+    def timeout_seconds(self, args: argparse.Namespace) -> float:
+        return max(args.timeout_seconds, self.default_timeout_seconds)
 
 
 class UiBridgeCommandSpec(McpDevCommandSpec):
@@ -543,9 +639,7 @@ class GeneratedRuntimeServerToolCommandSpec(
     @staticmethod
     def runtime_connection_parameter_names() -> frozenset[str]:
         return frozenset(
-            inspect.signature(
-                RuntimeServerConnectionToolRequest.from_fields
-            ).parameters
+            inspect.signature(RuntimeServerConnectionToolRequest.from_fields).parameters
         )
 
     def request_factory_parameters(self) -> tuple[inspect.Parameter, ...]:

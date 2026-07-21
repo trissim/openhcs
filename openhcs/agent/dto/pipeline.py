@@ -6,14 +6,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from openhcs.agent.dto.common import AgentResultEnvelope, JsonObject
-from openhcs.agent.dto.config import ConfigPatch, ConfigRef
+from openhcs.agent.dto.config import ConfigPatch
 from openhcs.agent.dto.functions import FunctionIdentity
 
 
 @dataclass(frozen=True, slots=True)
 class FunctionSpecRef(FunctionIdentity):
     kwargs: JsonObject = field(default_factory=dict)
-    runtime_options: JsonObject = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,9 +77,10 @@ class PipelineRef:
 
 
 @dataclass(frozen=True, slots=True)
-class PipelineConfigRefs:
-    global_ref: ConfigRef | None = None
-    pipeline_ref: ConfigRef | None = None
+class CreatePipelineRequest:
+    """Create one in-memory pipeline document from an optional config draft."""
+
+    pipeline_config_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,8 +98,8 @@ class PipelineSourceRenderRequest:
 class PipelineSpec:
     schema_version: str
     pipeline_id: str
+    pipeline_config_id: str
     steps: tuple[FunctionStepSpec, ...]
-    config_refs: PipelineConfigRefs = field(default_factory=PipelineConfigRefs)
 
 
 @dataclass(frozen=True, slots=True)

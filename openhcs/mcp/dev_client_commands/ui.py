@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 from collections.abc import Mapping
 import json
+from typing import cast
 
 from openhcs.agent.capabilities import agent_capabilities
 from openhcs.agent.dto.common import JsonObject, JsonValue
@@ -13,7 +15,6 @@ from openhcs.agent.dto.ui_bridge import (
     UiSelectedPlateWorkflowKind,
 )
 from openhcs.agent.ui_bridge_identities import (
-    PipelineDebugSessionStateSurfaceIdentityDeclaration,
     PlateManagerStateSurfaceIdentityDeclaration,
     PlateManagerWidgetIdentity,
 )
@@ -27,20 +28,31 @@ from openhcs.mcp.dev_client_core import (
     DEFAULT_WORKFLOW_POLL_INTERVAL_SECONDS,
     DEFAULT_WORKFLOW_POLL_TIMEOUT_SECONDS,
     McpDevCliUsageError,
-    McpDevServerSpec,
+    McpDevStdioSession,
     McpDevToolBatchResponse,
     McpDevToolCall,
+    WorkflowPollBaseline,
+    WorkflowPollSkipReason,
+    WorkflowPollSummaryStatus,
+    WorkflowStatePollPolicy,
     add_code_document_source_options,
     add_object_state_field_filter_options,
     add_ui_connection_options,
-    call_selected_workflow_with_state_poll,
+    call_mcp_tool,
     code_document_source_from_args,
     optional_str,
     parse_cli_json_value,
     parse_json_object,
+    plate_manager_state_surface_tool_arguments,
     selected_workflow_tool_arguments,
     ui_connection_arguments,
     ui_tool_arguments,
+    workflow_poll_skip_reason,
+    workflow_poll_summary_result,
+    workflow_poll_terminal_status,
+    workflow_result_action_status,
+    workflow_result_target_scope_ids,
+    workflow_result_was_accepted,
 )
 from openhcs.mcp.dev_client_rendering import (
     DEFAULT_CODE_DOCUMENT_MAX_CHARS,
@@ -52,6 +64,7 @@ from openhcs.mcp.dev_client_rendering import (
     WidgetTreeRenderOptions,
 )
 from openhcs.runtime.window_snapshot import WindowSnapshotCaptureScope
+
 
 class StateSurfaceCommandSpec(CapabilityBackedCommandSpec):
     capability = agent_capabilities.ui_get_state_surface
@@ -96,6 +109,7 @@ class StateSurfaceCommandSpec(CapabilityBackedCommandSpec):
             ),
         )
 
+
 class CallCommandSpec(McpDevCommandSpec):
     command = "call"
     help = "Call one MCP tool."
@@ -139,6 +153,7 @@ class CallCommandSpec(McpDevCommandSpec):
             parse_json_object(args.arguments),
         )
 
+
 class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
     capability = agent_capabilities.ui_selected_plate_workflow
 
@@ -154,33 +169,39 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
             help="Ask the UI bridge to reject the workflow unless confirmation is disabled.",
         )
         parser.add_argument(
+            "--wait",
             "--poll-state",
+            dest="poll_state",
             action="store_true",
             help=(
-                f"After accepted dispatch, poll {state_surface_id} until the "
-                "selected workflow reaches its terminal state."
+                f"After accepted dispatch, wait on {state_surface_id} until the "
+                "selected workflow reaches its terminal state. This is workflow "
+                "completion, not the wait for a UI operation receipt."
             ),
         )
         parser.add_argument(
+            "--wait-selection-mode",
             "--poll-selection-mode",
+            dest="poll_selection_mode",
             choices=tuple(mode.value for mode in SelectedAllSelectionMode),
             default=SelectedAllSelectionMode.SELECTED.value,
-            help=(
-                "Selection mode used by the follow-up "
-                f"{state_surface_id} polls."
-            ),
+            help=(f"Selection mode used while waiting on {state_surface_id}."),
         )
         parser.add_argument(
+            "--wait-interval-seconds",
             "--poll-interval-seconds",
+            dest="poll_interval_seconds",
             type=float,
             default=DEFAULT_WORKFLOW_POLL_INTERVAL_SECONDS,
-            help="Delay between follow-up state-surface polls.",
+            help="Advanced delay between workflow state checks.",
         )
         parser.add_argument(
+            "--wait-timeout-seconds",
             "--poll-timeout-seconds",
+            dest="poll_timeout_seconds",
             type=float,
             default=DEFAULT_WORKFLOW_POLL_TIMEOUT_SECONDS,
-            help=f"Maximum elapsed time spent polling {state_surface_id}.",
+            help=f"Maximum elapsed time spent waiting on {state_surface_id}.",
         )
         parser.add_argument(
             "--json",
@@ -200,17 +221,101 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
             ),
         )
 
-    async def run(
+    async def run_session(
         self,
-        server_spec: McpDevServerSpec,
+        session: McpDevStdioSession,
         args: argparse.Namespace,
     ) -> McpDevToolBatchResponse:
         if not args.poll_state:
-            return await super().run(server_spec, args)
-        return await call_selected_workflow_with_state_poll(
-            server_spec,
-            args,
-            timeout_seconds=args.timeout_seconds,
+            return cast(
+                McpDevToolBatchResponse,
+                await super().run_session(session, args),
+            )
+
+        timeout_seconds = self.timeout_seconds(args)
+        state_call = McpDevToolCall(
+            agent_capabilities.ui_get_state_surface.name,
+            plate_manager_state_surface_tool_arguments(
+                args,
+                selection_mode=args.poll_selection_mode,
+            ),
+        )
+        baseline_result = await call_mcp_tool(session, state_call, timeout_seconds)
+        workflow_result = await call_mcp_tool(
+            session,
+            McpDevToolCall(
+                self.capability.name,
+                selected_workflow_tool_arguments(args),
+            ),
+            timeout_seconds,
+        )
+        results = [baseline_result, workflow_result]
+        baseline = WorkflowPollBaseline.from_result(baseline_result)
+        poll_completed = False
+        poll_count = 0
+        target_scope_ids = workflow_result_target_scope_ids(workflow_result)
+        poll_status = WorkflowPollSummaryStatus.SKIPPED
+        poll_terminal_status: WorkflowPollSummaryStatus | None = None
+        skip_reason: WorkflowPollSkipReason | None = None
+        action_status = workflow_result_action_status(workflow_result)
+
+        if workflow_result_was_accepted(workflow_result):
+            policy = WorkflowStatePollPolicy.from_workflow_text(args.workflow)
+            poll_deadline = (
+                asyncio.get_running_loop().time() + args.poll_timeout_seconds
+            )
+            while True:
+                poll_result = await call_mcp_tool(
+                    session,
+                    state_call,
+                    timeout_seconds,
+                )
+                results.append(poll_result)
+                poll_count += 1
+                if poll_result.has_errors():
+                    poll_terminal_status = WorkflowPollSummaryStatus.FAILED
+                    break
+                if (
+                    baseline is None
+                    or baseline.changed_by(poll_result)
+                    or poll_count > 1
+                ):
+                    poll_terminal_status = workflow_poll_terminal_status(
+                        poll_result,
+                        target_scope_ids=target_scope_ids,
+                        policy=policy,
+                    )
+                    if poll_terminal_status is not None:
+                        poll_completed = (
+                            poll_terminal_status is WorkflowPollSummaryStatus.COMPLETED
+                        )
+                        break
+                if asyncio.get_running_loop().time() >= poll_deadline:
+                    break
+                await asyncio.sleep(args.poll_interval_seconds)
+            poll_status = (
+                poll_terminal_status
+                if poll_terminal_status is not None
+                else WorkflowPollSummaryStatus.TIMEOUT
+            )
+        else:
+            skip_reason = workflow_poll_skip_reason(workflow_result)
+
+        results.append(
+            workflow_poll_summary_result(
+                workflow=args.workflow,
+                status=poll_status,
+                poll_requested=True,
+                poll_completed=poll_completed,
+                poll_count=poll_count,
+                target_scope_ids=target_scope_ids,
+                skip_reason=skip_reason,
+                action_status=action_status,
+            )
+        )
+        return McpDevToolBatchResponse.from_results(
+            session.server_spec,
+            tuple(results),
         )
 
     def render_response(
@@ -234,7 +339,9 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
         ]
         target_scope_ids = summary.get("target_scope_ids")
         if isinstance(target_scope_ids, list) and target_scope_ids:
-            lines.append(f"Targets: {', '.join(str(value) for value in target_scope_ids)}")
+            lines.append(
+                f"Targets: {', '.join(str(value) for value in target_scope_ids)}"
+            )
         skip_reason = summary.get("skip_reason")
         if skip_reason is not None:
             lines.append(f"Skip reason: {self._text(skip_reason)}")
@@ -297,7 +404,9 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
         return tuple(result for result in results if isinstance(result, Mapping))
 
     @staticmethod
-    def _first_payload(result: Mapping[str, JsonValue]) -> Mapping[str, JsonValue] | None:
+    def _first_payload(
+        result: Mapping[str, JsonValue],
+    ) -> Mapping[str, JsonValue] | None:
         payloads = result.get("payloads")
         if not isinstance(payloads, list) or not payloads:
             return None
@@ -337,10 +446,7 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
             ]
             if row.get("selected") is True:
                 state_parts.append("selected=True")
-            lines.append(
-                f"- {cls._text(row.get('name'))}: "
-                + ", ".join(state_parts)
-            )
+            lines.append(f"- {cls._text(row.get('name'))}: " + ", ".join(state_parts))
         return lines
 
     @staticmethod
@@ -354,6 +460,7 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
         if value is None:
             return "<none>"
         return str(value)
+
 
 class CodeDocumentCommandSpec(CapabilityBackedCommandSpec):
     capability = agent_capabilities.ui_get_code_document
@@ -431,6 +538,7 @@ class CodeDocumentCommandSpec(CapabilityBackedCommandSpec):
             max_source_chars=DEFAULT_CODE_DOCUMENT_MAX_CHARS,
         )
 
+
 class ValidateCodeDocumentCommandSpec(CapabilityBackedCommandSpec):
     capability = agent_capabilities.ui_validate_code_document
 
@@ -463,6 +571,7 @@ class ValidateCodeDocumentCommandSpec(CapabilityBackedCommandSpec):
                 },
             ),
         )
+
 
 class ApplyCodeDocumentCommandSpec(CapabilityBackedCommandSpec):
     capability = agent_capabilities.ui_apply_code_document
@@ -508,6 +617,7 @@ class ApplyCodeDocumentCommandSpec(CapabilityBackedCommandSpec):
                 },
             ),
         )
+
 
 class ActionsCommandSpec(CapabilityBackedCommandSpec):
     capability = agent_capabilities.ui_list_actions
@@ -555,6 +665,7 @@ class ActionsCommandSpec(CapabilityBackedCommandSpec):
             json=False,
             widget_id=optional_str(tool_arguments.get("widget_id")),
         )
+
 
 class InvokeActionCommandSpec(CapabilityBackedCommandSpec):
     capability = agent_capabilities.ui_invoke_action
@@ -625,6 +736,7 @@ class InvokeActionCommandSpec(CapabilityBackedCommandSpec):
             action_id=optional_str(tool_arguments.get("action_id")),
         )
 
+
 class InvokeWidgetActionCommandSpec(CapabilityBackedCommandSpec):
     capability = agent_capabilities.ui_invoke_widget_action
 
@@ -632,6 +744,7 @@ class InvokeWidgetActionCommandSpec(CapabilityBackedCommandSpec):
         parser.add_argument("window_id")
         parser.add_argument("path_id")
         parser.add_argument("--action-kind", default="auto")
+        parser.add_argument("--target-index", type=int)
         parser.add_argument("--create-if-missing", action="store_true")
         parser.add_argument("--request-token")
         parser.add_argument(
@@ -652,6 +765,7 @@ class InvokeWidgetActionCommandSpec(CapabilityBackedCommandSpec):
                     "window_id": args.window_id,
                     "path_id": args.path_id,
                     "action_kind": args.action_kind,
+                    "target_index": args.target_index,
                     "create_if_missing": args.create_if_missing,
                     "request_token": args.request_token,
                     "connection": ui_connection_arguments(
@@ -661,6 +775,7 @@ class InvokeWidgetActionCommandSpec(CapabilityBackedCommandSpec):
                 },
             ),
         )
+
 
 class WidgetTreeCommandSpec(CapabilityBackedCommandSpec):
     capability = agent_capabilities.ui_get_widget_tree
@@ -780,6 +895,7 @@ class WidgetTreeCommandSpec(CapabilityBackedCommandSpec):
             include_technical_widgets=False,
         )
 
+
 class WindowSnapshotCommandSpec(CapabilityBackedCommandSpec):
     capability = agent_capabilities.ui_snapshot_window
 
@@ -816,6 +932,7 @@ class WindowSnapshotCommandSpec(CapabilityBackedCommandSpec):
                 },
             ),
         )
+
 
 class ObjectStateScopesCommandSpec(CapabilityBackedCommandSpec):
     capability = agent_capabilities.ui_list_object_state_scopes
@@ -874,6 +991,7 @@ class ObjectStateScopesCommandSpec(CapabilityBackedCommandSpec):
                 },
             ),
         )
+
 
 class ObjectStateFieldsCommandSpec(CapabilityBackedCommandSpec):
     capability = agent_capabilities.ui_get_object_state_fields
@@ -967,6 +1085,7 @@ class ObjectStateFieldsCommandSpec(CapabilityBackedCommandSpec):
             ),
         )
 
+
 class ObjectStateFieldHelpCommandSpec(CapabilityBackedCommandSpec):
     capability = agent_capabilities.ui_describe_object_state_field
 
@@ -1014,9 +1133,7 @@ class ObjectStateFieldHelpCommandSpec(CapabilityBackedCommandSpec):
             if args.scope_id_option is None:
                 scope_id = None
         if not field_path:
-            raise McpDevCliUsageError(
-                "object-state-field-help requires a field path."
-            )
+            raise McpDevCliUsageError("object-state-field-help requires a field path.")
         arguments: dict[str, JsonValue] = {
             "field_path": field_path,
             "window_id": args.window_id,
@@ -1034,6 +1151,7 @@ class ObjectStateFieldHelpCommandSpec(CapabilityBackedCommandSpec):
                 arguments,
             ),
         )
+
 
 class ObjectStateSetCommandSpec(CapabilityBackedCommandSpec):
     capability = agent_capabilities.ui_mutate_object_state_field
@@ -1106,6 +1224,7 @@ class ObjectStateSetCommandSpec(CapabilityBackedCommandSpec):
             ),
         )
 
+
 class UiSmokeCommandSpec(UiBridgeCommandSpec):
     command = "ui-smoke"
     help = "Call health plus UI bridge status, bridge list, and window list."
@@ -1125,9 +1244,13 @@ class UiSmokeCommandSpec(UiBridgeCommandSpec):
         connection_arguments = ui_tool_arguments(args, timeout_ms=args.timeout_ms)
         return (
             McpDevToolCall(agent_capabilities.health_check.name, {}),
-            McpDevToolCall(agent_capabilities.ui_bridge_status.name, connection_arguments),
+            McpDevToolCall(
+                agent_capabilities.ui_bridge_status.name, connection_arguments
+            ),
             McpDevToolCall(agent_capabilities.ui_list_bridges.name, {}),
-            McpDevToolCall(agent_capabilities.ui_list_windows.name, connection_arguments),
+            McpDevToolCall(
+                agent_capabilities.ui_list_windows.name, connection_arguments
+            ),
         )
 
     def render_response(

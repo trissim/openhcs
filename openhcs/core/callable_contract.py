@@ -10,52 +10,91 @@ import importlib
 import inspect
 import dataclasses
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Hashable, MutableMapping
+from collections.abc import Callable, Hashable, Iterable, MutableMapping
 from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
 from enum import Enum
 from functools import lru_cache, wraps
+from pathlib import Path
 from threading import Lock
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Mapping, get_type_hints
+from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Protocol, get_type_hints
 
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.constants.constants import GroupBy, VariableComponents
 from openhcs.core.artifact_key_selection import ArtifactPlanKeySelector
-from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan, ArtifactSpec, ArtifactSpecCollection
-from openhcs.core.module_artifact_contract import (
-    MODULE_ARTIFACT_CONTRACT_ATTR,
-    ModuleArtifactContract,
-    RecordedArtifactOutputPartition,
-    module_artifact_contract_from_namespace,
+from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ArtifactSpecCollection,
+    ArtifactSpecRef,
+    ImageArtifactType,
 )
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
-from openhcs.core.runtime_adapters import (
-    RuntimeAdapterSpec,
-    runtime_adapter_spec_from_callable,
-)
-from openhcs.core.runtime_invocation import (
-    RuntimeInvocationOptions,
-    RuntimeParameterDeclaration,
-)
-from openhcs.core.runtime_batch_contracts import (
-    RuntimeBatchCallableFamily,
-    RuntimeBatchExecutionDomain,
-)
 from openhcs.core.variable_component_stack_requirement import (
     VariableComponentStackRequirement,
 )
 
 if TYPE_CHECKING:
     from openhcs.core.function_reference import FunctionReference
+    from openhcs.core.pipeline.compilation_session import CompilationPathResolver
+    from openhcs.core.vfs_protocol import PlatePathDeclaration
+    from openhcs.core.runtime_adapters import RuntimeAdapterSpec
+    from openhcs.core.runtime_batch_contracts import RuntimeBatchExecutionDomain
+    from openhcs.processing.backends.lib_registry.unified_registry import (
+        ProcessingContract,
+    )
 
 
-ArtifactSpecItems = tuple[tuple[str, ArtifactSpec], ...]
 CallableNamespace = Mapping[str, Any]
 _prepared_callable_keys: set[tuple[str, str, Hashable]] = set()
 _prepared_callable_lock = Lock()
 
-CallableContractCacheKey = tuple[Hashable | None, ...]
-CallableRuntimeCacheKey = int | tuple[str, CallableContractCacheKey]
+CallableRuntimeCacheKey = int
+
+
+class RuntimeParameterDeclaration(Protocol):
+    """Nominal callable parameter declaration exposed by compiled bindings."""
+
+    @classmethod
+    def require_parameter_name(cls) -> str:
+        """Return the public callable parameter name."""
+
+    @classmethod
+    def parameter(cls) -> inspect.Parameter:
+        """Return the injected callable signature parameter."""
+
+
+class KeywordRuntimeParameter:
+    """Reusable declaration for one runtime-owned keyword-only parameter."""
+
+    parameter_name: ClassVar[str | None] = None
+    annotation_type: ClassVar[Any] = inspect.Parameter.empty
+    parameter_default: ClassVar[Any] = inspect.Parameter.empty
+
+    @classmethod
+    def require_parameter_name(cls) -> str:
+        """Return the non-empty callable parameter name declared by the leaf."""
+
+        parameter_name = cls.parameter_name
+        if not isinstance(parameter_name, str) or not parameter_name.strip():
+            raise ValueError(f"{cls.__name__} must declare parameter_name.")
+        return parameter_name
+
+    @classmethod
+    def default_value(cls) -> Any:
+        """Return the declared callable default."""
+
+        return cls.parameter_default
+
+    @classmethod
+    def parameter(cls) -> inspect.Parameter:
+        """Return the keyword-only signature parameter for this declaration."""
+
+        return inspect.Parameter(
+            cls.require_parameter_name(),
+            inspect.Parameter.KEYWORD_ONLY,
+            default=cls.default_value(),
+            annotation=cls.annotation_type,
+        )
 
 
 class CompilerPreparedAutoRegisterFamily(ABC):
@@ -67,28 +106,86 @@ class CompilerPreparedAutoRegisterFamily(ABC):
         """Prepare registered implementations before timed callable execution."""
 
 
+class FunctionStepExecutionScope(str, Enum):
+    """Lifecycle scope for one compiled FunctionStep callable."""
+
+    AXIS = "axis"
+    PLATE = "plate"
+
+    def context_owns_outputs(self, *, metadata_writer: bool) -> bool:
+        """Return whether one compiled context owns this invocation's outputs."""
+        return self is FunctionStepExecutionScope.AXIS or metadata_writer
+
+    @classmethod
+    def require_uniform(
+        cls,
+        contracts: Iterable["CallableContract"],
+    ) -> "FunctionStepExecutionScope":
+        """Return the one execution scope shared by all callable contracts."""
+        scopes = tuple(contract.execution_scope for contract in contracts)
+        if not scopes:
+            return cls.AXIS
+        first = scopes[0]
+        if any(scope is not first for scope in scopes[1:]):
+            raise ValueError(
+                "FunctionStep callable pattern has mixed execution scopes; "
+                "all invocation contracts must declare one uniform scope."
+            )
+        return first
+
+
+class ImagePayloadConsumption(str, Enum):
+    """How a callable consumes its primary image payload."""
+
+    NATURAL = "natural"
+    COMPOSED = "composed"
+
+
 @dataclass(frozen=True, slots=True)
 class CallableMetadata:
     """Compiler-visible metadata declared by one processing callable."""
 
     input_memory_type: str | None = None
     output_memory_type: str | None = None
-    artifact_inputs: ArtifactSpecItems = ()
-    artifact_outputs: ArtifactSpecItems = ()
+    artifact_inputs: tuple[ArtifactSpec, ...] = ()
+    artifact_input_parameter_names: tuple[str, ...] = ()
+    artifact_outputs: tuple[ArtifactSpec, ...] = ()
     runtime_bound_parameters: tuple[type[RuntimeParameterDeclaration], ...] = ()
     required_variable_components: tuple[VariableComponents, ...] = ()
-    variable_component_stack_requirement: VariableComponentStackRequirement | None = None
+    variable_component_stack_requirement: VariableComponentStackRequirement | None = (
+        None
+    )
     allowed_group_by: tuple[GroupBy, ...] = ()
     runtime_adapter: RuntimeAdapterSpec | None = None
     runtime_context_parameter: str | None = None
-    runtime_invocation_options_parameter: str | None = None
+    execution_scope: FunctionStepExecutionScope = FunctionStepExecutionScope.AXIS
     processing_contract: Enum | None = None
     declared_processing_contract: str | None = None
-    module_artifact_contract: ModuleArtifactContract | None = None
     raw_processing_function: Callable[..., object] | "FunctionReference" | None = None
     runtime_image_execution_mode: ImagePayloadExecutionMode | None = None
+    image_payload_consumption: ImagePayloadConsumption = ImagePayloadConsumption.NATURAL
     request_binding: "CallableRequestBinding | None" = None
     prepare: Callable[..., object] | None = None
+
+    def __post_init__(self) -> None:
+        """Normalize the generic artifact-fed callable parameter declaration."""
+
+        normalized = _unique_parameter_names(
+            self.artifact_input_parameter_names,
+            owner="CallableMetadata.artifact_input_parameter_names",
+        )
+        spec_parameter_names = _artifact_input_parameter_names(self.artifact_inputs)
+        if self.artifact_inputs and normalized and not (
+            frozenset(spec_parameter_names) <= frozenset(normalized)
+        ):
+            raise ValueError(
+                "Callable artifact-fed parameter declarations disagree: "
+                f"normalized parameters {normalized!r}, ArtifactSpec.parameter_name "
+                f"parameters {spec_parameter_names!r}."
+            )
+        if not normalized:
+            normalized = spec_parameter_names
+        object.__setattr__(self, "artifact_input_parameter_names", normalized)
 
     @classmethod
     def from_callable(cls, func: Callable[..., object]) -> "CallableMetadata":
@@ -101,20 +198,31 @@ class CallableMetadata:
         projection: "CallableProjection",
     ) -> "CallableMetadata":
         """Build metadata from an already resolved callable projection."""
+        from openhcs.core.runtime_adapters import runtime_adapter_spec_from_callable
+
         namespace = projection.namespace
         reader = CallableMetadataReader(namespace, projection.name)
         runtime_adapter = runtime_adapter_spec_from_callable(projection.func)
         if runtime_adapter is not None and callable(projection.func):
             runtime_adapter.validate_callable_signature(projection.func)
-        return cls(
-            input_memory_type=reader.optional_string("input_memory_type"),
-            output_memory_type=reader.optional_string("output_memory_type"),
-            artifact_inputs=_artifact_spec_items(
+        artifact_inputs = _artifact_input_specs_from_projection(
+            projection,
+            _artifact_specs_from_namespace(
                 namespace,
                 projection.name,
                 FunctionContractAttribute.artifact_inputs,
             ),
-            artifact_outputs=_artifact_spec_items(
+        )
+        return cls(
+            input_memory_type=reader.optional_string("input_memory_type"),
+            output_memory_type=reader.optional_string("output_memory_type"),
+            artifact_inputs=artifact_inputs,
+            artifact_input_parameter_names=_artifact_input_parameter_names_from_projection(
+                projection,
+                reader,
+                artifact_inputs,
+            ),
+            artifact_outputs=_artifact_specs_from_namespace(
                 namespace,
                 projection.name,
                 FunctionContractAttribute.artifact_outputs,
@@ -135,8 +243,8 @@ class CallableMetadata:
             ),
             runtime_adapter=runtime_adapter,
             runtime_context_parameter=_runtime_context_parameter(projection, reader),
-            runtime_invocation_options_parameter=(
-                _runtime_invocation_options_parameter(projection, reader)
+            execution_scope=reader.optional_execution_scope(
+                FunctionContractAttribute.execution_scope,
             ),
             processing_contract=reader.optional_enum(
                 FunctionContractAttribute.processing_contract
@@ -144,16 +252,13 @@ class CallableMetadata:
             declared_processing_contract=reader.optional_string(
                 FunctionContractAttribute.declared_processing_contract,
             ),
-            module_artifact_contract=module_artifact_contract_from_namespace(
-                namespace,
-                owner_name=projection.name,
-            ),
             raw_processing_function=reader.optional_raw_processing_function(
                 FunctionContractAttribute.raw_processing_function,
             ),
             runtime_image_execution_mode=reader.optional_execution_mode(
                 FunctionContractAttribute.runtime_image_execution_mode,
             ),
+            image_payload_consumption=reader.image_payload_consumption(),
             request_binding=reader.optional_request_binding(
                 FunctionContractAttribute.callable_request_binding,
             ),
@@ -184,11 +289,13 @@ class CallableMetadata:
         if self.output_memory_type is not None:
             namespace["output_memory_type"] = self.output_memory_type
         if self.artifact_inputs:
-            namespace[FunctionContractAttribute.artifact_inputs] = dict(
-                self.artifact_inputs
+            namespace[FunctionContractAttribute.artifact_inputs] = self.artifact_inputs
+        if self.artifact_input_parameter_names:
+            namespace[FunctionContractAttribute.artifact_input_parameter_names] = (
+                self.artifact_input_parameter_names
             )
         if self.artifact_outputs:
-            namespace[FunctionContractAttribute.artifact_outputs] = dict(
+            namespace[FunctionContractAttribute.artifact_outputs] = (
                 self.artifact_outputs
             )
         if self.runtime_bound_parameters:
@@ -204,17 +311,16 @@ class CallableMetadata:
                 FunctionContractAttribute.variable_component_stack_requirement
             ] = self.variable_component_stack_requirement
         if self.allowed_group_by:
-            namespace[FunctionContractAttribute.allowed_group_by] = self.allowed_group_by
+            namespace[FunctionContractAttribute.allowed_group_by] = (
+                self.allowed_group_by
+            )
         if self.runtime_adapter is not None:
             namespace[FunctionContractAttribute.runtime_adapter] = self.runtime_adapter
         if self.runtime_context_parameter is not None:
             namespace[FunctionContractAttribute.runtime_context_parameter] = (
                 self.runtime_context_parameter
             )
-        if self.runtime_invocation_options_parameter is not None:
-            namespace[
-                FunctionContractAttribute.runtime_invocation_options_parameter
-            ] = self.runtime_invocation_options_parameter
+        namespace[FunctionContractAttribute.execution_scope] = self.execution_scope
         if self.processing_contract is not None:
             namespace[FunctionContractAttribute.processing_contract] = (
                 self.processing_contract
@@ -223,8 +329,6 @@ class CallableMetadata:
             namespace[FunctionContractAttribute.declared_processing_contract] = (
                 self.declared_processing_contract
             )
-        if self.module_artifact_contract is not None:
-            namespace[MODULE_ARTIFACT_CONTRACT_ATTR] = self.module_artifact_contract
         if self.raw_processing_function is not None:
             namespace[FunctionContractAttribute.raw_processing_function] = (
                 self.raw_processing_function
@@ -232,6 +336,10 @@ class CallableMetadata:
         if self.runtime_image_execution_mode is not None:
             namespace[FunctionContractAttribute.runtime_image_execution_mode] = (
                 self.runtime_image_execution_mode
+            )
+        if self.image_payload_consumption is not ImagePayloadConsumption.NATURAL:
+            namespace[FunctionContractAttribute.image_payload_consumption] = (
+                self.image_payload_consumption
             )
         if self.request_binding is not None:
             namespace[FunctionContractAttribute.callable_request_binding] = (
@@ -250,7 +358,9 @@ class CallableContract(ArtifactPlanKeySelector):
     function_name: str
     module_name: str | None
     metadata: CallableMetadata = dataclasses.field(default_factory=CallableMetadata)
-    runtime_batch_executors: Mapping[RuntimeBatchExecutionDomain, Callable] | None = None
+    runtime_batch_executors: Mapping[RuntimeBatchExecutionDomain, Callable] | None = (
+        None
+    )
 
     def __reduce__(
         self,
@@ -277,6 +387,8 @@ class CallableContract(ArtifactPlanKeySelector):
         func: Callable[..., object] | "FunctionReference",
     ) -> "CallableContract":
         """Build a contract from callable attributes once at compiler boundary."""
+        from openhcs.core.runtime_batch_contracts import RuntimeBatchCallableFamily
+
         projection = CallableProjection.from_callable(func)
         metadata = CallableMetadata.from_projection(projection)
         batch_raw_processing_function = (
@@ -306,31 +418,103 @@ class CallableContract(ArtifactPlanKeySelector):
         return self.metadata.output_memory_type
 
     @property
-    def artifact_inputs(self) -> ArtifactSpecItems:
-        """Declared artifact inputs."""
-        return self.metadata.artifact_inputs
+    def artifact_inputs(self) -> ArtifactSpecCollection:
+        """Return effective compiled input declarations in contract order."""
+        return ArtifactSpecCollection(self.metadata.artifact_inputs)
 
     @property
-    def artifact_outputs(self) -> ArtifactSpecItems:
-        """Declared artifact outputs."""
-        return self.metadata.artifact_outputs
+    def artifact_input_parameter_names(self) -> tuple[str, ...]:
+        """Return callable parameters whose values come from artifact inputs."""
+
+        return self.metadata.artifact_input_parameter_names
+
+    @property
+    def artifact_outputs(self) -> ArtifactSpecCollection:
+        """Return effective compiled output declarations in contract order."""
+        return ArtifactSpecCollection(self.metadata.artifact_outputs)
+
+    @property
+    def main_flow_outputs(self) -> ArtifactSpecCollection:
+        """Return declared outputs eligible for the canonical image flow."""
+
+        return ArtifactSpecCollection(
+            spec for spec in self.artifact_outputs if spec.participates_in_main_flow
+        )
+
+    @property
+    def canonical_return_output_specs(self) -> ArtifactSpecCollection:
+        """Return named outputs carried by the callable's first return slot."""
+
+        declared_outputs = self.artifact_outputs
+        if self.execution_scope is FunctionStepExecutionScope.PLATE:
+            return ArtifactSpecCollection(declared_outputs[:1])
+        if not declared_outputs or not declared_outputs[0].participates_in_main_flow:
+            return ArtifactSpecCollection(())
+        canonical_count = 1
+        if declared_outputs[0].artifact_type is ImageArtifactType:
+            for spec in declared_outputs[1:]:
+                if (
+                    not spec.participates_in_main_flow
+                    or spec.artifact_type is not ImageArtifactType
+                ):
+                    break
+                canonical_count += 1
+        return ArtifactSpecCollection(declared_outputs[:canonical_count])
+
+    @property
+    def trailing_return_output_specs(self) -> ArtifactSpecCollection:
+        """Return named outputs carried by trailing positional return slots."""
+
+        canonical_count = len(self.canonical_return_output_specs)
+        return ArtifactSpecCollection(self.artifact_outputs[canonical_count:])
+
+    @property
+    def output_group_scope_sources(self) -> tuple[ArtifactSpecRef, ...]:
+        """Return exact input identities owning declared output group scopes."""
+
+        return tuple(
+            dict.fromkeys(
+                source_ref
+                for output_spec in self.artifact_outputs
+                for source_ref in output_spec.group_scope_sources()
+            )
+        )
+
+    @property
+    def group_scope_inputs(self) -> ArtifactSpecCollection:
+        """Return inputs whose declared relations own this invocation's group scope."""
+
+        input_specs = self.artifact_inputs
+        source_refs = self.output_group_scope_sources
+        if not source_refs:
+            return input_specs
+        sources = ArtifactSpecCollection(
+            source_spec
+            for source_ref in source_refs
+            for source_spec in (input_specs.by_ref(source_ref),)
+            if source_spec is not None
+        )
+        missing = tuple(
+            source_ref
+            for source_ref in source_refs
+            if input_specs.by_ref(source_ref) is None
+        )
+        if missing:
+            raise ValueError(
+                f"Callable {self.function_name!r} output group-scope relations "
+                f"reference undeclared inputs {missing!r}."
+            )
+        return sources
+
+    def preserves_input_main_flow(self) -> bool:
+        """Return whether declared artifact outputs leave main flow unchanged."""
+
+        return bool(self.artifact_outputs) and not self.main_flow_outputs
 
     @property
     def runtime_adapter(self) -> RuntimeAdapterSpec | None:
         """Declared runtime adapter."""
         return self.metadata.runtime_adapter
-
-    def adapter_records_artifact_outputs(
-        self,
-        artifact_output_keys: Iterable[str],
-    ) -> bool:
-        """Return whether this callable's adapter records selected outputs."""
-        if self.runtime_adapter is None or self.module_artifact_contract is None:
-            return False
-        return self.module_artifact_contract.has_keys_for_partition(
-            RecordedArtifactOutputPartition,
-            artifact_output_keys,
-        )
 
     @property
     def runtime_context_parameter(self) -> str | None:
@@ -338,9 +522,9 @@ class CallableContract(ArtifactPlanKeySelector):
         return self.metadata.runtime_context_parameter
 
     @property
-    def runtime_invocation_options_parameter(self) -> str | None:
-        """Compiled ABI name for invocation-options injection."""
-        return self.metadata.runtime_invocation_options_parameter
+    def execution_scope(self) -> FunctionStepExecutionScope:
+        """Declared lifecycle scope for this callable."""
+        return self.metadata.execution_scope
 
     @property
     def runtime_bound_parameters(self) -> tuple[str, ...]:
@@ -358,17 +542,109 @@ class CallableContract(ArtifactPlanKeySelector):
         return self.metadata.runtime_bound_parameters
 
     @property
+    def config_bound_parameters(self) -> tuple[inspect.Parameter, ...]:
+        """PipelineConfig-owned parameters declared by the callable signature."""
+
+        from openhcs.core.config import runtime_config_parameter
+
+        signature = inspect.signature(
+            self.resolve_canonical_raw_callable(),
+            eval_str=True,
+        )
+        return tuple(
+            normalized
+            for parameter in signature.parameters.values()
+            for normalized in (runtime_config_parameter(parameter),)
+            if normalized is not None
+        )
+
+    @property
+    def config_bound_parameter_names(self) -> tuple[str, ...]:
+        """Names of config values supplied by the compiled step scope."""
+
+        return tuple(parameter.name for parameter in self.config_bound_parameters)
+
+    @property
+    def runtime_owned_parameter_names(self) -> frozenset[str]:
+        """Parameters supplied by compiled artifact, config, or runtime state."""
+
+        names = {
+            *self.artifact_input_parameter_names,
+            *self.runtime_bound_parameters,
+            *self.config_bound_parameter_names,
+        }
+        if self.runtime_context_parameter is not None:
+            names.add(self.runtime_context_parameter)
+        if self.runtime_adapter is not None:
+            names.add(self.runtime_adapter.require_parameter_name())
+        return frozenset(names)
+
+    @property
+    def declared_path_parameters(self) -> Mapping[str, "PlatePathDeclaration"]:
+        """Plate-relative path declarations keyed by public parameter name."""
+
+        from openhcs.core.vfs_protocol import PlatePathDeclaration
+
+        raw_callable = self.resolve_canonical_raw_callable()
+        signature = inspect.signature(raw_callable)
+        annotations = get_type_hints(raw_callable, include_extras=True)
+        declarations = {
+            parameter_name: declaration
+            for parameter_name in signature.parameters
+            for annotation in (annotations.get(parameter_name),)
+            if annotation is not None
+            for declaration in (PlatePathDeclaration.from_annotation(annotation),)
+            if declaration is not None
+        }
+        return MappingProxyType(declarations)
+
+    def declared_path_values(
+        self,
+        kwargs: Mapping[str, object],
+    ) -> Mapping[str, tuple["PlatePathDeclaration", object]]:
+        """Return authored or signature-default values for declared paths."""
+
+        signature = inspect.signature(self.resolve_canonical_raw_callable())
+        values: dict[str, tuple["PlatePathDeclaration", object]] = {}
+        for parameter_name, declaration in self.declared_path_parameters.items():
+            if parameter_name in kwargs:
+                value = kwargs[parameter_name]
+            else:
+                value = signature.parameters[parameter_name].default
+                if value is inspect.Parameter.empty:
+                    continue
+            if value is not None:
+                values[parameter_name] = (declaration, value)
+        return MappingProxyType(values)
+
+    def resolve_declared_paths(
+        self,
+        kwargs: Mapping[str, object],
+        resolver: "CompilationPathResolver",
+    ) -> dict[str, object]:
+        """Resolve only explicitly declared public path arguments."""
+
+        resolved = dict(kwargs)
+        for parameter_name, (declaration, value) in self.declared_path_values(
+            kwargs
+        ).items():
+            if not isinstance(value, (str, Path)):
+                raise TypeError(
+                    f"Callable {self.function_name!r} path parameter "
+                    f"{parameter_name!r} requires str or Path, got "
+                    f"{type(value).__name__}."
+                )
+            resolved[parameter_name] = resolver.resolve(
+                value,
+                declaration,
+                owner=f"callable {self.function_name}.{parameter_name}",
+            )
+        return resolved
+
+    @property
     def required_variable_components(self) -> tuple[VariableComponents, ...]:
         """Declared FunctionStep variable axes required by this callable."""
-        components = (
-            *self.metadata.required_variable_components,
-            *(
-                ()
-                if self.module_artifact_contract is None
-                else self.module_artifact_contract.required_variable_components
-            ),
-        )
-        return tuple(dict.fromkeys(components))
+        return self.metadata.required_variable_components
 
     @property
     def variable_component_stack_requirement(
@@ -397,15 +673,24 @@ class CallableContract(ArtifactPlanKeySelector):
         """Declared nominal processing contract."""
         return self.metadata.processing_contract
 
+    def require_processing_contract(self) -> "ProcessingContract":
+        """Return the declared processing contract or fail at the contract boundary."""
+        from openhcs.processing.backends.lib_registry.unified_registry import (
+            ProcessingContract,
+        )
+
+        processing_contract = self.processing_contract
+        if not isinstance(processing_contract, ProcessingContract):
+            raise TypeError(
+                f"Callable {self.function_name!r} must declare a ProcessingContract; "
+                f"got {type(processing_contract).__name__}."
+            )
+        return processing_contract
+
     @property
     def declared_processing_contract(self) -> str | None:
         """Declared processing contract name."""
         return self.metadata.declared_processing_contract
-
-    @property
-    def module_artifact_contract(self) -> ModuleArtifactContract | None:
-        """Declared module artifact contract."""
-        return self.metadata.module_artifact_contract
 
     @property
     def raw_processing_function(
@@ -420,6 +705,11 @@ class CallableContract(ArtifactPlanKeySelector):
         return self.metadata.runtime_image_execution_mode
 
     @property
+    def image_payload_consumption(self) -> ImagePayloadConsumption:
+        """Declared primary-image payload consumption."""
+        return self.metadata.image_payload_consumption
+
+    @property
     def request_binding(self) -> "CallableRequestBinding | None":
         """Declared callable request binding."""
         return self.metadata.request_binding
@@ -428,22 +718,19 @@ class CallableContract(ArtifactPlanKeySelector):
     def artifact_specs(self) -> ArtifactSpecCollection:
         """All artifact specs declared by this callable."""
         return ArtifactSpecCollection(
-            spec
-            for _name, spec in (
-                *self.artifact_inputs,
-                *self.artifact_outputs,
-            )
+            (*self.metadata.artifact_inputs, *self.metadata.artifact_outputs)
         )
 
     @property
-    def artifact_input_names(self) -> tuple[str, ...]:
-        """Declared artifact input names in declaration order."""
-        return self.artifact_names_for(ArtifactInputPlan)
+    def artifact_key_specs(self) -> ArtifactSpecCollection:
+        """Return declarations owned by this callable's effective artifact contract."""
+
+        return self.artifact_specs
 
     @property
     def primary_input_parameter_name(self) -> str | None:
         """FunctionStep input payload parameter declared by callable signature."""
-        signature = inspect.signature(self.resolve_runtime_callable())
+        signature = inspect.signature(self.resolve_canonical_raw_callable())
         for parameter in signature.parameters.values():
             if parameter.kind in (
                 inspect.Parameter.POSITIONAL_ONLY,
@@ -451,21 +738,6 @@ class CallableContract(ArtifactPlanKeySelector):
             ):
                 return parameter.name
         return None
-
-    @property
-    def artifact_output_names(self) -> tuple[str, ...]:
-        """Declared artifact output names in declaration order."""
-        return self.artifact_names_for(ArtifactOutputPlan)
-
-    @property
-    def artifact_inputs_dict(self) -> dict[str, ArtifactSpec]:
-        """Return declared artifact inputs as a runtime mapping."""
-        return dict(self.artifact_inputs)
-
-    @property
-    def artifact_outputs_dict(self) -> dict[str, ArtifactSpec]:
-        """Return declared artifact outputs as a runtime mapping."""
-        return dict(self.artifact_outputs)
 
     def runtime_batch_executor(
         self,
@@ -476,44 +748,183 @@ class CallableContract(ArtifactPlanKeySelector):
             return None
         return self.runtime_batch_executors.get(domain)
 
-    def contract_cache_identity(self) -> CallableContractCacheKey:
-        """Return the contract dimensions that affect reference rehydration."""
-        return (
-            self.module_artifact_contract,
-            self.declared_processing_contract,
-            self.processing_contract,
-            self.runtime_adapter,
-            self.runtime_image_execution_mode,
-        )
-
     def runtime_callable_cache_identity(
         self,
     ) -> CallableRuntimeCacheKey:
         """Return the process-local cache identity for this callable contract."""
-        if _is_function_reference(self.func):
-            return (self.func.composite_key, self.contract_cache_identity())
-        if callable(self.func):
-            return id(self.func)
-        raise TypeError(f"Invalid callable contract function: {self.func}")
+        if not _is_function_reference(self.func) and not callable(self.func):
+            raise TypeError(f"Invalid callable contract function: {self.func}")
+        return id(self)
 
     def resolve_runtime_callable(self) -> Callable[..., object]:
         """Return the executable callable for this contract."""
-        if _is_function_reference(self.func):
-            from openhcs.core.function_reference_rehydration import (
-                FunctionReferenceRehydrationRequest,
-                FunctionReferenceRehydrator,
+        resolved = _resolve_declared_callable(self.func)
+        runtime_adapter = self.runtime_adapter
+        if runtime_adapter is None:
+            return resolved
+        return runtime_adapter.executable_callable(resolved, self)
+
+    def resolve_canonical_raw_callable(self) -> Callable[..., object]:
+        """Return the declaration-owned callable whose signature defines behavior."""
+
+        declared = self.raw_processing_function
+        if declared is None:
+            declared = self.func
+        return _resolve_declared_callable(declared)
+
+    def resolve_raw_runtime_callable(self) -> Callable[..., object]:
+        """Remove runtime wrappers without crossing a semantic request binding."""
+
+        canonical = self.resolve_canonical_raw_callable()
+        if self.request_binding is None:
+            return inspect.unwrap(canonical)
+
+        binding_key = FunctionContractAttribute.callable_request_binding
+
+        def is_request_boundary(candidate: Callable[..., object]) -> bool:
+            namespace = _callable_namespace(candidate)
+            if binding_key not in namespace:
+                return False
+            wrapped = namespace.get("__wrapped__")
+            return not callable(wrapped) or binding_key not in _callable_namespace(
+                wrapped
             )
 
-            return FunctionReferenceRehydrator.rehydrate_reference(
-                FunctionReferenceRehydrationRequest(
-                    reference=self.func,
-                    contract=self,
-                    resolved_callable=self.func.resolve(),
-                )
+        resolved = inspect.unwrap(canonical, stop=is_request_boundary)
+        if binding_key not in _callable_namespace(resolved):
+            raise RuntimeError(
+                f"Callable {self.function_name!r} declares a request binding, but "
+                "its canonical raw callable has no request-binding boundary."
             )
-        if callable(self.func):
-            return self.func
-        raise TypeError(f"Invalid callable contract function: {self.func}")
+        return resolved
+
+    def validate_public_kwargs(
+        self,
+        kwargs: Mapping,
+        *,
+        runtime_loaded_artifact_parameter_names: Iterable[str] = (),
+    ) -> tuple[tuple[object, object], ...]:
+        """Validate behavior kwargs against the canonical raw callable ABI."""
+
+        if not isinstance(kwargs, Mapping):
+            raise TypeError(
+                "CallableContract.validate_public_kwargs requires a mapping."
+            )
+        raw_callable = self.resolve_canonical_raw_callable()
+        signature = inspect.signature(raw_callable)
+        runtime_owned_value = object()
+        call_kwargs = dict(kwargs)
+        runtime_loaded_parameters = frozenset(
+            runtime_loaded_artifact_parameter_names
+        )
+
+        def bind_runtime_owned(parameter_name: str) -> None:
+            if parameter_name not in signature.parameters:
+                return
+            if parameter_name in call_kwargs:
+                if call_kwargs[parameter_name] is runtime_owned_value:
+                    return
+                raise TypeError(
+                    f"Callable {self.function_name!r} public kwargs cannot set "
+                    f"runtime-owned parameter {parameter_name!r}."
+                )
+            parameter = signature.parameters[parameter_name]
+            if parameter.kind is inspect.Parameter.POSITIONAL_ONLY:
+                raise TypeError(
+                    f"Callable {self.function_name!r} runtime-owned parameter "
+                    f"{parameter_name!r} cannot be positional-only."
+                )
+            call_kwargs[parameter_name] = runtime_owned_value
+
+        runtime_adapter = self.runtime_adapter
+        for parameter_name in self.artifact_input_parameter_names:
+            if (
+                parameter_name in call_kwargs
+                and parameter_name not in runtime_loaded_parameters
+            ):
+                continue
+            bind_runtime_owned(parameter_name)
+        if self.runtime_context_parameter is not None:
+            bind_runtime_owned(self.runtime_context_parameter)
+        if runtime_adapter is not None:
+            bind_runtime_owned(runtime_adapter.require_parameter_name())
+        for parameter_type in self.runtime_bound_parameter_types:
+            bind_runtime_owned(parameter_type.require_parameter_name())
+        for parameter_name in self.config_bound_parameter_names:
+            bind_runtime_owned(parameter_name)
+
+        primary_input = self.primary_input_parameter_name
+        call_args = () if primary_input is None else (runtime_owned_value,)
+        try:
+            signature.bind(*call_args, **call_kwargs)
+        except TypeError as exc:
+            raise TypeError(
+                f"Callable {self.function_name!r} has invalid public kwargs for "
+                f"canonical raw signature {signature}: {exc}"
+            ) from exc
+        return tuple(kwargs.items())
+
+    def validate_artifact_input_parameter_bindings(self) -> None:
+        """Validate exact artifact occurrences against the normalized callable ABI."""
+
+        from openhcs.core.pipeline.function_contracts import (
+            resolved_callable_parameter,
+            special_input_parameter_accepts_sequence,
+        )
+
+        raw_callable = self.resolve_canonical_raw_callable()
+        artifact_parameters = {
+            parameter_name: resolved_callable_parameter(raw_callable, parameter_name)
+            for parameter_name in self.artifact_input_parameter_names
+        }
+        specs_by_parameter: dict[str, list[ArtifactSpec]] = {}
+        for spec in self.artifact_inputs:
+            parameter_name = spec.parameter_name
+            if parameter_name is None:
+                continue
+            if parameter_name not in artifact_parameters:
+                raise ValueError(
+                    f"Callable {self.function_name!r} artifact input {spec.ref()!r} "
+                    f"binds undeclared artifact-fed parameter {parameter_name!r}."
+                )
+            parameter = artifact_parameters[parameter_name]
+            if (
+                parameter.annotation is not inspect.Signature.empty
+                and spec.artifact_type.runtime_parameter_types()
+                and not spec.artifact_type.accepts_parameter_annotation(
+                    parameter.annotation
+                )
+            ):
+                raise TypeError(
+                    f"Callable {self.function_name!r} parameter "
+                    f"{parameter_name!r} does not accept "
+                    f"{spec.artifact_type.require_value()} artifact payloads."
+                )
+            specs_by_parameter.setdefault(parameter_name, []).append(spec)
+
+        for parameter_name, parameter in artifact_parameters.items():
+            bound_specs = tuple(specs_by_parameter.get(parameter_name, ()))
+            if not bound_specs:
+                if parameter.default is inspect.Parameter.empty:
+                    raise ValueError(
+                        f"Callable {self.function_name!r} artifact-fed parameter "
+                        f"{parameter_name!r} has no exact artifact declaration "
+                        "binding."
+                    )
+                continue
+            if (
+                len(bound_specs) > 1
+                and not special_input_parameter_accepts_sequence(parameter)
+                and any(
+                    spec.artifact_type is not ImageArtifactType
+                    for spec in bound_specs
+                )
+            ):
+                raise ValueError(
+                    f"Callable {self.function_name!r} scalar artifact-fed parameter "
+                    f"{parameter_name!r} has multiple exact artifact occurrences "
+                    f"{tuple(spec.ref() for spec in bound_specs)!r}."
+                )
 
 
 def _rebuild_callable_contract(
@@ -668,8 +1079,7 @@ def callable_request(
         implementation_signature = inspect.signature(func)
         if request_parameter not in implementation_signature.parameters:
             raise ValueError(
-                f"{func.__name__} must declare request parameter "
-                f"{request_parameter!r}."
+                f"{func.__name__} must declare request parameter {request_parameter!r}."
             )
         public_signature = _request_public_signature(
             func,
@@ -722,9 +1132,7 @@ def attach_callable_contract_metadata(
             not isinstance(declared_processing_contract, str)
             or not declared_processing_contract.strip()
         ):
-            raise ValueError(
-                "declared_processing_contract must be a non-empty string."
-            )
+            raise ValueError("declared_processing_contract must be a non-empty string.")
         namespace = _mutable_callable_namespace(func)
         namespace[FunctionContractAttribute.declared_processing_contract] = (
             declared_processing_contract
@@ -761,10 +1169,7 @@ def attach_callable_contract_metadata(
     )
     if prepare is not None:
         if not callable(prepare):
-            raise TypeError(
-                "prepare must be callable, "
-                f"got {type(prepare).__name__}."
-            )
+            raise TypeError(f"prepare must be callable, got {type(prepare).__name__}.")
         _mutable_callable_namespace(func)[
             FunctionContractAttribute.processing_prepare
         ] = prepare
@@ -788,7 +1193,9 @@ def _attach_nominal_processing_contract_if_supported(
     if FunctionContractAttribute.processing_contract in namespace:
         return
 
-    from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+    from openhcs.processing.backends.lib_registry.unified_registry import (
+        ProcessingContract,
+    )
 
     contract = ProcessingContract.from_declared_name(declared_processing_contract)
     if contract is not None:
@@ -996,6 +1403,16 @@ def _is_function_reference(func: Any) -> bool:
     return isinstance(func, FunctionReference)
 
 
+def _resolve_declared_callable(func: Any) -> Callable[..., object]:
+    """Resolve one callable declaration without applying runtime adapters."""
+
+    if _is_function_reference(func):
+        return func.resolve()
+    if callable(func):
+        return func
+    raise TypeError(f"Invalid callable contract function: {func}")
+
+
 def _callable_namespace(func: Any) -> CallableNamespace:
     """Return the readable metadata namespace for a callable-like object."""
     if _is_function_reference(func):
@@ -1077,21 +1494,6 @@ def _runtime_context_parameter(
     return _callable_signature_parameter(
         projection.func,
         ProcessingContext.require_parameter_name(),
-    )
-
-
-def _runtime_invocation_options_parameter(
-    projection: CallableProjection,
-    reader: "CallableMetadataReader",
-) -> str | None:
-    declared = reader.optional_string(
-        FunctionContractAttribute.runtime_invocation_options_parameter
-    )
-    if declared is not None:
-        return declared
-    return _callable_signature_parameter(
-        projection.func,
-        RuntimeInvocationOptions.require_parameter_name(),
     )
 
 
@@ -1206,9 +1608,11 @@ class CallableMetadataReader:
                 f"got {type(value).__name__}."
             )
         normalized = tuple(
-            component
-            if isinstance(component, VariableComponents)
-            else VariableComponents(component)
+            (
+                component
+                if isinstance(component, VariableComponents)
+                else VariableComponents(component)
+            )
             for component in value
         )
         if len(normalized) != len(set(normalized)):
@@ -1248,9 +1652,7 @@ class CallableMetadataReader:
                 f"got {type(value).__name__}."
             )
         normalized = tuple(
-            group_by
-            if isinstance(group_by, GroupBy)
-            else GroupBy(group_by)
+            group_by if isinstance(group_by, GroupBy) else GroupBy(group_by)
             for group_by in value
         )
         if len(normalized) != len(set(normalized)):
@@ -1272,6 +1674,37 @@ class CallableMetadataReader:
             raise TypeError(
                 f"{self.function_name!r}.{field_name} must be "
                 "ImagePayloadExecutionMode, "
+                f"got {type(value).__name__}."
+            )
+        return value
+
+    def image_payload_consumption(self) -> ImagePayloadConsumption:
+        """Return declared image payload consumption with its natural default."""
+        value = self.namespace.get(
+            FunctionContractAttribute.image_payload_consumption,
+            ImagePayloadConsumption.NATURAL,
+        )
+        if not isinstance(value, ImagePayloadConsumption):
+            raise TypeError(
+                f"{self.function_name!r}."
+                f"{FunctionContractAttribute.image_payload_consumption} must be "
+                "ImagePayloadConsumption, "
+                f"got {type(value).__name__}."
+            )
+        return value
+
+    def optional_execution_scope(
+        self,
+        field_name: str,
+    ) -> FunctionStepExecutionScope:
+        """Return a callable execution scope, defaulting to per-axis execution."""
+        value = self.namespace.get(field_name)
+        if value is None:
+            return FunctionStepExecutionScope.AXIS
+        if not isinstance(value, FunctionStepExecutionScope):
+            raise TypeError(
+                f"{self.function_name!r}.{field_name} must be "
+                "FunctionStepExecutionScope, "
                 f"got {type(value).__name__}."
             )
         return value
@@ -1348,8 +1781,7 @@ def _validate_request_public_fields(
     ]
     if missing:
         raise ValueError(
-            f"{request_type.__name__} has no request field(s): "
-            f"{', '.join(missing)}."
+            f"{request_type.__name__} has no request field(s): {', '.join(missing)}."
         )
 
 
@@ -1398,36 +1830,162 @@ def _request_field_default(
     return inspect.Parameter.empty
 
 
-def _artifact_spec_items(
+def _unique_parameter_names(
+    parameter_names: tuple[str, ...],
+    *,
+    owner: str,
+) -> tuple[str, ...]:
+    """Return a validated tuple of unique non-empty callable parameter names."""
+
+    if not isinstance(parameter_names, tuple):
+        raise TypeError(f"{owner} must be a tuple.")
+    normalized = tuple(
+        parameter_name.strip()
+        for parameter_name in parameter_names
+        if isinstance(parameter_name, str)
+    )
+    if (
+        len(normalized) != len(parameter_names)
+        or any(not parameter_name for parameter_name in normalized)
+        or len(normalized) != len(set(normalized))
+    ):
+        raise TypeError(f"{owner} must contain unique non-empty strings.")
+    return normalized
+
+
+def _artifact_input_parameter_names(
+    artifact_inputs: Iterable[ArtifactSpec],
+) -> tuple[str, ...]:
+    """Return unique artifact-fed parameter names in declaration order."""
+
+    return tuple(
+        dict.fromkeys(
+            spec.parameter_name
+            for spec in artifact_inputs
+            if spec.parameter_name is not None
+        )
+    )
+
+
+def _artifact_input_specs_from_projection(
+    projection: CallableProjection,
+    artifact_inputs: tuple[ArtifactSpec, ...],
+) -> tuple[ArtifactSpec, ...]:
+    """Bind exact same-name input declarations at the metadata boundary."""
+
+    if not callable(projection.func):
+        return artifact_inputs
+    signature = inspect.signature(projection.func)
+    primary_parameter_name = next(
+        (
+            parameter.name
+            for parameter in signature.parameters.values()
+            if parameter.kind
+            in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        ),
+        None,
+    )
+    artifact_parameter_names = frozenset(signature.parameters) - {
+        primary_parameter_name
+    }
+    return tuple(
+        dataclasses.replace(spec, parameter_name=spec.name)
+        if spec.parameter_name is None and spec.name in artifact_parameter_names
+        else spec
+        for spec in artifact_inputs
+    )
+
+
+def _artifact_input_parameter_names_from_projection(
+    projection: CallableProjection,
+    reader: CallableMetadataReader,
+    artifact_inputs: tuple[ArtifactSpec, ...],
+) -> tuple[str, ...]:
+    """Normalize compatibility and exact artifact parameter declarations once."""
+
+    namespace = projection.namespace
+    parameter_declarations: list[tuple[str, tuple[str, ...]]] = []
+    normalized_key = FunctionContractAttribute.artifact_input_parameter_names
+    legacy_key = FunctionContractAttribute.special_inputs
+    artifact_key = FunctionContractAttribute.artifact_inputs
+    if normalized_key in namespace:
+        parameter_declarations.append(
+            (normalized_key, reader.optional_string_tuple(normalized_key))
+        )
+    if legacy_key in namespace:
+        parameter_declarations.append(
+            (legacy_key, reader.optional_string_tuple(legacy_key))
+        )
+    exact_parameter_names = _artifact_input_parameter_names(artifact_inputs)
+    if not parameter_declarations:
+        first_names = exact_parameter_names
+    else:
+        first_names = parameter_declarations[0][1]
+    first_set = frozenset(first_names)
+    if any(
+        frozenset(parameter_names) != first_set
+        for _source, parameter_names in parameter_declarations[1:]
+    ):
+        declarations = ", ".join(
+            f"{source}={parameter_names!r}"
+            for source, parameter_names in parameter_declarations
+        )
+        raise ValueError(
+            f"Callable {projection.name!r} artifact-fed parameter declarations "
+            f"disagree: {declarations}."
+        )
+    if (
+        artifact_key in namespace
+        and parameter_declarations
+        and not frozenset(exact_parameter_names) <= first_set
+    ):
+        declarations = ", ".join(
+            (
+                *(
+                    f"{source}={parameter_names!r}"
+                    for source, parameter_names in parameter_declarations
+                ),
+                f"{artifact_key}={exact_parameter_names!r}",
+            )
+        )
+        raise ValueError(
+            f"Callable {projection.name!r} artifact-fed parameter declarations "
+            f"disagree: {declarations}."
+        )
+
+    if not callable(projection.func):
+        return first_names
+    signature = inspect.signature(projection.func)
+    ordered_names = tuple(name for name in signature.parameters if name in first_set)
+    return (
+        *ordered_names,
+        *(name for name in first_names if name not in signature.parameters),
+    )
+
+
+def _artifact_specs_from_namespace(
     namespace: CallableNamespace,
     function_name: str,
     attr_name: str,
-) -> ArtifactSpecItems:
+) -> tuple[ArtifactSpec, ...]:
     raw_specs = namespace.get(attr_name)
     if not raw_specs:
         return ()
-    if not isinstance(raw_specs, Mapping):
+    if not isinstance(raw_specs, tuple):
         raise TypeError(
-            f"{function_name!r}.{attr_name} must be a mapping, "
+            f"{function_name!r}.{attr_name} must be an ordered ArtifactSpec tuple, "
             f"got {type(raw_specs).__name__}."
         )
-
-    items: list[tuple[str, ArtifactSpec]] = []
-    for name, spec in raw_specs.items():
-        if not isinstance(name, str):
-            raise TypeError(
-                f"{function_name!r}.{attr_name} contains a non-string "
-                f"artifact name: {name!r}."
-            )
+    for spec in raw_specs:
         if not isinstance(spec, ArtifactSpec):
             raise TypeError(
-                f"{function_name!r}.{attr_name}['{name}'] "
-                f"must be ArtifactSpec, got {type(spec).__name__}."
+                f"{function_name!r}.{attr_name} must contain ArtifactSpec values, "
+                f"got {type(spec).__name__}."
             )
-        if spec.name != name:
-            raise ValueError(
-                f"{function_name!r}.{attr_name} key '{name}' "
-                f"does not match ArtifactSpec.name '{spec.name}'."
-            )
-        items.append((name, spec))
-    return tuple(items)
+    collection = ArtifactSpecCollection(raw_specs)
+    if attr_name == FunctionContractAttribute.artifact_inputs:
+        return collection.specs
+    return collection.unique(conflict_context=f"{function_name}.{attr_name}")

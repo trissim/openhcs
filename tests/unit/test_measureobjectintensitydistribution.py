@@ -1,19 +1,25 @@
 import numpy as np
+import pytest
 
-from benchmark.cellprofiler_library.functions import (
-    measureobjectintensitydistribution as mid,
-)
+import openhcs.processing.backends.cellprofiler.intensity_distribution as mid
 from openhcs.core.config import DtypeConfig
 from openhcs.core.pipeline.function_contracts import (
-    ObjectLabelMeasurementExecution,
-    object_label_measurement_execution_from_callable,
+    ObjectLabelInputExecutionMode,
+    object_label_input_execution_mode_from_callable,
 )
 from openhcs.core.measurement_row_materialization import columnar_row_values
-from openhcs.core.runtime_semantics import (
-    ObjectLabelDomain,
-    ObjectLabelDomainScope,
+from openhcs.core.runtime_image_values import ImagePayloadMetadata
+from openhcs.core.runtime_measurements import MeasurementRowAxisField
+from openhcs.core.runtime_object_label_domains import ObjectLabelDomain, ObjectLabelDomainScope
+from openhcs.core.runtime_plane_projection import RuntimePlaneAxis
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelVariantData,
+    ObjectLabelPayload,
 )
-from openhcs.core.runtime_values import ObjectLabelPayload
+from openhcs.core.runtime_tabular_values import MeasurementObjectRowIdentity
+from openhcs.interop.cellprofiler.measurement_dialect import (
+    cellprofiler_projected_measurement_feature_name,
+)
 from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendProvider,
 )
@@ -32,11 +38,20 @@ from openhcs.processing.backends.cellprofiler.secondary import (
     secondary_propagation_backend,
 )
 from openhcs.processing.backends.cellprofiler.zernike import (
+    IntensityZernikeMeasurementFeature,
     IntensityZernikeMeasurementRowsRequest,
     ObjectIntensityZernikeMeasurementColumnarRows,
     ObjectZernikeDescriptorFeature,
     indexed_object_intensity_zernike_feature_name,
 )
+
+SOURCE_IMAGE_NAME = "BF_image"
+
+
+def source_image(image: np.ndarray):
+    return ImagePayloadMetadata(source_image_names=(SOURCE_IMAGE_NAME,)).attach_to(
+        image
+    )
 
 
 def test_native_radial_distribution_excludes_pixels_without_valid_center():
@@ -72,16 +87,18 @@ def test_radial_distribution_uses_dense_extent_domain_for_missing_object_rows():
     )
 
     label_payload = ObjectLabelPayload(
-        labels=labels,
+        variant_data=ObjectLabelVariantData(labels=labels),
         domain=ObjectLabelDomain(declared_object_count=4),
     )
 
     _result, measurements = mid.measure_object_intensity_distribution(
-        image,
+        source_image(image),
         label_payload,
         bin_count=4,
         dtype_config=DtypeConfig(),
     )
+
+    assert MeasurementRowAxisField.OBJECT_ROW_IDENTITY.value not in measurements.columns
 
     gap_label_measurements = [
         measurement for measurement in measurements if measurement.object_label == 2
@@ -96,67 +113,53 @@ def test_radial_distribution_uses_dense_extent_domain_for_missing_object_rows():
     assert len(gap_label_measurements) == 12
     assert len(label_three_measurements) == 12
     assert len(trailing_label_measurements) == 12
-    gap_values_by_feature = {
-        measurement.feature_name: measurement.result_value
-        for measurement in gap_label_measurements
+    rows = tuple(
+        zip(
+            columnar_row_values(measurements, "object_label"),
+            columnar_row_values(measurements, "feature_name"),
+            columnar_row_values(measurements, "bin_index"),
+            columnar_row_values(measurements, "result_value"),
+            strict=True,
+        )
+    )
+    gap_values_by_feature_and_bin = {
+        (feature_name, bin_index): value
+        for object_label, feature_name, bin_index, value in rows
+        if object_label == 2
     }
-    values_by_feature = {
-        measurement.feature_name: measurement.result_value
-        for measurement in label_three_measurements
+    values_by_feature_and_bin = {
+        (feature_name, bin_index): value
+        for object_label, feature_name, bin_index, value in rows
+        if object_label == 3
     }
-    trailing_values_by_feature = {
-        measurement.feature_name: measurement.result_value
-        for measurement in trailing_label_measurements
+    trailing_values_by_feature_and_bin = {
+        (feature_name, bin_index): value
+        for object_label, feature_name, bin_index, value in rows
+        if object_label == 4
     }
+    fraction_feature = MeasureObjectIntensityDistributionModule.MeasurementFeature.FRACTION_AT_DISTANCE.source_qualified_name(
+        source_image_name=SOURCE_IMAGE_NAME
+    )
+    mean_fraction_feature = MeasureObjectIntensityDistributionModule.MeasurementFeature.MEAN_FRACTION.source_qualified_name(
+        source_image_name=SOURCE_IMAGE_NAME
+    )
+    radial_cv_feature = MeasureObjectIntensityDistributionModule.MeasurementFeature.RADIAL_CV.source_qualified_name(
+        source_image_name=SOURCE_IMAGE_NAME
+    )
     for bin_index in range(1, 5):
-        radial_cv_feature = (
-            MeasureObjectIntensityDistributionModule.MeasurementFeature.RADIAL_CV.indexed_name(
-                bin_index=bin_index,
-                bin_count=4,
-            )
-        )
-        assert np.isfinite(
-            values_by_feature[
-                MeasureObjectIntensityDistributionModule.MeasurementFeature.FRACTION_AT_DISTANCE.indexed_name(
-                    bin_index=bin_index,
-                    bin_count=4,
-                )
-            ]
-        )
+        assert np.isfinite(values_by_feature_and_bin[(fraction_feature, bin_index)])
+        assert np.isnan(gap_values_by_feature_and_bin[(fraction_feature, bin_index)])
         assert np.isnan(
-            gap_values_by_feature[
-                MeasureObjectIntensityDistributionModule.MeasurementFeature.FRACTION_AT_DISTANCE.indexed_name(
-                    bin_index=bin_index,
-                    bin_count=4,
-                )
-            ]
+            gap_values_by_feature_and_bin[(mean_fraction_feature, bin_index)]
         )
+        assert gap_values_by_feature_and_bin[(radial_cv_feature, bin_index)] == 0.0
         assert np.isnan(
-            gap_values_by_feature[
-                MeasureObjectIntensityDistributionModule.MeasurementFeature.MEAN_FRACTION.indexed_name(
-                    bin_index=bin_index,
-                    bin_count=4,
-                )
-            ]
-        )
-        assert gap_values_by_feature[radial_cv_feature] == 0.0
-        assert np.isnan(trailing_values_by_feature[radial_cv_feature])
-        assert np.isfinite(
-            values_by_feature[
-                MeasureObjectIntensityDistributionModule.MeasurementFeature.MEAN_FRACTION.indexed_name(
-                    bin_index=bin_index,
-                    bin_count=4,
-                )
-            ]
+            trailing_values_by_feature_and_bin[(radial_cv_feature, bin_index)]
         )
         assert np.isfinite(
-            values_by_feature[
-                MeasureObjectIntensityDistributionModule.MeasurementFeature.RADIAL_CV.indexed_name(
-                    bin_index=bin_index,
-                    bin_count=4,
-                )
-            ]
+            values_by_feature_and_bin[(mean_fraction_feature, bin_index)]
         )
+        assert np.isfinite(values_by_feature_and_bin[(radial_cv_feature, bin_index)])
 
 
 def test_radial_cv_export_values_zero_undefined_coefficients():
@@ -169,6 +172,7 @@ def test_radial_cv_export_values_zero_undefined_coefficients():
             n_bins=1,
         ),
         object_ids=(1,),
+        source_image_name=SOURCE_IMAGE_NAME,
         bin_count=1,
     )
 
@@ -183,13 +187,139 @@ def test_radial_cv_export_values_zero_undefined_coefficients():
 
     assert (
         values_by_feature[
-            MeasureObjectIntensityDistributionModule.MeasurementFeature.RADIAL_CV.indexed_name(
-                bin_index=1,
-                bin_count=1,
+            MeasureObjectIntensityDistributionModule.MeasurementFeature.RADIAL_CV.source_qualified_name(
+                source_image_name=SOURCE_IMAGE_NAME,
             )
         ]
         == 0.0
     )
+
+
+def test_radial_distribution_rows_own_native_feature_identity_and_axes():
+    rows = ObjectIntensityDistributionMeasurementColumnarRows(
+        radial_arrays=RadialDistributionArrays(
+            fraction_at_distance=np.array([[0.25]], dtype=np.float64),
+            mean_pixel_fraction=np.array([[1.0]], dtype=np.float64),
+            radial_cv_by_bin=np.array([[0.0]], dtype=np.float64),
+            object_has_pixels=np.array([True]),
+            n_bins=1,
+        ),
+        object_ids=(1,),
+        source_image_name=SOURCE_IMAGE_NAME,
+        bin_count=4,
+    )
+
+    feature_name = columnar_row_values(rows, "feature_name")[0]
+    assert rows.object_row_identity is MeasurementObjectRowIdentity.LABEL_ID
+    assert feature_name == "RadialDistribution_FracAtD_BF_image"
+    assert cellprofiler_projected_measurement_feature_name(
+        feature_name,
+        (("bin_index", 1), ("bin_count", 4)),
+    ) == ("RadialDistribution_FracAtD_BF_image_1of4")
+    assert set(columnar_row_values(rows, "source_image_name")) == {SOURCE_IMAGE_NAME}
+    assert set(columnar_row_values(rows, "bin_index")) == {1}
+    assert set(columnar_row_values(rows, "bin_count")) == {4}
+
+
+def test_intensity_distribution_module_owns_canonical_source_projection():
+    assert (
+        MeasureObjectIntensityDistributionModule.source_qualified_measurement_category()
+        == "RadialDistribution"
+    )
+    radial_name = MeasureObjectIntensityDistributionModule.MeasurementFeature.FRACTION_AT_DISTANCE.source_qualified_name(
+        source_image_name=SOURCE_IMAGE_NAME
+    )
+    zernike_name = MeasureObjectIntensityDistributionModule.source_qualified_feature_name(
+        IntensityZernikeMeasurementFeature.ZERNIKE_MAGNITUDE.measurement_row_field_name,
+        SOURCE_IMAGE_NAME,
+    )
+
+    assert radial_name == "RadialDistribution_FracAtD_BF_image"
+    assert zernike_name == "RadialDistribution_ZernikeMagnitude_BF_image"
+    assert (
+        MeasureObjectIntensityDistributionModule.source_qualified_feature_name(
+            radial_name,
+            SOURCE_IMAGE_NAME,
+        )
+        == radial_name
+    )
+    assert (
+        MeasureObjectIntensityDistributionModule.source_qualified_feature_name(
+            zernike_name,
+            SOURCE_IMAGE_NAME,
+        )
+        == zernike_name
+    )
+
+
+def test_intensity_zernike_rows_own_native_feature_identity_and_axes():
+    rows = ObjectIntensityZernikeMeasurementColumnarRows(
+        object_ids=(1,),
+        zernike_indexes=((2, 0),),
+        magnitudes=np.array([[0.5]], dtype=np.float64),
+        phases=np.array([[0.0]], dtype=np.float64),
+        include_phase=False,
+        source_image_name=SOURCE_IMAGE_NAME,
+    )
+
+    assert tuple(columnar_row_values(rows, "feature_name")) == (
+        "RadialDistribution_ZernikeMagnitude_BF_image_2_0",
+    )
+    assert tuple(columnar_row_values(rows, "source_image_name")) == (SOURCE_IMAGE_NAME,)
+    assert tuple(columnar_row_values(rows, "n")) == (2,)
+    assert tuple(columnar_row_values(rows, "m")) == (0,)
+    native_feature_name = indexed_object_intensity_zernike_feature_name(
+        ObjectZernikeDescriptorFeature.INTENSITY_MAGNITUDE,
+        source_image_name=SOURCE_IMAGE_NAME,
+        degree=2,
+        repetition=0,
+    )
+    assert native_feature_name == "RadialDistribution_ZernikeMagnitude_BF_image_2_0"
+    assert (
+        cellprofiler_projected_measurement_feature_name(
+            native_feature_name,
+            (("n", 2), ("m", 0)),
+        )
+        == native_feature_name
+    )
+
+
+def test_radial_and_zernike_rows_preserve_exact_zero_row_schemas():
+    radial_rows = ObjectIntensityDistributionMeasurementColumnarRows.empty(
+        source_image_name=SOURCE_IMAGE_NAME,
+        slice_index=0,
+    )
+    zernike_rows = ObjectIntensityZernikeMeasurementColumnarRows.empty(
+        source_image_name=SOURCE_IMAGE_NAME,
+        slice_index=0,
+    )
+
+    assert tuple(field.name for field in radial_rows.fields) == tuple(
+        radial_rows.columns
+    )
+    assert tuple(field.dtype for field in radial_rows.fields) == (
+        int,
+        str,
+        str,
+        int,
+        int,
+        float,
+        int,
+    )
+    assert tuple(field.name for field in zernike_rows.fields) == tuple(
+        zernike_rows.columns
+    )
+    assert tuple(field.dtype for field in zernike_rows.fields) == (
+        int,
+        str,
+        str,
+        int,
+        int,
+        float,
+        int,
+    )
+    assert radial_rows.row_count() == 0
+    assert zernike_rows.row_count() == 0
 
 
 def test_intensity_distribution_object_domain_uses_declared_payload_domain():
@@ -202,10 +332,12 @@ def test_intensity_distribution_object_domain_uses_declared_payload_domain():
         dtype=np.int32,
     )
 
-    assert intensity_distribution_object_domain(labels) == (1, 2, 3)
+    with pytest.raises(ValueError, match="explicit object-ID domain"):
+        intensity_distribution_object_domain(labels)
     assert intensity_distribution_object_domain(
         ObjectLabelPayload(
-            labels=labels, domain=ObjectLabelDomain(declared_object_count=4)
+            variant_data=ObjectLabelVariantData(labels=labels),
+            domain=ObjectLabelDomain(declared_object_count=4),
         )
     ) == (1, 2, 3, 4)
 
@@ -240,102 +372,70 @@ def test_explicit_numba_radial_provider_remains_available():
     assert selected.backend_provider is CellProfilerBackendProvider.NUMBA
 
 
-def test_measure_object_intensity_distribution_declares_full_stack_labels():
+def test_measure_object_intensity_distribution_declares_slice_aligned_labels():
     assert (
-        object_label_measurement_execution_from_callable(
+        object_label_input_execution_mode_from_callable(
             measure_object_intensity_distribution
         )
-        is ObjectLabelMeasurementExecution.FULL_STACK
+        is ObjectLabelInputExecutionMode.SLICE_ALIGNED
     )
 
 
 def test_measure_object_intensity_distribution_preserves_runtime_slice_axis():
-    image = np.stack(
-        (
-            np.ones((4, 4), dtype=np.float32),
-            np.full((4, 4), 2.0, dtype=np.float32),
-        )
-    )
+    image = np.full((4, 4), 2.0, dtype=np.float32)
     labels = np.zeros(image.shape, dtype=np.int32)
-    labels[0, 1:3, 1:3] = 1
-    labels[1, 1:3, 1:3] = 1
+    labels[1:3, 1:3] = 1
 
     _result, measurements = measure_object_intensity_distribution(
-        image,
-        labels,
+        source_image(image),
+        ObjectLabelPayload(
+            variant_data=ObjectLabelVariantData(labels=labels),
+            domain=ObjectLabelDomain(declared_object_count=1),
+        ),
         bin_count=2,
         wants_zernikes="None",
+        slice_index=1,
     )
 
-    assert set(columnar_row_values(measurements, "slice_index")) == {0, 1}
+    assert set(columnar_row_values(measurements, "slice_index")) == {1}
 
 
-def test_measure_object_intensity_distribution_uses_stack_extent_for_raw_slice_domains():
+def test_measure_object_intensity_distribution_rejects_unprojected_label_stack():
     image = np.ones((2, 4, 4), dtype=np.float32)
     labels = np.zeros(image.shape, dtype=np.int32)
     labels[0, 1:3, 1:3] = 1
     labels[0, 0, 0] = 3
     labels[1, 1:3, 1:3] = 1
 
-    _result, measurements = measure_object_intensity_distribution(
-        image,
-        labels,
-        bin_count=2,
-        wants_zernikes="None",
-    )
-
-    radial_cv_feature = MeasureObjectIntensityDistributionModule.MeasurementFeature.RADIAL_CV.indexed_name(
-        bin_index=1,
-        bin_count=2,
-    )
-    labels_by_slice = {
-        slice_index: set()
-        for slice_index in columnar_row_values(measurements, "slice_index")
-    }
-    for slice_index, object_label, feature_name in zip(
-        columnar_row_values(measurements, "slice_index"),
-        columnar_row_values(measurements, "object_label"),
-        columnar_row_values(measurements, "feature_name"),
-        strict=True,
-    ):
-        if feature_name == radial_cv_feature:
-            labels_by_slice[slice_index].add(object_label)
-
-    assert labels_by_slice == {0: {1, 2, 3}, 1: {1, 2, 3}}
+    with pytest.raises(ValueError, match="already projected to one 2-D plane"):
+        measure_object_intensity_distribution(
+            source_image(image),
+            ObjectLabelPayload(variant_data=ObjectLabelVariantData(labels=labels)),
+            bin_count=2,
+            wants_zernikes="None",
+        )
 
 
-def test_measure_object_intensity_distribution_collapses_repeated_2d_plane_domains():
+def test_measure_object_intensity_distribution_rejects_repeated_plane_domains():
     image = np.ones((4, 4), dtype=np.float32)
     labels = np.zeros((2, 4, 4), dtype=np.int32)
     labels[:, 1:3, 1:3] = 1
     payload = ObjectLabelPayload(
-        labels=labels,
+        variant_data=ObjectLabelVariantData(labels=labels),
         domain=ObjectLabelDomain(
             declared_object_id_domains=((1, 2), (1, 2)),
             scope=ObjectLabelDomainScope.PLANE,
         ),
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
     )
 
-    _result, measurements = measure_object_intensity_distribution(
-        image,
-        payload,
-        bin_count=2,
-        wants_zernikes="None",
-    )
-
-    assert set(columnar_row_values(measurements, "slice_index")) == {0}
-    assert (
-        sum(
-            1
-            for feature in columnar_row_values(measurements, "feature_name")
-            if feature
-            == MeasureObjectIntensityDistributionModule.MeasurementFeature.RADIAL_CV.indexed_name(
-                bin_index=1,
-                bin_count=2,
-            )
+    with pytest.raises(ValueError, match="already projected to one 2-D plane"):
+        measure_object_intensity_distribution(
+            source_image(image),
+            payload,
+            bin_count=2,
+            wants_zernikes="None",
         )
-        == 2
-    )
 
 
 def test_intensity_zernike_uses_compact_rows_for_noncontiguous_domains():
@@ -345,6 +445,7 @@ def test_intensity_zernike_uses_compact_rows_for_noncontiguous_domains():
 
     phase_feature = indexed_object_intensity_zernike_feature_name(
         ObjectZernikeDescriptorFeature.INTENSITY_PHASE,
+        source_image_name=SOURCE_IMAGE_NAME,
         degree=0,
         repetition=0,
     )
@@ -354,6 +455,7 @@ def test_intensity_zernike_uses_compact_rows_for_noncontiguous_domains():
         labels=labels,
         max_order=0,
         include_phase=True,
+        source_image_name=SOURCE_IMAGE_NAME,
         object_ids=(5,),
         backend_provider=CellProfilerBackendProvider.LEGACY_FAST,
     ).rows()
@@ -373,6 +475,7 @@ def test_intensity_zernike_uses_compact_rows_for_noncontiguous_domains():
 def test_intensity_zernike_phase_export_preserves_undefined_phase():
     phase_feature = indexed_object_intensity_zernike_feature_name(
         ObjectZernikeDescriptorFeature.INTENSITY_PHASE,
+        source_image_name=SOURCE_IMAGE_NAME,
         degree=0,
         repetition=0,
     )
@@ -382,6 +485,7 @@ def test_intensity_zernike_phase_export_preserves_undefined_phase():
         magnitudes=np.array([[np.nan]], dtype=np.float64),
         phases=np.array([[np.nan]], dtype=np.float64),
         include_phase=True,
+        source_image_name=SOURCE_IMAGE_NAME,
     )
 
     values_by_feature = {
@@ -399,6 +503,7 @@ def test_intensity_zernike_phase_export_preserves_undefined_phase():
 def test_intensity_zernike_phase_export_zeroes_undefined_phase_within_extent():
     phase_feature = indexed_object_intensity_zernike_feature_name(
         ObjectZernikeDescriptorFeature.INTENSITY_PHASE,
+        source_image_name=SOURCE_IMAGE_NAME,
         degree=0,
         repetition=0,
     )
@@ -406,8 +511,9 @@ def test_intensity_zernike_phase_export_zeroes_undefined_phase_within_extent():
         object_ids=(1, 2),
         zernike_indexes=((0, 0),),
         magnitudes=np.array([[np.nan], [np.nan]], dtype=np.float64),
-        phases=np.array([[np.nan], [np.nan]], dtype=np.float64),
+        phases=np.array([[np.nan], [0.0]], dtype=np.float64),
         include_phase=True,
+        source_image_name=SOURCE_IMAGE_NAME,
         phase_zero_extent=1,
     )
 

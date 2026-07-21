@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import stat
-import tempfile
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -20,6 +20,7 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.agent.dto.common import AgentError, JsonObject, JsonValue, SCHEMA_VERSION
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.path_policy import AgentPathPolicy, AgentPathPolicyError
+from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
 from openhcs.agent.dto.ui_bridge import (
     UNKNOWN_UI_BRIDGE_OPERATION_ROUTE,
     UiActionCatalog,
@@ -37,6 +38,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiBridgeOperationIdentity,
     UiBridgeOperationRef,
     UiBridgeOperationStatusRequest,
+    UiBridgeOperationWaitRequest,
     UiBridgeOperationStatus,
     UiBridgeStatus,
     UiCodeDocument,
@@ -315,8 +317,6 @@ UiBridgeOperationContract: TypeAlias = (
 class UiBridgeDescriptorDirectoryAuthority:
     """Filesystem location policy for live UI bridge descriptors."""
 
-    UI_BRIDGE_DESCRIPTOR_SUBDIR = Path("openhcs") / "ui-bridge"
-
     @staticmethod
     def default_descriptor_dir() -> Path:
         return UiBridgeDescriptorDirectoryAuthority.descriptor_dirs()[0]
@@ -325,15 +325,12 @@ class UiBridgeDescriptorDirectoryAuthority:
     def descriptor_dirs(cls) -> tuple[Path, ...]:
         configured = environ.get("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR")
         if configured:
-            return (Path(configured).expanduser(),)
+            return (AgentRuntimePlatformAuthority.resolved_path(configured),)
 
-        candidates: list[Path] = []
-        runtime_dir = environ.get("XDG_RUNTIME_DIR")
-        if runtime_dir:
-            candidates.append(Path(runtime_dir).expanduser() / cls.UI_BRIDGE_DESCRIPTOR_SUBDIR)
-        candidates.append(Path(f"/run/user/{os.getuid()}") / cls.UI_BRIDGE_DESCRIPTOR_SUBDIR)
-        candidates.append(Path(tempfile.gettempdir()) / f"openhcs-ui-bridge-{os.getuid()}")
-        return tuple(dict.fromkeys(candidates))
+        return AgentRuntimePlatformAuthority.current().application_runtime_dirs(
+            "OpenHCS",
+            "ui-bridge",
+        )
 
 
 class UiBridgeGatewayABC(ABC, metaclass=AutoRegisterMeta):
@@ -537,6 +534,58 @@ class UiBridgeGatewayABC(ABC, metaclass=AutoRegisterMeta):
         request: UiBridgeOperationStatusRequest,
     ) -> UiBridgeOperationRef:
         raise NotImplementedError
+
+    def wait_for_operation(
+        self,
+        connection: UiBridgeConnectionSpec,
+        request: UiBridgeOperationWaitRequest,
+    ) -> UiBridgeOperationRef:
+        """Wait for an operation through the authoritative one-shot status method."""
+        deadline = time.monotonic() + request.timeout_seconds
+        status_request = UiBridgeOperationStatusRequest(
+            operation_id=request.operation_id
+        )
+        while True:
+            operation = self.get_operation_status(connection, status_request)
+            try:
+                status = UiBridgeOperationStatus(operation.status)
+            except ValueError:
+                return replace(
+                    operation,
+                    errors=(
+                        *operation.errors,
+                        AgentError(
+                            code="invalid_ui_bridge_operation_status",
+                            message=(
+                                f"UI bridge operation {request.operation_id!r} returned "
+                                f"unknown status {operation.status!r}."
+                            ),
+                        ),
+                    ),
+                )
+            if status.is_terminal:
+                return operation
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0.0:
+                return replace(
+                    operation,
+                    errors=(
+                        *operation.errors,
+                        AgentError(
+                            code="ui_bridge_operation_wait_timeout",
+                            message=(
+                                f"UI bridge operation {request.operation_id!r} did not "
+                                f"reach a terminal status within "
+                                f"{request.timeout_seconds:g} seconds."
+                            ),
+                            hint=(
+                                "The operation remains active; inspect it with "
+                                "openhcs_ui_get_operation_status or wait again."
+                            ),
+                        ),
+                    ),
+                )
+            time.sleep(min(request.poll_interval_seconds, remaining_seconds))
 
     @abstractmethod
     def selected_plate_workflow(
@@ -1587,7 +1636,14 @@ class UiBridgeDescriptorReader:
     @staticmethod
     def _validate_descriptor_file_path(path: Path) -> None:
         stat_result = path.stat()
-        uid = os.getuid()
+        if not stat.S_ISREG(stat_result.st_mode):
+            raise PermissionError("UI bridge descriptor must be a regular file.")
+        platform_authority = AgentRuntimePlatformAuthority.current()
+        if not platform_authority.supports_posix_permissions():
+            return
+        uid = platform_authority.current_user_id()
+        if uid is None:
+            return
         if stat_result.st_uid != uid:
             raise PermissionError("UI bridge descriptor is not owned by the current user.")
         if stat_result.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
@@ -1602,12 +1658,8 @@ class UiBridgeDescriptorReader:
 
     @staticmethod
     def _validate_descriptor_process(descriptor: UiBridgeDescriptorFile) -> None:
-        try:
-            os.kill(descriptor.pid, 0)
-        except ProcessLookupError as exc:
-            raise UiBridgeDescriptorProcessGoneError(descriptor.pid) from exc
-        except PermissionError:
-            return
+        if not AgentRuntimePlatformAuthority.process_exists(descriptor.pid):
+            raise UiBridgeDescriptorProcessGoneError(descriptor.pid)
 
 
 class UiBridgeDescriptorDirectoryCatalog:
@@ -1678,7 +1730,7 @@ class UiBridgeDescriptorDirectoryCatalog:
     def _remove_stale_process_descriptor(path: Path) -> None:
         try:
             path.unlink()
-        except FileNotFoundError:
+        except OSError:
             return
 
 
@@ -1737,11 +1789,19 @@ class UiBridgeDescriptorResolver:
         connection: UiBridgeConnectionSpec,
     ) -> UiBridgeConnectionResolution:
         if connection.descriptor_file_path is not None:
-            return self._resolve_explicit_file(Path(connection.descriptor_file_path), connection)
+            return self._resolve_explicit_file(
+                AgentRuntimePlatformAuthority.resolved_path(
+                    connection.descriptor_file_path
+                ),
+                connection,
+            )
 
         env_descriptor = environ.get("OPENHCS_UI_BRIDGE_DESCRIPTOR")
         if env_descriptor:
-            return self._resolve_explicit_file(Path(env_descriptor), connection)
+            return self._resolve_explicit_file(
+                AgentRuntimePlatformAuthority.resolved_path(env_descriptor),
+                connection,
+            )
 
         if connection.bridge_instance_id is not None:
             return self._resolve_instance(connection.bridge_instance_id, connection)
@@ -2336,16 +2396,40 @@ class UiBridgeService:
                 resolution,
                 request,
             ),
-            error_result=lambda errors: UiBridgeOperationRef(
-                schema_version=SCHEMA_VERSION,
-                identity=UiBridgeOperationIdentity(
-                    operation_id=operation_id,
-                    route=UNKNOWN_UI_BRIDGE_OPERATION_ROUTE,
-                ),
-                status=UiBridgeOperationStatus.UNAVAILABLE.value,
-                started_at_unix=0.0,
-                errors=errors,
+            error_result=lambda errors: self._operation_error_ref(operation_id, errors),
+        )
+
+    def wait_for_operation(
+        self,
+        request: UiBridgeOperationWaitRequest,
+        connection: UiBridgeConnectionSpec = DEFAULT_UI_BRIDGE_CONNECTION_SPEC,
+    ) -> UiBridgeOperationRef:
+        return self._dispatch_gateway(
+            connection=connection,
+            call=lambda resolution: self._gateway.wait_for_operation(
+                resolution,
+                request,
             ),
+            error_result=lambda errors: self._operation_error_ref(
+                request.operation_id,
+                errors,
+            ),
+        )
+
+    @staticmethod
+    def _operation_error_ref(
+        operation_id: str,
+        errors: tuple[AgentError, ...],
+    ) -> UiBridgeOperationRef:
+        return UiBridgeOperationRef(
+            schema_version=SCHEMA_VERSION,
+            identity=UiBridgeOperationIdentity(
+                operation_id=operation_id,
+                route=UNKNOWN_UI_BRIDGE_OPERATION_ROUTE,
+            ),
+            status=UiBridgeOperationStatus.UNAVAILABLE.value,
+            started_at_unix=0.0,
+            errors=errors,
         )
 
     @staticmethod

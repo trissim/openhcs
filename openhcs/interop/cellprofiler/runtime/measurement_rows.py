@@ -3,74 +3,138 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, fields as dataclass_fields, is_dataclass
 from enum import Enum
 import json
-from typing import ClassVar, TYPE_CHECKING, TypeVar
+import re
+from string import Formatter
+from types import MappingProxyType
+from typing import Annotated, TypeVar, get_args, get_origin, get_type_hints
 
-from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 from openhcs.core.alias_property import AliasProperty
 import numpy as np
 
-from openhcs.core.artifacts import ArtifactSpec, ArtifactSpecCollection, ObjectLabelsArtifactType
-from openhcs.core.registry_strategies import RegisteredEnumMeta
 from openhcs.core.measurement_row_materialization import (
     ConcatenatedColumnarRows,
+    MeasurementProjectedColumnarRows,
 )
-from openhcs.core.runtime_semantics import (
+from openhcs.core.registry_strategies import (
+    RegisteredEnumMeta,
+    str_enum_member_with_payload,
+)
+from openhcs.core.runtime_tabular_values import (
+    FieldSpec,
+)
+from openhcs.core.runtime_measurements import (
     MeasurementRowAxisField,
     MeasurementRowValueField,
+    ObjectCoreMeasurementFeature,
+    object_location_coordinate_arrays,
+)
+from openhcs.core.runtime_identifier import normalize_runtime_identifier
+from openhcs.core.runtime_image_values import ImagePayloadMetadata
+from openhcs.core.runtime_object_label_domains import (
     ObjectLabelDomainScope,
-    ObjectLocationMeasurementFeature,
-    ObjectLabelRepresentation,
-    measurement_row_mapping,
 )
+from openhcs.core.runtime_plane_projection import RuntimePlaneAxisValueProjection
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
-from openhcs.core.runtime_values import (
+from openhcs.core.runtime_tabular_values import (
     ColumnarRows,
-    DenseObjectLabelPlaneDomainStackRequest,
-    ObjectLabelDomainMetadata,
-    ObjectLabelPayload,
-    ObjectLabelSet,
+)
+from openhcs.core.runtime_object_labels import (
     ObjectLabelValue,
-    SingletonObjectLabelStackCollapseStrategy,
-    SparseIJVLabelRows,
+    object_label_axis_centers,
+    object_label_project_plane,
 )
-from openhcs.processing.backends.lib_registry.unified_registry import runtime_output_tuple
-from openhcs.interop.cellprofiler.runtime.mapping_lookup import MappingValueLookup
-from openhcs.interop.cellprofiler.runtime.payload_types import (
-    CellProfilerFunction,
-    CellProfilerKwargDict,
-    CellProfilerKwargs,
-    CellProfilerRuntimeValue,
-    CellProfilerRuntimeValues,
-    MeasurementRowsInput,
-)
-
-if TYPE_CHECKING:
-    from openhcs.interop.cellprofiler.runtime.adapter import CellProfilerRuntimeAdapter
-
-
-NestedDeclarationT = TypeVar("NestedDeclarationT")
-
-
-ObjectLocationFeatureValues = tuple[
-    tuple[ObjectLocationMeasurementFeature, float],
-    ...,
-]
-
-
 from openhcs.interop.cellprofiler.module_declarations import (
     CellProfilerModule,
+)
+from openhcs.interop.cellprofiler.module_measurement_features import (
     CellProfilerModuleAuthority,
 )
+from openhcs.interop.cellprofiler.database_column_dialect import (
+    CellProfilerObjectCoreMeasurementFeature,
+)
+from openhcs.core.steps.function_runtime import RuntimeCallableArgument
+
+NestedDeclarationT = TypeVar("NestedDeclarationT")
+FieldAnnotationT = TypeVar("FieldAnnotationT")
 
 
-class CellProfilerMeasurementStatField(str, CellProfilerModuleAuthority, Enum):
-    """Base for generated absorbed-result stat-field enums."""
+def measurement_source_image_name_for_slice(
+    source_metadata: ImagePayloadMetadata,
+    plane_projection: RuntimePlaneAxisValueProjection | None,
+    slice_index: int,
+) -> str:
+    """Project one measurement row's exact source name from runtime metadata."""
 
-    field_name = AliasProperty[str]("value")
+    if not isinstance(source_metadata, ImagePayloadMetadata):
+        raise TypeError(
+            "Measurement source projection requires ImagePayloadMetadata, got "
+            f"{type(source_metadata).__name__}."
+        )
+    if isinstance(slice_index, bool) or not isinstance(slice_index, int):
+        raise TypeError(
+            "Measurement source projection slice_index must be int, got "
+            f"{type(slice_index).__name__}."
+        )
+    if slice_index < 0:
+        raise ValueError(
+            "Measurement source projection slice_index cannot be negative."
+        )
+
+    if plane_projection is None:
+        if source_metadata.plane_axis is not None:
+            raise ValueError(
+                "Measurement source metadata declares plane axis "
+                f"{source_metadata.plane_axis.value!r} without a runtime projection."
+            )
+        if slice_index != 0:
+            raise ValueError(
+                "Scalar measurement source metadata cannot project nonzero slice "
+                f"index {slice_index}."
+            )
+        projected_metadata = source_metadata
+    else:
+        if not isinstance(plane_projection, RuntimePlaneAxisValueProjection):
+            raise TypeError(
+                "Measurement source projection requires "
+                "RuntimePlaneAxisValueProjection or None, got "
+                f"{type(plane_projection).__name__}."
+            )
+        if plane_projection.plane_index is not None:
+            raise ValueError(
+                "Measurement row source projection requires a preserved runtime "
+                "plane axis, not a preselected plane."
+            )
+        if source_metadata.plane_axis is not plane_projection.axis:
+            raise ValueError(
+                "Measurement source metadata plane axis conflicts with the runtime "
+                f"projection: {source_metadata.plane_axis!r} != "
+                f"{plane_projection.axis!r}."
+            )
+        source_plane_count = source_metadata.source_provenance.source_plane_count
+        if source_plane_count != plane_projection.axis_size:
+            raise ValueError(
+                "Measurement source metadata plane count conflicts with the runtime "
+                f"projection: {source_plane_count} != "
+                f"{plane_projection.axis_size}."
+            )
+        if slice_index >= plane_projection.axis_size:
+            raise ValueError(
+                "Measurement source projection slice_index exceeds the runtime "
+                f"axis: {slice_index} >= {plane_projection.axis_size}."
+            )
+        projected_metadata = source_metadata.for_source_plane(slice_index)
+
+    source_names = projected_metadata.source_provenance.represented_source_image_names
+    if len(source_names) != 1:
+        raise ValueError(
+            "Measurement source projection requires exactly one source image name "
+            f"for slice {slice_index}, got {source_names!r}."
+        )
+    return source_names[0]
 
 
 class FormattingMeasurementFeatureTemplate(
@@ -83,123 +147,194 @@ class FormattingMeasurementFeatureTemplate(
 
     __registry_key__ = "__name__"
 
-    def feature_name(self, **values: CellProfilerRuntimeValue) -> str:
+    def __new__(
+        cls,
+        value: str,
+        measurement_dtype: type[object] | None = None,
+    ):
+        return str_enum_member_with_payload(
+            cls,
+            value,
+            payload_attribute="_measurement_dtype",
+            payload=measurement_dtype,
+        )
+
+    measurement_dtype = AliasProperty[type[object] | None]("_measurement_dtype")
+
+    @classmethod
+    def database_measurement_dtype(cls) -> type[object] | None:
+        """Return an external CellProfiler database type override, when declared."""
+
+        return None
+
+    def matches_feature_name(self, feature_name: str) -> bool:
+        """Match a concrete feature name against this exact declared template."""
+
+        template_parts: list[str] = []
+        field_tokens: list[str] = []
+        for index, (literal, field_name, _format_spec, _conversion) in enumerate(
+            Formatter().parse(self.value)
+        ):
+            template_parts.append(literal)
+            if field_name is not None:
+                token = f"OpenHCSFormatField{index}"
+                field_tokens.append(normalize_runtime_identifier(token))
+                template_parts.append(token)
+        pattern = re.escape(
+            normalize_runtime_identifier("".join(template_parts))
+        )
+        for token in field_tokens:
+            pattern = pattern.replace(re.escape(token), ".+")
+        return re.fullmatch(
+            pattern,
+            normalize_runtime_identifier(feature_name),
+        ) is not None
+
+    def database_field_spec(
+        self,
+        name: str,
+        *,
+        required: bool = False,
+    ) -> FieldSpec:
+        """Build the CellProfiler database declaration for one emitted field."""
+
+        database_dtype = type(self).database_measurement_dtype()
+        return FieldSpec(
+            name,
+            self.measurement_dtype if database_dtype is None else database_dtype,
+            required=required,
+        )
+
+    def feature_name(self, **values: RuntimeCallableArgument) -> str:
         return self.value.format(**values)
 
+    def field_spec(self, name: str, *, required: bool = False) -> FieldSpec:
+        """Build one emitted field from this producer-owned feature declaration."""
+
+        if self.measurement_dtype is None:
+            raise TypeError(
+                f"{type(self).__name__}.{self.name} does not declare an emitted dtype."
+            )
+        return FieldSpec(name, self.measurement_dtype, required=required)
+
 
 @dataclass(frozen=True, slots=True)
-class CellProfilerMeasurementRowProjection(ABC):
-    """Base contract for emitted CellProfiler measurement fact rows."""
+class CellProfilerResultMeasurementRows(ABC):
+    """Project one schema-bearing absorbed function result into measurement rows."""
 
+    results: ColumnarRows
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.results, ColumnarRows):
+            raise TypeError(
+                f"{type(self).__name__} requires ColumnarRows results, got "
+                f"{type(self.results).__name__}."
+            )
+
+    @classmethod
     @abstractmethod
-    def rows(self) -> list[CellProfilerKwargDict]:
-        """Return long/tall measurement rows."""
-
-    @staticmethod
-    def measurement_row(
-        *,
-        feature_name: str,
-        value: CellProfilerRuntimeValue,
-        axis_values: Mapping[str, CellProfilerRuntimeValue] | None = None,
-        value_field: MeasurementRowValueField = MeasurementRowValueField.RESULT_VALUE,
-    ) -> CellProfilerKwargDict:
-        resolved_axis_values = {} if axis_values is None else dict(axis_values)
-        return {
-            **resolved_axis_values,
-            MeasurementRowAxisField.FEATURE_NAME.value: feature_name,
-            value_field.value: value,
-        }
-
-    @classmethod
-    def object_measurement_row(
-        cls,
-        *,
-        object_name: str,
-        object_label: int,
-        feature_name: str,
-        value: CellProfilerRuntimeValue,
-        axis_values: Mapping[str, CellProfilerRuntimeValue] | None = None,
-        value_field: MeasurementRowValueField = MeasurementRowValueField.RESULT_VALUE,
-    ) -> CellProfilerKwargDict:
-        resolved_axis_values = {} if axis_values is None else dict(axis_values)
-        return cls.measurement_row(
-            axis_values={
-                MeasurementRowAxisField.OBJECT_NAME.value: object_name,
-                MeasurementRowAxisField.OBJECT_LABEL.value: object_label,
-                **resolved_axis_values,
-            },
-            feature_name=feature_name,
-            value=value,
-            value_field=value_field,
-        )
-
-    @classmethod
-    def source_image_measurement_row(
-        cls,
-        *,
-        source_image_name: str,
-        feature_name: str,
-        value: CellProfilerRuntimeValue,
-        axis_values: Mapping[str, CellProfilerRuntimeValue] | None = None,
-        value_field: MeasurementRowValueField = MeasurementRowValueField.RESULT_VALUE,
-    ) -> CellProfilerKwargDict:
-        resolved_axis_values = {} if axis_values is None else dict(axis_values)
-        return cls.measurement_row(
-            axis_values={
-                MeasurementRowAxisField.SOURCE_IMAGE_NAME.value: source_image_name,
-                **resolved_axis_values,
-            },
-            feature_name=feature_name,
-            value=value,
-            value_field=value_field,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerMeasurementRows(
-    CellProfilerMeasurementRowProjection,
-    metaclass=AutoRegisterMeta,
-):
-    """Registered module-result measurement row projectors."""
-
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
-
-    stable_key_axis: ClassVar[str] = RegistryKeyAttribute.REGISTRY_KEY.value
-    registry_key: ClassVar[str | None] = None
-
-    @classmethod
     def for_request(
         cls,
         module_type: type[object],
         request: object,
-    ) -> "CellProfilerMeasurementRows":
-        del module_type, request
-        raise NotImplementedError(f"{cls.__name__} must implement for_request().")
+    ) -> "CellProfilerResultMeasurementRows":
+        """Bind one module-owned projector to its exact runtime request."""
 
+    @abstractmethod
+    def rows(self) -> ColumnarRows:
+        """Return the exact projected measurement table."""
 
-@dataclass(frozen=True, slots=True)
-class CellProfilerResultMeasurementRows(CellProfilerMeasurementRows):
-    """Measurement rows projected from absorbed function result records."""
+    def source_rows(self) -> ColumnarRows:
+        return self.results
 
-    results: CellProfilerRuntimeValue
+    def source_field(self, field: Enum | str) -> FieldSpec:
+        """Return one exact field declared by the producer-owned row schema."""
 
-    def source_rows(self) -> list[CellProfilerRuntimeValue]:
-        return measurement_table_rows(self.results)
+        field_name = str(field.value if isinstance(field, Enum) else field)
+        matching = tuple(
+            field_spec
+            for field_spec in self.source_rows().fields
+            if field_spec.name == field_name
+        )
+        if len(matching) != 1:
+            raise ValueError(
+                f"{type(self).__name__} requires exactly one source field "
+                f"{field_name!r}, got {matching!r}."
+            )
+        return matching[0]
+
+    def source_fields_annotated_with(
+        self,
+        row_type: type[object],
+        annotation_type: type[FieldAnnotationT],
+    ) -> tuple[tuple[FieldSpec, FieldAnnotationT], ...]:
+        """Return producer fields carrying exactly one annotation of a given type."""
+
+        annotations = self.producer_field_annotations(row_type)
+        selected: list[tuple[FieldSpec, FieldAnnotationT]] = []
+        for field_spec, metadata in annotations:
+            matching = tuple(
+                annotation
+                for annotation in metadata
+                if isinstance(annotation, annotation_type)
+            )
+            if len(matching) > 1:
+                raise TypeError(
+                    f"{row_type.__name__}.{field_spec.name} declares multiple "
+                    f"{annotation_type.__name__} annotations: {matching!r}."
+                )
+            if matching:
+                selected.append((field_spec, matching[0]))
+        return tuple(selected)
+
+    def source_field_annotated_by(
+        self,
+        row_type: type[object],
+        annotation: object,
+    ) -> FieldSpec:
+        """Return the single producer field carrying one exact nominal annotation."""
+
+        matching = tuple(
+            field_spec
+            for field_spec, metadata in self.producer_field_annotations(row_type)
+            if any(declared is annotation for declared in metadata)
+        )
+        if len(matching) != 1:
+            raise TypeError(
+                f"{row_type.__name__} must declare exactly one field annotated by "
+                f"{annotation!r}, got {matching!r}."
+            )
+        return matching[0]
+
+    def producer_field_annotations(
+        self,
+        row_type: type[object],
+    ) -> tuple[tuple[FieldSpec, tuple[object, ...]], ...]:
+        """Resolve producer dataclass fields and their nominal annotation metadata."""
+
+        if not isinstance(row_type, type) or not is_dataclass(row_type):
+            raise TypeError(
+                "Producer measurement row schema must be a dataclass type, got "
+                f"{row_type!r}."
+            )
+        annotations = get_type_hints(row_type, include_extras=True)
+        return tuple(
+            (
+                self.source_field(row_field.name),
+                (
+                    tuple(get_args(field_annotation)[1:])
+                    if get_origin(field_annotation) is Annotated
+                    else ()
+                ),
+            )
+            for row_field in dataclass_fields(row_type)
+            for field_annotation in (annotations[row_field.name],)
+        )
 
     @staticmethod
-    def row_value(
-        row: CellProfilerRuntimeValue,
-        field: Enum | str,
-        default: CellProfilerRuntimeValue,
-    ) -> CellProfilerRuntimeValue:
-        field_name = field.value if isinstance(field, Enum) else field
-        return MappingValueLookup(
-            measurement_row_mapping(row),
-            str(field_name),
-        ).value_or(default)
-
-    @staticmethod
-    def json_object_mapping(value: CellProfilerRuntimeValue) -> CellProfilerKwargs:
+    def json_object_mapping(
+        value: RuntimeCallableArgument,
+    ) -> Mapping[str, RuntimeCallableArgument]:
         if isinstance(value, Mapping):
             return value
         if value in (None, ""):
@@ -247,13 +382,6 @@ class ModuleOwnedResultMeasurementRows(CellProfilerResultMeasurementRows):
         return declarations[0]
 
     @property
-    def stat_field_type(self) -> type[CellProfilerMeasurementStatField]:
-        return self.single_nested_declaration(
-            self.module_type,
-            CellProfilerMeasurementStatField,
-        )
-
-    @property
     def feature_template_type(self) -> type[FormattingMeasurementFeatureTemplate]:
         return self.single_nested_declaration(
             self.module_type,
@@ -266,451 +394,154 @@ class ObjectLocationCenterValues:
     """Center coordinate values for one object-label domain."""
 
     object_ids: tuple[int, ...]
-    coordinates: tuple[tuple[ObjectLocationMeasurementFeature, np.ndarray], ...]
+    coordinates: tuple[tuple[CellProfilerObjectCoreMeasurementFeature, np.ndarray], ...]
 
     def feature_values(
         self,
         object_index: int,
-    ) -> ObjectLocationFeatureValues:
-        return (
+    ) -> tuple[tuple[CellProfilerObjectCoreMeasurementFeature, float], ...]:
+        return tuple(
             (feature, float(values[object_index]))
             for feature, values in self.coordinates
         )
 
 
 @dataclass(frozen=True, slots=True)
-class ObjectLocationMeasurementRows(CellProfilerMeasurementRows):
+class ObjectLocationMeasurementRows:
     """Emit CP object location rows from a declared object-label domain."""
 
-    registry_key = "object_location"
-
-    label_payload: CellProfilerRuntimeValue
+    label_payload: ObjectLabelValue
     object_name: str
-    include_declared_empty: bool = True
     domain_scope: ObjectLabelDomainScope | None = None
 
-    def rows(self) -> list[CellProfilerKwargDict]:
-        rows: list[CellProfilerKwargDict] = []
+    def __post_init__(self) -> None:
+        if not isinstance(self.label_payload, ObjectLabelValue):
+            raise TypeError(
+                "ObjectLocationMeasurementRows requires an ObjectLabelValue, "
+                f"got {type(self.label_payload).__name__}."
+            )
+        declared_scope = self.label_payload.object_label_domain().scope
+        if self.domain_scope is not None and self.domain_scope is not declared_scope:
+            raise ValueError(
+                "ObjectLocationMeasurementRows domain_scope must match the "
+                f"object-label declaration; got {self.domain_scope.value!r}, "
+                f"expected {declared_scope.value!r}."
+            )
+
+    def rows(self) -> MeasurementProjectedColumnarRows:
+        object_names: list[str] = []
+        object_labels: list[int] = []
+        slice_indices: list[int] = []
+        feature_names: list[str] = []
+        values: list[float] = []
         label_plane_domains = self.label_plane_domains()
         for slice_index, (label_plane, domain) in enumerate(label_plane_domains):
             centers = self.centers_for_plane(
                 label_plane,
                 domain=domain,
             )
-            rows.extend(
-                self.rows_for_object(
-                    object_label=object_label,
-                    slice_index=slice_index,
-                    feature_values=centers.feature_values(object_index),
-                )
-                for object_index, object_label in enumerate(centers.object_ids)
-            )
-        return [row for object_rows in rows for row in object_rows]
-
-    def rows_for_object(
-        self,
-        *,
-        object_label: int,
-        slice_index: int,
-        feature_values: ObjectLocationFeatureValues,
-    ) -> tuple[CellProfilerKwargDict, ...]:
-        return tuple(
-            self.object_measurement_row(
-                object_name=self.object_name,
-                object_label=object_label,
-                axis_values={MeasurementRowAxisField.SLICE_INDEX.value: slice_index},
-                feature_name=feature.value,
-                value=value,
-            )
-            for feature, value in feature_values
+            for object_index, object_label in enumerate(centers.object_ids):
+                for feature, value in centers.feature_values(object_index):
+                    object_names.append(self.object_name)
+                    object_labels.append(object_label)
+                    slice_indices.append(slice_index)
+                    feature_names.append(feature.value)
+                    values.append(value)
+        columns = MappingProxyType(
+            {
+                MeasurementRowAxisField.OBJECT_NAME.value: tuple(object_names),
+                MeasurementRowAxisField.OBJECT_LABEL.value: tuple(object_labels),
+                MeasurementRowAxisField.SLICE_INDEX.value: tuple(slice_indices),
+                MeasurementRowAxisField.FEATURE_NAME.value: tuple(feature_names),
+                MeasurementRowValueField.RESULT_VALUE.value: tuple(values),
+            }
+        )
+        return MeasurementProjectedColumnarRows(
+            columns,
+            fields=(
+                FieldSpec(MeasurementRowAxisField.OBJECT_NAME.value, str),
+                FieldSpec(MeasurementRowAxisField.OBJECT_LABEL.value, int),
+                FieldSpec(MeasurementRowAxisField.SLICE_INDEX.value, int),
+                FieldSpec(MeasurementRowAxisField.FEATURE_NAME.value, str),
+                FieldSpec(MeasurementRowValueField.RESULT_VALUE.value, float),
+            ),
         )
 
-    def label_planes(self) -> tuple[np.ndarray, ...]:
-        label_array = np.asarray(LABEL_PAYLOAD_FINAL.value(self.label_payload))
-        if self.domain_scope is ObjectLabelDomainScope.PAYLOAD:
-            return (label_array,)
-        if label_array.ndim <= 2:
-            return (label_array,)
-        return tuple(label_array[index] for index in range(label_array.shape[0]))
+    def label_plane_domains(self) -> tuple[tuple[object, tuple[int, ...]], ...]:
+        domain = self.label_payload.object_label_domain()
+        if domain.scope is ObjectLabelDomainScope.PAYLOAD:
+            object_ids = domain.explicit_id_domain()
+            if object_ids is None:
+                raise ValueError(
+                    "ObjectLocationMeasurementRows requires an explicit payload "
+                    "object-ID domain."
+                )
+            return ((self.label_payload, object_ids),)
 
-    def label_plane_domains(self) -> tuple[tuple[np.ndarray, tuple[int, ...]], ...]:
-        if self.domain_scope is ObjectLabelDomainScope.PAYLOAD:
-            label_array = np.asarray(LABEL_PAYLOAD_FINAL.value(self.label_payload))
-            return ((label_array, self.object_domain_for_payload(label_array)),)
-        domain_stack = DenseObjectLabelPlaneDomainStackRequest(
-            self.label_payload,
-            None,
-            True,
-            True,
-        ).stack()
-        if domain_stack is not None:
-            return tuple(
-                (domain_stack.labels[index], object_ids)
-                for index, object_ids in enumerate(domain_stack.object_id_domains)
+        object_id_domains = domain.declared_object_id_domains
+        if not object_id_domains:
+            raise ValueError(
+                "ObjectLocationMeasurementRows requires one declared object-ID "
+                "domain per label plane."
             )
-        label_planes = self.label_planes()
-        slice_count = len(label_planes)
+        plane_count = self.label_payload.declared_plane_count()
+        if plane_count != len(object_id_domains):
+            raise ValueError(
+                "ObjectLocationMeasurementRows label-plane cardinality must match "
+                f"its declared domains; got {plane_count!r} planes and "
+                f"{len(object_id_domains)} domains."
+            )
         return tuple(
             (
-                label_plane,
-                self.object_domain_for_plane(
-                    label_plane,
-                    slice_index=slice_index,
-                    slice_count=slice_count,
+                object_label_project_plane(
+                    self.label_payload.labels,
+                    plane_index,
+                    plane_count=plane_count,
                 ),
+                object_ids,
             )
-            for slice_index, label_plane in enumerate(label_planes)
+            for plane_index, object_ids in enumerate(object_id_domains)
         )
 
     def centers_for_plane(
         self,
-        label_plane: CellProfilerRuntimeValue,
+        label_plane: RuntimeCallableArgument,
         *,
         domain: tuple[int, ...],
     ) -> ObjectLocationCenterValues:
-        coordinates = self.dense_label_centers_for_domain(label_plane, domain)
+        axis_centers, counts = object_label_axis_centers(
+            label_plane,
+            domain=domain,
+        )
         return ObjectLocationCenterValues(
             object_ids=domain,
-            coordinates=coordinates,
-        )
-
-    def object_domain_for_payload(
-        self,
-        label_payload: CellProfilerRuntimeValue,
-    ) -> tuple[int, ...]:
-        if self.include_declared_empty and isinstance(
-            self.label_payload,
-            ObjectLabelDomainMetadata,
-        ):
-            declared_domain = (
-                self.label_payload.object_label_domain().explicit_id_domain()
-            )
-            if declared_domain is not None:
-                return declared_domain
-        return self.present_domain_for_plane(
-            label_payload,
-            dense_extent=not self.include_declared_empty,
-        )
-
-    def object_domain_for_plane(
-        self,
-        label_plane: CellProfilerRuntimeValue,
-        *,
-        slice_index: int,
-        slice_count: int,
-    ) -> tuple[int, ...]:
-        if self.include_declared_empty:
-            declared_domain = self.declared_domain_for_plane(
-                slice_index=slice_index,
-                slice_count=slice_count,
-            )
-            if declared_domain is not None:
-                return declared_domain
-        return self.present_domain_for_plane(
-            label_plane,
-            dense_extent=not self.include_declared_empty,
-        )
-
-    def declared_domain_for_plane(
-        self,
-        *,
-        slice_index: int,
-        slice_count: int,
-    ) -> tuple[int, ...] | None:
-        if not isinstance(self.label_payload, ObjectLabelDomainMetadata):
-            return None
-        return (
-            self.label_payload.object_label_domain()
-            .project_slice(slice_index, slice_count)
-            .explicit_id_domain()
-        )
-
-    @staticmethod
-    def present_domain_for_plane(
-        label_plane: CellProfilerRuntimeValue,
-        *,
-        dense_extent: bool,
-    ) -> tuple[int, ...]:
-        labels = np.asarray(label_plane)
-        if labels.size == 0:
-            return ()
-        positive_labels = labels[labels > 0]
-        if positive_labels.size == 0:
-            return ()
-        if dense_extent:
-            return tuple(range(1, int(np.max(positive_labels)) + 1))
-        return tuple(int(label_id) for label_id in np.unique(positive_labels))
-
-    @staticmethod
-    def dense_label_centers_for_domain(
-        label_plane: CellProfilerRuntimeValue,
-        domain: Sequence[int],
-    ) -> tuple[tuple[ObjectLocationMeasurementFeature, np.ndarray], ...]:
-        labels = np.asarray(label_plane, dtype=np.int64)
-        center_x = np.full(len(domain), np.nan, dtype=np.float64)
-        center_y = np.full(len(domain), np.nan, dtype=np.float64)
-        center_z = np.full(len(domain), np.nan, dtype=np.float64)
-        if not domain or labels.size == 0:
-            return (
-                (ObjectLocationMeasurementFeature.CENTER_X, center_x),
-                (ObjectLocationMeasurementFeature.CENTER_Y, center_y),
-                *(
-                    ((ObjectLocationMeasurementFeature.CENTER_Z, center_z),)
-                    if labels.ndim >= 3
-                    else ()
-                ),
-            )
-
-        positive_coordinates = np.nonzero(labels > 0)
-        if not positive_coordinates or positive_coordinates[-1].size == 0:
-            return (
-                (ObjectLocationMeasurementFeature.CENTER_X, center_x),
-                (ObjectLocationMeasurementFeature.CENTER_Y, center_y),
-                *(
-                    ((ObjectLocationMeasurementFeature.CENTER_Z, center_z),)
-                    if labels.ndim >= 3
-                    else ()
-                ),
-            )
-
-        object_ids = labels[positive_coordinates]
-        max_domain_label = 0
-        if domain:
-            max_domain_label = max(domain)
-        max_label = max(int(object_ids.max()), max_domain_label)
-        counts = np.bincount(object_ids, minlength=max_label + 1)
-        axis_centers: list[np.ndarray] = []
-        for coordinates in positive_coordinates:
-            sums = np.bincount(
-                object_ids,
-                weights=coordinates,
-                minlength=max_label + 1,
-            )
-            centers = np.full(max_label + 1, np.nan, dtype=np.float64)
-            np.divide(sums, counts, out=centers, where=counts > 0)
-            axis_centers.append(centers)
-        for index, object_label in enumerate(domain):
-            if object_label <= 0 or object_label >= counts.shape[0]:
-                continue
-            count = counts[object_label]
-            if count <= 0:
-                continue
-            center_x[index] = axis_centers[-1][object_label]
-            center_y[index] = axis_centers[-2][object_label]
-            if labels.ndim >= 3:
-                center_z[index] = axis_centers[-3][object_label]
-        return (
-            (ObjectLocationMeasurementFeature.CENTER_X, center_x),
-            (ObjectLocationMeasurementFeature.CENTER_Y, center_y),
-            *(
-                ((ObjectLocationMeasurementFeature.CENTER_Z, center_z),)
-                if labels.ndim >= 3
-                else ()
+            coordinates=tuple(
+                (
+                    CellProfilerObjectCoreMeasurementFeature[
+                        ObjectCoreMeasurementFeature(feature_name).name
+                    ],
+                    np.asarray(coordinate.values, dtype=np.float64)[
+                        np.asarray(domain, dtype=np.int64)
+                    ],
+                )
+                for feature_name, coordinate in object_location_coordinate_arrays(
+                    axis_centers,
+                    counts,
+                )
             ),
         )
 
 
-def _split_cellprofiler_output(raw_output: CellProfilerRuntimeValue) -> tuple[CellProfilerRuntimeValue, CellProfilerRuntimeValues]:
-    raw_output = runtime_output_tuple(raw_output)
-    if isinstance(raw_output, tuple):
-        return raw_output[0], tuple(raw_output[1:])
-    return raw_output, ()
-
-
-def _measurement_rows_from_output(
-    artifact_values: CellProfilerRuntimeValues,
-) -> MeasurementRowsInput:
-    if not artifact_values:
-        return []
-    rows = artifact_values[0]
-    return measurement_table_rows(rows)
-
-
-def measurement_table_rows(rows: CellProfilerRuntimeValue) -> MeasurementRowsInput:
+def measurement_table_rows(rows: RuntimeCallableArgument) -> ColumnarRows:
     match rows:
         case ColumnarRows():
             return rows
         case RuntimeSliceAlignedValues(slices=slices) if all(
             isinstance(row, ColumnarRows) for row in slices
         ):
-            return ConcatenatedMeasurementColumnarRows(slices)
-        case list() as row_list if row_list and all(
-            isinstance(row, ColumnarRows) for row in row_list
-        ):
-            return ConcatenatedMeasurementColumnarRows(tuple(row_list))
-        case list() as row_list:
-            return row_list
-        case tuple() as row_tuple if row_tuple and all(
-            isinstance(row, ColumnarRows) for row in row_tuple
-        ):
-            return ConcatenatedMeasurementColumnarRows(row_tuple)
-        case tuple() as row_tuple:
-            return list(row_tuple)
+            return ConcatenatedColumnarRows(slices)
         case _:
-            return [rows]
-
-
-@dataclass(slots=True)
-class ConcatenatedMeasurementColumnarRows(ConcatenatedColumnarRows):
-    """Columnar table view over per-slice measurement column batches."""
-
-
-class LabelPayloadFinalProjection:
-    """Project runtime object-label payloads to their final label values."""
-
-    def value(self, payload: CellProfilerRuntimeValue) -> CellProfilerRuntimeValue:
-        """Return the final label plane from a runtime label payload."""
-        final_labels = ObjectLabelFinalLabels(payload).value()
-        return SingletonObjectLabelStackCollapseStrategy.for_labels(final_labels).collapse(
-            final_labels
-        )
-
-
-LABEL_PAYLOAD_FINAL = LabelPayloadFinalProjection()
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelFinalLabels:
-    """Resolve the final-label value from native or serialized label payloads."""
-
-    payload: CellProfilerRuntimeValue
-
-    def value(self) -> CellProfilerRuntimeValue:
-        match self.payload:
-            case ObjectLabelSet(
-                representation=ObjectLabelRepresentation.SPARSE_IJV
-            ) as label_set:
-                return label_set
-            case ObjectLabelSet() as label_set:
-                payload = label_set.runtime_payload()
-                if isinstance(payload, ObjectLabelPayload):
-                    return payload.labels
-                return payload
-            case ObjectLabelPayload() as payload:
-                return payload.labels
-            case _:
-                return self.payload
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectLabelSmallRemovedLabels:
-    """Resolve the small-removed variant from native or serialized label payloads."""
-
-    payload: CellProfilerRuntimeValue
-
-    def value_or_none(self) -> CellProfilerRuntimeValue | None:
-        match self.payload:
-            case ObjectLabelSet() as label_set:
-                return label_set.small_removed_labels
-            case ObjectLabelPayload() as payload:
-                return payload.small_removed_labels
-            case _:
-                return None
-
-
-def _label_payload_small_removed(payload: CellProfilerRuntimeValue) -> CellProfilerRuntimeValue | None:
-    """Return the small-removed label variant when the runtime provides it."""
-    labels = ObjectLabelSmallRemovedLabels(payload).value_or_none()
-    if labels is None:
-        return None
-    return SingletonObjectLabelStackCollapseStrategy.for_labels(labels).collapse(labels)
-
-def _sparse_ijv_array(value: CellProfilerRuntimeValue) -> np.ndarray:
-    if not isinstance(value, SparseIJVLabelRows):
-        return np.asarray(value, dtype=np.int32)
-    return np.asarray(value.as_array(), dtype=np.int32)
-
-
-class ObjectLabelCountAuthority:
-    """Authoritative CellProfiler object-count projection for label payloads."""
-
-    @classmethod
-    def count_from_adapter(
-        cls,
-        adapter: CellProfilerRuntimeAdapter,
-        object_name: str,
-        *,
-        slice_index: int | None = None,
-    ) -> int:
-        return cls.count_from_value(
-            adapter.get_objects(object_name),
-            slice_index=slice_index,
-        )
-
-    @staticmethod
-    def count_from_value(
-        value: CellProfilerRuntimeValue,
-        *,
-        slice_index: int | None = None,
-    ) -> int:
-        match value:
-            case ObjectLabelPayload(labels=labels):
-                pass
-            case _:
-                labels = value
-        match labels:
-            case SparseIJVLabelRows() as sparse_labels:
-                label_array = _sparse_ijv_array(sparse_labels)
-            case _:
-                label_array = np.asarray(labels)
-        match value:
-            case ObjectLabelSet(
-                representation=ObjectLabelRepresentation.SPARSE_IJV
-            ):
-                sparse_rows = SparseLabelRowsCoercion(labels).rows()
-            case _:
-                sparse_rows = None
-        if sparse_rows is not None:
-            if label_array.size == 0:
-                return 0
-            if slice_index is not None:
-                sparse_rows = sparse_rows.slice(slice_index)
-                label_array = sparse_rows.as_array()
-                if label_array.size == 0:
-                    return 0
-            return int(np.max(label_array[:, sparse_rows.label_column]))
-        match value:
-            case ObjectLabelValue(declared_object_count=declared_count) if (
-                declared_count is not None
-                and (
-                    slice_index is None
-                    or label_array.ndim < 3
-                    or label_array.shape[0] == 1
-                )
-            ):
-                return int(declared_count)
-        if slice_index is not None and label_array.ndim >= 3:
-            if slice_index < label_array.shape[0]:
-                label_array = label_array[slice_index]
-            elif label_array.shape[0] == 1:
-                label_array = label_array[0]
-            else:
-                raise ValueError(
-                    "Object label stack does not contain requested slice "
-                    f"{slice_index}; shape={label_array.shape!r}."
-                )
-        if label_array.size == 0:
-            return 0
-        return int(label_array.max())
-
-
-@dataclass(frozen=True, slots=True)
-class SparseLabelRowsCoercion:
-    """Coerce sparse label data into SparseIJV rows."""
-
-    labels: CellProfilerRuntimeValue
-
-    def rows(self) -> SparseIJVLabelRows:
-        match self.labels:
-            case SparseIJVLabelRows() as sparse_rows:
-                return sparse_rows
-            case _:
-                return SparseIJVLabelRows(self.labels)
-
-def _measurement_object_name(
-    inputs: tuple[ArtifactSpec, ...],
-) -> str | None:
-    object_inputs = ArtifactSpecCollection(inputs).of_artifact_type(ObjectLabelsArtifactType)
-    if len(object_inputs) == 1:
-        return object_inputs[0].name
-    return None
+            raise TypeError(
+                "CellProfiler measurement outputs must be schema-bearing "
+                f"ColumnarRows, got {type(rows).__name__}."
+            )

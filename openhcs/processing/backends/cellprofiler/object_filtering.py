@@ -3,6 +3,7 @@
 from __future__ import annotations
 from openhcs.interop.cellprofiler.measurement_lookup import (
     CellProfilerMeasurementFeature,
+    CellProfilerMeasurementFeatureKind,
 )
 from openhcs.interop.cellprofiler.setting_names import (
     RepeatedSettingSequence,
@@ -15,234 +16,261 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, ClassVar
+import inspect
+from typing import TYPE_CHECKING, ClassVar
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
-from python_introspect import set_parameter_exclusions
 from numba import njit
 from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.callable_contract import KeywordRuntimeParameter
+from openhcs.core.pipeline.function_contracts import (
+    runtime_bound_parameters,
+    special_inputs,
+)
 from openhcs.core.measurement_feature_queries import (
-    MeasurementFeatureQuery,
     measurement_values_for_feature,
-    normalize_measurement_token,
-    ordered_measurement_feature_candidates,
+)
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
 )
 from openhcs.core.artifacts import (
+    ArtifactInputPlan,
     ArtifactSpec,
     ArtifactSpecCollection,
     ArtifactSpecRef,
+    ArtifactSpecRelation,
     GroupLineageSourceRelation,
-    ImageArtifactType,
     ObjectLabelsArtifactType,
+    ObjectLineageArtifactType,
     MeasurementsArtifactType,
-    RelationshipsArtifactType,
+    SourceStackLineageSourceRelation,
 )
-from openhcs.core.runtime_semantics import (
+from openhcs.core.runtime_object_label_domains import (
     DenseObjectLabelExtentDomainDeclaration,
-    DenseObjectLabelPairAligner,
-    DenseObjectLabelStack,
     ObjectLabelIdDomainStrategy,
-    ObjectLabelMeasurementValues,
-    ParentChildRelationshipPayload,
-    parent_child_relationship_artifact_name,
 )
+from openhcs.core.source_spatial_domain import SourceSpatialDomainAdapter
+from openhcs.core.runtime_measurements import (
+    ObjectLabelMeasurementValues,
+)
+from openhcs.core.runtime_relationships import (
+    DirectedObjectRelationshipPayload,
+)
+from openhcs.core.runtime_relationships import ObjectRelationshipDeclaration
 from openhcs.interop.cellprofiler.measurement_dialect import (
     CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-)
-from openhcs.interop.cellprofiler.measurement_lookup import (
-    child_count_feature_child_name,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.analysis.region_properties import (
     LabelRegionPropertiesBackendStrategy,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.backends.cellprofiler.shape import (
-    MeasureObjectSizeShapeModule,
-    form_factor_values,
-)
 from openhcs.processing.backends.cellprofiler.relationships import (
     ObjectRelationshipBackendStrategy,
 )
-from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
-from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
-    ImageArtifactOutputCapability,
-    ImageArtifactOutputModule,
-    MeasurementArtifactOutputCapability,
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
     MeasurementArtifactOutputModule,
-    ModuleSettingsSourceModule,
     ObjectArtifactInputModule,
-    ObjectLabelArtifactInputCapability,
-    ObjectLabelArtifactOutputCapability,
     ObjectArtifactOutputModule,
     PlaneRuntimeArtifactModule,
     PriorMeasurementArtifactInputModule,
-    RelationshipArtifactInputCapability,
-    RelationshipArtifactInputModule,
-    RelationshipArtifactOutputCapability,
-    RelationshipArtifactOutputModule,
+    ParentChildLineageArtifactOutputModule,
 )
 from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
     optional_setting_value,
     required_setting_value,
+    setting_names,
     setting_values,
-    split_symbol_names,
 )
-from openhcs.core.runtime_values import (
+from openhcs.interop.cellprofiler_setting_normalization import (
+    normalize_cellprofiler_setting_name,
+)
+from openhcs.interop.cellprofiler.settings_binder import (
+    MeasurementFeatureSettingBinding,
+    SettingToKeywordBinding,
+)
+from openhcs.core.runtime_measurements import (
     MeasurementTable,
-    ObjectLabelPayload,
+)
+from openhcs.core.runtime_object_labels import (
     ObjectLabelValue,
-    ObjectRelationship,
     object_label_dense_array,
     object_label_value_with_dense_labels,
 )
-from openhcs.interop.cellprofiler.runtime.object_input_policies import (
-    ObjectRowsWithMeasurementsInputPolicy,
+from openhcs.core.runtime_relationships import (
+    ObjectRelationship,
 )
-from openhcs.interop.cellprofiler.runtime.bound_parameters import (
-    RuntimeBoundParameterName,
-    declared_runtime_bound_parameter_names,
+from openhcs.interop.cellprofiler.runtime.object_input_policies import (
+    ObjectLabelsInputBindingMixin,
+    ObjectLabelsRuntimeParameter,
 )
 from openhcs.interop.cellprofiler.runtime.object_measurement_vectors import (
     CellProfilerObjectMeasurementVectorBinding,
-    ObjectInputBindingRequest,
 )
-from openhcs.interop.cellprofiler.runtime.object_measurement_tables import (
-    object_measurement_tables_for_object,
-)
-from openhcs.interop.cellprofiler.runtime.payload_types import (
-    CellProfilerKwargDict,
-    CellProfilerKwargs,
-    CellProfilerRuntimeValue,
+from openhcs.core.steps.function_runtime import (
+    RuntimeCallableArgument,
+    RuntimeCallableKwargs,
 )
 from openhcs.interop.cellprofiler.runtime.runtime_profile import (
     CellProfilerRuntimeProfileLogger,
 )
+from openhcs.interop.cellprofiler.runtime.artifact_binding import (
+    RuntimeInputBindingRequest,
+)
 
-_FILTER_OBJECTS_MEASUREMENT_FEATURES_KWARG = "measurement_features"
+if TYPE_CHECKING:
+    from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
+    from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 
 
-@dataclass(frozen=True, slots=True)
-class FilterObjectsKwargSettings:
-    """Typed FilterObjects settings projected from CellProfiler kwargs."""
+class _FilterMeasurementValuesRuntimeParameter(KeywordRuntimeParameter):
+    """Runtime-bound selected measurement vector."""
 
-    measurement_features: tuple[str, ...]
+    parameter_name = "measurement_values"
+    annotation_type = np.ndarray | None
+    parameter_default = None
 
-    @classmethod
-    def from_kwargs(cls, kwargs: CellProfilerKwargs) -> "FilterObjectsKwargSettings":
-        raw_measurement_features = kwargs.get(
-            _FILTER_OBJECTS_MEASUREMENT_FEATURES_KWARG
-        )
-        if raw_measurement_features is None:
-            measurement_features = ()
-        else:
-            measurement_features = tuple(
-                (str(value) for value in raw_measurement_features)
+
+class _FilterMeasurementTablesRuntimeParameter(KeywordRuntimeParameter):
+    """Runtime-bound measurement tables used by multi-feature filters."""
+
+    parameter_name = "measurement_tables"
+    annotation_type = tuple[MeasurementTable, ...]
+    parameter_default = ()
+
+
+class _FilterEnclosingLabelsRuntimeParameter(KeywordRuntimeParameter):
+    """Runtime-bound enclosing-object labels."""
+
+    parameter_name = "enclosing_object_labels"
+    annotation_type = ObjectLabelValue | None
+    parameter_default = None
+
+
+class _FilterParentChildRelationshipsRuntimeParameter(KeywordRuntimeParameter):
+    """Runtime-bound measurement relationship rows."""
+
+    parameter_name = "parent_child_relationships"
+    annotation_type = tuple[
+        ObjectRelationship | DirectedObjectRelationshipPayload,
+        ...,
+    ]
+    parameter_default = ()
+
+
+class FilterObjectsRemovedObjectSourceRelation(SourceStackLineageSourceRelation):
+    """Mark the complementary FilterObjects output derived from one input set."""
+
+    relation_key: ClassVar[str] = "filter_objects_removed_object_source"
+    target_artifact_type = ObjectLabelsArtifactType
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.source.artifact_type is not ObjectLabelsArtifactType:
+            raise ValueError(
+                "FilterObjects removed-object output requires an object-label "
+                f"source, got {self.source.artifact_type.value}:{self.source.name}."
             )
-        return cls(measurement_features=measurement_features)
-
-
-class FilterObjectsRuntimeBindingParameters:
-    """Runtime-bound topology and measurement inputs for FilterObjects."""
-
-    measurement_values_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName("measurement_values")
-    )
-    enclosing_object_labels_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName("enclosing_object_labels")
-    )
-    parent_child_relationship_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName("parent_child_relationship")
-    )
-    parent_child_relationships_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName("parent_child_relationships")
-    )
-    additional_object_count_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName("additional_object_count")
-    )
-    outline_object_indices_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        RuntimeBoundParameterName("outline_object_indices")
-    )
 
 
 @dataclass(frozen=True, slots=True)
 class FilterObjectsRuntimeInputPlan:
     """Runtime object-label partition for one FilterObjects invocation."""
 
-    measurement_tables_kwarg: ClassVar[RuntimeBoundParameterName] = (
-        ObjectRowsWithMeasurementsInputPolicy.measurement_tables_kwarg
-    )
     object_specs: tuple[ArtifactSpec, ...]
     enclosing_spec: ArtifactSpec | None
-    settings: FilterObjectsKwargSettings
-    outline_object_indices: tuple[int, ...] = ()
-    relationship_spec: ArtifactSpec | None = None
+    measurement_features: tuple[str, ...]
     measurement_relationship_specs: tuple[ArtifactSpec, ...] = ()
 
     @classmethod
     def from_request(
-        cls, request: ObjectInputBindingRequest
+        cls, request: RuntimeInputBindingRequest
     ) -> "FilterObjectsRuntimeInputPlan":
-        runtime_inputs = request.runtime_inputs or request.object_inputs
-        object_inputs = ArtifactSpecCollection(runtime_inputs).of_artifact_type(
-            ObjectLabelsArtifactType
+        declared_inputs = request.declared_inputs
+        object_inputs = declared_inputs.of_artifact_type(ObjectLabelsArtifactType)
+        raw_measurement_features = request.kwargs.get(
+            FilterObjectsModule.measurement_feature_binding.require_parameter_name()
         )
-        settings = FilterObjectsKwargSettings.from_kwargs(request.kwargs)
+        measurement_features = (
+            ()
+            if raw_measurement_features is None
+            else tuple(str(value) for value in raw_measurement_features)
+        )
+        output_specs = request.adapter.request.require_callable_contract().artifact_outputs
+        output_objects = output_specs.of_artifact_type(ObjectLabelsArtifactType)
+        removed_output_relations = tuple(
+            (spec, relation)
+            for spec, relation in output_specs.relation_refs(
+                FilterObjectsRemovedObjectSourceRelation
+            )
+            if spec.artifact_type is ObjectLabelsArtifactType
+        )
+        if len(removed_output_relations) > 1:
+            raise ValueError(
+                "FilterObjects declares multiple removed-object outputs: "
+                f"{tuple(spec.name for spec, _relation in removed_output_relations)!r}."
+            )
+        removed_refs = {spec.ref() for spec, _relation in removed_output_relations}
         object_specs = cls._object_specs_from_output_lineage(
             object_inputs,
-            request.output_specs,
-            module_name=request.module_name,
+            tuple(spec for spec in output_objects if spec.ref() not in removed_refs),
+            module_name=request.adapter.request.require_callable_contract().module_name,
         )
+        if (
+            removed_output_relations
+            and removed_output_relations[0][1].source != object_specs[0].ref()
+        ):
+            removed_spec, removed_relation = removed_output_relations[0]
+            raise ValueError(
+                f"FilterObjects removed output {removed_spec.name!r} derives from "
+                f"{removed_relation.source.name!r}, but the primary filtered input "
+                f"is {object_specs[0].name!r}."
+            )
         filtered_refs = {spec.ref() for spec in object_specs}
         remaining_object_specs = tuple(
             spec for spec in object_inputs if spec.ref() not in filtered_refs
         )
         enclosing_spec = cls._enclosing_object_spec(
             remaining_object_specs,
-            module_name=request.module_name,
+            module_name=request.adapter.request.require_callable_contract().module_name,
         )
-        relationship_spec = None
         measurement_relationship_specs: list[ArtifactSpec] = []
-        if enclosing_spec is not None and object_specs:
-            relationship_spec = ArtifactSpecCollection(
-                runtime_inputs
-            ).by_name_and_artifact_type(
-                parent_child_relationship_artifact_name(
-                    enclosing_spec.name,
-                    object_specs[0].name,
-                ),
-                RelationshipsArtifactType,
-            )
+        relationship_declarations = declared_inputs.relation_refs(
+            ObjectRelationshipDeclaration
+        )
         if object_specs:
             for (
                 child_object_name
             ) in CellProfilerMeasurementFeature.child_count_object_names(
-                settings.measurement_features
+                measurement_features
             ):
-                relationship = ArtifactSpecCollection(
-                    runtime_inputs
-                ).by_name_and_artifact_type(
-                    parent_child_relationship_artifact_name(
-                        object_specs[0].name, child_object_name
-                    ),
-                    RelationshipsArtifactType,
+                child_spec = declared_inputs.by_name_and_artifact_type(
+                    child_object_name,
+                    ObjectLabelsArtifactType,
                 )
+                relationship = None
+                if child_spec is not None:
+                    matches = tuple(
+                        spec
+                        for spec, declaration in relationship_declarations
+                        if declaration.source == object_specs[0].ref()
+                        and declaration.target == child_spec.ref()
+                    )
+                    if len(matches) > 1:
+                        raise ValueError(
+                            "FilterObjects child-count endpoints select multiple "
+                            "relationship inputs: "
+                            f"{tuple(spec.name for spec in matches)!r}."
+                        )
+                    relationship = matches[0] if matches else None
                 if relationship is not None:
                     measurement_relationship_specs.append(relationship)
         return cls(
             object_specs=object_specs,
             enclosing_spec=enclosing_spec,
-            settings=settings,
-            outline_object_indices=cls._outline_object_indices(
-                object_specs,
-                request.output_specs,
-            ),
-            relationship_spec=relationship_spec,
+            measurement_features=measurement_features,
             measurement_relationship_specs=ArtifactSpecCollection(
                 measurement_relationship_specs
             ).unique(conflict_context="CellProfiler input spec"),
@@ -267,13 +295,9 @@ class FilterObjectsRuntimeInputPlan:
         for output_spec in output_objects:
             source = cls._single_object_input_lineage_source(output_spec)
             if source is None:
-                if len(output_objects) == 1 and len(object_inputs) == 1:
-                    return object_inputs
                 raise ValueError(
                     f"{module_name} object output {output_spec.name!r} has no "
-                    "GroupLineageSourceRelation to an input object artifact, "
-                    "and the runtime contract does not declare exactly one "
-                    "object input and one object output."
+                    "GroupLineageSourceRelation to an input object artifact."
                 )
             source_spec = ArtifactSpecCollection(object_inputs).by_ref(source)
             if source_spec is None:
@@ -318,32 +342,6 @@ class FilterObjectsRuntimeInputPlan:
                     f"from extra object inputs={[spec.name for spec in remaining_object_specs]!r}."
                 )
 
-    @classmethod
-    def _outline_object_indices(
-        cls,
-        object_specs: tuple[ArtifactSpec, ...],
-        output_specs: tuple[ArtifactSpec, ...],
-    ) -> tuple[int, ...]:
-        input_index_by_ref = {
-            spec.ref(): index for index, spec in enumerate(object_specs)
-        }
-        indices: list[int] = []
-        for image_output in ArtifactSpecCollection(output_specs).of_artifact_type(
-            ImageArtifactType
-        ):
-            source = cls._single_object_input_lineage_source(image_output)
-            if source is None:
-                continue
-            try:
-                indices.append(input_index_by_ref[source])
-            except KeyError as exc:
-                raise ValueError(
-                    f"FilterObjects outline image {image_output.name!r} references "
-                    f"object input {source.name!r}, which is not one of the filtered "
-                    f"object rows={[spec.name for spec in object_specs]!r}."
-                ) from exc
-        return tuple(indices)
-
     @property
     def primary_object_spec(self) -> ArtifactSpec | None:
         if not self.object_specs:
@@ -351,31 +349,33 @@ class FilterObjectsRuntimeInputPlan:
         return self.object_specs[0]
 
     def bind_measurement_inputs(
-        self, request: ObjectInputBindingRequest
-    ) -> CellProfilerKwargDict:
+        self, request: RuntimeInputBindingRequest
+    ) -> dict[str, RuntimeCallableArgument]:
         """Return FilterObjects measurement bindings owned by this runtime plan."""
         scoped_request = request.with_object_inputs(self.object_specs)
         measurement_values = self.measurement_vector(scoped_request)
         if measurement_values is not None:
             return {
-                FilterObjectsRuntimeBindingParameters.measurement_values_kwarg: measurement_values
+                _FilterMeasurementValuesRuntimeParameter.require_parameter_name(): measurement_values
             }
         measurement_tables = self.measurement_tables(scoped_request)
         if measurement_tables is None:
             return {}
-        return {self.measurement_tables_kwarg: measurement_tables}
+        return {
+            _FilterMeasurementTablesRuntimeParameter.require_parameter_name(): measurement_tables
+        }
 
     def measurement_vector(
-        self, request: ObjectInputBindingRequest
-    ) -> CellProfilerRuntimeValue | None:
+        self, request: RuntimeInputBindingRequest
+    ) -> RuntimeCallableArgument | None:
         object_spec = self.primary_object_spec
         if object_spec is None:
             return None
-        feature_names = self.settings.measurement_features
+        feature_names = self.measurement_features
         if len(feature_names) != 1:
             return None
         feature_name = str(feature_names[0])
-        labels = request.labels_for(object_spec)
+        labels = request.label_payload_for(object_spec)
         return (
             CellProfilerObjectMeasurementVectorBinding.for_object(
                 request,
@@ -384,19 +384,19 @@ class FilterObjectsRuntimeInputPlan:
                 labels=labels,
             )
             .vector()
-            .slice_aligned_value
+            .runtime_value
         )
 
     def measurement_tables(
-        self, request: ObjectInputBindingRequest
+        self, request: RuntimeInputBindingRequest
     ) -> tuple[MeasurementTable, ...] | None:
         object_spec = self.primary_object_spec
         if object_spec is None:
             return None
-        feature_names = self.settings.measurement_features
+        feature_names = self.measurement_features
         if not feature_names:
             return None
-        labels = request.labels_for(object_spec)
+        labels = request.label_payload_for(object_spec)
         tables_by_identity: dict[int, MeasurementTable] = {}
         for feature_name in feature_names:
             binding = CellProfilerObjectMeasurementVectorBinding.for_object(
@@ -411,78 +411,61 @@ class FilterObjectsRuntimeInputPlan:
                 if table_identity not in tables_by_identity:
                     tables_by_identity[table_identity] = table
         if not tables_by_identity:
-            return object_measurement_tables_for_object(
-                request.adapter, object_spec.name
+            raise ValueError(
+                f"{request.adapter.request.require_callable_contract().module_name} declared measurement inputs do not "
+                f"provide features {feature_names!r} for object {object_spec.name!r}."
             )
         return tuple(tables_by_identity.values())
 
 
-@dataclass(frozen=True, slots=True)
-class FilterObjectsBoundMeasurementInputs:
-    """Measurement binding profile for FilterObjects logging."""
-
-    bound: CellProfilerKwargs
-
-    @property
-    def measurement_tables(self) -> tuple[MeasurementTable, ...]:
-        value = self.bound.get(
-            ObjectRowsWithMeasurementsInputPolicy.measurement_tables_kwarg
-        )
-        if value is None:
-            return ()
-        return tuple(value)
-
-    @property
-    def measurement_values(self) -> CellProfilerRuntimeValue | None:
-        return self.bound.get(
-            FilterObjectsRuntimeBindingParameters.measurement_values_kwarg
-        )
-
-    @property
-    def measurement_values_type(self) -> str:
-        measurement_values = self.measurement_values
-        if measurement_values is None:
-            return "none"
-        return type(measurement_values).__name__
-
-
-class FilterObjectsInputPolicy(
-    FilterObjectsRuntimeBindingParameters,
-    ObjectRowsWithMeasurementsInputPolicy,
-):
+class FilterObjectsInputPolicy(ObjectLabelsInputBindingMixin):
     """Bind ordered primary/additional object rows for FilterObjects."""
 
     supported_non_object_input_kinds = frozenset(
-        {MeasurementsArtifactType, RelationshipsArtifactType}
+        {MeasurementsArtifactType, ObjectLineageArtifactType}
     )
 
-    def bind(self, request: ObjectInputBindingRequest) -> CellProfilerKwargDict:
+    @classmethod
+    def bind_runtime_inputs(
+        cls,
+        request: RuntimeInputBindingRequest,
+    ) -> dict[str, RuntimeCallableArgument]:
         plan = FilterObjectsRuntimeInputPlan.from_request(request)
-        bound = super().bind(request.with_object_inputs(plan.object_specs))
+        bound = super().bind_runtime_inputs(
+            request.with_object_inputs(plan.object_specs)
+        )
         bound.update(plan.bind_measurement_inputs(request))
-        bound[self.additional_object_count_kwarg] = max(len(plan.object_specs) - 1, 0)
-        bound[self.outline_object_indices_kwarg] = plan.outline_object_indices
-        bound_measurements = FilterObjectsBoundMeasurementInputs(bound)
-        measurement_values = bound_measurements.measurement_values
+        measurement_tables = tuple(
+            bound.get(_FilterMeasurementTablesRuntimeParameter.require_parameter_name())
+            or ()
+        )
+        measurement_values = bound.get(
+            _FilterMeasurementValuesRuntimeParameter.require_parameter_name()
+        )
         CellProfilerRuntimeProfileLogger.log_module_profile(
             "filterobjects_bound_measurements",
             0.0,
-            module=request.module_name,
-            table_count=len(bound_measurements.measurement_tables),
+            module=request.adapter.request.require_callable_contract().module_name,
+            table_count=len(measurement_tables),
             has_measurement_values=measurement_values is not None,
-            measurement_values_type=bound_measurements.measurement_values_type,
-            measurement_features=len(plan.settings.measurement_features),
+            measurement_values_type=(
+                "none"
+                if measurement_values is None
+                else type(measurement_values).__name__
+            ),
+            measurement_features=len(plan.measurement_features),
         )
         if plan.enclosing_spec is not None:
-            bound[self.enclosing_object_labels_kwarg] = request.labels_for(
-                plan.enclosing_spec
+            parameter_name = (
+                _FilterEnclosingLabelsRuntimeParameter.require_parameter_name()
             )
-        if plan.relationship_spec is not None:
-            bound[self.parent_child_relationship_kwarg] = (
-                request.current_plane_relationship_for(plan.relationship_spec)
+            bound[parameter_name] = request.label_argument_for(
+                plan.enclosing_spec, parameter_name
             )
         if plan.measurement_relationship_specs:
-            bound[self.parent_child_relationships_kwarg] = tuple(
+            bound[
+                _FilterParentChildRelationshipsRuntimeParameter.require_parameter_name()
+            ] = tuple(
                 (
                     request.current_plane_relationship_for(relationship_spec)
                     for relationship_spec in plan.measurement_relationship_specs
@@ -496,12 +479,9 @@ class FilterObjectsModule(
     FilterObjectsInputPolicy,
     ObjectArtifactInputModule,
     ObjectArtifactOutputModule,
-    RelationshipArtifactInputModule,
-    RelationshipArtifactOutputModule,
-    ImageArtifactOutputModule,
+    ParentChildLineageArtifactOutputModule,
     PriorMeasurementArtifactInputModule,
     MeasurementArtifactOutputModule,
-    ModuleSettingsSourceModule,
 ):
     module_name = "FilterObjects"
     function_name = "filter_objects"
@@ -522,22 +502,209 @@ class FilterObjectsModule(
     minimum_setting = "Minimum value"
     use_maximum_setting = "Filter using a maximum measurement value?"
     maximum_setting = "Maximum value"
-    main_outline_setting = "Retain the outlines of filtered objects for use later in the pipeline (for example, in SaveImages)?"
-    outline_image_setting = "Name the outline image"
+    measurement_feature_binding = MeasurementFeatureSettingBinding(
+        measurement_setting,
+        "measurement_features",
+    )
+    measurement_minimum_binding = SettingToKeywordBinding(
+        minimum_setting,
+        "measurement_min_values",
+    )
+    measurement_maximum_binding = SettingToKeywordBinding(
+        maximum_setting,
+        "measurement_max_values",
+    )
+    measurement_use_minimum_binding = SettingToKeywordBinding(
+        use_minimum_setting,
+        "measurement_use_minimum",
+    )
+    measurement_use_maximum_binding = SettingToKeywordBinding(
+        use_maximum_setting,
+        "measurement_use_maximum",
+    )
+    measurement_rule_bindings = (
+        measurement_feature_binding,
+        measurement_minimum_binding,
+        measurement_maximum_binding,
+        measurement_use_minimum_binding,
+        measurement_use_maximum_binding,
+    )
     additional_input_setting = "Select additional object to relabel"
     additional_output_setting = "Name the relabeled objects"
-    additional_outline_setting = "Save outlines of relabeled objects?"
     enclosing_object_setting = "Select the objects that contain the filtered objects"
     per_object_assignment_setting = "Assign overlapping child to"
-    object_input_settings = (
+    measurement_count_setting = "Measurement count"
+    additional_object_count_setting = "Additional object count"
+    classifier_location_setting = "Select the location of the rules or classifier file"
+    classifier_file_setting = "Rules or classifier file name"
+    classifier_class_setting = "Class number"
+    keep_removed_objects_setting = "Keep removed objects as a separate set?"
+    removed_objects_name_setting = "Name the objects removed by the filter"
+    ignored_settings = (
+        classifier_location_setting,
+        classifier_file_setting,
+        classifier_class_setting,
+    )
+    input_binding = SettingToKeywordBinding.input(
         input_setting,
+        ObjectLabelsArtifactType,
+        runtime_parameter_name=ObjectLabelsRuntimeParameter.require_parameter_name(),
+    )
+    additional_input_binding = SettingToKeywordBinding.input(
         additional_input_setting,
+        ObjectLabelsArtifactType,
+        repeated=True,
+        runtime_parameter_name=ObjectLabelsRuntimeParameter.require_parameter_name(),
+    )
+    enclosing_object_binding = SettingToKeywordBinding.input(
         enclosing_object_setting,
+        ObjectLabelsArtifactType,
+        runtime_parameter_name=(
+            _FilterEnclosingLabelsRuntimeParameter.require_parameter_name()
+        ),
     )
-    object_output_settings = (
-        output_setting,
-        additional_output_setting,
+    output_binding = SettingToKeywordBinding.output(
+        output_setting, ObjectLabelsArtifactType
     )
+    additional_output_binding = SettingToKeywordBinding.output(
+        additional_output_setting, ObjectLabelsArtifactType, repeated=True
+    )
+    removed_output_binding = SettingToKeywordBinding.output(
+        removed_objects_name_setting, ObjectLabelsArtifactType
+    )
+    additional_object_count_binding = SettingToKeywordBinding(
+        additional_object_count_setting,
+        "additional_object_count",
+        int,
+    )
+    emit_removed_objects_binding = SettingToKeywordBinding(
+        keep_removed_objects_setting,
+        "emit_removed_objects",
+        parse_cellprofiler_bool,
+    )
+    setting_bindings = (
+        input_binding,
+        additional_input_binding,
+        enclosing_object_binding,
+        output_binding,
+        additional_output_binding,
+        removed_output_binding,
+        SettingToKeywordBinding(mode_setting, "mode"),
+        SettingToKeywordBinding(method_setting, "filter_method"),
+        SettingToKeywordBinding(
+            per_object_assignment_setting,
+            "per_object_assignment",
+        ),
+        additional_object_count_binding,
+        emit_removed_objects_binding,
+    )
+
+    @classmethod
+    def active_artifact_bindings(cls, module=None, *, invocation_key=None):
+        """Expose only the object topology declared by this module value."""
+
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
+        )
+        if module is None:
+            return bindings
+        additional_objects = cls.additional_object_count(module)
+        enclosing_objects = cls.filter_method(module).requires_enclosing_object
+        removed_objects = cls.emits_removed_objects(module)
+        return tuple(
+            binding
+            for binding in bindings
+            if additional_objects
+            or binding
+            not in (cls.additional_input_binding, cls.additional_output_binding)
+            if enclosing_objects or binding is not cls.enclosing_object_binding
+            if removed_objects or binding is not cls.removed_output_binding
+        )
+
+    @classmethod
+    def topology_parameter_value(
+        cls,
+        module: "ModuleBlock",
+        binding: SettingToKeywordBinding,
+    ) -> object:
+        """Resolve one topology value from its setting or public callable default."""
+
+        values = setting_values(module, binding.setting_name)
+        if len(values) > 1:
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) declares "
+                f"{len(values)} rows for scalar FilterObjects topology setting "
+                f"{setting_names(binding.setting_name)[0]!r}."
+            )
+        if values:
+            return values[0] if binding.parse is None else binding.parse(values[0])
+        parameter_name = binding.require_parameter_name()
+        parameter = inspect.signature(cls.require_callable()).parameters[parameter_name]
+        if parameter.default is inspect.Parameter.empty:
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) omits required "
+                f"FilterObjects topology setting "
+                f"{setting_names(binding.setting_name)[0]!r}."
+            )
+        return parameter.default
+
+    @classmethod
+    def additional_object_count(cls, module: "ModuleBlock") -> int:
+        """Return the exact public additional-object topology cardinality."""
+
+        values = setting_values(
+            module,
+            cls.additional_object_count_binding.setting_name,
+        )
+        if len(values) != 1:
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) requires exactly one "
+                f"FilterObjects {cls.additional_object_count_setting!r} setting "
+                f"row, got {len(values)}."
+            )
+        parser = cls.additional_object_count_binding.parse
+        if parser is None:
+            raise TypeError(
+                "FilterObjects additional-object count binding requires a parser."
+            )
+        count = parser(values[0])
+        if not isinstance(count, int):
+            raise TypeError(
+                "FilterObjects additional-object count must resolve to int, got "
+                f"{type(count).__name__}."
+            )
+        if count < 0:
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) declares a negative "
+                f"FilterObjects additional-object count {count}."
+            )
+        return count
+
+    @classmethod
+    def emits_removed_objects(cls, module: "ModuleBlock") -> bool:
+        """Return whether the public invocation declares a removed-object output."""
+
+        value = cls.topology_parameter_value(
+            module,
+            cls.emit_removed_objects_binding,
+        )
+        if not isinstance(value, bool):
+            raise TypeError(
+                "FilterObjects emit_removed_objects must resolve to bool, got "
+                f"{type(value).__name__}."
+            )
+        return value
+
+    @classmethod
+    def removed_object_name(cls, module: "ModuleBlock") -> str | None:
+        """Return the declared complementary output name when enabled."""
+
+        if not cls.emits_removed_objects(module):
+            return None
+        name = required_setting_value(module, cls.removed_objects_name_setting)
+        cls.SymbolRequirement(name, cls.removed_objects_name_setting).validate(module)
+        return name
 
     @dataclass(frozen=True, slots=True)
     class SymbolRequirement:
@@ -564,34 +731,6 @@ class FilterObjectsModule(
     class AdditionalObjectRow(ObjectPair):
         """One additional object set relabeled using the primary filter mask."""
 
-        retain_outline: bool = False
-        outline_image_name: str | None = None
-
-        @classmethod
-        def from_block(
-            cls, module: "ModuleBlock", block: Sequence["ModuleSetting"]
-        ) -> "FilterObjectsModule.AdditionalObjectRow":
-            return cls(
-                input_object_name=block_setting_value(
-                    block, FilterObjectsModule.additional_input_setting
-                ),
-                output_object_name=block_setting_value(
-                    block, FilterObjectsModule.additional_output_setting
-                ),
-                retain_outline=parse_cellprofiler_bool(
-                    block_setting_value(
-                        block,
-                        FilterObjectsModule.additional_outline_setting,
-                        default="No",
-                    )
-                ),
-                outline_image_name=normalized_symbol_name(
-                    block_setting_value(
-                        block, FilterObjectsModule.outline_image_setting
-                    )
-                ),
-            ).validated(module)
-
         def validated(
             self, module: "ModuleBlock"
         ) -> "FilterObjectsModule.AdditionalObjectRow":
@@ -601,10 +740,6 @@ class FilterObjectsModule(
             FilterObjectsModule.SymbolRequirement(
                 self.output_object_name, FilterObjectsModule.additional_output_setting
             ).validate(module)
-            if self.retain_outline and self.outline_image_name is None:
-                raise ValueError(
-                    f"Module {module.name}({module.module_num}) retains an additional FilterObjects outline without an outline image name."
-                )
             return self
 
     @dataclass(frozen=True, slots=True)
@@ -656,11 +791,10 @@ class FilterObjectsModule(
     class Plan(ObjectPair):
         """Complete typed FilterObjects artifact and runtime plan."""
 
-        retain_outline: bool
-        outline_image_name: str | None
         additional_rows: tuple["FilterObjectsModule.AdditionalObjectRow", ...]
         enclosing_object_name: str | None
         per_object_assignment: str
+        removed_object_name: str | None
 
         @property
         def input_object_names(self) -> tuple[str, ...]:
@@ -678,107 +812,106 @@ class FilterObjectsModule(
         def object_pairs(self) -> tuple["FilterObjectsModule.ObjectPair", ...]:
             return (self, *self.additional_rows)
 
+        def identity_kwargs(self) -> RuntimeCallableKwargs:
+            """Return only topology identities that cannot follow main-flow order."""
+
+            kwargs: RuntimeCallableKwargs = {}
+            if self.additional_rows:
+                kwargs[
+                    FilterObjectsModule.additional_input_binding.require_parameter_name()
+                ] = tuple(row.input_object_name for row in self.additional_rows)
+                kwargs[
+                    FilterObjectsModule.additional_output_binding.require_parameter_name()
+                ] = tuple(row.output_object_name for row in self.additional_rows)
+            if self.removed_object_name is not None:
+                kwargs[
+                    FilterObjectsModule.removed_output_binding.require_parameter_name()
+                ] = self.removed_object_name
+            return kwargs
+
         def output_artifact_specs(
             self,
+            module: "ModuleBlock",
             measurement_artifact_name: str,
+            artifact_inputs: ArtifactSpecCollection,
+            step_context: "ArtifactDeclarationStepContext",
         ) -> tuple[ArtifactSpec, ...]:
             object_sources = tuple(
                 (
                     (
                         pair,
-                        ArtifactSpecRef.input(
-                            pair.input_object_name, ObjectLabelsArtifactType
+                        artifact_inputs.require_by_name_and_artifact_type(
+                            pair.input_object_name,
+                            ObjectLabelsArtifactType,
                         ),
                     )
                     for pair in self.object_pairs
                 )
             )
-            return (
-                MeasurementArtifactOutputCapability.spec(
-                    measurement_artifact_name,
-                    relations=(
-                        GroupLineageSourceRelation(source=object_sources[0][1]),
-                    ),
-                ),
-                *(
-                    ObjectLabelArtifactOutputCapability.spec(
+            object_outputs = tuple(
+                (
+                    source,
+                    ArtifactSpec.output(
                         pair.output_object_name,
-                        relations=(GroupLineageSourceRelation(source=source),),
-                    )
-                    for pair, source in object_sources
-                ),
-                *(
-                    RelationshipArtifactOutputCapability.spec(
-                        parent_child_relationship_artifact_name(
-                            pair.input_object_name, pair.output_object_name
-                        ),
-                        relations=(GroupLineageSourceRelation(source=source),),
-                    )
-                    for pair, source in object_sources
-                ),
-                *(
-                    ImageArtifactOutputCapability.spec(
-                        outline_name,
+                        ObjectLabelsArtifactType,
                         relations=(
-                            GroupLineageSourceRelation(
-                                source=ArtifactSpecRef.input(
-                                    input_name,
-                                    ObjectLabelsArtifactType,
-                                )
+                            SourceStackLineageSourceRelation(source=source.ref()),
+                        ),
+                    ),
+                )
+                for pair, source in object_sources
+            )
+            if self.removed_object_name is not None:
+                removed_source = object_sources[0][1]
+                object_outputs = (
+                    *object_outputs,
+                    (
+                        removed_source,
+                        ArtifactSpec.output(
+                            self.removed_object_name,
+                            ObjectLabelsArtifactType,
+                            relations=(
+                                FilterObjectsRemovedObjectSourceRelation(
+                                    source=removed_source.ref()
+                                ),
                             ),
                         ),
-                    )
-                    for outline_name, input_name in self.outline_source_pairs()
+                    ),
+                )
+            relationship_outputs = tuple(
+                FilterObjectsModule.parent_child_relationship_output_artifact(
+                    module,
+                    step_context=step_context,
+                    parent=source,
+                    child=output,
+                    lineage_source=source,
+                )
+                for source, output in object_outputs
+            )
+            measurement_dependencies = (
+                *(output for _source, output in object_outputs),
+                *relationship_outputs,
+            )
+            return (
+                ArtifactSpec.output(
+                    measurement_artifact_name,
+                    MeasurementsArtifactType,
+                    relations=(
+                        SourceStackLineageSourceRelation(
+                            source=object_sources[0][1].ref()
+                        ),
+                        *(
+                            ArtifactSpecRelation(source=output.ref())
+                            for output in measurement_dependencies
+                        ),
+                    ),
                 ),
+                *(output for _source, output in object_outputs),
+                *relationship_outputs,
             )
-
-        @property
-        def outline_image_names(self) -> tuple[str, ...]:
-            names: list[str] = []
-            if self.retain_outline:
-                if self.outline_image_name is None:
-                    raise RuntimeError("FilterObjects retained outline has no name.")
-                names.append(self.outline_image_name)
-            names.extend(
-                (
-                    row.outline_image_name
-                    for row in self.additional_rows
-                    if row.retain_outline and row.outline_image_name is not None
-                )
-            )
-            return tuple(names)
-
-        def outline_source_pairs(self) -> tuple[tuple[str, str], ...]:
-            pairs: list[tuple[str, str]] = []
-            if self.retain_outline:
-                if self.outline_image_name is None:
-                    raise RuntimeError("FilterObjects retained outline has no name.")
-                pairs.append((self.outline_image_name, self.input_object_name))
-            pairs.extend(
-                (
-                    (row.outline_image_name, row.input_object_name)
-                    for row in self.additional_rows
-                    if row.retain_outline and row.outline_image_name is not None
-                )
-            )
-            return tuple(pairs)
-
-        @property
-        def outline_object_indices(self) -> tuple[int, ...]:
-            indices: list[int] = []
-            if self.retain_outline:
-                indices.append(0)
-            indices.extend(
-                (
-                    index
-                    for index, row in enumerate(self.additional_rows, start=1)
-                    if row.retain_outline
-                )
-            )
-            return tuple(indices)
 
     @classmethod
-    def settings_source(cls, module: "ModuleBlock") -> "CellProfilerKwargs":
+    def _filter_kwargs(cls, module: "ModuleBlock") -> "RuntimeCallableKwargs":
         """Return absorbed-function kwargs for a typed FilterObjects plan."""
         plan = cls.plan(module)
         measurement_rules = cls.measurement_rules(module)
@@ -786,34 +919,109 @@ class FilterObjectsModule(
             "mode": cls.mode_value(module),
             "filter_method": optional_setting_value(module, cls.method_setting)
             or "Limits",
-            "measurement_features": tuple(
+            cls.measurement_feature_binding.require_parameter_name(): tuple(
                 (rule.feature_name for rule in measurement_rules)
             ),
-            "measurement_min_values": tuple(
+            cls.measurement_minimum_binding.require_parameter_name(): tuple(
                 (rule.min_value for rule in measurement_rules)
             ),
-            "measurement_max_values": tuple(
+            cls.measurement_maximum_binding.require_parameter_name(): tuple(
                 (rule.max_value for rule in measurement_rules)
             ),
-            "measurement_use_minimum": tuple(
+            cls.measurement_use_minimum_binding.require_parameter_name(): tuple(
                 (rule.use_minimum for rule in measurement_rules)
             ),
-            "measurement_use_maximum": tuple(
+            cls.measurement_use_maximum_binding.require_parameter_name(): tuple(
                 (rule.use_maximum for rule in measurement_rules)
             ),
             "per_object_assignment": plan.per_object_assignment,
+            **plan.identity_kwargs(),
         }
+
+    @classmethod
+    def bind_settings(cls, module, *, binder):
+        """Bind behavior and consume the module's repeated topology rows."""
+
+        bound = cls._bind_declared_settings(module, binder=binder)
+        bound = bound.with_kwargs(cls._filter_kwargs(module)).with_consumed_settings(
+            *(binding.setting_name for binding in cls.measurement_rule_bindings),
+            cls.measurement_count_setting,
+        )
+        return cls._finalize_bound_settings(module, binder=binder, bound=bound)
+
+    @classmethod
+    def _derived_identity_setting_records(
+        cls,
+        *,
+        invocation,
+        block_position,
+        existing_records,
+        step_context,
+    ):
+        """Reconstruct interleaved measurement-limit rows from public tuples."""
+
+        from openhcs.interop.cellprofiler.cellprofiler_literals import (
+            cellprofiler_setting_literal,
+        )
+        from openhcs.interop.cellprofiler.parser import ModuleSetting
+
+        existing_names = cls._normalized_record_setting_names(existing_records)
+        rule_setting_names = {
+            normalize_cellprofiler_setting_name(name)
+            for binding in cls.measurement_rule_bindings
+            for name in setting_names(binding.setting_name)
+        }
+        own_records: tuple[ModuleSetting, ...] = ()
+        if not existing_names.intersection(rule_setting_names):
+            columns = tuple(
+                tuple(value if isinstance(value, (tuple, list)) else (value,))
+                for binding in cls.measurement_rule_bindings
+                if (
+                    value := invocation.kwargs_dict.get(
+                        binding.require_parameter_name(), ()
+                    )
+                )
+            )
+            if columns:
+                cardinalities = {len(column) for column in columns}
+                if (
+                    len(columns) != len(cls.measurement_rule_bindings)
+                    or len(cardinalities) != 1
+                ):
+                    raise ValueError(
+                        "FilterObjects measurement-rule kwargs must declare equal-length tuples."
+                    )
+                own_records = tuple(
+                    ModuleSetting(
+                        setting_names(binding.setting_name)[0],
+                        (
+                            ""
+                            if column[row_index] is None
+                            else cellprofiler_setting_literal(column[row_index])
+                        ),
+                    )
+                    for row_index in range(len(columns[0]))
+                    for binding, column in zip(
+                        cls.measurement_rule_bindings, columns, strict=True
+                    )
+                )
+        return (
+            *own_records,
+            *super()._derived_identity_setting_records(
+                invocation=invocation,
+                block_position=block_position,
+                existing_records=(*existing_records, *own_records),
+                step_context=step_context,
+            ),
+        )
 
     @classmethod
     def plan(cls, module: "ModuleBlock") -> "FilterObjectsModule.Plan":
         """Return the typed FilterObjects compile/runtime plan."""
+        filter_method = cls.filter_method(module)
         plan = cls.Plan(
             input_object_name=required_setting_value(module, cls.input_setting),
             output_object_name=required_setting_value(module, cls.output_setting),
-            retain_outline=parse_cellprofiler_bool(
-                optional_setting_value(module, cls.main_outline_setting) or "No"
-            ),
-            outline_image_name=cls.main_outline_image_name(module),
             additional_rows=cls.additional_rows(module),
             enclosing_object_name=normalized_symbol_name(
                 optional_setting_value(module, cls.enclosing_object_setting) or ""
@@ -822,6 +1030,7 @@ class FilterObjectsModule(
                 module, cls.per_object_assignment_setting
             )
             or "Both parents",
+            removed_object_name=cls.removed_object_name(module),
         )
         cls.SymbolRequirement(plan.input_object_name, cls.input_setting).validate(
             module
@@ -829,42 +1038,47 @@ class FilterObjectsModule(
         cls.SymbolRequirement(plan.output_object_name, cls.output_setting).validate(
             module
         )
-        if plan.retain_outline and plan.outline_image_name is None:
+        if (
+            filter_method.requires_enclosing_object
+            and plan.enclosing_object_name is None
+        ):
             raise ValueError(
-                f"Module {module.name}({module.module_num}) retains filtered-object outlines without an outline image name."
+                f"Module {module.name}({module.module_num}) uses "
+                f"{filter_method.value!r} filtering without an "
+                "enclosing object input."
             )
         return plan
+
+    @classmethod
+    def filter_method(cls, module: "ModuleBlock") -> "FilterMethod":
+        """Return the nominal filtering method declared by one module."""
+
+        return coerce_cellprofiler_enum(
+            FilterMethod,
+            optional_setting_value(module, cls.method_setting) or FilterMethod.LIMITS,
+        )
 
     @classmethod
     def additional_rows(
         cls, module: "ModuleBlock"
     ) -> tuple["FilterObjectsModule.AdditionalObjectRow", ...]:
         """Return ordered additional relabel rows from parsed settings."""
-        if module.iter_settings():
-            blocks = repeating_setting_blocks(
-                module.iter_settings(), start_name=cls.additional_input_setting
-            )
-            return tuple(
-                (cls.AdditionalObjectRow.from_block(module, block) for block in blocks)
-            )
+        row_count = cls.additional_object_count(module)
         input_names = setting_values(module, cls.additional_input_setting)
         output_names = setting_values(module, cls.additional_output_setting)
-        outline_flags = setting_values(module, cls.additional_outline_setting)
-        outline_names = setting_values(module, cls.outline_image_setting)[1:]
-        row_count = max(len(input_names), len(output_names), len(outline_flags))
+        if len(input_names) != row_count or len(output_names) != row_count:
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) declares "
+                f"additional_object_count={row_count}, but FilterObjects has "
+                f"{len(input_names)} additional inputs and {len(output_names)} "
+                "additional outputs."
+            )
         return tuple(
-            (
-                cls.AdditionalObjectRow(
-                    input_object_name=RepeatedSettingSequence(input_names).at(index),
-                    output_object_name=RepeatedSettingSequence(output_names).at(index),
-                    retain_outline=parse_cellprofiler_bool(
-                        RepeatedSettingSequence(outline_flags, default="No").at(index)
-                    ),
-                    outline_image_name=normalized_symbol_name(
-                        RepeatedSettingSequence(outline_names).at(index)
-                    ),
-                ).validated(module)
-                for index in range(row_count)
+            cls.AdditionalObjectRow(input_name, output_name).validated(module)
+            for input_name, output_name in zip(
+                input_names,
+                output_names,
+                strict=True,
             )
         )
 
@@ -914,20 +1128,11 @@ class FilterObjectsModule(
         )
 
     @classmethod
-    def main_outline_image_name(cls, module: "ModuleBlock") -> str | None:
-        names = setting_values(module, cls.outline_image_setting)
-        if not names:
-            return None
-        return normalized_symbol_name(names[0])
-
-    @classmethod
-    def mode_value(cls, module: "ModuleBlock") -> str:
+    def mode_value(cls, module: "ModuleBlock") -> "FilterMode":
         value = optional_setting_value(module, cls.mode_setting)
         if value is None:
-            return "Measurements"
-        if "border" in value.strip().lower():
-            return "Border"
-        return value
+            return FilterMode.MEASUREMENTS
+        return FilterMode(value.strip().lower())
 
     @staticmethod
     def optional_float(raw_value: str | None) -> float | None:
@@ -939,47 +1144,81 @@ class FilterObjectsModule(
         return float(stripped)
 
     @classmethod
-    def artifact_contract(cls, assembler, builder, module):
+    def artifact_contract_inputs(
+        cls,
+        module,
+        *,
+        invocation_key,
+        step_context,
+    ):
         plan = cls.plan(module)
         inputs = [
-            *(
-                ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(name))
-                for name in plan.input_object_names
+            *super().artifact_contract_inputs(
+                module,
+                invocation_key=invocation_key,
+                step_context=step_context,
             ),
-            *cls.prior_measurement_artifact_inputs(builder),
         ]
-        if plan.enclosing_object_name is not None:
-            relationship = builder.optional_artifact(
-                RelationshipArtifactInputCapability.spec(parent_child_relationship_artifact_name(
-                        plan.enclosing_object_name, plan.input_object_name
-                    ))
-            )
-            if relationship is not None:
-                inputs.append(relationship)
-        for child_object_name in cls.child_count_object_names(module):
-            relationship = builder.optional_artifact(
-                RelationshipArtifactInputCapability.spec(parent_child_relationship_artifact_name(
-                        plan.input_object_name, child_object_name
-                    ))
-            )
-            if relationship is not None:
-                inputs.append(relationship)
-        outputs = [
+        available_specs = ArtifactSpecCollection(
             (
-                cls.image_output_artifact(
-                    builder,
-                    module,
-                    spec.name,
-                    relations=spec.relations,
-                    sidecar_role=spec.sidecar_role,
-                )
-                if spec.artifact_type is ImageArtifactType
-                else builder.declare_artifact(spec, module)
+                *step_context.main_flow_artifacts.specs,
+                *step_context.available_artifacts.specs,
             )
-            for spec in plan.output_artifact_specs(cls.measurement_artifact_name(module))
-        ]
-        return assembler.assemble_contract(
-            module, builder, inputs=inputs, outputs=outputs
+        ).unique(conflict_context="active relationship artifact")
+
+        relationship_declarations = ArtifactSpecCollection(
+            available_specs
+        ).relation_refs(ObjectRelationshipDeclaration)
+        source_ref = (
+            ArtifactSpecCollection(inputs)
+            .require_by_name_and_artifact_type(
+                plan.input_object_name,
+                ObjectLabelsArtifactType,
+            )
+            .ref()
+            .for_plan_type(ArtifactInputPlan)
+        )
+        for target_name in cls.child_count_object_names(module):
+            target_ref = ArtifactSpec.input(
+                target_name,
+                ObjectLabelsArtifactType,
+            ).ref()
+            matches = tuple(
+                spec
+                for spec, declaration in relationship_declarations
+                if declaration.projects_parent_child_measurements()
+                and declaration.source.for_plan_type(ArtifactInputPlan) == source_ref
+                and declaration.target.for_plan_type(ArtifactInputPlan) == target_ref
+            )
+            if len(matches) > 1:
+                raise ValueError(
+                    "FilterObjects endpoints select multiple active relationship "
+                    f"artifacts: {source_ref!r} -> {target_ref!r}: "
+                    f"{tuple(spec.name for spec in matches)!r}."
+                )
+            if matches:
+                inputs.append(matches[0].for_plan_type(ArtifactInputPlan))
+        return tuple(inputs)
+
+    @classmethod
+    def artifact_contract_outputs(
+        cls,
+        module,
+        *,
+        invocation_key,
+        step_context,
+        artifact_inputs: ArtifactSpecCollection,
+    ):
+        plan = cls.plan(module)
+        return plan.output_artifact_specs(
+            module,
+            cls.measurement_artifact_name(
+                module,
+                invocation_key=invocation_key,
+                step_context=step_context,
+            ),
+            artifact_inputs,
+            step_context,
         )
 
 
@@ -991,6 +1230,12 @@ class FilterMethod(Enum):
     MINIMAL_PER_OBJECT = "minimal_per_object"
     MAXIMAL_PER_OBJECT = "maximal_per_object"
     LIMITS = "limits"
+
+    @property
+    def requires_enclosing_object(self) -> bool:
+        """Return whether this method selects one child per enclosing object."""
+
+        return self in {self.MINIMAL_PER_OBJECT, self.MAXIMAL_PER_OBJECT}
 
 
 class FilterMode(Enum):
@@ -1008,48 +1253,14 @@ class PerObjectAssignment(Enum):
 
 
 FilterObjectsParentChildRelationship = (
-    ObjectRelationship | ParentChildRelationshipPayload
+    ObjectRelationship | DirectedObjectRelationshipPayload
 )
 FilterObjectsParentChildRelationships = tuple[FilterObjectsParentChildRelationship, ...]
 
 
-@dataclass(frozen=True, slots=True)
-class FilterObjectsRelationshipEndpointIds:
-    """Dense integer ids carried by a FilterObjects relationship endpoint."""
-
-    values: object
-
-    @property
-    def ids(self) -> tuple[int, ...]:
-        return tuple((int(value) for value in np.asarray(self.values).reshape(-1)))
-
-
-@dataclass(frozen=True, slots=True)
-class FilterObjectsLabelPlane:
-    """Dense label plane with FilterObjects projection/alignment semantics."""
-
-    labels: np.ndarray
-
-    @property
-    def projected(self) -> np.ndarray:
-        labels = object_label_dense_array(self.labels, dtype=np.int32)
-        return DenseObjectLabelStack.from_labels(
-            labels
-        ).project_xy_plane_without_relabeling()
-
-    def aligned_to(self, reference_labels: np.ndarray) -> np.ndarray:
-        _aligned_reference, aligned_labels = DenseObjectLabelPairAligner(
-            reference_labels, object_label_dense_array(self.labels, dtype=np.int32)
-        ).aligned()
-        return aligned_labels.astype(np.int32, copy=False)
-
-    @classmethod
-    def optional_aligned_to(
-        cls, reference_labels: np.ndarray, labels: np.ndarray | None
-    ) -> np.ndarray | None:
-        if labels is None:
-            return None
-        return cls(labels).aligned_to(reference_labels)
+def filter_objects_relationship_endpoint_ids(values: object) -> tuple[int, ...]:
+    """Return flattened integer IDs from one relationship endpoint."""
+    return tuple(int(value) for value in np.asarray(values).reshape(-1))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1093,7 +1304,7 @@ class FilterObjectsMeasurementLimitWindow:
         )
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class FilterObjectsStats:
     """FilterObjects object-count output row."""
 
@@ -1119,7 +1330,7 @@ class FilterObjectsRelabeledPlane:
     """Relabeled object plane plus the direct input-to-output relationship."""
 
     labels: np.ndarray
-    relationship: ParentChildRelationshipPayload
+    relationship: DirectedObjectRelationshipPayload
 
     @classmethod
     def from_ordered_parent_ids(
@@ -1138,8 +1349,8 @@ class FilterObjectsRelabeledPlane:
                 child_ids.append(child_id)
         return cls(
             labels=label_mapping[label_array],
-            relationship=ParentChildRelationshipPayload(
-                parent_ids=tuple(parent_ids), child_ids=tuple(child_ids)
+            relationship=DirectedObjectRelationshipPayload(
+                source_ids=tuple(parent_ids), target_ids=tuple(child_ids)
             ),
         )
 
@@ -1172,7 +1383,6 @@ class FilterObjectsSelectionRequest:
     measurement_use_maximum: tuple[bool, ...]
     measurement_tables: tuple[MeasurementTable, ...]
     enclosing_labels: np.ndarray | None
-    parent_child_relationship: FilterObjectsParentChildRelationship | None
     parent_child_relationships: FilterObjectsParentChildRelationships
     per_object_assignment: PerObjectAssignment
     min_value: float | None
@@ -1187,28 +1397,75 @@ class FilterObjectsSelectionRequest:
     def measurement_values_for_feature(
         self, feature_name: str
     ) -> ObjectLabelMeasurementValues:
-        """Resolve one FilterObjects measurement rule through the nominal source chain."""
-        if (
-            self.measurement_values is not None
-            and self.measurement_features
-            and (feature_name == self.measurement_features[0])
+        """Resolve one rule from its exact declared runtime source."""
+        if self.measurement_values is not None and self.measurement_features == (
+            feature_name,
         ):
             return self.measurement_values
-        return FilterObjectsMeasurementValuesSource.resolve_feature(self, feature_name)
+
+        feature = CellProfilerMeasurementFeature.parse(feature_name)
+        if (
+            feature is not None
+            and feature.kind is CellProfilerMeasurementFeatureKind.CHILD_COUNT
+        ):
+            return self.child_count_measurement_values(feature)
+        if not self.measurement_tables:
+            raise ValueError(
+                "FilterObjects measurement feature "
+                f"{feature_name!r} has no declared measurement-table input."
+            )
+        values = measurement_values_for_feature(
+            self.measurement_tables,
+            feature_name,
+            object_count=self.num_objects_pre,
+            object_ids=self.object_ids,
+            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+        )
+        return ObjectLabelMeasurementValues(self.object_ids, values)
+
+    def child_count_measurement_values(
+        self,
+        feature: CellProfilerMeasurementFeature,
+    ) -> ObjectLabelMeasurementValues:
+        """Resolve a child-count rule from its exact named relationship."""
+
+        child_name = feature.object_name
+        if child_name is None:
+            raise ValueError(
+                f"FilterObjects child-count feature {feature.name!r} has no child identity."
+            )
+        matches = tuple(
+            relationship
+            for relationship in self.parent_child_relationships
+            if isinstance(relationship, ObjectRelationship)
+            and relationship.declaration.target.name == child_name
+        )
+        if len(matches) != 1:
+            raise ValueError(
+                f"FilterObjects child-count feature {feature.name!r} requires exactly "
+                f"one relationship targeting {child_name!r}, got {len(matches)}."
+            )
+        counts_by_parent_id: dict[int, float] = {
+            object_id: 0.0 for object_id in self.object_ids
+        }
+        for parent_id in filter_objects_relationship_endpoint_ids(
+            matches[0].payload.source_ids
+        ):
+            if parent_id in counts_by_parent_id:
+                counts_by_parent_id[parent_id] += 1.0
+        return ObjectLabelMeasurementValues.from_value_mapping(
+            self.object_ids,
+            counts_by_parent_id,
+        )
 
     def first_measurement_values(self) -> ObjectLabelMeasurementValues:
         if self.measurement_values is not None:
             return self.measurement_values
         if self.measurement_features:
             return self.measurement_values_for_feature(self.measurement_features[0])
-        return self.area_measurement_values()
-
-    def area_measurement_values(self) -> ObjectLabelMeasurementValues:
-        return ObjectLabelMeasurementValues.from_label_indexed_values(
-            self.object_ids,
-            DerivedMeasurementValuesStrategy.for_enum_member(
-                MeasureObjectSizeShapeModule.MeasurementFeature.AREA
-            ).values(self.labels),
+        raise ValueError(
+            "FilterObjects measurement selection requires a declared measurement "
+            "feature or runtime-bound measurement values."
         )
 
     def matching_measurement_rule_ids(self) -> list[int]:
@@ -1251,185 +1508,17 @@ class FilterSelectionKey:
             return self.mode.value
         return f"{self.mode.value}:{self.method.value}"
 
-    def lookup_candidates(self) -> tuple["FilterSelectionKey", ...]:
-        return (self, FilterSelectionKey(self.mode))
-
-
-class DerivedMeasurementValuesStrategy(
-    EnumKeyedStrategyMixin[MeasureObjectSizeShapeModule.MeasurementFeature],
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Derived object-measurement values available from dense labels."""
-
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
-    __enum_member_attr__ = "feature"
-    feature: ClassVar[MeasureObjectSizeShapeModule.MeasurementFeature]
-    strategy_label: ClassVar[str | None] = None
-
     @classmethod
-    def for_feature_name(
-        cls, feature_name: str
-    ) -> "DerivedMeasurementValuesStrategy | None":
-        candidates = ordered_measurement_feature_candidates(
-            feature_name, dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT
-        )
-        strategies_by_feature_name = {
-            normalize_measurement_token(strategy_type.feature.value): strategy_type
-            for strategy_type in cls.registered_strategy_types()
-        }
-        for candidate in candidates:
-            strategy_type = strategies_by_feature_name.get(candidate)
-            if strategy_type is not None:
-                return strategy_type()
-        return None
+    def from_mode_and_method(
+        cls,
+        mode: FilterMode,
+        method: FilterMethod,
+    ) -> "FilterSelectionKey":
+        """Return the single selection identity defined by the public mode."""
 
-    @abstractmethod
-    def values(self, labels: np.ndarray) -> np.ndarray:
-        """Return one derived value per object label."""
-
-
-class AreaDerivedMeasurementValuesStrategy(DerivedMeasurementValuesStrategy):
-    """Area is directly measurable from the label geometry."""
-
-    feature = MeasureObjectSizeShapeModule.MeasurementFeature.AREA
-
-    def values(self, labels: np.ndarray) -> np.ndarray:
-        return (
-            LabelRegionPropertiesBackendStrategy.for_memory_type()
-            .measure_2d(labels.astype(np.int32, copy=False))
-            .area
-        )
-
-
-class FormFactorDerivedMeasurementValuesStrategy(DerivedMeasurementValuesStrategy):
-    """FormFactor can be derived from area/perimeter label geometry."""
-
-    feature = MeasureObjectSizeShapeModule.MeasurementFeature.FORM_FACTOR
-    minimum_value: ClassVar[float] = 0.0
-    maximum_value: ClassVar[float] = 1.0
-
-    def values(self, labels: np.ndarray) -> np.ndarray:
-        label_ids = np.arange(1, int(labels.max()) + 1, dtype=np.int32)
-        if label_ids.size == 0:
-            return np.array([], dtype=float)
-        values = form_factor_values(labels.astype(np.int32, copy=False), label_ids)
-        return np.clip(values, type(self).minimum_value, type(self).maximum_value)
-
-
-class FilterObjectsMeasurementValuesSource(ABC, metaclass=AutoRegisterMeta):
-    """MRO-ordered FilterObjects measurement-value source chain."""
-
-    __registry_key__ = "source_label"
-    __skip_if_no_key__ = True
-    source_label: ClassVar[str | None] = None
-
-    @classmethod
-    def active_source_type(cls) -> type["FilterObjectsMeasurementValuesSource"]:
-        """Return the most-derived registered source; MRO defines precedence."""
-        return max(
-            cls.__registry__.values(), key=lambda source_type: len(source_type.__mro__)
-        )
-
-    @classmethod
-    def resolve_feature(
-        cls, request: FilterObjectsSelectionRequest, feature_name: str
-    ) -> ObjectLabelMeasurementValues:
-        if cls is FilterObjectsMeasurementValuesSource:
-            return cls.active_source_type().resolve_feature(request, feature_name)
-        values = measurement_values_for_feature(
-            request.measurement_tables,
-            feature_name,
-            object_count=request.num_objects_pre,
-            object_ids=request.object_ids,
-            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-        )
-        return ObjectLabelMeasurementValues(request.object_ids, values)
-
-
-class DerivedFilterObjectsMeasurementValuesSource(FilterObjectsMeasurementValuesSource):
-    """Resolve label-intrinsic measurements before falling back to tables."""
-
-    source_label = "derived"
-
-    @classmethod
-    def resolve_feature(
-        cls, request: FilterObjectsSelectionRequest, feature_name: str
-    ) -> ObjectLabelMeasurementValues:
-        strategy = DerivedMeasurementValuesStrategy.for_feature_name(feature_name)
-        if strategy is not None:
-            return ObjectLabelMeasurementValues.from_label_indexed_values(
-                request.object_ids, strategy.values(request.labels)
-            )
-        return super().resolve_feature(request, feature_name)
-
-
-class TableFilterObjectsMeasurementValuesSource(
-    DerivedFilterObjectsMeasurementValuesSource
-):
-    """Resolve explicit measurement tables before label-derived fallbacks."""
-
-    source_label = "measurement_table"
-
-    @classmethod
-    def resolve_feature(
-        cls, request: FilterObjectsSelectionRequest, feature_name: str
-    ) -> ObjectLabelMeasurementValues:
-        if request.measurement_tables:
-            value_index = MeasurementFeatureQuery(
-                feature_name, dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT
-            ).optional_value_index(request.measurement_tables)
-            if value_index is not None:
-                values_by_label, positional_values = value_index
-                if values_by_label:
-                    return ObjectLabelMeasurementValues.from_value_mapping(
-                        request.object_ids, values_by_label
-                    )
-                if positional_values:
-                    return ObjectLabelMeasurementValues.from_positional_values(
-                        request.object_ids, positional_values
-                    )
-        return super().resolve_feature(request, feature_name)
-
-
-class RelationshipChildCountFilterObjectsMeasurementValuesSource(
-    TableFilterObjectsMeasurementValuesSource
-):
-    """Resolve Children_* measurement rules from parent-child relationships."""
-
-    source_label = "relationship_child_count"
-
-    @classmethod
-    def resolve_feature(
-        cls, request: FilterObjectsSelectionRequest, feature_name: str
-    ) -> ObjectLabelMeasurementValues:
-        child_name = child_count_feature_child_name(feature_name)
-        if child_name is not None:
-            for relationship in request.parent_child_relationships:
-                parent_ids = cls.parent_ids_for_child(relationship, child_name)
-                if parent_ids is None:
-                    continue
-                counts_by_parent_id: dict[int, float] = {
-                    object_id: 0.0 for object_id in request.object_ids
-                }
-                for parent_id in parent_ids:
-                    if parent_id in counts_by_parent_id:
-                        counts_by_parent_id[parent_id] += 1.0
-                return ObjectLabelMeasurementValues.from_value_mapping(
-                    request.object_ids, counts_by_parent_id
-                )
-        return super().resolve_feature(request, feature_name)
-
-    @classmethod
-    def parent_ids_for_child(
-        cls, relationship: FilterObjectsParentChildRelationship, child_name: str
-    ) -> tuple[int, ...] | None:
-        if isinstance(relationship, ObjectRelationship):
-            if relationship.target.name != child_name:
-                return None
-            return FilterObjectsRelationshipEndpointIds(relationship.source_ids).ids
-        return FilterObjectsRelationshipEndpointIds(relationship.parent_ids).ids
+        if mode is FilterMode.BORDER:
+            return cls(mode)
+        return cls(mode, method)
 
 
 class FilterSelectionStrategy(ABC, metaclass=AutoRegisterMeta):
@@ -1444,11 +1533,10 @@ class FilterSelectionStrategy(ABC, metaclass=AutoRegisterMeta):
     def for_mode_and_method(
         cls, mode: FilterMode, method: FilterMethod
     ) -> "FilterSelectionStrategy":
-        requested_key = FilterSelectionKey(mode, method)
-        for key in requested_key.lookup_candidates():
-            strategy_type = cls.__registry__.get(key.label)
-            if strategy_type is not None:
-                return strategy_type()
+        requested_key = FilterSelectionKey.from_mode_and_method(mode, method)
+        strategy_type = cls.__registry__.get(requested_key.label)
+        if strategy_type is not None:
+            return strategy_type()
         raise ValueError(
             f"Unsupported FilterObjects selection {requested_key.label!r}."
         )
@@ -1491,7 +1579,7 @@ class LimitsFilterSelectionStrategy(FilterSelectionStrategy):
             return request.matching_measurement_rule_ids()
         values = request.measurement_values
         if values is None:
-            values = request.area_measurement_values()
+            values = request.first_measurement_values()
         return FilterObjectsMeasurementLimitWindow(
             values=values,
             min_value=request.min_value,
@@ -1553,7 +1641,6 @@ class PerObjectFilterSelectionStrategy(FilterSelectionStrategy):
                 measurement_values=values,
                 child_count=request.num_objects_pre,
                 keep_max=selection_key.method is FilterMethod.MAXIMAL_PER_OBJECT,
-                parent_child_relationship=request.parent_child_relationship,
             )
         )
 
@@ -1585,7 +1672,6 @@ class PerObjectAssignmentRequest:
     measurement_values: np.ndarray
     child_count: int
     keep_max: bool
-    parent_child_relationship: FilterObjectsParentChildRelationship | None = None
 
     def __post_init__(self) -> None:
         if self.child_labels.shape != self.enclosing_labels.shape:
@@ -1613,37 +1699,9 @@ class PerObjectAssignmentStrategy(ABC, metaclass=AutoRegisterMeta):
             )
         return strategy_type()
 
+    @abstractmethod
     def indexes_to_keep(self, request: PerObjectAssignmentRequest) -> list[int]:
-        parent_children = self.parent_children_from_relationship(
-            request
-        ) or self.parent_children(request)
-        return self.best_child_indexes_by_parent(parent_children, request)
-
-    def parent_children_from_relationship(
-        self, request: PerObjectAssignmentRequest
-    ) -> dict[int, set[int]]:
-        relationship = request.parent_child_relationship
-        if relationship is None:
-            return {}
-        if isinstance(relationship, ObjectRelationship):
-            parent_ids = relationship.source_ids
-            child_ids = relationship.target_ids
-        elif isinstance(relationship, ParentChildRelationshipPayload):
-            parent_ids = relationship.parent_ids
-            child_ids = relationship.child_ids
-        else:
-            raise TypeError(
-                f"FilterObjects parent_child_relationship must be ObjectRelationship or ParentChildRelationshipPayload, got {type(relationship).__name__}."
-            )
-        parent_children: dict[int, set[int]] = {}
-        for parent_id, child_id in zip(
-            FilterObjectsRelationshipEndpointIds(parent_ids).ids,
-            FilterObjectsRelationshipEndpointIds(child_ids).ids,
-            strict=True,
-        ):
-            if parent_id > 0 and child_id > 0:
-                parent_children.setdefault(parent_id, set()).add(child_id)
-        return parent_children
+        """Return child IDs selected by this exact assignment policy."""
 
     def best_child_indexes_by_parent(
         self, parent_children: dict[int, set[int]], request: PerObjectAssignmentRequest
@@ -1742,9 +1800,6 @@ class ParentWithMostOverlapAssignmentStrategy(PerObjectAssignmentStrategy):
     assignment_label = assignment.value
 
     def indexes_to_keep(self, request: PerObjectAssignmentRequest) -> list[int]:
-        parent_children = self.parent_children_from_relationship(request)
-        if parent_children:
-            return self.best_child_indexes_by_parent(parent_children, request)
         return best_child_indexes_parent_with_most_overlap(
             request.child_labels,
             request.enclosing_labels,
@@ -1958,30 +2013,6 @@ def filtered_object_payload(
     )
 
 
-def filter_objects_relationship_tuple(
-    relationship: FilterObjectsParentChildRelationship | None,
-    relationships: Sequence[FilterObjectsParentChildRelationship],
-) -> FilterObjectsParentChildRelationships:
-    """Return stable relationship inputs without duplicate object-pair entries."""
-    ordered = (
-        *(() if relationship is None else (relationship,)),
-        *tuple(relationships),
-    )
-    unique: list[FilterObjectsParentChildRelationship] = []
-    seen: set[tuple[str, str] | int] = set()
-    for value in ordered:
-        key: tuple[str, str] | int
-        if isinstance(value, ObjectRelationship):
-            key = (value.source.name, value.target.name)
-        else:
-            key = id(value)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(value)
-    return tuple(unique)
-
-
 def relabel_overlapping_objects(
     labels: np.ndarray, filtered_primary_labels: np.ndarray
 ) -> np.ndarray:
@@ -1998,7 +2029,7 @@ def relabel_overlapping_objects(
 def object_transform_relationships(
     input_label_planes: tuple[np.ndarray, ...],
     relabeled_objects: tuple[np.ndarray, ...],
-) -> tuple[ParentChildRelationshipPayload, ...]:
+) -> tuple[DirectedObjectRelationshipPayload, ...]:
     """Derive parent-child payloads between input and filtered object labels."""
     if len(input_label_planes) != len(relabeled_objects):
         raise ValueError(
@@ -2017,53 +2048,21 @@ def object_transform_relationships(
     )
 
 
-def filter_objects_outline_images(
-    relabeled_objects: tuple[np.ndarray, ...], outline_object_indices: tuple[int, ...]
-) -> tuple[np.ndarray, ...]:
-    """Return requested FilterObjects outline sidecar images."""
-    return tuple(
-        (
-            filter_objects_outline_image(relabeled_objects[index])
-            for index in outline_object_indices
-        )
-    )
-
-
-def filter_objects_outline_image(labels: np.ndarray) -> np.ndarray:
-    """Return a binary outline image for dense 2-D object labels."""
-    labels = np.asarray(labels).astype(np.int32)
-    if labels.ndim != 2:
-        raise ValueError("FilterObjects outline images require 2D labels.")
-    boundary = np.zeros(labels.shape, dtype=bool)
-    boundary[:-1, :] |= labels[:-1, :] != labels[1:, :]
-    boundary[1:, :] |= labels[:-1, :] != labels[1:, :]
-    boundary[:, :-1] |= labels[:, :-1] != labels[:, 1:]
-    boundary[:, 1:] |= labels[:, :-1] != labels[:, 1:]
-    boundary &= labels > 0
-    return boundary.astype(np.uint8)
-
-
 @numpy(contract=ProcessingContract.FLEXIBLE)
-@special_outputs(
-    (
-        "filter_stats",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "objects_pre_filter",
-                "objects_post_filter",
-                "objects_removed",
-            ],
-            analysis_type="filter_objects",
-        ),
-    ),
-    ("filtered_labels", segmentation_mask_rois()),
+@special_inputs(
+    ObjectLabelsRuntimeParameter.require_parameter_name(),
+    _FilterEnclosingLabelsRuntimeParameter.require_parameter_name(),
+)
+@runtime_bound_parameters(
+    _FilterMeasurementValuesRuntimeParameter,
+    _FilterMeasurementTablesRuntimeParameter,
+    _FilterParentChildRelationshipsRuntimeParameter,
 )
 def filter_objects(
     image: np.ndarray,
     mode: FilterMode = FilterMode.MEASUREMENTS,
     filter_method: FilterMethod = FilterMethod.LIMITS,
-    object_labels: tuple[np.ndarray, ...] = (),
+    object_labels: tuple[ObjectLabelValue, ...] = (),
     measurement_values: np.ndarray | None = None,
     measurement_features: tuple[str, ...] = (),
     measurement_min_values: tuple[float | None, ...] = (),
@@ -2071,8 +2070,7 @@ def filter_objects(
     measurement_use_minimum: tuple[bool, ...] = (),
     measurement_use_maximum: tuple[bool, ...] = (),
     measurement_tables: tuple[MeasurementTable, ...] = (),
-    enclosing_object_labels: np.ndarray | None = None,
-    parent_child_relationship: FilterObjectsParentChildRelationship | None = None,
+    enclosing_object_labels: ObjectLabelValue | None = None,
     parent_child_relationships: FilterObjectsParentChildRelationships = (),
     per_object_assignment: PerObjectAssignment = PerObjectAssignment.BOTH_PARENTS,
     min_value: float | None = None,
@@ -2080,16 +2078,47 @@ def filter_objects(
     use_minimum: bool = True,
     use_maximum: bool = True,
     additional_object_count: int = 0,
-    outline_object_indices: tuple[int, ...] = (),
+    emit_removed_objects: bool = False,
     slice_by_slice: bool = True,
-) -> tuple[
-    np.ndarray, FilterObjectsStats, np.ndarray | ParentChildRelationshipPayload, ...
-]:
-    """Filter dense object labels using CellProfiler-compatible selection policy."""
-    if object_labels is None:
-        object_labels = ()
-    elif isinstance(object_labels, np.ndarray):
-        object_labels = (object_labels,)
+) -> (
+    tuple[
+        np.ndarray,
+        DataclassMeasurementColumnarRows,
+        ObjectLabelValue,
+        DirectedObjectRelationshipPayload,
+    ]
+    | tuple[
+        np.ndarray,
+        DataclassMeasurementColumnarRows,
+        np.ndarray | DirectedObjectRelationshipPayload,
+        ...,
+    ]
+):
+    """Filter dense object labels using CellProfiler-compatible selection policy.
+
+    Args:
+        object_labels: Ordered object-label values: the first is filtered and any
+            additional sets are relabeled from regions overlapping retained
+            primary objects.
+        measurement_features: Ordered CellProfiler measurement feature names,
+            with one limit rule per entry.
+        measurement_min_values: Lower bounds aligned by index with
+            ``measurement_features``; ``None`` leaves a rule unbounded below.
+        measurement_max_values: Upper bounds aligned by index with
+            ``measurement_features``; ``None`` leaves a rule unbounded above.
+        measurement_use_minimum: Flags aligned with ``measurement_features`` that
+            enable each rule's lower bound.
+        measurement_use_maximum: Flags aligned with ``measurement_features`` that
+            enable each rule's upper bound.
+        enclosing_object_labels: Parent-object labels used by per-parent minimum
+            or maximum selection modes.
+        min_value: Lower limit for the single runtime measurement vector when no
+            repeated ``measurement_features`` rules are declared.
+        max_value: Upper limit for the single runtime measurement vector when no
+            repeated ``measurement_features`` rules are declared.
+        use_minimum: Apply ``min_value`` to the single-vector limit rule.
+        use_maximum: Apply ``max_value`` to the single-vector limit rule.
+    """
     if len(object_labels) == 0:
         raise ValueError("FilterObjects requires at least one object label input.")
     mode = coerce_cellprofiler_enum(FilterMode, mode)
@@ -2101,14 +2130,24 @@ def filter_objects(
         raise ValueError(
             "FilterObjects additional_object_count must match additional object label inputs."
         )
-    labels = FilterObjectsLabelPlane(object_labels[0]).projected.astype(np.int32)
-    additional_label_planes = tuple(
-        (
-            FilterObjectsLabelPlane(value).aligned_to(labels)
-            for value in object_labels[1:]
-        )
+    primary_labels = object_labels[0]
+    paired_values = (
+        *object_labels[1:],
+        *(() if enclosing_object_labels is None else (enclosing_object_labels,)),
     )
-    input_label_planes = (labels, *additional_label_planes)
+    aligned_values, aligned_adapters = SourceSpatialDomainAdapter.aligned_values(
+        (primary_labels, *paired_values)
+    )
+    labels = np.asarray(aligned_values[0], dtype=np.int32)
+    if labels.ndim != 2:
+        raise ValueError(
+            "FilterObjects requires one explicitly projected 2-D object-label plane."
+        )
+    additional_label_planes = tuple(
+        np.asarray(value, dtype=np.int32)
+        for value in aligned_values[1 : len(object_labels)]
+    )
+    output_adapters = aligned_adapters[: len(object_labels)]
     max_label = labels.max()
     if max_label == 0:
         stats = FilterObjectsStats.from_counts(
@@ -2122,15 +2161,38 @@ def filter_objects(
                 for label_plane in (labels, *additional_label_planes)
             )
         )
+        if emit_removed_objects:
+            relabeled_planes = (
+                *relabeled_planes,
+                FilterObjectsRelabeledPlane.from_ordered_parent_ids(
+                    labels, parent_ids_by_child=()
+                ),
+            )
+        output_sources = (
+            *object_labels,
+            *((object_labels[0],) if emit_removed_objects else ()),
+        )
+        output_adapters = (
+            *output_adapters,
+            *((output_adapters[0],) if emit_removed_objects else ()),
+        )
         relabeled_objects = filtered_object_payloads(
-            object_labels, tuple((plane.labels for plane in relabeled_planes))
+            output_sources,
+            tuple(
+                adapter.extract_source_array(
+                    plane.labels,
+                    spatial_axes_yx=adapter.spatial_axes_yx,
+                )
+                for plane, adapter in zip(
+                    relabeled_planes, output_adapters, strict=True
+                )
+            ),
         )
         return (
             image,
-            stats,
+            DataclassMeasurementColumnarRows((stats,), row_type=FilterObjectsStats),
             *relabeled_objects,
             *(plane.relationship for plane in relabeled_planes),
-            *filter_objects_outline_images(relabeled_objects, outline_object_indices),
         )
     object_ids = ObjectLabelIdDomainStrategy.for_value(labels).present_ids(labels)
     selection_measurement_values = (
@@ -2154,13 +2216,12 @@ def filter_objects(
             measurement_use_minimum=measurement_use_minimum,
             measurement_use_maximum=measurement_use_maximum,
             measurement_tables=measurement_tables,
-            enclosing_labels=FilterObjectsLabelPlane.optional_aligned_to(
-                labels, enclosing_object_labels
+            enclosing_labels=(
+                None
+                if enclosing_object_labels is None
+                else np.asarray(aligned_values[-1], dtype=np.int32)
             ),
-            parent_child_relationship=parent_child_relationship,
-            parent_child_relationships=filter_objects_relationship_tuple(
-                parent_child_relationship, parent_child_relationships
-            ),
+            parent_child_relationships=parent_child_relationships,
             per_object_assignment=per_object_assignment,
             min_value=min_value,
             max_value=max_value,
@@ -2180,62 +2241,73 @@ def filter_objects(
         )
     )
     relabeled_planes = (primary_plane, *additional_relabeled_planes)
+    if emit_removed_objects:
+        retained_ids = frozenset(int(value) for value in indexes_to_keep)
+        relabeled_planes = (
+            *relabeled_planes,
+            FilterObjectsRelabeledPlane.from_ordered_parent_ids(
+                labels,
+                parent_ids_by_child=tuple(
+                    object_id
+                    for object_id in object_ids
+                    if object_id not in retained_ids
+                ),
+            ),
+        )
+    output_sources = (
+        *object_labels,
+        *((object_labels[0],) if emit_removed_objects else ()),
+    )
+    output_adapters = (
+        *output_adapters,
+        *((output_adapters[0],) if emit_removed_objects else ()),
+    )
     relabeled_objects = filtered_object_payloads(
-        object_labels, tuple((plane.labels for plane in relabeled_planes))
+        output_sources,
+        tuple(
+            adapter.extract_source_array(
+                plane.labels,
+                spatial_axes_yx=adapter.spatial_axes_yx,
+            )
+            for plane, adapter in zip(relabeled_planes, output_adapters, strict=True)
+        ),
     )
     stats = FilterObjectsStats.from_counts(
         objects_pre_filter=len(object_ids), objects_post_filter=len(indexes_to_keep)
     )
     return (
         image,
-        stats,
+        DataclassMeasurementColumnarRows((stats,), row_type=FilterObjectsStats),
         *relabeled_objects,
         *(plane.relationship for plane in relabeled_planes),
-        *filter_objects_outline_images(relabeled_objects, outline_object_indices),
     )
-
-
-set_parameter_exclusions(
-    filter_objects,
-    declared_runtime_bound_parameter_names(FilterObjectsInputPolicy),
-)
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
-@special_outputs(
-    (
-        "filter_stats",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "objects_pre_filter",
-                "objects_post_filter",
-                "objects_removed",
-            ],
-            analysis_type="filter_objects",
-        ),
-    ),
-    ("filtered_labels", segmentation_mask_rois()),
-)
 def filter_objects_by_size(
     image: np.ndarray,
-    labels: np.ndarray,
+    labels: ObjectLabelValue,
     min_area: float = 0.0,
     max_area: float = float("inf"),
     use_minimum: bool = True,
     use_maximum: bool = True,
-) -> tuple[np.ndarray, FilterObjectsStats, np.ndarray]:
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
     """Filter objects based on area measurements."""
-    labels = object_label_dense_array(labels, dtype=np.int32)
-    max_label = labels.max()
+    source_labels = labels
+    label_array = object_label_dense_array(source_labels, dtype=np.int32)
+    max_label = label_array.max()
     if max_label == 0:
         stats = FilterObjectsStats.from_counts(
             objects_pre_filter=0, objects_post_filter=0
         )
-        return (image, stats, labels)
+        return (
+            image,
+            DataclassMeasurementColumnarRows((stats,), row_type=FilterObjectsStats),
+            filtered_object_payload(source_labels, label_array),
+        )
     region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
-        labels
+        label_array
     )
     indexes_to_keep = FilterObjectsMeasurementLimitWindow.from_label_indexed_values(
         region_props.area,
@@ -2252,39 +2324,35 @@ def filter_objects_by_size(
         objects_pre_filter=len(region_props.label),
         objects_post_filter=len(indexes_to_keep),
     )
-    return (image, stats, label_mapping[labels])
+    return (
+        image,
+        DataclassMeasurementColumnarRows((stats,), row_type=FilterObjectsStats),
+        filtered_object_payload(source_labels, label_mapping[label_array]),
+    )
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
-@special_outputs(
-    (
-        "filter_stats",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "objects_pre_filter",
-                "objects_post_filter",
-                "objects_removed",
-            ],
-            analysis_type="filter_objects",
-        ),
-    ),
-    ("filtered_labels", segmentation_mask_rois()),
-)
 def filter_border_objects(
-    image: np.ndarray, labels: np.ndarray
-) -> tuple[np.ndarray, FilterObjectsStats, np.ndarray]:
+    image: np.ndarray, labels: ObjectLabelValue
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
     """Remove objects touching the image border."""
-    labels = object_label_dense_array(labels, dtype=np.int32)
-    max_label = labels.max()
+    source_labels = labels
+    label_array = object_label_dense_array(source_labels, dtype=np.int32)
+    max_label = label_array.max()
     if max_label == 0:
         stats = FilterObjectsStats.from_counts(
             objects_pre_filter=0, objects_post_filter=0
         )
-        return (image, stats, labels)
-    object_ids = ObjectLabelIdDomainStrategy.for_value(labels).present_ids(labels)
-    indexes_to_keep = BorderFilterSelectionStrategy.discard_border_objects(labels)
+        return (
+            image,
+            DataclassMeasurementColumnarRows((stats,), row_type=FilterObjectsStats),
+            filtered_object_payload(source_labels, label_array),
+        )
+    object_ids = ObjectLabelIdDomainStrategy.for_value(label_array).present_ids(
+        label_array
+    )
+    indexes_to_keep = BorderFilterSelectionStrategy.discard_border_objects(label_array)
     label_mapping = np.zeros(max_label + 1, dtype=np.int32)
     for new_idx, old_idx in enumerate(indexes_to_keep, start=1):
         if old_idx <= max_label:
@@ -2292,18 +2360,19 @@ def filter_border_objects(
     stats = FilterObjectsStats.from_counts(
         objects_pre_filter=len(object_ids), objects_post_filter=len(indexes_to_keep)
     )
-    return (image, stats, label_mapping[labels])
+    return (
+        image,
+        DataclassMeasurementColumnarRows((stats,), row_type=FilterObjectsStats),
+        filtered_object_payload(source_labels, label_mapping[label_array]),
+    )
 
 
 __all__ = public_names_from_objects(
     FilterMethod,
     FilterMode,
-    FilterObjectsMeasurementValuesSource,
-    FilterObjectsLabelPlane,
     FilterObjectsMeasurementLimitWindow,
     "FilterObjectsParentChildRelationship",
     "FilterObjectsParentChildRelationships",
-    FilterObjectsRelationshipEndpointIds,
     FilterObjectsSelectionRequest,
     FilterObjectsStats,
     FilterSelectionStrategy,
@@ -2313,9 +2382,7 @@ __all__ = public_names_from_objects(
     PerObjectAssignmentStrategy,
     best_child_indexes_both_parents,
     best_child_indexes_parent_with_most_overlap,
-    filter_objects_outline_image,
-    filter_objects_outline_images,
-    filter_objects_relationship_tuple,
+    filter_objects_relationship_endpoint_ids,
     filter_border_objects,
     filter_objects,
     filter_objects_by_size,

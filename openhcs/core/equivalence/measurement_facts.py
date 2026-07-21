@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import cast, Generic, TypeVar
 
 from openhcs.core.equivalence.cells import (
     RuntimeCellMissingStrategy,
@@ -16,6 +16,7 @@ from openhcs.core.equivalence.cells import (
 from openhcs.core.equivalence.keys import (
     RuntimeMeasurementFeatureKey,
     RuntimeMeasurementNamePartsProjection,
+    RuntimeMeasurementSourcePair,
     RuntimeMeasurementSubjectKey,
 )
 from openhcs.core.equivalence.measurement_features import (
@@ -26,14 +27,17 @@ from openhcs.core.equivalence.policy import (
     RuntimeMeasurementDialect,
     normalize_runtime_identifier,
 )
-from openhcs.core.runtime_semantics import (
+from openhcs.core.runtime_measurements import (
     MeasuredObjectAnchorFeatureMarker,
     MeasurementScope,
 )
-from openhcs.core.runtime_values import (
+from openhcs.core.runtime_artifact_values import (
     RuntimeValue,
+)
+from openhcs.core.runtime_spatial_grid import (
     SpatialGrid,
 )
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 
 RuntimeMeasurementFact = tuple[
     RuntimeMeasurementFeatureKey,
@@ -57,12 +61,17 @@ RuntimeMeasurementPaddingGroup = tuple[
     str | None,
     tuple[str, ...],
 ]
-RuntimeRowProjectionRecord = tuple[
-    RuntimeMeasurementPaddingGroup,
-    RuntimeMeasurementFeatureKey,
-    RuntimeRowProjectionValueT,
-    bool,
-]
+@dataclass(frozen=True, slots=True)
+class RuntimeRowProjectionRecord(Generic[RuntimeRowProjectionValueT]):
+    """One exact projected cell before same-row alias consolidation."""
+
+    padding_group: RuntimeMeasurementPaddingGroup
+    key: RuntimeMeasurementFeatureKey
+    value: RuntimeRowProjectionValueT
+    measured_object_anchor: bool = False
+    producer_owned_feature: bool = False
+
+
 RuntimeRowProjectionRecords = tuple[
     RuntimeRowProjectionRecord[RuntimeRowProjectionValueT],
     ...,
@@ -140,9 +149,7 @@ class RuntimeDirectionalPairMeasurementDerivationContract:
     @property
     def regression_slope_feature(self) -> str | None:
         """Return the dialect-declared pair regression-slope family."""
-        return (
-            self.policy.measurement_dialect.resolved_pair_regression_slope_feature_name()
-        )
+        return self.policy.measurement_dialect.resolved_pair_regression_slope_feature_name()
 
     @property
     def correlation_feature(self) -> str | None:
@@ -172,7 +179,7 @@ class RuntimeDirectionalPairMeasurementDerivationContract:
         if not self.regression_slope_family:
             return False
         if required_keys is None:
-            return True
+            return False
         return any(
             key.belongs_to_source_qualified_feature_family(
                 self.policy.measurement_dialect,
@@ -187,22 +194,26 @@ class RuntimeDirectionalPairMeasurementDerivationContract:
     ) -> tuple[RuntimeMeasurementFeatureKey, ...]:
         """Return orientation inputs needed to satisfy a required pair key."""
         input_keys: list[RuntimeMeasurementFeatureKey] = []
-        reversed_key = key.reversed_source_pair_feature_key(
-            self.policy.measurement_dialect,
+        pair = self.declared_source_pair_for_key(
+            key,
             self.feature_families,
-            self.known_source_names,
         )
-        if reversed_key is not None:
-            input_keys.append(reversed_key)
+        if pair is not None:
+            input_keys.append(
+                key.source_pair_feature_key(
+                    pair.reversed_source_name,
+                    self.policy.measurement_dialect,
+                    self.feature_families,
+                )
+            )
 
         if key.belongs_to_source_qualified_feature_family(
             self.policy.measurement_dialect,
             self.regression_slope_family,
         ):
-            pair = key.source_pair(
-                self.policy.measurement_dialect,
+            pair = self.declared_source_pair_for_key(
+                key,
                 self.regression_slope_family,
-                self.known_source_names,
             )
             if pair is not None and self.correlation_feature is not None:
                 input_keys.extend(
@@ -214,6 +225,44 @@ class RuntimeDirectionalPairMeasurementDerivationContract:
                     for source_name in (pair.source_name, pair.reversed_source_name)
                 )
         return tuple(dict.fromkeys(input_keys))
+
+    def declared_source_pair_for_key(
+        self,
+        key: RuntimeMeasurementFeatureKey,
+        feature_families: tuple[str, ...],
+    ) -> RuntimeMeasurementSourcePair | None:
+        """Resolve a key against canonical source-pair declarations only."""
+        direct_pair = key.source_pair(
+            self.policy.measurement_dialect,
+            feature_families,
+        )
+        if direct_pair is not None:
+            return direct_pair
+
+        declared_pairs = tuple(
+            pair
+            for source_name in self.known_source_names
+            if (pair := RuntimeMeasurementSourcePair.from_source_name(source_name))
+            is not None
+        )
+        for declared_pair in dict.fromkeys(declared_pairs):
+            for candidate in (
+                declared_pair,
+                RuntimeMeasurementSourcePair(
+                    declared_pair.second,
+                    declared_pair.first,
+                ),
+            ):
+                if (
+                    key.source_pair_feature_key(
+                        candidate.source_name,
+                        self.policy.measurement_dialect,
+                        feature_families,
+                    )
+                    == key
+                ):
+                    return candidate
+        return None
 
     def source_pair_feature_key(
         self,
@@ -251,10 +300,9 @@ class RuntimeDirectionalPairMeasurementDerivationContract:
         derived: RuntimeMeasurementFactList = []
         values_by_key = dict(facts)
         for key, slope_value in slope_facts:
-            pair = key.source_pair(
-                self.policy.measurement_dialect,
+            pair = self.declared_source_pair_for_key(
+                key,
                 self.regression_slope_family,
-                self.known_source_names,
             )
             if pair is None:
                 continue
@@ -272,13 +320,11 @@ class RuntimeDirectionalPairMeasurementDerivationContract:
             )
             if reverse_slope is None:
                 continue
-            reversed_key = key.reversed_source_pair_feature_key(
+            reversed_key = key.source_pair_feature_key(
+                pair.reversed_source_name,
                 self.policy.measurement_dialect,
                 self.regression_slope_family,
-                self.known_source_names,
             )
-            if reversed_key is None:
-                continue
             derived.append(
                 (
                     reversed_key,
@@ -330,29 +376,31 @@ class RuntimeMeasurementFactProjectionContract:
         cls,
         records: Iterable[RuntimeRowProjectionRecord[RuntimeCellSignature]],
         policy: RuntimeEquivalencePolicy,
+        *,
+        declared_anchor_groups: frozenset[RuntimeMeasurementPaddingGroup] = frozenset(),
     ) -> frozenset[RuntimeMeasurementPaddingGroup]:
         """Return padding groups that carry observed measurement facts."""
         anchor_key_cache: dict[RuntimeMeasurementFeatureKey, bool] = {}
-        has_anchor: set[RuntimeMeasurementPaddingGroup] = set()
+        has_anchor = set(declared_anchor_groups)
         observed_anchors: set[RuntimeMeasurementPaddingGroup] = set()
         observed_values: set[RuntimeMeasurementPaddingGroup] = set()
-        for padding_group, key, value, _qualified_observation in records:
-            observed = cls.is_observed_value(value)
+        for record in records:
+            observed = cls.is_observed_value(record.value)
             if observed:
-                observed_values.add(padding_group)
-            is_anchor = anchor_key_cache.get(key)
+                observed_values.add(record.padding_group)
+            is_anchor = anchor_key_cache.get(record.key)
             if is_anchor is None:
                 is_anchor = object_measurement_feature_matches_marker(
-                    key,
+                    record.key,
                     MeasuredObjectAnchorFeatureMarker,
                     policy,
                 )
-                anchor_key_cache[key] = is_anchor
+                anchor_key_cache[record.key] = is_anchor
             if not is_anchor:
                 continue
-            has_anchor.add(padding_group)
+            has_anchor.add(record.padding_group)
             if observed:
-                observed_anchors.add(padding_group)
+                observed_anchors.add(record.padding_group)
         return frozenset(observed_anchors | (observed_values - has_anchor))
 
     @classmethod
@@ -377,12 +425,20 @@ class RuntimeMeasurementFactProjectionContract:
         cls,
         records: Iterable[RuntimeRowProjectionRecord[RuntimeCellSignature]],
         policy: RuntimeEquivalencePolicy,
+        *,
+        declared_anchor_groups: frozenset[RuntimeMeasurementPaddingGroup] = frozenset(),
     ) -> RuntimeRowProjectionRecords[RuntimeCellSignature]:
         """Return records whose padding family has an observed anchor/value."""
         materialized = tuple(records)
-        observed_padding_groups = cls.observed_padding_groups(materialized, policy)
+        observed_padding_groups = cls.observed_padding_groups(
+            materialized,
+            policy,
+            declared_anchor_groups=declared_anchor_groups,
+        )
         return tuple(
-            record for record in materialized if record[0] in observed_padding_groups
+            record
+            for record in materialized
+            if record.padding_group in observed_padding_groups
         )
 
     @classmethod
@@ -393,34 +449,26 @@ class RuntimeMeasurementFactProjectionContract:
     ) -> RuntimeMeasurementFacts:
         """Filter unobserved padding groups and collapse same-row aliases."""
         return cls.dedupe_alias_facts(
-            (key, value)
-            for (
-                _padding_group,
-                key,
-                value,
-                _qualified_observation,
-            ) in cls.observed_records(records, policy)
+            (record.key, record.value)
+            for record in cls.observed_records(records, policy)
         )
 
     @classmethod
-    def dedupe_observed_qualified_records(
+    def dedupe_observed_records(
         cls,
         records: Iterable[RuntimeRowProjectionRecord[RuntimeCellSignature]],
         policy: RuntimeEquivalencePolicy,
     ) -> RuntimeMeasurementFacts:
-        """Filter unobserved padding groups and collapse qualified aliases."""
+        """Filter unobserved padding groups and collapse declared aliases."""
         materialized = tuple(records)
         observed_padding_groups = cls.observed_padding_groups(
-            (
-                (padding_group, key, value, qualified_observation)
-                for padding_group, key, value, qualified_observation in materialized
-            ),
+            materialized,
             policy,
         )
-        return cls.dedupe_qualified_records(
-            (key, value, qualified_observation)
-            for padding_group, key, value, qualified_observation in materialized
-            if padding_group in observed_padding_groups
+        return cls.dedupe_records(
+            record
+            for record in materialized
+            if record.padding_group in observed_padding_groups
         )
 
     @classmethod
@@ -444,37 +492,36 @@ class RuntimeMeasurementFactProjectionContract:
         return tuple(values_by_key.items())
 
     @classmethod
-    def dedupe_qualified_records(
+    def dedupe_records(
         cls,
-        facts: Iterable[
-            tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature, bool]
-        ],
+        records: Iterable[RuntimeRowProjectionRecord[RuntimeCellSignature]],
     ) -> RuntimeMeasurementFacts:
-        """Collapse aliases unless field normalization intentionally dropped a qualifier."""
+        """Collapse aliases using producer-declared raw feature ownership."""
         values_by_key: dict[
             RuntimeMeasurementFeatureKey, list[RuntimeCellSignature]
         ] = {}
-        qualified_by_key: dict[RuntimeMeasurementFeatureKey, bool] = {}
-        for key, value, qualified_observation in facts:
+        producer_owned_by_key: dict[RuntimeMeasurementFeatureKey, bool] = {}
+        for record in records:
+            key = record.key
+            value = record.value
             if not cls.is_observed_value(value):
                 continue
             current_values = values_by_key.get(key)
             if current_values is None:
                 values_by_key[key] = [value]
-                qualified_by_key[key] = qualified_observation
+                producer_owned_by_key[key] = record.producer_owned_feature
                 continue
 
-            if any(
-                RuntimeCellMissingStrategy.for_kind(current.kind).is_missing(current)
-                for current in current_values
-            ):
+            current_is_producer_owned = producer_owned_by_key[key]
+            if record.producer_owned_feature and not current_is_producer_owned:
                 values_by_key[key] = [value]
-                qualified_by_key[key] = qualified_observation
+                producer_owned_by_key[key] = True
+                continue
+            if current_is_producer_owned and not record.producer_owned_feature:
                 continue
             if value in current_values:
                 continue
-            if qualified_by_key.get(key, False) or qualified_observation:
-                current_values.append(value)
+            current_values.append(value)
 
         return tuple(
             (key, value) for key, values in values_by_key.items() for value in values
@@ -485,7 +532,7 @@ def spatial_grid_measurement_facts(
     value: RuntimeValue,
     policy: RuntimeEquivalencePolicy,
 ) -> RuntimeMeasurementFacts:
-    """Project a typed spatial-grid artifact to CellProfiler-style image facts."""
+    """Project a typed spatial-grid artifact to dialect-rendered image facts."""
     return tuple(
         fact
         for grid in _spatial_grids_from_runtime_value(value)
@@ -503,16 +550,19 @@ def _single_spatial_grid_measurement_facts(
     fields = (
         ("columns", grid.columns),
         ("rows", grid.rows),
-        ("x_location_of_lowest_x_spot", grid.x_location_of_lowest_x_spot),
+        ("x_origin", grid.x_origin),
         ("x_spacing", grid.x_spacing),
-        ("y_location_of_lowest_y_spot", grid.y_location_of_lowest_y_spot),
+        ("y_origin", grid.y_origin),
         ("y_spacing", grid.y_spacing),
     )
     return tuple(
         (
             RuntimeMeasurementFeatureKey(
                 subject,
-                f"defined_grid_{grid_name}_{field_name}",
+                policy.measurement_dialect.spatial_grid_measurement_feature_name(
+                    grid_name,
+                    field_name,
+                ),
             ),
             runtime_cell_signature(str(field_value), policy),
         )
@@ -521,15 +571,9 @@ def _single_spatial_grid_measurement_facts(
 
 
 def _spatial_grids_from_runtime_value(value: RuntimeValue) -> tuple[SpatialGrid, ...]:
-    if value.schema.slice_aligned:
-        if not isinstance(value.data, tuple | list):
-            raise TypeError(
-                f"Slice-aligned spatial grid '{value.name}' payload must be a "
-                f"sequence of mappings, got {type(value.data).__name__}."
-            )
+    if isinstance(value.data, RuntimeSliceAlignedValueSet):
         return tuple(
-            SpatialGrid.from_mapping(value.name, item)
-            for item in value.data
-            if isinstance(item, Mapping)
+            cast(SpatialGrid, value.data.value_for_slice(index))
+            for index in range(value.data.slice_count)
         )
-    return (SpatialGrid.from_runtime_value(value),)
+    return (cast(SpatialGrid, value.data),)

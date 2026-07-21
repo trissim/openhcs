@@ -1,34 +1,130 @@
 """Intensity-distribution backends for CellProfiler-compatible processing."""
 
 from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from collections import OrderedDict
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from enum import Enum
+import hashlib
+import logging
+import time
+from types import MappingProxyType
+from typing import ClassVar
+
+from metaclass_registry import AutoRegisterMeta
+from numba import njit
+import numpy as np
+import scipy.sparse
+
+from openhcs.constants.constants import MemoryType
+from openhcs.core.aligned_image_payload import (
+    AlignedImageStack,
+    pack_aligned_image_outputs,
+)
+from openhcs.core.artifacts import (
+    ArtifactSpecCollection,
+    ArtifactSpecRelation,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    SourceStackLineageSourceRelation,
+)
+from openhcs.core.callable_contract import KeywordRuntimeParameter
+from openhcs.core.measurement_row_materialization import ConcatenatedColumnarRows
+from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import (
+    ObjectLabelInputExecutionMode,
+    object_label_input_execution_mode,
+    runtime_bound_parameters,
+    special_inputs,
+    )
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import enum_member_with_payload
-from openhcs.core.runtime_semantics import (
+from openhcs.core.runtime_array_values import RuntimeArrayData
+from openhcs.core.runtime_batch_contracts import SliceIndexRuntimeParameter
+from openhcs.core.runtime_image_values import (
+    ImagePayloadMetadata,
+    image_mask_for_data_domain,
+    image_payload_data,
+    image_payload_mask,
+    image_payload_metadata,
+    project_image_mask_to_data_domain,
+    with_image_payload_data,
+)
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelPayload,
+    ObjectLabelValue,
+    ObjectLabelVariantData,
+    object_label_dense_array,
+)
+from openhcs.core.runtime_tabular_values import (
+    FieldSpec,
+    MeasurementObjectRowIdentity,
+)
+from openhcs.core.runtime_measurements import (
     MeasurementRowAxisField,
+    MeasurementRowValueField,
     RuntimeMeasurementFeature,
 )
-from openhcs.interop.cellprofiler.setting_names import SettingNameFamily, setting_names
+from openhcs.core.runtime_object_label_domains import (
+    ObjectLabelDomain,
+    dense_object_label_id_domain,
+)
+from openhcs.core.runtime_plane_projection import (
+    RuntimePlaneAxis,
+    RuntimeSliceProjectableValue,
+)
+from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
+from openhcs.core.runtime_tabular_values import ColumnarRows
+from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
+from openhcs.interop.cellprofiler.setting_names import (
+    SettingNameFamily,
+    block_setting_value,
+    normalized_symbol_name,
+    repeating_setting_blocks,
+    setting_name_matches,
+    setting_values,
+)
 from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
     coerce_cellprofiler_enum,
-    normalize_cellprofiler_setting_name,
     parse_cellprofiler_bool,
     parse_cellprofiler_int,
 )
-from openhcs.interop.cellprofiler.module_declarations import (
-    ArtifactContractModule,
-    BinderSettingsSourceModule,
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    CellProfilerBackendAuthority,
+    CellProfilerBackendProvider,
+    CellProfilerBackendStrategyMixin,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+)
+from openhcs.processing.backends.cellprofiler.granularity import (
+    CellProfilerRuntimeProfiler,
+)
+from openhcs.processing.backends.cellprofiler.object_measurement_columnar_rows import (
+    ObjectMeasurementColumnarRows,
+)
+from openhcs.processing.backends.cellprofiler.secondary import (
+    SecondaryPropagationBackendStrategy,
+    secondary_propagation_backend,
+)
+from openhcs.processing.backends.cellprofiler.shape import (
+    ShapeMeasurementBackendStrategy,
+    shape_measurement_backend,
+)
+from openhcs.interop.cellprofiler.module_settings import (
     BoundModuleSettings,
-    CellProfilerModule,
+)
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
     ImageMeasurementInputModule,
-    IntensityFeature,
-    ModuleSettingsSourceModule,
     ObjectMeasurementInputModule,
-    ProcessingContract,
-    ScopedMeasurementModule,
     SourceQualifiedMeasurementFeatureModule,
-    StructuringElementSettingsModule,
-    ObjectMeasurementRowsModule,
     PerObjectMeasurementExecutionModule,
+)
+from openhcs.interop.cellprofiler.module_measurement_features import (
+    IntensityFeature,
 )
 from openhcs.interop.cellprofiler.runtime.object_measurement_row_policies import (
     DeclaredDomainCompactMeasuredObjectMeasurementRowPolicy,
@@ -42,18 +138,170 @@ from openhcs.interop.cellprofiler.runtime.object_measurement_row_completion impo
 from openhcs.interop.cellprofiler.runtime.object_input_policies import (
     LabelsObjectInputPolicy,
 )
-from openhcs.interop.cellprofiler.setting_names import (
-    optional_setting_value,
-    required_setting_value,
-    setting_values,
-    split_symbol_names,
-)
-from openhcs.interop.cellprofiler.cellprofiler_literals import (
-    cellprofiler_enum_from_literal,
-)
 from openhcs.processing.backends.cellprofiler.zernike import (
     IntensityZernikeFeatureAuthority,
+    IntensityZernikeMeasurementRowsRequest,
 )
+from openhcs.interop.cellprofiler.runtime.artifact_binding import (
+    RuntimeInputBindingRequest,
+)
+
+
+class IntensityDistributionHeatmapMeasurement(Enum):
+    """CellProfiler heatmap value families."""
+
+    FRACTION_AT_DISTANCE = "Fraction at Distance"
+    MEAN_FRACTION = "Mean Fraction"
+    RADIAL_CV = "Radial CV"
+
+
+@dataclass(frozen=True, slots=True)
+class IntensityDistributionBinGroup:
+    """One radial bin configuration selected by heatmap rows."""
+
+    bin_count: int
+    wants_scaled: bool
+    maximum_radius: int
+
+
+@dataclass(frozen=True, slots=True)
+class IntensityDistributionHeatmapGroup:
+    """One serialized heatmap group, including its conditional image output."""
+
+    source_image_name: str
+    object_name: str
+    bin_count: int
+    wants_scaled: bool
+    maximum_radius: int
+    measurement: IntensityDistributionHeatmapMeasurement
+    colormap: str
+    save_display: bool
+    output_image_name: str
+
+    def __post_init__(self) -> None:
+        for field_name, value in (
+            ("source_image_name", self.source_image_name),
+            ("object_name", self.object_name),
+            ("output_image_name", self.output_image_name),
+        ):
+            if not value.strip() or value != value.strip():
+                raise ValueError(
+                    f"IntensityDistributionHeatmapGroup.{field_name} must be a "
+                    "normalized non-empty string."
+                )
+        if self.bin_count <= 0:
+            raise ValueError(
+                "Intensity-distribution heatmap bin_count must be positive."
+            )
+
+
+class IntensityDistributionSettingSchema(Enum):
+    """Exact repeating-group count layout for one CellProfiler revision."""
+
+    def __new__(
+        cls,
+        revision: int,
+        bin_group_count_index: int,
+        heatmap_group_count_index: int,
+        records_image_group_count: bool,
+    ) -> "IntensityDistributionSettingSchema":
+        member = object.__new__(cls)
+        member._value_ = revision
+        member.bin_group_count_index = bin_group_count_index
+        member.heatmap_group_count_index = heatmap_group_count_index
+        member.records_image_group_count = records_image_group_count
+        return member
+
+    REVISION_5 = (5, 2, 3, True)
+    REVISION_6 = (6, 1, 2, False)
+
+    @classmethod
+    def imported_module(
+        cls, module: ModuleBlock
+    ) -> "IntensityDistributionSettingSchema | None":
+        """Return the exact serialized schema for an imported module."""
+        revision = module.variable_revision_number
+        return None if revision is None else cls(revision)
+
+    def declared_bin_group_count(self, hidden_counts: tuple[str, ...]) -> int:
+        return int(float(hidden_counts[self.bin_group_count_index]))
+
+    def declared_heatmap_group_count(self, hidden_counts: tuple[str, ...]) -> int:
+        return int(float(hidden_counts[self.heatmap_group_count_index]))
+
+    def hidden_count_records(
+        self,
+        *,
+        image_count: int,
+        object_count: int,
+        bin_count: int,
+        heatmap_count: int,
+    ) -> tuple[ModuleSetting, ...]:
+        counts = (
+            (image_count, object_count, bin_count, heatmap_count)
+            if self.records_image_group_count
+            else (object_count, bin_count, heatmap_count)
+        )
+        return tuple(ModuleSetting("Hidden", str(count)) for count in counts)
+
+
+@dataclass(frozen=True)
+class IntensityDistributionHeatmapSourceRelation(SourceStackLineageSourceRelation):
+    """Declare the exact source and rendering semantics for one heatmap."""
+
+    relation_key: ClassVar[str] = "intensity_distribution_heatmap_source"
+    target_artifact_type = ImageArtifactType
+
+    bin_count: int
+    wants_scaled: bool
+    maximum_radius: int
+    measurement: IntensityDistributionHeatmapMeasurement
+    colormap: str
+
+
+class IntensityDistributionHeatmapObjectRelation(ArtifactSpecRelation):
+    """Declare the exact object-label domain rendered by one heatmap."""
+
+    relation_key: ClassVar[str] = "intensity_distribution_heatmap_object"
+    target_artifact_type = ImageArtifactType
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.source.artifact_type is not ObjectLabelsArtifactType:
+            raise ValueError(
+                "Intensity-distribution heatmap object relation requires an "
+                f"object source, got {self.source.artifact_type.value}:"
+                f"{self.source.name}."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class IntensityDistributionHeatmapRuntimeOutput(RuntimeSliceProjectableValue):
+    """Runtime heatmap request in compiled image-output order."""
+
+    group: IntensityDistributionHeatmapGroup
+    object_labels: ObjectLabelValue
+
+    def project_runtime_slice(
+        self, slice_index: int
+    ) -> "IntensityDistributionHeatmapRuntimeOutput":
+        """Project the heatmap object-label domain through its declared axis."""
+        projection = self.object_labels.declared_plane_projection()
+        if projection is None or projection.axis is not RuntimePlaneAxis.RUNTIME_SLICE:
+            return self
+        projected = RuntimeSliceProjection.value_for_slice(
+            self.object_labels,
+            projection.selected_plane(slice_index),
+        )
+        return replace(self, object_labels=projected)
+
+
+class _IntensityDistributionHeatmapOutputsRuntimeParameter(KeywordRuntimeParameter):
+    """Runtime-bound heatmap requests reconstructed from output relations."""
+
+    parameter_name = "heatmap_outputs"
+    annotation_type = tuple[IntensityDistributionHeatmapRuntimeOutput, ...]
+    parameter_default = ()
 
 
 class IntensityDistributionCenterChoice(Enum):
@@ -115,9 +363,8 @@ class MeasureObjectIntensityDistributionObjectMeasurementRowPolicy(
 
 class MeasureObjectIntensityDistributionModule(
     LabelsObjectInputPolicy,
-    PerObjectMeasurementExecutionModule,
-    ObjectMeasurementRowsModule,
     MeasureObjectIntensityDistributionObjectMeasurementRowPolicy,
+    PerObjectMeasurementExecutionModule,
     ImageMeasurementInputModule,
     ObjectMeasurementInputModule,
     SourceQualifiedMeasurementFeatureModule,
@@ -128,8 +375,8 @@ class MeasureObjectIntensityDistributionModule(
     validated = True
     confidence = 1.0
     measurement_category_prefixes = (
-        ("intensity", "distribution"),
         ("radial", "distribution"),
+        ("intensity", "distribution"),
     )
     measurement_record_excluded_fields = frozenset(
         {MeasurementRowAxisField.OBJECT_ROW_IDENTITY.value}
@@ -142,166 +389,482 @@ class MeasureObjectIntensityDistributionModule(
         MEAN_FRACTION = ("MeanFrac", (), (IntensityFeature,))
         RADIAL_CV = ("RadialCV", (), (IntensityFeature,))
 
-        def indexed_name(self, *, bin_index: int, bin_count: int) -> str:
+        def source_qualified_name(
+            self,
+            *,
+            source_image_name: str,
+        ) -> str:
             return (
-                f"IntensityDistribution_{self.value}_{int(bin_index)}of{int(bin_count)}"
+                MeasureObjectIntensityDistributionModule.source_qualified_feature_name(
+                    self.measurement_row_field_name,
+                    source_image_name,
+                )
             )
 
-    ignored_settings = (
-        "Hidden",
-        "Select objects to use as centers",
-        "Calculate intensity Zernikes?",
-        "Maximum Zernike moment",
-        "Maximum zernike moment",
-        "Object to use as center?",
-        "Scale the bins?",
-        "Number of bins",
-        "Maximum radius",
+    ignored_settings = ("Hidden",)
+    zernike_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
+        "Calculate intensity Zernikes?"
     )
-    zernike_setting = "Calculate intensity Zernikes?"
-    zernike_degree_setting = SettingNameFamily(
+    zernike_degree_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
         "Maximum Zernike moment", aliases=("Maximum zernike moment",)
     )
-    center_choice_setting = "Object to use as center?"
-    scalar_settings: ClassVar[Mapping[str, tuple[str, Callable[[str], Any]]]] = {
-        "Scale the bins?": ("wants_scaled", parse_cellprofiler_bool),
-        "Number of bins": ("bin_count", parse_cellprofiler_int),
-        "Maximum radius": ("maximum_radius", parse_cellprofiler_int),
-    }
+    center_choice_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
+        "Object to use as center?"
+    )
+    wants_scaled_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
+        "Scale the bins?"
+    )
+    bin_count_setting: ClassVar[SettingNameFamily] = SettingNameFamily("Number of bins")
+    maximum_radius_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
+        "Maximum radius"
+    )
+    center_objects_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
+        "Select objects to use as centers"
+    )
+    heatmap_image_setting = "Image"
+    heatmap_object_setting = "Objects to display"
+    heatmap_measurement_setting = "Measurement"
+    heatmap_colormap_setting = "Color map"
+    heatmap_save_setting = "Save display as image?"
+    heatmap_output_image_setting = "Output image name"
+    heatmap_output_image_binding = SettingToKeywordBinding.output(
+        heatmap_output_image_setting,
+        ImageArtifactType,
+        "heatmap_output_names",
+        repeated=True,
+    )
+    setting_bindings = (
+        heatmap_output_image_binding,
+        SettingToKeywordBinding(
+            zernike_setting,
+            "wants_zernikes",
+            parse_intensity_distribution_zernike_mode,
+        ),
+        SettingToKeywordBinding(
+            zernike_degree_setting,
+            "zernike_degree",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            wants_scaled_setting,
+            "wants_scaled",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            bin_count_setting,
+            "bin_count",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            maximum_radius_setting,
+            "maximum_radius",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            center_choice_setting,
+            "center_choice",
+            parse_intensity_distribution_center_choice,
+        ),
+        SettingToKeywordBinding(
+            center_objects_setting,
+            "select_objects_to_use_as_centers",
+        ),
+    )
 
     @classmethod
-    def bind_settings(
+    def bin_groups(
         cls,
-        module: "ModuleBlock",
-        *,
-        binder: "SettingsBinder",
-        param_mapping: Mapping[str, Any],
-        ignored_unmapped_settings: frozenset[str] = frozenset(),
-    ) -> "BoundModuleSettings":
-        bound = cls._bind_generic_settings(
-            module, binder=binder, param_mapping=param_mapping
+        module: ModuleBlock,
+    ) -> tuple[IntensityDistributionBinGroup, ...]:
+        blocks = repeating_setting_blocks(
+            module.iter_settings(),
+            start_name=cls.wants_scaled_setting,
         )
-        kwargs = dict(bound.kwargs)
-        unmapped_kwargs = dict(bound.unmapped_kwargs)
-        zernike_value = optional_setting_value(module, cls.zernike_setting)
-        if zernike_value is not None:
-            kwargs["wants_zernikes"] = parse_intensity_distribution_zernike_mode(
-                zernike_value
+        if blocks:
+            hidden_counts = setting_values(module, "Hidden")
+            schema = IntensityDistributionSettingSchema.imported_module(module)
+            if schema is not None and len(blocks) != (
+                declared_count := schema.declared_bin_group_count(hidden_counts)
+            ):
+                raise ValueError(
+                    "MeasureObjectIntensityDistribution bin groups do not match "
+                    f"their declared count: {len(blocks)} != {declared_count}."
+                )
+            return tuple(
+                IntensityDistributionBinGroup(
+                    bin_count=int(
+                        float(block_setting_value(block, cls.bin_count_setting))
+                    ),
+                    wants_scaled=parse_cellprofiler_bool(
+                        block_setting_value(block, cls.wants_scaled_setting)
+                    ),
+                    maximum_radius=int(
+                        float(
+                            block_setting_value(
+                                block,
+                                cls.maximum_radius_setting,
+                                default="100",
+                            )
+                        )
+                    ),
+                )
+                for block in blocks
             )
-            unmapped_kwargs.pop(
-                normalize_cellprofiler_setting_name(cls.zernike_setting), None
+        bin_values = setting_values(module, cls.bin_count_setting)
+        if not bin_values:
+            return ()
+        scaled_values = setting_values(module, cls.wants_scaled_setting)
+        radius_values = setting_values(module, cls.maximum_radius_setting)
+        if len(bin_values) != 1 or len(scaled_values) > 1 or len(radius_values) > 1:
+            raise ValueError(
+                "MeasureObjectIntensityDistribution mapping-only settings cannot "
+                "represent repeated bin groups."
             )
-        zernike_degree = optional_setting_value(module, cls.zernike_degree_setting)
-        if zernike_degree is not None:
-            kwargs["zernike_degree"] = parse_cellprofiler_int(zernike_degree)
-            unmapped_kwargs.pop(
-                normalize_cellprofiler_setting_name(
-                    setting_names(cls.zernike_degree_setting)[0]
+        return (
+            IntensityDistributionBinGroup(
+                bin_count=int(float(bin_values[0])),
+                wants_scaled=(
+                    parse_cellprofiler_bool(scaled_values[0]) if scaled_values else True
                 ),
-                None,
-            )
-        for setting_name, (parameter_name, parse) in cls.scalar_settings.items():
-            value = optional_setting_value(module, setting_name)
-            if value is not None:
-                kwargs[parameter_name] = parse(value)
-            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
-        center_choice = optional_setting_value(module, cls.center_choice_setting)
-        if center_choice is not None:
-            kwargs["center_choice"] = parse_intensity_distribution_center_choice(
-                center_choice
-            )
-            unmapped_kwargs.pop(
-                normalize_cellprofiler_setting_name(cls.center_choice_setting), None
-            )
-        return cls._finalize_bound_settings(
-            module,
-            binder=binder,
-            bound=BoundModuleSettings(kwargs, unmapped_kwargs),
-            ignored_unmapped_settings=ignored_unmapped_settings,
+                maximum_radius=(int(float(radius_values[0])) if radius_values else 100),
+            ),
         )
 
     @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        return cls.measurement_artifact_contract_from_declared_settings(
-            assembler, builder, module
+    def heatmap_groups(
+        cls,
+        module: ModuleBlock,
+    ) -> tuple[IntensityDistributionHeatmapGroup, ...]:
+        blocks = repeating_setting_blocks(
+            module.iter_settings(),
+            start_name=cls.heatmap_image_setting,
+        )
+        hidden_counts = setting_values(module, "Hidden")
+        schema = IntensityDistributionSettingSchema.imported_module(module)
+        if schema is not None and len(blocks) != (
+            declared_count := schema.declared_heatmap_group_count(hidden_counts)
+        ):
+            raise ValueError(
+                "MeasureObjectIntensityDistribution heatmap groups do not match "
+                f"their declared count: {len(blocks)} != {declared_count}."
+            )
+        bin_groups_by_count: dict[int, IntensityDistributionBinGroup] = {}
+        for bin_group in cls.bin_groups(module):
+            if bin_group.bin_count in bin_groups_by_count:
+                raise ValueError(
+                    "MeasureObjectIntensityDistribution heatmap selection is "
+                    "ambiguous for duplicate bin count "
+                    f"{bin_group.bin_count}."
+                )
+            bin_groups_by_count[bin_group.bin_count] = bin_group
+        groups: list[IntensityDistributionHeatmapGroup] = []
+        for group_index, block in enumerate(blocks):
+            source_name = normalized_symbol_name(
+                block_setting_value(block, cls.heatmap_image_setting)
+            )
+            object_name = normalized_symbol_name(
+                block_setting_value(block, cls.heatmap_object_setting)
+            )
+            output_name = normalized_symbol_name(
+                block_setting_value(block, cls.heatmap_output_image_setting)
+            )
+            if source_name is None or object_name is None or output_name is None:
+                raise ValueError(
+                    "MeasureObjectIntensityDistribution heatmap group "
+                    f"{group_index + 1} requires exact image, object, and output "
+                    "names."
+                )
+            bin_count = int(float(block_setting_value(block, cls.bin_count_setting)))
+            try:
+                bin_group = bin_groups_by_count[bin_count]
+            except KeyError as exc:
+                raise ValueError(
+                    "MeasureObjectIntensityDistribution heatmap group "
+                    f"{group_index + 1} selects undeclared bin count {bin_count}."
+                ) from exc
+            measurement = coerce_cellprofiler_enum(
+                IntensityDistributionHeatmapMeasurement,
+                block_setting_value(block, cls.heatmap_measurement_setting),
+            )
+            groups.append(
+                IntensityDistributionHeatmapGroup(
+                    source_image_name=source_name,
+                    object_name=object_name,
+                    bin_count=bin_group.bin_count,
+                    wants_scaled=bin_group.wants_scaled,
+                    maximum_radius=bin_group.maximum_radius,
+                    measurement=measurement,
+                    colormap=block_setting_value(
+                        block,
+                        cls.heatmap_colormap_setting,
+                        default="Default",
+                    ),
+                    save_display=parse_cellprofiler_bool(
+                        block_setting_value(
+                            block,
+                            cls.heatmap_save_setting,
+                            default="No",
+                        )
+                    ),
+                    output_image_name=output_name,
+                )
+            )
+        return tuple(groups)
+
+    @classmethod
+    def saved_heatmap_groups(
+        cls,
+        module: ModuleBlock,
+    ) -> tuple[IntensityDistributionHeatmapGroup, ...]:
+        return tuple(
+            group for group in cls.heatmap_groups(module) if group.save_display
         )
 
+    @classmethod
+    def active_artifact_bindings(cls, module=None, *, invocation_key=None):
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
+        )
+        if module is None:
+            return bindings
+        return tuple(
+            binding
+            for binding in bindings
+            if cls.saved_heatmap_groups(module)
+            or binding is not cls.heatmap_output_image_binding
+        )
 
-from abc import ABC, abstractmethod
-from collections import OrderedDict
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
-import hashlib
-import logging
-import time
-from types import MappingProxyType
-import numpy as np
-import scipy.sparse
-from metaclass_registry import AutoRegisterMeta
-from numba import njit
-from openhcs.constants.constants import MemoryType
-from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import (
-    ObjectLabelMeasurementExecution,
-    measurement_image_batch_executor,
-    object_label_measurement_execution,
-    special_inputs,
-    special_outputs,
-)
-from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
-from openhcs.core.runtime_semantics import (
-    MeasurementObjectRowIdentity,
-    MeasurementRowValueField,
-    dense_object_label_declared_or_extent_id_domain,
-)
-from openhcs.core.runtime_values import (
-    ColumnarRows,
-    DenseObjectLabelPlaneDomainStackRequest,
-    DenseObjectLabelSliceStackRequest,
-    ObjectLabelValue,
-    image_payload_data,
-    image_payload_mask,
-    object_label_dense_array,
-    project_image_mask_to_data_domain,
-)
-from openhcs.core.measurement_row_materialization import (
-    ConcatenatedColumnarRows,
-)
+    @classmethod
+    def artifact_names_for_binding(cls, module, binding):
+        if binding is cls.heatmap_output_image_binding:
+            return tuple(
+                group.output_image_name for group in cls.saved_heatmap_groups(module)
+            )
+        return super().artifact_names_for_binding(module, binding)
+
+    @classmethod
+    def artifact_output_relations(
+        cls,
+        module,
+        *,
+        invocation_key,
+        step_context,
+        binding,
+        name,
+        artifact_inputs: ArtifactSpecCollection,
+        output_position: int,
+    ):
+        del invocation_key, step_context, binding
+        groups = cls.saved_heatmap_groups(module)
+        if (
+            output_position >= len(groups)
+            or groups[output_position].output_image_name != name
+        ):
+            raise ValueError(
+                "MeasureObjectIntensityDistribution output order does not match "
+                f"its saved heatmaps: position={output_position}, name={name!r}, "
+                f"groups={groups!r}."
+            )
+        group = groups[output_position]
+        source = artifact_inputs.require_by_name_and_artifact_type(
+            group.source_image_name,
+            ImageArtifactType,
+        )
+        objects = artifact_inputs.require_by_name_and_artifact_type(
+            group.object_name,
+            ObjectLabelsArtifactType,
+        )
+        return (
+            IntensityDistributionHeatmapSourceRelation(
+                source=source.ref(),
+                bin_count=group.bin_count,
+                wants_scaled=group.wants_scaled,
+                maximum_radius=group.maximum_radius,
+                measurement=group.measurement,
+                colormap=group.colormap,
+            ),
+            IntensityDistributionHeatmapObjectRelation(source=objects.ref()),
+        )
+
+    @classmethod
+    def postprocess_bound_settings(
+        cls,
+        module: ModuleBlock,
+        bound: BoundModuleSettings,
+    ) -> BoundModuleSettings:
+        kwargs = dict(bound.kwargs)
+        kwargs.pop(cls.heatmap_output_image_binding.require_parameter_name(), None)
+        heatmap_groups = cls.heatmap_groups(module)
+        if heatmap_groups:
+            kwargs["heatmap_groups"] = heatmap_groups
+        return bound.with_replaced_kwargs(kwargs).with_consumed_settings(
+            cls.heatmap_image_setting,
+            cls.heatmap_object_setting,
+            cls.heatmap_measurement_setting,
+            cls.heatmap_colormap_setting,
+            cls.heatmap_save_setting,
+            cls.heatmap_output_image_setting,
+        )
+
+    @classmethod
+    def finalize_module_blocks_for_invocation(
+        cls,
+        blocks, *,
+        invocation,
+        step_context,
+    ) -> tuple[ModuleBlock, ...]:
+        """Reconstruct all heatmap rows from the public callable declaration."""
+
+        blocks = super().finalize_module_blocks_for_invocation(
+            blocks, invocation=invocation,
+            step_context=step_context,
+        )
+        raw_groups = invocation.kwargs_dict.get("heatmap_groups", ())
+        if not isinstance(raw_groups, (tuple, list)) or any(
+            not isinstance(group, IntensityDistributionHeatmapGroup)
+            for group in raw_groups
+        ):
+            raise TypeError(
+                "MeasureObjectIntensityDistribution heatmap_groups must contain "
+                "only IntensityDistributionHeatmapGroup values."
+            )
+        groups = tuple(raw_groups)
+        return tuple(cls._block_with_heatmap_groups(block, groups) for block in blocks)
+
+    @classmethod
+    def _block_with_heatmap_groups(
+        cls,
+        block: ModuleBlock,
+        groups: tuple[IntensityDistributionHeatmapGroup, ...],
+    ) -> ModuleBlock:
+        records: list[ModuleSetting] = []
+        heatmap_rows_started = False
+        for record in block.iter_settings():
+            if setting_name_matches(record.name, cls.heatmap_image_setting):
+                heatmap_rows_started = True
+            if heatmap_rows_started or setting_name_matches(record.name, "Hidden"):
+                continue
+            records.append(record)
+        image_count = len(
+            cls.artifact_names_for_binding(
+                block,
+                cls.image_measurement_binding,
+            )
+        )
+        object_count = len(
+            cls.artifact_names_for_binding(
+                block,
+                cls.object_measurement_binding,
+            )
+        )
+        bin_count = len(cls.bin_groups(block))
+        if image_count <= 0 or object_count <= 0 or bin_count <= 0:
+            raise ValueError(
+                "MeasureObjectIntensityDistribution public reconstruction requires "
+                "at least one declared image, object, and bin group."
+            )
+        records[1:1] = (
+            IntensityDistributionSettingSchema.REVISION_6.hidden_count_records(
+                image_count=image_count,
+                object_count=object_count,
+                bin_count=bin_count,
+                heatmap_count=len(groups),
+            )
+        )
+        for group in groups:
+            records.extend(
+                (
+                    ModuleSetting(cls.heatmap_image_setting, group.source_image_name),
+                    ModuleSetting(cls.heatmap_object_setting, group.object_name),
+                    ModuleSetting(
+                        cls.bin_count_setting.canonical, str(group.bin_count)
+                    ),
+                    ModuleSetting(
+                        cls.heatmap_measurement_setting,
+                        group.measurement.value,
+                    ),
+                    ModuleSetting(cls.heatmap_colormap_setting, group.colormap),
+                    ModuleSetting(
+                        cls.heatmap_save_setting,
+                        "Yes" if group.save_display else "No",
+                    ),
+                    ModuleSetting(
+                        cls.heatmap_output_image_setting,
+                        group.output_image_name,
+                    ),
+                )
+            )
+        return replace(
+            block,
+            setting_records=records,
+        )
+
+    @classmethod
+    def bind_runtime_inputs(cls, request: RuntimeInputBindingRequest):
+        return {
+            **super().bind_runtime_inputs(request),
+            _IntensityDistributionHeatmapOutputsRuntimeParameter.require_parameter_name(): cls._runtime_heatmap_outputs(
+                request
+            ),
+        }
+
+    @classmethod
+    def _runtime_heatmap_outputs(
+        cls,
+        request: RuntimeInputBindingRequest,
+    ) -> tuple[IntensityDistributionHeatmapRuntimeOutput, ...]:
+        inputs = request.declared_inputs
+        image_outputs = request.adapter.request.require_callable_contract().artifact_outputs.of_artifact_type(
+            ImageArtifactType
+        )
+        outputs: list[IntensityDistributionHeatmapRuntimeOutput] = []
+        for output in image_outputs:
+            source_relations = tuple(
+                relation
+                for relation in output.relations
+                if isinstance(relation, IntensityDistributionHeatmapSourceRelation)
+            )
+            object_relations = tuple(
+                relation
+                for relation in output.relations
+                if isinstance(relation, IntensityDistributionHeatmapObjectRelation)
+            )
+            if len(source_relations) != 1 or len(object_relations) != 1:
+                raise ValueError(
+                    "MeasureObjectIntensityDistribution heatmap output requires "
+                    "one exact source and object relation, got "
+                    f"{source_relations!r} and {object_relations!r}."
+                )
+            source_relation = source_relations[0]
+            source_spec = inputs.by_ref(source_relation.source)
+            object_spec = inputs.by_ref(object_relations[0].source)
+            if source_spec is None or object_spec is None:
+                raise ValueError(
+                    "MeasureObjectIntensityDistribution heatmap relation refers "
+                    "to an input absent from the compiled contract."
+                )
+            outputs.append(
+                IntensityDistributionHeatmapRuntimeOutput(
+                    group=IntensityDistributionHeatmapGroup(
+                        source_image_name=source_spec.name,
+                        object_name=object_spec.name,
+                        bin_count=source_relation.bin_count,
+                        wants_scaled=source_relation.wants_scaled,
+                        maximum_radius=source_relation.maximum_radius,
+                        measurement=source_relation.measurement,
+                        colormap=source_relation.colormap,
+                        save_display=True,
+                        output_image_name=output.name,
+                    ),
+                    object_labels=request.label_payload_for(object_spec),
+                )
+            )
+        return tuple(outputs)
+
 
 CenterChoice = IntensityDistributionCenterChoice
 ZernikeMode = IntensityDistributionZernikeMode
-
-from openhcs.processing.backends.cellprofiler._backend import (
-    BackendProviderInput,
-    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-    CellProfilerBackendProvider,
-    CellProfilerBackendStrategyMixin,
-    CellProfilerBackendAuthority,
-)
-from openhcs.processing.backends.cellprofiler.granularity import (
-    CellProfilerRuntimeProfiler,
-)
-from openhcs.processing.backends.cellprofiler.object_measurement_columnar_rows import (
-    ObjectMeasurementColumnarRows,
-)
-from openhcs.processing.backends.cellprofiler.shape import (
-    ShapeMeasurementBackendStrategy,
-    shape_measurement_backend,
-)
-from openhcs.processing.backends.cellprofiler.secondary import (
-    SecondaryPropagationBackendStrategy,
-    secondary_propagation_backend,
-)
-from openhcs.processing.backends.cellprofiler.zernike import (
-    IntensityZernikeMeasurementRowsRequest,
-    ObjectIntensityZernikeMeasurementColumnarRows,
-    intensity_zernike_moments_batch,
-)
-from openhcs.processing.materialization import csv_materializer
-from openhcs.processing.backends.cellprofiler.thresholding import (
-    ThresholdSettingsModule,
-)
 
 logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
@@ -436,181 +999,6 @@ class RadialLabelGeometry:
 
 
 @dataclass(frozen=True, slots=True)
-class IntensityDistributionPlaneInputs:
-    """2D image/label plane consumed by intensity-distribution measurement."""
-
-    image: np.ndarray
-    labels: ObjectLabelValue | np.ndarray
-
-    def arrays(self) -> tuple[np.ndarray, np.ndarray]:
-        label_array = object_label_dense_array(self.labels, dtype=np.int32)
-        image_array = np.asarray(self.image)
-        if image_array.ndim == 3:
-            image_2d = image_array[0]
-            labels_2d = label_array[0] if label_array.ndim == 3 else label_array
-            return (image_2d, labels_2d)
-        return (image_array, label_array)
-
-
-@dataclass(frozen=True, slots=True)
-class IntensityDistributionSliceInputs:
-    """Runtime-aligned image/label slices for intensity-distribution measurement."""
-
-    image: object
-    labels: ObjectLabelValue | np.ndarray
-
-    @property
-    def image_array(self) -> np.ndarray:
-        return np.asarray(image_payload_data(self.image))
-
-    @property
-    def image_mask_array(self) -> np.ndarray | None:
-        mask = image_payload_mask(self.image)
-        if mask is None:
-            return None
-        projected = project_image_mask_to_data_domain(mask, self.image_array)
-        if projected is None:
-            raise ValueError(
-                "MeasureObjectIntensityDistribution image mask cannot be "
-                f"projected into image domain; got mask {np.shape(mask)!r} "
-                f"for image {self.image_array.shape!r}."
-            )
-        return np.asarray(projected, dtype=bool)
-
-    @property
-    def slice_count(self) -> int:
-        image_array = self.image_array
-        return int(image_array.shape[0]) if image_array.ndim == 3 else 1
-
-    def slices(self) -> tuple["IntensityDistributionSliceInput", ...]:
-        image_array = self.image_array
-        image_mask_array = self.image_mask_array
-        plane_domain_stack = DenseObjectLabelPlaneDomainStackRequest(
-            self.labels,
-            dtype=np.int32,
-            allow_single_plane=image_array.ndim == 2,
-            collapse_repeated=image_array.ndim == 2,
-        ).stack()
-        if image_array.ndim == 2 and plane_domain_stack is not None:
-            return tuple(
-                (
-                    IntensityDistributionSliceInput(
-                        image=image_array,
-                        image_mask=self._slice_mask(image_mask_array, 0, image_array),
-                        labels=plane_domain_stack.plane(plane_index),
-                        slice_index=plane_index,
-                        object_domain=plane_domain_stack.object_id_domains[plane_index],
-                        row_identity=MeasurementObjectRowIdentity.LABEL_ID,
-                    )
-                    for plane_index in range(plane_domain_stack.plane_count)
-                )
-            )
-        if (
-            image_array.ndim == 3
-            and plane_domain_stack is not None
-            and (image_array.shape[0] == plane_domain_stack.plane_count)
-        ):
-            return tuple(
-                (
-                    IntensityDistributionSliceInput(
-                        image=image_array[plane_index],
-                        image_mask=self._slice_mask(
-                            image_mask_array,
-                            plane_index,
-                            image_array[plane_index],
-                        ),
-                        labels=plane_domain_stack.plane(plane_index),
-                        slice_index=plane_index,
-                        object_domain=plane_domain_stack.object_id_domains[plane_index],
-                        row_identity=MeasurementObjectRowIdentity.LABEL_ID,
-                    )
-                    for plane_index in range(plane_domain_stack.plane_count)
-                )
-            )
-        label_stack = DenseObjectLabelSliceStackRequest(
-            self.labels, slice_count=self.slice_count, dtype=np.int32
-        ).stack()
-        if label_stack is None:
-            image_2d, labels_2d = IntensityDistributionPlaneInputs(
-                image_array, self.labels
-            ).arrays()
-            return (
-                IntensityDistributionSliceInput(
-                    image=image_2d,
-                    image_mask=self._slice_mask(image_mask_array, 0, image_2d),
-                    labels=labels_2d,
-                    slice_index=0,
-                    object_domain=intensity_distribution_object_domain(labels_2d),
-                ),
-            )
-        if image_array.ndim == 3:
-            object_domains = self._slice_object_domains(label_stack)
-            return tuple(
-                (
-                    IntensityDistributionSliceInput.from_aligned_arrays(
-                        image=image_array[slice_index],
-                        image_mask=self._slice_mask(
-                            image_mask_array,
-                            slice_index,
-                            image_array[slice_index],
-                        ),
-                        labels=label_stack.slice(slice_index),
-                        slice_index=slice_index,
-                        object_domain=object_domains[slice_index],
-                    )
-                    for slice_index in range(self.slice_count)
-                )
-            )
-        object_domains = self._slice_object_domains(label_stack)
-        return (
-            IntensityDistributionSliceInput.from_aligned_arrays(
-                image=image_array,
-                image_mask=self._slice_mask(image_mask_array, 0, image_array),
-                labels=label_stack.slice(0),
-                slice_index=0,
-                object_domain=object_domains[0],
-            ),
-        )
-
-    def _slice_object_domains(
-        self, label_stack: DenseObjectLabelSliceStack
-    ) -> tuple[tuple[int, ...], ...]:
-        """Return CP row domains aligned with a sliced dense label stack."""
-        if label_stack.preserves_payload_domain and label_stack.payload is not None:
-            return tuple(
-                (
-                    intensity_distribution_object_domain(label_stack.slice(slice_index))
-                    for slice_index in range(label_stack.labels.shape[0])
-                )
-            )
-        stack_domain = intensity_distribution_object_domain(self.labels)
-        return (stack_domain,) * int(label_stack.labels.shape[0])
-
-    @staticmethod
-    def _slice_mask(
-        mask: np.ndarray | None,
-        plane_index: int,
-        image_slice: np.ndarray,
-    ) -> np.ndarray | None:
-        if mask is None:
-            return None
-        mask_array = np.asarray(mask, dtype=bool)
-        candidates: list[np.ndarray] = []
-        if mask_array.ndim >= 3 and mask_array.shape[0] > int(plane_index):
-            candidates.append(mask_array[int(plane_index)])
-        candidates.append(mask_array)
-        for candidate in candidates:
-            projected = project_image_mask_to_data_domain(candidate, image_slice)
-            if projected is not None:
-                return np.asarray(projected, dtype=bool)
-        raise ValueError(
-            "MeasureObjectIntensityDistribution image mask cannot be projected "
-            f"into slice domain; got mask {mask_array.shape!r} for image "
-            f"{np.shape(image_slice)!r}."
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class IntensityDistributionSliceInput:
     """One aligned 2D image/label slice."""
 
@@ -619,7 +1007,6 @@ class IntensityDistributionSliceInput:
     labels: np.ndarray
     slice_index: int
     object_domain: tuple[int, ...]
-    row_identity: MeasurementObjectRowIdentity | None = MeasurementObjectRowIdentity.LABEL_ID
 
     @classmethod
     def from_aligned_arrays(
@@ -627,24 +1014,34 @@ class IntensityDistributionSliceInput:
         *,
         image: np.ndarray,
         image_mask: np.ndarray | None = None,
-        labels: ObjectLabelValue | np.ndarray,
+        labels: ObjectLabelValue,
         slice_index: int,
         object_domain: tuple[int, ...] | None = None,
-        row_identity: MeasurementObjectRowIdentity | None = (
-            MeasurementObjectRowIdentity.LABEL_ID
-        ),
     ) -> "IntensityDistributionSliceInput":
+        image_array = np.asarray(image)
+        label_array = np.asarray(object_label_dense_array(labels, dtype=np.int32))
+        if image_array.ndim != 2 or label_array.ndim != 2:
+            raise ValueError(
+                "MeasureObjectIntensityDistribution requires image and labels "
+                "already projected to one 2-D plane; got image "
+                f"{image_array.shape!r} and labels {label_array.shape!r}."
+            )
+        if image_array.shape != label_array.shape:
+            raise ValueError(
+                "MeasureObjectIntensityDistribution image and projected labels "
+                f"must share a shape; got image {image_array.shape!r} and labels "
+                f"{label_array.shape!r}."
+            )
         return cls(
-            image=image,
+            image=image_array,
             image_mask=image_mask,
-            labels=np.asarray(object_label_dense_array(labels, dtype=np.int32)),
+            labels=label_array,
             slice_index=slice_index,
             object_domain=(
                 intensity_distribution_object_domain(labels)
                 if object_domain is None
                 else object_domain
             ),
-            row_identity=row_identity,
         )
 
     @property
@@ -740,6 +1137,7 @@ class IntensityDistributionMeasurementRequest:
     """Executable intensity-distribution request for one aligned slice."""
 
     slice_input: IntensityDistributionSliceInput
+    source_image_name: str
     bin_count: int
     wants_scaled: bool
     maximum_radius: int
@@ -753,7 +1151,10 @@ class IntensityDistributionMeasurementRequest:
         labels_2d = self.slice_input.radial_labels
         object_ids = self.slice_input.object_domain
         if not object_ids:
-            return ObjectIntensityDistributionMeasurementColumnarRows.empty()
+            return ObjectIntensityDistributionMeasurementColumnarRows.empty(
+                source_image_name=self.source_image_name,
+                slice_index=self.slice_input.slice_index,
+            )
         phase_started_at = time.perf_counter()
         radial_arrays = self.radial_backend.measure_self_centered(
             self.slice_input.image,
@@ -772,9 +1173,9 @@ class IntensityDistributionMeasurementRequest:
         measurements = ObjectIntensityDistributionMeasurementColumnarRows(
             radial_arrays=radial_arrays,
             object_ids=object_ids,
+            source_image_name=self.source_image_name,
             bin_count=self.bin_count,
             slice_index=self.slice_input.slice_index,
-            row_identity=self.slice_input.row_identity,
         )
         self.profiler.record_rows(
             "idist_radial_rows", phase_started_at, len(measurements)
@@ -787,9 +1188,10 @@ class IntensityDistributionMeasurementRequest:
                 image_mask=self.slice_input.image_mask,
                 max_order=self.zernike_degree,
                 object_ids=object_ids,
+                source_image_name=self.source_image_name,
                 include_phase=self.wants_zernikes == ZernikeMode.MAGNITUDES_AND_PHASE,
                 slice_index=self.slice_input.slice_index,
-                row_identity=self.slice_input.row_identity,
+                row_identity=MeasurementObjectRowIdentity.LABEL_ID,
                 backend_provider=self.zernike_backend_provider,
             ).rows()
             measurements = ConcatenatedColumnarRows(
@@ -805,33 +1207,43 @@ class IntensityDistributionMeasurementRequest:
 class ObjectIntensityDistributionMeasurementColumnarRows(ObjectMeasurementColumnarRows):
     """Columnar radial intensity-distribution rows."""
 
+    object_row_identity = MeasurementObjectRowIdentity.LABEL_ID
+
     radial_arrays: RadialDistributionArrays
     object_ids: tuple[int, ...]
+    source_image_name: str
     bin_count: int
     slice_index: int | None = None
-    row_identity: MeasurementObjectRowIdentity | None = None
     _columns: Mapping[str, np.ndarray] = field(init=False, repr=False, compare=False)
+    _fields: tuple[FieldSpec, ...] = field(init=False, repr=False, compare=False)
 
     @classmethod
-    def empty(cls) -> "ObjectIntensityDistributionMeasurementColumnarRows":
+    def empty(
+        cls,
+        *,
+        source_image_name: str,
+        slice_index: int | None = None,
+    ) -> "ObjectIntensityDistributionMeasurementColumnarRows":
         return cls(
             radial_arrays=RadialDistributionArrays.empty(
                 bin_count=0, wants_scaled=True
             ),
             object_ids=(),
+            source_image_name=source_image_name,
             bin_count=0,
+            slice_index=slice_index,
         )
 
     def __post_init__(self) -> None:
         object_ids = np.asarray(
             tuple((int(object_id) for object_id in self.object_ids))
         )
-        if object_ids.size == 0:
-            self._columns = MappingProxyType({})
-            return
         row_count = int(object_ids.size) * int(self.radial_arrays.n_bins) * 3
         object_labels = np.empty(row_count, dtype=np.int32)
         feature_names = np.empty(row_count, dtype=object)
+        source_image_names = np.full(row_count, self.source_image_name, dtype=object)
+        bin_indices = np.empty(row_count, dtype=np.int32)
+        bin_counts = np.full(row_count, int(self.bin_count), dtype=np.int32)
         result_values = np.empty(row_count, dtype=np.float64)
         object_has_pixels_by_index = self.radial_arrays.object_has_pixels
         fraction_at_distance = self.radial_arrays.fraction_at_distance
@@ -844,14 +1256,14 @@ class ObjectIntensityDistributionMeasurementColumnarRows(ObjectMeasurementColumn
         row_index = 0
         for bin_idx in range(self.radial_arrays.n_bins):
             bin_index = bin_idx + 1
-            fraction_at_distance_feature = MeasureObjectIntensityDistributionModule.MeasurementFeature.FRACTION_AT_DISTANCE.indexed_name(
-                bin_index=bin_index, bin_count=self.bin_count
+            fraction_at_distance_feature = MeasureObjectIntensityDistributionModule.MeasurementFeature.FRACTION_AT_DISTANCE.source_qualified_name(
+                source_image_name=self.source_image_name,
             )
-            mean_fraction_feature = MeasureObjectIntensityDistributionModule.MeasurementFeature.MEAN_FRACTION.indexed_name(
-                bin_index=bin_index, bin_count=self.bin_count
+            mean_fraction_feature = MeasureObjectIntensityDistributionModule.MeasurementFeature.MEAN_FRACTION.source_qualified_name(
+                source_image_name=self.source_image_name,
             )
-            radial_cv_feature = MeasureObjectIntensityDistributionModule.MeasurementFeature.RADIAL_CV.indexed_name(
-                bin_index=bin_index, bin_count=self.bin_count
+            radial_cv_feature = MeasureObjectIntensityDistributionModule.MeasurementFeature.RADIAL_CV.source_qualified_name(
+                source_image_name=self.source_image_name,
             )
             radial_cv = radial_cv_by_bin[bin_idx]
             for object_label in object_ids:
@@ -866,6 +1278,7 @@ class ObjectIntensityDistributionMeasurementColumnarRows(ObjectMeasurementColumn
                 feature_names[row_index] = fraction_at_distance_feature
                 feature_names[row_index + 1] = mean_fraction_feature
                 feature_names[row_index + 2] = radial_cv_feature
+                bin_indices[row_index : row_index + 3] = bin_index
                 result_values[row_index] = (
                     float(fraction_at_distance[obj_idx, bin_idx])
                     if object_has_pixels and obj_idx is not None
@@ -877,29 +1290,46 @@ class ObjectIntensityDistributionMeasurementColumnarRows(ObjectMeasurementColumn
                     else np.nan
                 )
                 result_values[row_index + 2] = (
-                    CellProfilerRadialCVExportValue(radial_cv[obj_idx]).as_float()
+                    RadialCVMissingValueAuthority.export_value(radial_cv[obj_idx])
                     if object_has_pixels and obj_idx is not None
                     else radial_cv_missing_values[int(object_label)]
                 )
                 row_index += 3
-        columns: dict[str, np.ndarray] = {
-            MeasurementRowAxisField.OBJECT_LABEL.value: object_labels,
-            MeasurementRowAxisField.FEATURE_NAME.value: feature_names,
-            MeasurementRowValueField.RESULT_VALUE.value: result_values,
-        }
+        field_columns: tuple[tuple[FieldSpec, np.ndarray], ...] = (
+            (FieldSpec(MeasurementRowAxisField.OBJECT_LABEL.value, int), object_labels),
+            (FieldSpec(MeasurementRowAxisField.FEATURE_NAME.value, str), feature_names),
+            (
+                FieldSpec(MeasurementRowAxisField.SOURCE_IMAGE_NAME.value, str),
+                source_image_names,
+            ),
+            (FieldSpec(MeasurementRowAxisField.BIN_INDEX.value, int), bin_indices),
+            (FieldSpec(MeasurementRowAxisField.BIN_COUNT.value, int), bin_counts),
+            (
+                FieldSpec(MeasurementRowValueField.RESULT_VALUE.value, float),
+                result_values,
+            ),
+        )
         if self.slice_index is not None:
-            columns[MeasurementRowAxisField.SLICE_INDEX.value] = np.full(
-                row_count, int(self.slice_index), dtype=np.int32
+            field_columns = (
+                *field_columns,
+                (
+                    FieldSpec(MeasurementRowAxisField.SLICE_INDEX.value, int),
+                    np.full(row_count, int(self.slice_index), dtype=np.int32),
+                ),
             )
-        if self.row_identity is not None:
-            columns[MeasurementRowAxisField.OBJECT_ROW_IDENTITY.value] = np.full(
-                row_count, self.row_identity.value, dtype=object
-            )
-        self._columns = MappingProxyType(columns)
+        self._fields = tuple(field_spec for field_spec, _values in field_columns)
+        self._columns = MappingProxyType(
+            {field_spec.name: values for field_spec, values in field_columns}
+        )
+        self.validate_fields()
 
     @property
     def columns(self) -> Mapping[str, np.ndarray]:
         return self._columns
+
+    @property
+    def fields(self) -> tuple[FieldSpec, ...]:
+        return self._fields
 
 
 @dataclass(frozen=True, slots=True)
@@ -917,21 +1347,16 @@ class DeclaredRadialDistributionObjectRow:
         return index
 
 
-@dataclass(frozen=True, slots=True)
-class CellProfilerRadialCVExportValue:
-    """CellProfiler export value for undefined radial coefficient of variation."""
+class RadialCVMissingValueAuthority:
+    """CellProfiler missing-row values for RadialCV over a dense object domain."""
 
-    value: float
-
-    def as_float(self) -> float:
-        raw_value = float(self.value)
+    @staticmethod
+    def export_value(value: float) -> float:
+        """Normalize undefined radial coefficients to CellProfiler's export value."""
+        raw_value = float(value)
         if not np.isfinite(raw_value):
             return 0.0
         return raw_value
-
-
-class RadialCVMissingValueAuthority:
-    """CellProfiler missing-row values for RadialCV over a dense object domain."""
 
     @classmethod
     def values(
@@ -952,8 +1377,7 @@ class RadialCVMissingValueAuthority:
                     object_id=int(object_id),
                     label_payload=(),
                     field_name=(
-                        MeasureObjectIntensityDistributionModule
-                        .MeasurementFeature.RADIAL_CV.value
+                        MeasureObjectIntensityDistributionModule.MeasurementFeature.RADIAL_CV.value
                     ),
                     positive_label_extent=measured_positive_extent,
                 )
@@ -1678,13 +2102,11 @@ def _measure_radial_distribution_from_geometry_index_numba(
         if pixel_count > 0.0:
             object_has_pixels[object_index] = True
         for bin_index in range(bin_count + 1):
-            fraction_at_distance[object_index, bin_index] = (
-                _numpy_divide_scalar(histogram[object_index, bin_index], intensity_sum)
+            fraction_at_distance[object_index, bin_index] = _numpy_divide_scalar(
+                histogram[object_index, bin_index], intensity_sum
             )
-            fraction_at_bin[object_index, bin_index] = (
-                _numpy_divide_scalar(
-                    number_at_distance[object_index, bin_index], pixel_count
-                )
+            fraction_at_bin[object_index, bin_index] = _numpy_divide_scalar(
+                number_at_distance[object_index, bin_index], pixel_count
             )
     mean_pixel_fraction = np.zeros((object_count, bin_count + 1), dtype=np.float64)
     for object_index in range(object_count):
@@ -1787,13 +2209,11 @@ def _measure_radial_distribution_numba(
         if pixel_count > 0.0:
             object_has_pixels[object_index] = True
         for bin_index in range(bin_count + 1):
-            fraction_at_distance[object_index, bin_index] = (
-                _numpy_divide_scalar(histogram[object_index, bin_index], intensity_sum)
+            fraction_at_distance[object_index, bin_index] = _numpy_divide_scalar(
+                histogram[object_index, bin_index], intensity_sum
             )
-            fraction_at_bin[object_index, bin_index] = (
-                _numpy_divide_scalar(
-                    number_at_distance[object_index, bin_index], pixel_count
-                )
+            fraction_at_bin[object_index, bin_index] = _numpy_divide_scalar(
+                number_at_distance[object_index, bin_index], pixel_count
             )
     mean_pixel_fraction = np.zeros((object_count, bin_count + 1), dtype=np.float64)
     for object_index in range(object_count):
@@ -1834,22 +2254,12 @@ def _measure_radial_distribution_numba(
     )
 
 
-@numpy(contract=ProcessingContract.FLEXIBLE)
+@numpy(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
-@object_label_measurement_execution(ObjectLabelMeasurementExecution.FULL_STACK)
-@special_outputs(
-    (
-        "radial_measurements",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "object_label",
-                "feature_name",
-                "result_value",
-            ],
-            analysis_type="radial_distribution",
-        ),
-    )
+@object_label_input_execution_mode(ObjectLabelInputExecutionMode.SLICE_ALIGNED)
+@runtime_bound_parameters(
+    SliceIndexRuntimeParameter,
+    _IntensityDistributionHeatmapOutputsRuntimeParameter,
 )
 def measure_object_intensity_distribution(
     image: np.ndarray,
@@ -1862,47 +2272,208 @@ def measure_object_intensity_distribution(
     center_choice: CenterChoice = CenterChoice.SELF,
     radial_distribution_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     zernike_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> tuple[np.ndarray, ColumnarRows]:
-    """Measure CellProfiler-compatible object intensity distribution rows."""
+    slice_index: int | None = None,
+    heatmap_groups: tuple[IntensityDistributionHeatmapGroup, ...] = (),
+    heatmap_outputs: tuple[IntensityDistributionHeatmapRuntimeOutput, ...] = (),
+) -> tuple[np.ndarray | AlignedImageStack, ColumnarRows]:
+    """Measure CellProfiler-compatible object intensity distribution rows.
+
+    Args:
+        labels: Object-label plane defining the regions for radial-distribution
+            and Zernike measurements.
+        heatmap_groups: Ordered heatmap declarations selecting the source image,
+            object set, radial bin or measurement, colormap, and output name for
+            each retained heatmap.
+    """
     total_started_at = time.perf_counter()
     profiler = IntensityDistributionProfiler(
         function_name="measure_object_intensity_distribution"
     )
     del center_choice
     wants_zernikes = coerce_cellprofiler_enum(ZernikeMode, wants_zernikes)
+    source_image_names = image_payload_metadata(image).source_image_names
+    if len(source_image_names) != 1:
+        raise ValueError(
+            "MeasureObjectIntensityDistribution requires exactly one declared "
+            f"source image name, got {source_image_names!r}."
+        )
+    source_image_name = source_image_names[0]
     radial_backend = radial_distribution_backend(
         backend_provider=radial_distribution_backend_provider
     )
-    measurement_batches: list[ColumnarRows] = []
-    for slice_input in IntensityDistributionSliceInputs(
-        image,
-        labels,
-    ).slices():
-        measurement_batches.append(
-            IntensityDistributionMeasurementRequest(
-                slice_input=slice_input,
-                bin_count=bin_count,
-                wants_scaled=wants_scaled,
-                maximum_radius=maximum_radius,
-                wants_zernikes=wants_zernikes,
-                zernike_degree=zernike_degree,
-                radial_backend=radial_backend,
-                zernike_backend_provider=zernike_backend_provider,
-                profiler=profiler,
-            ).rows()
-        )
-    measurements = (
-        measurement_batches[0]
-        if len(measurement_batches) == 1
-        else ConcatenatedColumnarRows(tuple(measurement_batches))
+    image_array = np.asarray(image_payload_data(image))
+    image_mask = image_payload_mask(image)
+    projected_mask = image_mask_for_data_domain(
+        source_payload=image,
+        data=image_array,
     )
+    if image_mask is not None and projected_mask is None:
+        raise ValueError(
+            "MeasureObjectIntensityDistribution image mask must already match "
+            f"the projected image domain; got mask {np.shape(image_mask)!r} for "
+            f"image {image_array.shape!r}."
+        )
+    slice_input = IntensityDistributionSliceInput.from_aligned_arrays(
+        image=image_array,
+        image_mask=(
+            None if projected_mask is None else np.asarray(projected_mask, dtype=bool)
+        ),
+        labels=labels,
+        slice_index=0 if slice_index is None else int(slice_index),
+    )
+    measurements = IntensityDistributionMeasurementRequest(
+        slice_input=slice_input,
+        source_image_name=source_image_name,
+        bin_count=bin_count,
+        wants_scaled=wants_scaled,
+        maximum_radius=maximum_radius,
+        wants_zernikes=wants_zernikes,
+        zernike_degree=zernike_degree,
+        radial_backend=radial_backend,
+        zernike_backend_provider=zernike_backend_provider,
+        profiler=profiler,
+    ).rows()
     profiler.record_rows("idist_total", total_started_at, len(measurements))
-    return (image, measurements)
+    active_heatmap_groups = tuple(
+        group for group in heatmap_groups if group.save_display
+    )
+    runtime_heatmap_groups = tuple(output.group for output in heatmap_outputs)
+    if active_heatmap_groups != runtime_heatmap_groups:
+        raise ValueError(
+            "MeasureObjectIntensityDistribution runtime heatmaps do not match "
+            "the public saved-heatmap groups: "
+            f"{runtime_heatmap_groups!r} != {active_heatmap_groups!r}."
+        )
+    output = (
+        pack_aligned_image_outputs(
+            tuple(
+                _intensity_distribution_heatmap(
+                    image,
+                    request,
+                    radial_backend=radial_backend,
+                )
+                for request in heatmap_outputs
+            )
+        )
+        if heatmap_outputs
+        else image
+    )
+    return (output, measurements)
+
+
+def _intensity_distribution_heatmap(
+    image: np.ndarray,
+    request: IntensityDistributionHeatmapRuntimeOutput,
+    *,
+    radial_backend: "RadialDistributionBackendStrategy",
+) -> RuntimeArrayData:
+    """Render one CellProfiler radial-distribution heatmap."""
+
+    group = request.group
+    source_names = image_payload_metadata(image).source_image_names
+    if source_names != (group.source_image_name,):
+        raise ValueError(
+            "MeasureObjectIntensityDistribution heatmap source does not match "
+            f"the active image payload: {group.source_image_name!r} not in "
+            f"{source_names!r}."
+        )
+    image_array = np.asarray(image_payload_data(image))
+    image_mask = image_payload_mask(image)
+    projected_mask = image_mask_for_data_domain(
+        source_payload=image,
+        data=image_array,
+    )
+    if image_mask is not None and projected_mask is None:
+        raise ValueError(
+            "MeasureObjectIntensityDistribution heatmap image mask must match "
+            f"the source image domain: {np.shape(image_mask)!r} for "
+            f"{image_array.shape!r}."
+        )
+    slice_input = IntensityDistributionSliceInput.from_aligned_arrays(
+        image=image_array,
+        image_mask=(
+            None if projected_mask is None else np.asarray(projected_mask, dtype=bool)
+        ),
+        labels=request.object_labels,
+        slice_index=0,
+    )
+    labels = slice_input.radial_labels
+    radial_arrays = radial_backend.measure_self_centered(
+        slice_input.image,
+        labels,
+        bin_count=group.bin_count,
+        wants_scaled=group.wants_scaled,
+        maximum_radius=group.maximum_radius,
+    )
+    heatmap = np.zeros(labels.shape, dtype=float)
+    if labels.size and int(labels.max()) > 0:
+        geometry = radial_backend.label_geometry(labels)
+        center_fields = geometry.center_fields
+        valid = (labels > 0) & (center_fields.center_labels > 0)
+        normalized_distance = np.zeros(labels.shape, dtype=float)
+        if group.wants_scaled:
+            total_distance = center_fields.d_from_center + geometry.d_to_edge
+            normalized_distance[valid] = center_fields.d_from_center[valid] / (
+                total_distance[valid] + 0.001
+            )
+        else:
+            normalized_distance[valid] = (
+                center_fields.d_from_center[valid] / group.maximum_radius
+            )
+        bin_indices = (normalized_distance * group.bin_count).astype(int)
+        bin_indices[bin_indices > group.bin_count] = group.bin_count
+        object_indices = labels - 1
+        renderable = (
+            valid
+            & (object_indices >= 0)
+            & (object_indices < radial_arrays.object_has_pixels.size)
+            & (bin_indices >= 0)
+            & (bin_indices < radial_arrays.n_bins)
+        )
+        rows, columns = np.nonzero(renderable)
+        object_values = object_indices[rows, columns]
+        bin_values = bin_indices[rows, columns]
+        if (
+            group.measurement
+            is IntensityDistributionHeatmapMeasurement.FRACTION_AT_DISTANCE
+        ):
+            values = radial_arrays.fraction_at_distance[object_values, bin_values]
+        elif group.measurement is IntensityDistributionHeatmapMeasurement.MEAN_FRACTION:
+            values = radial_arrays.mean_pixel_fraction[object_values, bin_values]
+        elif group.measurement is IntensityDistributionHeatmapMeasurement.RADIAL_CV:
+            values = radial_arrays.radial_cv_by_bin[bin_values, object_values]
+        else:
+            raise ValueError(
+                "Unsupported intensity-distribution heatmap measurement "
+                f"{group.measurement!r}."
+            )
+        heatmap[rows, columns] = values
+    colormap_name = group.colormap
+    if colormap_name == "gray":
+        return with_image_payload_data(
+            image,
+            heatmap,
+            metadata=image_payload_metadata(image).without_source_channel_axis(),
+        )
+    if colormap_name == "Default":
+        colormap_name = "viridis"
+    import matplotlib
+    from matplotlib.cm import ScalarMappable
+
+    rgb = ScalarMappable(cmap=matplotlib.colormaps[colormap_name]).to_rgba(heatmap)[
+        :, :, :3
+    ]
+    rgb[labels == 0] = 0
+    return with_image_payload_data(
+        image,
+        rgb,
+        metadata=image_payload_metadata(image).replace_fields(source_channel_axis=-1),
+    )
 
 
 def intensity_distribution_object_domain(labels: object) -> tuple[int, ...]:
     """Return the object domain for CP intensity-distribution rows."""
-    return dense_object_label_declared_or_extent_id_domain(labels)
+    return dense_object_label_id_domain(labels)
 
 
 def _prepare_measure_object_intensity_distribution() -> None:
@@ -1912,8 +2483,11 @@ def _prepare_measure_object_intensity_distribution() -> None:
     labels[8:24, 8:24] = 1
     labels[32:56, 32:56] = 2
     measure_object_intensity_distribution.__wrapped__(
-        image,
-        labels,
+        ImagePayloadMetadata(source_image_names=("prepare_image",)).attach_to(image),
+        ObjectLabelPayload(
+            variant_data=ObjectLabelVariantData(labels=labels),
+            domain=ObjectLabelDomain(declared_object_ids=(1, 2)),
+        ),
         bin_count=4,
         wants_scaled=True,
         maximum_radius=100,
@@ -1924,245 +2498,4 @@ def _prepare_measure_object_intensity_distribution() -> None:
 
 measure_object_intensity_distribution.__openhcs_prepare__ = (
     _prepare_measure_object_intensity_distribution
-)
-
-
-@dataclass(frozen=True, slots=True)
-class IntensityDistributionBatchInvocation:
-    """One batch invocation projected into the intensity-distribution slice domain."""
-
-    request: RuntimeBatchInvocationRequest
-    slice_input: IntensityDistributionSliceInput
-
-    @classmethod
-    def from_request(
-        cls, request: RuntimeBatchInvocationRequest
-    ) -> "IntensityDistributionBatchInvocation | None":
-        if "labels" not in request.kwargs:
-            return None
-        labels = request.kwargs["labels"]
-        slice_inputs = IntensityDistributionSliceInputs(
-            request.image,
-            labels,
-        ).slices()
-        if len(slice_inputs) != 1:
-            return None
-        return cls(request=request, slice_input=slice_inputs[0])
-
-
-@dataclass(frozen=True, slots=True)
-class IntensityDistributionBatchSettings:
-    """Shared scalar settings for a serial measurement-image batch."""
-
-    wants_zernikes: ZernikeMode
-    zernike_degree: int
-    zernike_backend_provider: BackendProviderInput
-    radial_distribution_backend_provider: BackendProviderInput
-
-    @classmethod
-    def from_requests(
-        cls, requests: tuple[RuntimeBatchInvocationRequest, ...]
-    ) -> "IntensityDistributionBatchSettings | None":
-        first = cls.from_kwargs(requests[0].kwargs)
-        for request in requests[1:]:
-            if cls.from_kwargs(request.kwargs) != first:
-                return None
-        return first
-
-    @classmethod
-    def from_kwargs(
-        cls, kwargs: Mapping[str, object]
-    ) -> "IntensityDistributionBatchSettings":
-        return cls(
-            wants_zernikes=coerce_cellprofiler_enum(
-                ZernikeMode, kwargs.get("wants_zernikes", ZernikeMode.NONE)
-            ),
-            zernike_degree=int(kwargs.get("zernike_degree", 9)),
-            zernike_backend_provider=kwargs.get(
-                "zernike_backend_provider", DEFAULT_CELLPROFILER_BACKEND_SELECTION
-            ),
-            radial_distribution_backend_provider=kwargs.get(
-                "radial_distribution_backend_provider",
-                DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-            ),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class IntensityDistributionRadialSettings:
-    """Per-invocation radial settings for intensity distribution rows."""
-
-    bin_count: int
-    wants_scaled: bool
-    maximum_radius: int
-
-    @classmethod
-    def from_kwargs(
-        cls, kwargs: Mapping[str, object]
-    ) -> "IntensityDistributionRadialSettings":
-        return cls(
-            bin_count=int(kwargs.get("bin_count", 4)),
-            wants_scaled=bool(kwargs.get("wants_scaled", True)),
-            maximum_radius=int(kwargs.get("maximum_radius", 100)),
-        )
-
-
-def measure_object_intensity_distribution_batch(
-    func: Callable[..., object],
-    requests: tuple[RuntimeBatchInvocationRequest, ...],
-    execute_request: Callable[
-        [Callable[..., object], RuntimeBatchInvocationRequest], object
-    ],
-) -> list[object]:
-    """Serially share label-derived Zernike work across measurement images."""
-    if len(requests) <= 1:
-        return [execute_request(func, request) for request in requests]
-    batch_invocations = tuple(
-        (
-            IntensityDistributionBatchInvocation.from_request(request)
-            for request in requests
-        )
-    )
-    if any((batch_invocation is None for batch_invocation in batch_invocations)):
-        return [execute_request(func, request) for request in requests]
-    concrete_invocations = tuple(
-        (
-            batch_invocation
-            for batch_invocation in batch_invocations
-            if batch_invocation is not None
-        )
-    )
-    slice_inputs = tuple(
-        (batch_invocation.slice_input for batch_invocation in concrete_invocations)
-    )
-    first_slice = slice_inputs[0]
-    first_labels = first_slice.radial_labels
-    first_zernike_labels = first_slice.labels
-    first_object_domain = first_slice.object_domain
-    if any(
-        (
-            slice_input.radial_labels.shape != first_labels.shape
-            or not np.array_equal(slice_input.radial_labels, first_labels)
-            or slice_input.labels.shape != first_zernike_labels.shape
-            or not np.array_equal(slice_input.labels, first_zernike_labels)
-            or slice_input.object_domain != first_object_domain
-            for slice_input in slice_inputs[1:]
-        )
-    ):
-        return [execute_request(func, request) for request in requests]
-    batch_settings = IntensityDistributionBatchSettings.from_requests(requests)
-    if batch_settings is None:
-        return [execute_request(func, request) for request in requests]
-    zernike_rows_by_request: tuple[ColumnarRows | None, ...]
-    if batch_settings.wants_zernikes == ZernikeMode.NONE or not first_object_domain:
-        zernike_rows_by_request = tuple((None for _request in requests))
-    elif any(slice_input.image_mask is not None for slice_input in slice_inputs):
-        zernike_rows_by_request = tuple(
-            (
-                IntensityZernikeMeasurementRowsRequest(
-                    image=slice_input.image,
-                    labels=slice_input.labels,
-                    image_mask=slice_input.image_mask,
-                    max_order=batch_settings.zernike_degree,
-                    object_ids=first_object_domain,
-                    include_phase=batch_settings.wants_zernikes
-                    == ZernikeMode.MAGNITUDES_AND_PHASE,
-                    slice_index=slice_input.slice_index,
-                    row_identity=slice_input.row_identity,
-                    backend_provider=batch_settings.zernike_backend_provider,
-                ).rows()
-                for slice_input in slice_inputs
-            )
-        )
-    else:
-        zernike_indexes, zernike_results = intensity_zernike_moments_batch(
-            tuple((slice_input.image for slice_input in slice_inputs)),
-            first_zernike_labels,
-            np.asarray(first_object_domain, dtype=np.int32),
-            max_order=batch_settings.zernike_degree,
-            backend_provider=batch_settings.zernike_backend_provider,
-        )
-        zernike_rows_by_request = tuple(
-            (
-                ObjectIntensityZernikeMeasurementColumnarRows(
-                    object_ids=first_object_domain,
-                    zernike_indexes=zernike_indexes,
-                    magnitudes=magnitudes,
-                    phases=phases,
-                    include_phase=batch_settings.wants_zernikes
-                    == ZernikeMode.MAGNITUDES_AND_PHASE,
-                    phase_zero_extent=int(first_labels.max(initial=0)),
-                    slice_index=slice_input.slice_index,
-                    row_identity=slice_input.row_identity,
-                )
-                for slice_input, (magnitudes, phases) in zip(
-                    slice_inputs, zernike_results, strict=True
-                )
-            )
-        )
-    radial_backend = radial_distribution_backend(
-        backend_provider=batch_settings.radial_distribution_backend_provider
-    )
-    radial_geometry = radial_backend.label_geometry(first_labels)
-    radial_settings_by_request = tuple(
-        (
-            IntensityDistributionRadialSettings.from_kwargs(request.kwargs)
-            for request in requests
-        )
-    )
-    first_radial_settings = radial_settings_by_request[0]
-    if all(
-        (
-            radial_settings == first_radial_settings
-            for radial_settings in radial_settings_by_request[1:]
-        )
-    ):
-        radial_arrays_by_request = (
-            radial_backend.measure_batch_self_centered_with_geometry(
-                tuple((slice_input.image for slice_input in slice_inputs)),
-                first_labels,
-                radial_geometry,
-                bin_count=first_radial_settings.bin_count,
-                wants_scaled=first_radial_settings.wants_scaled,
-                maximum_radius=first_radial_settings.maximum_radius,
-            )
-        )
-    else:
-        radial_arrays_by_request = tuple(
-            (
-                radial_backend.measure_self_centered_with_geometry(
-                    slice_input.image,
-                    first_labels,
-                    radial_geometry,
-                    bin_count=radial_settings.bin_count,
-                    wants_scaled=radial_settings.wants_scaled,
-                    maximum_radius=radial_settings.maximum_radius,
-                )
-                for slice_input, radial_settings in zip(
-                    slice_inputs, radial_settings_by_request, strict=True
-                )
-            )
-        )
-    outputs: list[object] = []
-    for request, slice_input, radial_settings, radial_arrays, zernike_rows in zip(
-        requests,
-        slice_inputs,
-        radial_settings_by_request,
-        radial_arrays_by_request,
-        zernike_rows_by_request,
-        strict=True,
-    ):
-        measurements: ColumnarRows = ObjectIntensityDistributionMeasurementColumnarRows(
-            radial_arrays=radial_arrays,
-            object_ids=first_object_domain,
-            bin_count=radial_settings.bin_count,
-            slice_index=slice_input.slice_index,
-            row_identity=slice_input.row_identity,
-        )
-        if zernike_rows is not None:
-            measurements = ConcatenatedColumnarRows((measurements, zernike_rows))
-        outputs.append((request.image, measurements))
-    return outputs
-measurement_image_batch_executor(measure_object_intensity_distribution_batch)(
-    measure_object_intensity_distribution
 )

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from openhcs.core.artifact_inspection import CompiledArtifactInspection
 from openhcs.core.debug import (
     DebugCommandType,
     DebugCursor,
@@ -12,7 +13,7 @@ from openhcs.core.debug import (
     DebugProgressEventRequest,
     DebugReplayMode,
 )
-from openhcs.core.artifacts import ArtifactKey, ArtifactScope, MeasurementsArtifactType
+from openhcs.core.artifacts import MeasurementsArtifactType
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
     DebugSnapshotAvailableNotification,
@@ -33,12 +34,17 @@ from openhcs.pyqt_gui.widgets.shared.services.debug_workflow_service import (
 from openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter import (
     ExecutionServerStatusPresenter,
 )
-from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
+from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
 from openhcs.pyqt_gui.widgets.shared.services.execution_control_service import (
     ExecutionControlService,
 )
+from openhcs.pyqt_gui.widgets.shared.services.execution_submission_service import (
+    ExecutionSubmissionService,
+)
+from openhcs.pyqt_gui.widgets.shared.services import execution_submission_service
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+    ExecutionBatchRuntime,
     ManagerExecutionState,
     TerminalExecutionStatus,
 )
@@ -49,6 +55,7 @@ from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder imp
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileJob,
     CompileWorkflowService,
+    PlateCompiledState,
     PlatePipelineRequest,
 )
 from openhcs.pyqt_gui.widgets.shared.services.progress_workflow_service import (
@@ -57,10 +64,18 @@ from openhcs.pyqt_gui.widgets.shared.services.progress_workflow_service import (
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import (
     ZMQExecutionClientBoundary,
 )
+from openhcs.pyqt_gui.widgets.shared.services.terminal_result_builder import (
+    TerminalExecutionResultBuilder,
+)
 from openhcs.runtime.zmq_execution_client import ZMQExecutionRequestBuilder
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
     LiveMeasurementAvailableNotification,
     LiveMeasurementProgressNotificationService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.runtime_artifact_progress_service import (
+    RuntimeArtifactAvailableNotification,
+    RuntimeArtifactProgressNotificationService,
 )
 from openhcs.core.progress import (
     ProgressEvent,
@@ -72,9 +87,14 @@ from openhcs.core.progress.live_measurements import (
     LiveMeasurementProgressPayload,
     LiveMeasurementTablePreview,
 )
+from openhcs.core.progress.runtime_artifacts import RuntimeArtifactProgressPayload
 from openhcs.core.runtime_stores import RuntimeArtifactAddress, RuntimeArtifactLocation
 from pyqt_reactive.services.zmq_server_info_parser import DefaultServerInfoParser
 from zmqruntime.execution import BatchSubmitWaitEngine
+from openhcs.core.runtime_artifact_values import (
+    ArtifactKey,
+)
+from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
 
 
 def _identity_image(image):
@@ -88,7 +108,7 @@ def _job(plate_path: str) -> CompileJob:
         selected_pipeline_path=None,
         plate_name=plate_path,
         definition_pipeline=[],
-        pipeline_config={"x": 1},
+        pipeline_config=PipelineConfig(),
     )
 
 
@@ -180,7 +200,7 @@ def test_build_compile_job_preserves_debug_config_params():
         selected_pipeline_path=None,
         definition_pipeline=[],
         global_config=object(),
-        pipeline_config={"x": 1},
+        pipeline_config=PipelineConfig(),
     )
 
     job = PlatePipelineRequestBuilder.compile_job_from_run_spec(
@@ -309,7 +329,7 @@ def test_compile_submission_uses_execution_plate_path_for_transport():
         selected_pipeline_path="/tmp/source/BBBC022_Analysis_Start.cppipe",
         plate_name="Analysis_Start",
         definition_pipeline=[],
-        pipeline_config={"x": 1},
+        pipeline_config=PipelineConfig(),
     )
 
     execution_id = asyncio.run(
@@ -328,9 +348,42 @@ def test_compile_submission_uses_execution_plate_path_for_transport():
     )
 
 
-def test_compile_transport_normalizes_cellprofiler_submodule_function_collision():
+def test_compile_wait_fetches_inspection_after_successful_completion() -> None:
+    inspection = CompiledArtifactInspection(
+        compile_artifact_id="compile-1",
+        plate_id="/tmp/plate",
+        steps=(),
+    )
+    calls = []
+
+    class FakeClient:
+        def wait_for_completion(self, execution_id):
+            calls.append(("wait", execution_id))
+            return {"status": "complete", "execution_id": execution_id}
+
+        def get_compiled_artifact_inspection(self, execution_id):
+            calls.append(("inspect", execution_id))
+            return inspection
+
+    service = CompileWorkflowService(
+        context=_context(SimpleNamespace(zmq_client=None)),
+    )
+
+    result = asyncio.run(
+        service.wait_for_compile_completion(
+            zmq_client=FakeClient(),
+            loop=object(),
+            execution_id="compile-1",
+            plate_path="/tmp/plate",
+        )
+    )
+
+    assert result is inspection
+    assert calls == [("wait", "compile-1"), ("inspect", "compile-1")]
+
+
+def test_compile_transport_rejects_cellprofiler_module_objects():
     import importlib
-    import pickle
 
     from openhcs.core.steps.function_step import FunctionStep
 
@@ -344,13 +397,8 @@ def test_compile_transport_normalizes_cellprofiler_submodule_function_collision(
         )
     ]
 
-    normalized = CompileWorkflowService.normalize_pipeline_for_transport(pipeline)
-
-    normalized_func = normalized[0].func[0]
-    assert callable(normalized_func)
-    assert normalized_func.__name__ == "crop"
-    assert normalized_func.__module__ == "openhcs.processing.backends.cellprofiler"
-    pickle.dumps(normalized)
+    with pytest.raises(TypeError, match="module object"):
+        CompileWorkflowService.normalize_pipeline_for_transport(pipeline)
 
 
 def test_compile_transport_preserves_stable_cellprofiler_function_wrappers():
@@ -370,16 +418,13 @@ def test_compile_transport_preserves_stable_cellprofiler_function_wrappers():
 
 
 def test_plate_pipeline_submission_normalizes_compile_and_run_signatures():
-    import importlib
+    import openhcs.processing.backends.cellprofiler as cellprofiler_backend
 
     from openhcs.core.steps.function_step import FunctionStep
 
-    crop_module = importlib.import_module(
-        "openhcs.processing.backends.cellprofiler.crop"
-    )
     pipeline = [
         FunctionStep(
-            func=(crop_module, {"crop_shape": "Rectangle"}),
+            func=(cellprofiler_backend.crop, {"crop_shape": "Rectangle"}),
             name="Crop",
         )
     ]
@@ -530,6 +575,7 @@ class CompilePlateRowHostHarness:
         self.execution_state = ManagerExecutionState.IDLE
         self.plate_compile_pending = set()
         self.plate_compiled_data = {}
+        self.plate_execution_ids = {}
         self.cleared_tracking = []
         self.statuses = []
         self.item_updates = 0
@@ -539,6 +585,7 @@ class CompilePlateRowHostHarness:
         self.progress_finished = 0
         self.compilation_errors = []
         self.orchestrator_states = []
+        self.compiled_states = []
 
     def emit_progress_started(self, total: int) -> None:
         self.progress_started.append(total)
@@ -567,6 +614,17 @@ class CompilePlateRowHostHarness:
     def emit_compilation_error(self, plate_name: str, error: str) -> None:
         self.compilation_errors.append((plate_name, error))
 
+    def emit_compiled_state(
+        self,
+        plate_path: str,
+        compiled_state: PlateCompiledState | None,
+    ) -> None:
+        if compiled_state is None:
+            self.plate_compiled_data.pop(plate_path, None)
+        else:
+            self.plate_compiled_data[plate_path] = compiled_state
+        self.compiled_states.append((plate_path, compiled_state))
+
 
 class RecordingPlateRequestBuilder:
     """Compile-job builder that records the row contract it receives."""
@@ -582,7 +640,7 @@ class RecordingPlateRequestBuilder:
             selected_pipeline_path=row.cppipe_path,
             plate_name=row.name,
             definition_pipeline=[],
-            pipeline_config={"x": 1},
+            pipeline_config=PipelineConfig(),
         )
 
 
@@ -627,6 +685,76 @@ def test_compile_plates_accepts_plate_manager_rows() -> None:
     assert host.progress_finished == 1
     assert host.compilation_errors == []
     assert client_service.disconnect_calls == 1
+
+
+def test_compile_batch_publishes_typed_artifact_inspection() -> None:
+    host = CompilePlateRowHostHarness()
+    inspection = CompiledArtifactInspection(
+        compile_artifact_id="compile-1",
+        plate_id="/tmp/plate",
+        steps=(),
+    )
+
+    class FakeCompileWorkflow:
+        async def wait_compile_job(self, **kwargs):
+            assert kwargs["submission_id"] == "compile-1"
+            return inspection
+
+    service = CompileBatchWorkflowService(
+        host=host,
+        context=_context(ClientServiceHarness()),
+        compile_workflow=FakeCompileWorkflow(),
+    )
+
+    asyncio.run(
+        service._wait_compile_job(
+            submission_id="compile-1",
+            job=_job("/tmp/plate"),
+            zmq_client=object(),
+            loop=object(),
+        )
+    )
+
+    state = host.plate_compiled_data["/tmp/plate"]
+    assert isinstance(state, PlateCompiledState)
+    assert state.inspection is inspection
+    assert host.compiled_states == [("/tmp/plate", state)]
+
+
+def test_compile_submission_clears_previous_compiled_artifact_state() -> None:
+    host = CompilePlateRowHostHarness()
+    old_inspection = CompiledArtifactInspection(
+        compile_artifact_id="old-compile",
+        plate_id="/tmp/plate",
+        steps=(),
+    )
+    host.plate_compiled_data["/tmp/plate"] = PlateCompiledState(
+        compile_artifact_id="old-compile",
+        definition_pipeline=(),
+        inspection=old_inspection,
+    )
+
+    class FakeCompileWorkflow:
+        async def submit_compile_job(self, **_kwargs):
+            return "new-compile"
+
+    service = CompileBatchWorkflowService(
+        host=host,
+        context=_context(ClientServiceHarness()),
+        compile_workflow=FakeCompileWorkflow(),
+    )
+
+    execution_id = asyncio.run(
+        service._submit_compile_job(
+            job=_job("/tmp/plate"),
+            zmq_client=object(),
+            loop=object(),
+        )
+    )
+
+    assert execution_id == "new-compile"
+    assert "/tmp/plate" not in host.plate_compiled_data
+    assert host.compiled_states == [("/tmp/plate", None)]
 
 
 class ExecutionRuntimeHarness:
@@ -686,12 +814,71 @@ class ClientServiceHarness:
         self.zmq_client = None
 
 
+def test_execution_submission_defers_terminal_state_to_ui_completion_handler(
+    monkeypatch,
+) -> None:
+    class ImmediateThread:
+        def __init__(self, *, target, daemon):
+            assert daemon is True
+            self._target = target
+
+        def start(self) -> None:
+            self._target()
+
+    class TerminalPoller:
+        @staticmethod
+        def run(execution_id, policy) -> None:
+            policy.on_terminal(
+                execution_id,
+                TerminalExecutionStatus.COMPLETE.value,
+                {"status": TerminalExecutionStatus.COMPLETE.value},
+            )
+
+    class SubmissionHost:
+        def __init__(self) -> None:
+            self.plate_execution_ids = {"/tmp/plate": "execution-1"}
+            self.current_execution_id = "execution-1"
+            self.plate_terminal_activity_status = ExecutionBatchRuntime()
+            self.plate_terminal_activity_status.begin_batch(("/tmp/plate",))
+            self.completions = []
+
+        def notify_plate_completed(self, plate_path, status, result) -> None:
+            self.completions.append((plate_path, status, result))
+
+    monkeypatch.setattr(execution_submission_service.threading, "Thread", ImmediateThread)
+    host = SubmissionHost()
+    service = ExecutionSubmissionService(
+        host=host,
+        context=_context(ClientServiceHarness()),
+        completion_poller=TerminalPoller(),
+        terminal_result_builder=TerminalExecutionResultBuilder(),
+    )
+
+    service.start_completion_poller("execution-1", "/tmp/plate")
+
+    assert host.plate_terminal_activity_status.terminal_status("/tmp/plate") is None
+    assert host.completions == [
+        (
+            "/tmp/plate",
+            TerminalExecutionStatus.COMPLETE.value,
+            {
+                "status": TerminalExecutionStatus.COMPLETE.value,
+                "execution_id": "execution-1",
+                "results": {},
+                "output_plate_root": None,
+                "auto_add_output_plate_to_plate_manager": None,
+            },
+        )
+    ]
+
+
 def test_execution_control_notifies_when_batch_terminal() -> None:
     host = ExecutionControlHostHarness()
     service = ExecutionControlService.openhcs_default(
         host=host,
         context=_context(ClientServiceHarness()),
         port=7777,
+        config=OPENHCS_ZMQ_CONFIG,
     )
 
     service.check_all_completed()
@@ -705,6 +892,7 @@ def test_execution_control_emits_cancelled_for_cancellable_plates() -> None:
         host=host,
         context=_context(ClientServiceHarness()),
         port=7777,
+        config=OPENHCS_ZMQ_CONFIG,
     )
 
     service.emit_cancelled_for_all_plates()
@@ -721,6 +909,7 @@ def test_execution_control_disconnect_uses_client_service() -> None:
         host=ExecutionControlHostHarness(),
         context=_context(client_service),
         port=7777,
+        config=OPENHCS_ZMQ_CONFIG,
     )
 
     service.disconnect()
@@ -796,6 +985,7 @@ def _progress_service(
     client_service,
     on_dirty,
     live_measurements=None,
+    runtime_artifacts=None,
 ) -> tuple[ProgressWorkflowService, DebugProgressNotificationService]:
     debug_notifications = DebugProgressNotificationService()
     service = ProgressWorkflowService(
@@ -805,6 +995,7 @@ def _progress_service(
         debug_notifications=debug_notifications,
         status_presenter=ExecutionServerStatusPresenter(),
         live_measurements=live_measurements,
+        runtime_artifacts=runtime_artifacts,
         on_dirty=on_dirty,
         start_timer=False,
     )
@@ -926,7 +1117,7 @@ def test_on_progress_notifies_live_measurement_listeners() -> None:
                     key=ArtifactKey(
                         name="Measure",
                         artifact_type=MeasurementsArtifactType,
-                        scope=ArtifactScope(axis_id="A01"),
+                        scope=RuntimeExecutionAxisScope(axis_id="A01"),
                     ),
                     location=RuntimeArtifactLocation(
                         path="/memory/measure.pkl",
@@ -964,6 +1155,54 @@ def test_on_progress_notifies_live_measurement_listeners() -> None:
 
     assert len(notifications) == 1
     assert notifications[0].payload.previews[0].rows == ({"mean": 3.0},)
+
+
+def test_on_progress_notifies_generic_runtime_artifact_listeners() -> None:
+    host = BatchWorkflowHostHarness()
+    client_service = SimpleNamespace(zmq_client=None)
+    notifications: list[RuntimeArtifactAvailableNotification] = []
+    runtime_artifacts = RuntimeArtifactProgressNotificationService()
+    runtime_artifacts.add_listener(notifications.append)
+    service, _debug_notifications = _progress_service(
+        host=host,
+        client_service=client_service,
+        on_dirty=lambda: None,
+        runtime_artifacts=runtime_artifacts,
+    )
+    address = RuntimeArtifactAddress(
+        key=ArtifactKey(
+            name="ResultImage",
+            artifact_type=MeasurementsArtifactType,
+            scope=RuntimeExecutionAxisScope(axis_id="A01"),
+        ),
+        location=RuntimeArtifactLocation(
+            path="/memory/result.pkl",
+            backend="memory",
+        ),
+        value_type="ndarray",
+    )
+    event = ProgressEvent(
+        identity=ProgressIdentity(
+            execution_id="exec-1",
+            plate_id="plate-1",
+            axis_id="A01",
+            step_name="Measure",
+        ),
+        phase=ProgressPhase.STEP_COMPLETED,
+        status=ProgressStatus.SUCCESS,
+        percent=100.0,
+        completed=1,
+        total=1,
+        timestamp=1.0,
+        pid=1234,
+        context=RuntimeArtifactProgressPayload((address,)).to_context(),
+    )
+
+    service.on_progress(event.to_dict())
+
+    assert len(notifications) == 1
+    assert notifications[0].event == event
+    assert notifications[0].payload.addresses == (address,)
 
 
 def test_on_progress_ignores_debug_events_without_snapshot_id() -> None:

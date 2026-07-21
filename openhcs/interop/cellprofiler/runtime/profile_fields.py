@@ -2,52 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
-
 import numpy as np
 
+from openhcs.core.image_shapes import ArrayShape
 from openhcs.core.artifacts import ArtifactSpec
-from openhcs.core.runtime_values import (
+from openhcs.core.runtime_object_labels import (
     ObjectLabelValue,
+)
+from openhcs.core.runtime_image_values import (
     image_payload_data,
 )
 from openhcs.interop.cellprofiler.runtime.invocation import CellProfilerMeasurementImage
-from openhcs.interop.cellprofiler.runtime.payload_types import (
-    CellProfilerKwargDict,
-    CellProfilerProfileFields,
-    CellProfilerRuntimeValue,
-)
-from openhcs.interop.cellprofiler.runtime.processing_contracts import RuntimeShapeInspection
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerSpecialInputPayloadSemanticMember:
-    """Construct one special-input semantic enum member with payload metadata."""
-
-    value: str
-    dense_label_domain: bool
-
-    def enum_member(self, enum_type: type[str]) -> str:
-        member = str.__new__(enum_type, self.value)
-        member._value_ = self.value
-        member.dense_label_domain = self.dense_label_domain
-        return member
-
-
-class CellProfilerSpecialInputPayloadSemantics(str, Enum):
-    """Runtime value semantics for declared CellProfiler special inputs."""
-
-    INTENSITY_IMAGE = ("intensity_image", False)
-    DENSE_LABEL_IMAGE = ("dense_label_image", True)
-
-    def __new__(cls, value: str, dense_label_domain: bool):
-        return CellProfilerSpecialInputPayloadSemanticMember(
-            value,
-            dense_label_domain,
-        ).enum_member(cls)
-
-    dense_label_domain: bool
+from openhcs.core.steps.function_runtime import RuntimeCallableArgument, RuntimeProfileFieldValue
 
 
 def object_label_stage_profile_fields(
@@ -55,7 +21,7 @@ def object_label_stage_profile_fields(
     measurement_image: CellProfilerMeasurementImage,
     object_spec: ArtifactSpec,
     value: ObjectLabelValue,
-) -> CellProfilerProfileFields:
+) -> tuple[tuple[str, RuntimeProfileFieldValue], ...]:
     """Return structured profile fields for object-label values."""
     label_data = value.labels
     domain = value.domain
@@ -66,7 +32,7 @@ def object_label_stage_profile_fields(
         ("reference_domain", measurement_image.reference_domain.value),
         ("value_type", type(value).__name__),
         ("data_type", type(label_data).__name__),
-        ("data_shape", RuntimeShapeInspection(label_data).shape_tuple()),
+        ("data_shape", ArrayShape.shape_for(label_data)),
         ("domain_scope", domain.scope),
         ("plane_axis", value.plane_axis),
         ("representation", value.representation),
@@ -86,8 +52,8 @@ def dense_label_argument_stage_profile_fields(
     stage: str,
     measurement_image: CellProfilerMeasurementImage,
     object_spec: ArtifactSpec,
-    value: CellProfilerRuntimeValue,
-) -> CellProfilerProfileFields:
+    value: RuntimeCallableArgument,
+) -> tuple[tuple[str, RuntimeProfileFieldValue], ...]:
     """Return structured profile fields for dense label arrays."""
     data = image_payload_data(value)
     return (
@@ -97,14 +63,14 @@ def dense_label_argument_stage_profile_fields(
         ("reference_domain", measurement_image.reference_domain.value),
         ("value_type", type(value).__name__),
         ("data_type", type(data).__name__),
-        ("data_shape", RuntimeShapeInspection(data).shape_tuple()),
+        ("data_shape", ArrayShape.shape_for(data)),
     )
 
 
 def cellprofiler_profile_payload_fields(
     prefix: str,
-    value: CellProfilerRuntimeValue,
-) -> CellProfilerKwargDict:
+    value: RuntimeCallableArgument,
+) -> dict[str, RuntimeCallableArgument]:
     """Return cheap payload shape/size fields for CellProfiler runtime profiling."""
     data = image_payload_data(value)
     data_array = data if isinstance(data, np.ndarray) else None
@@ -117,19 +83,19 @@ def cellprofiler_profile_payload_fields(
 
 def object_label_artifact_profile_fields(
     value: ObjectLabelValue,
-) -> CellProfilerKwargDict:
+) -> dict[str, RuntimeCallableArgument]:
     """Return object-label artifact fields for runtime adapter profiling."""
     source_component_metadata = None
     if value.source_component_metadata is not None:
         source_component_metadata = dict(value.source_component_metadata)
     domain = value.domain
     return {
-        "label_shape": RuntimeShapeInspection(value.labels).shape_tuple(),
+        "label_shape": ArrayShape.shape_for(value.labels),
         "declared_object_count": domain.declared_object_count,
         "declared_object_ids": len(domain.declared_object_ids),
         "declared_object_id_domains": len(domain.declared_object_id_domains),
         "domain_scope": domain.scope.value,
-        "plane_axis": value.plane_axis.value,
+        "plane_axis": None if value.plane_axis is None else value.plane_axis.value,
         "source_path": value.source_path,
         "source_component_metadata": source_component_metadata,
         "source_image_provenance_plane_count": (

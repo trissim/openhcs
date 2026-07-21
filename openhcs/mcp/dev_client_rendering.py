@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import ClassVar, TypeAlias
 
@@ -34,6 +35,21 @@ class WidgetTreeOutputFormat(str, Enum):
 @dataclass(frozen=True, slots=True)
 class McpDevOutputRenderOptions:
     """Typed presentation options for an output-contract renderer."""
+
+    @classmethod
+    def configure_cli_parser(cls, parser: argparse.ArgumentParser) -> None:
+        """Declare renderer-owned CLI presentation options."""
+        del parser
+
+    @classmethod
+    def from_cli_args(cls, args: argparse.Namespace) -> "McpDevOutputRenderOptions":
+        """Construct renderer options from its declared CLI arguments."""
+        del args
+        return cls()
+
+    def cli_argument_values(self) -> dict[str, object]:
+        """Project dataclass defaults into a namespace for generic call rendering."""
+        return asdict(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +83,23 @@ class ViewerImageSampleRenderOptions(McpDevOutputRenderOptions):
 class CatalogRenderOptions(McpDevOutputRenderOptions):
     contains: str | None = None
     limit: int = 20
+
+    @classmethod
+    def configure_cli_parser(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--contains",
+            help="Show only catalog entries containing this text.",
+        )
+        parser.add_argument(
+            "--limit",
+            type=int,
+            default=cls().limit,
+            help="Maximum catalog entries shown in compact output.",
+        )
+
+    @classmethod
+    def from_cli_args(cls, args: argparse.Namespace) -> "CatalogRenderOptions":
+        return cls(contains=args.contains, limit=args.limit)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +137,9 @@ class McpDevOutputRenderer(metaclass=AutoRegisterMeta):
 
     renderer_key: ClassVar[McpDevOutputRendererKey | None] = None
     output_contract: ClassVar[type | None] = None
+    render_options_type: ClassVar[type[McpDevOutputRenderOptions]] = (
+        McpDevOutputRenderOptions
+    )
     __renderer_types__: ClassVar[tuple[type["McpDevOutputRenderer"], ...]] = ()
 
     def __init_subclass__(cls, **kwargs: JsonValue) -> None:
@@ -173,6 +209,18 @@ class McpDevOutputRendererBinding:
     output_contract: type
     renderer_type: type[McpDevOutputRenderer]
     render_function: McpDevOutputRenderFunction | None = None
+
+    def configure_cli_parser(self, parser: argparse.ArgumentParser) -> None:
+        self.renderer_type.render_options_type.configure_cli_parser(parser)
+
+    def options_from_cli_args(
+        self,
+        args: argparse.Namespace,
+    ) -> McpDevOutputRenderOptions:
+        return self.renderer_type.render_options_type.from_cli_args(args)
+
+    def default_cli_argument_values(self) -> dict[str, object]:
+        return self.renderer_type.render_options_type().cli_argument_values()
 
     def render_with_options(
         self,
@@ -282,6 +330,28 @@ class McpDevPayloadProjection:
 class McpDiagnosticRenderer:
     """Compact shared rendering for MCP error and warning payloads."""
 
+    @classmethod
+    def response_error_lines(cls, response: JsonObject) -> tuple[str, ...]:
+        """Render structured errors from the response and its tool payloads."""
+        errors = list(
+            McpDevPayloadProjection.sequence_of_mappings(response.get("errors"))
+        )
+        for result in McpDevPayloadProjection.sequence_of_mappings(
+            response.get("results")
+        ):
+            payloads = result.get("payloads")
+            if not isinstance(payloads, list):
+                continue
+            for payload in payloads:
+                if not isinstance(payload, Mapping):
+                    continue
+                errors.extend(
+                    McpDevPayloadProjection.sequence_of_mappings(
+                        payload.get("errors")
+                    )
+                )
+        return cls.error_lines(tuple(errors))
+
     @staticmethod
     def error_lines(errors: tuple[Mapping[str, JsonValue], ...]) -> tuple[str, ...]:
         grouped_codes: dict[str, list[str]] = {}
@@ -323,6 +393,35 @@ class ToolListRenderer:
     """Compact renderer for current MCP tool metadata."""
 
     @classmethod
+    def project_response(
+        cls,
+        response: JsonObject,
+        *,
+        contains: str | None = None,
+        limit: int = 80,
+    ) -> JsonObject:
+        """Return a bounded JSON response while preserving selected tool metadata."""
+        matched_tools, visible_tools = cls._selected_tools(
+            response,
+            contains=contains,
+            limit=limit,
+        )
+        projected = dict(response)
+        projected.update(
+            {
+                "matched_tool_count": len(matched_tools),
+                "returned_tool_count": len(visible_tools),
+                "truncated_tool_count": len(matched_tools) - len(visible_tools),
+                "filter": {
+                    "contains": contains,
+                    "limit": max(limit, 0),
+                },
+                "tools": [dict(tool) for tool in visible_tools],
+            }
+        )
+        return projected
+
+    @classmethod
     def render(
         cls,
         response: JsonObject,
@@ -336,18 +435,11 @@ class ToolListRenderer:
             return "\n".join(
                 ("Tools: failed", *McpDiagnosticRenderer.error_lines(errors))
             )
-        tools = McpDevPayloadProjection.sequence_of_mappings(response.get("tools"))
-        if contains:
-            needle = contains.casefold()
-            tools = tuple(
-                tool
-                for tool in tools
-                if needle in McpDevPayloadProjection.text(tool.get("name")).casefold()
-                or needle
-                in McpDevPayloadProjection.text(tool.get("description")).casefold()
-            )
-        bounded_limit = max(limit, 0)
-        visible_tools = tools[:bounded_limit]
+        tools, visible_tools = cls._selected_tools(
+            response,
+            contains=contains,
+            limit=limit,
+        )
         lines = [
             (
                 "Tools: "
@@ -366,6 +458,28 @@ class ToolListRenderer:
         if len(visible_tools) < len(tools):
             lines.append(f"...<truncated {len(tools) - len(visible_tools)} tools>")
         return "\n".join(lines)
+
+    @staticmethod
+    def _selected_tools(
+        response: JsonObject,
+        *,
+        contains: str | None,
+        limit: int,
+    ) -> tuple[
+        tuple[Mapping[str, JsonValue], ...],
+        tuple[Mapping[str, JsonValue], ...],
+    ]:
+        tools = McpDevPayloadProjection.sequence_of_mappings(response.get("tools"))
+        if contains:
+            needle = contains.casefold()
+            tools = tuple(
+                tool
+                for tool in tools
+                if needle in McpDevPayloadProjection.text(tool.get("name")).casefold()
+                or needle
+                in McpDevPayloadProjection.text(tool.get("description")).casefold()
+            )
+        return tools, tools[: max(limit, 0)]
 
     @staticmethod
     def _tool_lines(tools: tuple[Mapping[str, JsonValue], ...]) -> list[str]:

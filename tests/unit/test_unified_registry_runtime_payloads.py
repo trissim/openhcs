@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import wraps
 from typing import Any
 
 import numpy as np
+import pytest
+from arraybridge.decorators import (
+    DtypeConversionConfig,
+    PRESERVE_INPUT_DTYPE_CONFIG,
+)
 from python_introspect import (
     Enableable,
     UnifiedParameterAnalyzer,
@@ -12,17 +18,22 @@ from python_introspect import (
 )
 
 from openhcs.core.memory import MEMORY_TYPE_NUMPY
-from openhcs.core.runtime_values import (
-    ImageMetadataPayload,
-    ImagePayloadMetadata,
-    RuntimeArrayPayload,
-    RuntimeImagePayloadContext,
-    SourceImageProvenancePlanes,
-    image_payload_data,
-    image_payload_metadata,
-    image_payload_mask,
-    with_image_payload_data,
+from openhcs.core.callable_contract import callable_request
+from openhcs.core.config import LazyDtypeConfig
+from openhcs.core.runtime_image_values import ImageMetadataPayload, ImagePayloadMetadata, image_payload_data, image_payload_metadata, image_payload_mask, with_image_payload_data
+from openhcs.core.runtime_array_values import RuntimeArrayPayload
+from openhcs.core.runtime_object_label_domains import (
+    ObjectLabelDomain,
+    ObjectLabelDomainScope,
 )
+from openhcs.core.source_image_provenance import (
+    SourceImageProvenancePlanes,
+)
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelVariantData,
+    ObjectLabelPayload,
+)
+from openhcs.core.runtime_plane_projection import RuntimePlaneAxis
 from openhcs.processing.backends.processors.numpy_processor import (
     create_projection,
     gaussian_blur,
@@ -56,7 +67,9 @@ class MinimalRegistry(LibraryRegistryBase):
     def _preprocess_input(self, image: Any, func_name: str) -> Any:
         return image
 
-    def _postprocess_output(self, result: Any, original_image: Any, func_name: str) -> Any:
+    def _postprocess_output(
+        self, result: Any, original_image: Any, func_name: str
+    ) -> Any:
         return result
 
     def _check_first_parameter(self, first_param: Any, func_name: str) -> bool:
@@ -84,8 +97,28 @@ def test_contract_wrapper_exposes_enableable_but_hides_runtime_parameters() -> N
     assert "sigma" in params
     assert "dtype_config" not in params
     assert "slice_by_slice" not in params
-    assert "dtype_config" in exclusions
+    assert "dtype_config" not in exclusions
     assert "slice_by_slice" in exclusions
+
+
+def test_contract_wrapper_exposes_registered_lazy_runtime_config_signature() -> None:
+    import inspect
+
+    def raw(
+        image: np.ndarray,
+        *,
+        dtype_config: DtypeConversionConfig = PRESERVE_INPUT_DTYPE_CONFIG,
+    ) -> np.ndarray:
+        return image
+
+    wrapped = MinimalRegistry("minimal").apply_contract_wrapper(
+        raw,
+        ProcessingContract.FLEXIBLE,
+    )
+    parameter = inspect.signature(wrapped).parameters["dtype_config"]
+
+    assert parameter.annotation is LazyDtypeConfig
+    assert isinstance(parameter.default, LazyDtypeConfig)
 
 
 def test_pure_2d_contract_slices_image_metadata_payload_nominally() -> None:
@@ -93,10 +126,9 @@ def test_pure_2d_contract_slices_image_metadata_payload_nominally() -> None:
     payload = ImageMetadataPayload(
         data=stack,
         metadata=ImagePayloadMetadata(
+            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
             source_image_provenance_planes=(
-                SourceImageProvenancePlanes.from_components(
-                    paths=("z0.tif", "z1.tif")
-                )
+                SourceImageProvenancePlanes.from_components(paths=("z0.tif", "z1.tif"))
             ),
             source_plane_dtypes=("float32", "float32"),
         ),
@@ -127,18 +159,35 @@ def test_pure_2d_contract_slices_image_metadata_payload_nominally() -> None:
 
 
 def test_pure_2d_contract_projects_stack_shaped_kwargs_per_slice() -> None:
-    stack = np.arange(40, dtype=np.float32).reshape(2, 4, 5)
-    mask = np.zeros(stack.shape, dtype=bool)
-    mask[0, 0, 0] = True
-    mask[1, 1, 1] = True
+    stack_data = np.arange(40, dtype=np.float32).reshape(2, 4, 5)
+    mask_data = np.zeros(stack_data.shape, dtype=bool)
+    mask_data[0, 0, 0] = True
+    mask_data[1, 1, 1] = True
+    stack = ImageMetadataPayload(
+        data=stack_data,
+        metadata=ImagePayloadMetadata(plane_axis=RuntimePlaneAxis.RUNTIME_SLICE),
+    )
+    mask = ImageMetadataPayload(
+        data=mask_data,
+        metadata=ImagePayloadMetadata(plane_axis=RuntimePlaneAxis.RUNTIME_SLICE),
+    )
     seen_shapes: list[tuple[int, ...]] = []
     seen_true_indices: list[tuple[int, int]] = []
 
-    def apply_mask(image: np.ndarray, *, mask: np.ndarray) -> np.ndarray:
-        seen_shapes.append(mask.shape)
-        true_y, true_x = np.argwhere(mask)[0]
+    def apply_mask(
+        image: ImageMetadataPayload,
+        *,
+        mask: ImageMetadataPayload,
+    ) -> ImageMetadataPayload:
+        image_data = image_payload_data(image)
+        mask_data = image_payload_data(mask)
+        seen_shapes.append(mask_data.shape)
+        true_y, true_x = np.argwhere(mask_data)[0]
         seen_true_indices.append((int(true_y), int(true_x)))
-        return np.where(mask, image + 100, image)
+        return with_image_payload_data(
+            image,
+            np.where(mask_data, image_data + 100, image_data),
+        )
 
     apply_mask.output_memory_type = MEMORY_TYPE_NUMPY
 
@@ -149,12 +198,65 @@ def test_pure_2d_contract_projects_stack_shaped_kwargs_per_slice() -> None:
         mask=mask,
     )
 
-    expected = stack.copy()
+    expected = stack_data.copy()
     expected[0, 0, 0] += 100
     expected[1, 1, 1] += 100
-    np.testing.assert_array_equal(result, expected)
+    np.testing.assert_array_equal(image_payload_data(result), expected)
     assert seen_shapes == [(4, 5), (4, 5)]
     assert seen_true_indices == [(0, 0), (1, 1)]
+
+
+def test_pure_2d_contract_preserves_declared_source_binding_axis() -> None:
+    source_aliases = ("OrigBlue", "OrigGreen")
+    stack = ImageMetadataPayload(
+        data=np.arange(24, dtype=np.float32).reshape(2, 3, 4),
+        metadata=ImagePayloadMetadata(
+            plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+            source_image_names=source_aliases,
+            source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+                paths=("blue.tif", "green.tif")
+            ),
+        ),
+    )
+    labels = ObjectLabelPayload(
+        variant_data=ObjectLabelVariantData(
+            labels=np.asarray(
+                (
+                    ((0, 1, 0, 0), (0, 0, 0, 0), (0, 0, 0, 0)),
+                    ((0, 2, 0, 0), (0, 0, 0, 0), (0, 0, 0, 0)),
+                ),
+                dtype=np.int32,
+            )
+        ),
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
+        source_image_names=source_aliases,
+        domain=ObjectLabelDomain(
+            declared_object_id_domains=((1,), (2,)),
+            scope=ObjectLabelDomainScope.PLANE,
+        ),
+    )
+    seen_label_shapes: list[tuple[int, ...]] = []
+
+    def consume_labels(
+        image: ImageMetadataPayload,
+        *,
+        labels: ObjectLabelPayload,
+    ) -> ImageMetadataPayload:
+        seen_label_shapes.append(labels.labels.shape)
+        return image
+
+    consume_labels.output_memory_type = MEMORY_TYPE_NUMPY
+
+    result = ProcessingContract.PURE_2D.execute(
+        MinimalRegistry("minimal"),
+        consume_labels,
+        stack,
+        labels=labels,
+    )
+
+    assert seen_label_shapes == [(3, 4), (3, 4)]
+    assert image_payload_metadata(result).plane_axis is RuntimePlaneAxis.SOURCE_BINDING
+    assert image_payload_metadata(result).source_image_names == source_aliases
 
 
 def test_pure_3d_contract_preserves_metadata_for_plain_numpy_processor() -> None:
@@ -163,9 +265,7 @@ def test_pure_3d_contract_preserves_metadata_for_plain_numpy_processor() -> None
         data=stack,
         metadata=ImagePayloadMetadata(
             source_image_provenance_planes=(
-                SourceImageProvenancePlanes.from_components(
-                    paths=("z0.tif", "z1.tif")
-                )
+                SourceImageProvenancePlanes.from_components(paths=("z0.tif", "z1.tif"))
             ),
             source_plane_dtypes=("float32", "float32"),
         ),
@@ -187,14 +287,17 @@ def test_pure_3d_contract_preserves_metadata_for_plain_numpy_processor() -> None
     )
 
 
-def test_pure_3d_projection_accepts_metadata_payload_array_methods() -> None:
+def test_volumetric_projection_accepts_metadata_payload_array_methods() -> None:
     stack = np.arange(60, dtype=np.float32).reshape(2, 5, 6)
     payload = ImageMetadataPayload(
         data=stack,
-        metadata=ImagePayloadMetadata(source_dtype="float32"),
+        metadata=ImagePayloadMetadata(
+            source_dtype="float32",
+            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+        ),
     )
 
-    result = ProcessingContract.PURE_3D.execute(
+    result = ProcessingContract.VOLUMETRIC_TO_SLICE.execute(
         MinimalRegistry("minimal"),
         create_projection,
         payload,
@@ -206,41 +309,30 @@ def test_pure_3d_projection_accepts_metadata_payload_array_methods() -> None:
     assert image_payload_metadata(result).source_dtype == "float32"
 
 
-def test_with_image_payload_data_projects_channel_last_mask_to_grayscale() -> None:
+def test_with_image_payload_data_rejects_implicit_channel_mask_collapse() -> None:
     mask = np.zeros((4, 5, 2), dtype=bool)
     mask[:, :, 0] = True
-    source = RuntimeImagePayloadContext(
-        np.ones((4, 5, 2), dtype=np.float32),
-        mask=mask,
-        metadata=ImagePayloadMetadata(),
-    ).payload()
-
-    result = with_image_payload_data(
-        source,
-        np.ones((4, 5), dtype=np.float32),
+    source = ImagePayloadMetadata(source_channel_axis=-1).payload_with(
+        np.ones((4, 5, 2), dtype=np.float32), mask
     )
 
-    assert image_payload_data(result).shape == (4, 5)
-    np.testing.assert_array_equal(
-        image_payload_mask(result),
-        np.zeros((4, 5), dtype=bool),
-    )
+    with pytest.raises(ValueError, match="does not match declared image mask domain"):
+        with_image_payload_data(
+            source,
+            np.ones((4, 5), dtype=np.float32),
+        )
 
 
 def test_runtime_callable_invocation_can_call_raw_signature_filtered_callable() -> None:
-    source = RuntimeImagePayloadContext(
-        np.ones((4, 5), dtype=np.float32),
-        mask=np.ones((4, 5), dtype=bool),
-        metadata=ImagePayloadMetadata(),
-    ).payload()
+    source = ImagePayloadMetadata().payload_with(
+        np.ones((4, 5), dtype=np.float32), np.ones((4, 5), dtype=bool)
+    )
 
     def raw(image: RuntimeArrayPayload, *, scale: int) -> RuntimeArrayPayload:
         assert isinstance(image, RuntimeArrayPayload)
-        return RuntimeImagePayloadContext(
-            image_payload_data(image) * scale,
-            mask=image_payload_mask(image),
-            metadata=image_payload_metadata(image),
-        ).payload()
+        return image_payload_metadata(image).payload_with(
+            image_payload_data(image) * scale, image_payload_mask(image)
+        )
 
     @wraps(raw)
     def decorated(image: Any, **kwargs: Any) -> np.ndarray:
@@ -256,4 +348,38 @@ def test_runtime_callable_invocation_can_call_raw_signature_filtered_callable() 
 
     assert isinstance(result, RuntimeArrayPayload)
     np.testing.assert_array_equal(image_payload_data(result), np.full((4, 5), 3.0))
-    np.testing.assert_array_equal(image_payload_mask(result), np.ones((4, 5), dtype=bool))
+    np.testing.assert_array_equal(
+        image_payload_mask(result), np.ones((4, 5), dtype=bool)
+    )
+
+
+def test_raw_runtime_callable_preserves_request_binding_semantics() -> None:
+    @dataclass(frozen=True, slots=True)
+    class ScaleRequest:
+        image: object
+        scale: int
+
+    @callable_request(ScaleRequest)
+    def request_bound(request: ScaleRequest) -> object:
+        return image_payload_metadata(request.image).payload_with(
+            image_payload_data(request.image) * request.scale,
+            image_payload_mask(request.image),
+        )
+
+    @wraps(request_bound)
+    def decorated(*args: Any, **kwargs: Any) -> object:
+        return request_bound(*args, **kwargs)
+
+    source = ImagePayloadMetadata().payload_with(
+        np.ones((3, 4), dtype=np.float32), np.ones((3, 4), dtype=bool)
+    )
+
+    result = RuntimeCallableInvocation(
+        decorated,
+        args=(source,),
+        kwargs={"scale": 4, "adapter_control": object()},
+        callable_view=RuntimeCallableView.RAW,
+        kwarg_policy=RuntimeInvocationKwargPolicy.SIGNATURE_FILTERED,
+    ).call()
+
+    np.testing.assert_array_equal(image_payload_data(result), np.full((3, 4), 4.0))

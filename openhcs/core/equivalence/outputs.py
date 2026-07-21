@@ -1,7 +1,7 @@
 """Runtime output snapshot construction for equivalence checks."""
 
 from __future__ import annotations
-from openhcs.core.runtime_semantics import MeasurementRowAxisField
+from openhcs.core.runtime_measurements import MeasurementRowAxisField
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
@@ -14,14 +14,11 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.core.equivalence.images import RuntimeImageSnapshot
 from openhcs.core.equivalence.policy import normalize_runtime_identifier
 from openhcs.core.equivalence.tables import RuntimeTableSnapshot
+from openhcs.core.image_file_serialization import ImageFileFormat
 from openhcs.core.runtime_execution_validation import (
     RuntimeArtifactExecutionObservation,
 )
-from openhcs.core.runtime_exports import (
-    RuntimeExportObservation,
-    RuntimeImageExportSpec,
-    image_runtime_records,
-)
+from openhcs.core.runtime_exports import RuntimeExportObservation
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,28 +51,12 @@ class RuntimeOutputSnapshot:
     def from_artifact_execution_observation(
         cls,
         observation: RuntimeArtifactExecutionObservation,
-        *,
-        image_artifact_names: frozenset[str] = frozenset(),
-        image_export_specs: tuple[RuntimeImageExportSpec, ...] = (),
     ) -> "RuntimeOutputSnapshot":
         """Build a snapshot from files owned by observed runtime artifacts."""
-        file_snapshot = cls.from_export_observation(
+        return cls.from_export_observation(
             observation.exports.with_runtime_artifact_tables(
                 observation.records_by_axis
             )
-        )
-        image_specs = _image_export_specs(
-            image_artifact_names=image_artifact_names,
-            image_export_specs=image_export_specs,
-        )
-        if not image_specs:
-            return cls(tables=file_snapshot.tables)
-        return cls(
-            tables=file_snapshot.tables,
-            images=_image_snapshots_from_artifact_execution(
-                observation,
-                image_export_specs=image_specs,
-            ),
         )
 
     @classmethod
@@ -208,45 +189,5 @@ def image_paths(output_root: Path) -> tuple[Path, ...]:
     )
 
 
-def _image_snapshots_from_artifact_execution(
-    observation: RuntimeArtifactExecutionObservation,
-    *,
-    image_export_specs: tuple[RuntimeImageExportSpec, ...],
-) -> tuple[RuntimeImageSnapshot, ...]:
-    return tuple(
-        RuntimeImageSnapshot.from_array(
-            f"{record.key.scope.axis_id}_{export_spec.artifact_name}",
-            export_spec.prepare_payload(record.value.data),
-        )
-        for axis_id in sorted(observation.records_by_axis)
-        for export_spec in image_export_specs
-        for record in image_runtime_records(
-            observation.records_by_axis[axis_id],
-            artifact_names=frozenset((export_spec.artifact_name,)),
-        )
-    )
-
-
-def _image_export_specs(
-    *,
-    image_artifact_names: frozenset[str],
-    image_export_specs: tuple[RuntimeImageExportSpec, ...],
-) -> tuple[RuntimeImageExportSpec, ...]:
-    if image_export_specs:
-        return image_export_specs
-    return tuple(
-        RuntimeImageExportSpec(artifact_name)
-        for artifact_name in sorted(image_artifact_names)
-    )
-
-
 def _is_image_path(path: Path) -> bool:
-    return path.suffix.lower() in {
-        ".bmp",
-        ".jpeg",
-        ".jpg",
-        ".npy",
-        ".png",
-        ".tif",
-        ".tiff",
-    }
+    return ImageFileFormat.is_image_path(path)

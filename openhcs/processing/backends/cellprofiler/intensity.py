@@ -1,32 +1,48 @@
 """Intensity-measurement backends for CellProfiler-compatible processing."""
 
 from __future__ import annotations
+from openhcs.core.artifacts import ArtifactInputPlan
+from collections.abc import Mapping
+from dataclasses import dataclass
 from enum import Enum
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Annotated, ClassVar
+
+from openhcs.core.artifacts import (
+    ArtifactSpecCollection,
+    SourceStackLineageSourceRelation,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+)
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
+    MeasurementProjectedColumnarRows,
+)
 from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     cellprofiler_enum_value_setting_parser,
     normalize_cellprofiler_setting_name,
+    parse_cellprofiler_bool,
     parse_cellprofiler_float,
 )
-from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
-    ArtifactContractModule,
-    BinderSettingsSourceModule,
+from openhcs.interop.cellprofiler.module_settings import (
     BoundModuleSettings,
+)
+from openhcs.interop.cellprofiler.module_declarations import (
     CellProfilerModule,
-    ImageArtifactInputModule,
-    ImageArtifactOutputModule,
+)
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
     ImageMeasurementInputModule,
-    IntensityFeature,
-    ModuleSettingsSourceModule,
+    ObjectArtifactInputModule,
     ObjectMeasurementInputModule,
-    ObjectLocationFeature,
-    ScopedMeasurementModule,
     SourceQualifiedMeasurementFeatureModule,
-    StructuringElementSettingsModule,
-    ObjectMeasurementRowsModule,
+    SourceQualifiedWideMeasurementRowsModule,
     PerObjectMeasurementExecutionModule,
+)
+from openhcs.interop.cellprofiler.module_measurement_features import (
+    IntensityFeature,
+    ObjectLocationFeature,
 )
 from openhcs.interop.cellprofiler.runtime.object_measurement_row_policies import (
     DeclaredObjectMeasurementRowPolicy,
@@ -38,18 +54,23 @@ from openhcs.interop.cellprofiler.runtime.object_measurement_row_completion impo
 from openhcs.interop.cellprofiler.runtime.object_input_policies import (
     LabelsObjectInputPolicy,
 )
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    FieldDerivedMeasurementFeatureModule,
+    MeasurementFeatureRecord,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_rows import (
+    ModuleOwnedResultMeasurementRows,
+)
 from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
     required_setting_value,
-    setting_values,
-    split_symbol_names,
 )
-from openhcs.interop.cellprofiler.cellprofiler_literals import (
-    cellprofiler_enum_from_literal,
-)
-from openhcs.processing.backends.cellprofiler.thresholding import (
-    ThresholdSettingsModule,
-)
+from openhcs.core.runtime_object_labels import ObjectLabelVariantData
+
+if TYPE_CHECKING:
+    from openhcs.core.function_patterns import FunctionInvocationKey
+    from openhcs.interop.cellprofiler.parser import ModuleBlock
+    from openhcs.interop.cellprofiler.settings_binder import SettingsBinder
 
 
 class RescaleIntensityAutomaticHigh(Enum):
@@ -78,23 +99,133 @@ class RescaleIntensityMethod(Enum):
 
 
 class MeasureImageIntensityModule(
-    ImageMeasurementInputModule, ObjectMeasurementInputModule, CellProfilerModule
+    LabelsObjectInputPolicy,
+    PerObjectMeasurementExecutionModule,
+    FieldDerivedMeasurementFeatureModule,
+    SourceQualifiedMeasurementFeatureModule,
+    ImageMeasurementInputModule,
+    ObjectArtifactInputModule,
 ):
     module_name = "MeasureImageIntensity"
     function_name = "measure_image_intensity"
+    function_variants = ("measure_image_intensity_objects",)
     validated = True
     confidence = 1.0
     measurement_category_prefixes = (("intensity",),)
+    measurement_feature_family = "Intensity"
     object_gate_setting = SettingNameFamily(
         "Select the input objects",
         aliases=("Select input objects", "Select input object sets", "Objects"),
     )
     object_measurement_setting = object_gate_setting
-    ignored_settings = (
-        "Measure the intensity only from areas enclosed by objects?",
-        "calculate_custom_percentiles",
-        "specify_percentiles_to_measure",
+    object_gate_binding = SettingToKeywordBinding.input(
+        object_gate_setting, ObjectLabelsArtifactType, runtime_parameter_name="labels"
     )
+    calculate_percentiles_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
+        "Calculate custom percentiles"
+    )
+    percentiles_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
+        "Specify percentiles to measure"
+    )
+    setting_bindings = (
+        object_gate_binding,
+        SettingToKeywordBinding(
+            calculate_percentiles_setting,
+            "calculate_percentiles",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(percentiles_setting, "percentiles", str),
+    )
+    ignored_settings = ("Measure the intensity only from areas enclosed by objects?",)
+
+    @dataclass(frozen=True, slots=True)
+    class MeasurementRows(ModuleOwnedResultMeasurementRows):
+        """Project image-intensity records into exact CellProfiler features."""
+
+        measurement_name: str
+
+        @classmethod
+        def for_request(cls, module_type, request):
+            source_image_name = request.source.source_image_name
+            if source_image_name is None:
+                raise ValueError(
+                    "MeasureImageIntensity requires exact source-image ownership."
+                )
+            object_inputs = ArtifactSpecCollection(
+                request.callable_contract.artifact_inputs.specs
+            ).of_artifact_type(ObjectLabelsArtifactType)
+            if len(object_inputs) > 1:
+                raise ValueError(
+                    "MeasureImageIntensity accepts at most one object-label input "
+                    f"per invocation, got {[spec.name for spec in object_inputs]!r}."
+                )
+            measurement_name = (
+                source_image_name
+                if not object_inputs
+                else f"{source_image_name}_{object_inputs[0].name}"
+            )
+            return cls(
+                request.output_value,
+                module_type=module_type,
+                measurement_name=measurement_name,
+            )
+
+        def rows(self) -> MeasurementProjectedColumnarRows:
+            source_rows = self.source_rows()
+            slice_field = self.source_field(MeasurementRowAxisField.SLICE_INDEX)
+            percentile_field = self.source_field("percentile_values")
+            feature_fields = tuple(
+                field_spec
+                for field_spec in source_rows.fields
+                if field_spec.name not in (slice_field.name, percentile_field.name)
+            )
+            slice_indices: list[object] = []
+            feature_names: list[str] = []
+            values: list[object] = []
+            for source_record in source_rows.iter_row_mappings():
+                slice_index = source_record[slice_field.name]
+                for field_spec in feature_fields:
+                    slice_indices.append(slice_index)
+                    feature_names.append(
+                        self.module_type.measurement_feature_name(
+                            field_spec.name,
+                            self.measurement_name,
+                        )
+                    )
+                    values.append(source_record[field_spec.name])
+                percentile_values = source_record[percentile_field.name]
+                if not isinstance(percentile_values, Mapping):
+                    raise TypeError(
+                        "MeasureImageIntensity percentile_values must be a mapping, "
+                        f"got {type(percentile_values).__name__}."
+                    )
+                for percentile, value in percentile_values.items():
+                    slice_indices.append(slice_index)
+                    feature_names.append(
+                        self.module_type.measurement_feature_name(
+                            "percentile",
+                            percentile,
+                            self.measurement_name,
+                        )
+                    )
+                    values.append(value)
+            value_field_name = ImageIntensityMeasurement.measurement_value_field.value
+            return MeasurementProjectedColumnarRows(
+                MappingProxyType(
+                    {
+                        slice_field.name: tuple(slice_indices),
+                        MeasurementRowAxisField.FEATURE_NAME.value: tuple(
+                            feature_names
+                        ),
+                        value_field_name: tuple(values),
+                    }
+                ),
+                fields=(
+                    slice_field,
+                    FieldSpec(MeasurementRowAxisField.FEATURE_NAME.value, str),
+                    FieldSpec(value_field_name),
+                ),
+            )
 
     @classmethod
     def ignored_settings_for(
@@ -109,31 +240,44 @@ class MeasureImageIntensityModule(
         return ignored
 
     @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        return cls.measurement_artifact_contract_from_declared_settings(
-            assembler, builder, module
+    def active_artifact_bindings(
+        cls,
+        module: "ModuleBlock | None" = None,
+        *,
+        invocation_key: "FunctionInvocationKey | None" = None,
+    ) -> tuple[SettingToKeywordBinding, ...]:
+        """Declare masked-image topology only when an object set is selected."""
+
+        from openhcs.interop.cellprofiler.setting_names import is_blank_symbol_name
+
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
+        )
+        if module is None:
+            return bindings
+        value = cls.setting_value(module, cls.object_gate_setting, include_blank=True)
+        active = value is not None and bool(value.strip()) and not is_blank_symbol_name(value)
+        return tuple(
+            binding
+            for binding in bindings
+            if active or binding is not cls.object_gate_binding
         )
 
 
 class RescaleIntensityModule(
-    ImageArtifactInputModule, ImageArtifactOutputModule, CellProfilerModule
+    CellProfilerModule
 ):
     module_name = "RescaleIntensity"
     function_name = "rescale_intensity"
     validated = True
     confidence = 1.0
-    image_input_settings = (
-        "Select the input image",
-        "Select image to match in maximum intensity",
-    )
-    image_output_settings = ("Name the output image",)
-    ignored_settings = (
-        "Select the input image",
-        "Name the output image",
-        "Select image to match in maximum intensity",
-        "Divisor measurement",
-    )
     setting_bindings = (
+        SettingToKeywordBinding.input("Select the input image", ImageArtifactType),
+        SettingToKeywordBinding.input(
+            "Select image to match in maximum intensity", ImageArtifactType
+        ),
+        SettingToKeywordBinding.output("Name the output image", ImageArtifactType),
         SettingToKeywordBinding(
             "Rescaling method",
             "rescale_method",
@@ -163,10 +307,35 @@ class RescaleIntensityModule(
             "Divisor value", "divisor_value", parse_cellprofiler_float
         ),
     )
+    ignored_settings = ("Divisor measurement",)
     range_settings = {
         "Intensity range for the input image": ("source_low", "source_high"),
         "Intensity range for the output image": ("dest_low", "dest_high"),
     }
+
+    @classmethod
+    def artifact_output_relations(
+        cls,
+        module,
+        *,
+        invocation_key,
+        step_context,
+        binding,
+        name,
+        artifact_inputs: ArtifactSpecCollection,
+        output_position: int,
+    ):
+        """Anchor output context to the image being rescaled."""
+
+        del invocation_key, step_context, binding, name, output_position
+        source = artifact_inputs.require_by_name_and_artifact_type(
+            required_setting_value(
+                module,
+                cls.declared_artifact_bindings(plan_type = ArtifactInputPlan, artifact_type = ImageArtifactType)[0].setting_name,
+            ),
+            ImageArtifactType,
+        )
+        return (SourceStackLineageSourceRelation(source=source.ref()),)
 
     @classmethod
     def bind_settings(
@@ -174,11 +343,8 @@ class RescaleIntensityModule(
         module: "ModuleBlock",
         *,
         binder: "SettingsBinder",
-        param_mapping: Mapping[str, Any],
-        ignored_unmapped_settings: frozenset[str] = frozenset(),
     ) -> "BoundModuleSettings":
-        del param_mapping
-        bound = cls._bind_declared_settings(module, binder=binder, param_mapping={})
+        bound = cls._bind_declared_settings(module, binder=binder)
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
         for setting_name, target_names in cls.range_settings.items():
@@ -196,18 +362,16 @@ class RescaleIntensityModule(
             module,
             binder=binder,
             bound=BoundModuleSettings(kwargs, unmapped_kwargs),
-            ignored_unmapped_settings=ignored_unmapped_settings,
         )
 
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable
-from dataclasses import dataclass, field
+from dataclasses import field
 from enum import Enum
-import json
 import logging
 import time
-from typing import ClassVar, TypeAlias
+from typing import TypeAlias
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.alias_property import AliasProperty
@@ -216,49 +380,55 @@ from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.callable_contract import runtime_image_execution_mode
 from openhcs.core.memory import numpy as numpy_decorator
 from openhcs.core.pipeline.function_contracts import (
-    ObjectLabelMeasurementExecution,
+    ObjectLabelInputExecutionMode,
+    object_label_input_execution_mode,
+    runtime_bound_parameters,
+    special_inputs,
+    )
+from openhcs.core.runtime_batch_contracts import (
     RuntimePure2DSliceBatchRequest,
+    SliceIndexRuntimeParameter,
     measurement_image_batch_executor,
-    object_label_measurement_execution,
     pure_2d_batch_executor,
 )
 from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.image_shapes import is_color_image_slice
-from openhcs.core.runtime_semantics import (
+from openhcs.core.runtime_object_label_domains import (
     ConsecutiveObjectLabelIdProjection,
-    MeasurementRowAxisField,
+    ObjectLabelDomain,
+    dense_object_label_measurement_row_domain,
+)
+from openhcs.core.runtime_tabular_values import (
+    FieldSpec,
     MeasurementObjectRowIdentity,
+)
+from openhcs.core.runtime_measurements import (
+    MeasurementRowAxisField,
     RuntimeMeasurementFeature,
     RuntimeMeasurementFeatureRelationDeclaration,
     RuntimeMeasurementFeatureSemanticMarker,
+)
+from openhcs.core.runtime_plane_projection import (
     RuntimePlaneAxis,
-    dense_object_label_measurement_row_domain,
 )
-from openhcs.core.measurement_row_materialization import (
-    ConcatenatedColumnarRows,
-)
-from openhcs.core.runtime_values import (
-    ColumnarRows,
-    DenseObjectLabelPlaneDomainStack,
-    DenseObjectLabelPlaneDomainStackRequest,
-    DenseObjectLabelSliceStackRequest,
+from openhcs.core.runtime_image_values import (
     ImageMetadataPayload,
     MaskedImagePayload,
-    ObjectLabelPayload,
-    ObjectLabelSet,
-    ObjectLabelValue,
     image_payload_data,
     image_payload_metadata,
-    object_label_dense_array,
     with_image_payload_data,
 )
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelPayload,
+    ObjectLabelValue,
+    object_label_dense_array,
+)
+from openhcs.processing.backends.cellprofiler.object_measurement_columnar_rows import (
+    ObjectMeasurementColumnarRows,
+)
 from openhcs.core.runtime_profile import RuntimeProfileLogger
-from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
+from openhcs.core.runtime_batch_contracts import RuntimeBatchInvocationRequest
 from openhcs.interop.cellprofiler.runtime.measurement_execution_support import (
     PreparedObjectMeasurementInvocation,
-)
-from openhcs.core.measurement_image_alignment import (
-    ReplicatedChannelMonochromeProjection,
 )
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
@@ -277,12 +447,14 @@ from openhcs.processing.backends.cellprofiler.intensity_object_quantiles_numba i
     ObjectIntensityForegroundIndex,
     _object_intensity_quantiles,
     _object_intensity_quantiles_3d_batch_numba,
-    _object_intensity_quantiles_3d_numba,
     _object_intensity_quantiles_3d_sparse_batch_numba,
     _object_intensity_scan_3d_batch_numba,
-    _object_intensity_scan_3d_numba,
     _object_intensity_scan_3d_sparse_batch_numba,
     _object_intensity_scan_numba,
+)
+from openhcs.processing.backends.cellprofiler.shape import (
+    ShapeMeasurementBackendStrategy,
+    _numpy124_aquicksort_indices,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -295,6 +467,10 @@ ImageIntensityOutput: TypeAlias = np.ndarray | ImageMetadataPayload | MaskedImag
 ObjectIntensityRuntimeRequest: TypeAlias = (
     RuntimePure2DSliceBatchRequest | RuntimeBatchInvocationRequest
 )
+
+
+class MaxIntensityLocationFeature(ObjectLocationFeature):
+    """Location feature tied to the corresponding maximum-intensity value."""
 
 
 class RescaleMethod(CellProfilerEnumAttributeMixin, Enum):
@@ -371,11 +547,11 @@ class ImageIntensityPercentileSpec:
         }
 
 
-@dataclass
-class ImageIntensityMeasurement:
+@dataclass(frozen=True, slots=True)
+class ImageIntensityMeasurement(MeasurementFeatureRecord):
     """CellProfiler-compatible intensity measurements for one image region."""
 
-    slice_index: int
+    slice_index: Annotated[int, MeasurementRowAxisField.SLICE_INDEX]
     total_intensity: float
     mean_intensity: float
     median_intensity: float
@@ -387,7 +563,7 @@ class ImageIntensityMeasurement:
     percent_maximal: float
     lower_quartile_intensity: float
     upper_quartile_intensity: float
-    percentile_values: str
+    percentile_values: dict[int, float]
 
     @classmethod
     def from_pixels(
@@ -435,7 +611,7 @@ class ImageIntensityMeasurement:
             percent_maximal=pixel_pct_max,
             lower_quartile_intensity=pixel_lower_qrt,
             upper_quartile_intensity=pixel_upper_qrt,
-            percentile_values=json.dumps(percentile_dict),
+            percentile_values=percentile_dict,
         )
 
 
@@ -457,20 +633,6 @@ class ObjectIntensityMeasurement(ObjectIntensityFeatureValues[float]):
             **arrays.scalar_kwargs(index),
         )
 
-    @classmethod
-    def rows_from_backend_arrays(
-        cls, arrays: ObjectIntensityArrays, *, slice_index: int
-    ) -> list["ObjectIntensityMeasurement"]:
-        """Materialize all CellProfiler object-intensity rows from backend arrays."""
-        if arrays.object_labels.size == 0:
-            return []
-        return [
-            cls.from_backend_arrays(
-                arrays, index=index, label=int(label), slice_index=slice_index
-            )
-            for index, label in enumerate(arrays.object_labels)
-        ]
-
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ObjectIntensityMeasurementAxisContext:
@@ -478,7 +640,7 @@ class ObjectIntensityMeasurementAxisContext:
 
     slice_index: int
     object_domain: tuple[int, ...] | None = None
-    row_identity: MeasurementObjectRowIdentity | None = None
+    object_row_identity: MeasurementObjectRowIdentity | None = None
 
     def object_labels_for(self, measured_labels: np.ndarray) -> np.ndarray:
         return np.asarray(
@@ -495,23 +657,30 @@ class ObjectIntensityMeasurementAxisContext:
             MeasurementRowAxisField.SLICE_INDEX.value: np.full(
                 row_count, self.slice_index, dtype=np.int64
             ),
-            MeasurementRowAxisField.IMAGE_NUMBER.value: np.full(
-                row_count, self.slice_index + 1, dtype=np.int64
-            ),
         }
-        if self.row_identity is not None:
-            columns[MeasurementRowAxisField.OBJECT_ROW_IDENTITY.value] = np.full(
-                row_count, self.row_identity.value, dtype=object
-            )
         return columns
 
 
 @dataclass(frozen=True, slots=True)
 class ObjectIntensityMeasurementRows(
-    ObjectIntensityMeasurementAxisContext, ColumnarRows
+    ObjectIntensityMeasurementAxisContext, ObjectMeasurementColumnarRows
 ):
     """Columnar object-intensity measurements for runtime lookup paths."""
 
+    fields: ClassVar[tuple[FieldSpec, ...]] = (
+        FieldSpec(MeasurementRowAxisField.SLICE_INDEX.value, int),
+        FieldSpec(MeasurementRowAxisField.OBJECT_LABEL.value, int),
+        *(
+            FieldSpec(
+                feature_field.name,
+                float,
+                required=feature_field.required,
+            )
+            for feature_field in FieldSpec.from_dataclass_type(
+                ObjectIntensityFeatureValues
+            )
+        ),
+    )
     arrays: ObjectIntensityArrays
     _columns: dict[str, np.ndarray] = field(repr=False, compare=False)
 
@@ -522,12 +691,12 @@ class ObjectIntensityMeasurementRows(
         *,
         slice_index: int,
         object_domain: tuple[int, ...] | None = None,
-        row_identity: MeasurementObjectRowIdentity | None = None,
+        object_row_identity: MeasurementObjectRowIdentity | None = None,
     ) -> "ObjectIntensityMeasurementRows":
         axis_context = ObjectIntensityMeasurementAxisContext(
             slice_index=slice_index,
             object_domain=object_domain,
-            row_identity=row_identity,
+            object_row_identity=object_row_identity,
         )
         object_labels = axis_context.object_labels_for(arrays.object_labels)
         row_count = int(object_labels.size)
@@ -561,16 +730,14 @@ class ObjectIntensityMeasurementRows(
             arrays=arrays,
             slice_index=slice_index,
             object_domain=object_domain,
-            row_identity=row_identity,
+            object_row_identity=object_row_identity,
             _columns=columns,
         )
 
     columns: ClassVar[AliasProperty[dict[str, np.ndarray]]] = AliasProperty("_columns")
 
-    @property
-    def covers_declared_object_measurement_domain(self) -> bool:
-        """Rows are aligned to the declared/prepared object domain at creation."""
-        return True
+    def __post_init__(self) -> None:
+        self.validate_fields()
 
     def __len__(self) -> int:
         return int(self._columns[MeasurementRowAxisField.OBJECT_LABEL.value].size)
@@ -616,15 +783,6 @@ def _align_intensity_column(
 
 
 @dataclass(frozen=True, slots=True)
-class ObjectIntensityResults:
-    """Collection of intensity measurements for all objects."""
-
-    slice_index: int
-    object_count: int
-    measurements: ObjectIntensityMeasurementRows
-
-
-@dataclass(frozen=True, slots=True)
 class ObjectIntensityPreparedLabels:
     """Prepared object-label domain reused across same-label intensity images."""
 
@@ -657,7 +815,7 @@ class ObjectIntensityPreparedLabels:
             source=labels,
             dense_labels=label_array,
             object_domain=dense_object_label_measurement_row_domain(
-                labels, label_array
+                labels, projection.positive_label_ids
             ),
             projection=projection,
             relabeled_labels=relabeled_labels,
@@ -669,11 +827,10 @@ class ObjectIntensityPreparedLabels:
     def from_measurement(
         cls, *, image: object, labels: ObjectIntensityLabelInput, slice_index: int
     ) -> "ObjectIntensityPreparedLabels":
+        del image, slice_index
         return cls.from_source(
             labels,
-            object_intensity_dense_labels(
-                image=image, labels=labels, slice_index=slice_index
-            ),
+            object_label_dense_array(labels, dtype=np.int32),
         )
 
     @staticmethod
@@ -719,14 +876,7 @@ class ObjectIntensityPreparedLabels:
         """Return the row identity declared by the prepared label plane domain."""
         if not isinstance(self.source, ObjectLabelValue):
             return None
-        stack = DenseObjectLabelPlaneDomainStack.from_payload_labels(
-            self.source,
-            self.dense_labels,
-            allow_single_plane=True,
-        )
-        if stack is None:
-            return None
-        return stack.measurement_row_identity
+        return MeasurementObjectRowIdentity.LABEL_ID
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -745,7 +895,7 @@ class ObjectIntensityMeasurementContext(ObjectIntensityMeasurementAxisContext):
         backend_provider: BackendProviderInput,
         slice_index: int,
         object_domain: tuple[int, ...] | None = None,
-        row_identity: MeasurementObjectRowIdentity | None = None,
+        object_row_identity: MeasurementObjectRowIdentity | None = None,
         prepared_labels: ObjectIntensityPreparedLabels | None = None,
     ) -> "ObjectIntensityMeasurementContext":
         return cls(
@@ -755,7 +905,7 @@ class ObjectIntensityMeasurementContext(ObjectIntensityMeasurementAxisContext):
             ),
             slice_index=int(slice_index),
             object_domain=object_domain,
-            row_identity=row_identity,
+            object_row_identity=object_row_identity,
             prepared_labels=prepared_labels,
         )
 
@@ -767,9 +917,10 @@ class ObjectIntensityMeasurementContext(ObjectIntensityMeasurementAxisContext):
         if "labels" not in kwargs:
             raise ValueError("Object-intensity runtime kwargs are missing 'labels'.")
         labels = kwargs["labels"]
-        if not isinstance(labels, ObjectLabelValue | np.ndarray):
+        if not isinstance(labels, ObjectLabelValue):
             raise TypeError(
-                f"Object-intensity labels must be an ObjectLabelValue or ndarray; got {type(labels).__name__}."
+                "Object-intensity runtime labels must be an already-projected "
+                f"ObjectLabelValue, got {type(labels).__name__}."
             )
         backend_provider = (
             kwargs["object_intensity_backend_provider"]
@@ -810,38 +961,6 @@ class ObjectIntensityMeasurementContext(ObjectIntensityMeasurementAxisContext):
         )
 
 
-def object_intensity_dense_labels(
-    *, image: object, labels: ObjectIntensityLabelInput, slice_index: int
-) -> np.ndarray:
-    """Return object labels in the measurement image execution domain."""
-    label_array = object_label_dense_array(labels, dtype=np.int32)
-    image_array = np.asarray(image)
-    if (
-        image_array.ndim == 3
-        and label_array.ndim == 4
-        and (label_array.shape[0] == image_array.shape[0])
-        and (label_array.shape[1] == image_array.shape[0])
-        and (label_array.shape[-2:] == image_array.shape[-2:])
-    ):
-        return np.ascontiguousarray(
-            np.stack(
-                tuple(
-                    (label_array[index, index] for index in range(image_array.shape[0]))
-                ),
-                axis=0,
-            ),
-            dtype=np.int32,
-        )
-    if (
-        image_array.ndim == 2
-        and label_array.ndim == 3
-        and (label_array.shape[-2:] == image_array.shape)
-        and (0 <= slice_index < label_array.shape[0])
-    ):
-        return np.asarray(label_array[slice_index], dtype=np.int32)
-    return np.asarray(label_array, dtype=np.int32)
-
-
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ObjectIntensityMeasurementRequest(ObjectIntensityMeasurementContext):
     """Executable request for one object-intensity image/label plane."""
@@ -850,20 +969,13 @@ class ObjectIntensityMeasurementRequest(ObjectIntensityMeasurementContext):
 
     @property
     def measurement_image(self) -> np.ndarray:
-        image = np.asarray(self.image)
-        if image.ndim == 3 and (not is_color_image_slice(image)):
-            return image
-        return ReplicatedChannelMonochromeProjection().plane(image, name="image")
+        return np.asarray(self.image)
 
     @property
     def dense_labels(self) -> np.ndarray:
         if self.prepared_labels is not None:
             return self.prepared_labels.dense_labels
-        return object_intensity_dense_labels(
-            image=self.measurement_image,
-            labels=self.labels,
-            slice_index=self.slice_index,
-        )
+        return object_label_dense_array(self.labels, dtype=np.int32)
 
     @property
     def measurement_object_domain(self) -> tuple[int, ...]:
@@ -890,7 +1002,7 @@ class ObjectIntensityMeasurementRequest(ObjectIntensityMeasurementContext):
             intensity_arrays,
             slice_index=self.slice_index,
             object_domain=self.measurement_object_domain,
-            row_identity=self.row_identity,
+            object_row_identity=self.object_row_identity,
         )
 
 
@@ -903,14 +1015,16 @@ class ObjectIntensityBackendStrategy(
     __skip_if_no_key__ = True
 
     @abstractmethod
-    def measure(self, image: np.ndarray, labels: np.ndarray) -> ObjectIntensityArrays:
+    def measure(
+        self, image: np.ndarray, labels: ObjectIntensityLabelInput
+    ) -> ObjectIntensityArrays:
         """Measure object intensity arrays for one image plane."""
 
     def measure_prepared(
         self, image: np.ndarray, labels: ObjectIntensityPreparedLabels
     ) -> ObjectIntensityArrays:
         """Measure object intensity arrays with a prepared label domain."""
-        return self.measure(image, labels.dense_labels)
+        return self.measure(image, labels.source)
 
     def measure_prepared_batch(
         self, images: tuple[np.ndarray, ...], labels: ObjectIntensityPreparedLabels
@@ -930,34 +1044,89 @@ class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
     is_default_backend = True
     sparse_foreground_max_fraction: ClassVar[float] = 0.6
 
-    def measure(self, image: np.ndarray, labels: np.ndarray) -> ObjectIntensityArrays:
+    def maximum_intensity_positions(
+        self,
+        image: np.ndarray,
+        labels: ObjectIntensityPreparedLabels,
+    ) -> tuple[np.ndarray, ...]:
+        """Return CellProfiler 4.2 maximum positions in the label domain."""
+        label_ids = np.arange(1, labels.object_count + 1, dtype=np.int32)
+        shape_backend = ShapeMeasurementBackendStrategy.for_memory_type(
+            MemoryType.NUMPY,
+            backend_provider=self.backend_provider,
+        )
+        return shape_backend.maximum_position_of_labels(
+            image,
+            labels.relabeled_labels,
+            label_ids,
+            mask=labels.relabeled_labels > 0,
+        )
+
+    def maximum_intensity_positions_batch(
+        self,
+        images: np.ndarray,
+        labels: ObjectIntensityPreparedLabels,
+    ) -> tuple[tuple[np.ndarray, ...], ...]:
+        """Return exact maximum positions without repeating foreground scans."""
+        foreground_index = labels.foreground_index
+        image_batch = np.asarray(images)
+        image_shape = image_batch.shape[1:]
+        if foreground_index is None or not foreground_index.matches_shape(image_shape):
+            raise ValueError(
+                "Batched 3-D maximum positions require a matching prepared "
+                "foreground index."
+            )
+
+        z_indices = foreground_index.z_indices
+        y_indices = foreground_index.y_indices
+        x_indices = foreground_index.x_indices
+        source_positions = (
+            z_indices * (image_shape[1] * image_shape[2])
+            + y_indices * image_shape[2]
+            + x_indices
+        )
+        flat_images = image_batch.reshape((image_batch.shape[0], -1))
+        positions: list[tuple[np.ndarray, ...]] = []
+        for flat_image in flat_images:
+            order = _numpy124_aquicksort_indices(flat_image[source_positions])
+            maximum_positions = np.zeros(labels.object_count, dtype=np.int64)
+            maximum_positions[foreground_index.object_indexes[order]] = (
+                source_positions[order]
+            )
+            positions.append(
+                tuple(
+                    np.asarray(coordinates, dtype=np.float64)
+                    for coordinates in np.unravel_index(
+                        maximum_positions,
+                        image_shape,
+                    )
+                )
+            )
+        return tuple(positions)
+
+    def measure(
+        self, image: np.ndarray, labels: ObjectIntensityLabelInput
+    ) -> ObjectIntensityArrays:
         image_array = np.ascontiguousarray(image)
-        label_array = np.ascontiguousarray(labels, dtype=np.int32)
-        if (
-            image_array.ndim == 2
-            and label_array.ndim == 3
-            and (label_array.shape[0] == 1)
-            and (label_array.shape[1:] == image_array.shape)
-        ):
-            label_array = np.ascontiguousarray(label_array[0], dtype=np.int32)
+        label_array = np.ascontiguousarray(
+            object_label_dense_array(labels, dtype=np.int32)
+        )
         if image_array.ndim != 2 or label_array.ndim != 2:
             if image_array.ndim == 3 and label_array.ndim == 3:
-                return self._measure_3d(image_array, label_array)
-            if image_array.ndim == 3 and label_array.ndim == 2:
-                if image_array.shape[-2:] != label_array.shape:
-                    raise ValueError("image and labels must have matching YX shapes.")
-                broadcast_labels = np.broadcast_to(label_array, image_array.shape)
-                return self._measure_3d(
-                    image_array, np.ascontiguousarray(broadcast_labels, dtype=np.int32)
+                return self._measure_3d_prepared(
+                    image_array,
+                    ObjectIntensityPreparedLabels.from_source(labels, label_array),
                 )
             raise NotImplementedError(
-                f"NumPy object-intensity backend supports 2-D and 3-D arrays; got image shape {image_array.shape!r} and label shape {label_array.shape!r}."
+                "NumPy object-intensity requires image and labels already projected "
+                "into the same 2-D or 3-D domain; got image shape "
+                f"{image_array.shape!r} and label shape {label_array.shape!r}."
             )
         if image_array.shape != label_array.shape:
             raise ValueError("image and labels must have matching shapes.")
         return self.measure_prepared(
             image_array,
-            ObjectIntensityPreparedLabels.from_source(label_array, label_array),
+            ObjectIntensityPreparedLabels.from_source(labels, label_array),
         )
 
     def measure_prepared(
@@ -968,17 +1137,10 @@ class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
         if image_array.ndim != 2 or label_array.ndim != 2:
             if image_array.ndim == 3 and label_array.ndim == 3:
                 return self._measure_3d_prepared(image_array, labels)
-            if image_array.ndim == 3 and label_array.ndim == 2:
-                if image_array.shape[-2:] != label_array.shape:
-                    raise ValueError("image and labels must have matching YX shapes.")
-                broadcast_labels = np.broadcast_to(
-                    labels.relabeled_labels, image_array.shape
-                )
-                return self._measure_3d_prepared(
-                    image_array, labels.with_relabeled_labels(broadcast_labels)
-                )
             raise NotImplementedError(
-                f"NumPy object-intensity backend supports 2-D and 3-D arrays; got image shape {image_array.shape!r} and label shape {label_array.shape!r}."
+                "NumPy object-intensity requires prepared labels in the exact image "
+                f"domain; got image shape {image_array.shape!r} and label shape "
+                f"{label_array.shape!r}."
             )
         if image_array.shape != label_array.shape:
             raise ValueError("image and labels must have matching shapes.")
@@ -1016,9 +1178,11 @@ class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
             center_mass_intensity_x=arrays[12],
             center_mass_intensity_y=arrays[13],
             center_mass_intensity_z=np.zeros(object_count, dtype=np.float64),
-            max_intensity_x=arrays[14],
-            max_intensity_y=arrays[15],
+            max_intensity_x=np.zeros(object_count, dtype=np.float64),
+            max_intensity_y=np.zeros(object_count, dtype=np.float64),
             max_intensity_z=np.zeros(object_count, dtype=np.float64),
+        ).with_max_intensity_positions(
+            self.maximum_intensity_positions(image_array, labels)
         )
 
     def measure_prepared_batch(
@@ -1034,11 +1198,7 @@ class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
         if any((image.shape != image_shape for image in image_arrays)):
             raise ValueError("Batched object-intensity images must share shape.")
         relabeled_labels = labels.relabeled_labels
-        if relabeled_labels.ndim == 2:
-            if image_shape[-2:] != relabeled_labels.shape:
-                raise ValueError("image and labels must have matching YX shapes.")
-            relabeled_labels = np.broadcast_to(relabeled_labels, image_shape)
-        elif relabeled_labels.ndim != 3:
+        if relabeled_labels.ndim != 3:
             return super().measure_prepared_batch(images, labels)
         if image_shape != relabeled_labels.shape:
             raise ValueError("image and labels must have matching shapes.")
@@ -1053,39 +1213,39 @@ class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
             labels, image_shape
         )
         if sparse_foreground_index is not None:
-            return self._measure_sparse_prepared_batch(
+            measured_arrays = self._measure_sparse_prepared_batch(
                 image_batch, labels, sparse_foreground_index
             )
-        scan_started_at = time.perf_counter()
-        scan_result = _object_intensity_scan_3d_batch_numba(
-            image_batch, label_array, object_labels, labels.label_to_index
-        )
-        RuntimeProfileLogger.log(
-            logger,
-            "object_intensity_scan_3d_batch",
-            time.perf_counter() - scan_started_at,
-            images=len(images),
-            objects=labels.object_count,
-            voxels=image_arrays[0].size,
-        )
-        quantile_started_at = time.perf_counter()
-        quantile_result = _object_intensity_quantiles_3d_batch_numba(
-            image_batch,
-            label_array,
-            labels.label_to_index,
-            scan_result[0].astype(np.int64, copy=False),
-            1.0 / 3.0,
-        )
-        RuntimeProfileLogger.log(
-            logger,
-            "object_intensity_quantiles_3d_batch",
-            time.perf_counter() - quantile_started_at,
-            images=len(images),
-            objects=labels.object_count,
-            voxels=image_arrays[0].size,
-        )
-        return tuple(
-            (
+        else:
+            scan_started_at = time.perf_counter()
+            scan_result = _object_intensity_scan_3d_batch_numba(
+                image_batch, label_array, object_labels, labels.label_to_index
+            )
+            RuntimeProfileLogger.log(
+                logger,
+                "object_intensity_scan_3d_batch",
+                time.perf_counter() - scan_started_at,
+                images=len(images),
+                objects=labels.object_count,
+                voxels=image_arrays[0].size,
+            )
+            quantile_started_at = time.perf_counter()
+            quantile_result = _object_intensity_quantiles_3d_batch_numba(
+                image_batch,
+                label_array,
+                labels.label_to_index,
+                scan_result[0].astype(np.int64, copy=False),
+                1.0 / 3.0,
+            )
+            RuntimeProfileLogger.log(
+                logger,
+                "object_intensity_quantiles_3d_batch",
+                time.perf_counter() - quantile_started_at,
+                images=len(images),
+                objects=labels.object_count,
+                voxels=image_arrays[0].size,
+            )
+            measured_arrays = tuple(
                 ObjectIntensityArrays.from_3d_scan_batch_result(
                     object_labels=object_labels,
                     scan_result=scan_result,
@@ -1093,6 +1253,17 @@ class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
                     image_index=image_index,
                 )
                 for image_index in range(len(images))
+            )
+        maximum_positions = self.maximum_intensity_positions_batch(
+            image_batch,
+            labels,
+        )
+        return tuple(
+            measured.with_max_intensity_positions(positions)
+            for measured, positions in zip(
+                measured_arrays,
+                maximum_positions,
+                strict=True,
             )
         )
 
@@ -1168,72 +1339,14 @@ class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
             )
         )
 
-    def _measure_3d(
-        self, image_array: np.ndarray, label_array: np.ndarray
-    ) -> ObjectIntensityArrays:
-        if image_array.shape != label_array.shape:
-            raise ValueError("image and labels must have matching shapes.")
-        return self._measure_3d_prepared(
-            image_array,
-            ObjectIntensityPreparedLabels.from_source(label_array, label_array),
-        )
-
     def _measure_3d_prepared(
         self, image_array: np.ndarray, labels: ObjectIntensityPreparedLabels
     ) -> ObjectIntensityArrays:
         if image_array.shape != labels.relabeled_labels.shape:
             raise ValueError("image and labels must have matching shapes.")
-        object_labels = labels.object_labels
         if labels.object_count == 0:
-            return ObjectIntensityArrays.empty(object_labels)
-        image_shape = (
-            int(image_array.shape[0]),
-            int(image_array.shape[1]),
-            int(image_array.shape[2]),
-        )
-        sparse_foreground_index = self._sparse_foreground_index_for_batch(
-            labels, image_shape
-        )
-        if sparse_foreground_index is not None:
-            return self._measure_sparse_prepared_batch(
-                np.ascontiguousarray(image_array)[np.newaxis, ...],
-                labels,
-                sparse_foreground_index,
-            )[0]
-        scan_started_at = time.perf_counter()
-        arrays = _object_intensity_scan_3d_numba(
-            np.ascontiguousarray(image_array),
-            np.ascontiguousarray(labels.relabeled_labels),
-            object_labels,
-            labels.label_to_index,
-        )
-        RuntimeProfileLogger.log(
-            logger,
-            "object_intensity_scan_3d",
-            time.perf_counter() - scan_started_at,
-            objects=labels.object_count,
-            voxels=image_array.size,
-        )
-        quantile_started_at = time.perf_counter()
-        quantile_result = _object_intensity_quantiles_3d_numba(
-            np.ascontiguousarray(image_array),
-            np.ascontiguousarray(labels.relabeled_labels),
-            labels.label_to_index,
-            arrays[0].astype(np.int64, copy=False),
-            1.0 / 3.0,
-        )
-        RuntimeProfileLogger.log(
-            logger,
-            "object_intensity_quantiles_3d",
-            time.perf_counter() - quantile_started_at,
-            objects=labels.object_count,
-            voxels=image_array.size,
-        )
-        return ObjectIntensityArrays.from_3d_scan_result(
-            object_labels=object_labels,
-            scan_result=arrays,
-            quantile_result=quantile_result,
-        )
+            return ObjectIntensityArrays.empty(labels.object_labels)
+        return self.measure_prepared_batch((image_array,), labels)[0]
 
     def prepare_backend(self) -> None:
         """Compile object-intensity kernels outside measured execution."""
@@ -1241,15 +1354,26 @@ class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
         labels = np.zeros(image.shape, dtype=np.int32)
         labels[4:16, 4:16] = 1
         labels[16:28, 16:28] = 2
-        self.measure(image, labels)
+        label_payload = ObjectLabelPayload(
+            variant_data=ObjectLabelVariantData(labels=labels),
+            domain=ObjectLabelDomain(declared_object_ids=(1, 2)),
+        )
+        self.measure(image, label_payload)
         image_3d = np.linspace(0.0, 1.0, 8 * 16 * 16, dtype=np.float32).reshape(
             (8, 16, 16)
         )
         labels_3d = np.zeros(image_3d.shape, dtype=np.int32)
         labels_3d[1:4, 3:9, 3:9] = 1
         labels_3d[4:7, 7:14, 7:14] = 2
-        self.measure(image_3d, labels_3d)
-        prepared_3d = ObjectIntensityPreparedLabels.from_source(labels_3d, labels_3d)
+        label_payload_3d = ObjectLabelPayload(
+            variant_data=ObjectLabelVariantData(labels=labels_3d),
+            domain=ObjectLabelDomain(declared_object_ids=(1, 2)),
+        )
+        self.measure(image_3d, label_payload_3d)
+        prepared_3d = ObjectIntensityPreparedLabels.from_source(
+            label_payload_3d,
+            labels_3d,
+        )
         self.measure_prepared_batch(
             (image_3d, np.ascontiguousarray(1.0 - image_3d)), prepared_3d
         )
@@ -1267,47 +1391,9 @@ def object_intensity_backend(
 def measure_object_intensity_batch(
     request: RuntimePure2DSliceBatchRequest,
 ) -> list[object]:
-    context = ObjectIntensityMeasurementContext.from_runtime_request(request)
-    plane_domain_stack = DenseObjectLabelPlaneDomainStackRequest(
-        context.labels, dtype=np.int32
-    ).stack()
-    if (
-        plane_domain_stack is not None
-        and plane_domain_stack.plane_count == request.slice_count
-    ):
-        return [
-            (
-                slice_2d,
-                ObjectIntensityMeasurementRequest(
-                    image=image_payload_data(slice_2d),
-                    labels=plane_domain_stack.plane(slice_index),
-                    backend_provider=context.backend_provider,
-                    slice_index=slice_index,
-                    object_domain=plane_domain_stack.object_id_domains[slice_index],
-                    row_identity=plane_domain_stack.measurement_row_identity,
-                ).measurements(),
-            )
-            for slice_index, slice_2d in enumerate(request.slices_2d)
-        ]
-    label_stack = DenseObjectLabelSliceStackRequest(
-        context.labels, slice_count=request.slice_count, dtype=np.int32
-    ).stack()
-    if label_stack is None:
-        return [
-            request.execute_one(slice_index)
-            for slice_index in range(request.slice_count)
-        ]
-    results: list[object] = []
-    for slice_index, slice_2d in enumerate(request.slices_2d):
-        labels_for_slice = label_stack.slice(slice_index)
-        measurements = ObjectIntensityMeasurementRequest(
-            image=image_payload_data(slice_2d),
-            labels=labels_for_slice,
-            backend_provider=context.backend_provider,
-            slice_index=slice_index,
-        ).measurements()
-        results.append((slice_2d, measurements))
-    return results
+    return [
+        request.execute_one(slice_index) for slice_index in range(request.slice_count)
+    ]
 
 
 def measure_object_intensity_measurement_image_batch(
@@ -1357,7 +1443,7 @@ def measure_object_intensity_measurement_image_batch(
                     request
                 ).slice_index,
                 object_domain=prepared_labels.object_domain,
-                row_identity=prepared_labels.measurement_row_identity,
+                object_row_identity=prepared_labels.measurement_row_identity,
             )
             RuntimeProfileLogger.log(
                 logger,
@@ -1432,15 +1518,24 @@ def _object_intensity_batch_key(
 
 
 @numpy_decorator(contract=ProcessingContract.FLEXIBLE)
-@object_label_measurement_execution(ObjectLabelMeasurementExecution.FULL_STACK)
+@special_inputs("labels")
+@object_label_input_execution_mode(ObjectLabelInputExecutionMode.SLICE_ALIGNED)
+@runtime_bound_parameters(SliceIndexRuntimeParameter)
 def measure_object_intensity(
     image: np.ndarray,
-    labels: ObjectIntensityLabelInput,
+    labels: ObjectLabelValue,
     object_intensity_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     slice_index: int = OBJECT_INTENSITY_DEFAULT_SLICE_INDEX,
     object_intensity_prepared_labels: ObjectIntensityPreparedLabels | None = None,
 ) -> tuple[np.ndarray, ObjectIntensityMeasurementRows]:
-    """Measure CellProfiler intensity features for identified objects."""
+    """Measure CellProfiler intensity features for identified objects.
+
+    Args:
+        labels: Object-label plane defining the regions that receive separate
+            intensity measurements.
+        object_intensity_prepared_labels: Prepared label-index projection reused
+            by batched object measurements; leave unset for ordinary calls.
+    """
     context = ObjectIntensityMeasurementContext.from_function_arguments(
         labels=labels,
         backend_provider=object_intensity_backend_provider,
@@ -1456,61 +1551,21 @@ def measure_object_intensity(
                 backend_provider=context.backend_provider,
                 slice_index=context.slice_index,
                 object_domain=context.object_domain,
-                row_identity=context.row_identity,
+                object_row_identity=context.object_row_identity,
                 prepared_labels=context.prepared_labels,
             ).measurements(),
         )
-    label_array = object_label_dense_array(context.labels, dtype=np.int32)
-    measurement_labels = context.labels
-    measurement_label_array = label_array
-    if np.asarray(image).ndim == 2 and context.slice_index == 0:
-        plane_domain_stack = DenseObjectLabelPlaneDomainStackRequest(
-            context.labels, dtype=np.int32
-        ).stack()
-        if plane_domain_stack is not None:
-            rows = tuple(
-                (
-                    ObjectIntensityMeasurementRequest(
-                        image=image,
-                        labels=plane_domain_stack.plane(plane_index),
-                        backend_provider=context.backend_provider,
-                        slice_index=plane_index,
-                        object_domain=plane_domain_stack.object_id_domains[plane_index],
-                        row_identity=plane_domain_stack.measurement_row_identity,
-                    ).measurements()
-                    for plane_index in range(plane_domain_stack.plane_count)
-                )
-            )
-            return (image, ConcatenatedColumnarRows(rows))
-    if (
-        np.asarray(image).ndim == 2
-        and label_array.ndim == 3
-        and (label_array.shape[-2:] == np.asarray(image).shape)
-    ):
-        label_stack = DenseObjectLabelSliceStackRequest(
-            context.labels, slice_count=int(label_array.shape[0]), dtype=np.int32
-        ).stack()
-        if label_stack is not None:
-            projected_index = (
-                context.slice_index
-                if context.slice_index < label_stack.labels.shape[0]
-                else 0 if label_stack.labels.shape[0] == 1 else None
-            )
-            if projected_index is not None:
-                measurement_labels = label_stack.slice(projected_index)
-                measurement_label_array = object_label_dense_array(
-                    measurement_labels, dtype=np.int32
-                )
+    measurement_label_array = object_label_dense_array(context.labels, dtype=np.int32)
     return (
         image,
         ObjectIntensityMeasurementRequest(
             image=image,
-            labels=measurement_label_array,
+            labels=context.labels,
             backend_provider=context.backend_provider,
             slice_index=context.slice_index,
             prepared_labels=context.prepared_labels,
             object_domain=dense_object_label_measurement_row_domain(
-                measurement_labels, measurement_label_array
+                context.labels, measurement_label_array
             ),
         ).measurements(),
     )
@@ -1523,34 +1578,68 @@ def prepare_measure_object_intensity() -> None:
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
 def measure_image_intensity(
-    image: np.ndarray, calculate_percentiles: bool = False, percentiles: str = "10,90"
-) -> tuple[np.ndarray, ImageIntensityMeasurement]:
-    """Measure CellProfiler intensity features across an entire image."""
+    image: np.ndarray,
+    calculate_percentiles: bool = False,
+    percentiles: str = "10,90",
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows]:
+    """Measure intensity across the declared image."""
+    image_array = np.asarray(image)
     measurements = ImageIntensityMeasurement.from_pixels(
-        image.flatten(),
+        image_array.flatten(),
         percentile_spec=ImageIntensityPercentileSpec(
             enabled=calculate_percentiles, raw_percentiles=percentiles
         ),
     )
-    return (image, measurements)
+    return (
+        image_array,
+        DataclassMeasurementColumnarRows(
+            (measurements,),
+            row_type=ImageIntensityMeasurement,
+        ),
+    )
 
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
-def measure_image_intensity_masked(
+@special_inputs("labels")
+def measure_image_intensity_objects(
     image: np.ndarray,
-    labels: np.ndarray,
+    labels: ObjectLabelValue,
     calculate_percentiles: bool = False,
     percentiles: str = "10,90",
-) -> tuple[np.ndarray, ImageIntensityMeasurement]:
-    """Measure aggregate image intensity within nonzero label regions."""
-    mask = labels > 0
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows]:
+    """Measure image intensity within one declared object set.
+
+    Args:
+        labels: Object-label plane whose positive pixels select the image pixels
+            included in the aggregate intensity measurement.
+    """
+    image_array = np.asarray(image)
+    label_array = object_label_dense_array(labels, dtype=np.int32)
+    if image_array.ndim != 2 or label_array.ndim != 2:
+        raise ValueError(
+            "MeasureImageIntensity object labels must already be projected "
+            f"to one 2-D image plane; got image {image_array.shape!r} and "
+            f"labels {label_array.shape!r}."
+        )
+    if image_array.shape != label_array.shape:
+        raise ValueError(
+            "MeasureImageIntensity image and projected object labels must "
+            f"share a shape; got image {image_array.shape!r} and labels "
+            f"{label_array.shape!r}."
+        )
     measurements = ImageIntensityMeasurement.from_pixels(
-        image[mask].flatten(),
+        image_array[label_array > 0].flatten(),
         percentile_spec=ImageIntensityPercentileSpec(
             enabled=calculate_percentiles, raw_percentiles=percentiles
         ),
     )
-    return (image, measurements)
+    return (
+        image_array,
+        DataclassMeasurementColumnarRows(
+            (measurements,),
+            row_type=ImageIntensityMeasurement,
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1660,7 +1749,14 @@ class StretchRescaleMethodRunner(RescaleMethodRunner):
         in_max = np.max(context.data)
         if in_min == in_max:
             return np.zeros_like(context.data)
-        return context.linearly_rescaled((float(in_min), float(in_max)), (0.0, 1.0))
+        source_low = float(in_min)
+        source_high = float(in_max)
+        result = np.empty_like(context.data, dtype=np.float32)
+        np.subtract(context.data, source_low, out=result)
+        result /= source_high - source_low
+        # Retain the legacy destination-offset pass for exact signed-zero semantics.
+        result += 0.0
+        return result
 
 
 class ManualInputRangeRescaleMethodRunner(RescaleMethodRunner):
@@ -1731,7 +1827,14 @@ def rescale_intensity(
     dest_high: float = 1.0,
     divisor_value: float = 1.0,
 ) -> ImageIntensityOutput:
-    """Rescale CellProfiler image intensity using its declared range policy."""
+    """Rescale CellProfiler image intensity using its declared range policy.
+
+    Args:
+        dest_low: Output intensity assigned to the lower destination endpoint
+            when the selected method maps into a declared output range.
+        dest_high: Output intensity assigned to the upper destination endpoint
+            when the selected method maps into a declared output range.
+    """
     rescale_method = coerce_cellprofiler_enum(RescaleMethod, rescale_method)
     context = RescaleIntensityContext.from_settings(
         image,
@@ -1802,19 +1905,18 @@ class MeasureObjectIntensityObjectMeasurementRowPolicy(
 
 class MeasureObjectIntensityModule(
     LabelsObjectInputPolicy,
-    PerObjectMeasurementExecutionModule,
-    ObjectMeasurementRowsModule,
     MeasureObjectIntensityObjectMeasurementRowPolicy,
+    PerObjectMeasurementExecutionModule,
     ImageMeasurementInputModule,
     ObjectMeasurementInputModule,
-    SourceQualifiedMeasurementFeatureModule,
+    SourceQualifiedWideMeasurementRowsModule,
     IntensityFeature,
 ):
     module_name = "MeasureObjectIntensity"
     function_name = "measure_object_intensity"
     validated = True
     confidence = 1.0
-    measurement_category_prefixes = (("intensity",),)
+    measurement_category_prefixes = (("intensity",), ("location",))
 
     class MeasurementFeature(RuntimeMeasurementFeature):
         """Feature families emitted by MeasureObjectIntensity."""
@@ -1849,39 +1951,78 @@ class MeasureObjectIntensityModule(
         CENTER_MASS_INTENSITY_X = (
             "CenterMassIntensity_X",
             (),
-            (IntensityFeature,),
+            (ObjectLocationFeature,),
         )
         CENTER_MASS_INTENSITY_Y = (
             "CenterMassIntensity_Y",
             (),
-            (IntensityFeature,),
+            (ObjectLocationFeature,),
         )
         CENTER_MASS_INTENSITY_Z = (
             "CenterMassIntensity_Z",
             (),
-            (IntensityFeature,),
+            (ObjectLocationFeature,),
         )
         MAX_INTENSITY_X = (
             "MaxIntensity_X",
             (),
-            (ObjectLocationFeature,),
+            (MaxIntensityLocationFeature,),
         )
         MAX_INTENSITY_Y = (
             "MaxIntensity_Y",
             (),
-            (ObjectLocationFeature,),
+            (MaxIntensityLocationFeature,),
         )
         MAX_INTENSITY_Z = (
             "MaxIntensity_Z",
             (),
-            (ObjectLocationFeature,),
+            (MaxIntensityLocationFeature,),
         )
+
+        def source_qualified_name(self, source_image_name: str) -> str:
+            """Return this member's exact CellProfiler source-qualified name."""
+            category_qualifiers = tuple(
+                dict.fromkeys(
+                    marker_type.family_qualifier
+                    for marker_type in self.semantic_markers
+                    if marker_type.family_qualifier is not None
+                )
+            )
+            if len(category_qualifiers) != 1:
+                raise ValueError(
+                    f"{type(self).__name__}.{self.name} requires exactly one "
+                    f"measurement category, got {category_qualifiers!r}."
+                )
+            category = "".join(
+                part[:1].upper() + part[1:]
+                for part in category_qualifiers[0].split("_")
+            )
+            return "_".join((category, self.value, source_image_name))
 
     ignored_settings = (
         "Select images to measure",
         "Select objects to measure",
         "Hidden",
     )
+
+    @classmethod
+    def source_qualified_feature_name(
+        cls,
+        field_name: str,
+        source_image_name: str,
+    ) -> str:
+        """Resolve a raw row field through its nominal feature declaration."""
+        matches = tuple(
+            feature
+            for feature in cls.MeasurementFeature
+            if feature.measurement_row_field_name == field_name
+        )
+        if len(matches) != 1:
+            raise ValueError(
+                f"{cls.__name__} requires exactly one measurement feature for raw "
+                f"field {field_name!r}, got {[feature.value for feature in matches]!r}."
+            )
+        return matches[0].source_qualified_name(source_image_name)
 
     @classmethod
     def derived_measurement_feature_relation_declarations(
@@ -1896,15 +2037,15 @@ class MeasureObjectIntensityModule(
                     target_feature=cls._single_target_feature_for_source(
                         source_feature,
                         features,
-                        source_marker=ObjectLocationFeature,
+                        source_marker=MaxIntensityLocationFeature,
                         target_marker=IntensityFeature,
                     ),
-                    source_marker=ObjectLocationFeature,
+                    source_marker=MaxIntensityLocationFeature,
                     target_marker=IntensityFeature,
                 ),
             )
             for source_feature in features
-            if ObjectLocationFeature.matches_feature(source_feature)
+            if MaxIntensityLocationFeature.matches_feature(source_feature)
         )
 
     @classmethod
@@ -1922,8 +2063,8 @@ class MeasureObjectIntensityModule(
                 f"{cls.__name__}.{source_feature.name} must carry "
                 f"{source_marker.__name__}."
             )
-        source_stem, separator, _axis_token = source_feature.feature_family().rpartition(
-            "_"
+        source_stem, separator, _axis_token = (
+            source_feature.feature_family().rpartition("_")
         )
         if not separator:
             raise ValueError(
@@ -1943,12 +2084,6 @@ class MeasureObjectIntensityModule(
             )
         return matches[0]
 
-    @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        return cls.measurement_artifact_contract_from_declared_settings(
-            assembler, builder, module
-        )
-
 
 __all__ = public_names_from_objects(
     NumbaNumpyObjectIntensityBackendStrategy,
@@ -1960,13 +2095,12 @@ __all__ = public_names_from_objects(
     ObjectIntensityMeasurementRows,
     ObjectIntensityMeasurementRequest,
     ObjectIntensityPreparedLabels,
-    ObjectIntensityResults,
     RescaleMethod,
     "ObjectIntensityArrays",
     ObjectIntensityBackendStrategy,
     "ObjectIntensityLabelInput",
     measure_image_intensity,
-    measure_image_intensity_masked,
+    measure_image_intensity_objects,
     measure_object_intensity,
     measure_object_intensity_batch,
     object_intensity_backend,

@@ -1,68 +1,89 @@
 """Grid-label backends for CellProfiler-compatible processing."""
 
 from __future__ import annotations
+
 import re
+from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar
+
+import numpy as np
+from metaclass_registry import AutoRegisterMeta
+from numba import njit
+
+from openhcs.constants.constants import VariableComponents
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
-from openhcs.core.runtime_invocation import RuntimeInvocationOptions
-from openhcs.interop.cellprofiler.runtime.execution_mode_policies import (
-    CellProfilerInvocationExecutionModePolicyMixin,
+from openhcs.core.artifacts import (
+    ArtifactSpecCollection,
+    ArtifactSpecRelation,
+    ImageArtifactType,
+    ObjectLabelsArtifactType,
+    SourceStackLineageSourceRelation,
+    SpatialGridArtifactType,
 )
-from openhcs.interop.cellprofiler.runtime.payload_types import (
-    CellProfilerKwargs,
-    CellProfilerRuntimeValue,
+from openhcs.core.memory.decorators import numpy
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
 )
-from openhcs.interop.cellprofiler.setting_names import (
-    SettingNameFamily,
-    is_blank_symbol_name,
-    normalized_symbol_name,
+from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.core.public_api import public_names_from_objects
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelPayload,
+    ObjectLabelValue,
+    object_label_dense_array,
 )
-from openhcs.interop.cellprofiler.parser import ModuleBlock
-from openhcs.interop.cellprofiler.settings_binder import SettingsBinder
-from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
-    ArtifactContractModule,
-    BinderSettingsSourceModule,
-    BoundModuleSettings,
-    CellProfilerModule,
-    ImageArtifactInputCapability,
-    ImageArtifactInputModule,
-    ImageArtifactOutputCapability,
-    ImageArtifactOutputModule,
-    MeasurementArtifactOutputCapability,
-    MeasurementArtifactOutputModule,
-    ModuleSettingsSourceModule,
-    ObjectLabelArtifactInputCapability,
-    ObjectLabelArtifactOutputCapability,
-    ObjectArtifactInputModule,
-    ObjectArtifactOutputModule,
-    PlaneRuntimeArtifactModule,
-    ScopedMeasurementModule,
-    SpatialGridArtifactInputCapability,
-    SpatialGridArtifactInputModule,
-    SpatialGridArtifactOutputCapability,
-    SpatialGridArtifactOutputModule,
-    StructuringElementSettingsModule,
+from openhcs.core.runtime_object_label_building import (
+    SourceImageObjectLabelBuildRequest,
 )
-from openhcs.interop.cellprofiler.setting_names import (
-    optional_setting_value,
-    required_setting_value,
-    setting_values,
-    split_symbol_names,
+from openhcs.core.runtime_measurements import (
+    MeasurementRowAxisField,
+)
+from openhcs.core.runtime_spatial_grid import (
+    SpatialGridOrdering,
+    SpatialGridOrigin,
+)
+from openhcs.core.runtime_spatial_grid import (
+    SpatialGrid,
 )
 from openhcs.interop.cellprofiler.cellprofiler_literals import (
     cellprofiler_enum_from_literal,
 )
+from openhcs.interop.cellprofiler.module_declarations import (
+    CellProfilerModule,
+)
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
+    MeasurementArtifactOutputModule,
+    ObjectArtifactInputModule,
+    ObjectArtifactOutputModule,
+    PlaneRuntimeArtifactModule,
+    )
+from openhcs.interop.cellprofiler.parser import ModuleBlock
 from openhcs.interop.cellprofiler.runtime.measurement_recording import (
-    FieldsFromRowsMeasurementRecordMixin,
+    MeasurementFeatureRecord,
     NoObjectNameMeasurementRecordMixin,
-    ObjectLabelOutputSourceMeasurementRecordMixin,
 )
-from openhcs.processing.backends.cellprofiler.thresholding import (
-    ThresholdSettingsModule,
+from openhcs.core.steps.function_runtime import RuntimeCallableArgument, RuntimeCallableKwargs
+from openhcs.interop.cellprofiler.setting_names import (
+    SettingNameFamily,
+    optional_setting_value,
 )
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingsBinder,
+    SettingToKeywordBinding,
+    coerce_cellprofiler_enum,
+    parse_cellprofiler_bool,
+    parse_cellprofiler_int,
+)
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+
+if TYPE_CHECKING:
+    from openhcs.core.artifacts import ArtifactSpec
+    from openhcs.core.function_patterns import FunctionInvocationKey
+    from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
+    from openhcs.core.callable_contract import CallableContract
+    from openhcs.core.source_bindings import StepSourceBindingsConfig
 
 
 class DefineGridCycleScope(str, Enum):
@@ -89,51 +110,31 @@ class DefineGridCycleScope(str, Enum):
         return cls(normalized)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class DefineGridInvocationOptions(RuntimeInvocationOptions):
-    """Typed runtime controls owned by DefineGrid module declarations."""
-
-    cycle_scope: DefineGridCycleScope = DefineGridCycleScope.EACH_CYCLE
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.cycle_scope, DefineGridCycleScope):
-            raise TypeError(
-                f"DefineGridInvocationOptions.cycle_scope must be DefineGridCycleScope, got {type(self.cycle_scope).__name__}."
-            )
-
-
 class DefineGridVariant(str, Enum):
     """Absorbed DefineGrid function variants."""
 
     MANUAL = "define_grid_manual"
     AUTOMATIC = "define_grid_automatic"
 
+    @property
+    def requires_object_input(self) -> bool:
+        """Return whether this variant derives the grid from object labels."""
+        return self is DefineGridVariant.AUTOMATIC
+
     @classmethod
     def from_module(cls, module: ModuleBlock) -> "DefineGridVariant":
-        value = _setting_value(
-            module, "Select the method to define the grid", default="Manual"
-        ).lower()
-        if "automatic" in value:
-            return cls.AUTOMATIC
-        if "manual" in value:
-            return cls.MANUAL
-        raise ValueError(f"Unsupported DefineGrid method: {value!r}.")
-
-
-class IdentifyObjectsInGridVariant(str, Enum):
-    """Absorbed IdentifyObjectsInGrid function variants."""
-
-    GRID_ONLY = "identify_objects_in_grid"
-    WITH_GUIDES = "identify_objects_in_grid_with_guides"
-
-    @classmethod
-    def from_module(cls, module: ModuleBlock) -> "IdentifyObjectsInGridVariant":
-        guiding_objects = _setting_value(
-            module, "Select the guiding objects", default="None"
+        method = DefineGridManualModule.DefinitionMethod.from_literal(
+            _setting_value(
+                module,
+                DefineGridManualModule.definition_method_setting,
+                default=DefineGridManualModule.definition_method_default.value,
+            )
         )
-        if is_blank_symbol_name(guiding_objects):
-            return cls.GRID_ONLY
-        return cls.WITH_GUIDES
+        return (
+            cls.AUTOMATIC
+            if method is DefineGridManualModule.DefinitionMethod.automatic
+            else cls.MANUAL
+        )
 
 
 def define_grid_bound_kwargs(
@@ -142,80 +143,81 @@ def define_grid_bound_kwargs(
     """Return kwargs for the absorbed DefineGrid variant."""
     kwargs = {
         "grid_rows": TypedGridSetting(
-            module, binder, "Number of rows", default="8"
+            module, binder, DefineGridManualModule.rows_setting, default="8"
         ).value,
         "grid_columns": TypedGridSetting(
-            module, binder, "Number of columns", default="12"
+            module, binder, DefineGridManualModule.columns_setting, default="12"
         ).value,
         "origin": _grid_origin(
-            _setting_value(module, "Location of the first spot", default="Top left")
+            _setting_value(
+                module,
+                DefineGridManualModule.origin_setting,
+                default="Top left",
+            )
         ),
         "ordering": _grid_ordering(
-            _setting_value(module, "Order of the spots", default="Rows")
+            _setting_value(
+                module,
+                DefineGridManualModule.ordering_setting,
+                default="Rows",
+            )
+        ),
+        "cycle_scope": _grid_cycle_scope(
+            _setting_value(
+                module,
+                DefineGridManualModule.cycle_scope_setting,
+                default="Each cycle",
+            )
         ),
     }
     if DefineGridVariant.from_module(module) is DefineGridVariant.MANUAL:
         first_x, first_y = _coordinate_pair(
-            _setting_value(module, "Coordinates of the first cell", default="100,100")
+            _setting_value(
+                module,
+                DefineGridManualModule.first_coordinates_setting,
+                default="100,100",
+            )
         )
         second_x, second_y = _coordinate_pair(
-            _setting_value(module, "Coordinates of the second cell", default="200,200")
+            _setting_value(
+                module,
+                DefineGridManualModule.second_coordinates_setting,
+                default="200,200",
+            )
         )
         kwargs.update(
             {
                 "first_spot_x": first_x,
                 "first_spot_y": first_y,
                 "first_spot_row": TypedGridSetting(
-                    module, binder, "Row number of the first cell", default="1"
+                    module,
+                    binder,
+                    DefineGridManualModule.first_row_setting,
+                    default="1",
                 ).value,
                 "first_spot_col": TypedGridSetting(
-                    module, binder, "Column number of the first cell", default="1"
+                    module,
+                    binder,
+                    DefineGridManualModule.first_column_setting,
+                    default="1",
                 ).value,
                 "second_spot_x": second_x,
                 "second_spot_y": second_y,
                 "second_spot_row": TypedGridSetting(
-                    module, binder, "Row number of the second cell", default="8"
+                    module,
+                    binder,
+                    DefineGridManualModule.second_row_setting,
+                    default="8",
                 ).value,
                 "second_spot_col": TypedGridSetting(
-                    module, binder, "Column number of the second cell", default="12"
+                    module,
+                    binder,
+                    DefineGridManualModule.second_column_setting,
+                    default="12",
                 ).value,
             }
         )
     return kwargs
-
-
-def define_grid_invocation_options(module: ModuleBlock) -> DefineGridInvocationOptions:
-    """Return typed runtime controls for a DefineGrid invocation."""
-    return DefineGridInvocationOptions(
-        cycle_scope=_grid_cycle_scope(
-            _setting_value(
-                module, "Define a grid for which cycle?", default="Each cycle"
-            )
-        )
-    )
-
-
-def identify_objects_in_grid_bound_kwargs(
-    module: ModuleBlock, binder: SettingsBinder
-) -> dict[str, Any]:
-    """Return kwargs for the absorbed IdentifyObjectsInGrid variant."""
-    return {
-        "shape_choice": _shape_choice(
-            _setting_value(
-                module,
-                "Select object shapes and locations",
-                default="Rectangle Forced Location",
-            )
-        ),
-        "diameter_choice": _diameter_choice(
-            _setting_value(
-                module, "Specify the circle diameter automatically?", default="Manual"
-            )
-        ),
-        "circle_diameter": TypedGridSetting(
-            module, binder, "Circle diameter", default="20"
-        ).value,
-    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,7 +253,12 @@ class FragmentMatchedLiteral:
         raise ValueError(f"Unsupported grid setting value: {self.value!r}.")
 
 
-def _setting_value(module: ModuleBlock, setting_name: str, *, default: str) -> str:
+def _setting_value(
+    module: ModuleBlock,
+    setting_name: str | SettingNameFamily,
+    *,
+    default: str,
+) -> str:
     return optional_setting_value(module, setting_name) or default
 
 
@@ -310,32 +317,33 @@ def _diameter_choice(value: str) -> str:
     raise ValueError(f"Unsupported grid diameter choice: {value!r}.")
 
 
-class GridCycleScopeExecutionModePolicy(CellProfilerInvocationExecutionModePolicyMixin):
+class GridCycleScopeExecutionModePolicy:
     """Honor DefineGrid's per-cycle versus once-only grid definition scope."""
 
+    @classmethod
     def execution_mode(
-        self,
+        cls,
         default: ImagePayloadExecutionMode,
         *,
-        image: CellProfilerRuntimeValue,
-        kwargs: CellProfilerKwargs,
-        invocation_options: RuntimeInvocationOptions | None = None,
+        image: RuntimeCallableArgument,
+        kwargs: RuntimeCallableKwargs,
+        variable_components: tuple[VariableComponents, ...],
     ) -> ImagePayloadExecutionMode:
-        del image, kwargs
-        if not isinstance(invocation_options, DefineGridInvocationOptions):
-            return default
-        if invocation_options.cycle_scope is DefineGridCycleScope.ONCE:
+        del cls, image, variable_components
+        parameter_name = (
+            DefineGridManualModule.cycle_scope_binding.require_parameter_name()
+        )
+        cycle_scope = DefineGridCycleScope.from_setting(
+            kwargs[parameter_name] if parameter_name in kwargs else None
+        )
+        if cycle_scope is DefineGridCycleScope.ONCE:
             return ImagePayloadExecutionMode.FULL_STACK
         return default
 
 
 class DefineGridManualModule(
     GridCycleScopeExecutionModePolicy,
-    ImageArtifactInputModule,
     ObjectArtifactInputModule,
-    ImageArtifactOutputModule,
-    SpatialGridArtifactOutputModule,
-    BinderSettingsSourceModule,
     CellProfilerModule,
 ):
     module_name = "DefineGridManual"
@@ -343,22 +351,52 @@ class DefineGridManualModule(
     validated = True
     aliases = ("DefineGrid",)
     function_variants = ("define_grid_automatic",)
-    contract = ProcessingContract.FLEXIBLE
     confidence = 0.0
-    definition_method_setting = SettingNameFamily(
+    definition_method_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
         "Select the method to define the grid"
     )
-    display_grid_image_setting = "Select the image on which to display the grid"
-    drawing_image_setting = "Select the image to display when drawing"
-    previous_objects_setting = "Select the previously identified objects"
-    retain_grid_image_setting = "Retain an image of the grid?"
-    grid_image_output_setting = "Name the output image"
-    grid_output_setting = "Name the grid"
-    object_input_settings = (previous_objects_setting,)
-    image_output_settings = (grid_image_output_setting,)
-    spatial_grid_output_settings = (grid_output_setting,)
-    settings_source = staticmethod(define_grid_bound_kwargs)
-    invocation_options_source = staticmethod(define_grid_invocation_options)
+    rows_setting: ClassVar[str] = "Number of rows"
+    columns_setting: ClassVar[str] = "Number of columns"
+    origin_setting: ClassVar[str] = "Location of the first spot"
+    ordering_setting: ClassVar[str] = "Order of the spots"
+    first_coordinates_setting: ClassVar[str] = "Coordinates of the first cell"
+    first_row_setting: ClassVar[str] = "Row number of the first cell"
+    first_column_setting: ClassVar[str] = "Column number of the first cell"
+    second_coordinates_setting: ClassVar[str] = "Coordinates of the second cell"
+    second_row_setting: ClassVar[str] = "Row number of the second cell"
+    second_column_setting: ClassVar[str] = "Column number of the second cell"
+    cycle_scope_setting: ClassVar[str] = "Define a grid for which cycle?"
+    manual_definition_method_setting: ClassVar[str] = (
+        "Select the method to define the grid manually"
+    )
+    reuse_previous_grid_setting: ClassVar[str] = (
+        "Use a previous grid if gridding fails?"
+    )
+    display_grid_image_setting: ClassVar[str] = (
+        "Select the image on which to display the grid"
+    )
+    drawing_image_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
+        "Select the image to display when drawing",
+        aliases=("Select the image to display",),
+    )
+    previous_objects_setting: ClassVar[str] = "Select the previously identified objects"
+    retain_grid_image_setting: ClassVar[str] = "Retain an image of the grid?"
+    grid_image_output_setting: ClassVar[str] = "Name the output image"
+    grid_output_setting: ClassVar[str] = "Name the grid"
+    display_grid_image_binding = SettingToKeywordBinding.input(
+        display_grid_image_setting, ImageArtifactType
+    )
+    previous_objects_binding = SettingToKeywordBinding.input(
+        previous_objects_setting, ObjectLabelsArtifactType, runtime_parameter_name="labels"
+    )
+    grid_image_output_binding = SettingToKeywordBinding.output(
+        grid_image_output_setting, ImageArtifactType
+    )
+    grid_output_binding = SettingToKeywordBinding.output(
+        grid_output_setting, SpatialGridArtifactType
+    )
+    ignored_settings = (drawing_image_setting,)
+    _bound_kwargs = staticmethod(define_grid_bound_kwargs)
 
     class DefinitionMethod(str, Enum):
         manual = "Manual"
@@ -371,12 +409,89 @@ class DefineGridManualModule(
             return cellprofiler_enum_from_literal(cls, value)
 
     definition_method_default = DefinitionMethod.manual
+    cycle_scope_binding = SettingToKeywordBinding(
+        cycle_scope_setting,
+        "cycle_scope",
+        _grid_cycle_scope,
+    )
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        display_grid_image_binding,
+        previous_objects_binding,
+        grid_image_output_binding,
+        grid_output_binding,
+        SettingToKeywordBinding(rows_setting, "grid_rows", parse_cellprofiler_int),
+        SettingToKeywordBinding(
+            columns_setting,
+            "grid_columns",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(origin_setting, "origin", _grid_origin),
+        SettingToKeywordBinding(ordering_setting, "ordering", _grid_ordering),
+        SettingToKeywordBinding(
+            first_row_setting,
+            "first_spot_row",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            first_column_setting,
+            "first_spot_col",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            second_row_setting,
+            "second_spot_row",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            second_column_setting,
+            "second_spot_col",
+            parse_cellprofiler_int,
+        ),
+        cycle_scope_binding,
+        SettingToKeywordBinding(retain_grid_image_setting),
+    )
+
+    @classmethod
+    def bind_settings(cls, module, *, binder):
+        """Bind scalar rows and the two coordinate-pair compound rows."""
+
+        variant = DefineGridVariant.from_module(module)
+        if not variant.requires_object_input:
+            manual_method = optional_setting_value(
+                module, cls.manual_definition_method_setting
+            )
+            if (
+                manual_method is not None
+                and "coordinate" not in manual_method.casefold()
+            ):
+                raise NotImplementedError(
+                    "Headless DefineGrid supports coordinate-based manual grids only."
+                )
+        reuse_previous = optional_setting_value(module, cls.reuse_previous_grid_setting)
+        if reuse_previous is not None and parse_cellprofiler_bool(reuse_previous):
+            raise NotImplementedError(
+                "Headless DefineGrid does not support previous-grid fallback."
+            )
+        bound = cls._bind_declared_settings(module, binder=binder)
+        bound = bound.with_kwargs(cls._bound_kwargs(module, binder))
+        bound = bound.with_consumed_settings(
+            cls.definition_method_setting,
+            cls.manual_definition_method_setting,
+            cls.reuse_previous_grid_setting,
+            cls.first_coordinates_setting,
+            cls.second_coordinates_setting,
+        )
+        return cls._finalize_bound_settings(module, binder=binder, bound=bound)
 
     @classmethod
     def resolve_function(
-        cls, module: "ModuleBlock", *, default_function_name: str | None = None
-    ) -> "ResolvedModuleFunction":
-        del default_function_name
+        cls,
+        module: "ModuleBlock",
+        *,
+        contract: "CallableContract",
+        source_bindings: "StepSourceBindingsConfig",
+    ) -> Callable[..., object]:
+        del contract, source_bindings
         method = cls.DefinitionMethod.from_literal(
             cls.setting_value(module, cls.definition_method_setting)
             or cls.definition_method_default.value
@@ -386,196 +501,217 @@ class DefineGridManualModule(
             if method is cls.DefinitionMethod.automatic
             else str(cls.function_name)
         )
-        return super().resolve_function(module, default_function_name=function_name)
+        return cls.require_callable(function_name)
 
     @classmethod
-    def compile_time_public_setting_names(cls):
-        return (
-            *super().compile_time_public_setting_names(),
-            cls.display_grid_image_setting,
-            cls.drawing_image_setting,
-            cls.retain_grid_image_setting,
+    def active_artifact_bindings(
+        cls,
+        module: "ModuleBlock | None",
+        *,
+        invocation_key: "FunctionInvocationKey | None" = None,
+    ) -> tuple[SettingToKeywordBinding, ...]:
+        """Expose the selected variant input and optional rendered grid."""
+
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
+        )
+        if module is None:
+            return bindings
+        if invocation_key is None:
+            raise TypeError("DefineGrid requires its exact invocation key.")
+        requires_objects = DefineGridVariant(
+            invocation_key.function_name
+        ).requires_object_input
+        retain_image = optional_setting_value(module, cls.retain_grid_image_setting)
+        retain_image = retain_image is not None and parse_cellprofiler_bool(
+            retain_image
+        )
+        return tuple(
+            binding
+            for binding in bindings
+            if requires_objects or binding is not cls.previous_objects_binding
+            if retain_image or binding is not cls.grid_image_output_binding
         )
 
     @classmethod
-    def compile_time_public_setting_records(cls, module, source_schema=None):
-        from openhcs.interop.cellprofiler.parser import ModuleSetting
+    def artifact_output_relations(
+        cls,
+        module: "ModuleBlock",
+        *,
+        binding: SettingToKeywordBinding,
+        name: str,
+        invocation_key: "FunctionInvocationKey",
+        step_context: "ArtifactDeclarationStepContext",
+        artifact_inputs: ArtifactSpecCollection,
+        output_position: int,
+    ) -> tuple[ArtifactSpecRelation, ...]:
+        """Bind grid geometry to the image or objects that define its domain."""
 
-        records = list(super().compile_time_public_setting_records(module, source_schema))
-        for setting_name in (
-            cls.display_grid_image_setting,
-            cls.drawing_image_setting,
-        ):
-            value = optional_setting_value(module, setting_name)
-            if value is not None:
-                records.append(ModuleSetting(setting_name, value))
-        retain_value = optional_setting_value(module, cls.retain_grid_image_setting)
-        if retain_value is not None:
-            records.append(ModuleSetting(cls.retain_grid_image_setting, retain_value))
-        return tuple(records)
-
-    @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        inputs = []
-        for setting_name, capability_type in (
-            (
-                cls.display_grid_image_setting,
-                ImageArtifactInputCapability,
-            ),
-            (cls.drawing_image_setting, ImageArtifactInputCapability),
-            (
-                cls.previous_objects_setting,
-                ObjectLabelArtifactInputCapability,
-            ),
-        ):
-            artifact_name = optional_setting_value(module, setting_name)
-            normalized_artifact_name = (
-                None if artifact_name is None else normalized_symbol_name(artifact_name)
-            )
-            if normalized_artifact_name is not None:
-                inputs.append(
-                    capability_type.bind_artifact(cls, builder, module, capability_type.spec(normalized_artifact_name))
-                )
-        outputs = []
-        if optional_setting_value(module, cls.retain_grid_image_setting) in {
-            "Yes",
-            "yes",
-            "True",
-            "true",
-        }:
-            outputs.append(
-                cls.image_output_artifact(
-                    builder,
-                    module,
-                    required_setting_value(module, cls.grid_image_output_setting),
-                    setting=cls.grid_image_output_setting,
-                )
-            )
-        outputs.append(
-            SpatialGridArtifactOutputCapability.bind_artifact(
-                cls,
-                builder,
+        if binding is not cls.grid_output_binding:
+            return super().artifact_output_relations(
                 module,
-                SpatialGridArtifactOutputCapability.spec(
-                    required_setting_value(module, cls.grid_output_setting)
-                ),
+                binding=binding,
+                name=name,
+                invocation_key=invocation_key,
+                step_context=step_context,
+                artifact_inputs=artifact_inputs,
+                output_position=output_position,
             )
+        del module, name, step_context, output_position
+        variant = DefineGridVariant(invocation_key.function_name)
+        source_type = (
+            ObjectLabelsArtifactType
+            if variant.requires_object_input
+            else ImageArtifactType
         )
-        return assembler.assemble_contract(
-            module, builder, inputs=inputs, outputs=outputs
-        )
+        sources = artifact_inputs.of_artifact_type(source_type)
+        if len(sources) != 1:
+            raise ValueError(
+                f"{variant.value} requires exactly one {source_type.value} "
+                f"grid-domain source, got {tuple(spec.ref() for spec in sources)!r}."
+            )
+        return (SourceStackLineageSourceRelation(source=sources[0].ref()),)
 
 
 class IdentifyObjectsInGridModule(
     PlaneRuntimeArtifactModule,
-    FieldsFromRowsMeasurementRecordMixin,
     NoObjectNameMeasurementRecordMixin,
-    ObjectLabelOutputSourceMeasurementRecordMixin,
-    SpatialGridArtifactInputModule,
     ObjectArtifactInputModule,
-    ObjectArtifactOutputModule,
     MeasurementArtifactOutputModule,
-    BinderSettingsSourceModule,
+    ObjectArtifactOutputModule,
     CellProfilerModule,
 ):
     module_name = "IdentifyObjectsInGrid"
     function_name = "identify_objects_in_grid"
     validated = True
-    function_variants = ("identify_objects_in_grid_with_guides",)
-    contract = ProcessingContract.FLEXIBLE
     confidence = 1.0
-    grid_setting = SettingNameFamily("Select the defined grid")
-    output_objects_setting = SettingNameFamily("Name the objects to be identified")
-    guiding_objects_setting = SettingNameFamily("Select the guiding objects")
-    guiding_objects_default = "None"
-    spatial_grid_input_settings = (grid_setting,)
-    object_input_settings = (guiding_objects_setting,)
-    object_output_settings = (output_objects_setting,)
-    settings_source = staticmethod(identify_objects_in_grid_bound_kwargs)
+    grid_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
+        "Select the defined grid"
+    )
+    output_objects_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
+        "Name the objects to be identified"
+    )
+    guiding_objects_setting: ClassVar[SettingNameFamily] = SettingNameFamily(
+        "Select the guiding objects"
+    )
+    shape_choice_setting: ClassVar[str] = "Select object shapes and locations"
+    diameter_choice_setting: ClassVar[str] = (
+        "Specify the circle diameter automatically?"
+    )
+    circle_diameter_setting: ClassVar[str] = "Circle diameter"
+    guiding_objects_default: ClassVar[str] = "None"
+    grid_binding = SettingToKeywordBinding.input(
+        grid_setting, SpatialGridArtifactType, runtime_parameter_name="topology_inputs"
+    )
+    guiding_objects_binding = SettingToKeywordBinding.input(
+        guiding_objects_setting,
+        ObjectLabelsArtifactType,
+        runtime_parameter_name="topology_inputs",
+    )
+    output_objects_binding = SettingToKeywordBinding.output(
+        output_objects_setting,
+        ObjectLabelsArtifactType,
+    )
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        grid_binding,
+        guiding_objects_binding,
+        output_objects_binding,
+        SettingToKeywordBinding(shape_choice_setting, "shape_choice", _shape_choice),
+        SettingToKeywordBinding(
+            diameter_choice_setting,
+            "diameter_choice",
+            _diameter_choice,
+        ),
+        SettingToKeywordBinding(
+            circle_diameter_setting,
+            "circle_diameter",
+            parse_cellprofiler_int,
+        ),
+    )
 
     @classmethod
-    def measurement_record_rows(
-        cls, request: "CellProfilerOutputRecordRequest"
-    ) -> list[CellProfilerRuntimeValue]:
-        from openhcs.interop.cellprofiler.runtime.measurement_rows import (
-            measurement_table_rows,
-        )
+    def active_artifact_bindings(
+        cls,
+        module: "ModuleBlock | None" = None,
+        *,
+        invocation_key: "FunctionInvocationKey | None" = None,
+    ) -> tuple[SettingToKeywordBinding, ...]:
+        """Declare the guide role required by the module's explicit shape."""
 
-        object_name = request.single_output_object_name()
-        return [
-            *measurement_table_rows(request.output_value),
-            *IdentifyObjectsInGridLocationMeasurementRows(
-                request.output_values[object_name],
-                object_name=object_name,
-                call_kwargs=request.call_kwargs,
-            ).rows(),
-        ]
-
-    @classmethod
-    def resolve_function(
-        cls, module: "ModuleBlock", *, default_function_name: str | None = None
-    ) -> "ResolvedModuleFunction":
-        del default_function_name
-        guiding_objects = (
-            cls.setting_value(module, cls.guiding_objects_setting)
-            or cls.guiding_objects_default
+        bindings = super().active_artifact_bindings(
+            module,
+            invocation_key=invocation_key,
         )
-        function_name = (
-            cls.function_variants[0]
-            if normalized_symbol_name(guiding_objects) is not None
-            else str(cls.function_name)
+        if module is None:
+            return bindings
+        shape_choice = _shape_choice(
+            cls.setting_value(module, cls.shape_choice_setting)
+            or ShapeChoice.RECTANGLE.value
         )
-        return super().resolve_function(module, default_function_name=function_name)
-
-    @classmethod
-    def artifact_contract(cls, assembler, builder, module):
-        inputs = [
-            SpatialGridArtifactInputCapability.bind_artifact(cls, builder, module, SpatialGridArtifactInputCapability.spec(required_setting_value(module, cls.grid_setting)))
-        ]
-        guiding_objects = (
-            cls.setting_value(module, cls.guiding_objects_setting)
-            or cls.guiding_objects_default
-        )
-        if normalized_symbol_name(guiding_objects) is not None:
-            inputs.append(
-                ObjectLabelArtifactInputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactInputCapability.spec(required_setting_value(module, cls.guiding_objects_setting)))
+        if not GridShapeStrategy.for_shape_choice(shape_choice).requires_guides:
+            return tuple(
+                binding
+                for binding in bindings
+                if binding is not cls.guiding_objects_binding
             )
-        outputs = [
-            MeasurementArtifactOutputCapability.bind_artifact(cls, builder, module, MeasurementArtifactOutputCapability.spec(cls.measurement_artifact_name(module))),
-            ObjectLabelArtifactOutputCapability.bind_artifact(cls, builder, module, ObjectLabelArtifactOutputCapability.spec(required_setting_value(module, cls.output_objects_setting))),
-        ]
-        return assembler.assemble_contract(
-            module, builder, inputs=inputs, outputs=outputs
+        return bindings
+
+    @classmethod
+    def artifact_contract_inputs(
+        cls,
+        module: "ModuleBlock",
+        *,
+        invocation_key: "FunctionInvocationKey",
+        step_context: "ArtifactDeclarationStepContext",
+    ) -> tuple[ArtifactSpec, ...]:
+        """Anchor unguided grid labels in the current main-flow image domain."""
+
+        declared_inputs = super().artifact_contract_inputs(
+            module,
+            invocation_key=invocation_key,
+            step_context=step_context,
         )
+        shape_choice = _shape_choice(
+            cls.setting_value(module, cls.shape_choice_setting)
+            or ShapeChoice.RECTANGLE.value
+        )
+        if GridShapeStrategy.for_shape_choice(shape_choice).requires_guides:
+            return declared_inputs
+        spatial_grids = ArtifactSpecCollection(declared_inputs).of_artifact_type(
+            SpatialGridArtifactType
+        )
+        if len(spatial_grids) != 1:
+            raise ValueError(
+                f"IdentifyObjectsInGrid shape {shape_choice!r} requires exactly "
+                "one spatial-grid input."
+            )
+        declared_grid = spatial_grids[0]
+        produced_grid = step_context.available_artifacts.by_name_and_artifact_type(
+            declared_grid.name,
+            SpatialGridArtifactType,
+        )
+        if produced_grid is None:
+            raise ValueError(
+                f"IdentifyObjectsInGrid cannot resolve spatial grid "
+                f"{declared_grid.name!r} from available artifact producers."
+            )
+        lineage_refs = produced_grid.group_scope_sources()
+        if len(lineage_refs) != 1:
+            raise ValueError(
+                f"IdentifyObjectsInGrid shape {shape_choice!r} requires its "
+                "spatial grid to declare exactly one source domain, got "
+                f"{lineage_refs!r}."
+            )
+        lineage_ref = lineage_refs[0]
+        lineage_source = step_context.main_flow_artifacts.by_ref(lineage_ref)
+        if lineage_source is None:
+            raise ValueError(
+                f"IdentifyObjectsInGrid grid lineage {lineage_ref!r} is not in "
+                "the current main-flow image domain."
+            )
+        return (*declared_inputs, lineage_source)
 
-
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from enum import Enum
-from typing import ClassVar
-import numpy as np
-from metaclass_registry import AutoRegisterMeta
-from numba import njit
-from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
-from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.runtime_semantics import (
-    MeasurementRowAxisField,
-    SpatialGridOrdering,
-    SpatialGridOrigin,
-)
-from openhcs.core.runtime_values import (
-    ObjectLabelPayload,
-    SourceImageObjectLabelBuildRequest,
-    SpatialGrid,
-    object_label_dense_array,
-)
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
-from openhcs.interop.cellprofiler.runtime.measurement_rows import (
-    ObjectLocationMeasurementRows,
-)
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 GridInfo = SpatialGrid
 
@@ -924,9 +1060,9 @@ class GridDefinition:
             y_spacing=spatial_grid.y_spacing,
             x_location_of_lowest_x_spot=spatial_grid.x_origin,
             y_location_of_lowest_y_spot=spatial_grid.y_origin,
-            x_locations=spatial_grid.x_locations_array(),
-            y_locations=spatial_grid.y_locations_array(),
-            spot_table=spatial_grid.spot_table_array(),
+            x_locations=np.asarray(spatial_grid.x_locations, dtype=np.float64),
+            y_locations=np.asarray(spatial_grid.y_locations, dtype=np.float64),
+            spot_table=np.asarray(spatial_grid.spot_table, dtype=np.int32),
             image_height=height,
             image_width=width,
             ordering=spatial_grid.ordering,
@@ -1079,40 +1215,9 @@ class GridDefinition:
         return _mask_grid_labels_by_filtered_guides_numba(grid_labels, label_array)
 
 
-@dataclass(frozen=True, slots=True)
-class IdentifyObjectsInGridLocationMeasurementRows:
-    """Location rows declared by IdentifyObjectsInGrid."""
-
-    label_payload: CellProfilerRuntimeValue
-    object_name: str
-    call_kwargs: CellProfilerKwargs
-
-    def rows(self) -> list[CellProfilerRuntimeValue]:
-        base_rows = ObjectLocationMeasurementRows(
-            self.label_payload, object_name=self.object_name
-        )
-        rows: list[CellProfilerRuntimeValue] = []
-        for slice_index, (label_plane, domain) in enumerate(
-            base_rows.label_plane_domains()
-        ):
-            centers = base_rows.centers_for_plane(label_plane, domain=domain)
-            rows.extend(
-                (
-                    row
-                    for object_index, object_label in enumerate(centers.object_ids)
-                    for row in base_rows.rows_for_object(
-                        object_label=object_label,
-                        slice_index=slice_index,
-                        feature_values=centers.feature_values(object_index),
-                    )
-                )
-            )
-        return rows
-
-
 @dataclass
-class GridObjectStats:
-    slice_index: int
+class GridObjectStats(MeasurementFeatureRecord):
+    slice_index: Annotated[int, MeasurementRowAxisField.SLICE_INDEX]
     object_count: int
     grid_rows: int
     grid_columns: int
@@ -1146,8 +1251,6 @@ class GridShapeRequest(GridShapeContext):
     def labels(self, shape_choice: ShapeChoice) -> np.ndarray:
         """Materialize labels through the registered strategy family."""
         strategy = GridShapeStrategy.for_shape_choice(shape_choice)
-        if strategy.requires_guides and self.guiding_labels is None:
-            strategy = GridShapeStrategy.for_shape_choice(ShapeChoice.RECTANGLE)
         return strategy.labels(self)
 
     @property
@@ -1222,7 +1325,9 @@ class IdentifyObjectsInGridRequest(GridShapeContext):
             shape_type=self.shape_choice.value,
         )
 
-    def execute(self) -> tuple[np.ndarray, GridObjectStats, ObjectLabelPayload]:
+    def execute(
+        self,
+    ) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelPayload]:
         labels = GridShapeRequest(
             grid=self.grid,
             guiding_labels=self.guiding_labels,
@@ -1237,7 +1342,10 @@ class IdentifyObjectsInGridRequest(GridShapeContext):
         )
         return (
             self.image,
-            self.stats(),
+            DataclassMeasurementColumnarRows(
+                (self.stats(),),
+                row_type=GridObjectStats,
+            ),
             SourceImageObjectLabelBuildRequest(
                 image=self.image,
                 labels=labels.astype(np.int32, copy=False),
@@ -1248,25 +1356,6 @@ class IdentifyObjectsInGridRequest(GridShapeContext):
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
-@special_outputs(
-    (
-        "grid_info",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "rows",
-                "columns",
-                "x_spacing",
-                "y_spacing",
-                "x_location_of_lowest_x_spot",
-                "y_location_of_lowest_y_spot",
-                "total_width",
-                "total_height",
-            ],
-            analysis_type="grid_definition",
-        ),
-    )
-)
 def define_grid_manual(
     image: np.ndarray,
     grid_rows: int = 8,
@@ -1281,8 +1370,21 @@ def define_grid_manual(
     second_spot_col: int = 12,
     origin: SpatialGridOrigin = SpatialGridOrigin.TOP_LEFT,
     ordering: SpatialGridOrdering = SpatialGridOrdering.BY_ROWS,
+    cycle_scope: DefineGridCycleScope = DefineGridCycleScope.EACH_CYCLE,
 ) -> tuple[np.ndarray, SpatialGrid]:
-    """Define a CellProfiler grid manually from two spot references."""
+    """Define a CellProfiler grid manually from two spot references.
+
+    Args:
+        first_spot_x: Horizontal pixel coordinate of the first reference spot.
+        first_spot_y: Vertical pixel coordinate of the first reference spot.
+        second_spot_x: Horizontal pixel coordinate of the second reference spot.
+        second_spot_y: Vertical pixel coordinate of the second reference spot.
+    """
+    if not isinstance(cycle_scope, DefineGridCycleScope):
+        raise TypeError(
+            "define_grid_manual cycle_scope must be DefineGridCycleScope, "
+            f"got {type(cycle_scope).__name__}."
+        )
     grid = SpatialGridManualDefinition(
         rows=grid_rows,
         columns=grid_columns,
@@ -1301,38 +1403,30 @@ def define_grid_manual(
 
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
-@special_outputs(
-    (
-        "grid_info",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "rows",
-                "columns",
-                "x_spacing",
-                "y_spacing",
-                "x_location_of_lowest_x_spot",
-                "y_location_of_lowest_y_spot",
-                "total_width",
-                "total_height",
-            ],
-            analysis_type="grid_definition",
-        ),
-    )
-)
 def define_grid_automatic(
     image: np.ndarray,
-    labels: np.ndarray,
+    labels: ObjectLabelValue,
     grid_rows: int = 8,
     grid_columns: int = 12,
     origin: SpatialGridOrigin = SpatialGridOrigin.TOP_LEFT,
     ordering: SpatialGridOrdering = SpatialGridOrdering.BY_ROWS,
+    cycle_scope: DefineGridCycleScope = DefineGridCycleScope.EACH_CYCLE,
 ) -> tuple[np.ndarray, SpatialGrid]:
-    """Define a CellProfiler grid from object-label centroid extrema."""
+    """Define a CellProfiler grid from object-label centroid extrema.
+
+    Args:
+        labels: Object-label plane whose centroid extrema establish the grid;
+            at least two labeled objects are required.
+    """
+    if not isinstance(cycle_scope, DefineGridCycleScope):
+        raise TypeError(
+            "define_grid_automatic cycle_scope must be DefineGridCycleScope, "
+            f"got {type(cycle_scope).__name__}."
+        )
     grid = SpatialGridAutomaticDefinition(
         rows=grid_rows,
         columns=grid_columns,
-        labels=labels,
+        labels=object_label_dense_array(labels, dtype=np.int32),
         origin=coerce_cellprofiler_enum(SpatialGridOrigin, origin),
         ordering=coerce_cellprofiler_enum(SpatialGridOrdering, ordering),
         image_shape_yx=tuple((int(value) for value in image.shape[-2:])),
@@ -1378,26 +1472,10 @@ def draw_grid_overlay(
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
-@special_inputs("grid")
-@special_outputs(
-    (
-        "grid_stats",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "object_count",
-                "grid_rows",
-                "grid_columns",
-                "shape_type",
-            ],
-            analysis_type="grid_objects",
-        ),
-    ),
-    ("labels", segmentation_mask_rois()),
-)
+@special_inputs("topology_inputs")
 def identify_objects_in_grid(
     image: np.ndarray,
-    grid: SpatialGrid | None = None,
+    topology_inputs: tuple[SpatialGrid | ObjectLabelValue, ...],
     grid_rows: int = 8,
     grid_columns: int = 12,
     x_spacing: float = 100.0,
@@ -1407,59 +1485,49 @@ def identify_objects_in_grid(
     shape_choice: ShapeChoice = ShapeChoice.RECTANGLE,
     diameter_choice: DiameterChoice = DiameterChoice.MANUAL,
     circle_diameter: int = 20,
-) -> tuple[np.ndarray, GridObjectStats, ObjectLabelPayload]:
-    """Identify objects within each section of a grid pattern."""
-    return IdentifyObjectsInGridRequest.from_runtime(
-        image=image,
-        grid_definition=GridRuntimeDefinitionRequest(
-            image_shape=image.shape,
-            grid=grid,
-            grid_rows=grid_rows,
-            grid_columns=grid_columns,
-            x_spacing=x_spacing,
-            y_spacing=y_spacing,
-            x_origin=x_origin,
-            y_origin=y_origin,
-        ),
-        shape_choice=shape_choice,
-        diameter_choice=diameter_choice,
-        circle_diameter=circle_diameter,
-    ).execute()
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelPayload]:
+    """Identify objects within each section of a grid pattern.
 
-
-@numpy(contract=ProcessingContract.PURE_2D)
-@special_inputs("grid", "guiding_labels")
-@special_outputs(
-    (
-        "grid_stats",
-        csv_materializer(
-            fields=[
-                "slice_index",
-                "object_count",
-                "grid_rows",
-                "grid_columns",
-                "shape_type",
-            ],
-            analysis_type="grid_objects",
-        ),
-    ),
-    ("labels", segmentation_mask_rois()),
-)
-def identify_objects_in_grid_with_guides(
-    image: np.ndarray,
-    guiding_labels: np.ndarray,
-    grid: SpatialGrid | None = None,
-    grid_rows: int = 8,
-    grid_columns: int = 12,
-    x_spacing: float = 100.0,
-    y_spacing: float = 100.0,
-    x_origin: float = 50.0,
-    y_origin: float = 50.0,
-    shape_choice: ShapeChoice = ShapeChoice.CIRCLE_NATURAL,
-    diameter_choice: DiameterChoice = DiameterChoice.AUTOMATIC,
-    circle_diameter: int = 20,
-) -> tuple[np.ndarray, GridObjectStats, ObjectLabelPayload]:
-    """Identify grid objects using guiding objects for shape/location."""
+    Args:
+        topology_inputs: The authoritative ``SpatialGrid`` followed, for natural
+            shapes only, by the guiding object-label value.
+        grid_rows: Compatibility row-count fallback; the supplied ``SpatialGrid``
+            takes precedence.
+        grid_columns: Compatibility column-count fallback; the supplied
+            ``SpatialGrid`` takes precedence.
+        x_spacing: Compatibility horizontal spot spacing in pixels; the supplied
+            ``SpatialGrid`` takes precedence.
+        y_spacing: Compatibility vertical spot spacing in pixels; the supplied
+            ``SpatialGrid`` takes precedence.
+        x_origin: Compatibility horizontal center coordinate of the first spot;
+            the supplied ``SpatialGrid`` takes precedence.
+        y_origin: Compatibility vertical center coordinate of the first spot;
+            the supplied ``SpatialGrid`` takes precedence.
+    """
+    shape_strategy = GridShapeStrategy.for_shape_choice(shape_choice)
+    expected_input_count = 2 if shape_strategy.requires_guides else 1
+    if len(topology_inputs) != expected_input_count:
+        required_inputs = (
+            "a spatial grid and one guiding object-label value"
+            if shape_strategy.requires_guides
+            else "a spatial grid"
+        )
+        raise ValueError(
+            f"IdentifyObjectsInGrid shape {shape_choice!r} requires exactly "
+            f"{expected_input_count} topology input(s): {required_inputs}; got "
+            f"{len(topology_inputs)}."
+        )
+    grid = topology_inputs[0]
+    if not isinstance(grid, SpatialGrid):
+        raise TypeError(
+            "IdentifyObjectsInGrid topology input 0 must be SpatialGrid, "
+            f"got {type(grid).__name__}."
+        )
+    guiding_labels = (
+        object_label_dense_array(topology_inputs[1], dtype=np.int32)
+        if shape_strategy.requires_guides
+        else None
+    )
     return IdentifyObjectsInGridRequest.from_runtime(
         image=image,
         grid_definition=GridRuntimeDefinitionRequest(
@@ -1494,18 +1562,25 @@ def prepare_identify_objects_in_grid() -> None:
     guide_labels = np.zeros((64, 64), dtype=np.int32)
     guide_labels[8:18, 8:18] = 1
     guide_labels[24:34, 24:34] = 2
+    guide_payload = SourceImageObjectLabelBuildRequest(
+        image=image,
+        labels=guide_labels,
+        declared_object_count=2,
+        declared_object_ids=(1, 2),
+    ).payload()
     identify_objects_in_grid.__wrapped__(
-        image, grid=grid, shape_choice=ShapeChoice.RECTANGLE
+        image,
+        topology_inputs=(grid,),
+        shape_choice=ShapeChoice.RECTANGLE,
     )
-    identify_objects_in_grid_with_guides.__wrapped__(
-        image, guide_labels, grid=grid, shape_choice=ShapeChoice.NATURAL
+    identify_objects_in_grid.__wrapped__(
+        image,
+        topology_inputs=(grid, guide_payload),
+        shape_choice=ShapeChoice.NATURAL,
     )
 
 
 identify_objects_in_grid.__openhcs_prepare__ = prepare_identify_objects_in_grid
-identify_objects_in_grid_with_guides.__openhcs_prepare__ = (
-    prepare_identify_objects_in_grid
-)
 
 
 @njit(cache=True)
@@ -1684,7 +1759,7 @@ class GridShapeStrategy(ABC, metaclass=AutoRegisterMeta):
     @classmethod
     def for_shape_choice(cls, shape_choice: ShapeChoice | str) -> "GridShapeStrategy":
         resolved = coerce_cellprofiler_enum(ShapeChoice, shape_choice)
-        strategy_type = cls.__registry__.get(resolved.value, RectangleGridShapeStrategy)
+        strategy_type = cls.__registry__[resolved.value]
         return strategy_type()
 
     @abstractmethod
@@ -1767,7 +1842,6 @@ __all__ = public_names_from_objects(
     define_grid_manual,
     draw_grid_overlay,
     identify_objects_in_grid,
-    identify_objects_in_grid_with_guides,
     label_centroid_extremes,
     prepare_identify_objects_in_grid,
     spatial_grid_from_spacing,

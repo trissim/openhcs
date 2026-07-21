@@ -6,13 +6,11 @@ import dataclasses
 import importlib
 import inspect
 import logging
-from abc import ABC
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from types import ModuleType
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING
 
-from metaclass_registry import AutoRegisterMeta
 from openhcs.core.callable_contract import CallableContract, CallableMetadata
 from python_introspect import Enableable
 
@@ -35,6 +33,12 @@ class FunctionReference:
 
     def resolve(self) -> Callable:
         """Resolve this reference to the decorated callable for execution."""
+        resolved = FunctionReferenceTransportAuthority.importable_function(
+            self.original_module,
+            self.function_name,
+        )
+        if callable(resolved):
+            return resolved
         from openhcs.processing.backends.lib_registry.registry_service import (
             RegistryService,
         )
@@ -42,83 +46,10 @@ class FunctionReference:
         all_functions = RegistryService.get_all_functions_with_metadata()
         if self.composite_key in all_functions:
             return all_functions[self.composite_key].func
-        resolved = FunctionReferenceTransportAuthority.importable_function(
-            self.original_module,
-            self.function_name,
-        )
-        if callable(resolved):
-            return resolved
         raise RuntimeError(
             f"Function {self.composite_key} not found in registry. "
             f"Ensure the function registry is initialized in this process."
         )
-
-
-class FunctionReferenceTransportStrategy(ABC, metaclass=AutoRegisterMeta):
-    """Registered transport normalization for callable families outside core."""
-
-    __registry_key__ = "strategy_key"
-    __skip_if_no_key__ = True
-
-    strategy_key: ClassVar[str | None] = None
-
-    def reference_for_callable(self, func: Callable) -> FunctionReference | None:
-        """Return a stable reference for this callable, or None when unowned."""
-        del func
-        return None
-
-    def normalized_callable(self, func: Callable) -> Callable | None:
-        """Return a stable callable export, or None when unowned."""
-        del func
-        return None
-
-    def normalized_module(self, module: ModuleType) -> Callable | None:
-        """Return the callable represented by a module object, or None."""
-        del module
-        return None
-
-    def preserve_callable(self, func: Callable) -> bool:
-        """Return whether this callable should stay in object form for transport."""
-        del func
-        return False
-
-    @classmethod
-    def reference_for_registered_callable(
-        cls,
-        func: Callable,
-    ) -> FunctionReference | None:
-        """Return the first strategy-owned reference for a callable."""
-        for strategy_type in cls.__registry__.values():
-            reference = strategy_type().reference_for_callable(func)
-            if reference is not None:
-                return reference
-        return None
-
-    @classmethod
-    def normalized_registered_callable(cls, func: Callable) -> Callable | None:
-        """Return the first strategy-owned stable callable export."""
-        for strategy_type in cls.__registry__.values():
-            normalized = strategy_type().normalized_callable(func)
-            if normalized is not None:
-                return normalized
-        return None
-
-    @classmethod
-    def normalized_registered_module(cls, module: ModuleType) -> Callable | None:
-        """Return the first strategy-owned callable for a module object."""
-        for strategy_type in cls.__registry__.values():
-            normalized = strategy_type().normalized_module(module)
-            if normalized is not None:
-                return normalized
-        return None
-
-    @classmethod
-    def should_preserve_callable(cls, func: Callable) -> bool:
-        """Return whether any strategy owns this callable as already transportable."""
-        for strategy_type in cls.__registry__.values():
-            if strategy_type().preserve_callable(func):
-                return True
-        return False
 
 
 class FunctionReferenceTransportAuthority:
@@ -187,12 +118,15 @@ class FunctionReferenceTransportAuthority:
     def reference_function_spec(cls, func_value: object) -> object:
         """Convert callable function-pattern leaves to FunctionReference."""
         if callable(func_value):
-            if FunctionReferenceTransportStrategy.should_preserve_callable(func_value):
-                return func_value
             return cls.function_reference(func_value)
 
-        if isinstance(func_value, tuple) and len(func_value) in {2, 3}:
-            func, params, *invocation_options = func_value
+        if isinstance(func_value, tuple):
+            if len(func_value) != 2:
+                raise TypeError(
+                    "Function-pattern tuple leaves must contain exactly two "
+                    "members: (callable, kwargs)."
+                )
+            func, params = func_value
 
             if isinstance(params, dict) and Enableable.disabled_in(params):
                 return None
@@ -202,8 +136,8 @@ class FunctionReferenceTransportAuthority:
 
             if callable(func):
                 func_ref = cls.reference_function_spec(func)
-                return (func_ref, params, *invocation_options)
-            return (func, params, *invocation_options)
+                return (func_ref, params)
+            return (func, params)
 
         if isinstance(func_value, list):
             referenced = [cls.reference_function_spec(item) for item in func_value]
@@ -227,34 +161,9 @@ class FunctionReferenceTransportAuthority:
             RegistryService,
         )
 
-        strategy_reference = FunctionReferenceTransportStrategy.reference_for_registered_callable(
-            func
-        )
-        if strategy_reference is not None:
-            return strategy_reference
-
         original_func = inspect.unwrap(func)
         original_name = original_func.__name__
         original_module = original_func.__module__
-
-        all_functions = RegistryService.get_all_functions_with_metadata()
-        for composite_key, metadata in all_functions.items():
-            registry_original = inspect.unwrap(metadata.func)
-            registry_module = registry_original.__module__
-            if (
-                registry_original.__name__ == original_name
-                and registry_module == original_module
-            ):
-                return FunctionReference(
-                    function_name=original_name,
-                    registry_name=metadata.registry.library_name,
-                    memory_type=metadata.registry.MEMORY_TYPE,
-                    composite_key=composite_key,
-                    original_module=original_module,
-                    metadata=FunctionReferenceTransportAuthority.callable_metadata(
-                        func
-                    ),
-                )
 
         imported = FunctionReferenceTransportAuthority.importable_function(
             original_module,
@@ -276,23 +185,33 @@ class FunctionReferenceTransportAuthority:
                 metadata=FunctionReferenceTransportAuthority.callable_metadata(func),
             )
 
+        all_functions = RegistryService.get_all_functions_with_metadata()
+        for composite_key, metadata in all_functions.items():
+            registry_original = inspect.unwrap(metadata.func)
+            registry_module = registry_original.__module__
+            if (
+                registry_original.__name__ == original_name
+                and registry_module == original_module
+            ):
+                return FunctionReference(
+                    function_name=original_name,
+                    registry_name=metadata.registry.library_name,
+                    memory_type=metadata.registry.MEMORY_TYPE,
+                    composite_key=composite_key,
+                    original_module=original_module,
+                    metadata=FunctionReferenceTransportAuthority.callable_metadata(
+                        func
+                    ),
+                )
+
         raise RuntimeError(
             f"Function {original_name} (module: {original_module}) not found in "
             "registry or importable module attribute - cannot create reference"
         )
 
     def callable_metadata(func: Callable) -> CallableMetadata:
-        """Return compiler transport metadata with raw callables stabilized."""
-        metadata = CallableMetadata.from_callable(func)
-        raw_processing_function = metadata.raw_processing_function
-        if not callable(raw_processing_function):
-            return metadata
-        stable_raw = FunctionReferenceTransportStrategy.normalized_registered_callable(
-            raw_processing_function
-        )
-        if stable_raw is None:
-            return metadata
-        return metadata.with_raw_processing_function(stable_raw)
+        """Return compiler transport metadata declared by the callable."""
+        return CallableMetadata.from_callable(func)
 
     @staticmethod
     def importable_function(module_name: str, function_name: str) -> Callable | None:
