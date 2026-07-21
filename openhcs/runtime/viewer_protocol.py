@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from multiprocessing.process import BaseProcess
 from pathlib import Path
-from typing import ClassVar, Self, TypeAlias, cast
+from typing import ClassVar, TypeAlias, cast
 
 from openhcs.core.config import TransportMode as ViewerTransportMode
 from openhcs.core.streaming_config_factory import (
@@ -24,6 +24,7 @@ from openhcs.core.streaming_config_factory import (
 from metaclass_registry import AutoRegisterMeta
 from polystore.streaming_constants import StreamingDataType
 from zmqruntime.config import TransportMode as ZMQTransportMode, ZMQConfig
+from zmqruntime.messages import ControlMessageType
 from zmqruntime.streaming import VisualizerProcessManager
 from zmqruntime.viewer_protocol import (
     ViewerBatchMessageType as ViewerBatchMessageType,
@@ -36,9 +37,8 @@ from zmqruntime.viewer_protocol import (
     ViewerTransportEndpoint,
 )
 from openhcs.runtime.viewer_controls import (
-    ViewerControlWireValue,
-    ViewerNavigationControlOptions,
-    ViewerPayloadControlOptions,
+    ViewerNavigationControlOptions as ViewerNavigationControlOptions,
+    ViewerPayloadControlOptions as ViewerPayloadControlOptions,
     ViewerScalar,
     ViewerStateControlOptions,
 )
@@ -65,6 +65,7 @@ class ViewerControlMessageType(Enum):
     """Shared control-message names consumed by viewer servers."""
 
     SCREENSHOT = "screenshot"
+    CLEAR_STATE = "clear_state"
     SETTLE = "settle"
     STATE = "state"
     PAYLOADS = "payloads"
@@ -75,17 +76,13 @@ class ViewerPayloadSummaryField(str, Enum):
     """Viewer payload-summary response fields."""
 
     SHAPE = "shape"
-    SOURCE_SPATIAL_SHAPES_YX = "source_spatial_shapes_yx"
     NONZERO_COUNT = "nonzero_count"
 
 
 class ViewerControlField(str, Enum):
-    """Viewer control response payload fields."""
+    """Application-specific viewer control response payload fields."""
 
-    TYPE = "type"
     SNAPSHOT = "snapshot"
-    STATUS = "status"
-    MESSAGE = "message"
     VIEWER = "viewer"
     RESOURCE = "resource"
     WIDTH = "width"
@@ -104,6 +101,7 @@ class ViewerLayerField(str, Enum):
     """Viewer layer-state response payload fields."""
 
     ROUTE_KEY = "route_key"
+    PRODUCER_IDENTITIES = "producer_identities"
     TITLE = "title"
     MOUNTED = "mounted"
     ITEM_COUNT = "item_count"
@@ -176,7 +174,7 @@ class ViewerPersistenceMode(Enum):
 class ViewerControlResponse:
     """Typed view of a viewer control-message response."""
 
-    payload: Mapping[str, ViewerControlWireValue]
+    payload: Mapping[str, object]
 
     @property
     def status(self) -> ViewerProtocolStatus:
@@ -256,7 +254,10 @@ class ViewerProcessPlatform(Enum):
         "Linux",
         "Linux",
         QtPlatformName.XCB,
-        {"QT_X11_NO_MITSHM": "1"},
+        {
+            "QT_X11_NO_MITSHM": "1",
+            "vblank_mode": "0",
+        },
     )
     OTHER = ("other", None, None, {})
 
@@ -913,6 +914,7 @@ class ViewerControlMessageRequest:
 
     endpoint: ViewerRuntimeEndpoint
     message_type: str
+    payload: object | None = None
     timeout: float = 2.0
 
     def send(self) -> ViewerControlResponse:
@@ -928,9 +930,12 @@ class ViewerControlMessageRequest:
             socket.setsockopt(zmq.LINGER, 0)
             socket.setsockopt(zmq.RCVTIMEO, int(self.timeout * 1000))
             socket.connect(self.endpoint.control_url())
-            socket.send(
-                pickle.dumps({ViewerControlResponseField.TYPE.value: self.message_type})
-            )
+            request: dict[str, object] = {
+                ViewerControlResponseField.TYPE.value: self.message_type
+            }
+            if self.payload is not None:
+                request[ViewerControlResponseField.PAYLOAD.value] = self.payload
+            socket.send(pickle.dumps(request))
             payload = pickle.loads(socket.recv())
             if not isinstance(payload, Mapping):
                 raise TypeError(
@@ -938,7 +943,7 @@ class ViewerControlMessageRequest:
                     f"got {type(payload).__name__}."
                 )
             return ViewerControlResponse(
-                cast(Mapping[str, ViewerControlWireValue], payload)
+                cast(Mapping[str, object], payload)
             )
         finally:
             if socket is not None:
@@ -967,14 +972,14 @@ class ManagedViewerLifecycleMixin(
         self,
         *,
         runtime_config: StreamingViewerRuntimeConfig,
-        transport_config: ZMQConfig,
     ) -> None:
         super().__init__(port=runtime_config.transport_endpoint.port)
         self.persistent: bool = runtime_config.persistent
+        self.display_enabled: bool = runtime_config.display_enabled
         self.lifecycle_presentation = runtime_config.presentation
         self.runtime_endpoint = ViewerRuntimeEndpoint(
             transport=runtime_config.transport_endpoint,
-            config=transport_config,
+            config=runtime_config.transport_config,
         )
         self.lifecycle_state: ViewerLifecycleState = ViewerLifecycleState.stopped()
 
@@ -1024,7 +1029,7 @@ class ManagedViewerLifecycleMixin(
         """Ask the viewer currently bound to this endpoint to terminate."""
         response = ViewerControlMessageRequest(
             endpoint=self.runtime_endpoint,
-            message_type="force_shutdown",
+            message_type=ControlMessageType.FORCE_SHUTDOWN.value,
             timeout=timeout,
         ).send()
         return response.succeeded()
@@ -1061,7 +1066,7 @@ class ManagedViewerLifecycleMixin(
         )
 
     def wait_for_ready(self, timeout: float = 10.0) -> bool:
-        """Satisfy zmqruntime's process-manager readiness contract."""
+        """Wait for the viewer endpoint to bind and report ready."""
         return self.runtime_endpoint.wait_ready(
             timeout=timeout,
             require_ready=True,
@@ -1171,7 +1176,7 @@ class ManagedViewerLifecycleMixin(
     def clear_viewer_state(self) -> bool:
         """Clear accumulated viewer state for a new pipeline run."""
 
-        return self.send_control_message("clear_state")
+        return self.send_control_message(ViewerControlMessageType.CLEAR_STATE.value)
 
     def settle_viewer_state(self, timeout: float = 30.0) -> bool:
         """Wait for queued viewer layer updates before state/screenshot reads."""
@@ -1180,6 +1185,27 @@ class ManagedViewerLifecycleMixin(
             ViewerControlMessageType.SETTLE.value,
             timeout=timeout,
         )
+
+    def read_viewer_state(self, timeout: float = 30.0) -> ViewerControlResponse:
+        """Return typed state from the settled viewer control endpoint."""
+
+        if not self.is_running:
+            raise RuntimeError(
+                f"{self.viewer_process_label} viewer on port {self.required_port} "
+                "is not running."
+            )
+        response = ViewerControlMessageRequest(
+            endpoint=self.runtime_endpoint,
+            message_type=ViewerControlMessageType.STATE.value,
+            payload=ViewerStateControlOptions(),
+            timeout=timeout,
+        ).send()
+        if not response.succeeded():
+            raise RuntimeError(
+                f"{self.viewer_process_label} viewer state request failed: "
+                f"{response.payload!r}."
+            )
+        return response
 
     @property
     def is_running(self) -> bool:

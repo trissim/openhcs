@@ -20,7 +20,6 @@ from openhcs.core.path_cache import (
     get_cached_dialog_path,
     cache_dialog_path,
 )
-from openhcs.core.config import GlobalPipelineConfig
 from pyqt_reactive.theming import ThemeManager
 from pyqt_reactive.theming import ColorScheme
 
@@ -460,7 +459,7 @@ class PyQtServiceAdapter:
         Returns:
             Global configuration object
         """
-        return self.main_window.global_config or GlobalPipelineConfig()
+        return self.main_window.pipeline_runtime_config
 
     def set_global_config(self, config):
         """
@@ -469,9 +468,7 @@ class PyQtServiceAdapter:
         Args:
             config: Global configuration object
         """
-        self.main_window.global_config = config
-        if self.app is not None:
-            self.app.global_config = config
+        self.main_window.set_pipeline_runtime_config(config)
 
     # ========== THEME MANAGEMENT METHODS ==========
 

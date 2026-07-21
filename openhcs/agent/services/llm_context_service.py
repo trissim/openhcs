@@ -10,46 +10,29 @@ from typing import ClassVar
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.agent.authoring_contexts import (
-    AgentCapabilityIndexContext,
     AuthoringContextDeclaration,
-    CellProfilerTranslationAuthoringContext,
     CellProfilerTranslationContext,
-    CoreOpenHCSModelContext,
-    CustomFunctionAuthoringContext,
     CustomFunctionAuthoringRulesContext,
     CustomFunctionRuntimeContext,
-    DomainExpertAssistedSetupAuthoringContext,
+    DebuggingWorkflowContext,
     DomainExpertAssistedSetupContext,
     ExampleCorpusContext,
-    FirstUseAuthoringContext,
     FirstUseWorkflowContext,
-    FolderOnboardingAuthoringContext,
     FolderOnboardingContext,
-    HeadlessExecutionAuthoringContext,
     HeadlessExecutionContext,
-    ObjectStateEditingAuthoringContext,
     ObjectStateEditingContext,
-    PipelineAuthoringContext,
     PipelineAuthoringRulesContext,
-    PipelineMentalModelContext,
     PipelineSystemModelContext,
     RuntimeUiCoordinationContext,
     SourceBindingWorkflowContext,
     StateCodeRoundtripContext,
-    UiVisibleWorkflowAuthoringContext,
     UiVisibleWorkflowContext,
-    ViewerReviewAuthoringContext,
     ViewerReviewContext,
 )
-from openhcs.agent.capabilities import (
-    CapabilityKind,
-    agent_capabilities,
-    get_capability_registry,
-)
+from openhcs.agent.capabilities import agent_capabilities
 from openhcs.agent.dto.authoring import AuthoringContext, AuthoringContextRequest
 from openhcs.agent.dto.common import SCHEMA_VERSION
 from openhcs.agent.dto.config import ConfigSchema
-from openhcs.agent.dto.knowledge import KnowledgeBaseDocumentRequest
 from openhcs.agent.services.architecture_projection_service import (
     CellProfilerTranslationArchitectureTopic,
 )
@@ -60,6 +43,11 @@ from openhcs.agent.ui_bridge_actions import PlateManagerAction
 from openhcs.agent.ui_bridge_identities import (
     PlateManagerOrchestratorCodeDocumentIdentity,
     PlateManagerStateSurfaceIdentityDeclaration,
+    PipelineDebugSessionStateSurfaceIdentityDeclaration,
+    UiLiveOverviewStateSurfaceIdentityDeclaration,
+)
+from openhcs.ui.shared.plate_manager_code_document import (
+    PlateManagerCodeNamespaceField,
 )
 
 
@@ -102,76 +90,36 @@ def render_authoring_context_sections(
     context: type[AuthoringContextDeclaration],
     service: "AgentAuthoringContextService",
 ) -> tuple[str, ...]:
-    """Render sections whose nominal context facets belong to a context."""
-    return tuple(
+    """Render one intent header, its matching sections, and bounded deepening links."""
+    route = context.require_route()
+    sections = tuple(
         section_type.render(service)
         for section_type in AuthoringContextSection.__registry__.values()
         if section_type.belongs_to(context)
     )
-
-
-class KnowledgeBackedAuthoringContextSection(AuthoringContextSection):
-    """Authoring-context section projected from the source-backed KB."""
-
-    heading: ClassVar[str]
-    document_id: ClassVar[str]
-    document_section_id: ClassVar[str | None] = None
-    max_chars: ClassVar[int] = 2_000
-
-    @classmethod
-    def render(cls, service: "AgentAuthoringContextService") -> str:
-        content = service.knowledge_document_content(
-            document_id=cls.document_id,
-            section_id=cls.document_section_id,
-            max_chars=cls.max_chars,
-        )
-        return f"=== {cls.heading} ===\n{content}"
-
-
-class CoreModelKnowledgeSection(
-    KnowledgeBackedAuthoringContextSection,
-    CoreOpenHCSModelContext,
-):
-    section_id = "core_openhcs_model"
-    heading = "OPENHCS CORE MODEL"
-    document_id = "openhcs_core_model"
-    document_section_id = "core-summary"
-    max_chars = 3_000
-
-
-class CellProfilerCompatibilityKnowledgeSection(
-    KnowledgeBackedAuthoringContextSection,
-    CellProfilerTranslationContext,
-):
-    section_id = "cellprofiler_compatibility_model"
-    heading = "CELLPROFILER COMPATIBILITY MODEL"
-    document_id = "openhcs_core_model"
-    document_section_id = "cellprofiler-compatibility-model"
-    max_chars = 2_400
-
-
-class ArtifactUniverseKnowledgeSection(
-    KnowledgeBackedAuthoringContextSection,
-    CoreOpenHCSModelContext,
-):
-    section_id = "artifact_sidecar_source_universe_model"
-    heading = "ARTIFACT SIDECAR AND SOURCE UNIVERSE MODEL"
-    document_id = "openhcs_core_model"
-    document_section_id = "artifact-sidecar-and-source-universe-model"
-    max_chars = 2_400
+    header = f"=== {route.title.upper()} ===\nUse this context when {route.use_when}."
+    deepening = service.render_knowledge_targets(context)
+    return (header, *sections, deepening)
 
 
 class PipelineSystemModelSection(
-    StaticAuthoringContextSection,
+    AuthoringContextSection,
     PipelineSystemModelContext,
 ):
     section_id = "pipeline_system_model"
-    content = """=== FRONTLOADED OPENHCS MODEL ===
-- FunctionStep is the authored step boundary: function reference(s), step name, lazy step configs, and source_bindings.
-- PipelineConfig and GlobalPipelineConfig carry lazy defaults; inspect resolved values through ObjectState/UI tools before assuming None means inactive.
-- Compilation resolves FunctionStep declarations, source bindings, artifact contracts, and materialization into an execution plan; runtime tools should not bypass that boundary.
-- Use architecture tools when the model is unclear: openhcs_explain_architecture with pipeline_model, cellprofiler_translation, source_semantics, or execution_runtime.
-- Read knowledge docs openhcs_data_dimensions, openhcs_function_patterns, openhcs_pattern_grouping_special_outputs, and openhcs_code_ui_interconversion for axis/state/code details."""
+
+    @classmethod
+    def render(cls, service: "AgentAuthoringContextService") -> str:
+        del service
+        return f"""=== EXECUTION MENTAL MODEL ===
+- The public declaration is PipelineConfig plus an ordered list[FunctionStep]. FunctionStep.func accepts a callable, (callable, kwargs), a list chain, or a dictionary keyed by compiled group identity; nested lazy configs own processing, sources, materialization, data types, filters, and viewers.
+- Five independent questions govern each step: variable_components says what varies along the assembled array axis; group_by partitions the assembled value and routes only dictionary patterns; input_source chooses previous-step or pipeline-start main flow; callable ArtifactSpec declarations name semantic inputs and outputs; compiled materialization plans decide what persists. ProcessingContract separately declares per-plane, whole-stack, flexible, or volumetric-to-slice callable semantics.
+- A separately named source is not a third InputSource value: it is a declared artifact input satisfied by step source bindings or a prior producer. Runtime-store availability lets downstream steps consume a typed image, label, measurement, relationship, table, grid, or external resource, but does not itself promise a persistent file.
+- Configuration has two independent inheritance axes. Scope precedence is global -> pipeline -> step, where a lazy raw None means inherit. Nominal specialization says which related policies share a default: for example, the pipeline well filter constrains the execution domain, step well-filter specializations inherit that scope unless overridden, and viewer/checkpoint filters narrow their own emission or persistence. A path-planning override is a sibling persistence policy and must not leak into viewer filtering.
+- Workload filters and output filters are not interchangeable. `pipeline_config.well_filter_config` is applied before per-well contexts compile, so it reduces loading, memory, and processing. A viewer-local well filter only suppresses viewer emission after that well was processed; a materialization/path filter only suppresses its persistent output. For fast inspection, constrain the broadest safe execution scope first, then inherit or narrow at specialized consumers.
+- ObjectState resolves those scope and nominal relationships once. Compilation validates sources, function patterns, artifacts, memory, scope, and workers, then emits a CompiledExecutionBundle. Workers consume that typed bundle and record typed runtime values; they do not reconstruct contracts from strings or sidecars.
+- CellProfiler uses this same model: setup modules contribute source bindings and executable modules become ordinary FunctionStep declarations. Each CellProfilerModule subclass owns the semantics it declares supported, so CellProfiler knowledge transfers while parity remains pipeline-and-result evidence.
+- If this model is unclear, call {agent_capabilities.explain_architecture.name} for only the relevant pipeline, source, CellProfiler, or runtime topic, or retrieve one targeted knowledge document listed below."""
 
 
 class CellProfilerTranslationBridgeSection(
@@ -191,7 +139,7 @@ class CellProfilerTranslationBridgeSection(
         return f"""=== CELLPROFILER MENTAL MODEL BRIDGE ===
 - If you know CellProfiler, use that model first: CellProfiler compatibility is integrated into OpenHCS compilation and runtime through source bindings, FunctionStep declarations, artifact contracts, runtime values, materialization, and measurements.
 - Use CellProfiler examples and .cppipe files to understand the biological intent, module order, named images/objects, measurements, and expected artifacts; then compile and validate the OpenHCS projection with artifact-plan, runtime, and viewer/inventory tools.
-- Detailed architecture topic: openhcs_explain_architecture(topic_id="cellprofiler_translation").
+- Detailed architecture topic: {agent_capabilities.explain_architecture.name} with topic_id="cellprofiler_translation".
 {concept_lines}
 {note_lines}"""
 
@@ -207,124 +155,127 @@ class RuntimeUiCoordinationSection(
         del service
         code_document_id = PlateManagerOrchestratorCodeDocumentIdentity.require_value()
         state_surface_id = PlateManagerStateSurfaceIdentityDeclaration.require_value()
+        document_fields = ", ".join(
+            field.value for field in PlateManagerCodeNamespaceField
+        )
         workflow_names = ", ".join(
             action.value
             for action in PlateManagerAction
             if action.plate_operation is not None
         )
         return f"""=== RUNTIME AND UI COORDINATION ===
-- If the OpenHCS UI is open and the user should see the work, use the UI bridge path: read/apply {code_document_id} with plate_paths and pipeline_data, then dispatch {workflow_names} through {agent_capabilities.ui_selected_plate_workflow.name}.
+- If the OpenHCS UI is open and the user should see the work, use the UI bridge path: read/apply {code_document_id} as one complete document ({document_fields}), then dispatch {workflow_names} through {agent_capabilities.ui_selected_plate_workflow.name}.
 - Direct orchestrator sessions are headless runtime jobs: they can execute, stream to viewers, and write output plates, but they do not make PlateManager rows, ObjectState snapshots, or selected UI state visible unless the UI path is used.
-- After UI-owned runs, poll {state_surface_id} with {agent_capabilities.ui_get_state_surface.name} to confirm source and output rows, then inspect/query/sample the output plate and validate viewer layers from those visible paths."""
+- A UI mutation receipt and a workflow terminal state are separate evidence. Retain the returned operation_id, wait once with {agent_capabilities.ui_wait_for_operation.name} for accepted/completed/rejected receipt terminality, then read {state_surface_id} with {agent_capabilities.ui_get_state_surface.name} until the selected plate's compile/run state is terminal.
+- After UI-owned runs, confirm source and output rows on that state surface, then inspect/query/sample the output plate and validate viewer layers from those visible paths."""
 
 
 class StateCodeRoundtripSection(
-    StaticAuthoringContextSection,
+    AuthoringContextSection,
     StateCodeRoundtripContext,
 ):
     section_id = "state_code_roundtrip"
-    content = """=== OBJECTSTATE AND CODE ROUNDTRIP ===
-- ObjectState is the edit/provenance layer for config, pipelines, steps, and code surfaces; use object-state-scopes and object-state-fields before assuming UI text or raw None values.
+
+    @classmethod
+    def render(cls, service: "AgentAuthoringContextService") -> str:
+        del service
+        return f"""=== OBJECTSTATE AND CODE ROUNDTRIP ===
+- ObjectState is the edit/provenance layer for config, pipelines, steps, and code surfaces; list scopes and fields through {agent_capabilities.ui_list_object_state_scopes.name} and {agent_capabilities.ui_get_object_state_fields.name} before assuming UI text or raw None values.
 - Field markers are semantic: * means unsaved/dirty, _ means differs from defaults, inherited/resolved values show lazy/default resolution even when raw values are None.
-- Code documents are live typed bidirectional UI<->code projections over ObjectState-backed UI objects, not freeform files or export/import scripts; get-code-document, validate-code-document, and apply-code-document use revision tokens to preserve reviewable Python and real-time ObjectState updates.
-- UI mutations can create snapshots and branches; use window snapshots, ObjectState scopes, state surfaces, and time-travel-head to understand whether the UI is at branch head before applying edits.
-- Read knowledge document openhcs_code_ui_interconversion for the current PyQt/ObjectState/code-document model."""
+- Code documents are live typed bidirectional UI<->code projections over ObjectState-backed UI objects, not freeform files. Read, validate, and apply them through their declared capabilities with fresh revision tokens.
+- UI mutations can create snapshots and branches; inspect the registered state surfaces and time-travel head before applying edits. Retrieve the targeted code/UI knowledge document below only when this ownership boundary needs more detail."""
 
 
 class CustomFunctionRuntimeSection(
-    StaticAuthoringContextSection,
+    AuthoringContextSection,
     CustomFunctionRuntimeContext,
 ):
     section_id = "custom_function_runtime"
-    content = """=== CUSTOM FUNCTIONS AND RUNTIME OUTPUTS ===
+
+    @classmethod
+    def render(cls, service: "AgentAuthoringContextService") -> str:
+        del service
+        return """=== CUSTOM FUNCTIONS AND RUNTIME OUTPUTS ===
 - Custom functions are registry functions used inside FunctionStep.func patterns: callable, (callable, kwargs), list chains, or component/group keyed patterns.
 - Dict patterns are routed by processing_config.group_by; list and single-callable patterns apply the same callable chain to each grouped 3D array.
 - processing_config.variable_components are the axes stacked into each callable input array; group_by groups the remaining 3D arrays and only selects callable branches for dict patterns.
 - Memory decorators such as @numpy define runtime memory conversion; FunctionStep processing_config defines grouping, axes, and input source.
-- Declare non-image outputs with artifact_outputs plus MaterializationSpec/CsvOptions/JsonOptions, or ROI/image presets such as segmentation_mask_rois and tiff_stack.
-- Artifact graph planning owns output names, sidecar results, materialization intent, and downstream artifact inputs; do not encode those as ad hoc files or hidden globals.
-- ROI and image review flows use materialized/streamed artifacts through viewer streaming tools; after execution inspect selected-plate-files, viewer-rois, viewer-payloads, and sample-viewer-image."""
+- Declare outputs with typed ArtifactSpec values. The decorator owns their input/output role. MeasurementsArtifactType receives schema-bearing ColumnarRows; ObjectLabelsArtifactType receives complete integer label arrays and may use segmentation_mask_rois for materialization.
+- Artifact graph planning owns output names, sidecar results, materialization intent, and downstream artifact inputs; do not encode those as ad hoc files or hidden globals. Request the viewer-review context only after execution produces artifacts to inspect."""
 
 
 class SourceBindingWorkflowSection(
-    StaticAuthoringContextSection,
+    AuthoringContextSection,
     SourceBindingWorkflowContext,
 ):
     section_id = "source_binding_workflow"
-    content = """=== SOURCE-BINDING WORKFLOW ===
-- Start custom plates by inspecting real inventory: inspect-plate, query-plate-files, selected-plate-images, and selected-plate-files expose virtual paths, axes, results, and handler confidence; selected-plate review tools can target selected/source/output rows.
-- Filename and folder semantics belong in MetadataExtractionRule, SourceBindingsConfig, and StepSourceBindingsConfig, not local filename parsing or raw string conventions.
-- FunctionStep.source_bindings is the step-local semantic-input contract; pipeline_config.source_bindings_config is the source discovery/default contract.
-- Virtual workspaces map logical OpenHCS virtual filenames to source paths and metadata; agents should query virtual paths/source metadata instead of assuming physical folder layout is execution layout.
-- Compile/session inspection can expose source_workspace files with virtual_path, full_virtual_path, source_path, and source_metadata for source-bound pipelines.
-- For source-bound custom plates, use reviewed Python/code-document or CellProfiler import/generator flows until the compact v1 draft-step API grows a nominal source-binding DTO. Do not pass ad hoc source_bindings dicts."""
+
+    @classmethod
+    def render(cls, service: "AgentAuthoringContextService") -> str:
+        del service
+        from openhcs.microscopes.microscope_base import (
+            MicroscopeHandler,
+            MicroscopeSourceSelectionRole,
+        )
+
+        handler_lines: list[str] = []
+        for microscope_type, handler_type in MicroscopeHandler.__registry__.items():
+            role = handler_type.source_selection_role()
+            if role is MicroscopeSourceSelectionRole.DECLARED_FILE_FALLBACK:
+                binding_role = "bindings own ingestion and semantic naming"
+            elif handler_type.projects_declared_source_bindings():
+                binding_role = "bindings may select/name handler-emitted planes"
+            else:
+                binding_role = "handler does not project declared bindings"
+            handler_lines.append(
+                f"- {microscope_type}: role={role.value}; {binding_role}. "
+                f"{handler_type.source_selection_guidance()}"
+            )
+        registered_handlers = "\n".join(handler_lines)
+
+        return f"""=== SOURCE-BINDING WORKFLOW ===
+=== REGISTERED INGESTION OWNERS (LIVE REGISTRY) ===
+{registered_handlers}
+- Selection rule: prefer a format-specific owner only when its declaration-owned detection/subset policy accepts the source. Auto-detection commonly requires complete vendor metadata. When plate inspection reports format_specific_handler_candidates, read the live handler guidance: some owners permit explicit partial exports, while owners that require their complete detection contract leave loose ordinary files to SourceBindingsHandler with explicitly declared semantics.
+- Separate ingestion ownership from semantic source selection. A recognized HCS layout keeps its format-specific microscope handler; CZI, OME-TIFF, and other supported rich containers use the broad Bio-Formats/store handler only when no stronger registered format-specific owner matches. SourceBindingsConfig may then name or select exact planes only when that handler declares projection support; it does not open the container or replace the handler.
+- SourceBindingsHandler is the microscope-independent ingestion fallback for arbitrary image folders and unsupported layouts. If auto-detection does not recognize a folder but SourceBindingsConfig is non-empty, OpenHCS selects that nominal handler and projects the declared TIFF, PNG, JPEG, or other registered ordinary files; do not force structured CZI/OME data through this fallback.
+- Start by inventorying and sampling real files. Use typed SourceFilterClause values to bound the source universe, MetadataExtractionRule named regex captures to declare well/site/channel/Z/time metadata, and NamedSourceBinding selectors plus component_identity to give semantic aliases such as DNA or GFP.
+- The pipeline-level pipeline_config.source_bindings_config owns discovery, metadata, cross-alias matching, grouping metadata, stack components, explicit planes, and imported metadata tables. FunctionStep.source_bindings is the step-local choice of named sources; enable it when a step consumes bound sources instead of only the previous main-flow result.
+- source_stack_components describe axes physically contained inside each selected file/store payload. Do not declare SITE or another source-stack axis for separate ordinary 2-D files; give those files component identities and use processing_config.variable_components to assemble the selected files into a callable stack.
+- Source bindings compile into a source universe, per-step binding plans, and a virtual workspace. Query projected virtual paths and source_metadata rather than treating physical filenames, decoders, or storage backends as the pipeline ABI. Source-satisfied typed artifact inputs do not require invented runtime producer plans.
+- Validate on representative files: confirm alias counts, required bindings, matched well/site/channel keys, stack axes, and source paths; then inspect the compiled source workspace and artifact plan before execution. Conflicts and missing required aliases must be fixed in the declarations, never hidden by fallback matching.
+- Through MCP, reflect PipelineConfig first. Config patches can construct the nested typed source_bindings_config; reviewed Python/code-document flows can express the full model. Use UI code documents when the running GUI must own the state, or reviewed pipeline source for an exposed headless route. Do not pass ad hoc source_bindings dictionaries or invent field names from stale examples."""
 
 
-class ExampleCorpusSection(StaticAuthoringContextSection, ExampleCorpusContext):
+class ExampleCorpusSection(AuthoringContextSection, ExampleCorpusContext):
     section_id = "example_corpus"
-    content = """=== EXAMPLE CORPUS FIRST ===
-- Search/read knowledge document openhcs_example_corpus_map before inventing source bindings or pipeline structure.
-- benchmark/cellprofiler_pipelines contains in-tree .cppipe examples plus checked-in OpenHCS equivalents for ExampleHuman and ExampleFly.
-- benchmark/native_refs/official30_scoped_rows contains 30 native CellProfiler reference .cppipe runs; generated OpenHCS equivalents are produced by converter/adapter paths, not checked in as one static .py per case.
-- benchmark/pipelines and openhcs/processing/presets/pipelines contain native OpenHCS examples and reusable preset pipelines."""
 
-
-class CoreImportsSection(
-    StaticAuthoringContextSection,
-    PipelineAuthoringRulesContext,
-):
-    section_id = "core_imports"
-    content = """=== CORE PIPELINE IMPORTS ===
-from openhcs.core.steps.function_step import FunctionStep
-from openhcs.core.config import (
-    LazyProcessingConfig,
-    LazyDtypeConfig,
-    LazyStepSourceBindingsConfig,
-    LazyStepMaterializationConfig,
-    LazyNapariStreamingConfig,
-    LazyFijiStreamingConfig,
-    SourceBindingsConfig,
-    StepSourceBindingsConfig,
-)
-from openhcs.core.source_bindings import (
-    MetadataExtractionRule,
-    MetadataSource,
-    NamedSourceBinding,
-    SourceBindingOrigin,
-    SourceFilterClause,
-    SourceFilterMatchType,
-    SourceFilterSubject,
-)
-from openhcs.constants.constants import VariableComponents, GroupBy
-from openhcs.constants.input_source import InputSource"""
+    @classmethod
+    def render(cls, service: "AgentAuthoringContextService") -> str:
+        del service
+        return f"""=== EXAMPLE CORPUS FIRST ===
+- Search with {agent_capabilities.search_knowledge.name} for the biological task plus "OpenHCS Python" or "official30 recipe" before inventing source bindings or pipeline structure; follow the returned document_id and section_id rather than guessing a case name.
+- The official30 knowledge target listed below is the broad current corpus. Each exact <case>-openhcs-python section is generated lazily through the public CellProfiler importer and defines PipelineConfig plus FunctionStep declarations; retrieve only the matching section with a max_chars bound large enough for the source, and require truncated=false before validating or applying it.
+- The example-corpus-map target identifies the smaller current native preset authority and separates validated examples from older benchmark/debug migration evidence.
+- Treat structured source or conversion errors as authoritative. Do not substitute stale checked-in scripts or raw .cppipe text when an exact generated section is unavailable."""
 
 
 class PipelineRulesSection(
-    StaticAuthoringContextSection,
+    AuthoringContextSection,
     PipelineAuthoringRulesContext,
 ):
     section_id = "pipeline_rules"
-    content = """=== PIPELINE AUTHORING RULES ===
-- Author pipelines as ordered FunctionStep objects.
-- Function references should come from the registry when using MCP tools.
-- Search functions first, then call openhcs_describe_function before adding a step with non-default parameters.
-- Rendered Python source is review/export output; the MCP draft pipeline is the canonical v1 state.
-- Use LazyProcessingConfig for per-step axis/input-source semantics when needed.
-- Do not pass variable_components, group_by, or input_source directly to FunctionStep; put them inside processing_config.
 
-Minimal source-backed step:
-```python
-pipeline_steps = [
-    FunctionStep(
-        func=(registered_function, {"parameter_name": 1.0}),
-        name="Denoise images",
-        processing_config=LazyProcessingConfig(
-            variable_components=[VariableComponents.SITE],
-            group_by=GroupBy.CHANNEL,
-        ),
-    )
-]
-```"""
+    @classmethod
+    def render(cls, service: "AgentAuthoringContextService") -> str:
+        del service
+        return f"""=== PIPELINE AUTHORING WORKFLOW ===
+- Search {agent_capabilities.search_functions.name} from the user's biological or processing intent, then call {agent_capabilities.describe_function.name} for each candidate before supplying non-default parameters. Do not start from an arbitrary function dump.
+- Create one typed draft with {agent_capabilities.create_pipeline.name}; add ordinary single-function steps through {agent_capabilities.add_function_step.name}. Function references come from the registry, and reflected request/config schemas own accepted values. The incremental add-step request does not express a list chain or group-keyed dictionary; for those patterns use one reviewed complete PipelineDocument/code document, or start from the exact importer-generated OpenHCS source and revise it.
+- FunctionStep.func may be one callable, a callable-plus-kwargs pair, a chain, or a group-keyed dictionary. Answer the five dataflow questions in the execution model separately. Put variable_components, group_by, and input_source inside processing_config; they are not direct FunctionStep fields. Treat callable-owned artifact contracts as constraints to inspect, not fields to re-declare on the step.
+- Reflect the relevant nested config path before editing. A lazy raw None usually means inherit; do not copy fields from examples or flatten pipeline, step, source, materialization, and streaming scopes.
+- Validate with {agent_capabilities.validate_pipeline.name}, then render reviewed Python with {agent_capabilities.render_pipeline_source.name}. The complete PipelineDocument contains PipelineConfig plus the ordered FunctionStep list; never send a steps-only fragment or a parallel config side channel.
+- Before execution, inspect the compiled artifact and materialization plans. Callable declarations own semantic image, label, measurement, relationship, table, grid, and external-resource contracts; filenames and tuple positions do not. Confirm separately which runtime values are only available during execution and which outputs have persistent targets."""
 
 
 class ConfigSchemaHintsSection(AuthoringContextSection, PipelineAuthoringRulesContext):
@@ -338,7 +289,11 @@ class ConfigSchemaHintsSection(AuthoringContextSection, PipelineAuthoringRulesCo
         )
         lines = [
             "=== CONFIG SCHEMA HINTS ===",
-            "Use openhcs_describe_config_schema for the full reflected schema before setting non-obvious fields.",
+            (
+                f"Use {agent_capabilities.describe_config_schema.name} for the "
+                "top-level family map, then pass one returned path_prefix for its "
+                "reflected nested schema before editing fields."
+            ),
         ]
         for schema in schemas:
             lines.extend(cls._schema_lines(schema, service.max_config_fields))
@@ -360,52 +315,6 @@ class ConfigSchemaHintsSection(AuthoringContextSection, PipelineAuthoringRulesCo
         return lines
 
 
-class FunctionCatalogSection(AuthoringContextSection, PipelineAuthoringRulesContext):
-    section_id = "function_catalog"
-
-    @classmethod
-    def render(cls, service: "AgentAuthoringContextService") -> str:
-        page = service.function_catalog.search(
-            limit=service.max_functions,
-            compact_signatures=True,
-        )
-        lines = [
-            "=== REGISTERED OPENHCS FUNCTIONS ===",
-            "Use function_id values with MCP authoring tools; use imports only when rendering reviewed Python source.",
-        ]
-        current_library = None
-        for entry in page.items:
-            if entry.library != current_library:
-                current_library = entry.library
-                lines.append(f"\n## {entry.library}")
-            summary = "" if entry.summary is None else f" - {entry.summary}"
-            lines.append(f"- {entry.function_id}: `{entry.signature}`{summary}")
-        if page.total > len(page.items):
-            remaining = page.total - len(page.items)
-            lines.append(
-                f"\n... {remaining} more functions are available through openhcs_search_functions."
-            )
-        return "\n".join(lines)
-
-
-class CustomFunctionImportsSection(
-    StaticAuthoringContextSection,
-    CustomFunctionAuthoringRulesContext,
-):
-    section_id = "custom_function_imports"
-    content = """=== CORE CUSTOM FUNCTION IMPORTS ===
-from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import artifact_outputs, artifact_inputs
-from openhcs.processing.materialization import (
-    CsvOptions,
-    JsonOptions,
-    MaterializationSpec,
-    segmentation_mask_rois,
-    tiff_stack,
-)
-import numpy as np"""
-
-
 class CustomFunctionRulesSection(
     StaticAuthoringContextSection,
     CustomFunctionAuthoringRulesContext,
@@ -416,6 +325,7 @@ class CustomFunctionRulesSection(
 - The first image-like argument is supplied by OpenHCS at runtime; do not pass it as a FunctionStep kwarg.
 - Prefer concrete typed parameters with serializable defaults.
 - Preserve dtype unless intentionally changing representation.
+- Declare measurements as MeasurementsArtifactType and return ColumnarRows; declare segmentation as ObjectLabelsArtifactType and return the complete integer label array.
 - Do not close over GUI, filesystem, or live viewer state."""
 
 
@@ -444,32 +354,50 @@ def robust_clip(image, low_percentile: float = 1.0, high_percentile: float = 99.
 
 
 class CustomFunctionRegistrationSection(
-    StaticAuthoringContextSection,
+    AuthoringContextSection,
     CustomFunctionAuthoringRulesContext,
 ):
     section_id = "custom_function_registration"
-    content = '''=== REGISTRATION WORKFLOW ===
-Use the existing public custom-function manager; do not duplicate registry or file-loading logic.
 
-```python
-from openhcs.processing.custom_functions import CustomFunctionManager
-
-CustomFunctionManager().register_from_code(source_code, persist=True)
-```
-
-Then call openhcs_search_functions with the function name, describe the returned function_id, and draft a FunctionStep from that function_id.'''
+    @classmethod
+    def render(cls, service: "AgentAuthoringContextService") -> str:
+        del service
+        return f"""=== REGISTRATION WORKFLOW ===
+- Read the targeted custom-function and artifact-contract knowledge documents below before inventing decorators or payload types.
+- Register reviewed source through {agent_capabilities.register_custom_function.name}; that capability delegates to the nominal CustomFunctionManager and owns persistence and registry refresh.
+- Search with {agent_capabilities.search_functions.name}, describe the returned function_id with {agent_capabilities.describe_function.name}, then request the pipeline context to add the function and validate its compiled artifact plan."""
 
 
 class FirstUseOrientationSection(
-    StaticAuthoringContextSection,
+    AuthoringContextSection,
     FirstUseWorkflowContext,
 ):
     section_id = "first_use_orientation"
-    content = """=== FIRST-USE OPERATIONAL ROUTES ===
-- If you do not already know OpenHCS, read this first_use context before choosing tools. It is the front-door model for the compiler/runtime, UI bridge, CellProfiler compatibility, source universes, artifacts, and review workflow.
-- If the user has an image folder, use the plate-data route: inspect the folder, query/sample representative files, read example/axis docs, draft the smallest useful pipeline, inspect the artifact plan, run a bounded validation, then inspect outputs.
-- If the OpenHCS UI is open and the user should see or continue editing the work, use the UI-owned route: read state surfaces and code documents, validate/apply code with revision tokens, dispatch selected-plate init/compile/run, then poll state surfaces.
-- If the task is unclear, use knowledge search and architecture topics before authoring. Do not ask the user to understand the full tool catalog before you have followed the smallest relevant route."""
+
+    @classmethod
+    def render(cls, service: "AgentAuthoringContextService") -> str:
+        del service
+        route_lines = []
+        for declaration in AuthoringContextDeclaration.__registry__.values():
+            if declaration is cls or declaration.require_kind() == "first_use":
+                continue
+            route = declaration.require_route()
+            route_lines.append(
+                f'- kind="{declaration.require_kind()}" — {route.title}: {route.use_when}.'
+            )
+        routes = "\n".join(route_lines)
+        return f"""=== CORE MODEL IN ONE PASS ===
+- OpenHCS is a typed compiler/runtime for high-content microscopy. It projects microscope data into a storage-independent virtual workspace, compiles PipelineConfig plus ordered FunctionStep declarations, resolves multidimensional grouping and artifact contracts, executes through typed runtime values, and validates results through plate and viewer evidence.
+- Choose the state owner before choosing file formats or tools. If the user asks to open, show, continue, or edit work in the desktop, the UI-owned route always takes precedence over folder inspection or a headless session.
+
+=== CHOOSE ONE TASK ROUTE ===
+Request exactly one matching context with {agent_capabilities.get_authoring_context.name}; deepen into another only when the workflow reaches that boundary.
+{routes}
+
+=== SAFE FIRST ACTION ===
+- Start read-only. Inspect the active surface through {agent_capabilities.list_capabilities.name}; its workflow groups, target contexts, side effects, and security metadata are the authority for what this server exposes.
+- Request the matching task context before mutation. Do not read every knowledge document, enumerate every function, invent config fields, or load full-resolution image data up front.
+- Before any write or execution, show the exact target and intended change, refresh revision/request tokens, obtain approval, validate, and compile before running."""
 
 
 class FolderOnboardingStepsSection(
@@ -478,13 +406,13 @@ class FolderOnboardingStepsSection(
 ):
     section_id = "folder_onboarding_steps"
     content = f"""=== FOLDER ONBOARDING WORKFLOW ===
-- OpenHCS turns microscope folders and metadata into a typed source model and virtual workspace; inspect that model before guessing filenames or source bindings.
-- Confirm wells, sites, channels, Z planes, and timepoints, then choose variable_components based on what each callable must receive and group_by only for dictionary routing.
-- Inspect the folder first with {agent_capabilities.inspect_plate_path.name}; if the UI has a selected plate, use {agent_capabilities.ui_inspect_selected_plate_images.name}.
-- Query and sample representative files with {agent_capabilities.query_plate_files.name}, {agent_capabilities.sample_plate_image.name}, {agent_capabilities.ui_query_selected_plate_files.name}, or {agent_capabilities.ui_sample_selected_plate_image.name} before drafting source bindings or processing steps.
+- This is the headless/read-only data route. If the user expects the work to appear in the desktop, stop and request kind="ui_visible_workflow"; its PlateManager state and code document remain the owner throughout onboarding.
+- OpenHCS turns microscope files and metadata into a typed source model and storage-independent virtual workspace. Inspecting a path is decoder evidence only: it does not add a UI plate, choose persistent configuration, or author a pipeline.
+- Keep the authoritative HCS/Bio-Formats handler for a valid native layout or rich CZI/OME container. Parser recognition alone is insufficient when that format owner requires a complete metadata detection contract; intentionally loose ordinary files may instead use SourceBindingsHandler with explicit component identities. SourceBindingsConfig may name/select planes emitted by a recognized handler only when that handler declares projection support.
+- Inspect with {agent_capabilities.inspect_plate_path.name}, query a bounded representative inventory with {agent_capabilities.query_plate_files.name}, and sample a small region with {agent_capabilities.sample_plate_image.name}. Never infer dimensions from names or load a full rich container merely to identify it.
+- Confirm wells, sites, channels, Z planes, timepoints, source diagnostics, and selected resolution provenance before authoring. If one container has multiple ambiguous datasets or samples, resolve the typed inspection error rather than guessing an index.
 - Search/read the example corpus and architecture topics before inventing source bindings. Match the folder to existing examples when possible.
-- Draft the pipeline through {agent_capabilities.create_pipeline.name}, {agent_capabilities.add_function_step.name}, {agent_capabilities.validate_pipeline.name}, and {agent_capabilities.render_pipeline_source.name}, or edit the PlateManager code document when the running UI should own the state.
-- Validate by compiling, inspecting the artifact plan, querying output files, and streaming outputs to a viewer before telling the domain expert the setup is complete."""
+- Once the source model is proven, request kind="pipeline" for typed authoring and kind="headless_execution" for compile/run. Validate compiled source bindings and artifact plans before full execution, then query bounded outputs and request kind="viewer_review" when visual evidence matters."""
 
 
 class DomainExpertAssistedSetupSection(
@@ -493,10 +421,10 @@ class DomainExpertAssistedSetupSection(
 ):
     section_id = "domain_expert_assisted_setup"
     content = """=== DOMAIN-EXPERT ASSISTED SETUP ===
-- If you do not already know OpenHCS, read openhcs_get_authoring_context(kind="first_use") first; this section assumes the core compiler/runtime and UI/code model.
 - Translate biology requests into pipeline intent, but keep the operational burden on the agent: inspect the folder, infer axes, use examples, draft the workflow, compile, run a bounded validation, and show reviewable evidence.
 - Treat missing channel names, site layout, Z/time semantics, and expected outputs as validation targets. Ask the expert only for domain choices that cannot be inferred from files, metadata, or examples.
-- Keep source binding and config changes reviewable in Python/ObjectState so the expert can later reproduce the setup without relying on chat history."""
+- Choose visible versus headless ownership first. Request kind="ui_visible_workflow" when the expert should see or continue editing the setup; otherwise request kind="folder_onboarding" to inspect data read-only before authoring.
+- Keep source binding and config changes reviewable in Python/ObjectState so the expert can reproduce the setup without relying on chat history. Do not claim completion until compiled artifacts, bounded result samples, and viewer or measurement evidence match the requested biological outcome."""
 
 
 class UiVisibleWorkflowStepsSection(
@@ -506,11 +434,15 @@ class UiVisibleWorkflowStepsSection(
     section_id = "ui_visible_workflow_steps"
     content = f"""=== UI-VISIBLE WORKFLOW ===
 - ObjectState is the UI state authority; code documents are live typed pycodified projections over UI-reflected objects with revision tokens, not standalone scripts.
+- This route takes precedence over headless folder onboarding whenever the user asks to open, inspect, or continue work in the desktop. Plate inspection remains diagnostic evidence and must not become a parallel UI setup path.
 - Discover or verify the UI bridge with {agent_capabilities.ui_list_bridges.name} and {agent_capabilities.ui_bridge_status.name}; when multiple bridges exist, pin the descriptor/connection rather than guessing.
+- Read {UiLiveOverviewStateSurfaceIdentityDeclaration.require_value()} first for the current ObjectState token, revision, snapshot, windows, statuses, and operations contributed by registered UI providers.
 - Read the PlateManager state surface with {agent_capabilities.ui_list_state_surfaces.name} and {agent_capabilities.ui_get_state_surface.name}; the selected/source/output rows are the UI authority for visible workflows.
 - Read, validate, and apply the PlateManager code document with {agent_capabilities.ui_list_code_documents.name}, {agent_capabilities.ui_get_code_document.name}, {agent_capabilities.ui_validate_code_document.name}, and {agent_capabilities.ui_apply_code_document.name}.
-- Dispatch init, compile, and run through {agent_capabilities.ui_selected_plate_workflow.name}; then poll state surfaces and operation status until the UI-visible result is clear.
-- Read openhcs_code_ui_interconversion if the UI/code ownership boundary is unclear."""
+- Add the containing plate directory and initialize with auto-detection. Recognized HCS layouts and CZI/OME stores keep their detected handler; use SourceBindingsConfig only for semantic selection/naming after discovery, or as the SourceBindingsHandler ingestion declaration for an otherwise unrecognized arbitrary-file folder.
+- For a write: read, explain, obtain approval, re-read, validate, then apply using the fresh document revision and approved confirmation policy; retain the mutation receipt and snapshot facts.
+- Dispatch init, compile, and run through {agent_capabilities.ui_selected_plate_workflow.name} using its current selection revision token. Wait for the returned operation_id once with {agent_capabilities.ui_wait_for_operation.name}, then read the Plate Manager state surface for the separate workflow terminal condition.
+- Retrieve the targeted code/UI knowledge document below only if the ownership boundary remains unclear."""
 
 
 class HeadlessExecutionStepsSection(
@@ -519,51 +451,43 @@ class HeadlessExecutionStepsSection(
 ):
     section_id = "headless_execution_steps"
     content = f"""=== HEADLESS EXECUTION WORKFLOW ===
-- Use {agent_capabilities.create_orchestrator_session.name} for a draft pipeline or {agent_capabilities.create_orchestrator_session_from_pipeline_source.name} for reviewed Python source.
-- Compile first with {agent_capabilities.submit_compile.name} or inspect the artifact plan with {agent_capabilities.inspect_pipeline_source_artifact_plan.name}; unresolved source bindings or artifact contracts should be fixed before full execution.
+- Use {agent_capabilities.create_orchestrator_session.name} for a draft pipeline or {agent_capabilities.create_orchestrator_session_from_pipeline_source.name} for reviewed Python source. The source route requires one complete PipelineDocument with pipeline_config and pipeline_steps; never send either through a parallel side channel.
+- Inspect first with {agent_capabilities.inspect_pipeline_source_artifact_plan.name}: it returns compiled source-workspace, step, group, artifact-output, and persistent-materialization plans, but not values that only exist during execution. Compile with {agent_capabilities.submit_compile.name} after those plans are sound.
 - Run with {agent_capabilities.submit_pipeline_execution.name}, poll with {agent_capabilities.get_execution_status.name}, then inspect/query/sample output plates before claiming success.
+- A normal completed-job status is lifecycle evidence, not a dump of RuntimeValueStore. Request kind="debugging" when an intermediate invocation value or artifact must be inspected, and kind="viewer_review" when image/label presentation is the evidence.
 - Headless sessions do not update PlateManager selection, snapshots, or output auto-add. Use the UI-visible workflow when those are required."""
+
+
+class DebuggingWorkflowSection(
+    AuthoringContextSection,
+    DebuggingWorkflowContext,
+):
+    section_id = "debugging_workflow"
+
+    @classmethod
+    def render(cls, service: "AgentAuthoringContextService") -> str:
+        del service
+        debug_surface_id = PipelineDebugSessionStateSurfaceIdentityDeclaration.require_value()
+        return f"""=== DEBUGGING WORKFLOW ===
+- Diagnose the first failing boundary. A declaration/config problem, compiled-plan problem, paused runtime-value problem, persisted-output problem, and viewer-presentation problem require different evidence; do not reconstruct one from another's filenames or logs.
+- Before execution, call {agent_capabilities.inspect_pipeline_source_artifact_plan.name}. Inspect the exact source workspace, step/group identities, typed artifact inputs/outputs, and materialization paths. This is compiled intent, not proof that a runtime value was produced.
+- In the desktop route, select the real Plate Manager row and compile it, then read {debug_surface_id} with {agent_capabilities.ui_get_state_surface.name}. List {agent_capabilities.ui_list_actions.name} for its debug toolbar and invoke the declared Debug, Step, Run to Pause, Restart, Stop, or Inspect Runtime action only when its typed enabled state permits it.
+- The debug-session surface owns phase, session/execution identity, source group, cursor, current/last frame, snapshot-store identity, and exact disabled reasons. Wait for an operation receipt with {agent_capabilities.ui_wait_for_operation.name}, then re-read the surface; do not repeatedly invoke an action while it is pending.
+- Read the paused worker directly with {agent_capabilities.inspect_debug_runtime_values.name}, passing the active debug_session_id and its runtime-server connection. The bounded view shows actual invocation parameters, runtime values, measurements, relationships, and artifact references without bulk array transfer.
+- A debug snapshot makes replay/inspection possible; it is not user-facing persistence. Use step materialization for an ordinary main-flow checkpoint, artifact materialization for a named typed output, or viewer review for visual evidence.
+- If the run completed normally, use output-plate inventory/sampling and viewer validation. If it failed, keep the first typed compile/runtime error and inspect only the owning boundary before changing the pipeline."""
 
 
 class ViewerReviewStepsSection(StaticAuthoringContextSection, ViewerReviewContext):
     section_id = "viewer_review_steps"
     content = f"""=== VIEWER REVIEW WORKFLOW ===
-- Stream plate images or result artifacts with {agent_capabilities.stream_plate_files_to_viewer.name} or {agent_capabilities.ui_stream_selected_plate_files_to_viewer.name}.
+- Three mechanisms are independent. A step's napari_streaming_config or fiji_streaming_config displays eligible outputs during execution; step_materialization_config persists that step's ordinary main-flow result; typed artifact materialization persists named images, labels, measurements, relationships, tables, grids, or external resources according to the compiled artifact plan.
+- To view one specific step, keep pipeline/global viewer enablement disabled and set enabled=true only on that FunctionStep's chosen viewer config. Put a one-well constraint such as B03 in `pipeline_config.well_filter_config` when the goal is a fast diagnostic run: that bounds loading and execution, and the step viewer cannot emit wells that never entered the compiled domain. Leave the viewer's own well_filter inherited unless it must narrow that domain further. Use persistent=true when the detached viewer must remain after completion; display, batching, transport, and port choices also inherit unless explicitly overridden.
+- If the viewer is the only desired image destination, set `pipeline_config.path_planning_config.well_filter=0` to keep the automatic final main-flow output runtime-only. This does not disable an explicitly enabled step checkpoint or named-artifact materialization; those have separate owning configs and compiled plans.
+- Reflect current fields with {agent_capabilities.describe_config_schema.name} using config_type="step" and path_prefix="napari_streaming_config", "fiji_streaming_config", or "step_materialization_config"; do not copy a historical field list. Recompile after changing a viewer or materialization declaration.
+- Stream existing plate images or result artifacts independently with {agent_capabilities.stream_plate_files_to_viewer.name} or {agent_capabilities.ui_stream_selected_plate_files_to_viewer.name} when rerunning a step is unnecessary.
 - Probe or inspect the viewer with {agent_capabilities.probe_viewer_window.name}, {agent_capabilities.get_viewer_window_state.name}, and {agent_capabilities.get_viewer_window_payloads.name}.
 - Validate and sample payloads with {agent_capabilities.validate_viewer_window_state.name}, {agent_capabilities.sample_viewer_window_image.name}, and {agent_capabilities.summarize_viewer_window_rois.name}; use ROI summaries and nonzero payload checks as concrete visual QA evidence."""
-
-
-class CapabilityGroupIndexSection(AuthoringContextSection, AgentCapabilityIndexContext):
-    section_id = "capability_group_index"
-
-    @classmethod
-    def render(cls, service: "AgentAuthoringContextService") -> str:
-        del service
-        registry = get_capability_registry()
-        capability_by_name = {
-            capability.name: capability
-            for capability in registry.capabilities
-        }
-        lines = ["=== CAPABILITY GROUPS ==="]
-        for group in registry.groups:
-            tool_names = tuple(
-                name
-                for name in group.capability_names
-                if capability_by_name[name].kind is CapabilityKind.TOOL
-            )
-            resource_names = tuple(
-                name
-                for name in group.capability_names
-                if capability_by_name[name].kind is CapabilityKind.RESOURCE
-            )
-            lines.append(
-                f"- {group.title}: {len(tool_names)} tools, {len(resource_names)} resources"
-            )
-            if tool_names:
-                lines.append(f"  Tools: {', '.join(tool_names)}")
-            if resource_names:
-                lines.append(f"  Resources: {', '.join(resource_names)}")
-        return "\n".join(lines)
 
 
 class ObjectStateEditingStepsSection(
@@ -574,6 +498,7 @@ class ObjectStateEditingStepsSection(
     content = f"""=== OBJECTSTATE EDITING WORKFLOW ===
 - List scopes and fields with {agent_capabilities.ui_list_object_state_scopes.name} and {agent_capabilities.ui_get_object_state_fields.name}; use {agent_capabilities.ui_describe_object_state_field.name} when a field's semantics are unclear.
 - Apply field changes with {agent_capabilities.ui_mutate_object_state_field.name}; keep save/commit explicit through managed UI actions so dirty/default markers remain inspectable.
+- A field-mutation request token is idempotency, not a base-revision guard. Confirm branch head, re-read the exact field immediately before one small approved mutation, and verify the field and related state surface immediately afterward; prefer a revision-checked code document for related atomic changes.
 - Use snapshots, branches, and time-travel-head tools to avoid editing stale time-traveled state."""
 
 
@@ -637,7 +562,7 @@ class AgentAuthoringContextService:
     def max_config_fields(self) -> int:
         return self._max_config_fields
 
-    def get_authoring_context(self, kind: str = "pipeline") -> AuthoringContext:
+    def get_authoring_context(self, kind: str = "first_use") -> AuthoringContext:
         context_declaration = AuthoringContextDeclaration.from_request(kind)
         return AuthoringContext(
             schema_version=SCHEMA_VERSION,
@@ -647,26 +572,37 @@ class AgentAuthoringContextService:
             ),
         )
 
-    def knowledge_document_content(
+    def render_knowledge_targets(
         self,
-        *,
-        document_id: str,
-        section_id: str | None = None,
-        max_chars: int = 2_000,
+        context: type[AuthoringContextDeclaration],
     ) -> str:
-        document = self.knowledge_base.get_document(
-            KnowledgeBaseDocumentRequest.from_fields(
-                document_id=document_id,
-                section_id=section_id,
-                max_chars=max_chars,
-            )
-        )
-        if document.errors:
-            messages = "; ".join(error.message for error in document.errors)
-            raise RuntimeError(
-                f"Failed to render authoring knowledge document {document_id!r}: {messages}"
-            )
-        return document.content
+        """Project declaration-owned deepening targets from the live KB catalog."""
+        targets = context.require_route().knowledge_targets
+        catalog = self.knowledge_base.list_documents()
+        documents_by_id = {
+            document.document_id: document for document in catalog.documents
+        }
+        lines = [
+            "=== DEEPEN ONLY WHEN NEEDED ===",
+            (
+                f"Retrieve one relevant source-backed target with "
+                f"{agent_capabilities.get_knowledge_document.name}; use its returned "
+                "section ids to narrow further instead of loading every document."
+            ),
+        ]
+        for target in targets:
+            try:
+                document = documents_by_id[target.document_id]
+            except KeyError as exc:
+                raise RuntimeError(
+                    f"Authoring context {context.require_kind()!r} targets unknown "
+                    f"knowledge document {target.document_id!r}."
+                ) from exc
+            target_id = target.document_id
+            if target.section_id is not None:
+                target_id = f"{target_id}#{target.section_id}"
+            lines.append(f"- {target_id} — {document.title}: {document.summary}")
+        return "\n".join(lines)
 
     def get_bounded_authoring_context(
         self,
@@ -680,7 +616,7 @@ class AgentAuthoringContextService:
         return replace(
             context,
             content=(
-                context.content[:request.max_chars]
+                context.content[: request.max_chars]
                 + f"\n...<truncated {len(context.content) - request.max_chars} chars>"
             ),
         )

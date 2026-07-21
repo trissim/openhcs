@@ -3,16 +3,72 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, replace
+import ctypes
+from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar, TypeVar
 
+from llvmlite import ir
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
-from numba import njit
+from numba import njit, types
+from numba.extending import intrinsic
+from numpy.core import _multiarray_umath
 import skimage.measure
 
 from openhcs.constants.constants import MemoryType
+
+
+_NUMPY_UMATH_GLOBAL = ctypes.CDLL(
+    _multiarray_umath.__file__,
+    mode=ctypes.RTLD_GLOBAL,
+)
+
+
+@intrinsic
+def _numpy_124_power_two(typing_context, value):
+    """Emit the NumPy 1.24 AVX-512 power operation used by CP 4.2.8.1."""
+
+    del typing_context, value
+    signature = types.float64(types.float64)
+
+    def codegen(context, builder, resolved_signature, arguments):
+        del context, resolved_signature
+        double_type = ir.DoubleType()
+        vector_type = ir.VectorType(double_type, 8)
+        function_type = ir.FunctionType(
+            vector_type,
+            (vector_type, vector_type),
+        )
+        if "__svml_pow8" in builder.module.globals:
+            power_function = builder.module.globals["__svml_pow8"]
+        else:
+            power_function = ir.Function(
+                builder.module,
+                function_type,
+                name="__svml_pow8",
+            )
+        base_vector = ir.Constant(
+            vector_type,
+            (ir.Constant(double_type, 1.0),) * 8,
+        )
+        exponent_vector = ir.Constant(
+            vector_type,
+            (ir.Constant(double_type, 2.0),) * 8,
+        )
+        lane_zero = ir.Constant(ir.IntType(32), 0)
+        base_vector = builder.insert_element(
+            base_vector,
+            arguments[0],
+            lane_zero,
+        )
+        result = builder.call(
+            power_function,
+            (base_vector, exponent_vector),
+        )
+        return builder.extract_element(result, lane_zero)
+
+    return signature, codegen
 
 
 class AnalysisBackendProvider(str, Enum):
@@ -249,18 +305,7 @@ class NumbaNumpyLabelRegionPropertiesBackendStrategy(
             np.ascontiguousarray(label_array),
             bool(include_advanced),
         )
-        props = DenseLabelRegionProperties(*arrays)
-        return replace(
-            props,
-            orientation=_skimage018_orientation_2d_numpy(
-                label_array,
-                props.label,
-                props.bbox_min_y,
-                props.bbox_min_x,
-                props.bbox_max_y,
-                props.bbox_max_x,
-            ),
-        )
+        return DenseLabelRegionProperties(*arrays)
 
 
 class SkimageNumpyLabelRegionPropertiesBackendStrategy(
@@ -291,14 +336,20 @@ class SkimageNumpyLabelRegionPropertiesBackendStrategy(
             label_array,
             properties=_skimage_region_properties(include_advanced),
         )
+        label = np.asarray(props["label"], dtype=np.int64)
+        area = np.asarray(props["area"], dtype=np.float64)
+        bbox_min_y = np.asarray(props["bbox-0"], dtype=np.int64)
+        bbox_min_x = np.asarray(props["bbox-1"], dtype=np.int64)
+        bbox_max_y = np.asarray(props["bbox-2"], dtype=np.int64)
+        bbox_max_x = np.asarray(props["bbox-3"], dtype=np.int64)
         return DenseLabelRegionProperties(
-            label=np.asarray(props["label"], dtype=np.int64),
-            area=np.asarray(props["area"], dtype=np.float64),
+            label=label,
+            area=area,
             perimeter=np.asarray(props["perimeter"], dtype=np.float64),
-            bbox_min_y=np.asarray(props["bbox-0"], dtype=np.int64),
-            bbox_min_x=np.asarray(props["bbox-1"], dtype=np.int64),
-            bbox_max_y=np.asarray(props["bbox-2"], dtype=np.int64),
-            bbox_max_x=np.asarray(props["bbox-3"], dtype=np.int64),
+            bbox_min_y=bbox_min_y,
+            bbox_min_x=bbox_min_x,
+            bbox_max_y=bbox_max_y,
+            bbox_max_x=bbox_max_x,
             bbox_area=np.asarray(props["bbox_area"], dtype=np.float64),
             centroid_y=np.asarray(props["centroid-0"], dtype=np.float64),
             centroid_x=np.asarray(props["centroid-1"], dtype=np.float64),
@@ -313,7 +364,15 @@ class SkimageNumpyLabelRegionPropertiesBackendStrategy(
                 props["minor_axis_length"], dtype=np.float64
             ),
             eccentricity=np.asarray(props["eccentricity"], dtype=np.float64),
-            orientation=np.asarray(props["orientation"], dtype=np.float64),
+            orientation=_label_orientations_2d(
+                np.ascontiguousarray(label_array),
+                label,
+                bbox_min_y,
+                bbox_min_x,
+                bbox_max_y,
+                bbox_max_x,
+                area,
+            ),
             euler_number=np.asarray(props["euler_number"], dtype=np.int64),
             moments=_regionprops_matrix(props, "moments", 4, 4, include_advanced),
             moments_central=_regionprops_matrix(
@@ -345,7 +404,6 @@ def _skimage_region_properties(include_advanced: bool) -> tuple[str, ...]:
         "major_axis_length",
         "minor_axis_length",
         "eccentricity",
-        "orientation",
         "euler_number",
     )
     if not include_advanced:
@@ -393,68 +451,6 @@ def _regionprops_vector(
     for index in range(length):
         values[:, index] = np.asarray(props[f"{name}-{index}"], dtype=np.float64)
     return values
-
-
-def _skimage018_orientation_2d_numpy(
-    labels: np.ndarray,
-    label_ids: np.ndarray,
-    bbox_min_y: np.ndarray,
-    bbox_min_x: np.ndarray,
-    bbox_max_y: np.ndarray,
-    bbox_max_x: np.ndarray,
-) -> np.ndarray:
-    """Return skimage 0.18-compatible 2-D orientation values."""
-    orientation = np.empty(len(label_ids), dtype=np.float64)
-    for index, label_id in enumerate(label_ids):
-        crop = (
-            labels[
-                int(bbox_min_y[index]) : int(bbox_max_y[index]),
-                int(bbox_min_x[index]) : int(bbox_max_x[index]),
-            ]
-            == int(label_id)
-        ).astype(np.uint8)
-        moments = _skimage018_moments_central_numpy(crop, (0.0, 0.0), order=3)
-        m00 = moments[0, 0]
-        if m00 == 0.0:
-            orientation[index] = 0.0
-            continue
-        center = (moments[1, 0] / m00, moments[0, 1] / m00)
-        central = _skimage018_moments_central_numpy(crop, center, order=3)
-        mu0 = central[0, 0]
-        mu20 = central[2, 0]
-        mu02 = central[0, 2]
-        mu11 = central[1, 1]
-        diagonal_sum = np.sum(np.asarray((mu20, mu02), dtype=np.float64))
-        tensor_a = (diagonal_sum - mu20) / mu0
-        tensor_b = -mu11 / mu0
-        tensor_c = (diagonal_sum - mu02) / mu0
-        if tensor_a - tensor_c == 0.0:
-            orientation[index] = (
-                -0.25 * np.pi if tensor_b < 0.0 else 0.25 * np.pi
-            )
-        else:
-            orientation[index] = 0.5 * np.arctan2(
-                -2.0 * tensor_b,
-                tensor_c - tensor_a,
-            )
-    return orientation
-
-
-def _skimage018_moments_central_numpy(
-    image: np.ndarray,
-    center: tuple[float, float],
-    *,
-    order: int,
-) -> np.ndarray:
-    """Compute central moments using skimage 0.18 axis reduction order."""
-    calc = image.astype(float)
-    for dim, dim_length in enumerate(image.shape):
-        delta = np.arange(dim_length, dtype=float) - center[dim]
-        powers_of_delta = delta[:, np.newaxis] ** np.arange(order + 1)
-        calc = np.rollaxis(calc, dim, image.ndim)
-        calc = np.dot(calc, powers_of_delta)
-        calc = np.rollaxis(calc, -1, dim)
-    return calc
 
 
 def label_region_properties_backend(
@@ -531,6 +527,8 @@ def _dense_label_region_properties_2d_numba(
             if col + 1 > max_x[label_id]:
                 max_x[label_id] = col + 1
 
+    border_labels = _label_border_pixels_4(labels)
+
     object_count = 0
     for label_id in range(1, max_label + 1):
         if area_dense[label_id] > 0.0:
@@ -591,9 +589,9 @@ def _dense_label_region_properties_2d_numba(
             index = dense_to_index[label_id]
             local_y = float(row - bbox_min_y[index])
             local_x = float(col - bbox_min_x[index])
-            centered_y = float(row) - centroid_y[index]
-            centered_x = float(col) - centroid_x[index]
             if include_advanced:
+                centered_y = float(row) - centroid_y[index]
+                centered_x = float(col) - centroid_x[index]
                 powers_y = np.empty(4, dtype=np.float64)
                 powers_x = np.empty(4, dtype=np.float64)
                 powers_cy = np.empty(4, dtype=np.float64)
@@ -610,29 +608,32 @@ def _dense_label_region_properties_2d_numba(
                 for p in range(4):
                     for q in range(4):
                         moments[index, p, q] += powers_y[p] * powers_x[q]
-                        moments_central[index, p, q] += (
-                            powers_cy[p] * powers_cx[q]
-                        )
+                        if p + q != 2:
+                            moments_central[index, p, q] += (
+                                powers_cy[p] * powers_cx[q]
+                            )
             else:
                 moments_central[index, 0, 0] += 1.0
-                moments_central[index, 2, 0] += centered_y * centered_y
-                moments_central[index, 0, 2] += centered_x * centered_x
 
     for index in range(object_count):
         m00 = area[index] if not include_advanced else moments_central[index, 0, 0]
         moments_central[index, 0, 0] = m00
         if m00 <= 0.0:
             continue
-        moments_central[index, 1, 1] = _label_mu11_skimage_order_2d(
-            labels,
-            label[index],
-            bbox_min_y[index],
-            bbox_min_x[index],
-            bbox_max_y[index],
-            bbox_max_x[index],
-            centroid_y[index],
-            centroid_x[index],
+        orientation_mu20, orientation_mu02, orientation_mu11 = (
+            _label_second_central_moments_2d(
+                labels,
+                label[index],
+                bbox_min_y[index],
+                bbox_min_x[index],
+                bbox_max_y[index],
+                bbox_max_x[index],
+                m00,
+            )
         )
+        moments_central[index, 2, 0] = orientation_mu20
+        moments_central[index, 0, 2] = orientation_mu02
+        moments_central[index, 1, 1] = orientation_mu11
         if include_advanced:
             for p in range(4):
                 for q in range(4):
@@ -694,29 +695,14 @@ def _dense_label_region_properties_2d_numba(
         eccentricity[index] = (
             np.sqrt(max(0.0, 1.0 - eig1 / eig0)) if eig0 > 0.0 else 0.0
         )
-        orientation_a, orientation_b, orientation_c = (
-            _label_orientation_tensor_components_2d(
-                labels,
-                label[index],
-                bbox_min_y[index],
-                bbox_min_x[index],
-                bbox_max_y[index],
-                bbox_max_x[index],
-                m00,
-            )
+        orientation[index] = _orientation_from_second_central_moments_2d(
+            orientation_mu20,
+            orientation_mu02,
+            orientation_mu11,
+            m00,
         )
-        if orientation_a - orientation_c == 0.0:
-            if orientation_b < 0.0:
-                orientation[index] = -0.25 * np.pi
-            else:
-                orientation[index] = 0.25 * np.pi
-        else:
-            orientation[index] = 0.5 * np.arctan2(
-                -2.0 * orientation_b,
-                orientation_c - orientation_a,
-            )
-        perimeter[index] = _label_perimeter_2d(
-            labels,
+        perimeter[index] = _label_perimeter_from_border_pixels_2d(
+            border_labels,
             label[index],
             bbox_min_y[index],
             bbox_min_x[index],
@@ -760,8 +746,32 @@ def _dense_label_region_properties_2d_numba(
 
 
 @njit(cache=True)
-def _label_perimeter_2d(
-    labels: np.ndarray,
+def _label_border_pixels_4(labels: np.ndarray) -> np.ndarray:
+    """Return a padded label-aware map of 4-neighborhood border pixels."""
+    height, width = labels.shape
+    border_labels = np.zeros((height + 2, width + 2), dtype=np.int32)
+    for row in range(height):
+        for col in range(width):
+            label_id = int(labels[row, col])
+            if label_id <= 0:
+                continue
+            if (
+                row == 0
+                or col == 0
+                or row + 1 == height
+                or col + 1 == width
+                or int(labels[row - 1, col]) != label_id
+                or int(labels[row + 1, col]) != label_id
+                or int(labels[row, col - 1]) != label_id
+                or int(labels[row, col + 1]) != label_id
+            ):
+                border_labels[row + 1, col + 1] = label_id
+    return border_labels
+
+
+@njit(cache=True)
+def _label_perimeter_from_border_pixels_2d(
+    border_labels: np.ndarray,
     label_id: int,
     min_y: int,
     min_x: int,
@@ -769,59 +779,30 @@ def _label_perimeter_2d(
     max_x: int,
 ) -> float:
     """Return skimage-compatible 4-neighborhood Crookes perimeter."""
-    weights = np.zeros(50, dtype=np.float64)
-    weights[5] = 1.0
-    weights[7] = 1.0
-    weights[15] = 1.0
-    weights[17] = 1.0
-    weights[25] = 1.0
-    weights[27] = 1.0
-    weights[21] = np.sqrt(2.0)
-    weights[33] = np.sqrt(2.0)
-    weights[13] = (1.0 + np.sqrt(2.0)) / 2.0
-    weights[23] = (1.0 + np.sqrt(2.0)) / 2.0
-
     total = 0.0
     for row in range(min_y, max_y):
         for col in range(min_x, max_x):
             config = 0
-            if _label_border_pixel_4(labels, label_id, row - 1, col - 1):
+            if int(border_labels[row, col]) == int(label_id):
                 config += 10
-            if _label_border_pixel_4(labels, label_id, row - 1, col):
+            if int(border_labels[row, col + 1]) == int(label_id):
                 config += 2
-            if _label_border_pixel_4(labels, label_id, row - 1, col + 1):
+            if int(border_labels[row, col + 2]) == int(label_id):
                 config += 10
-            if _label_border_pixel_4(labels, label_id, row, col - 1):
+            if int(border_labels[row + 1, col]) == int(label_id):
                 config += 2
-            if _label_border_pixel_4(labels, label_id, row, col):
+            if int(border_labels[row + 1, col + 1]) == int(label_id):
                 config += 1
-            if _label_border_pixel_4(labels, label_id, row, col + 1):
+            if int(border_labels[row + 1, col + 2]) == int(label_id):
                 config += 2
-            if _label_border_pixel_4(labels, label_id, row + 1, col - 1):
+            if int(border_labels[row + 2, col]) == int(label_id):
                 config += 10
-            if _label_border_pixel_4(labels, label_id, row + 1, col):
+            if int(border_labels[row + 2, col + 1]) == int(label_id):
                 config += 2
-            if _label_border_pixel_4(labels, label_id, row + 1, col + 1):
+            if int(border_labels[row + 2, col + 2]) == int(label_id):
                 config += 10
-            total += weights[config]
+            total += _perimeter_weight_for_config_numba(config)
     return total
-
-
-@njit(cache=True)
-def _label_border_pixel_4(
-    labels: np.ndarray,
-    label_id: int,
-    row: int,
-    col: int,
-) -> bool:
-    if not _label_pixel_at(labels, label_id, row, col):
-        return False
-    return not (
-        _label_pixel_at(labels, label_id, row - 1, col)
-        and _label_pixel_at(labels, label_id, row + 1, col)
-        and _label_pixel_at(labels, label_id, row, col - 1)
-        and _label_pixel_at(labels, label_id, row, col + 1)
-    )
 
 
 @njit(cache=True)
@@ -855,28 +836,7 @@ def _label_euler_number_2d(
 
 
 @njit(cache=True)
-def _label_mu11_skimage_order_2d(
-    labels: np.ndarray,
-    label_id: int,
-    min_y: int,
-    min_x: int,
-    max_y: int,
-    max_x: int,
-    centroid_y: float,
-    centroid_x: float,
-) -> float:
-    total = 0.0
-    for col in range(min_x, max_x):
-        column_total = 0.0
-        for row in range(min_y, max_y):
-            if int(labels[row, col]) == int(label_id):
-                column_total += float(row) - centroid_y
-        total += column_total * (float(col) - centroid_x)
-    return total
-
-
-@njit(cache=True)
-def _label_orientation_tensor_components_2d(
+def _label_second_central_moments_2d(
     labels: np.ndarray,
     label_id: int,
     min_y: int,
@@ -885,7 +845,7 @@ def _label_orientation_tensor_components_2d(
     max_x: int,
     m00: float,
 ) -> tuple[float, float, float]:
-    """Return skimage-0.18 orientation tensor components (a, b, c)."""
+    """Return CP 4.2.8.1 local-crop second moments for a dense label."""
     local_height = max_y - min_y
     local_width = max_x - min_x
 
@@ -899,44 +859,80 @@ def _label_orientation_tensor_components_2d(
     centroid_y = sum_y / m00
     centroid_x = sum_x / m00
 
-    # skimage 0.18 computes central moments by reducing the binary crop over
-    # rows first, then columns. The reduction order is observable for symmetric
-    # objects because orientation tie-breaking depends on signed zeros and ulps.
-    powers_y1 = np.empty(local_height, dtype=np.float64)
-    powers_y2 = np.empty(local_height, dtype=np.float64)
+    powers_y = np.empty((local_height, 3), dtype=np.float64)
     for row in range(local_height):
         delta_y = float(row) - centroid_y
-        powers_y1[row] = delta_y
-        powers_y2[row] = delta_y**2.0
+        powers_y[row, 0] = 1.0
+        powers_y[row, 1] = delta_y
+        powers_y[row, 2] = _numpy_124_power_two(delta_y)
 
-    reduced_y0 = np.zeros(local_width, dtype=np.float64)
-    reduced_y1 = np.zeros(local_width, dtype=np.float64)
-    reduced_y2 = np.zeros(local_width, dtype=np.float64)
+    local_image = np.zeros((local_height, local_width), dtype=np.float64)
     for col in range(local_width):
         for row in range(local_height):
-            if int(labels[min_y + row, min_x + col]) != int(label_id):
-                continue
-            reduced_y0[col] += 1.0
-            reduced_y1[col] += powers_y1[row]
-            reduced_y2[col] += powers_y2[row]
+            if int(labels[min_y + row, min_x + col]) == int(label_id):
+                local_image[row, col] = 1.0
 
-    powers_x1 = np.empty(local_width, dtype=np.float64)
-    powers_x2 = np.empty(local_width, dtype=np.float64)
+    powers_x = np.empty((local_width, 3), dtype=np.float64)
     for col in range(local_width):
         delta_x = float(col) - centroid_x
-        powers_x1[col] = delta_x
-        powers_x2[col] = delta_x**2.0
+        powers_x[col, 0] = 1.0
+        powers_x[col, 1] = delta_x
+        powers_x[col, 2] = _numpy_124_power_two(delta_x)
 
-    mu20 = 0.0
-    mu02 = 0.0
-    mu11 = 0.0
-    for col in range(local_width):
-        mu20 += reduced_y2[col]
-        mu02 += reduced_y0[col] * powers_x2[col]
-        mu11 += reduced_y1[col] * powers_x1[col]
+    reduced_y = np.dot(local_image.T, powers_y)
+    moments = np.dot(reduced_y.T, powers_x)
+    return moments[2, 0], moments[0, 2], moments[1, 1]
 
+
+@njit(cache=True)
+def _orientation_from_second_central_moments_2d(
+    mu20: float,
+    mu02: float,
+    mu11: float,
+    m00: float,
+) -> float:
     diagonal_sum = mu20 + mu02
-    return (diagonal_sum - mu20) / m00, -mu11 / m00, (diagonal_sum - mu02) / m00
+    orientation_a = (diagonal_sum - mu20) / m00
+    orientation_b = -mu11 / m00
+    orientation_c = (diagonal_sum - mu02) / m00
+    if orientation_a - orientation_c == 0.0:
+        return -0.25 * np.pi if orientation_b < 0.0 else 0.25 * np.pi
+    return 0.5 * np.arctan2(
+        -2.0 * orientation_b,
+        orientation_c - orientation_a,
+    )
+
+
+@njit(cache=True)
+def _label_orientations_2d(
+    labels: np.ndarray,
+    label_ids: np.ndarray,
+    bbox_min_y: np.ndarray,
+    bbox_min_x: np.ndarray,
+    bbox_max_y: np.ndarray,
+    bbox_max_x: np.ndarray,
+    areas: np.ndarray,
+) -> np.ndarray:
+    """Return canonical orientations for an exact dense-label domain."""
+    orientations = np.empty(len(label_ids), dtype=np.float64)
+    for index in range(len(label_ids)):
+        m00 = float(areas[index])
+        mu20, mu02, mu11 = _label_second_central_moments_2d(
+            labels,
+            int(label_ids[index]),
+            int(bbox_min_y[index]),
+            int(bbox_min_x[index]),
+            int(bbox_max_y[index]),
+            int(bbox_max_x[index]),
+            m00,
+        )
+        orientations[index] = _orientation_from_second_central_moments_2d(
+            mu20,
+            mu02,
+            mu11,
+            m00,
+        )
+    return orientations
 
 
 @njit(cache=True)
@@ -991,13 +987,14 @@ def _label_area_rounded_perimeter_2d_numba(
 
     area = 0.0
     perimeter = 0.0
+    border_labels = _label_border_pixels_4(labels)
     for label_id in range(1, max_label + 1):
         if area_dense[label_id] <= 0.0:
             continue
         area += area_dense[label_id]
         perimeter += np.round(
-            _label_perimeter_2d(
-                labels,
+            _label_perimeter_from_border_pixels_2d(
+                border_labels,
                 label_id,
                 int(min_y[label_id]),
                 int(min_x[label_id]),

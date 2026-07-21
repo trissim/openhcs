@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import math
 import multiprocessing
 import queue
@@ -13,9 +14,12 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from enum import Enum, StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import psutil
+
+if TYPE_CHECKING:
+    from benchmark.reports.cppipe_figures import BenchmarkMetricRow
 
 from benchmark.cellprofiler_comparison import CASE_NAME_FIELD
 from benchmark.cellprofiler_comparison import load_comparison_cases
@@ -23,26 +27,29 @@ from benchmark.cellprofiler_comparison import MEDIAN_NATIVE_EXECUTION_SECONDS_FI
 from benchmark.contracts.comparison_manifest import ComparisonManifest
 from benchmark.metrics.memory import MemoryMetric
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from openhcs.constants.constants import AllComponents
 from openhcs.core.config import (
     AnalysisConsolidationConfig,
     GlobalPipelineConfig,
+    LazyVFSConfig,
     LazyWellFilterConfig,
     LazyPathPlanningConfig,
     MaterializationBackend,
     MultiprocessingStartMethod,
-    PipelineConfig,
-    VFSConfig,
 )
+from openhcs.core.input_workspace import InputWorkspacePreparationRequest
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-from openhcs.core.orchestrator.execution_result import RuntimeObservationMode
+from openhcs.core.orchestrator.execution_result import (
+    ExecutionResult,
+    RuntimeObservationMode,
+)
 from openhcs.core.progress import set_progress_queue
-from openhcs.core.source_schema_workspace import (
-    expand_source_schema_workspace_wells,
+from openhcs.core.source_matching import with_source_component_metadata
+from openhcs.interop.cellprofiler.plate_workspace import (
+    prepare_cellprofiler_input_workspace,
 )
-from openhcs.interop.cellprofiler.source_schema_ingestion import (
-    CellProfilerSourceSchemaWorkspaceRequest,
-    prepare_cellprofiler_source_schema_workspace,
-)
+from openhcs.microscopes.openhcs import FIELDS
+from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
 
 WELL_THROUGHPUT_ROWS_CSV = "well_throughput.csv"
@@ -2046,31 +2053,32 @@ def run_case_well_throughput(
     """Run one converted cppipe over synthetic wells in a single OpenHCS execution."""
     output_root.mkdir(parents=True, exist_ok=True)
     generated_module_path = output_root / f"{cppipe_path.stem}_openhcs.py"
-    ingestion = prepare_cellprofiler_source_schema_workspace(
-        CellProfilerSourceSchemaWorkspaceRequest(
-            source_root=dataset_path,
-            cppipe_path=cppipe_path,
+    prepared = prepare_cellprofiler_input_workspace(
+        InputWorkspacePreparationRequest(
+            selected_path=dataset_path,
+            selected_pipeline_path=cppipe_path,
             workspace_root=(
                 output_root
                 / f"{dataset_path.name}_{cppipe_path.stem}_source_workspace"
             ),
-            generated_pipeline_path=generated_module_path,
-            prune_dead_unmaterialized_artifact_steps=True,
-            materialize_skipped_save_images=False,
-            materialize_terminal_images=False,
-            force_materialization=True,
+            generated_source_path=generated_module_path,
         )
     )
-    prepared = ingestion.prepared_pipeline
-    if prepared.source_schema.is_empty:
+    if prepared.pipeline_import_error is not None:
         raise ValueError(
-            f"Case {case_name} has no source schema; synthetic well expansion requires source-schema input."
+            f"Case {case_name} could not import {cppipe_path.name}: "
+            f"{prepared.pipeline_import_error.message}"
         )
-    source_workspace_path = ingestion.source_workspace_path
-    if source_workspace_path is None:
-        raise RuntimeError("Forced source-schema materialization returned no workspace.")
-    well_ids = expand_source_schema_workspace_wells(
-        source_workspace_path / "openhcs_metadata.json",
+    if prepared.pipeline_steps is None or prepared.pipeline_config is None:
+        raise ValueError(f"Case {case_name} produced no executable pipeline.")
+    if prepared.materialization is None:
+        raise ValueError(
+            f"Case {case_name} has no source bindings; synthetic well expansion "
+            "requires a materialized source-binding workspace."
+        )
+    source_workspace_path = prepared.execution_plate_path
+    well_ids = _replicate_source_binding_workspace_wells(
+        prepared.materialization.metadata_path,
         _synthetic_well_ids(mode.well_count),
     )
 
@@ -2083,13 +2091,13 @@ def run_case_well_throughput(
     )
     ensure_global_config_context(GlobalPipelineConfig, global_config)
     pipeline_config = replace(
-        prepared.generated_pipeline.pipeline_config,
+        prepared.pipeline_config,
         well_filter_config=LazyWellFilterConfig(well_filter=list(well_ids)),
         path_planning_config=LazyPathPlanningConfig(
             global_output_folder=output_root,
             output_dir_suffix="_well_throughput",
         ),
-        vfs_config=VFSConfig(materialization_backend=MaterializationBackend.DISK),
+        vfs_config=LazyVFSConfig(materialization_backend=MaterializationBackend.DISK),
     )
     orchestrator = PipelineOrchestrator(
         source_workspace_path,
@@ -2116,7 +2124,7 @@ def run_case_well_throughput(
     compile_seconds = 0.0
     prepare_seconds = 0.0
     execute_seconds = 0.0
-    execution_results: Mapping[Any, Any] = {}
+    execution_results: Mapping[object, ExecutionResult] = {}
     started_at = time.perf_counter()
     with MemoryMetric(
         interval_seconds=0.05,
@@ -2134,7 +2142,7 @@ def run_case_well_throughput(
                 set_progress_queue(progress_queue)
                 try:
                     compilation = orchestrator.compile_pipelines(
-                        pipeline_definition=prepared.runtime_pipeline_steps,
+                        pipeline_definition=prepared.pipeline_steps,
                     )
                 finally:
                     set_progress_queue(None)
@@ -2144,7 +2152,7 @@ def run_case_well_throughput(
                 compiled_contexts = execution_bundle.runtime_contexts
                 pipeline_definition = compilation.get(
                     "pipeline_definition",
-                    prepared.runtime_pipeline_steps,
+                    prepared.pipeline_steps,
                 )
 
                 execute_started_at = time.perf_counter()
@@ -2157,7 +2165,7 @@ def run_case_well_throughput(
                     runtime_observation_mode=RuntimeObservationMode.OMIT,
                 )
                 execute_seconds = time.perf_counter() - execute_started_at
-            except KeyboardInterrupt as exc:
+            except KeyboardInterrupt:
                 peak_memory_mb = memory_metric.get_result()
                 total_seconds = time.perf_counter() - started_at
                 if memory_metric.limit_exceeded and max_memory_mb is not None:
@@ -2229,7 +2237,7 @@ def run_case_well_throughput(
     successful_wells = sum(
         1
         for result in execution_results.values()
-        if _execution_result_succeeded(result)
+        if result.is_success()
     )
     _write_progress_diagnostics(
         output_root,
@@ -2985,25 +2993,99 @@ def _deterministic_jitter(index: int, count: int) -> float:
     return ((index / (count - 1)) - 0.5) * spread
 
 
+def _replicate_source_binding_workspace_wells(
+    metadata_path: Path,
+    well_ids: Iterable[str],
+) -> tuple[str, ...]:
+    """Replicate one benchmark source workspace without copying source pixels."""
+
+    target_wells = tuple(dict.fromkeys(str(well_id) for well_id in well_ids))
+    if not target_wells:
+        raise ValueError("well_ids must contain at least one well.")
+
+    metadata_path = Path(metadata_path)
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    subdirectories = metadata.get(FIELDS.SUBDIRECTORIES)
+    if not isinstance(subdirectories, dict):
+        raise ValueError(f"OpenHCS metadata lacks subdirectories: {metadata_path}")
+    main_metadata = subdirectories.get(FIELDS.DEFAULT_SUBDIRECTORY)
+    if not isinstance(main_metadata, dict):
+        raise ValueError(f"OpenHCS metadata lacks its main source workspace: {metadata_path}")
+    workspace_mapping = main_metadata.get(FIELDS.WORKSPACE_MAPPING)
+    if not isinstance(workspace_mapping, dict) or not workspace_mapping:
+        raise ValueError(f"OpenHCS metadata lacks source mappings: {metadata_path}")
+    source_metadata = main_metadata.get(FIELDS.SOURCE_METADATA) or {}
+    if not isinstance(source_metadata, dict):
+        raise ValueError(f"OpenHCS source metadata is not a mapping: {metadata_path}")
+
+    parser = SourceSchemaFilenameParser()
+    expanded_mapping: dict[str, object] = {}
+    expanded_metadata: dict[str, dict[str, object]] = {}
+    used_paths: set[str] = set()
+    for virtual_path, source_ref in workspace_mapping.items():
+        parsed = parser.parse_filename(str(virtual_path))
+        if parsed is None:
+            raise ValueError(f"Cannot parse source-binding path {virtual_path!r}.")
+        path_metadata = source_metadata.get(str(virtual_path), {})
+        if not isinstance(path_metadata, dict):
+            raise ValueError(f"Source metadata for {virtual_path!r} is not a mapping.")
+        for well_id in target_wells:
+            site = parsed["site"]
+            expanded_path = _synthetic_well_virtual_path(
+                parser,
+                str(virtual_path),
+                parsed,
+                well_id,
+                site,
+            )
+            ordinal_site = 1
+            while expanded_path in used_paths:
+                expanded_path = _synthetic_well_virtual_path(
+                    parser,
+                    str(virtual_path),
+                    parsed,
+                    well_id,
+                    ordinal_site,
+                )
+                ordinal_site += 1
+            used_paths.add(expanded_path)
+            expanded_mapping[expanded_path] = source_ref
+            expanded_metadata[expanded_path] = dict(
+                with_source_component_metadata(
+                    path_metadata,
+                    AllComponents.WELL,
+                    well_id,
+                )
+            )
+
+    main_metadata[FIELDS.IMAGE_FILES] = list(expanded_mapping)
+    main_metadata[FIELDS.WORKSPACE_MAPPING] = expanded_mapping
+    main_metadata[FIELDS.SOURCE_METADATA] = expanded_metadata
+    main_metadata[FIELDS.WELLS] = {well_id: None for well_id in target_wells}
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return target_wells
+
+
+def _synthetic_well_virtual_path(
+    parser: SourceSchemaFilenameParser,
+    virtual_path: str,
+    parsed: Mapping[str, object],
+    well_id: str,
+    site: object,
+) -> str:
+    filename = parser.construct_filename(
+        well=well_id,
+        site=site,
+        channel=parsed["channel"],
+        z_index=parsed["z_index"],
+        timepoint=parsed["timepoint"],
+        extension=str(parsed["extension"]),
+    )
+    return str(Path(virtual_path).with_name(filename))
+
+
 def _synthetic_well_ids(count: int) -> tuple[str, ...]:
     return tuple(f"W{index:03d}" for index in range(1, count + 1))
-
-
-def _execution_result_succeeded(result: Any) -> bool:
-    if isinstance(result, WellThroughputResult):
-        return result.is_successful()
-    is_success = getattr(result, "is_success", None)
-    if callable(is_success):
-        return bool(is_success())
-    status = getattr(result, "status", None)
-    if status is not None:
-        status_value = getattr(status, "value", status)
-        return str(status_value).lower() == "success"
-    if isinstance(result, dict):
-        raw_status = result.get("status")
-        status_value = getattr(raw_status, "value", raw_status)
-        return status_value is None or str(status_value).lower() == "success"
-    return True
 
 
 def _drain_progress_queue(

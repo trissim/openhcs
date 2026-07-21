@@ -8,14 +8,13 @@ determining materialization flags and backend selection for each step in a pipel
 import logging
 import dataclasses
 from pathlib import Path
-from typing import List
+from typing import List, Sequence
 
 from openhcs.constants.constants import Backend
-from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
-from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.config import MaterializationBackend
+from openhcs.core.utils import WellFilterProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +27,8 @@ class MaterializationFlagPlanner:
         context: ProcessingContext,
         pipeline_definition: List[AbstractStep],
         plate_path: Path,
-        pipeline_config
+        pipeline_config,
+        available_axis_values: Sequence[str] | None = None,
     ) -> None:
         """
         Set read/write backends for pipeline steps.
@@ -39,6 +39,8 @@ class MaterializationFlagPlanner:
             plate_path: Path to plate data
             pipeline_config: Merged GlobalPipelineConfig, not the raw
                            PipelineConfig. This ensures proper inheritance.
+            available_axis_values: Authoritative ordered multiprocessing-axis
+                values used to resolve the path-planning well filter.
         """
 
         # === SETUP ===
@@ -46,6 +48,22 @@ class MaterializationFlagPlanner:
         # This ensures inheritance without field-specific resolution here.
         vfs_config = pipeline_config.vfs_config
         step_plans = context.step_plans
+        path_config = pipeline_config.path_planning_config
+        axis_values = tuple(
+            str(value)
+            for value in (
+                available_axis_values
+                if available_axis_values is not None
+                else (context.axis_id,)
+            )
+        )
+        materializes_main_flow_axis = (
+            MaterializationFlagPlanner._path_planning_allows_axis(
+                axis_id=str(context.axis_id),
+                available_axis_values=axis_values,
+                path_config=path_config,
+            )
+        )
 
         last_image_materialization_step = (
             MaterializationFlagPlanner._last_image_materialization_step(
@@ -89,12 +107,13 @@ class MaterializationFlagPlanner:
             # Check if this step will use zarr (has zarr_config set by compiler)
             will_use_zarr = step_plan.zarr_config is not None
 
-            if will_use_zarr:
+            if will_use_zarr and materializes_main_flow_axis:
                 # Steps with zarr_config should write to materialization backend
                 materialization_backend = MaterializationFlagPlanner._resolve_materialization_backend(context, vfs_config)
                 step_plan.write_backend = materialization_backend
             elif (
-                i == last_image_materialization_step
+                materializes_main_flow_axis
+                and i == last_image_materialization_step
             ):  # Last image-producing step without zarr - write to materialization backend
                 materialization_backend = MaterializationFlagPlanner._resolve_materialization_backend(context, vfs_config)
                 step_plan.write_backend = materialization_backend
@@ -108,6 +127,30 @@ class MaterializationFlagPlanner:
                     step_plan.materialized_output,
                     backend=materialization_backend,
                 )
+
+        if not materializes_main_flow_axis:
+            logger.info(
+                "Path-planning filter keeps axis %s runtime-only; automatic "
+                "main-flow output persistence is disabled for this axis.",
+                context.axis_id,
+            )
+
+    @staticmethod
+    def _path_planning_allows_axis(
+        *,
+        axis_id: str,
+        available_axis_values: Sequence[str],
+        path_config,
+    ) -> bool:
+        """Return whether the automatic output plate receives this axis."""
+        if path_config.well_filter is None:
+            return True
+        selected_axis_values = WellFilterProcessor.resolve_filter_with_mode(
+            path_config.well_filter,
+            path_config.well_filter_mode,
+            list(available_axis_values),
+        )
+        return axis_id in selected_axis_values
 
     @staticmethod
     def _get_first_step_read_backend(context: ProcessingContext, vfs_config) -> str:
@@ -145,10 +188,9 @@ class MaterializationFlagPlanner:
         """Return whether automatic final materialization should flush images."""
         if not step_plan.artifact_outputs:
             return True
-        image_kinds = {ImageArtifactType, ObjectLabelsArtifactType}
         return any(
-            output.artifact_type in image_kinds
-            and output.materialization is not NO_ARTIFACT_MATERIALIZATION
+            output.artifact_type.participates_in_main_flow_output
+            and output.materialization is not None
             for output in step_plan.artifact_outputs.values()
         )
 

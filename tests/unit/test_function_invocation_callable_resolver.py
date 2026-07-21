@@ -4,20 +4,13 @@ from openhcs.core.function_patterns import (
     CompiledFunctionInvocation,
     FunctionInvocationKey,
 )
-from openhcs.core.module_artifact_contract import ModuleArtifactContract
-from openhcs.core.module_artifact_contract import (
-    DeclaredArtifactOutputPartition,
-    RecordedArtifactOutputPartition,
-    RuntimeArtifactInputPartition,
-    SourceArtifactInputPartition,
-)
 from openhcs.core.function_reference import FunctionReference
 from openhcs.core.steps.function_runtime import FunctionInvocationCallableResolver
 
 
 def _callable_contract_for_reference(
     reference: FunctionReference,
-    module_contract: ModuleArtifactContract,
+    output_spec: ArtifactSpec,
 ) -> CallableContract:
     return CallableContract(
         func=reference,
@@ -26,12 +19,12 @@ def _callable_contract_for_reference(
         metadata=CallableMetadata(
             input_memory_type="python",
             output_memory_type="python",
-            module_artifact_contract=module_contract,
+            artifact_outputs=(output_spec,),
         ),
     )
 
 
-def test_function_reference_cache_key_includes_module_artifact_contract():
+def test_function_reference_cache_key_distinguishes_compiled_callable_contracts():
     reference = FunctionReference(
         function_name="image_math",
         registry_name="cellprofiler",
@@ -41,35 +34,11 @@ def test_function_reference_cache_key_includes_module_artifact_contract():
     )
     first_contract = _callable_contract_for_reference(
         reference,
-        ModuleArtifactContract(
-            "ImageMath",
-            items=(
-                *ModuleArtifactContract.items_for_partition(
-                    RecordedArtifactOutputPartition,
-                    (ArtifactSpec.output("CombinedImage", ImageArtifactType),),
-                ),
-                *ModuleArtifactContract.items_for_partition(
-                    DeclaredArtifactOutputPartition,
-                    (ArtifactSpec.output("CombinedImage", ImageArtifactType),),
-                ),
-            ),
-        ),
+        ArtifactSpec.output("CombinedImage", ImageArtifactType),
     )
     second_contract = _callable_contract_for_reference(
         reference,
-        ModuleArtifactContract(
-            "ImageMath",
-            items=(
-                *ModuleArtifactContract.items_for_partition(
-                    RecordedArtifactOutputPartition,
-                    (ArtifactSpec.output("SubtractedRed", ImageArtifactType),),
-                ),
-                *ModuleArtifactContract.items_for_partition(
-                    DeclaredArtifactOutputPartition,
-                    (ArtifactSpec.output("SubtractedRed", ImageArtifactType),),
-                ),
-            ),
-        ),
+        ArtifactSpec.output("SubtractedRed", ImageArtifactType),
     )
 
     first_invocation = CompiledFunctionInvocation(

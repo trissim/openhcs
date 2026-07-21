@@ -7,8 +7,7 @@ Uses hybrid approach: extracted business logic + clean PyQt6 UI.
 
 import logging
 from functools import cache
-from pathlib import Path
-from typing import Optional, Callable, Dict, List, Any
+from typing import Optional, Callable, Dict, List
 
 from PyQt6.QtWidgets import (
     QVBoxLayout,
@@ -17,7 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
     QMessageBox,
 )
-from PyQt6.QtCore import pyqtSignal, Qt, QTimer
+from PyQt6.QtCore import pyqtSignal, QTimer
 from PyQt6.QtGui import QShowEvent
 
 from openhcs.core.steps.function_step import FunctionSpec, FunctionStep
@@ -28,13 +27,22 @@ from openhcs.pyqt_gui.windows.dual_editor_tab_builder import (
     _DualEditorTabBuildContext,
     _DualEditorTabBuilder,
 )
-from openhcs.constants.constants import GroupBy
 from openhcs.core.config import PipelineConfig
+from openhcs.core.artifact_inspection import CompiledArtifactInspection
 from openhcs.core.source_binding_context import SourceBindingContext
-from openhcs.core.pipeline_image_schema import PipelineImageSchema
+from openhcs.core.source_bindings import SourceBindingsConfig
 from openhcs.config_framework import is_global_config_instance
 from openhcs.config_framework.global_config import get_current_global_config
 from openhcs.core.steps.abstract import AbstractStep
+from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
+    PlateCompiledState,
+)
+from openhcs.pyqt_gui.widgets.shared.services.runtime_artifact_progress_service import (
+    RuntimeArtifactAvailableNotification,
+)
+from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
+    DebugSnapshotAvailableNotification,
+)
 from openhcs.ui.shared.pattern_data_manager import PatternDataManager
 from openhcs.pyqt_gui.services.step_scope_identity import (
     StepEditorScope,
@@ -189,11 +197,14 @@ class DualEditorWindow(BaseFormDialog):
         step_index: Optional[int] = None,
         *,
         plate_scope: str,
-        source_schema: PipelineImageSchema | None = None,
+        source_bindings: SourceBindingsConfig | None = None,
         source_binding_context: SourceBindingContext | None = None,
         function_invocation_badge_provider: Optional[
             Callable[[str, int, Callable], Optional[str]]
         ] = None,
+        compiled_artifact_inspection_provider: (
+            Callable[[str], CompiledArtifactInspection | None] | None
+        ) = None,
     ):
         """
         Initialize the dual editor window.
@@ -215,6 +226,9 @@ class DualEditorWindow(BaseFormDialog):
         # Store step_index for border pattern (used by ScopedBorderMixin.init_scope_border)
         self._step_index = step_index
         self._function_invocation_badge_provider = function_invocation_badge_provider
+        self._compiled_artifact_inspection_provider = (
+            compiled_artifact_inspection_provider
+        )
         self.service_adapter = _resolve_service_adapter(service_adapter, parent)
 
         # Make window non-modal (like plate manager and pipeline editor)
@@ -224,7 +238,7 @@ class DualEditorWindow(BaseFormDialog):
         self.color_scheme = color_scheme or ColorScheme()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
         self.gui_config = gui_config
-        self.source_schema = source_schema
+        self.source_bindings = source_bindings
         self.source_binding_context = source_binding_context
 
         # Business logic state (extracted from Textual version)
@@ -263,7 +277,7 @@ class DualEditorWindow(BaseFormDialog):
         # hooks can run during init_scope_border() without attribute errors.
         self.step_editor = None
         self.func_editor = None
-        self.artifact_contract_preview = None
+        self.artifact_plan_view = None
 
         self._flash_overlay = None  # Window flash overlay for visual feedback
         self._flash_overlay_cleaned = False  # Track if overlay was cleaned up
@@ -273,6 +287,9 @@ class DualEditorWindow(BaseFormDialog):
         self._time_travel_title_refresh_callback = None
         self._event_bus = None
         self._orchestrator_config_signal = None
+        self._compiled_artifact_signal = None
+        self._runtime_artifact_signal = None
+        self._debug_snapshot_signal = None
 
         # Setup UI
         self.setup_ui()
@@ -474,7 +491,7 @@ class DualEditorWindow(BaseFormDialog):
                 scope_id=self.scope_id,
                 step_index=self._step_index,
                 scope_accent_color=self._scope_accent_color,
-                source_schema=self.source_schema,
+                source_bindings=self.source_bindings,
                 source_binding_context=self.source_binding_context,
                 invocation_badge_provider=self._function_invocation_badge_provider,
                 main_window=self._find_main_window(),
@@ -483,14 +500,15 @@ class DualEditorWindow(BaseFormDialog):
                 update_window_title=self._update_window_title,
                 detect_changes=self.detect_changes,
                 sync_function_editor_from_step=self._sync_function_editor_from_step,
-                refresh_artifact_contract_preview=(
-                    self._refresh_artifact_contract_preview
+                invalidate_artifact_plan=self._invalidate_artifact_plan,
+                compiled_artifact_inspection=(
+                    self._current_compiled_artifact_inspection()
                 ),
             )
         ).build_into(self._tab_body)
         self.step_editor = tabs.step_editor
         self.func_editor = tabs.func_editor
-        self.artifact_contract_preview = tabs.artifact_contract_preview
+        self.artifact_plan_view = tabs.artifact_plan_view
         self._function_pattern_controller = tabs.function_pattern_controller
 
         # Editors now exist; apply scope styling to their widget trees.
@@ -715,6 +733,8 @@ class DualEditorWindow(BaseFormDialog):
                 self.step_editor.step_index = new_index
             if self.func_editor:
                 self.func_editor.set_scope_index(new_index)
+            if self.artifact_plan_view:
+                self.artifact_plan_view.set_step_index(new_index)
             self._refresh_scope_border()
             self._update_window_title()
 
@@ -735,11 +755,7 @@ class DualEditorWindow(BaseFormDialog):
             if self.func_editor and updated_step.func:
                 self.func_editor._initialize_pattern_data(updated_step.func)
                 self.func_editor._populate_function_list()
-            if self.artifact_contract_preview and updated_step.func:
-                self.artifact_contract_preview.set_function_spec(
-                    updated_step.func,
-                    source_bindings=updated_step.source_bindings,
-                )
+            self._invalidate_artifact_plan()
 
             # Detect changes (might have unsaved changes now)
             self.detect_changes()
@@ -807,6 +823,22 @@ class DualEditorWindow(BaseFormDialog):
         signal.connect(self.on_orchestrator_config_changed)
         self._orchestrator_config_signal = signal
 
+    def connect_artifact_signals(
+        self,
+        *,
+        compiled_artifact_signal,
+        runtime_artifact_signal,
+        debug_snapshot_signal,
+    ) -> None:
+        """Subscribe the Artifact tab to typed compile/runtime notifications."""
+
+        compiled_artifact_signal.connect(self._on_compiled_artifact_state_changed)
+        runtime_artifact_signal.connect(self._on_runtime_artifact_available)
+        debug_snapshot_signal.connect(self._on_debug_snapshot_available)
+        self._compiled_artifact_signal = compiled_artifact_signal
+        self._runtime_artifact_signal = runtime_artifact_signal
+        self._debug_snapshot_signal = debug_snapshot_signal
+
     def _cleanup_managed_listeners(self) -> None:
         """Disconnect editor-owned cross-window subscriptions."""
         event_bus = self._event_bus
@@ -829,6 +861,23 @@ class DualEditorWindow(BaseFormDialog):
             except TypeError:
                 pass
             self._orchestrator_config_signal = None
+
+        compiled_artifact_signal = self._compiled_artifact_signal
+        if compiled_artifact_signal is not None:
+            compiled_artifact_signal.disconnect(
+                self._on_compiled_artifact_state_changed
+            )
+            self._compiled_artifact_signal = None
+
+        runtime_artifact_signal = self._runtime_artifact_signal
+        if runtime_artifact_signal is not None:
+            runtime_artifact_signal.disconnect(self._on_runtime_artifact_available)
+            self._runtime_artifact_signal = None
+
+        debug_snapshot_signal = self._debug_snapshot_signal
+        if debug_snapshot_signal is not None:
+            debug_snapshot_signal.disconnect(self._on_debug_snapshot_available)
+            self._debug_snapshot_signal = None
 
         super()._cleanup_managed_listeners()
 
@@ -865,7 +914,7 @@ class DualEditorWindow(BaseFormDialog):
         if not self._session.sync_function_editor_from_step():
             return
 
-        self._refresh_artifact_contract_preview(self._session.current_function_spec())
+        self._invalidate_artifact_plan()
 
         logger.debug("✅ Triggered function editor refresh from context")
 
@@ -873,13 +922,62 @@ class DualEditorWindow(BaseFormDialog):
         """Compatibility wrapper for tests; authority lives in DualEditorSession."""
         return self._session.current_function_spec()
 
-    def _refresh_artifact_contract_preview(self, func_spec: FunctionSpec) -> None:
-        if self.artifact_contract_preview is None:
+    def _invalidate_artifact_plan(self) -> None:
+        if self.artifact_plan_view is None:
             return
-        self.artifact_contract_preview.set_function_spec(
-            func_spec,
-            source_bindings=self._session.current_source_bindings(),
-        )
+        self.artifact_plan_view.set_inspection(None)
+
+    def _current_compiled_artifact_inspection(
+        self,
+    ) -> CompiledArtifactInspection | None:
+        provider = self._compiled_artifact_inspection_provider
+        if provider is None:
+            return None
+        inspection = provider(self.plate_scope)
+        if inspection is not None and not isinstance(
+            inspection,
+            CompiledArtifactInspection,
+        ):
+            raise TypeError(
+                "Compiled artifact inspection provider returned "
+                f"{type(inspection).__name__}."
+            )
+        return inspection
+
+    def _on_compiled_artifact_state_changed(
+        self,
+        plate_path: str,
+        state: PlateCompiledState | None,
+    ) -> None:
+        if plate_path != self.plate_scope:
+            return
+        if state is not None and not isinstance(state, PlateCompiledState):
+            raise TypeError(
+                "Compiled artifact state signal requires PlateCompiledState or None, got "
+                f"{type(state).__name__}."
+            )
+        if self.artifact_plan_view is not None:
+            self.artifact_plan_view.set_inspection(
+                None if state is None else state.inspection
+            )
+
+    def _on_runtime_artifact_available(
+        self,
+        notification: RuntimeArtifactAvailableNotification,
+    ) -> None:
+        if notification.event.plate_id != self.plate_scope:
+            return
+        if self.artifact_plan_view is not None:
+            self.artifact_plan_view.apply_runtime_notification(notification)
+
+    def _on_debug_snapshot_available(
+        self,
+        notification: DebugSnapshotAvailableNotification,
+    ) -> None:
+        if notification.progress_event.plate_id != self.plate_scope:
+            return
+        if self.artifact_plan_view is not None and notification.snapshot is not None:
+            self.artifact_plan_view.apply_debug_snapshot(notification.snapshot)
 
     def _find_main_window(self):
         """Return the main window from the editor service adapter."""

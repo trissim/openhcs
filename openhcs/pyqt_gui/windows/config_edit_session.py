@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import copy
 from dataclasses import dataclass, field
-from typing import Generic, TypeVar
+from typing import Generic, TypeVar, cast
 
 from openhcs.config_framework import is_global_config_type
 from openhcs.config_framework.global_config import (
@@ -15,6 +15,11 @@ from openhcs.config_framework.global_config import (
 )
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from objectstate import ObjectStateEditSession
+from objectstate.lazy_factory import LazyDataclass
+
+from openhcs.serialization.pycodify_formatters import (
+    LazyDataclassFieldEmissionState,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +31,6 @@ ConfigT = TypeVar("ConfigT")
 class ConfigEditSession(Generic[ConfigT]):
     """Own non-visual config edit state for ConfigWindow."""
 
-    config_class: type[ConfigT]
     state: ObjectState
     original_config: ConfigT
     global_context_dirty: bool = False
@@ -45,12 +49,37 @@ class ConfigEditSession(Generic[ConfigT]):
         )
 
     @property
+    def config_class(self) -> type[ConfigT]:
+        return type(self.original_config)
+
+    @property
     def is_global_config(self) -> bool:
         return is_global_config_type(self.config_class)
 
     def to_object(self) -> ConfigT:
         """Reconstruct the current config object from ObjectState storage."""
         return self._object_session.to_object()
+
+    def to_code_document_object(self) -> ConfigT:
+        """Reconstruct config while retaining only authored lazy field paths.
+
+        Flattened ``ObjectState`` storage reconstructs every nested lazy
+        dataclass so raw inheritance markers remain intact.  Clean code mode
+        must not mistake those reconstructed containers for user-authored
+        overrides, so project the object through ObjectState's authoritative
+        signature-diff paths before serialization.
+        """
+
+        config = self.to_object()
+        if not isinstance(config, LazyDataclass):
+            return config
+        return cast(
+            ConfigT,
+            LazyDataclassFieldEmissionState.retain_only_authored_paths(
+                config,
+                self.state.signature_diff_fields,
+            ),
+        )
 
     def begin_save_callback(self, window_id: int) -> None:
         self.saving = True

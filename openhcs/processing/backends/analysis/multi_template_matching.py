@@ -13,6 +13,7 @@ from typing import Tuple, List, Dict, Any, Optional, Union
 from dataclasses import dataclass
 import logging
 import pandas as pd
+from python_introspect import set_signature_analysis_target
 from openhcs.constants.constants import Backend
 from pathlib import Path
 
@@ -20,6 +21,7 @@ import MTM
 
 from openhcs.core.memory import numpy as numpy_func
 from openhcs.core.pipeline.function_contracts import artifact_outputs
+from openhcs.core.vfs_protocol import PlateInputFile
 from openhcs.processing.materialization import CsvOptions, MaterializationSpec
 
 
@@ -84,7 +86,7 @@ class TemplateMatchResult:
 ))
 def multi_template_crop_reference_channel(
     image_stack: np.ndarray,
-    template_path: str,
+    template_path: PlateInputFile,
     reference_channel: int = 0,
     score_threshold: float = 0.8,
     max_matches: int = 1,
@@ -107,35 +109,9 @@ def multi_template_crop_reference_channel(
 
     Parameters
     ----------
-    image_stack : np.ndarray
-        3D array of shape (Z, Y, X) where Z represents channels/slices
-    template_path : str
-        Path to the template image file (supports common formats: PNG, JPEG, TIFF)
     reference_channel : int, default=0
         Channel index to use for template matching (0-based). All other channels
         will be cropped using the coordinates found in this channel.
-    score_threshold : float, default=0.8
-        Minimum correlation score for template matches (0.0 to 1.0)
-    max_matches : int, default=1
-        Maximum number of matches to find in the reference channel
-    crop_margin : int, default=0
-        Additional pixels to include around the matched template region
-    method : int, default=cv2.TM_CCOEFF_NORMED,
-        OpenCV template matching method (currently not used by MTM)
-    use_best_match_only : bool, default=True
-        If True, only crop around the best match in the reference channel
-    normalize_input : bool, default=True
-        Whether to normalize input slices to uint8 range for MTM processing
-    pad_mode : str, default="constant"
-        Padding mode for size normalization ('constant', 'edge', 'reflect', etc.)
-    rotation_range : float, default=0.0
-        Total rotation range in degrees (e.g., 360.0 for full rotation)
-    rotation_step : float, default=45.0
-        Rotation increment in degrees (e.g., 45.0 for 8 orientations)
-    rotate_result : bool, default=True
-        Whether to rotate cropped results back to upright orientation
-    crop_enabled : bool, default=True
-        Whether to crop regions around matches. If False, returns original stack
 
     Returns
     -------
@@ -256,7 +232,7 @@ def multi_template_crop_reference_channel(
 ))
 def multi_template_crop_subset(
     image_stack: np.ndarray,
-    template_path: str,
+    template_path: PlateInputFile,
     reference_channel: int = 0,
     target_channels: Optional[List[int]] = None,
     score_threshold: float = 0.8,
@@ -280,37 +256,11 @@ def multi_template_crop_subset(
 
     Parameters
     ----------
-    image_stack : np.ndarray
-        3D array of shape (Z, Y, X) where Z represents channels/slices
-    template_path : str
-        Path to the template image file
     reference_channel : int, default=0
         Channel index to use for template matching (0-based)
     target_channels : List[int], optional
         List of channel indices to crop. If None, crops all channels.
         Example: [0, 2, 3] to crop channels 0, 2, and 3 only
-    score_threshold : float, default=0.8
-        Minimum correlation score for template matches
-    max_matches : int, default=1
-        Maximum number of matches to find in the reference channel
-    crop_margin : int, default=0
-        Additional pixels around the matched region
-    method : int, default=cv2.TM_CCOEFF_NORMED,
-        OpenCV template matching method
-    use_best_match_only : bool, default=True
-        If True, only crop around the best match
-    normalize_input : bool, default=True
-        Whether to normalize input for MTM processing
-    pad_mode : str, default="constant"
-        Padding mode for size normalization
-    rotation_range : float, default=0.0
-        Total rotation range in degrees
-    rotation_step : float, default=45.0
-        Rotation increment in degrees
-    rotate_result : bool, default=True
-        Whether to rotate cropped results back to upright
-    crop_enabled : bool, default=True
-        Whether to crop regions around matches
 
     Returns
     -------
@@ -410,7 +360,7 @@ def multi_template_crop_subset(
 ))
 def multi_template_crop(
     image_stack: np.ndarray,
-    template_path: str,
+    template_path: PlateInputFile,
     score_threshold: float = 0.8,
     max_matches: int = 1,
     crop_margin: int = 0,
@@ -432,8 +382,6 @@ def multi_template_crop(
     
     Parameters
     ----------
-    image_stack : np.ndarray
-        3D array of shape (Z, Y, X) containing the image slices to process
     template_path : str
         Path to the template image file (supports common formats: PNG, JPEG, TIFF)
     score_threshold : float, default=0.8
@@ -554,6 +502,16 @@ def multi_template_crop(
         logging.info(f"Template matching complete. Original stack shape preserved: {cropped_stack.shape}")
 
     return cropped_stack, match_results
+
+
+set_signature_analysis_target(
+    multi_template_crop_reference_channel,
+    multi_template_crop,
+)
+set_signature_analysis_target(
+    multi_template_crop_subset,
+    multi_template_crop,
+)
 
 
 

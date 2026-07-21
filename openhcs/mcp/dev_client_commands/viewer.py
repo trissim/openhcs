@@ -526,6 +526,13 @@ class SampleViewerImageCommandSpec(SingleToolCommandSpec):
             "max_array_elements",
             "--max-array-elements",
         )
+        add_request_field_option(
+            parser,
+            ViewerWindowImageSampleRequest,
+            "max_records",
+            "--max-records",
+            "--limit",
+        )
         parser.add_argument(
             "--json",
             action="store_true",
@@ -567,6 +574,7 @@ class SampleViewerImageCommandSpec(SingleToolCommandSpec):
             width=args.width,
             include_array_values=args.include_array_values,
             max_array_elements=args.max_array_elements,
+            max_records=args.max_records,
         )
         return McpToolArgumentAuthority.from_payload(request.as_tool_arguments())
 

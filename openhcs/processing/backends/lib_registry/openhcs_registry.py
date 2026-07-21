@@ -208,6 +208,10 @@ class OpenHCSRegistry(LibraryRegistryBase):
         Custom functions are NOT cached - they're loaded fresh from .py files
         each time and added to the result here.
         """
+        for _, module in self.get_modules_to_scan():
+            if isinstance(module, OpenHCSFunctionCatalogModule):
+                module.openhcs_registry_functions()
+
         # Get module-based functions from cache or discovery
         functions = super().load_or_discover_functions()
         if not self.MODULES_TO_SCAN:
@@ -254,6 +258,16 @@ class OpenHCSRegistry(LibraryRegistryBase):
 
         functions = {}
         modules = self.get_modules_to_scan()
+        catalog_functions = {
+            module_name: module.openhcs_registry_functions()
+            for module_name, module in modules
+            if isinstance(module, OpenHCSFunctionCatalogModule)
+        }
+        catalog_owned_modules = {
+            func.__module__
+            for owned_functions in catalog_functions.values()
+            for func in owned_functions
+        }
 
         logger.info(f"🔍 OpenHCS Registry: Scanning {len(modules)} modules for functions with memory type decorators")
 
@@ -262,12 +276,11 @@ class OpenHCSRegistry(LibraryRegistryBase):
             module_function_count = 0
 
             if isinstance(module, OpenHCSFunctionCatalogModule):
-                for func in module.openhcs_registry_functions():
+                for func in catalog_functions[module_name]:
                     metadata = self._metadata_for_function(
                         func.__name__,
                         func,
                         module_name,
-                        module,
                         ProcessingContract,
                     )
                     if metadata is None:
@@ -275,6 +288,13 @@ class OpenHCSRegistry(LibraryRegistryBase):
                     functions[metadata.name] = metadata
                     module_function_count += 1
                 logger.debug(f"  📦 {module_name}: Found {module_function_count} OpenHCS functions")
+                continue
+
+            if module_name in catalog_owned_modules:
+                logger.debug(
+                    "Skipping %s because its functions are owned by a catalog module",
+                    module_name,
+                )
                 continue
 
             for name, func in inspect.getmembers(module, inspect.isfunction):
@@ -287,7 +307,6 @@ class OpenHCSRegistry(LibraryRegistryBase):
                     name,
                     func,
                     module_name,
-                    module,
                     ProcessingContract,
                 )
                 if metadata is None:
@@ -310,7 +329,6 @@ class OpenHCSRegistry(LibraryRegistryBase):
         name: str,
         func,
         module_name: str,
-        module,
         ProcessingContract,
     ) -> FunctionMetadata | None:
         callable_contract = CallableContract.from_callable(func)
@@ -346,12 +364,6 @@ class OpenHCSRegistry(LibraryRegistryBase):
 
         # Apply nominal contract wrapper.
         wrapped_func = self.apply_contract_wrapper(func, contract)
-
-        # Ordinary backend modules expose the runtime-control wrapper directly.
-        # Catalog modules own their public export surface; mutating their globals
-        # poisons the catalog with registry wrapper controls.
-        if not isinstance(module, OpenHCSFunctionCatalogModule):
-            setattr(module, name, wrapped_func)
 
         # Generate unique function name using module information
         unique_name = self._generate_function_name(name, module_name)

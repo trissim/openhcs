@@ -6,7 +6,8 @@ from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.config_framework.collection_containers import RootState
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
-from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
+from openhcs.pyqt_gui.config import get_default_ui_config
+from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
 from openhcs.pyqt_gui.widgets.plate_manager import (
     PlateManagerWidget,
@@ -57,7 +58,10 @@ def test_plate_manager_registers_multi_cppipe_folder_as_logical_pipeline_rows(
     )
     service_adapter = PlateManagerServiceStub()
     ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
-    widget = PlateManagerWidget(service_adapter)
+    widget = PlateManagerWidget(
+        service_adapter,
+        gui_config=get_default_ui_config(),
+    )
     plate_root = tmp_path / "plate"
     plate_root.mkdir()
     first_cppipe = plate_root / "first.cppipe"
@@ -129,7 +133,10 @@ def test_plate_manager_prefers_tutorial_final_pipeline_for_multi_cppipe_folder(
     )
     service_adapter = PlateManagerServiceStub()
     ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
-    widget = PlateManagerWidget(service_adapter)
+    widget = PlateManagerWidget(
+        service_adapter,
+        gui_config=get_default_ui_config(),
+    )
     plate_root = tmp_path / "AdvancedSegmentation"
     plate_root.mkdir()
     final_cppipe = plate_root / "BBBC022_Analysis_Final.cppipe"
@@ -163,7 +170,10 @@ def test_plate_manager_cppipe_add_keeps_visible_selection_on_logical_scope(
 
     service_adapter = PlateManagerServiceStub()
     ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
-    widget = PlateManagerWidget(service_adapter)
+    widget = PlateManagerWidget(
+        service_adapter,
+        gui_config=get_default_ui_config(),
+    )
     plate_root = tmp_path / "AdvancedSegmentation"
     plate_root.mkdir()
     final_cppipe = plate_root / "BBBC022_Analysis_Final.cppipe"
@@ -196,7 +206,10 @@ def test_plate_manager_refresh_preserves_selection_without_reemitting_plate_sele
 
     service_adapter = PlateManagerServiceStub()
     ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
-    widget = PlateManagerWidget(service_adapter)
+    widget = PlateManagerWidget(
+        service_adapter,
+        gui_config=get_default_ui_config(),
+    )
     plate_root = tmp_path / "AdvancedSegmentation"
     plate_root.mkdir()
     final_cppipe = plate_root / "BBBC022_Analysis_Final.cppipe"
@@ -223,7 +236,10 @@ def test_plate_manager_delete_selected_cppipe_selects_remaining_scope(
 
     service_adapter = PlateManagerServiceStub()
     ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
-    widget = PlateManagerWidget(service_adapter)
+    widget = PlateManagerWidget(
+        service_adapter,
+        gui_config=get_default_ui_config(),
+    )
     plate_root = tmp_path / "BeginnerSegmentation"
     plate_root.mkdir()
     start_cppipe = plate_root / "segmentation_start.cppipe"
@@ -268,7 +284,10 @@ def test_plate_manager_delete_action_moves_pipeline_editor_to_remaining_cppipe(
 
     service_adapter = PlateManagerServiceStub()
     ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
-    widget = PlateManagerWidget(service_adapter)
+    widget = PlateManagerWidget(
+        service_adapter,
+        gui_config=get_default_ui_config(),
+    )
     editor = PipelineEditorWidget(service_adapter)
     widget.pipeline_editor = editor
     widget.plate_selected.connect(editor.set_current_plate)
@@ -328,7 +347,10 @@ def test_plate_manager_normalizes_persisted_multi_cppipe_scope_to_logical_rows(
     root_state.update_parameter("orchestrator_scope_ids", [str(plate_root)])
 
     try:
-        widget = PlateManagerWidget(service_adapter)
+        widget = PlateManagerWidget(
+            service_adapter,
+            gui_config=get_default_ui_config(),
+        )
 
         start_scope = PlateScopeIdentity.from_cellprofiler_pipeline(
             plate_root,
@@ -345,12 +367,12 @@ def test_plate_manager_normalizes_persisted_multi_cppipe_scope_to_logical_rows(
         ]
         assert (
             ObjectStateRegistry.get_object(start_scope)
-            .input_workspace_preparation.selected_pipeline_path
+            .selected_pipeline_path
             == start_cppipe
         )
         assert (
             ObjectStateRegistry.get_object(final_scope)
-            .input_workspace_preparation.selected_pipeline_path
+            .selected_pipeline_path
             == final_cppipe
         )
         close_widget(widget)
@@ -368,7 +390,10 @@ def test_plate_manager_scoped_cppipe_orchestrator_uses_physical_plate_root(
     monkeypatch.setattr(PlateManagerWidget, "update_button_states", lambda self: None)
     service_adapter = PlateManagerServiceStub()
     ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
-    widget = PlateManagerWidget(service_adapter)
+    widget = PlateManagerWidget(
+        service_adapter,
+        gui_config=get_default_ui_config(),
+    )
     plate_root = tmp_path / "plate"
     plate_root.mkdir()
     cppipe_path = plate_root / "first.cppipe"
@@ -397,7 +422,10 @@ def test_plate_manager_code_mode_cppipe_scope_preserves_import_request(
     monkeypatch.setattr(PlateManagerWidget, "update_item_list", lambda self: None)
     service_adapter = PlateManagerServiceStub()
     ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
-    widget = PlateManagerWidget(service_adapter)
+    widget = PlateManagerWidget(
+        service_adapter,
+        gui_config=get_default_ui_config(),
+    )
     plate_root = tmp_path / "BeginnerSegmentation"
     plate_root.mkdir()
     cppipe_path = plate_root / "segmentation_final.cppipe"
@@ -413,12 +441,7 @@ def test_plate_manager_code_mode_cppipe_scope_preserves_import_request(
         orchestrator = ObjectStateRegistry.get_object(scope_id)
         assert orchestrator is not None
         assert orchestrator.plate_path == plate_root
-        assert orchestrator.input_workspace_preparation is not None
-        assert orchestrator.input_workspace_preparation.selected_path == plate_root
-        assert (
-            orchestrator.input_workspace_preparation.selected_pipeline_path
-            == cppipe_path
-        )
+        assert orchestrator.selected_pipeline_path == cppipe_path
     finally:
         close_widget(widget)
         ObjectStateRegistry.clear()
@@ -436,7 +459,10 @@ def test_plate_manager_opens_cppipe_config_with_logical_scope(
 
     service_adapter = PlateManagerServiceStub()
     ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
-    widget = PlateManagerWidget(service_adapter)
+    widget = PlateManagerWidget(
+        service_adapter,
+        gui_config=get_default_ui_config(),
+    )
     plate_root = tmp_path / "AdvancedSegmentation"
     plate_root.mkdir()
     cppipe_path = plate_root / "BBBC022_Analysis_Final.cppipe"
@@ -466,16 +492,12 @@ def test_plate_manager_opens_cppipe_config_with_logical_scope(
     class FakeConfigWindow:
         def __init__(
             self,
-            config_class,
-            current_config,
-            on_save_callback,
+            tabs,
             color_scheme=None,
             parent=None,
             scope_id=None,
         ):
-            captured["config_class"] = config_class
-            captured["current_config"] = current_config
-            captured["on_save_callback"] = on_save_callback
+            captured["tabs"] = tabs
             captured["scope_id"] = scope_id
 
         def show(self):
@@ -499,11 +521,11 @@ def test_plate_manager_opens_cppipe_config_with_logical_scope(
     try:
         widget.action_edit_config()
 
-        assert captured["config_class"] is PipelineConfig
         assert captured["scope_id"] == scope_id
+        assert captured["tabs"][0].state is ObjectStateRegistry.get_by_scope(scope_id)
 
         new_config = PipelineConfig()
-        captured["on_save_callback"](new_config)
+        captured["tabs"][0].on_save(new_config)
 
         assert widget.plate_configs[scope_id] is new_config
         assert str(plate_root) not in widget.plate_configs
@@ -525,7 +547,10 @@ def test_plate_manager_cppipe_row_preview_uses_logical_config_scope(
 
     service_adapter = PlateManagerServiceStub()
     ensure_global_config_context(GlobalPipelineConfig, service_adapter.global_config)
-    widget = PlateManagerWidget(service_adapter)
+    widget = PlateManagerWidget(
+        service_adapter,
+        gui_config=get_default_ui_config(),
+    )
     plate_root = tmp_path / "AdvancedSegmentation"
     plate_root.mkdir()
     cppipe_path = plate_root / "BBBC022_Analysis_Final.cppipe"

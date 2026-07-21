@@ -10,7 +10,6 @@ from typing import Any, List, Optional
 
 from prompt_toolkit.widgets import Dialog
 
-from openhcs.core.pipeline import Pipeline
 from openhcs.core.steps.function_step import FunctionStep
 # DualEditorPane injected via constructor to break circular dependency
 # Global error handling will catch all exceptions automatically
@@ -44,7 +43,10 @@ class VisualProgrammingDialogService:
         self.current_dialog = None
         self.current_dialog_future = None
     
-    async def show_add_step_dialog(self, target_pipelines: List[Pipeline]) -> Optional[FunctionStep]:
+    async def show_add_step_dialog(
+        self,
+        target_pipelines: List[list[FunctionStep]],
+    ) -> Optional[FunctionStep]:
         """
         Show visual programming dialog for adding a new step.
         

@@ -27,6 +27,12 @@ def test_llm_service_builds_system_prompt():
     assert "FunctionStep" in service.system_prompt
     assert "VariableComponents" in service.system_prompt
 
+    function_prompt = service.get_system_prompt("function")
+    assert "MeasurementsArtifactType" in function_prompt
+    assert "ObjectLabelsArtifactType" in function_prompt
+    assert "DataclassMeasurementColumnarRows" in function_prompt
+    assert '@artifact_outputs(("segmentation_masks"' not in function_prompt
+
 
 @patch('openhcs.pyqt_gui.services.llm_pipeline_service.requests.post')
 def test_llm_service_generates_code(mock_post):

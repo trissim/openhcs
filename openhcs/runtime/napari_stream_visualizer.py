@@ -16,8 +16,6 @@ from __future__ import annotations
 import logging
 import subprocess
 import threading
-import time
-import zmq
 import numpy as np
 from pathlib import Path
 from typing import Optional
@@ -34,7 +32,6 @@ from openhcs.runtime.viewer_protocol import (
     ViewerProcessHandle,
     ViewerType,
 )
-from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 # Optional napari import - this module should only be imported if napari is available
 napari = optional_import("napari")
@@ -46,9 +43,6 @@ if napari is None:
 
 
 logger = logging.getLogger(__name__)
-
-# ZMQ connection delay (ms)
-ZMQ_CONNECTION_DELAY_MS = 100  # Brief delay for ZMQ connection to establish
 
 # Global process management for napari viewer
 _global_viewer_process: Optional[subprocess.Popen[bytes]] = None
@@ -105,14 +99,9 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin):
         runtime_config: StreamingViewerRuntimeConfig,
         replace_layers: bool = False,
     ):
-        super().__init__(
-            runtime_config=runtime_config,
-            transport_config=OPENHCS_ZMQ_CONFIG,
-        )
+        super().__init__(runtime_config=runtime_config)
         self.filemanager = filemanager
         self.replace_layers = replace_layers
-        self.zmq_context: Optional[zmq.Context] = None
-        self.zmq_socket: Optional[zmq.Socket] = None
 
         # Clause 368: Visualization must be observer-only.
         # This class will only read data and display it.
@@ -178,11 +167,6 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin):
                 with _global_process_lock:
                     _global_viewer_process = self.process
 
-            # Set up ZeroMQ client immediately after process spawn.
-            # Readiness is owned by ViewerStateManager.wait_for_ready() to avoid
-            # duplicate/competing wait loops with conflicting timeout behavior.
-            self._setup_zmq_client()
-
             # Check if process is running (different methods for subprocess vs multiprocessing)
             process_alive = ViewerProcessHandle.from_process(self.process).is_alive()
 
@@ -193,18 +177,6 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin):
                 )
             else:
                 logger.error("🔬 VISUALIZER: Failed to start napari viewer process")
-
-    def _setup_zmq_client(self):
-        """Set up ZeroMQ client to send data to viewer process."""
-        data_url = self.runtime_endpoint.data_url()
-
-        self.zmq_context = zmq.Context()
-        self.zmq_socket = self.zmq_context.socket(zmq.PUB)
-        self.zmq_socket.connect(data_url)
-
-        # Brief delay for ZMQ connection to establish
-        time.sleep(ZMQ_CONNECTION_DELAY_MS / 1000.0)
-        logger.info(f"🔬 VISUALIZER: ZMQ client connected to {data_url}")
 
     def send_image_data(
         self, step_id: str, image_data: np.ndarray, axis_id: str = "unknown"
@@ -223,7 +195,6 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin):
         with self._lock:
             if not self.persistent:
                 logger.info("🔬 VISUALIZER: Stopping non-persistent napari viewer")
-                self._cleanup_zmq()
                 if self.process:
                     killed = ViewerProcessHandle.from_process(self.process).terminate()
                     if killed:
@@ -233,22 +204,8 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin):
                 self.lifecycle_state.mark_stopped()
             else:
                 logger.info("🔬 VISUALIZER: Keeping persistent napari viewer alive")
-                # Just cleanup our ZMQ connection, leave process running
-                self._cleanup_zmq()
                 # DON'T set is_running = False for persistent viewers!
                 # The process is still alive and should be reusable
-
-    def _cleanup_zmq(self):
-        """Clean up ZeroMQ resources."""
-        if self.zmq_socket:
-            self.zmq_socket.close()
-            self.zmq_socket = None
-        if self.zmq_context:
-            self.zmq_context.term()
-            self.zmq_context = None
-
-    def cleanup_viewer_client(self) -> None:
-        self._cleanup_zmq()
 
     def visualize_path(
         self, step_id: str, path: str, backend: str, axis_id: Optional[str] = None

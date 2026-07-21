@@ -7,7 +7,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from openhcs.agent.dto.common import AgentError, AgentWarning, SCHEMA_VERSION
+from polystore.base import ImageSamplingRequest
+
+from openhcs.agent.dto.common import AgentError, AgentWarning, JsonObject, SCHEMA_VERSION
 from openhcs.agent.dto.plate import (
     PlateFileQueryRecordSummary,
     PlateFileQueryRequest,
@@ -17,8 +19,10 @@ from openhcs.agent.dto.plate import (
     PlateInspectionComponentValue,
     PlateInspectionConfidence,
     PlateInspectionDefaults,
+    PlateInspectionHandlerCandidate,
     PlateInspectionImageFileSummary,
     PlateInspectionImageRecordSummary,
+    PlateInspectionIngestionRoute,
     PlateInspectionIssueCode,
     PlateInspectionParseFailure,
     PlateInspectionParseSummary,
@@ -26,7 +30,10 @@ from openhcs.agent.dto.plate import (
     PlateInspectionResultFilePreview,
     PlateInspectionResultFileSummary,
     PlateInspectionStatus,
+    PlateInspectionSourceBindingRole,
     PlateInspectionValueSource,
+    PlateInspectionWorkflowAdvice,
+    PlateInspectionWorkflowScope,
     PlateInspectionWorkspacePreparation,
     PlateImageSampleRequest,
     PlateImageSampleResult,
@@ -36,6 +43,10 @@ from openhcs.agent.dto.plate import (
 )
 from openhcs.agent.path_policy import AgentPathPolicy, AgentPathPolicyError
 from openhcs.agent.services.stdio import AgentStdoutRedirect
+from openhcs.agent.ui_bridge_actions import PlateOperation
+from openhcs.agent.ui_bridge_identities import (
+    PlateManagerOrchestratorCodeDocumentIdentity,
+)
 from openhcs.constants.constants import AllComponents, Backend, Microscope
 from openhcs.core.config import GlobalPipelineConfig, PathPlanningConfig
 from openhcs.core.plate_image_inventory import (
@@ -48,6 +59,9 @@ from openhcs.core.plate_image_inventory import (
     PlateResultFileRecord,
     PlateResultFilePreviewReader,
     PlateResultFileInventory,
+)
+from openhcs.core.source_workspace_projection import (
+    VirtualWorkspaceSourceProjectionAuthority,
 )
 
 if TYPE_CHECKING:
@@ -125,6 +139,135 @@ class PlateInspectionBackendProjection:
     @staticmethod
     def names(backends: Sequence["Backend"]) -> tuple[str, ...]:
         return tuple(backend.value for backend in backends)
+
+
+class PlateInspectionHandlerCandidateProjection:
+    """Recover format-specific candidates from registered parser/detector owners."""
+
+    @classmethod
+    def candidates(
+        cls,
+        *,
+        requested_microscope_type: str,
+        selected_handler: "MicroscopeHandler",
+        plate_path: Path,
+        filemanager: "FileManager",
+        max_files_to_parse: int,
+    ) -> tuple[PlateInspectionHandlerCandidate, ...]:
+        from openhcs.microscopes.microscope_base import (
+            MicroscopeHandler,
+            MicroscopeSourceSelectionRole,
+        )
+
+        if requested_microscope_type != PlateInspectionDefaults.MICROSCOPE_AUTO:
+            return ()
+        if (
+            type(selected_handler).source_selection_role()
+            is not MicroscopeSourceSelectionRole.BROAD_STRUCTURED_STORE
+        ):
+            return ()
+
+        try:
+            source_paths = tuple(
+                str(path)
+                for path in selected_handler.metadata_handler.physical_source_paths(
+                    plate_path
+                )[:max_files_to_parse]
+            )
+        except Exception:
+            return ()
+        if not source_paths:
+            return ()
+
+        candidates: list[PlateInspectionHandlerCandidate] = []
+        for handler_type in MicroscopeHandler.__registry__.values():
+            if (
+                handler_type.source_selection_role()
+                is not MicroscopeSourceSelectionRole.FORMAT_SPECIFIC
+            ):
+                continue
+            candidate = cls._candidate(
+                handler_type=handler_type,
+                source_paths=source_paths,
+                plate_path=plate_path,
+                filemanager=filemanager,
+            )
+            if candidate is not None:
+                candidates.append(candidate)
+        return tuple(candidates)
+
+    @staticmethod
+    def supports_explicit_incomplete_export(
+        candidate: PlateInspectionHandlerCandidate,
+    ) -> bool:
+        """Project the candidate handler's declaration-owned subset policy."""
+
+        from openhcs.microscopes.microscope_base import MicroscopeHandler
+
+        return MicroscopeHandler.__registry__[
+            candidate.microscope_type
+        ].supports_explicit_incomplete_export()
+
+    @staticmethod
+    def _candidate(
+        *,
+        handler_type: type["MicroscopeHandler"],
+        source_paths: tuple[str, ...],
+        plate_path: Path,
+        filemanager: "FileManager",
+    ) -> PlateInspectionHandlerCandidate | None:
+        try:
+            handler = handler_type.create(filemanager=filemanager)
+            handler.plate_folder = plate_path
+            parser = handler.parser
+            if parser is None:
+                return None
+            recognized_file_count = sum(
+                bool(parser.can_parse(Path(source_path).name))
+                for source_path in source_paths
+            )
+            root_dir = handler.root_dir
+        except Exception:
+            return None
+
+        tested_file_count = len(source_paths)
+        recognizes_all = recognized_file_count == tested_file_count
+        expected_root = (plate_path / root_dir).resolve()
+        files_under_expected_root = all(
+            Path(source_path).resolve().is_relative_to(expected_root)
+            for source_path in source_paths
+        )
+        if not recognizes_all or not files_under_expected_root:
+            return None
+
+        metadata_detected = False
+        metadata_file_path: str | None = None
+        metadata_diagnostic: str | None = None
+        try:
+            metadata_detected = bool(handler_type.detect(plate_path, filemanager))
+        except Exception as exc:
+            metadata_diagnostic = str(exc)
+        try:
+            metadata_file_path = str(
+                handler.metadata_handler.find_metadata_file(plate_path)
+            )
+        except Exception as exc:
+            if metadata_diagnostic is None:
+                metadata_diagnostic = str(exc)
+
+        return PlateInspectionHandlerCandidate(
+            microscope_type=handler.microscope_type,
+            handler_class=type(handler).__name__,
+            parser_class=type(parser).__name__,
+            root_dir=root_dir,
+            tested_file_count=tested_file_count,
+            recognized_file_count=recognized_file_count,
+            recognizes_all_tested_files=recognizes_all,
+            files_under_expected_root=files_under_expected_root,
+            metadata_detected=metadata_detected,
+            metadata_file_path=metadata_file_path,
+            metadata_diagnostic=metadata_diagnostic,
+        )
 
 
 class PlateInspectionFileQueryProjection:
@@ -608,6 +751,201 @@ class PlateInspectionWorkspacePreparationPolicy:
         )
 
 
+class PlateInspectionWorkflowAdvicePolicy:
+    """Route inspection evidence without replacing the selected source owner."""
+
+    KNOWLEDGE_QUERY = "source model CZI Bio-Formats source bindings"
+
+    @classmethod
+    def for_handler(
+        cls,
+        handler: "MicroscopeHandler",
+        *,
+        format_specific_candidates: tuple[
+            PlateInspectionHandlerCandidate, ...
+        ] = (),
+        requested_microscope_type: str = PlateInspectionDefaults.MICROSCOPE_AUTO,
+    ) -> PlateInspectionWorkflowAdvice:
+        from openhcs.microscopes.microscope_base import (
+            MicroscopeSourceSelectionRole,
+        )
+
+        ingestion_owner = handler.microscope_type
+        projects_bindings = type(handler).projects_declared_source_bindings()
+        selection_role = type(handler).source_selection_role()
+        supported_partial_candidates = tuple(
+            candidate
+            for candidate in format_specific_candidates
+            if PlateInspectionHandlerCandidateProjection.supports_explicit_incomplete_export(
+                candidate
+            )
+        )
+        unsupported_partial_candidates = tuple(
+            candidate
+            for candidate in format_specific_candidates
+            if candidate not in supported_partial_candidates
+        )
+        probable_native_owners = tuple(
+            candidate.microscope_type for candidate in supported_partial_candidates
+        )
+        if unsupported_partial_candidates and not supported_partial_candidates:
+            ingestion_route = PlateInspectionIngestionRoute.SOURCE_BINDINGS_HANDLER
+            ingestion_owner = Microscope.SOURCE_BINDINGS.value
+            source_binding_role = PlateInspectionSourceBindingRole.INGESTION_OWNER
+            evidence = "; ".join(
+                cls._candidate_evidence(candidate)
+                for candidate in unsupported_partial_candidates
+            )
+            message = (
+                "A registered format-specific parser recognizes these filenames, "
+                f"but its owner requires the complete native detection contract: {evidence}. "
+                "Do not explicitly select that native microscope type while its "
+                "required metadata is absent. Obtain the complete vendor export for "
+                "native plate semantics. If these are intentionally loose, ordinary "
+                "image files, declare their file selection and Well/Site/Channel/Z/Time "
+                "identity in SourceBindingsConfig so SourceBindingsHandler owns "
+                "ingestion instead of accepting the broad decoder's inferred sample "
+                "layout."
+            )
+        elif supported_partial_candidates:
+            ingestion_route = PlateInspectionIngestionRoute.DETECTED_HANDLER
+            source_binding_role = (
+                PlateInspectionSourceBindingRole.SEMANTIC_SELECTION
+                if projects_bindings
+                else PlateInspectionSourceBindingRole.NOT_PROJECTED_BY_HANDLER
+            )
+            evidence = "; ".join(
+                cls._candidate_evidence(candidate)
+                for candidate in supported_partial_candidates
+            )
+            unsupported_note = (
+                " Other recognized filename candidates require their complete "
+                "detection contract and are not eligible for explicit partial "
+                "selection: "
+                + "; ".join(
+                    cls._candidate_evidence(candidate)
+                    for candidate in unsupported_partial_candidates
+                )
+                + "."
+                if unsupported_partial_candidates
+                else ""
+            )
+            message = (
+                f"Auto-detection selected the broad {ingestion_owner} handler, but "
+                f"registered format-specific candidate evidence is stronger: {evidence}. "
+                "This is a probable incomplete vendor export, not proof that the "
+                "broad decoder is the better semantic owner. Prefer obtaining the "
+                "complete vendor export so native auto-detection and full plate "
+                "metadata work. For a knowingly partial analysis, keep files under "
+                "the candidate's declared root_dir and explicitly select that "
+                "microscope_type; expect missing metadata-derived fields. Source "
+                "bindings may name/select planes only when the selected handler "
+                "projects them, and are not a replacement vendor decoder."
+                f"{unsupported_note}"
+            )
+        elif (
+            selection_role
+            is MicroscopeSourceSelectionRole.DECLARED_FILE_FALLBACK
+        ):
+            ingestion_route = PlateInspectionIngestionRoute.SOURCE_BINDINGS_HANDLER
+            source_binding_role = PlateInspectionSourceBindingRole.INGESTION_OWNER
+            message = (
+                "The SourceBindingsHandler owns ingestion for this arbitrary image "
+                "folder. Keep file selection, metadata extraction, and semantic "
+                "aliases in SourceBindingsConfig."
+            )
+        else:
+            ingestion_route = PlateInspectionIngestionRoute.DETECTED_HANDLER
+            source_binding_role = (
+                PlateInspectionSourceBindingRole.SEMANTIC_SELECTION
+                if projects_bindings
+                else PlateInspectionSourceBindingRole.NOT_PROJECTED_BY_HANDLER
+            )
+            binding_message = (
+                "SourceBindingsConfig may name or select the planes emitted by this "
+                "handler; it does not open or replace the detected store."
+                if projects_bindings
+                else "This handler does not project declared source bindings."
+            )
+            selection_message = type(handler).source_selection_guidance()
+            initialization_message = (
+                f"initialize with explicit microscope_type={ingestion_owner!r}"
+                if requested_microscope_type
+                != PlateInspectionDefaults.MICROSCOPE_AUTO
+                else "initialize with auto-detection"
+            )
+            message = (
+                f"Keep the detected {ingestion_owner} handler as the ingestion "
+                "owner. For a visible workflow, add the plate directory through "
+                f"the PlateManager code document and {initialization_message}. "
+                f"{selection_message} {binding_message}"
+            )
+        return cls._advice(
+            ingestion_route=ingestion_route,
+            ingestion_owner=ingestion_owner,
+            source_binding_role=source_binding_role,
+            probable_native_ingestion_owners=probable_native_owners,
+            message=message,
+        )
+
+    @staticmethod
+    def _candidate_evidence(candidate: PlateInspectionHandlerCandidate) -> str:
+        detection = (
+            f"metadata detected at {candidate.metadata_file_path}"
+            if candidate.metadata_detected
+            else "metadata detection unsatisfied"
+        )
+        diagnostic = (
+            ""
+            if candidate.metadata_diagnostic is None
+            else f" ({candidate.metadata_diagnostic})"
+        )
+        return (
+            f"{candidate.microscope_type} parser {candidate.parser_class} recognized "
+            f"{candidate.recognized_file_count}/{candidate.tested_file_count} source "
+            f"filenames under root_dir={candidate.root_dir!r}; {detection}{diagnostic}"
+        )
+
+    @classmethod
+    def unresolved(cls) -> PlateInspectionWorkflowAdvice:
+        return cls._advice(
+            ingestion_route=PlateInspectionIngestionRoute.UNRESOLVED,
+            ingestion_owner=None,
+            source_binding_role=PlateInspectionSourceBindingRole.UNRESOLVED,
+            message=(
+                "No ingestion owner was selected. For an arbitrary TIFF, PNG, or "
+                "similar folder, declare a non-empty SourceBindingsConfig so the "
+                "SourceBindingsHandler can own ingestion. For CZI, OME, or another "
+                "structured microscopy store, repair or enable its decoder instead "
+                "of routing it through the arbitrary-file fallback."
+            ),
+        )
+
+    @classmethod
+    def _advice(
+        cls,
+        *,
+        ingestion_route: PlateInspectionIngestionRoute,
+        ingestion_owner: str | None,
+        source_binding_role: PlateInspectionSourceBindingRole,
+        probable_native_ingestion_owners: tuple[str, ...] = (),
+        message: str,
+    ) -> PlateInspectionWorkflowAdvice:
+        return PlateInspectionWorkflowAdvice(
+            workflow_scope=PlateInspectionWorkflowScope.DIAGNOSTIC,
+            ingestion_route=ingestion_route,
+            ingestion_owner=ingestion_owner,
+            source_binding_role=source_binding_role,
+            ui_code_document_id=(
+                PlateManagerOrchestratorCodeDocumentIdentity.require_value()
+            ),
+            ui_operation=PlateOperation.INIT.value,
+            knowledge_query=cls.KNOWLEDGE_QUERY,
+            probable_native_ingestion_owners=probable_native_ingestion_owners,
+            message=message,
+        )
+
+
 class PlateInspectionPathPlanningConfigProvider:
     """Resolve the saved global path-planning config used for result discovery."""
 
@@ -642,6 +980,7 @@ class PlateInspectionService:
         self._component_builder = PlateInspectionComponentSummaryBuilder()
         self._status_policy = PlateInspectionStatusPolicy()
         self._preparation_policy = PlateInspectionWorkspacePreparationPolicy()
+        self._workflow_advice_policy = PlateInspectionWorkflowAdvicePolicy()
 
     def inspect(
         self,
@@ -745,6 +1084,7 @@ class PlateInspectionService:
             context.handler,
             context.plate_path,
             context.parser,
+            context.filemanager,
             PlateFileInventoryQuery.kind_from_value(kind),
             warnings,
         )
@@ -851,6 +1191,7 @@ class PlateInspectionService:
             handler,
             plate_path,
             parser,
+            filemanager,
             query_kind,
             warnings,
         )
@@ -953,17 +1294,24 @@ class PlateInspectionService:
                 handler,
                 plate_path,
                 parser,
+                filemanager,
                 PlateFileKind.IMAGE,
                 warnings,
             )
             record = inventory.require_image_record(request.image_path)
             source_path = self._path_policy.assert_readable(record.source_path)
-            sample = PlateImageSampler.sample(
+            sample = PlateImageSampler.from_storage_sample(
                 record,
-                y=request.y,
-                x=request.x,
-                height=request.height,
-                width=request.width,
+                filemanager.sample(
+                    record.full_virtual_path,
+                    record.backend,
+                    ImageSamplingRequest(
+                        origin_yx=(request.y, request.x),
+                        shape_yx=(request.height, request.width),
+                        resolution_index=request.resolution_index,
+                        max_auto_resolution_size=request.max_auto_resolution_size,
+                    ),
+                ),
                 include_array_values=request.include_array_values,
                 max_array_elements=request.max_array_elements,
             )
@@ -991,10 +1339,16 @@ class PlateInspectionService:
             source_path=str(source_path),
             source_metadata=dict(record.metadata),
             shape=sample.shape,
+            resolution_shape=sample.resolution_shape,
             dtype=sample.dtype,
             minimum=sample.minimum,
             maximum=sample.maximum,
             mean=sample.mean,
+            requested_resolution_index=request.resolution_index,
+            selected_resolution_index=sample.selected_resolution_index,
+            resolution_count=sample.resolution_count,
+            downsample_yx=sample.downsample_yx,
+            statistics_scope=sample.statistics_scope,
             sample_origin_yx=sample.sample_origin_yx,
             sample_shape=sample.sample_shape,
             sample_included=sample.sample_included,
@@ -1171,6 +1525,7 @@ class PlateInspectionService:
             handler,
             plate_path,
             parser,
+            filemanager,
             warnings,
         )
         image_files = tuple(
@@ -1233,6 +1588,11 @@ class PlateInspectionService:
             )
 
         metadata_values = self._metadata_values(handler, plate_path, warnings)
+        source_diagnostics = self._source_diagnostics(
+            handler,
+            plate_path,
+            warnings,
+        )
         components = self._component_builder.build(
             metadata_values=metadata_values,
             parsed_values=parsed.components,
@@ -1251,6 +1611,50 @@ class PlateInspectionService:
             file_inventory.result_inventory,
             bounds.max_sample_files,
         )
+        format_specific_candidates = (
+            PlateInspectionHandlerCandidateProjection.candidates(
+                requested_microscope_type=request.microscope_type,
+                selected_handler=handler,
+                plate_path=plate_path,
+                filemanager=filemanager,
+                max_files_to_parse=bounds.max_files_to_parse,
+            )
+        )
+        if format_specific_candidates:
+            candidate_names = ", ".join(
+                candidate.microscope_type
+                for candidate in format_specific_candidates
+            )
+            supports_partial = all(
+                PlateInspectionHandlerCandidateProjection.supports_explicit_incomplete_export(
+                    candidate
+                )
+                for candidate in format_specific_candidates
+            )
+            warnings.append(
+                AgentWarning(
+                    code=PlateInspectionIssueCode.PROBABLE_NATIVE_HANDLER.value,
+                    message=(
+                        "A registered format-specific parser recognized every "
+                        "tested source filename under its expected layout: "
+                        f"{candidate_names}."
+                    ),
+                    hint=(
+                        (
+                            "Inspect format_specific_handler_candidates and choose "
+                            "between a complete vendor export or explicit partial "
+                            "analysis with the native microscope_type."
+                        )
+                        if supports_partial
+                        else (
+                            "The candidate owner requires its complete metadata "
+                            "detection contract. Obtain the complete export, or use "
+                            "SourceBindingsConfig to declare intentionally loose "
+                            "ordinary image files without selecting the native handler."
+                        )
+                    ),
+                )
+            )
         errors: tuple[AgentError, ...] = ()
         warnings_tuple = tuple(warnings)
         detected_type = handler.microscope_type
@@ -1288,8 +1692,15 @@ class PlateInspectionService:
             result_files=result_summary,
             parse_summary=parsed.summary,
             components=components,
+            source_diagnostics=source_diagnostics,
+            format_specific_handler_candidates=format_specific_candidates,
             workspace_preparation=self._preparation_policy.for_microscope(
                 detected_type
+            ),
+            workflow_advice=self._workflow_advice_policy.for_handler(
+                handler,
+                format_specific_candidates=format_specific_candidates,
+                requested_microscope_type=request.microscope_type,
             ),
             errors=errors,
             warnings=warnings_tuple,
@@ -1344,6 +1755,7 @@ class PlateInspectionService:
                 result_inventory,
                 bounds.max_sample_files,
             ),
+            workflow_advice=self._workflow_advice_policy.unresolved(),
             warnings=tuple(warnings),
         )
 
@@ -1445,6 +1857,7 @@ class PlateInspectionService:
         handler: "MicroscopeHandler",
         plate_path: Path,
         parser: "FilenameParser | None",
+        filemanager: "FileManager",
         query_kind: PlateFileKind | None,
         warnings: list[AgentWarning],
     ) -> PlateFileInventory:
@@ -1453,6 +1866,7 @@ class PlateInspectionService:
                 handler,
                 plate_path,
                 parser,
+                filemanager,
                 warnings,
             )
             if not image_inventory.records:
@@ -1495,6 +1909,7 @@ class PlateInspectionService:
                 handler,
                 plate_path,
                 parser,
+                filemanager,
                 warnings,
             ),
             self._result_file_inventory(
@@ -1511,12 +1926,14 @@ class PlateInspectionService:
         handler: "MicroscopeHandler",
         plate_path: Path,
         parser: "FilenameParser | None",
+        filemanager: "FileManager",
         warnings: list[AgentWarning],
     ) -> PlateFileInventory:
         image_inventory = PlateInspectionService._image_inventory(
             handler,
             plate_path,
             parser,
+            filemanager,
             warnings,
         )
         result_inventory = self._result_file_inventory(
@@ -1532,13 +1949,25 @@ class PlateInspectionService:
         handler: "MicroscopeHandler",
         plate_path: Path,
         parser: "FilenameParser | None",
+        filemanager: "FileManager",
         warnings: list[AgentWarning],
     ) -> PlateImageInventory:
         try:
+            source_projection = (
+                VirtualWorkspaceSourceProjectionAuthority.from_plate_metadata(
+                    plate_path=plate_path,
+                    metadata_handler=handler.metadata_handler,
+                    filemanager=filemanager,
+                ).projection_if_available()
+            )
+            if source_projection is not None:
+                handler.register_workspace_backends(plate_path, filemanager)
             return PlateImageInventory.from_handler(
                 plate_path=plate_path,
                 metadata_handler=handler.metadata_handler,
                 parser=parser,
+                filemanager=filemanager,
+                backend=handler.get_primary_backend(plate_path, filemanager),
                 all_subdirs=True,
             )
         except Exception as exc:
@@ -1705,7 +2134,33 @@ class PlateInspectionService:
             return PlateInspectionComponentCollection.empty()
 
     @staticmethod
+    def _source_diagnostics(
+        handler: "MicroscopeHandler",
+        plate_path: Path,
+        warnings: list[AgentWarning],
+    ) -> tuple[JsonObject, ...]:
+        """Read structured diagnostics through the metadata-handler owner."""
+
+        try:
+            return tuple(
+                dict(diagnostic)
+                for diagnostic in handler.metadata_handler.source_diagnostics(
+                    plate_path
+                )
+            )
+        except Exception as exc:
+            warnings.append(
+                AgentWarning(
+                    code=(
+                        PlateInspectionIssueCode.SOURCE_DIAGNOSTICS_UNAVAILABLE.value
+                    ),
+                    message=str(exc),
+                )
+            )
+            return ()
+
     def _error_result(
+        self,
         *,
         request: PlatePathInspectionRequest,
         available_types: tuple[str, ...],
@@ -1719,6 +2174,7 @@ class PlateInspectionService:
             status=PlateInspectionStatus.ERROR,
             confidence=PlateInspectionConfidence.NONE,
             available_microscope_types=available_types,
+            workflow_advice=self._workflow_advice_policy.unresolved(),
             errors=(error,),
         )
 

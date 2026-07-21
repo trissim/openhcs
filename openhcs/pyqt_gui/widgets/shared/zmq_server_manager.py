@@ -34,6 +34,7 @@ from openhcs.agent.dto.ui_bridge import (
 from openhcs.core.progress import ProgressEvent, registry
 from openhcs.pyqt_gui.services.ui_bridge_contracts import UiLiveOverviewWidget
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
+from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 from openhcs.pyqt_gui.widgets.shared.server_browser import (
     ExecutionProgressProjection,
     ExecutionServerProgressRenderer,
@@ -53,6 +54,7 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
     def __init__(
         self,
         ports_to_scan: List[int],
+        config: OpenHCSZMQConfig,
         title: str = "ZMQ Servers",
         style_generator: Optional[StyleSheetGenerator] = None,
         server_info_parser: Optional[ServerInfoParserABC] = None,
@@ -61,14 +63,12 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         if style_generator is None:
             raise RuntimeError("style_generator is required for ZMQServerManagerWidget")
 
-        from openhcs.constants.constants import CONTROL_PORT_OFFSET
-        from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-
         parser = server_info_parser or DefaultServerInfoParser()
+        self._config = config
         scan_service = ZMQServerScanService(
-            control_port_offset=CONTROL_PORT_OFFSET,
-            config=OPENHCS_ZMQ_CONFIG,
-            host="localhost",
+            control_port_offset=config.control_port_offset,
+            config=config,
+            host=config.client_host,
         )
         super().__init__(
             ports_to_scan=ports_to_scan,
@@ -123,13 +123,14 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
             tree_sync_adapter=self._tree_sync_adapter,
             tree_builder=self._progress_tree_builder,
         )
-        self._server_kill_service = ServerKillService.openhcs_default()
+        self._server_kill_service = ServerKillService.openhcs_default(config)
         self._server_row_presenter = ServerRowPresenter(
             create_tree_item=self._create_tree_item,
             update_execution_server_item=self._progress_renderer.update_execution_server_item,
             log_warning=logger.warning,
         )
         self._missing_port_counts: Dict[int, int] = {}
+
         self._live_tree_sync = LiveServerTreeSync(
             tree=self.server_tree,
             find_item_by_port=self._find_existing_server_item,
@@ -144,6 +145,26 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
         self._progress_timer = QTimer()
         self._progress_timer.setSingleShot(True)
         self._progress_timer.timeout.connect(self._update_from_progress)
+
+    def set_zmq_config(
+        self,
+        config: OpenHCSZMQConfig,
+        ports_to_scan: List[int],
+    ) -> None:
+        """Apply one resolved transport config to browser and progress clients."""
+
+        if self._zmq_client is not None:
+            self._zmq_client.disconnect()
+            self._zmq_client = None
+            self._progress_client_port = None
+        self._config = config
+        self.ports_to_scan = ports_to_scan
+        self._scan_service = ZMQServerScanService(
+            control_port_offset=config.control_port_offset,
+            config=config,
+            host=config.client_host,
+        )
+        self._server_kill_service = ServerKillService.openhcs_default(config)
 
     def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
         rows = tuple(
@@ -339,10 +360,12 @@ class ZMQServerManagerWidget(UiLiveOverviewWidget, ZMQServerBrowserWidgetABC):
             logger.debug("_setup_progress_client: creating new ZMQExecutionClient")
             self._zmq_client = ZMQExecutionClient(
                 port=port,
-                persistent=True,
+                config=self._config,
                 progress_callback=self._on_progress,
             )
-            connected = self._zmq_client.connect(timeout=1)
+            connected = self._zmq_client.connect(
+                timeout=self._config.progress_connect_timeout_seconds
+            )
             if not connected:
                 logger.warning("_setup_progress_client: failed to connect")
                 self._zmq_client = None

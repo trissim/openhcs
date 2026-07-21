@@ -7,9 +7,9 @@ This module defines the ProcessingContext class, which maintains state during pi
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from polystore.filemanager import FileManager
+from zmqruntime.config import ZMQConfig
 
 from openhcs.core.config import (
     AnalysisConsolidationConfig,
@@ -27,8 +27,10 @@ from openhcs.core.runtime_pattern_cache import RuntimePatternDiscoveryCache
 from openhcs.core.runtime_stack_cache import RuntimeImageStackCache
 from openhcs.core.runtime_source_binding_cache import RuntimeSourceBindingContextCache
 from openhcs.core.source_workspace_projection import VirtualWorkspaceSourceProjectionCache
+from openhcs.core.source_matching import SourceImageSetIdentityPolicy
 from openhcs.core.axis_filter import StepAxisFilterMap
 from openhcs.core.steps.function_output_identity import FunctionOutputIdentityCache
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +89,7 @@ class ProcessingContext:
         plate_metadata_config: PlateMetadataConfig | None = None,
         auto_add_output_plate_to_plate_manager: bool = False,
         output_plate_root: str | None = None,
+        transport_config: ZMQConfig = OPENHCS_ZMQ_CONFIG,
     ):
         """
         Initialize the processing context.
@@ -114,6 +117,7 @@ class ProcessingContext:
         self.runtime_source_workspace_projection_cache = (
             VirtualWorkspaceSourceProjectionCache()
         )
+        self.source_image_set_identity_policy = SourceImageSetIdentityPolicy()
         self.axis_id = axis_id
         self.filemanager = filemanager
         self.microscope_handler = None
@@ -137,6 +141,7 @@ class ProcessingContext:
             auto_add_output_plate_to_plate_manager
         )
         self.output_plate_root = output_plate_root
+        self.transport_config = transport_config
 
         self.execution_id = None
         self.plate_id = None

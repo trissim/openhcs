@@ -9,15 +9,6 @@ from openhcs.pyqt_gui.services.ui_agent_bridge import (
     UiBridgeOperationTracker,
     UiObjectStateSnapshotProvider,
 )
-from openhcs.pyqt_gui.services.ui_bridge_object_state import ObjectStateBridgeProviderSet
-from openhcs.pyqt_gui.services.ui_bridge_plate_manager import PlateManagerBridgeProviderSet
-from openhcs.pyqt_gui.services.ui_bridge_pipeline_editor import (
-    PipelineEditorBridgeProviderSet,
-)
-from openhcs.pyqt_gui.services.ui_bridge_live_overview import (
-    LiveOverviewBridgeProviderSet,
-)
-from openhcs.pyqt_gui.services.ui_bridge_windows import MainWindowBridgeProviderSet
 from openhcs.pyqt_gui.services.ui_bridge_registry import (
     CompositeUiBridgeProviderSet,
     UiBridgeProviderSetABC,
@@ -36,12 +27,10 @@ class OpenHCSUiBridgeCompositionRoot:
     def for_main_window(cls, main_window) -> "OpenHCSUiBridgeCompositionRoot":
         return cls(
             CompositeUiBridgeProviderSet(
-                (
-                    PlateManagerBridgeProviderSet(main_window.plate_manager_widget),
-                    PipelineEditorBridgeProviderSet(main_window.pipeline_editor_widget),
-                    MainWindowBridgeProviderSet(main_window),
-                    ObjectStateBridgeProviderSet(),
-                    LiveOverviewBridgeProviderSet(),
+                tuple(
+                    provider_set_type.for_main_window(main_window)
+                    for provider_set_type in UiBridgeProviderSetABC.__registry__.values()
+                    if provider_set_type.compose_for_main_window
                 )
             )
         )

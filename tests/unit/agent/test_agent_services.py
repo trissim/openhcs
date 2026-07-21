@@ -7,28 +7,28 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from polystore.virtual_workspace import SourcePixelRef
 from pyqt_reactive.services.parameter_help_service import (
     dataclass_parameter_descriptions,
 )
 
 from openhcs.agent.dto.config import ConfigPatch
+from openhcs.agent.dto.authoring import AuthoringContextRequest
+from openhcs.agent.dto.pipeline import CreatePipelineRequest
 from openhcs.agent.path_policy import AgentPathPolicy
 from openhcs.agent.services.config_service import ConfigService
 from openhcs.agent.dto.execution import (
-    DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS,
-    DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
-    DEFAULT_EXECUTION_WAIT_TIMEOUT_MS,
     ExecutionConnectionSpec,
     MAX_EXECUTION_STATUS_TRACEBACK_CHARS,
+    OrchestratorSessionCreationRequest,
+    PipelineSourceArtifactPlanInspectionRequest,
+    PipelineSourceOrchestratorSessionRequest,
 )
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.agent.services.execution_session_service import (
-    AgentProgressQueue,
     artifact_plan_inspection_from_compilation,
-    CompileInspectionInput,
-    ExecutionConfigBundle,
     ExecutionSessionService,
-    InProcessCompileInspectionGateway,
-    PycodifiedPipelineSessionRequest,
+    PipelineSourceSessionRequest,
 )
 from openhcs.agent.services import function_catalog_service as function_catalog_module
 from openhcs.agent.services.function_catalog_service import FunctionCatalogService
@@ -46,6 +46,7 @@ from openhcs.agent.services.viewer_window_service import (
     ZMQViewerWindowGateway,
 )
 from openhcs.agent.dto.viewer import (
+    ViewerWindowLayerIsolationRequest,
     ViewerWindowNavigationRequest,
     ViewerWindowPayloadRequest,
     ViewerWindowSnapshotRequest,
@@ -53,16 +54,29 @@ from openhcs.agent.dto.viewer import (
     ViewerWindowValidationPolicy,
     ViewerWindowValidationRequest,
 )
-from openhcs.core.config import Backend, GlobalPipelineConfig, PipelineConfig
+from openhcs.core.config import Backend, NapariStreamingConfig, PipelineConfig
+from openhcs.core.config_document import ConfigDocumentAuthority
 from openhcs.core.artifacts import (
+    ArtifactSpec,
     ArtifactInputPlan,
     ArtifactOutputPlan,
     SpecialArtifactType,
     ObjectLabelsArtifactType,
 )
 from openhcs.core.callable_contract import CallableContract
-from openhcs.core.compiled_step_plan import CompiledStepPlan
+from openhcs.core.compiled_step_plan import CompiledStepPlan, MaterializedOutputPlan
+from openhcs.core.component_group_scope import ComponentGroupScope
+from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
+from openhcs.constants.constants import AllComponents
 from openhcs.core.source_workspace_projection import VirtualWorkspaceSourceProjection
+from openhcs.core.source_bindings import (
+    LazySourceBindingsConfig,
+    MetadataExtractionRule,
+    NamedSourceBinding,
+    SourceFilterClause,
+    SourceSelector,
+)
 from openhcs.microscopes.exceptions import MicroscopePixelSizeUnavailableError
 from openhcs.runtime.window_snapshot import (
     WindowSnapshotCaptureScope,
@@ -72,7 +86,6 @@ from openhcs.runtime.viewer_protocol import (
     ViewerPayloadControlOptions,
     ViewerStateControlOptions,
 )
-from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.runtime.zmq_execution_signature import ZMQExecutionIdentity
 from zmqruntime.execution.server import ExecutionServer
 from zmqruntime.messages import MessageFields
@@ -80,6 +93,13 @@ from zmqruntime.messages import MessageFields
 
 def sample_processing_function(image, sigma: float = 1.0):
     """Apply a small sample operation."""
+    return image
+
+
+@artifact_outputs(ArtifactSpec.output("objects", ObjectLabelsArtifactType))
+@artifact_inputs(ArtifactSpec.input("positions", SpecialArtifactType))
+def sample_artifact_contract_function(image, positions):
+    """Apply a sample operation with canonical artifact declarations."""
     return image
 
 
@@ -195,6 +215,31 @@ def _catalog(monkeypatch):
     return FunctionCatalogService()
 
 
+def _pipeline_document_source(
+    pipeline_config: PipelineConfig | None = None,
+) -> str:
+    config = pipeline_config if pipeline_config is not None else PipelineConfig()
+    return PipelineDocumentAuthority.render(
+        PipelineDocumentAuthority.from_values(
+            pipeline_config=config,
+            pipeline_steps=[],
+        )
+    )
+
+
+def test_execution_session_request_contracts_do_not_mirror_pipeline_config_id():
+    request_types = (
+        OrchestratorSessionCreationRequest,
+        PipelineSourceOrchestratorSessionRequest,
+        PipelineSourceArtifactPlanInspectionRequest,
+    )
+
+    assert all(
+        "pipeline_config_id" not in {field.name for field in fields(request_type)}
+        for request_type in request_types
+    )
+
+
 class _ExecutionTestId:
     COMPILE = "compile-1"
     EXECUTE = "execute-1"
@@ -212,7 +257,7 @@ class _FakeExecutionClient:
         self,
         submission,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ):
         self.submit_timeout_requests.append(("compile", timeout_ms))
         self.compile_submissions.append(submission)
@@ -222,7 +267,7 @@ class _FakeExecutionClient:
         self,
         submission,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ):
         self.submit_timeout_requests.append(("execute", timeout_ms))
         self.execution_submissions.append(submission)
@@ -232,7 +277,7 @@ class _FakeExecutionClient:
         self,
         execution_id=None,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ):
         self.status_requests.append((execution_id, timeout_ms))
         return {"status": "complete", "execution_id": execution_id}
@@ -247,7 +292,7 @@ class _EnvelopeStatusExecutionClient(_FakeExecutionClient):
         self,
         execution_id=None,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ):
         self.status_requests.append((execution_id, timeout_ms))
         return {
@@ -264,7 +309,7 @@ class _HeadlessCompleteExecutionClient(_FakeExecutionClient):
         self,
         execution_id=None,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ):
         self.status_requests.append((execution_id, timeout_ms))
         return {
@@ -285,7 +330,7 @@ class _FailedStatusExecutionClient(_FakeExecutionClient):
         self,
         execution_id=None,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ):
         self.status_requests.append((execution_id, timeout_ms))
         return {
@@ -304,7 +349,7 @@ class _CustomFunctionImportFailedStatusExecutionClient(_FakeExecutionClient):
         self,
         execution_id=None,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ):
         self.status_requests.append((execution_id, timeout_ms))
         message = (
@@ -327,7 +372,7 @@ class _TimeoutStatusExecutionClient(_FakeExecutionClient):
         self,
         execution_id=None,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ):
         self.status_requests.append((execution_id, timeout_ms))
         raise TimeoutError(f"status timed out after {timeout_ms}ms")
@@ -338,7 +383,7 @@ class _TimeoutSubmitExecutionClient(_FakeExecutionClient):
         self,
         submission,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ):
         self.submit_timeout_requests.append(("compile", timeout_ms))
         raise TimeoutError(f"submit timed out after {timeout_ms}ms")
@@ -349,7 +394,7 @@ class _BlockingSubmitExecutionClient(_FakeExecutionClient):
         self,
         submission,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ):
         self.submit_timeout_requests.append(("compile", timeout_ms))
         time.sleep(1.0)
@@ -378,23 +423,44 @@ class _FakeCompileInspectionGateway:
             axis_id="A01",
             output_dir=Path("/tmp/out/A01"),
         )
-        step_plan.execution_groups = ["A01"]
-        step_plan.artifact_inputs["positions"] = ArtifactInputPlan(
+        step_plan.execution_group_scope = ComponentGroupScope.from_raw(
+            ("A01",),
+            component=AllComponents.WELL,
+        )
+        step_plan.materialized_output = MaterializedOutputPlan(
+            output_dir=Path("/tmp/out/A01/checkpoints"),
+            backend="disk",
+            plate_root="/tmp/out",
+            sub_dir="checkpoints",
+            analysis_results_dir="/tmp/out/A01/checkpoints/analysis",
+        )
+        step_plan.streaming_configs["napari_streaming_config"] = (
+            NapariStreamingConfig(
+                enabled=True,
+                persistent=True,
+                well_filter=["A01"],
+            )
+        )
+        input_plan = ArtifactInputPlan(
             name="positions",
             artifact_type=SpecialArtifactType,
             path="/tmp/out/A01/positions.pkl",
+            group_component=AllComponents.WELL,
             group_keys=("A01",),
             paths_by_group={"A01": "/tmp/out/A01/positions.pkl"},
             source_step_id=0,
             source_step_scope_id="step-find-positions",
         )
-        step_plan.artifact_outputs["objects"] = ArtifactOutputPlan(
+        step_plan.artifact_inputs[input_plan.ref()] = input_plan
+        output_plan = ArtifactOutputPlan(
             name="objects",
             artifact_type=ObjectLabelsArtifactType,
             path="/tmp/out/A01/objects.zarr",
+            group_component=AllComponents.WELL,
             group_keys=("A01",),
             paths_by_group={"A01": "/tmp/out/A01/objects.zarr"},
         )
+        step_plan.artifact_outputs[output_plan.ref()] = output_plan
         context = SimpleNamespace(step_plans={0: step_plan})
         virtual_name = "A01_s001_w1_z001_t001.tif"
         full_virtual_path = str(request.plate / virtual_name)
@@ -404,9 +470,13 @@ class _FakeCompileInspectionGateway:
                 worker_assignments={"worker-1": ["A01"]},
             ),
             "source_workspace_projection": VirtualWorkspaceSourceProjection(
-                source_paths_by_virtual_path={
-                    virtual_name: str(request.plate / "source.tif"),
-                    full_virtual_path: str(request.plate / "source.tif"),
+                source_refs_by_virtual_path={
+                    virtual_name: SourcePixelRef(
+                        "disk", str(request.plate / "source.tif")
+                    ),
+                    full_virtual_path: SourcePixelRef(
+                        "disk", str(request.plate / "source.tif")
+                    ),
                 },
                 source_metadata_by_path={
                     virtual_name: {"well": "A01", "channel": "1"},
@@ -464,7 +534,7 @@ class _FakeRuntimeServerGateway:
         connection,
         execution_id=None,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ):
         self.execution_status_requests.append((connection, execution_id, timeout_ms))
         return {"status": "complete", "execution_id": execution_id}
@@ -511,7 +581,7 @@ class _FailedRuntimeStatusGateway(_FakeRuntimeServerGateway):
         connection,
         execution_id=None,
         *,
-        timeout_ms: int = DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        timeout_ms: int = OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     ):
         self.execution_status_requests.append((connection, execution_id, timeout_ms))
         return {
@@ -539,7 +609,7 @@ class _FakeViewerWindowGateway(ViewerWindowGatewayABC):
             },
             "width": 640,
             "height": 480,
-            "snapshot": request.to_wire_payload().as_dict(),
+            "snapshot": request,
             "resource": {
                 "uri": "file:///tmp/napari.png",
                 "title": "OpenHCS Napari Viewer",
@@ -562,6 +632,19 @@ class _FakeViewerWindowGateway(ViewerWindowGatewayABC):
             "layers": (
                 {
                     "route_key": "IdentifyPrimaryObjects|image",
+                    "producer_identities": (
+                        {
+                            "origin": "pipeline",
+                            "output_kind": "main",
+                            "output_key": "main",
+                            "projection_key": "main",
+                            "step_name": "IdentifyPrimaryObjects",
+                            "pipeline_position": 3,
+                            "step_scope_id": "identify-primary",
+                            "invocation_key": None,
+                            "artifact_kind": "image",
+                        },
+                    ),
                     "title": "IdentifyPrimaryObjects",
                     "mounted": True,
                     "item_count": 2,
@@ -579,6 +662,8 @@ class _FakeViewerWindowGateway(ViewerWindowGatewayABC):
                             "components": {"well": "A14", "site": 1, "channel": 0},
                             "payload_type": "ndarray",
                             "shape": (16, 16),
+                            "spatial_origin_yx": (0, 0),
+                            "source_spatial_shape_yx": (16, 16),
                             "dtype": "uint16",
                             "size": 256,
                             "nonzero_count": 128,
@@ -589,6 +674,8 @@ class _FakeViewerWindowGateway(ViewerWindowGatewayABC):
                             "components": {"well": "B13", "site": 1, "channel": 0},
                             "payload_type": "ndarray",
                             "shape": (16, 16),
+                            "spatial_origin_yx": (0, 0),
+                            "source_spatial_shape_yx": (16, 16),
                             "dtype": "uint16",
                             "size": 256,
                             "nonzero_count": 96,
@@ -642,6 +729,19 @@ class _FakeViewerWindowGateway(ViewerWindowGatewayABC):
             "layers": (
                 {
                     "route_key": "IdentifyPrimaryObjects|image",
+                    "producer_identities": (
+                        {
+                            "origin": "pipeline",
+                            "output_kind": "main",
+                            "output_key": "main",
+                            "projection_key": "main",
+                            "step_name": "IdentifyPrimaryObjects",
+                            "pipeline_position": 3,
+                            "step_scope_id": "identify-primary",
+                            "invocation_key": None,
+                            "artifact_kind": "image",
+                        },
+                    ),
                     "title": "IdentifyPrimaryObjects",
                     "mounted": True,
                     "item_count": 2,
@@ -702,6 +802,25 @@ class _FakeViewerWindowGateway(ViewerWindowGatewayABC):
             request.navigation.axis_indices.get("channel", 0),
             0,
             0,
+        )
+        return response
+
+
+class _UnmountedRouteViewerWindowGateway(_FakeViewerWindowGateway):
+    def window_state(self, request):
+        response = super().window_state(request)
+        mounted_layer = response["layers"][0]
+        response["layer_count"] = 2
+        response["layers"] = (
+            mounted_layer,
+            {
+                **mounted_layer,
+                "route_key": "selected_rois",
+                "title": "Selected ROIs",
+                "mounted": False,
+                "visible": False,
+                "selected": False,
+            },
         )
         return response
 
@@ -795,6 +914,8 @@ class _RgbViewerWindowGateway(_FakeViewerWindowGateway):
             {
                 **payload_summary,
                 "shape": (16, 16, 3),
+                "spatial_origin_yx": (0, 0),
+                "source_spatial_shape_yx": (16, 16),
                 "size": 16 * 16 * 3,
             }
             for payload_summary in layer["payload_summaries"]
@@ -809,57 +930,20 @@ class _PaddedVariableSizeViewerWindowGateway(_FakeViewerWindowGateway):
         layer = dict(state["layers"][0])
         layer["data_shape"] = (2, 1, 1, 20, 20)
         layer["payload_summaries"] = (
-            {**layer["payload_summaries"][0], "shape": (16, 20)},
-            {**layer["payload_summaries"][1], "shape": (20, 18)},
+            {
+                **layer["payload_summaries"][0],
+                "shape": (16, 20),
+                "spatial_origin_yx": (0, 0),
+                "source_spatial_shape_yx": (16, 20),
+            },
+            {
+                **layer["payload_summaries"][1],
+                "shape": (20, 18),
+                "spatial_origin_yx": (0, 0),
+                "source_spatial_shape_yx": (20, 18),
+            },
         )
         state["layers"] = (layer,)
-        return state
-
-
-class _CrossLayerSpatialMismatchViewerWindowGateway(_FakeViewerWindowGateway):
-    def window_state(self, request):
-        state = super().window_state(request)
-        image_layer = dict(state["layers"][0])
-        shapes_layer = {
-            **image_layer,
-            "route_key": "IdentifyPrimaryObjects|labels",
-            "title": "IdentifyPrimaryObjects labels",
-            "item_count": 1,
-            "data_types": ("shapes",),
-            "component_values": ({"well": "A14", "site": 1, "channel": 0},),
-            "component_value_count": 1,
-            "payload_summaries": (
-                {
-                    "data_type": "shapes",
-                    "path": "/tmp/A14_labels.roi.zip",
-                    "components": {"well": "A14", "site": 1, "channel": 0},
-                    "source_spatial_shapes_yx": ((20, 24),),
-                    "nonzero_count": 1,
-                },
-            ),
-            "payload_summary_count": 1,
-            "labels": {
-                "well": ("A14",),
-                "site": ("1",),
-                "channel": ("0",),
-            },
-            "axis_component_values": {
-                "well": ("A14",),
-                "site": (1,),
-                "channel": (0,),
-            },
-            "routed_component_values": {
-                "well": ("A14",),
-                "site": (1,),
-                "channel": (0,),
-            },
-            "data_shape": (1, 1, 1, 20, 24),
-            "selected": False,
-        }
-        state["layers"] = (image_layer, shapes_layer)
-        state["layer_count"] = 2
-        state["component_group_count"] = 2
-        state["component_item_count"] = 3
         return state
 
 
@@ -998,6 +1082,36 @@ def test_callable_contract_owns_primary_input_parameter_identity():
     assert contract.primary_input_parameter_name == "image"
 
 
+def test_function_catalog_projects_canonical_callable_artifact_specs(monkeypatch):
+    monkeypatch.setattr(
+        FunctionCatalogService,
+        "_all_metadata",
+        lambda self: {
+            "test:sample_artifact_contract_function": _Metadata.from_function(
+                sample_artifact_contract_function,
+                "Apply a sample operation with canonical artifact declarations.",
+                [],
+            )
+        },
+    )
+
+    detail = FunctionCatalogService().get("test:sample_artifact_contract_function")
+
+    assert detail.runtime_contract is not None
+    runtime_contract = detail.runtime_contract
+    assert tuple(spec.name for spec in runtime_contract.artifact_inputs) == (
+        "positions",
+    )
+    assert tuple(spec.name for spec in runtime_contract.artifact_outputs) == (
+        "objects",
+    )
+    assert runtime_contract.source_binding_rule is not None
+    assert "canonical CallableContract artifact_inputs" in (
+        runtime_contract.source_binding_rule
+    )
+    assert runtime_contract.materialization_rule is not None
+
+
 def test_function_catalog_resolves_detail_by_callable_import_path(monkeypatch):
     catalog = _catalog(monkeypatch)
     import_path = (
@@ -1116,14 +1230,41 @@ def test_function_catalog_describe_bounds_large_docs(monkeypatch):
 
 
 def test_function_catalog_describe_projects_cellprofiler_module_contract(monkeypatch):
+    from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
+
+    module_type = CellProfilerModule.for_function_name("track_objects")
+    assert module_type is not None
+    nominal_calls = []
+    require_module_name = module_type.require_module_name
+
+    def resolve_module(cls, function_name):
+        nominal_calls.append(("for_function_name", function_name))
+        return module_type
+
+    def resolve_module_name(cls):
+        nominal_calls.append(("require_module_name", cls))
+        return require_module_name()
+
+    monkeypatch.setattr(
+        CellProfilerModule,
+        "for_function_name",
+        classmethod(resolve_module),
+    )
+    monkeypatch.setattr(
+        module_type,
+        "require_module_name",
+        classmethod(resolve_module_name),
+    )
     monkeypatch.setattr(
         FunctionCatalogService,
         "_all_metadata",
         lambda self: {
-            "test:cellprofiler_track_objects": _Metadata.from_function(
-                track_objects,
-                "Track CellProfiler object labels through time.",
-                ["cellprofiler"],
+            "test:cellprofiler_track_objects": _Metadata(
+                func=track_objects,
+                original_name="registry_track_alias",
+                name="registry_track_alias",
+                doc="Track CellProfiler object labels through time.",
+                tags=["cellprofiler"],
             )
         },
     )
@@ -1135,9 +1276,10 @@ def test_function_catalog_describe_projects_cellprofiler_module_contract(monkeyp
     assert detail.runtime_contract.callable_kind == "cellprofiler_module"
     assert detail.runtime_contract.cellprofiler_module is not None
     assert detail.runtime_contract.cellprofiler_module.module_name == "TrackObjects"
-    assert detail.runtime_contract.cellprofiler_module.required_variable_components == (
-        "TIMEPOINT",
-    )
+    assert nominal_calls == [
+        ("for_function_name", "track_objects"),
+        ("require_module_name", module_type),
+    ]
     assert detail.runtime_contract.pattern_compatibility_rule is not None
     assert "one CP module contract per FunctionStep" in (
         detail.runtime_contract.pattern_compatibility_rule
@@ -1256,10 +1398,7 @@ def test_viewer_window_service_snapshots_running_viewer():
     assert result.width == 640
     assert result.height == 480
     assert result.capture_scope is WindowSnapshotCaptureScope.WINDOW
-    assert (
-        gateway.requests[0].output_dir_path
-        == "/tmp/openhcs-mcp-window-snapshots"
-    )
+    assert gateway.requests[0].output_dir_path == "/tmp/openhcs-mcp-window-snapshots"
     assert gateway.requests[0].capture_scope is WindowSnapshotCaptureScope.WINDOW
 
 
@@ -1300,6 +1439,9 @@ def test_viewer_window_service_reads_running_viewer_state():
     assert len(result.layers) == 1
     layer = result.layers[0]
     assert layer.route_key == "IdentifyPrimaryObjects|image"
+    assert len(layer.producer_identities) == 1
+    assert layer.producer_identities[0].step_scope_id == "identify-primary"
+    assert layer.producer_identities[0].pipeline_position == 3
     assert layer.mounted is True
     assert layer.item_count == 2
     assert layer.data_types == ("image",)
@@ -1466,6 +1608,33 @@ def test_viewer_window_service_navigates_running_viewer_window():
     assert gateway.requests[0].navigation.axis_indices == {"well": 1, "channel": 0}
 
 
+def test_viewer_window_service_isolates_only_mounted_layers() -> None:
+    gateway = _UnmountedRouteViewerWindowGateway()
+    service = ViewerWindowService(gateway=gateway)
+
+    result = service.isolate_layers(
+        ViewerWindowLayerIsolationRequest.from_fields(
+            connection=_viewer_connection(),
+            visible_route_keys=("IdentifyPrimaryObjects|image",),
+            selected_route_key="IdentifyPrimaryObjects|image",
+        )
+    )
+
+    navigation_requests = tuple(
+        request
+        for request in gateway.requests
+        if isinstance(request, ViewerWindowNavigationRequest)
+    )
+    assert result.applied is True
+    assert result.changed_route_count == 1
+    assert result.layer_count == 1
+    assert result.visible_route_keys == ("IdentifyPrimaryObjects|image",)
+    assert result.hidden_route_keys == ()
+    assert tuple(request.navigation.route_key for request in navigation_requests) == (
+        "IdentifyPrimaryObjects|image",
+    )
+
+
 def test_viewer_window_service_probes_running_viewer_endpoint():
     gateway = _FakeViewerWindowGateway()
     service = ViewerWindowService(gateway=gateway)
@@ -1515,6 +1684,8 @@ def test_viewer_window_service_summarizes_viewer_state_validation():
     assert result.layer_count == 1
     assert result.mounted_layer_count == 1
     assert result.pending_update_count == 0
+    assert result.active_dimension_label_route == "IdentifyPrimaryObjects|image"
+    assert result.active_dimension_label_route_valid is True
     assert result.payload_count == 2
     assert result.nonzero_payload_count == 2
     assert result.zero_payload_count == 0
@@ -1522,7 +1693,6 @@ def test_viewer_window_service_summarizes_viewer_state_validation():
     assert result.missing_payload_coordinate_count == 0
     assert result.duplicate_payload_coordinate_count == 0
     assert result.payload_without_coordinate_count == 0
-    assert result.spatial_mismatch_count == 0
     assert result.required_axis_labels == ("well", "site", "channel")
     assert result.warnings == ()
     assert result.state is None
@@ -1534,6 +1704,41 @@ def test_viewer_window_service_summarizes_viewer_state_validation():
     assert layer_summary.expected_coordinate_count == 2
     assert layer_summary.payload_coordinate_count == 2
     assert layer_summary.axis_labels == ("well", "site", "channel", "y", "x")
+
+
+class _ActiveDimensionLabelRouteViewerWindowGateway(_FakeViewerWindowGateway):
+    def __init__(self, active_dimension_label_route: str | None) -> None:
+        super().__init__()
+        self.active_dimension_label_route = active_dimension_label_route
+
+    def window_state(self, request):
+        response = super().window_state(request)
+        response["active_dimension_label_route"] = self.active_dimension_label_route
+        return response
+
+
+def test_viewer_window_validation_accepts_absent_active_dimension_label_route():
+    result = ViewerWindowService(
+        gateway=_ActiveDimensionLabelRouteViewerWindowGateway(None)
+    ).validation_summary(ViewerWindowValidationRequest(connection=_viewer_connection()))
+
+    assert result.valid is True
+    assert result.active_dimension_label_route is None
+    assert result.active_dimension_label_route_valid is True
+    assert result.warnings == ()
+
+
+def test_viewer_window_validation_rejects_unobserved_active_dimension_label_route():
+    result = ViewerWindowService(
+        gateway=_ActiveDimensionLabelRouteViewerWindowGateway("missing-route")
+    ).validation_summary(ViewerWindowValidationRequest(connection=_viewer_connection()))
+
+    assert result.valid is False
+    assert result.active_dimension_label_route == "missing-route"
+    assert result.active_dimension_label_route_valid is False
+    assert [warning.code for warning in result.warnings] == [
+        "viewer_active_dimension_label_route_missing"
+    ]
 
 
 def test_viewer_window_service_validation_applies_state_controls_when_requested():
@@ -1554,7 +1759,9 @@ def test_viewer_window_service_validation_applies_state_controls_when_requested(
 
     assert result.valid is True
     assert result.state is not None
-    assert gateway.requests[0].state_controls.route_key == "IdentifyPrimaryObjects|image"
+    assert (
+        gateway.requests[0].state_controls.route_key == "IdentifyPrimaryObjects|image"
+    )
     assert gateway.requests[0].state_controls.include_component_values is False
     assert gateway.requests[0].state_controls.include_payload_summaries is True
 
@@ -1643,7 +1850,6 @@ def test_viewer_window_service_validation_accepts_channel_last_rgb_spatial_shape
     )
 
     assert result.valid is True
-    assert result.layer_summaries[0].spatial_mismatch_count == 0
 
 
 def test_viewer_window_service_validation_accepts_padded_variable_size_payloads():
@@ -1652,22 +1858,6 @@ def test_viewer_window_service_validation_accepts_padded_variable_size_payloads(
     ).validation_summary(ViewerWindowValidationRequest(connection=_viewer_connection()))
 
     assert result.valid is True
-    assert result.layer_summaries[0].spatial_mismatch_count == 0
-
-
-def test_viewer_window_service_validation_reports_cross_layer_spatial_mismatch():
-    result = ViewerWindowService(
-        gateway=_CrossLayerSpatialMismatchViewerWindowGateway()
-    ).validation_summary(ViewerWindowValidationRequest(connection=_viewer_connection()))
-
-    assert result.valid is False
-    assert result.spatial_mismatch_count == 1
-    assert [layer.spatial_mismatch_count for layer in result.layer_summaries] == [0, 0]
-    assert any(
-        warning.code == "viewer_cross_layer_spatial_mismatch"
-        and "matching component metadata" in warning.message
-        for warning in result.warnings
-    )
 
 
 def test_viewer_window_service_validation_expands_aggregate_payload_coordinates():
@@ -1709,15 +1899,43 @@ def test_config_service_reflects_pipeline_schema_without_materializing_lazy_valu
     assert well_filter.lazy is True
     assert well_filter.default_repr.endswith("LazyWellFilterConfig()")
     assert source_bindings.description == shared_descriptions["source_bindings_config"]
-    assert source_bindings.description == (
-        "Pipeline/plate source-binding defaults and init-time discovery config."
-    )
     assert path_planning.description == shared_descriptions["path_planning_config"]
     assert path_planning.description is not None
     assert path_planning.description.startswith(
         "Configuration for pipeline path planning"
     )
     assert "PathPlanningConfig(" not in path_planning.description
+    assert len(schema.fields) == len(fields(PipelineConfig))
+    nested_schema = service.describe_schema("pipeline", "processing_config")
+    source_bindings_schema = service.describe_schema(
+        "pipeline", "source_bindings_config"
+    )
+    napari_schema = service.describe_schema("pipeline", "napari_streaming_config")
+    nested_paths = {
+        field.path: field
+        for selected_schema in (nested_schema, source_bindings_schema, napari_schema)
+        for field in selected_schema.fields
+    }
+    assert nested_paths["processing_config.variable_components"].lazy is False
+    assert nested_paths["processing_config.variable_components"].inheritable is True
+    assert nested_paths["processing_config.group_by"].enum_values
+    assert "assembled array axis" in (
+        nested_paths["processing_config.variable_components"].description or ""
+    )
+    assert "partition already assembled values" in (
+        nested_paths["processing_config.group_by"].description or ""
+    )
+    input_source_description = " ".join(
+        (nested_paths["processing_config.input_source"].description or "").split()
+    )
+    assert "not another ``InputSource`` value" in input_source_description
+    assert "source_bindings_config.bindings[].alias" in nested_paths
+    assert "source_bindings_config.metadata_rules[].pattern" in nested_paths
+    assert "napari_streaming_config.site_mode" in nested_paths
+    assert nested_schema.path_prefix == "processing_config"
+
+    with pytest.raises(ValueError, match="Unknown config schema path_prefix"):
+        service.describe_schema("pipeline", "not_a_config")
 
 
 def test_config_service_validates_and_renders_config_source():
@@ -1728,9 +1946,17 @@ def test_config_service_validates_and_renders_config_source():
         ConfigPatch(config_type="GlobalPipelineConfig", values={"num_workers": 2}),
     )
     rendered = service.render_source(result.config_ref)
+    config = service.resolve_ref(result.config_ref)
 
     assert result.valid is True
     assert "num_workers=2" in rendered.source
+    assert (
+        ConfigDocumentAuthority.from_source(
+            rendered.source,
+            expected_config_type=type(config),
+        )
+        == config
+    )
 
 
 def test_config_service_coerces_nested_pipeline_config_patch_values():
@@ -1773,8 +1999,83 @@ def test_config_service_coerces_nested_pipeline_config_patch_values():
     assert "path_planning_config=LazyPathPlanningConfig" in rendered.source
 
 
+def test_config_service_coerces_generic_source_binding_patch_values():
+    service = ConfigService()
+
+    config_ref = service.create(
+        "pipeline",
+        ConfigPatch(
+            config_type="PipelineConfig",
+            values={
+                "source_bindings_config": {
+                    "source_filters": [
+                        {
+                            "subject": "extension",
+                            "match_type": "is_image",
+                        }
+                    ],
+                    "metadata_rules": [
+                        {
+                            "source": "file_name",
+                            "pattern": (
+                                r"^(?P<Well>[A-H][0-9]{2})_"
+                                r"s(?P<Site>[0-9]+)_(?P<Stain>[^.]+)"
+                            ),
+                        }
+                    ],
+                    "bindings": [
+                        {
+                            "alias": "DNA",
+                            "selector": {
+                                "filters": [
+                                    {
+                                        "subject": "file",
+                                        "match_type": "contains",
+                                        "value": "DNA",
+                                    }
+                                ]
+                            },
+                            "component_identity": [
+                                {"component": "channel", "value": "1"}
+                            ],
+                        }
+                    ],
+                }
+            },
+        ),
+    )
+
+    config = service.resolve_ref(config_ref)
+    source_bindings = config.source_bindings_config
+    rendered = service.render_source(config_ref)
+
+    assert isinstance(source_bindings, LazySourceBindingsConfig)
+    assert isinstance(source_bindings.source_filters[0], SourceFilterClause)
+    assert isinstance(source_bindings.metadata_rules[0], MetadataExtractionRule)
+    assert source_bindings.metadata_rules[0].capture_fields == (
+        "Well",
+        "Site",
+        "Stain",
+    )
+    assert isinstance(source_bindings.bindings[0], NamedSourceBinding)
+    assert isinstance(source_bindings.bindings[0].selector, SourceSelector)
+    assert isinstance(
+        source_bindings.bindings[0].selector.filters[0],
+        SourceFilterClause,
+    )
+    assert source_bindings.bindings[0].component_identity[0].component.value == (
+        "channel"
+    )
+    assert "source_bindings_config=LazySourceBindingsConfig" in rendered.source
+    assert "NamedSourceBinding(" in rendered.source
+
+
 def test_pipeline_authoring_service_renders_function_step_source(monkeypatch):
-    pipeline_service = PipelineAuthoringService(_catalog(monkeypatch))
+    config_service = ConfigService()
+    pipeline_service = PipelineAuthoringService(
+        _catalog(monkeypatch),
+        config_service,
+    )
     pipeline_ref = pipeline_service.create_pipeline()
     step = pipeline_service.make_step_spec(
         function_id="test:sample_processing_function",
@@ -1783,12 +2084,68 @@ def test_pipeline_authoring_service_renders_function_step_source(monkeypatch):
 
     pipeline_service.add_step(pipeline_ref, step)
     validation = pipeline_service.validate(pipeline_ref)
+    pipeline_spec = pipeline_service.get_pipeline(pipeline_ref)
+    document = pipeline_service.to_pipeline_document(pipeline_ref)
     rendered = pipeline_service.render_source(pipeline_ref)
 
+    assert tuple(field.name for field in fields(type(step.functions[0]))) == (
+        "function_id",
+        "kwargs",
+    )
     assert validation.valid is True
+    assert pipeline_spec.pipeline_config_id
+    assert document.pipeline_config is config_service.resolve_ref(
+        pipeline_spec.pipeline_config_id
+    )
+    assert document.pipeline_steps
+    assert "pipeline_config = PipelineConfig(" in rendered.source
+    assert "pipeline_steps = [" in rendered.source
     assert "FunctionStep" in rendered.source
     assert "sample_processing_function" in rendered.source
     assert "sigma" in rendered.source
+
+
+def test_pipeline_authoring_service_uses_referenced_pipeline_config(monkeypatch):
+    config_service = ConfigService()
+    config_ref = config_service.create(
+        "pipeline",
+        ConfigPatch(
+            config_type="PipelineConfig",
+            values={"well_filter_config": {"well_filter": 2}},
+        ),
+    )
+    pipeline_service = PipelineAuthoringService(
+        _catalog(monkeypatch),
+        config_service,
+    )
+
+    pipeline_ref = pipeline_service.create_pipeline_from_request(
+        CreatePipelineRequest(pipeline_config_id=config_ref.config_id)
+    )
+    pipeline_spec = pipeline_service.get_pipeline(pipeline_ref)
+    document = pipeline_service.to_pipeline_document(pipeline_ref)
+    rendered = pipeline_service.render_source(pipeline_ref)
+
+    assert pipeline_spec.pipeline_config_id == config_ref.config_id
+    assert document.pipeline_config is config_service.resolve_ref(config_ref)
+    assert document.pipeline_config.well_filter_config.well_filter == 2
+    assert "well_filter=2" in rendered.source
+
+
+def test_pipeline_authoring_service_rejects_non_pipeline_config_reference(monkeypatch):
+    config_service = ConfigService()
+    global_config_ref = config_service.create("global")
+    pipeline_service = PipelineAuthoringService(
+        _catalog(monkeypatch),
+        config_service,
+    )
+
+    with pytest.raises(TypeError, match="must resolve to PipelineConfig"):
+        pipeline_service.create_pipeline_from_request(
+            CreatePipelineRequest(
+                pipeline_config_id=global_config_ref.config_id,
+            )
+        )
 
 
 def test_pipeline_authoring_service_rejects_unknown_function_kwargs(monkeypatch):
@@ -1926,6 +2283,7 @@ def test_execution_session_service_submits_compile_and_execution_jobs(
         plate_path=str(tmp_path),
         pipeline_id=pipeline_ref.pipeline_id,
     )
+    session = execution_service.get_session(session_ref.session_id)
     compile_ref = execution_service.submit_compile(session_ref.session_id)
     execute_ref = execution_service.submit_execution(
         session_ref.session_id,
@@ -1937,25 +2295,37 @@ def test_execution_session_service_submits_compile_and_execution_jobs(
     assert execute_ref.server_execution_id == _ExecutionTestId.EXECUTE
     assert compile_status.status == "complete"
     assert fake_client.submit_timeout_requests == [
-        ("compile", DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS),
-        ("execute", DEFAULT_EXECUTION_SUBMIT_TIMEOUT_MS),
+        ("compile", OPENHCS_ZMQ_CONFIG.control_timeout_ms),
+        ("execute", OPENHCS_ZMQ_CONFIG.control_timeout_ms),
     ]
     assert fake_client.compile_submissions[0].plate_id == str(tmp_path.resolve())
+    assert (
+        session.pipeline_config_id
+        == pipeline_service.get_pipeline(pipeline_ref).pipeline_config_id
+    )
+    assert (
+        fake_client.compile_submissions[0].pipeline_document.pipeline_config
+        == pipeline_service.to_pipeline_document(pipeline_ref).pipeline_config
+    )
     assert fake_client.status_requests[0] == (
         _ExecutionTestId.COMPILE,
-        DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     )
     assert (
         fake_client.execution_submissions[0].compile_artifact_id
         == _ExecutionTestId.COMPILE
     )
+    assert type(fake_client.compile_submissions[0].pipeline_steps) is list
+    assert len(fake_client.compile_submissions[0].pipeline_steps) == 1
+    assert not hasattr(fake_client.compile_submissions[0], "submission_pipeline")
 
 
-def test_execution_session_service_preserves_pycodified_pipeline_source(
+def test_execution_session_service_preserves_pipeline_source_document(
     monkeypatch,
     tmp_path: Path,
 ):
-    pipeline_source = "pipeline_steps = []\n"
+    pipeline_config = PipelineConfig(num_workers=7)
+    pipeline_source = _pipeline_document_source(pipeline_config)
     fake_client = _FakeExecutionClient()
     execution_service = ExecutionSessionService(
         path_policy=AgentPathPolicy.with_roots(
@@ -1968,22 +2338,25 @@ def test_execution_session_service_preserves_pycodified_pipeline_source(
     )
 
     session_ref = execution_service.create_session_from_pipeline_source(
-        PycodifiedPipelineSessionRequest(
+        PipelineSourceSessionRequest(
             identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
             pipeline_source=pipeline_source,
             global_config_id=None,
-            pipeline_config_id=None,
             connection=ExecutionConnectionSpec(),
         )
     )
     execution_service.submit_compile(session_ref.session_id)
 
     submission = fake_client.compile_submissions[0]
-    assert submission.pipeline_source == pipeline_source
+    assert submission.pipeline_document.original_source == pipeline_source
+    assert submission.pipeline_code() == pipeline_source
     assert submission.pipeline_steps == []
+    assert submission.pipeline_config == pipeline_config
+    assert submission.pipeline_code() == pipeline_source
+    assert not hasattr(submission, "pipeline_steps_boundary")
 
 
-def test_execution_session_service_inspects_pycodified_artifact_plan(
+def test_execution_session_service_inspects_pipeline_source_artifact_plan(
     monkeypatch,
     tmp_path: Path,
 ):
@@ -2000,18 +2373,21 @@ def test_execution_session_service_inspects_pycodified_artifact_plan(
     )
 
     inspection = execution_service.inspect_pipeline_source_artifact_plan(
-        PycodifiedPipelineSessionRequest(
+        PipelineSourceSessionRequest(
             identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
-            pipeline_source="pipeline_steps = []\n",
+            pipeline_source=_pipeline_document_source(),
             global_config_id=None,
-            pipeline_config_id=None,
             connection=ExecutionConnectionSpec(),
         ),
         axis_filter=("A01",),
     )
 
     assert compile_gateway.requests[0].plate == tmp_path.resolve()
-    assert compile_gateway.requests[0].pipeline_source == "pipeline_steps = []\n"
+    assert compile_gateway.requests[0].pipeline_document.pipeline_steps == []
+    assert (
+        compile_gateway.requests[0].pipeline_document.pipeline_config
+        == PipelineConfig()
+    )
     assert compile_gateway.requests[0].axis_filter == ("A01",)
     assert compile_gateway.requests[0].progress_queue.events == [
         {"phase": "compile", "status": "running"}
@@ -2023,6 +2399,19 @@ def test_execution_session_service_inspects_pycodified_artifact_plan(
     assert inspection.progress_event_count == 1
     assert inspection.steps[0].step_name == "WriteArtifacts"
     assert inspection.steps[0].execution_groups == ("A01",)
+    assert inspection.steps[0].main_flow_materialization is not None
+    assert inspection.steps[0].main_flow_materialization.output_dir == (
+        "/tmp/out/A01/checkpoints"
+    )
+    assert inspection.steps[0].main_flow_materialization.sub_dir == "checkpoints"
+    assert inspection.steps[0].viewer_streaming[0].config_key == (
+        "napari_streaming_config"
+    )
+    assert inspection.steps[0].viewer_streaming[0].viewer_type == "napari"
+    assert inspection.steps[0].viewer_streaming[0].effective_config["enabled"] is True
+    assert inspection.steps[0].viewer_streaming[0].effective_config["well_filter"] == [
+        "A01"
+    ]
     assert inspection.steps[0].artifact_inputs[0].name == "positions"
     assert inspection.steps[0].artifact_inputs[0].kind == "special"
     assert inspection.steps[0].artifact_inputs[0].source_step_id == 0
@@ -2068,9 +2457,13 @@ def test_compile_inspection_counts_source_workspace_for_empty_pipeline_axis_filt
                 worker_assignments={},
             ),
             "source_workspace_projection": VirtualWorkspaceSourceProjection(
-                source_paths_by_virtual_path={
-                    virtual_name: str(tmp_path / "source-a01.tif"),
-                    other_virtual_name: str(tmp_path / "source-a02.tif"),
+                source_refs_by_virtual_path={
+                    virtual_name: SourcePixelRef(
+                        "disk", str(tmp_path / "source-a01.tif")
+                    ),
+                    other_virtual_name: SourcePixelRef(
+                        "disk", str(tmp_path / "source-a02.tif")
+                    ),
                 },
                 source_metadata_by_path={},
                 workspace_root=str(tmp_path),
@@ -2109,11 +2502,10 @@ def test_execution_session_service_warns_when_compile_inspection_initializes_wor
     )
 
     inspection = execution_service.inspect_pipeline_source_artifact_plan(
-        PycodifiedPipelineSessionRequest(
+        PipelineSourceSessionRequest(
             identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
-            pipeline_source="pipeline_steps = []\n",
+            pipeline_source=_pipeline_document_source(),
             global_config_id=None,
-            pipeline_config_id=None,
             connection=ExecutionConnectionSpec(),
         ),
     )
@@ -2124,14 +2516,10 @@ def test_execution_session_service_warns_when_compile_inspection_initializes_wor
     assert "openhcs_inspect_plate_path" in inspection.warnings[0].hint
 
 
-def test_execution_session_service_projects_typed_compile_inspection_errors(
+def test_execution_session_service_projects_invalid_pipeline_document_errors(
     monkeypatch,
     tmp_path: Path,
 ):
-    from openhcs.agent.services.execution_session_service import (
-        PipelineSourceMissingStepsError,
-    )
-
     execution_service = ExecutionSessionService(
         path_policy=AgentPathPolicy.with_roots(
             readable_roots=(tmp_path,),
@@ -2140,22 +2528,19 @@ def test_execution_session_service_projects_typed_compile_inspection_errors(
         pipeline_service=PipelineAuthoringService(_catalog(monkeypatch)),
         config_service=ConfigService(),
         client_factory=_FakeExecutionClientFactory(_FakeExecutionClient()),
-        compile_inspection_gateway=_FailingCompileInspectionGateway(
-            PipelineSourceMissingStepsError()
-        ),
+        compile_inspection_gateway=_FakeCompileInspectionGateway(),
     )
 
     inspection = execution_service.inspect_pipeline_source_artifact_plan(
-        PycodifiedPipelineSessionRequest(
+        PipelineSourceSessionRequest(
             identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
             pipeline_source="x = 1\n",
             global_config_id=None,
-            pipeline_config_id=None,
             connection=ExecutionConnectionSpec(),
         ),
     )
 
-    assert inspection.errors[0].code == "pipeline_source_missing_steps"
+    assert inspection.errors[0].code == "pipeline_source_invalid_document"
     assert "openhcs_render_pipeline_source" in inspection.errors[0].hint
 
 
@@ -2183,11 +2568,10 @@ def test_execution_session_service_projects_missing_artifact_input_guidance(
     )
 
     inspection = execution_service.inspect_pipeline_source_artifact_plan(
-        PycodifiedPipelineSessionRequest(
+        PipelineSourceSessionRequest(
             identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
-            pipeline_source="pipeline_steps = []\n",
+            pipeline_source=_pipeline_document_source(),
             global_config_id=None,
-            pipeline_config_id=None,
             connection=ExecutionConnectionSpec(),
         ),
     )
@@ -2197,7 +2581,7 @@ def test_execution_session_service_projects_missing_artifact_input_guidance(
     assert error.exception_type == "MissingArtifactInputError"
     assert "positions" in error.message
     assert "source bindings" in error.hint
-    assert "openhcs_agent_mcp_overview#pipeline-input-routing" in error.hint
+    assert "openhcs_architecture_quick_start#compile-before-execution" in error.hint
 
 
 def test_execution_session_service_projects_pixel_size_compile_inspection_error(
@@ -2219,11 +2603,10 @@ def test_execution_session_service_projects_pixel_size_compile_inspection_error(
     )
 
     inspection = execution_service.inspect_pipeline_source_artifact_plan(
-        PycodifiedPipelineSessionRequest(
+        PipelineSourceSessionRequest(
             identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
-            pipeline_source="pipeline_steps = []\n",
+            pipeline_source=_pipeline_document_source(),
             global_config_id=None,
-            pipeline_config_id=None,
             connection=ExecutionConnectionSpec(),
         ),
     )
@@ -2237,54 +2620,78 @@ def test_execution_session_service_projects_pixel_size_compile_inspection_error(
     assert inspection.progress_event_count == 1
 
 
-def test_compile_inspection_syntax_error_preflight_avoids_registry_bootstrap(
+def test_compile_inspection_syntax_error_preflight_avoids_compile_gateway(
     monkeypatch,
     tmp_path: Path,
 ):
-    from builtins import __import__ as real_import
+    compile_gateway = _FakeCompileInspectionGateway()
+    execution_service = ExecutionSessionService(
+        path_policy=AgentPathPolicy.with_roots(
+            readable_roots=(tmp_path,),
+            writable_roots=(tmp_path,),
+        ),
+        pipeline_service=PipelineAuthoringService(_catalog(monkeypatch)),
+        config_service=ConfigService(),
+        client_factory=_FakeExecutionClientFactory(_FakeExecutionClient()),
+        compile_inspection_gateway=compile_gateway,
+    )
 
-    from openhcs.agent.services.execution_session_service import PipelineSourceSyntaxError
-
-    blocked_imports: list[str] = []
-
-    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name in {
-            "openhcs.processing.func_registry",
-            "openhcs.core.orchestrator.orchestrator",
-        }:
-            blocked_imports.append(name)
-            raise AssertionError(f"unexpected heavy import for syntax error: {name}")
-        return real_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr("builtins.__import__", guarded_import)
-
-    with pytest.raises(PipelineSourceSyntaxError):
-        InProcessCompileInspectionGateway().compile(
-            CompileInspectionInput(
-                plate=tmp_path,
-                pipeline_source="not valid python !!!",
-                axis_filter=(),
-                configs=ExecutionConfigBundle(
-                    global_pipeline=GlobalPipelineConfig(),
-                    plate_pipeline=None,
-                ),
-                progress_queue=AgentProgressQueue(),
-            )
+    inspection = execution_service.inspect_pipeline_source_artifact_plan(
+        PipelineSourceSessionRequest(
+            identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
+            pipeline_source="not valid python !!!",
+            global_config_id=None,
+            connection=ExecutionConnectionSpec(),
         )
+    )
 
-    assert blocked_imports == []
+    assert inspection.errors[0].code == "pipeline_source_syntax_error"
+    assert compile_gateway.requests == []
 
 
-def test_pycodified_pipeline_session_rejects_execution_plate_path(tmp_path: Path):
+def test_compile_inspection_requires_direct_pipeline_step_list(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    compile_gateway = _FakeCompileInspectionGateway()
+    execution_service = ExecutionSessionService(
+        path_policy=AgentPathPolicy.with_roots(
+            readable_roots=(tmp_path,),
+            writable_roots=(tmp_path,),
+        ),
+        pipeline_service=PipelineAuthoringService(_catalog(monkeypatch)),
+        config_service=ConfigService(),
+        client_factory=_FakeExecutionClientFactory(_FakeExecutionClient()),
+        compile_inspection_gateway=compile_gateway,
+    )
+
+    inspection = execution_service.inspect_pipeline_source_artifact_plan(
+        PipelineSourceSessionRequest(
+            identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
+            pipeline_source=(
+                "from openhcs.core.config import PipelineConfig\n"
+                "pipeline_config = PipelineConfig()\n"
+                "pipeline_steps = ()\n"
+            ),
+            global_config_id=None,
+            connection=ExecutionConnectionSpec(),
+        )
+    )
+
+    assert inspection.errors[0].code == "pipeline_source_invalid_document"
+    assert "list[FunctionStep]" in inspection.errors[0].message
+    assert compile_gateway.requests == []
+
+
+def test_pipeline_source_session_rejects_execution_plate_path(tmp_path: Path):
     with pytest.raises(ValueError, match="execution_plate_id must be None"):
-        PycodifiedPipelineSessionRequest(
+        PipelineSourceSessionRequest(
             identity=ZMQExecutionIdentity(
                 plate_id=str(tmp_path),
                 execution_plate_id=str(tmp_path),
             ),
-            pipeline_source="pipeline_steps = []\n",
+            pipeline_source=_pipeline_document_source(),
             global_config_id=None,
-            pipeline_config_id=None,
             connection=ExecutionConnectionSpec(),
         )
 
@@ -2305,11 +2712,10 @@ def test_execution_session_service_reports_nested_runtime_status(
     )
 
     session_ref = execution_service.create_session_from_pipeline_source(
-        PycodifiedPipelineSessionRequest(
+        PipelineSourceSessionRequest(
             identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
-            pipeline_source="pipeline_steps = []\n",
+            pipeline_source=_pipeline_document_source(),
             global_config_id=None,
-            pipeline_config_id=None,
             connection=ExecutionConnectionSpec(),
         )
     )
@@ -2320,7 +2726,7 @@ def test_execution_session_service_reports_nested_runtime_status(
     assert status.response["status"] == "ok"
     assert fake_client.status_requests[0] == (
         _ExecutionTestId.COMPILE,
-        DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     )
 
 
@@ -2340,11 +2746,10 @@ def test_execution_session_service_warns_when_headless_run_skips_plate_manager(
     )
 
     session_ref = execution_service.create_session_from_pipeline_source(
-        PycodifiedPipelineSessionRequest(
+        PipelineSourceSessionRequest(
             identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
-            pipeline_source="pipeline_steps = []\n",
+            pipeline_source=_pipeline_document_source(),
             global_config_id=None,
-            pipeline_config_id=None,
             connection=ExecutionConnectionSpec(),
         )
     )
@@ -2373,11 +2778,10 @@ def test_execution_session_service_wait_true_is_bounded_polling(
     )
 
     session_ref = execution_service.create_session_from_pipeline_source(
-        PycodifiedPipelineSessionRequest(
+        PipelineSourceSessionRequest(
             identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
-            pipeline_source="pipeline_steps = []\n",
+            pipeline_source=_pipeline_document_source(),
             global_config_id=None,
-            pipeline_config_id=None,
             connection=ExecutionConnectionSpec(),
         )
     )
@@ -2392,7 +2796,7 @@ def test_execution_session_service_wait_true_is_bounded_polling(
     assert status.response["wait_timed_out"] is True
     assert status.response["wait_timeout_ms"] == 1
     assert fake_client.status_requests[0][0] == _ExecutionTestId.COMPILE
-    assert fake_client.status_requests[0][1] <= DEFAULT_EXECUTION_WAIT_TIMEOUT_MS
+    assert fake_client.status_requests[0][1] <= OPENHCS_ZMQ_CONFIG.control_timeout_ms
     assert fake_client.wait_requests == []
 
 
@@ -2412,11 +2816,10 @@ def test_execution_session_service_wait_true_converts_status_timeout_to_warning(
     )
 
     session_ref = execution_service.create_session_from_pipeline_source(
-        PycodifiedPipelineSessionRequest(
+        PipelineSourceSessionRequest(
             identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
-            pipeline_source="pipeline_steps = []\n",
+            pipeline_source=_pipeline_document_source(),
             global_config_id=None,
-            pipeline_config_id=None,
             connection=ExecutionConnectionSpec(),
         )
     )
@@ -2451,11 +2854,10 @@ def test_execution_session_service_submit_timeout_returns_agent_error(
     )
 
     session_ref = execution_service.create_session_from_pipeline_source(
-        PycodifiedPipelineSessionRequest(
+        PipelineSourceSessionRequest(
             identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
-            pipeline_source="pipeline_steps = []\n",
+            pipeline_source=_pipeline_document_source(),
             global_config_id=None,
-            pipeline_config_id=None,
             connection=ExecutionConnectionSpec(),
         )
     )
@@ -2487,11 +2889,10 @@ def test_execution_session_service_submit_boundary_timeout_returns_agent_error(
     )
 
     session_ref = execution_service.create_session_from_pipeline_source(
-        PycodifiedPipelineSessionRequest(
+        PipelineSourceSessionRequest(
             identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
-            pipeline_source="pipeline_steps = []\n",
+            pipeline_source=_pipeline_document_source(),
             global_config_id=None,
-            pipeline_config_id=None,
             connection=ExecutionConnectionSpec(),
         )
     )
@@ -2526,11 +2927,10 @@ def test_execution_session_service_bounds_failed_execution_status(
     )
 
     session_ref = execution_service.create_session_from_pipeline_source(
-        PycodifiedPipelineSessionRequest(
+        PipelineSourceSessionRequest(
             identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
-            pipeline_source="pipeline_steps = []\n",
+            pipeline_source=_pipeline_document_source(),
             global_config_id=None,
-            pipeline_config_id=None,
             connection=ExecutionConnectionSpec(),
         )
     )
@@ -2550,7 +2950,7 @@ def test_execution_session_service_bounds_failed_execution_status(
     )
     assert fake_client.status_requests[0] == (
         _ExecutionTestId.EXECUTE,
-        DEFAULT_EXECUTION_STATUS_TIMEOUT_MS,
+        OPENHCS_ZMQ_CONFIG.control_timeout_ms,
     )
 
 
@@ -2570,11 +2970,10 @@ def test_execution_session_service_hints_custom_function_import_failures(
     )
 
     session_ref = execution_service.create_session_from_pipeline_source(
-        PycodifiedPipelineSessionRequest(
+        PipelineSourceSessionRequest(
             identity=ZMQExecutionIdentity(plate_id=str(tmp_path)),
-            pipeline_source="pipeline_steps = []\n",
+            pipeline_source=_pipeline_document_source(),
             global_config_id=None,
-            pipeline_config_id=None,
             connection=ExecutionConnectionSpec(),
         )
     )
@@ -2612,7 +3011,9 @@ def test_runtime_server_service_reads_runtime_server_state():
     assert [server.port for server in scan_result.servers] == [5555, 7777]
     assert execution_status.status == "complete"
     assert gateway.execution_status_requests[0][1] == _ExecutionTestId.EXECUTE
-    assert gateway.execution_status_requests[0][2] == DEFAULT_EXECUTION_STATUS_TIMEOUT_MS
+    assert (
+        gateway.execution_status_requests[0][2] == OPENHCS_ZMQ_CONFIG.control_timeout_ms
+    )
 
 
 def test_runtime_server_service_bounds_failed_execution_status():
@@ -2650,64 +3051,36 @@ def test_runtime_server_info_rejects_viewer_endpoint_with_agent_error():
     assert "openhcs_scan_runtime_servers" in server_info.errors[0].hint
 
 
-def test_authoring_context_uses_function_catalog(monkeypatch):
+def test_pipeline_authoring_context_is_task_specific_and_does_not_dump_catalog():
+    class _UnexpectedFunctionCatalog:
+        def search(self, **_kwargs):
+            raise AssertionError("pipeline context must search only after user intent")
+
     context = AgentAuthoringContextService(
-        _catalog(monkeypatch)
-    ).get_authoring_context()
+        function_catalog=_UnexpectedFunctionCatalog(),
+    ).get_authoring_context("pipeline")
 
     assert context.kind == "pipeline"
+    assert len(context.content) < 16_000
+    assert "EXECUTION MENTAL MODEL" in context.content
+    assert "PIPELINE AUTHORING WORKFLOW" in context.content
     assert "CONFIG SCHEMA HINTS" in context.content
-    assert "test:sample_processing_function" in context.content
-    assert "from openhcs.constants.constants import VariableComponents, GroupBy" in context.content
-    assert "StepSourceBindingsConfig" in context.content
-    assert "FRONTLOADED OPENHCS MODEL" in context.content
-    assert "CELLPROFILER MENTAL MODEL BRIDGE" in context.content
-    assert context.content.index("CELLPROFILER MENTAL MODEL BRIDGE") < context.content.index(
-        "PIPELINE AUTHORING RULES"
-    )
-    assert "If you know CellProfiler, use that model first" in context.content
-    assert "CellProfiler Image name becomes an OpenHCS semantic source binding" in context.content
-    assert "CellProfiler Object name becomes an OpenHCS object-label runtime value" in context.content
-    assert "cellprofiler_translation" in context.content
-    assert "RUNTIME AND UI COORDINATION" in context.content
-    assert context.content.index("RUNTIME AND UI COORDINATION") < context.content.index(
-        "OBJECTSTATE AND CODE ROUNDTRIP"
-    )
-    assert "plate_manager.orchestrator_config" in context.content
-    assert "Direct orchestrator sessions are headless runtime jobs" in context.content
-    assert "do not make PlateManager rows" in context.content
-    assert "OBJECTSTATE AND CODE ROUNDTRIP" in context.content
-    assert context.content.index("OBJECTSTATE AND CODE ROUNDTRIP") < context.content.index(
-        "PIPELINE AUTHORING RULES"
-    )
-    assert "object-state-scopes and object-state-fields" in context.content
-    assert "* means unsaved/dirty" in context.content
-    assert "_ means differs from defaults" in context.content
-    assert "get-code-document, validate-code-document, and apply-code-document" in context.content
-    assert "time-travel-head" in context.content
-    assert "CUSTOM FUNCTIONS AND RUNTIME OUTPUTS" in context.content
-    assert context.content.index("CUSTOM FUNCTIONS AND RUNTIME OUTPUTS") < context.content.index(
-        "PIPELINE AUTHORING RULES"
-    )
-    assert "FunctionStep.func patterns" in context.content
-    assert "processing_config.variable_components are the axes stacked" in context.content
-    assert "Dict patterns are routed by processing_config.group_by" in context.content
-    assert "artifact_outputs plus MaterializationSpec" in context.content
-    assert "viewer-rois, viewer-payloads" in context.content
-    assert "SOURCE-BINDING WORKFLOW" in context.content
-    assert context.content.index("FRONTLOADED OPENHCS MODEL") < context.content.index(
-        "PIPELINE AUTHORING RULES"
-    )
-    assert "inspect-plate, query-plate-files" in context.content
-    assert "Virtual workspaces map logical OpenHCS virtual filenames" in context.content
-    assert "source_workspace files with virtual_path" in context.content
-    assert "openhcs_function_patterns" in context.content
-    assert "openhcs_code_ui_interconversion" in context.content
-    assert "openhcs_example_corpus_map" in context.content
-    assert "official30_scoped_rows contains 30" in context.content
-    assert "Do not pass variable_components, group_by, or input_source directly to FunctionStep" in context.content
-    assert "processing_config=LazyProcessingConfig(" in context.content
-    assert "group_by=GroupBy.CHANNEL" in context.content
+    assert "openhcs_search_functions" in context.content
+    assert "openhcs_describe_function" in context.content
+    assert "openhcs_configuration_reference" in context.content
+    assert "openhcs_artifact_contract_system" in context.content
+    assert "Five independent questions govern each step" in context.content
+    assert "not a third InputSource value" in context.content
+    assert "does not itself promise a persistent file" in context.content
+    assert "compiled artifact and materialization plans" in context.content
+    assert "two independent inheritance axes" in context.content
+    assert "reduces loading, memory, and processing" in context.content
+    assert "viewer-local well filter only suppresses viewer emission" in context.content
+    assert "REGISTERED OPENHCS FUNCTIONS" not in context.content
+    assert "CORE PIPELINE IMPORTS" not in context.content
+    assert "RUNTIME AND UI COORDINATION" not in context.content
+    assert "CELLPROFILER MENTAL MODEL BRIDGE" not in context.content
+    assert "SOURCE-BINDING WORKFLOW" not in context.content
 
 
 def test_custom_function_authoring_context_is_not_pipeline_context():
@@ -2720,86 +3093,90 @@ def test_custom_function_authoring_context_is_not_pipeline_context():
     ).get_authoring_context("custom_function")
 
     assert context.kind == "custom_function"
-    assert "CORE CUSTOM FUNCTION IMPORTS" in context.content
+    assert len(context.content) < 16_000
+    assert "CORE CUSTOM FUNCTION IMPORTS" not in context.content
     assert "from openhcs.core.memory import numpy" in context.content
-    assert "artifact_outputs, artifact_inputs" in context.content
-    assert "segmentation_mask_rois" in context.content
-    assert "OBJECTSTATE AND CODE ROUNDTRIP" in context.content
-    assert "object-state-scopes and object-state-fields" in context.content
+    assert "MeasurementsArtifactType" in context.content
+    assert "ObjectLabelsArtifactType" in context.content
     assert "CUSTOM FUNCTIONS AND RUNTIME OUTPUTS" in context.content
     assert "FunctionStep.func patterns" in context.content
-    assert "processing_config.variable_components are the axes stacked" in context.content
+    assert (
+        "processing_config.variable_components are the axes stacked" in context.content
+    )
     assert "Dict patterns are routed by processing_config.group_by" in context.content
-    assert "selected-plate-files, viewer-rois" in context.content
     assert "@numpy" in context.content
-    assert "CustomFunctionManager().register_from_code" in context.content
+    assert "openhcs_register_custom_function" in context.content
+    assert "openhcs_custom_function_management" in context.content
+    assert "CustomFunctionManager().register_from_code" not in context.content
     assert "CORE PIPELINE IMPORTS" not in context.content
     assert "CONFIG SCHEMA HINTS" not in context.content
     assert "REGISTERED OPENHCS FUNCTIONS" not in context.content
 
 
-def test_first_use_authoring_context_frontloads_core_model():
-    context = AgentAuthoringContextService().get_authoring_context("first_use")
+def test_first_use_authoring_context_is_a_bounded_intent_router():
+    class _UnexpectedFunctionCatalog:
+        def search(self, **_kwargs):
+            raise AssertionError("first-use must not enumerate the function catalog")
+
+    context = AgentAuthoringContextService(
+        function_catalog=_UnexpectedFunctionCatalog(),
+    ).get_authoring_context("first_use")
+    normalized_content = " ".join(context.content.split())
 
     assert context.kind == "first_use"
-    assert context.content.startswith("=== OPENHCS CORE MODEL ===")
-    assert "Data/source model" in context.content
-    assert "Axis/component model" in context.content
-    assert "Pipeline/function model" in context.content
-    assert "CellProfiler compatibility model" in context.content
-    assert "Source-universe model" in context.content
-    assert "Runtime artifact/sidecar model" in context.content
-    assert "Config/ObjectState model" in context.content
-    assert "Compiler/artifact model" in context.content
-    assert "Runtime/UI model" in context.content
-    assert "UI/code biconversion model" in context.content
-    assert "Review model" in context.content
-    assert "If you do not already know OpenHCS" in context.content
-    assert "read the ``first_use`` authoring context" in context.content
-    assert "=== CELLPROFILER COMPATIBILITY MODEL ===" in context.content
-    assert "first-class CellProfiler compatibility" in context.content
-    assert "official30 native" in context.content
-    assert "CellProfiler reference set" in context.content
-    assert "compiler/runtime model" in context.content
-    assert "=== ARTIFACT SIDECAR AND SOURCE UNIVERSE MODEL ===" in context.content
-    assert "SourceUniverseRequest" in context.content
-    assert "ArtifactSpec" in context.content
-    assert "ArtifactSidecarRole" in context.content
-    assert "UI-reflected objects can be edited" in context.content
-    assert "code documents are live typed pycodified projections" in context.content
-    assert "not standalone scripts" in context.content
-    assert "revision tokens" in context.content
-    assert context.content.index("=== OPENHCS CORE MODEL ===") < context.content.index(
-        "=== CELLPROFILER COMPATIBILITY MODEL ==="
+    assert len(context.content) < 16_000
+    assert context.content.startswith("=== CHOOSE AN OPENHCS WORKFLOW ===")
+    assert "=== CORE MODEL IN ONE PASS ===" in context.content
+    assert "storage-independent virtual workspace" in normalized_content
+    assert "multidimensional grouping and artifact contracts" in normalized_content
+    assert "=== CHOOSE ONE TASK ROUTE ===" in context.content
+    assert 'kind="ui_visible_workflow"' in context.content
+    assert 'kind="folder_onboarding"' in context.content
+    assert 'kind="pipeline"' in context.content
+    assert 'kind="headless_execution"' in context.content
+    assert 'kind="viewer_review"' in context.content
+    assert context.content.index('kind="ui_visible_workflow"') < context.content.index(
+        'kind="folder_onboarding"'
     )
-    assert context.content.index(
-        "=== CELLPROFILER COMPATIBILITY MODEL ==="
-    ) < context.content.index(
-        "=== ARTIFACT SIDECAR AND SOURCE UNIVERSE MODEL ==="
-    )
-    assert context.content.index(
-        "=== ARTIFACT SIDECAR AND SOURCE UNIVERSE MODEL ==="
-    ) < context.content.index(
-        "=== FIRST-USE OPERATIONAL ROUTES ==="
-    )
-    assert context.content.index(
-        "=== FIRST-USE OPERATIONAL ROUTES ==="
-    ) < context.content.index("=== FOLDER ONBOARDING WORKFLOW ===")
-    assert context.content.index("=== FOLDER ONBOARDING WORKFLOW ===") < context.content.index(
-        "=== UI-VISIBLE WORKFLOW ==="
-    )
-    assert context.content.index("=== UI-VISIBLE WORKFLOW ===") < context.content.index(
-        "=== VIEWER REVIEW WORKFLOW ==="
-    )
-    assert context.content.index("=== VIEWER REVIEW WORKFLOW ===") < context.content.index(
-        "=== CAPABILITY GROUPS ==="
-    )
+    assert "UI-owned route always takes precedence" in context.content
+    assert "Do not read every knowledge document" in context.content
+    assert "openhcs_architecture_quick_start" in context.content
+    assert "read this complete first_use curriculum" not in context.content
+    assert "=== REGISTERED OPENHCS FUNCTIONS ===" not in context.content
+    assert "=== CONFIGURATION SYSTEM ===" not in context.content
+    assert "=== SOURCE-BINDING WORKFLOW ===" not in context.content
+    assert "=== UI-VISIBLE WORKFLOW ===" not in context.content
 
 
-def test_domain_expert_context_points_unknown_agents_to_first_use():
+def test_default_authoring_context_request_returns_complete_progressive_router():
+    request = AuthoringContextRequest()
+    context = AgentAuthoringContextService().get_bounded_authoring_context(request)
+
+    assert request.kind == "first_use"
+    assert request.max_chars == 16_000
+    assert context.kind == "first_use"
+    assert "...<truncated" not in context.content
+    assert context.content.startswith("=== CHOOSE AN OPENHCS WORKFLOW ===")
+    assert "=== CORE MODEL IN ONE PASS ===" in context.content
+    assert "=== CHOOSE ONE TASK ROUTE ===" in context.content
+    assert 'kind="ui_visible_workflow"' in context.content
+    assert 'kind="folder_onboarding"' in context.content
+    assert 'kind="pipeline"' in context.content
+    assert 'kind="headless_execution"' in context.content
+    assert 'kind="viewer_review"' in context.content
+    assert "=== SOURCE-BINDING WORKFLOW ===" not in context.content
+    assert "=== CONFIGURATION SYSTEM ===" not in context.content
+
+
+def test_domain_expert_context_routes_by_visible_state_ownership():
     context = AgentAuthoringContextService().get_authoring_context(
         "domain_expert_assisted_setup"
     )
 
     assert context.kind == "domain_expert_assisted_setup"
-    assert 'openhcs_get_authoring_context(kind="first_use") first' in context.content
+    assert len(context.content) < 16_000
+    assert 'kind="ui_visible_workflow"' in context.content
+    assert 'kind="folder_onboarding"' in context.content
+    assert "compiled artifacts, bounded result samples" in context.content
+    assert "=== UI-VISIBLE WORKFLOW ===" not in context.content
+    assert "=== FOLDER ONBOARDING WORKFLOW ===" not in context.content

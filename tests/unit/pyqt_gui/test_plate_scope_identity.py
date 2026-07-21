@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from openhcs.pyqt_gui.services.plate_scope_identity import (
+from openhcs.ui.shared.plate_scope_identity import (
     PipelineScopeIdentity,
     PlateScopeIdentity,
 )

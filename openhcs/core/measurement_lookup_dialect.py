@@ -369,11 +369,12 @@ class RuntimeMeasurementFeatureLookup:
 
     @property
     def source_qualified_feature_families(self) -> tuple[tuple[str, ...], ...]:
+        dialect_feature_parts = self.dialect_feature_parts
         families: list[tuple[str, ...]] = []
         for family in self.dialect.resolved_source_qualified_feature_families():
-            if len(self.dialect_feature_parts) <= len(family):
+            if len(dialect_feature_parts) <= len(family):
                 continue
-            if self.dialect_feature_parts[: len(family)] != family:
+            if dialect_feature_parts[: len(family)] != family:
                 continue
             families.append(family)
         return tuple(families)

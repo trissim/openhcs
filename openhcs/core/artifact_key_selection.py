@@ -6,7 +6,12 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from typing import TypeVar
 
-from openhcs.core.artifacts import ArtifactPlan, ArtifactSpecCollection
+from openhcs.core.artifacts import (
+    ArtifactOutputPlan,
+    ArtifactPlan,
+    ArtifactSpecCollection,
+    ArtifactSpecRef,
+)
 
 ArtifactPlanT = TypeVar("ArtifactPlanT", bound=ArtifactPlan)
 
@@ -24,20 +29,36 @@ class ArtifactPlanKeySelector(ABC):
         """Artifact specs that participate in compiled plan-key selection."""
         return self.artifact_specs
 
-    def artifact_names_for(
+    def select_plans(
         self,
         plan_type: type[ArtifactPlanT],
-    ) -> tuple[str, ...]:
-        return self.artifact_key_specs.names_for_plan_type(plan_type)
+        plans: Mapping[ArtifactSpecRef, ArtifactPlanT],
+    ) -> tuple[ArtifactPlanT, ...]:
+        """Select exact compiled plans in declaration order.
 
-    def select_plan_keys(
-        self,
-        plan_type: type[ArtifactPlanT],
-        plans: Mapping[str, ArtifactPlanT],
-    ) -> tuple[str, ...]:
-        """Select compiled artifact plans consumed or produced by this declaration."""
-        declared = set(self.artifact_names_for(plan_type))
-        return tuple(key for key in plans if key in declared)
+        The path planner owns whether a semantic input requires a runtime
+        artifact plan. Inputs satisfied by source bindings, metadata, or main
+        flow are therefore absent from ``plans``. Every present plan remains
+        indexed by its declaration-owned exact artifact ref.
+        """
+        plan_type.require_exact_map(
+            plans,
+            boundary=f"{type(self).__name__} artifact plan",
+        )
+        declared = self.artifact_key_specs.for_plan_type(plan_type)
+        selected: list[ArtifactPlanT] = []
+        for spec in declared.specs:
+            ref = spec.ref()
+            plan = plans.get(ref)
+            if plan is None:
+                continue
+            selected.append(plan)
+        return tuple(selected)
 
     def validate_artifact_relation_refs(self, *, owner_name: str) -> None:
-        self.artifact_specs.validate_registered_relation_refs(owner_name=owner_name)
+        self.artifact_specs.validate_registered_relation_refs(
+            owner_name=owner_name,
+            relation_specs=self.artifact_specs.for_plan_type(
+                ArtifactOutputPlan
+            ).specs,
+        )

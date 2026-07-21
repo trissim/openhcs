@@ -36,7 +36,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Callable, ClassVar, TypeVar
 from xml.dom.minidom import parse
 from metaclass_registry import AutoRegisterMeta
 from scipy.ndimage import (
@@ -79,9 +79,11 @@ from openhcs.interop.cellprofiler.worm_measurements import (
 )
 from openhcs.core.runtime_tabular_values import (
     FieldSpec,
+    MeasurementObjectRowIdentity,
 )
 from openhcs.core.runtime_measurements import (
     MeasurementRowAxisField,
+    RuntimeMeasurementFeature,
 )
 from openhcs.core.runtime_object_labels import (
     ObjectLabelRepresentation,
@@ -124,9 +126,14 @@ from openhcs.interop.cellprofiler.module_artifact_declarations import (
     ObjectArtifactInputModule,
     ObjectArtifactOutputModule,
 )
-from openhcs.interop.cellprofiler.runtime.measurement_rows import measurement_table_rows
 from openhcs.interop.cellprofiler.runtime.measurement_recording import (
     CurrentPayloadMeasurementRecordMixin,
+    FieldDerivedMeasurementFeatureModule,
+    MeasurementFeatureRecord,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_rows import (
+    ModuleOwnedResultMeasurementRows,
+    measurement_table_rows,
 )
 from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.processing.backends.cellprofiler.distance_propagation_numba import (
@@ -1104,14 +1111,23 @@ class WormMeasurement:
 
 
 @dataclass(frozen=True, slots=True)
-class DeadWormStats:
-    """IdentifyDeadWorms summary row."""
+class DeadWormStats(MeasurementFeatureRecord):
+    """IdentifyDeadWorms summary carrier retained for runtime diagnostics."""
 
-    slice_index: int
+    slice_index: Annotated[int, MeasurementRowAxisField.SLICE_INDEX]
     object_count: int
     mean_center_x: float
     mean_center_y: float
     mean_angle: float
+
+
+@dataclass(frozen=True, slots=True)
+class DeadWormAngleMeasurement(MeasurementFeatureRecord):
+    """IdentifyDeadWorms per-object angle measurement."""
+
+    slice_index: Annotated[int, MeasurementRowAxisField.SLICE_INDEX]
+    object_label: Annotated[int, MeasurementRowAxisField.OBJECT_LABEL]
+    angle: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -2215,7 +2231,7 @@ def identify_dead_worms(
     auto_distance: bool = True,
     space_distance: float = 5.0,
     angular_distance: float = 30.0,
-) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
+) -> tuple[np.ndarray, ConcatenatedColumnarRows, ObjectLabelValue]:
     """Identify straight dead worms by diamond-template matches across angles.
 
     Args:
@@ -2252,9 +2268,17 @@ def identify_dead_worms(
         labels = np.zeros(mask.shape, dtype=np.int32)
         return (
             image,
-            DataclassMeasurementColumnarRows(
-                (DeadWormStats(0, 0, 0.0, 0.0, 0.0),),
-                row_type=DeadWormStats,
+            ConcatenatedColumnarRows(
+                (
+                    DataclassMeasurementColumnarRows(
+                        (DeadWormStats(0, 0, 0.0, 0.0, 0.0),),
+                        row_type=DeadWormStats,
+                    ),
+                    DataclassMeasurementColumnarRows(
+                        (),
+                        row_type=DeadWormAngleMeasurement,
+                    ),
+                )
             ),
             SourceImageObjectLabelBuildRequest(
                 image=image,
@@ -2302,11 +2326,27 @@ def identify_dead_worms(
         mean_center_y=float(np.mean(center_y)) if len(center_y) > 0 else 0.0,
         mean_angle=float(np.mean(angles) * 180 / np.pi) if len(angles) > 0 else 0.0,
     )
+    angle_measurements = tuple(
+        DeadWormAngleMeasurement(
+            slice_index=0,
+            object_label=object_label,
+            angle=float(angle * 180 / np.pi),
+        )
+        for object_label, angle in enumerate(angles, start=1)
+    )
     return (
         image,
-        DataclassMeasurementColumnarRows(
-            (stats,),
-            row_type=DeadWormStats,
+        ConcatenatedColumnarRows(
+            (
+                DataclassMeasurementColumnarRows(
+                    (stats,),
+                    row_type=DeadWormStats,
+                ),
+                DataclassMeasurementColumnarRows(
+                    angle_measurements,
+                    row_type=DeadWormAngleMeasurement,
+                ),
+            )
         ),
         SourceImageObjectLabelBuildRequest(
             image=image,
@@ -3114,8 +3154,121 @@ def _worm_descriptor_row(
     return row
 
 
-class IdentifyDeadWormsModule(CellProfilerModule):
+class IdentifyDeadWormsModule(
+    FieldDerivedMeasurementFeatureModule,
+    MeasurementArtifactOutputModule,
+    ObjectArtifactOutputModule,
+    CellProfilerModule,
+):
     module_name = "IdentifyDeadWorms"
     function_name = "identify_dead_worms"
     validated = True
     confidence = 1.0
+    measurement_feature_family = "Worm"
+    measurement_category_prefixes = (("worm",),)
+
+    class MeasurementFeature(RuntimeMeasurementFeature):
+        """Exact IdentifyDeadWorms feature vocabulary beyond core object rows."""
+
+        ANGLE = "Angle"
+
+    @dataclass(frozen=True, slots=True)
+    class MeasurementRows(ModuleOwnedResultMeasurementRows):
+        """Project owned angle records to exact CellProfiler worm features."""
+
+        object_name: str
+
+        @classmethod
+        def for_request(cls, module_type, request):
+            object_outputs = request.callable_contract.artifact_outputs.of_artifact_type(
+                ObjectLabelsArtifactType
+            )
+            if len(object_outputs) != 1:
+                raise ValueError(
+                    "IdentifyDeadWorms measurement projection requires exactly one "
+                    f"object output, got {[spec.name for spec in object_outputs]!r}."
+                )
+            return cls(
+                request.output_value,
+                module_type=module_type,
+                object_name=object_outputs[0].name,
+            )
+
+        def rows(self) -> MeasurementSparseColumnarRows:
+            source_rows = self.source_rows()
+            if not isinstance(source_rows, ConcatenatedColumnarRows):
+                raise TypeError(
+                    "IdentifyDeadWorms measurement projection requires "
+                    "ConcatenatedColumnarRows, got "
+                    f"{type(source_rows).__name__}."
+                )
+            angle_batches = tuple(
+                batch
+                for batch in source_rows.row_batches
+                if isinstance(batch, DataclassMeasurementColumnarRows)
+                and batch.row_type is DeadWormAngleMeasurement
+            )
+            if len(angle_batches) != 1:
+                raise TypeError(
+                    "IdentifyDeadWorms measurement projection requires exactly one "
+                    f"{DeadWormAngleMeasurement.__name__} batch, got "
+                    f"{angle_batches!r}."
+                )
+            projected_rows = self.module_type.measurement_feature_rows_from_records(
+                tuple(angle_batches[0].rows)
+            )
+            object_name_field = MeasurementRowAxisField.OBJECT_NAME.value
+            for row in projected_rows:
+                row[object_name_field] = self.object_name
+            return MeasurementSparseColumnarRows.from_rows(
+                projected_rows,
+                fields=(
+                    FieldSpec(object_name_field, str),
+                    *self.module_type.measurement_feature_row_fields(
+                        DeadWormAngleMeasurement
+                    ),
+                ),
+                object_row_identity=MeasurementObjectRowIdentity.LABEL_ID,
+            )
+
+    input_image_setting = SettingNameFamily("Select the input image")
+    output_objects_setting = SettingNameFamily(
+        "Name the dead worm objects to be identified"
+    )
+    setting_bindings = (
+        SettingToKeywordBinding.input(input_image_setting, ImageArtifactType),
+        SettingToKeywordBinding.output(
+            output_objects_setting,
+            ObjectLabelsArtifactType,
+        ),
+        SettingToKeywordBinding(
+            "Worm width",
+            "worm_width",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            "Worm length",
+            "worm_length",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            "Number of angles",
+            "angle_count",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            "Automatically calculate distance parameters?",
+            "auto_distance",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Spatial distance",
+            "space_distance",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            "Angular distance",
+            "angular_distance",
+            parse_cellprofiler_float,
+        ),
+    )

@@ -12,17 +12,28 @@ Format example:
 
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 
 from openhcs.constants import Backend
+from openhcs.core.source_bindings import ImagePlaneSource
 from openhcs.core.vfs_protocol import FileManagerLike
 
 from .cellprofiler_literals import decode_cellprofiler_setting_literal
 
 logger = logging.getLogger(__name__)
 
-CellProfilerMetadataValue = str | tuple[str, ...] | tuple[dict[str, str | None], ...]
+CellProfilerMetadataValue = str | tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ImagePlaneDetailsTable:
+    """Typed image-plane table and the source lines it owns."""
+
+    sources: tuple[ImagePlaneSource, ...]
+    line_span: range
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,10 +62,16 @@ class ModuleBlock:
     name: str  # e.g., "IdentifyPrimaryObjects"
     module_num: int  # Position in pipeline
     enabled: bool = True
-    settings: dict[str, str] = field(default_factory=dict)
     setting_records: list[ModuleSetting] = field(default_factory=list)
     metadata: dict[str, CellProfilerMetadataValue] = field(default_factory=dict)
     cppipe_path: Path | None = None
+
+    @property
+    def settings(self) -> Mapping[str, str]:
+        """Return a read-only last-value mapping derived from ordered settings."""
+        return MappingProxyType(
+            {setting.name: setting.value for setting in self.setting_records}
+        )
 
     @property
     def library_module_name(self) -> str:
@@ -135,7 +152,7 @@ class CPPipeParser:
         self.cppipe_path = Path(cppipe_path) if cppipe_path else None
         self.modules: list[ModuleBlock] = []
         self.header: dict[str, str] = {}
-        self.image_plane_sources: tuple[dict[str, str | None], ...] = ()
+        self.image_plane_sources: tuple[ImagePlaneSource, ...] = ()
 
     def parse(
         self,
@@ -166,17 +183,26 @@ class CPPipeParser:
         if filemanager is None and not path.exists():
             raise FileNotFoundError(f".cppipe file not found: {path}")
 
-        logger.info(f"Parsing .cppipe file: {path}")
+        logger.debug(f"Parsing .cppipe file: {path}")
 
         content = self._read_cppipe_text(path, filemanager=filemanager, backend=backend)
         lines = content.split("\n")
+        image_plane_details = self._parse_image_plane_details(lines)
 
         self.modules = []
         self.header = {}
-        self.image_plane_sources = ()
+        self.image_plane_sources = (
+            image_plane_details.sources if image_plane_details is not None else ()
+        )
         current_module: ModuleBlock | None = None
 
-        for line in lines:
+        for line_index, line in enumerate(lines):
+            if (
+                image_plane_details is not None
+                and line_index in image_plane_details.line_span
+            ):
+                continue
+
             # Check for module header
             header_match = self.MODULE_HEADER_PATTERN.match(line)
             if header_match:
@@ -205,7 +231,6 @@ class CPPipeParser:
             )
             if setting is not None and current_module is not None:
                 current_module.setting_records.append(setting)
-                current_module.settings[setting.name] = setting.value
                 continue
 
             # Skip comments
@@ -223,7 +248,6 @@ class CPPipeParser:
             )
             if setting is not None and current_module is not None:
                 current_module.setting_records.append(setting)
-                current_module.settings[setting.name] = setting.value
                 continue
 
             # Header line (key:value without module bracket)
@@ -236,12 +260,7 @@ class CPPipeParser:
         if current_module:
             self.modules.append(current_module)
 
-        self.image_plane_sources = self._parse_image_plane_sources(lines)
-        if self.image_plane_sources:
-            for module in self.modules:
-                module.metadata["image_plane_sources"] = self.image_plane_sources
-
-        logger.info(f"Parsed {len(self.modules)} modules from {path.name}")
+        logger.debug(f"Parsed {len(self.modules)} modules from {path.name}")
         return self.modules
 
     @staticmethod
@@ -300,8 +319,17 @@ class CPPipeParser:
     def _parse_image_plane_sources(
         self,
         lines: list[str],
-    ) -> tuple[dict[str, str | None], ...]:
+    ) -> tuple[ImagePlaneSource, ...]:
         """Parse CellProfiler's optional embedded image-plane details table."""
+
+        details = self._parse_image_plane_details(lines)
+        return details.sources if details is not None else ()
+
+    def _parse_image_plane_details(
+        self,
+        lines: list[str],
+    ) -> _ImagePlaneDetailsTable | None:
+        """Return the typed embedded table and its exclusive source-line span."""
 
         for index, line in enumerate(lines):
             version_match = self.IMAGE_PLANE_DETAILS_PATTERN.match(line.strip())
@@ -309,13 +337,23 @@ class CPPipeParser:
                 continue
             header_index = index + 1
             if header_index >= len(lines):
-                return ()
+                return _ImagePlaneDetailsTable((), range(index, index + 1))
             header = self._csv_image_plane_row(lines[header_index])
             if not header or header[0] != "URL":
-                return ()
-            plane_sources: list[dict[str, str | None]] = []
+                return _ImagePlaneDetailsTable((), range(index, header_index + 1))
+            plane_sources: list[ImagePlaneSource] = []
             expected_count = int(version_match.group("count"))
-            for row_line in lines[header_index + 1 :]:
+            last_table_index = header_index
+            if expected_count == 0:
+                return _ImagePlaneDetailsTable(
+                    (),
+                    range(index, header_index + 1),
+                )
+            for row_index, row_line in enumerate(
+                lines[header_index + 1 :],
+                start=header_index + 1,
+            ):
+                last_table_index = row_index
                 if not row_line.strip():
                     continue
                 row = self._csv_image_plane_row(row_line)
@@ -329,17 +367,20 @@ class CPPipeParser:
                 if not uri:
                     continue
                 plane_sources.append(
-                    {
-                        "uri": uri,
-                        "series": values.get("Series"),
-                        "index": values.get("Index"),
-                        "channel": values.get("Channel"),
-                    }
+                    ImagePlaneSource(
+                        uri=uri,
+                        series=values.get("Series"),
+                        index=values.get("Index"),
+                        channel=values.get("Channel"),
+                    )
                 )
                 if len(plane_sources) == expected_count:
                     break
-            return tuple(plane_sources)
-        return ()
+            return _ImagePlaneDetailsTable(
+                tuple(plane_sources),
+                range(index, last_table_index + 1),
+            )
+        return None
 
     def _csv_image_plane_row(self, line: str) -> list[str]:
         import csv

@@ -9,7 +9,14 @@ from typing import TYPE_CHECKING, ClassVar, TypeAlias
 
 from metaclass_registry import AutoRegisterMeta
 from PyQt6.QtCore import QItemSelectionModel, QModelIndex, Qt, QTimer
-from PyQt6.QtWidgets import QAbstractButton, QAbstractItemView, QApplication, QWidget
+from PyQt6.QtWidgets import (
+    QAbstractButton,
+    QAbstractItemView,
+    QApplication,
+    QTabBar,
+    QTabWidget,
+    QWidget,
+)
 from PyQt6.QtWidgets import QMessageBox
 from pyqt_reactive.services.scope_window_factory import ScopeWindowRegistry
 from pyqt_reactive.services.scope_window_navigation import ScopeWindowNavigationService
@@ -1369,6 +1376,15 @@ class UiWidgetActionInvokeResultFactory:
                 summary=action_summary,
             )
 
+        if action_kind == WidgetActionKind.TAB_SELECTOR:
+            return self._invoke_tab_selector(
+                request,
+                descriptor,
+                action_summary,
+                widget,
+                action_kind=action_kind,
+            )
+
         guard_error = self._guard_error(request, descriptor, widget, action_kind)
         if guard_error is not None:
             return self.error(
@@ -1394,6 +1410,65 @@ class UiWidgetActionInvokeResultFactory:
             )
 
         QTimer.singleShot(0, button.click)
+        return UiWidgetActionInvokeResult(
+            schema_version=SCHEMA_VERSION,
+            window_id=request.window_id,
+            path_id=request.path_id,
+            action_kind=action_kind.value,
+            invoked=True,
+            receipt=UiMutationReceipt.accepted_for(request.request_token),
+            summary=action_summary,
+        )
+
+    def _invoke_tab_selector(
+        self,
+        request: UiWidgetActionInvokeRequest,
+        descriptor: WidgetDescriptor,
+        action_summary: UiWidgetActionSummary,
+        widget: QWidget,
+        *,
+        action_kind: WidgetActionKind,
+    ) -> UiWidgetActionInvokeResult:
+        guard_error = self._guard_error(request, descriptor, widget, action_kind)
+        if guard_error is not None:
+            return self.error(
+                request,
+                guard_error,
+                summary=action_summary,
+                action_kind=action_kind.value,
+            )
+
+        if not isinstance(widget, (QTabBar, QTabWidget)):
+            return self.error(
+                request,
+                AgentError(
+                    code="ui_widget_action_unsupported",
+                    message=(
+                        f"Widget path_id {request.path_id!r} is a "
+                        f"{type(widget).__name__}, not a tab selector."
+                    ),
+                ),
+                summary=action_summary,
+                action_kind=action_kind.value,
+            )
+
+        target_index = request.target_index
+        if target_index is None or not 0 <= target_index < widget.count():
+            return self.error(
+                request,
+                AgentError(
+                    code="ui_widget_tab_index_invalid",
+                    message=(
+                        f"Target tab index {target_index!r} is outside the "
+                        f"available range for widget path_id {request.path_id!r}."
+                    ),
+                    hint=f"Provide target_index from 0 through {widget.count() - 1}.",
+                ),
+                summary=action_summary,
+                action_kind=action_kind.value,
+            )
+
+        QTimer.singleShot(0, lambda: widget.setCurrentIndex(target_index))
         return UiWidgetActionInvokeResult(
             schema_version=SCHEMA_VERSION,
             window_id=request.window_id,
@@ -1928,7 +2003,10 @@ class UiWidgetTreeResultFactory:
         state.returned_widget_count += 1
 
         children: list[UiWidgetTreeNode] = []
-        for child in draft.children:
+        for child in sorted(
+            draft.children,
+            key=lambda candidate: not candidate.descriptor.visible,
+        ):
             child_node = cls.node_from_draft(child, request=request, state=state)
             if child_node is not None:
                 children.append(child_node)
@@ -2084,6 +2162,7 @@ class UiWidgetTreeResultFactory:
             current_index=descriptor.current_index,
             current_text=descriptor.current_text,
             item_count=descriptor.item_count,
+            item_texts=descriptor.item_texts,
             tool_tip=descriptor.tool_tip,
             context_label=context_label,
             action_role=action_role,
@@ -2197,6 +2276,7 @@ class UiWidgetTreeResultFactory:
             current_index=descriptor.current_index,
             current_text=descriptor.current_text,
             item_count=descriptor.item_count,
+            item_texts=descriptor.item_texts,
             children=(
                 tuple(cls.node(child) for child in descriptor.children)
                 if children is None
@@ -2812,6 +2892,10 @@ class MainWindowBridgeProviderSet(UiBridgeProviderSetABC):
 
     main_window: "OpenHCSMainWindow"
     registry_key = MAIN_WINDOW_PROVIDER_ID
+
+    @classmethod
+    def for_main_window(cls, main_window) -> "MainWindowBridgeProviderSet":
+        return cls(main_window)
 
     def register(self, context: UiBridgeRegistrationContext) -> None:
         for provider_type in WindowCatalogProjectionABC.registered_types():

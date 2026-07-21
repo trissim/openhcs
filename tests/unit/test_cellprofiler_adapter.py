@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -12,6 +11,7 @@ from PIL import Image
 from benchmark.adapters.cellprofiler import (
     CELLPROFILER_FIRST_IMAGE_SET_PARAM,
     CELLPROFILER_LAST_IMAGE_SET_PARAM,
+    DETERMINISTIC_NUMPY_DISABLED_CPU_FEATURES,
     DETERMINISTIC_PYTHONHASHSEED,
     HeadlessCellProfilerPipelinePolicy,
     HeadlessCellProfilerPipelinePatch,
@@ -19,9 +19,9 @@ from benchmark.adapters.cellprofiler import (
     NativeCellProfilerImportedMetadataPipelinePatch,
     NativeCellProfilerInputDomainStrategyKey,
     NativeCellProfilerProvenanceField,
+    NUMPY_DISABLED_CPU_FEATURES_ENV,
     PYTHONHASHSEED_ENV,
     CellProfilerAdapter,
-    native_cellprofiler_reference_is_complete,
 )
 from benchmark.adapters.cellprofiler_installation import (
     CELLPROFILER_EXECUTABLE_ENV,
@@ -29,13 +29,32 @@ from benchmark.adapters.cellprofiler_installation import (
     CellProfilerExecutableSource,
     OPENHCS_BENCHMARK_TOOL_ROOTS_ENV,
 )
-from benchmark.contracts.tool_adapter import ToolNotInstalledError
-from openhcs.core.pipeline_image_schema import ImportedMetadataTable
-from openhcs.core.source_bindings import SourceBindingRuntimeContext
-from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
-from openhcs.interop.cellprofiler.runtime.source_candidates import (
-    SourceCandidatePathProjection,
+from benchmark.contracts.tool_adapter import ToolExecutionError, ToolNotInstalledError
+from openhcs.core.config import GlobalPipelineConfig, WellFilterConfig
+from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
+from openhcs.core.runtime_stores import RuntimeValueStore
+from openhcs.core.source_bindings import (
+    ImportedMetadataTable,
+    SourceBindingRuntimeContext,
 )
+from tests.unit.cellprofiler_runtime_test_support import (
+    cellprofiler_runtime_adapter_for_test,
+)
+
+
+def _minimal_images_cppipe() -> str:
+    return "\n".join(
+        (
+            "CellProfiler Pipeline: http://www.cellprofiler.org",
+            "Version:5",
+            "ModuleCount:1",
+            "HasImagePlaneDetails:False",
+            "",
+            "Images:[module_num:1|enabled:True]",
+            "    Filter images?:No filtering",
+            "",
+        )
+    )
 
 
 def test_cellprofiler_adapter_requires_executable(monkeypatch) -> None:
@@ -82,9 +101,12 @@ def test_native_cellprofiler_imported_metadata_places_files_by_path_columns(
         encoding="utf-8",
     )
 
+    metadata_table = ImportedMetadataTable(location="20585_AE.csv").resolved(
+        source_root
+    )
     placements = NativeCellProfilerImportedMetadataPlacementPlan(
         source_root,
-        (ImportedMetadataTable(location="20585_AE.csv"),),
+        (metadata_table,),
         (image_path, csv_path),
     ).placements()
 
@@ -97,7 +119,7 @@ def test_native_cellprofiler_imported_metadata_places_files_by_path_columns(
     }
 
 
-def test_native_cellprofiler_imported_metadata_uses_shared_stale_path_resolution(
+def test_native_cellprofiler_imported_metadata_rejects_unresolved_foreign_path(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "AdvancedSegmentation" / "BBBC022_20585_AE"
@@ -105,17 +127,20 @@ def test_native_cellprofiler_imported_metadata_uses_shared_stale_path_resolution
     metadata_path = source_root.parent / "20585_AE.csv"
     metadata_path.write_text("Metadata_Plate\n20585\n", encoding="utf-8")
 
-    resolved = NativeCellProfilerImportedMetadataPlacementPlan(
+    table = ImportedMetadataTable(
+        location="/Users/pryder/Documents/tutorials/AdvancedSegmentation/20585_AE.csv"
+    )
+    placement_plan = NativeCellProfilerImportedMetadataPlacementPlan(
         source_root,
-        (ImportedMetadataTable(location="/Users/pryder/Documents/tutorials/AdvancedSegmentation/20585_AE.csv"),),
+        (table,),
         (metadata_path,),
-    ).imported_metadata_path(
-        ImportedMetadataTable(
-            location="/Users/pryder/Documents/tutorials/AdvancedSegmentation/20585_AE.csv"
-        )
     )
 
-    assert resolved == metadata_path
+    with pytest.raises(
+        ToolExecutionError,
+        match="Resolved imported metadata table does not exist",
+    ):
+        placement_plan.imported_metadata_path(table)
 
 
 def test_native_cellprofiler_imported_metadata_pipeline_patch_targets_staged_input(
@@ -129,6 +154,7 @@ def test_native_cellprofiler_imported_metadata_pipeline_patch_targets_staged_inp
             "CellProfiler Pipeline: http://www.cellprofiler.org",
             "Metadata:[module_num:2|enabled:True]",
             "    Metadata extraction method:Extract from file/folder names",
+            "    Extract metadata from:All images",
             "    Metadata file location:Elsewhere...|",
             "    Metadata file name:",
             "    Metadata extraction method:Import from file",
@@ -149,32 +175,11 @@ def test_native_cellprofiler_imported_metadata_pipeline_patch_targets_staged_inp
     assert "/Users/pryder" not in patched
 
 
-def test_source_candidate_paths_preserve_virtual_well_identity_for_shared_source(
-    tmp_path: Path,
-) -> None:
-    source_path = tmp_path / "Channel 1-01-A-01-00.tif"
-    source_path.write_bytes(b"image")
-    context = SourceBindingRuntimeContext(
-        step_input_dir=str(tmp_path),
-        step_input_source_paths={
-            "W001_s001_w1_z001_t001.tif": str(source_path),
-            "W002_s001_w1_z001_t001.tif": str(source_path),
-        },
-    )
-    adapter = SimpleNamespace(source_binding_context=context)
-
-    assert tuple(
-        (path.path, path.resolved_path)
-        for path in SourceCandidatePathProjection(str(source_path), adapter).paths()
-    ) == (
-        ("W001_s001_w1_z001_t001.tif", str(source_path)),
-        ("W002_s001_w1_z001_t001.tif", str(source_path)),
-    )
-
-
 def test_cellprofiler_adapter_accepts_executable_env(monkeypatch) -> None:
     commands: list[tuple[str, ...]] = []
-    monkeypatch.setenv(CELLPROFILER_EXECUTABLE_ENV, "/opt/cellprofiler/bin/cellprofiler")
+    monkeypatch.setenv(
+        CELLPROFILER_EXECUTABLE_ENV, "/opt/cellprofiler/bin/cellprofiler"
+    )
 
     def _run(
         command,
@@ -212,13 +217,7 @@ def test_cellprofiler_resolver_discovers_local_workspace_tool_root(
         lambda _name: None,
     )
     repo_root = tmp_path / "openhcs-benchmark-platform"
-    executable = (
-        tmp_path
-        / "openhcs"
-        / ".venv-cellprofiler39"
-        / "bin"
-        / "cellprofiler"
-    )
+    executable = tmp_path / "openhcs" / ".venv-cellprofiler39" / "bin" / "cellprofiler"
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n", encoding="utf-8")
 
@@ -229,10 +228,9 @@ def test_cellprofiler_resolver_discovers_local_workspace_tool_root(
     )
 
     assert resolver.resolve() == executable
-    assert (
-        CellProfilerExecutableSource.LOCAL_WORKSPACE_TOOL_ROOT
-        in {candidate.source for candidate in resolver.candidates()}
-    )
+    assert CellProfilerExecutableSource.LOCAL_WORKSPACE_TOOL_ROOT in {
+        candidate.source for candidate in resolver.candidates()
+    }
 
 
 def test_cellprofiler_resolver_discovers_declared_tool_root(
@@ -255,10 +253,9 @@ def test_cellprofiler_resolver_discovers_declared_tool_root(
     )
 
     assert resolver.resolve() == executable
-    assert (
-        CellProfilerExecutableSource.DECLARED_TOOL_ROOT
-        in {candidate.source for candidate in resolver.candidates()}
-    )
+    assert CellProfilerExecutableSource.DECLARED_TOOL_ROOT in {
+        candidate.source for candidate in resolver.candidates()
+    }
 
 
 def test_cellprofiler_adapter_runs_cppipe_headless(
@@ -268,7 +265,7 @@ def test_cellprofiler_adapter_runs_cppipe_headless(
     dataset_path = tmp_path / "plate"
     dataset_path.mkdir()
     cppipe_path = tmp_path / "pipeline.cppipe"
-    cppipe_path.write_text("CellProfiler Pipeline: http://www.cellprofiler.org\n")
+    cppipe_path.write_text(_minimal_images_cppipe(), encoding="utf-8")
     commands: list[tuple[str, ...]] = []
 
     def _run(
@@ -294,6 +291,10 @@ def test_cellprofiler_adapter_runs_cppipe_headless(
                 stderr="",
             )
         assert env[PYTHONHASHSEED_ENV] == DETERMINISTIC_PYTHONHASHSEED
+        assert (
+            env[NUMPY_DISABLED_CPU_FEATURES_ENV]
+            == DETERMINISTIC_NUMPY_DISABLED_CPU_FEATURES
+        )
         assert cwd is not None
         if "--file-list" in command:
             execution_cppipe_path = Path(command[command.index("-p") + 1])
@@ -307,12 +308,7 @@ def test_cellprofiler_adapter_runs_cppipe_headless(
 
     monkeypatch.setattr("benchmark.adapters.cellprofiler.subprocess.run", _run)
 
-    adapter = CellProfilerAdapter(
-        executable="/usr/bin/cellprofiler",
-        source_schema_image_set_selection=SourceSchemaImageSetSelection(
-            max_image_set_count=1,
-        ),
-    )
+    adapter = CellProfilerAdapter(executable="/usr/bin/cellprofiler")
     adapter.validate_installation()
     result = adapter.run(
         dataset_path=dataset_path,
@@ -331,6 +327,12 @@ def test_cellprofiler_adapter_runs_cppipe_headless(
     assert result.provenance["pipeline_source"] == "native_cppipe"
     assert result.provenance["csv_output_count"] == 1
     assert result.provenance["pythonhashseed"] == DETERMINISTIC_PYTHONHASHSEED
+    assert (
+        result.provenance[
+            NativeCellProfilerProvenanceField.NUMPY_DISABLED_CPU_FEATURES
+        ]
+        == DETERMINISTIC_NUMPY_DISABLED_CPU_FEATURES
+    )
     assert {
         record["phase"] for record in result.provenance["phase_timing_records"]
     } == {"RESOLVE_SOURCE", "EXECUTE_NATIVE_CP", "SNAPSHOT_OUTPUTS"}
@@ -354,7 +356,7 @@ def test_cellprofiler_adapter_runs_bounded_image_set_range(
     dataset_path = tmp_path / "plate"
     dataset_path.mkdir()
     cppipe_path = tmp_path / "pipeline.cppipe"
-    cppipe_path.write_text("CellProfiler Pipeline: http://www.cellprofiler.org\n")
+    cppipe_path.write_text(_minimal_images_cppipe(), encoding="utf-8")
     commands: list[tuple[str, ...]] = []
 
     def _run(
@@ -378,12 +380,7 @@ def test_cellprofiler_adapter_runs_bounded_image_set_range(
 
     monkeypatch.setattr("benchmark.adapters.cellprofiler.subprocess.run", _run)
 
-    adapter = CellProfilerAdapter(
-        executable="/usr/bin/cellprofiler",
-        source_schema_image_set_selection=SourceSchemaImageSetSelection(
-            max_image_set_count=1,
-        ),
-    )
+    adapter = CellProfilerAdapter(executable="/usr/bin/cellprofiler")
     adapter.validate_installation()
     result = adapter.run(
         dataset_path=dataset_path,
@@ -403,7 +400,7 @@ def test_cellprofiler_adapter_runs_bounded_image_set_range(
     assert result.provenance[CELLPROFILER_LAST_IMAGE_SET_PARAM] == 1
 
 
-def test_cellprofiler_adapter_file_list_limits_selected_image_sets(
+def test_cellprofiler_adapter_file_list_applies_public_well_filter(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -431,6 +428,7 @@ def test_cellprofiler_adapter_file_list_limits_selected_image_sets(
                 "Metadata:[module_num:2|enabled:True]",
                 "    Extract metadata?:Yes",
                 "    Metadata extraction method:Extract from file/folder names",
+                "    Extract metadata from:All images",
                 "    Metadata source:File name",
                 "    Regular expression to extract from file name:^Plate_(?P<Well>[A-Z][0-9]{2})_s(?P<Site>[0-9]+)_(?P<ChannelName>.*)",
                 "",
@@ -438,18 +436,20 @@ def test_cellprofiler_adapter_file_list_limits_selected_image_sets(
                 "    Assign a name to:Images matching rules",
                 "    Select the image type:Grayscale image",
                 "    Name to assign these images:DNA",
-                "    Match metadata:[{\"DNA\":\"Well\",\"Protein\":\"Well\"},{\"DNA\":\"Site\",\"Protein\":\"Site\"}]",
+                '    Match metadata:[{"DNA":"Well","Protein":"Well"},{"DNA":"Site","Protein":"Site"}]',
                 "    Image set matching method:Metadata",
                 "    Set intensity range from:Image metadata",
                 "    Assignments count:2",
-                "    Select the rule criteria:and (metadata does Well) (file does contain \"dapi\")",
+                '    Select the rule criteria:and (metadata does Well) (file does contain "dapi")',
                 "    Name to assign these images:DNA",
                 "    Name to assign these objects:Cell",
                 "    Select the image type:Grayscale image",
                 "    Set intensity range from:Image metadata",
-                "    Select the rule criteria:and (metadata does Well) (file does contain \"gfp\")",
+                '    Select the rule criteria:and (metadata does Well) (file does contain "gfp")',
                 "    Name to assign these images:Protein",
                 "    Name to assign these objects:Cell",
+                "    Select the image type:Grayscale image",
+                "    Set intensity range from:Image metadata",
                 "",
                 "Groups:[module_num:4|enabled:True]",
                 "    Do you want to group your images?:Yes",
@@ -485,8 +485,8 @@ def test_cellprofiler_adapter_file_list_limits_selected_image_sets(
 
     adapter = CellProfilerAdapter(
         executable="/usr/bin/cellprofiler",
-        source_schema_image_set_selection=SourceSchemaImageSetSelection(
-            max_image_set_count=1
+        global_config=GlobalPipelineConfig(
+            well_filter_config=WellFilterConfig(well_filter=1),
         ),
     )
     adapter.validate_installation()
@@ -504,19 +504,19 @@ def test_cellprofiler_adapter_file_list_limits_selected_image_sets(
     command = commands[1]
     file_list_path = Path(command[command.index("--file-list") + 1])
     file_list = file_list_path.read_text(encoding="utf-8").splitlines()
-    assert len(file_list) == 2
+    assert len(file_list) == 4
     assert all("Plate_A01_" in entry for entry in file_list)
     assert any("_s1_dapi" in entry for entry in file_list)
     assert any("_s1_gfp" in entry for entry in file_list)
-    assert not any("_s2_" in entry for entry in file_list)
+    assert any("_s2_dapi" in entry for entry in file_list)
+    assert any("_s2_gfp" in entry for entry in file_list)
+    assert not any("Plate_A02_" in entry for entry in file_list)
     assert result.provenance[NativeCellProfilerProvenanceField.SELECTED_WELLS] == (
         "A01",
     )
     assert (
-        result.provenance[
-            NativeCellProfilerProvenanceField.SELECTED_SOURCE_FILE_COUNT
-        ]
-        == 2
+        result.provenance[NativeCellProfilerProvenanceField.SELECTED_SOURCE_FILE_COUNT]
+        == 4
     )
 
 
@@ -548,13 +548,13 @@ def test_cellprofiler_adapter_isolates_embedded_image_plane_input_domain(
                 "    Image set matching method:Order",
                 "    Set intensity range from:Image metadata",
                 "    Assignments count:2",
-                "    Select the rule criteria:and (file does contain \"D.TIF\")",
+                '    Select the rule criteria:and (file does contain "D.TIF")',
                 "    Name to assign these images:OrigBlue",
                 "    Name to assign these objects:Cell",
                 "    Select the image type:Grayscale image",
                 "    Set intensity range from:Image metadata",
                 "    Maximum intensity:255.0",
-                "    Select the rule criteria:and (file does contain \"F.TIF\")",
+                '    Select the rule criteria:and (file does contain "F.TIF")',
                 "    Name to assign these images:OrigGreen",
                 "    Name to assign these objects:Cell",
                 "    Select the image type:Grayscale image",
@@ -563,8 +563,8 @@ def test_cellprofiler_adapter_isolates_embedded_image_plane_input_domain(
                 "",
                 '"Version":"1","PlaneCount":"2"',
                 '"URL","Series","Index","Channel"',
-                '"https://example.invalid/data/url_D.TIF",,,',
-                '"https://example.invalid/data/url_F.TIF",,,',
+                f'"{(dataset_path / "url_D.TIF").as_uri()}",,,',
+                f'"{(dataset_path / "url_F.TIF").as_uri()}",,,',
             ]
         ),
         encoding="utf-8",
@@ -628,88 +628,6 @@ def test_cellprofiler_adapter_isolates_embedded_image_plane_input_domain(
     assert result.provenance[NativeCellProfilerProvenanceField.SOURCE_PLANE_COUNT] == 2
 
 
-def test_native_reference_completeness_rejects_stale_embedded_plane_domain(
-    tmp_path: Path,
-) -> None:
-    cppipe_path = tmp_path / "url_planes.cppipe"
-    cppipe_path.write_text(
-        "\n".join(
-            [
-                "CellProfiler Pipeline: http://www.cellprofiler.org",
-                "Version:3",
-                "HasImagePlaneDetails:True",
-                "",
-                "Images:[module_num:1|enabled:True]",
-                "    Filter images?:Images only",
-                "",
-                '"Version":"1","PlaneCount":"1"',
-                '"URL","Series","Index","Channel"',
-                '"https://example.invalid/data/url_D.TIF",,,',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    reference_dir = tmp_path / "reference"
-    reference_dir.mkdir()
-    (reference_dir / ".cellprofiler_benchmark_reference.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "provenance": {
-                    "cppipe_path": str(cppipe_path),
-                    NativeCellProfilerProvenanceField.INPUT_DOMAIN_STRATEGY: (
-                        NativeCellProfilerInputDomainStrategyKey.DATASET_FOLDER
-                    ),
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    assert native_cellprofiler_reference_is_complete(reference_dir) is False
-
-
-def test_native_reference_completeness_accepts_selected_source_schema_domain(
-    tmp_path: Path,
-) -> None:
-    cppipe_path = tmp_path / "url_planes.cppipe"
-    cppipe_path.write_text(
-        "\n".join(
-            [
-                "CellProfiler Pipeline: http://www.cellprofiler.org",
-                "Version:3",
-                "HasImagePlaneDetails:True",
-                "",
-                "Images:[module_num:1|enabled:True]",
-                "    Filter images?:Images only",
-                "",
-                '"Version":"1","PlaneCount":"1"',
-                '"URL","Series","Index","Channel"',
-                '"https://example.invalid/data/url_D.TIF",,,',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    reference_dir = tmp_path / "reference"
-    reference_dir.mkdir()
-    (reference_dir / ".cellprofiler_benchmark_reference.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "provenance": {
-                    "cppipe_path": str(cppipe_path),
-                    NativeCellProfilerProvenanceField.INPUT_DOMAIN_STRATEGY: (
-                        NativeCellProfilerInputDomainStrategyKey.SELECTED_SOURCE_SCHEMA_WELLS
-                    ),
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    assert native_cellprofiler_reference_is_complete(reference_dir) is True
-
-
 def test_headless_cellprofiler_cppipe_enables_saveimages_overwrite(
     tmp_path: Path,
 ) -> None:
@@ -753,7 +671,5 @@ def test_headless_cellprofiler_cppipe_trusts_selected_source_universe(
     )
 
     assert execution_path != cppipe_path
-    assert "Filter images?:No filtering" in execution_path.read_text(
-        encoding="utf-8"
-    )
+    assert "Filter images?:No filtering" in execution_path.read_text(encoding="utf-8")
     assert "Filter images?:Images only" in cppipe_path.read_text(encoding="utf-8")

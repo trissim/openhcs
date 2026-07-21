@@ -1,85 +1,53 @@
 #!/usr/bin/env python3
-"""
-CellProfiler → OpenHCS Converter
+"""Convert one CellProfiler pipeline to canonical public OpenHCS source."""
 
-Converts .cppipe files to OpenHCS pipelines using absorbed library.
-Requires library to be absorbed first via:
-    python -m benchmark.converter.absorb
-
-Usage:
-    python -m benchmark.converter.convert <cppipe_file>
-
-If a module is not absorbed, conversion FAILS. No fallback. Absorb first.
-"""
+from __future__ import annotations
 
 import argparse
 import logging
-import sys
+from collections.abc import Sequence
 from pathlib import Path
 
-from .runtime_pipeline import CPPipePipelineGenerationRequest
+from openhcs.core.function_step_transport import FunctionStepTransportAuthority
+from openhcs.interop.cellprofiler.pipeline_import import import_cellprofiler_pipeline
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-)
+
 logger = logging.getLogger(__name__)
 
 
-def main():
+def main(argv: Sequence[str] | None = None) -> int:
+    """Translate one ``.cppipe`` and write its canonical FunctionStep source."""
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
     parser = argparse.ArgumentParser(
-        description="Convert .cppipe to OpenHCS pipeline using absorbed library"
+        description="Convert a .cppipe to public OpenHCS FunctionStep source."
     )
+    parser.add_argument("cppipe_file", type=Path, help="CellProfiler pipeline path")
     parser.add_argument(
-        "cppipe_file",
+        "--output",
+        "-o",
         type=Path,
-        help="Path to .cppipe file"
+        help="Output path (default: <name>_openhcs.py)",
     )
-    parser.add_argument(
-        "--output", "-o",
-        type=Path,
-        default=None,
-        help="Output path (default: <name>_openhcs.py)"
+    args = parser.parse_args(argv)
+    output_path = args.output or (
+        args.cppipe_file.parent / f"{args.cppipe_file.stem}_openhcs.py"
     )
 
-    args = parser.parse_args()
-
-    # Validate input
-    if not args.cppipe_file.exists():
-        logger.error(f"File not found: {args.cppipe_file}")
-        sys.exit(1)
-
-    # Default output path
-    if args.output is None:
-        args.output = args.cppipe_file.parent / f"{args.cppipe_file.stem}_openhcs.py"
-
-    logger.info(f"Converting: {args.cppipe_file}")
-
-    conversion = CPPipePipelineGenerationRequest(
-        cppipe_path=args.cppipe_file,
-    ).generate()
-    logger.info(f"Parsed {len(conversion.modules)} modules")
-
-    for m in conversion.modules:
-        logger.info(f"  - {m.name}")
-
-    if conversion.infrastructure_modules:
-        logger.info(
-            "Skipping %d infrastructure modules:",
-            len(conversion.infrastructure_modules),
-        )
-        for m in conversion.infrastructure_modules:
-            logger.info(f"  - {m.name} (handled by OpenHCS infrastructure)")
-
-    conversion.generated_pipeline.save(args.output)
-
-    # Summary
-    logger.info("=" * 50)
-    logger.info(f"Pipeline: {conversion.generated_pipeline.name}")
-    logger.info(f"Modules: {len(conversion.generated_pipeline.converted_modules)}")
-    logger.info(f"Output: {args.output}")
-    logger.info("=" * 50)
+    pipeline_steps, _pipeline_config = import_cellprofiler_pipeline(args.cppipe_file)
+    source = FunctionStepTransportAuthority.source_from_pipeline(pipeline_steps)
+    output_path.write_text(source, encoding="utf-8")
+    logger.info(
+        "Converted %s to %s public FunctionSteps at %s",
+        args.cppipe_file,
+        len(pipeline_steps),
+        output_path,
+    )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

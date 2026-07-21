@@ -20,6 +20,7 @@ class OpenHCSUiWindowId:
     image_browser: ClassVar[str] = "image_browser"
     log_viewer: ClassVar[str] = "log_viewer"
     global_config: ClassVar[str] = "global_config"
+    knowledge_base: ClassVar[str] = "knowledge_base"
 
     manager_scope_aliases: ClassVar[Mapping[str, str]] = MappingProxyType(
         {

@@ -169,8 +169,6 @@ def object_colocalization_threshold_reductions(
     threshold_2: np.ndarray,
     costes_threshold_1: float,
     costes_threshold_2: float,
-    first_costes_denominator_threshold: float,
-    second_costes_denominator_threshold: float,
     object_count: int,
 ) -> tuple[
     np.ndarray,
@@ -225,9 +223,9 @@ def object_colocalization_threshold_reductions(
             if costes_threshold_2 <= 0.0
             else second_value > costes_threshold_2
         )
-        if first_value >= first_costes_denominator_threshold:
+        if first_value >= costes_threshold_1:
             total_first_costes[label_index] += first_value
-        if second_value >= second_costes_denominator_threshold:
+        if second_value >= costes_threshold_2:
             total_second_costes[label_index] += second_value
         if first_above_costes and second_above_costes:
             costes_sum1[label_index] += first_value

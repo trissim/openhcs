@@ -154,9 +154,27 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
         return MicroscopeSourceSelectionRole.FORMAT_SPECIFIC
 
     @classmethod
+    def supports_explicit_incomplete_export(cls) -> bool:
+        """Return whether parser-recognized subsets are valid explicit inputs.
+
+        Format-specific leaves override this when their metadata detection contract
+        is required for a dataset to have valid native semantics.
+        """
+
+        return True
+
+    @classmethod
     def source_selection_guidance(cls) -> str:
         """Explain format-specific auto-detection and explicit partial selection."""
 
+        if not cls.supports_explicit_incomplete_export():
+            return (
+                "Use only when this handler's complete detection contract succeeds. "
+                "Parser recognition without the required vendor metadata is filename "
+                "evidence, not a valid native dataset. Obtain the complete export, or "
+                "treat independently decodable ordinary files through the declared-file "
+                "fallback with explicit source semantics."
+            )
         return (
             "Use when this handler's parser and layout describe the dataset. Prefer a "
             "complete source layout/export so the handler detection contract and "

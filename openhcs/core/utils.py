@@ -505,9 +505,12 @@ class WellFilterProcessor:
             return set(w for w in well_filter if w in available_set)
 
         elif isinstance(well_filter, int):
-            # Inline validation for max count
-            if well_filter <= 0:
-                raise ValueError(f"Max count must be positive, got: {well_filter}")
+            # Inline validation for max count. Zero is the explicit empty
+            # selection used by persistence policies that should emit no wells.
+            if well_filter < 0:
+                raise ValueError(f"Max count must be non-negative, got: {well_filter}")
+            if well_filter == 0:
+                return set()
             if well_filter > len(available_wells):
                 raise ValueError(
                     f"Requested {well_filter} wells but only {len(available_wells)} available"
@@ -533,8 +536,8 @@ class WellFilterProcessor:
             if stripped.isdigit():
                 # Convert numeric string to integer and process as max count
                 numeric_value = int(stripped)
-                if numeric_value <= 0:
-                    raise ValueError(f"Max count must be positive, got: {numeric_value}")
+                if numeric_value == 0:
+                    return set()
                 if numeric_value > len(available_wells):
                     raise ValueError(
                         f"Requested {numeric_value} wells but only {len(available_wells)} available"

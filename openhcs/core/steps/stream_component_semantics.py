@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import ClassVar, Iterable, TypeAlias
 
@@ -21,10 +21,13 @@ from polystore.streaming.viewer_transport import (
 )
 from zmqruntime.viewer_protocol import (
     ViewerComponentMetadataPayload,
+    ViewerWireField,
+    ViewerWireValue,
 )
 
 from openhcs.constants.constants import AllComponents, get_multiprocessing_axis
 from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.runtime_image_values import ImagePayloadMetadata
 
 from openhcs.core.source_image_provenance import (
     SourceComponentMetadata,
@@ -52,6 +55,116 @@ from openhcs.utils.display_config_factory import ViewerDisplayConfigObject
 StreamComponentMetadata = SourceComponentMetadata | None
 ComponentDisplayName: TypeAlias = str | int | float | bool | None
 StreamComponentDomainMetadataItems: TypeAlias = tuple[dict[str, ComponentValue], ...]
+
+
+class StreamImagePayloadMetadataProjector:
+    """Project image-axis declarations into viewer batch-item fields."""
+
+    @classmethod
+    def item_fields(
+        cls,
+        metadata: ImagePayloadMetadata | None,
+        component_order: tuple[str, ...],
+    ) -> dict[str, ViewerWireValue]:
+        """Project main-flow metadata through its existing component order."""
+
+        return cls._item_fields(
+            metadata,
+            tuple(
+                component
+                for component_name in component_order
+                if (component := AllComponents.from_value(component_name)) is not None
+            ),
+            project_singleton=False,
+        )
+
+    @classmethod
+    def item_fields_for_plane_components(
+        cls,
+        metadata: ImagePayloadMetadata | None,
+        plane_components: tuple[AllComponents, ...],
+    ) -> dict[str, ViewerWireValue]:
+        """Project metadata through exact compiler-owned plane components."""
+
+        return cls._item_fields(
+            metadata,
+            plane_components,
+            project_singleton=True,
+        )
+
+    @classmethod
+    def _item_fields(
+        cls,
+        metadata: ImagePayloadMetadata | None,
+        plane_components: tuple[AllComponents, ...],
+        *,
+        project_singleton: bool,
+    ) -> dict[str, ViewerWireValue]:
+        if metadata is None:
+            return {}
+        item_fields = metadata.source_spatial_domain.to_viewer_wire_mapping()
+        if metadata.source_channel_axis is not None:
+            item_fields[ViewerWireField.SOURCE_CHANNEL_AXIS.value] = (
+                metadata.source_channel_axis
+            )
+        if metadata.plane_axis is None:
+            return item_fields
+
+        item_fields[ViewerWireField.PLANE_AXIS.value] = metadata.plane_axis.value
+        plane_component_values = (
+            metadata.source_provenance.varying_plane_component_values(
+                plane_components
+            )
+        )
+        if (
+            not plane_component_values
+            and metadata.source_provenance.source_plane_count == 1
+            and project_singleton
+        ):
+            plane_component_values = cls._singleton_plane_component_values(
+                metadata,
+                plane_components,
+            )
+        if len(plane_component_values) > 1:
+            raise ValueError(
+                "Viewer stream image plane axis declares multiple varying "
+                "OpenHCS components; one leading plane axis requires exactly "
+                f"one component projection, got {tuple(plane_component_values)!r}."
+            )
+        if plane_component_values:
+            item_fields[ViewerWireField.PLANE_COMPONENT_VALUES.value] = (
+                plane_component_values
+            )
+        return item_fields
+
+    @staticmethod
+    def _singleton_plane_component_values(
+        metadata: ImagePayloadMetadata,
+        plane_components: tuple[AllComponents, ...],
+    ) -> dict[str, tuple[ComponentValue, ...]]:
+        """Project one exact source plane onto its declared viewer component."""
+
+        plane_metadata = metadata.source_provenance.for_source_plane(
+            0
+        ).source_component_metadata
+        values = {
+            component.value: (value,)
+            for component in plane_components
+            if (
+                value := source_component_metadata_raw_value(
+                    plane_metadata or {},
+                    component,
+                )
+            )
+            is not None
+        }
+        if len(values) != 1:
+            raise ValueError(
+                "Viewer stream singleton plane axis requires exactly one exact "
+                "component value from the declared plane components; got "
+                f"{tuple(values)!r} from {plane_components!r}."
+            )
+        return values
 
 class StreamComponentNameMetadata(dict[str, dict[str, ComponentDisplayName]]):
     """Component value display names keyed by component then raw value."""
@@ -267,11 +380,12 @@ class StreamComponentNameMap(StreamComponentNameMetadata):
             self[component] = {}
         self[component].update(values)
 
-    def include_observed_value(self, component: str, value: str) -> None:
+    def include_observed_value(self, component: str, value: ComponentValue) -> None:
         if component not in self:
             self[component] = {}
-        if value not in self[component]:
-            self[component][value] = None
+        wire_value = str(value)
+        if wire_value not in self[component]:
+            self[component][wire_value] = None
 
 @dataclass(frozen=True, slots=True)
 class StreamMetadataRoot:
@@ -533,6 +647,10 @@ class StreamComponentMessageExtraAuthority:
         context: ProcessingContext,
         source_metadata_items: StreamSourceComponentMetadataItems,
     ) -> "StreamComponentMessageExtraAuthority":
+        viewer_surface = cls._scope_to_complete_components(
+            viewer_surface,
+            source_metadata_items,
+        )
         display_input = ViewerObjectDisplayConfigInput(viewer_surface.display_config)
         metadata_roots = StreamMetadataRootAuthority.from_context(context).roots()
         return cls(
@@ -553,6 +671,10 @@ class StreamComponentMessageExtraAuthority:
         *,
         source_metadata_items: StreamSourceComponentMetadataItems,
     ) -> "StreamComponentMessageExtraAuthority":
+        viewer_surface = cls._scope_to_complete_components(
+            viewer_surface,
+            source_metadata_items,
+        )
         return cls(
             viewer_surface=viewer_surface,
             source_metadata_items=source_metadata_items,
@@ -560,6 +682,27 @@ class StreamComponentMessageExtraAuthority:
                 viewer_surface.source,
             ).roots(),
             domain_providers=StreamComponentDomainProviders(()),
+        )
+
+    @staticmethod
+    def _scope_to_complete_components(
+        viewer_surface: StreamingViewerSurface,
+        source_metadata_items: StreamSourceComponentMetadataItems,
+    ) -> StreamingViewerSurface:
+        component_order = ViewerObjectDisplayConfigInput(
+            viewer_surface.display_config
+        ).layout().component_order
+        complete_component_order = source_metadata_items.complete_component_order(
+            component_order
+        )
+        if complete_component_order == component_order:
+            return viewer_surface
+        return replace(
+            viewer_surface,
+            display_config=StreamScopedDisplayConfig(
+                base=viewer_surface.display_config,
+                component_order=complete_component_order,
+            ),
         )
 
     @property

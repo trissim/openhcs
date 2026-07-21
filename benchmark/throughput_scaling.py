@@ -353,7 +353,6 @@ def _run_openhcs_throughput_job(spec: ThroughputJobSpec) -> ThroughputJobResult:
         "cppipe_path": str(spec.cppipe_path),
         "compare_image_outputs": spec.compare_image_outputs,
         "raise_on_equivalence_failure": False,
-        "reuse_runtime_execution_cache": False,
     }
     if spec.microscope_type is not None:
         params["microscope_type"] = spec.microscope_type

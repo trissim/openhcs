@@ -24,6 +24,7 @@ def decode_cellprofiler_setting_literal(value: str) -> str:
 
 
 def _decode_escape_sequences(value: str) -> str:
+    value = value.replace(r"\\\\g<", r"\g<")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         return bytes(value, "utf-8").decode("unicode_escape")
@@ -63,10 +64,9 @@ def cellprofiler_setting_literal(value: object) -> str:
     if isinstance(value, bool):
         return "Yes" if value else "No"
     if isinstance(value, str):
-        return value
+        return value.encode("unicode_escape").decode("ascii")
     if isinstance(value, (list, tuple)):
         return ", ".join(cellprofiler_setting_literal(item) for item in value)
-    enum_value = getattr(value, "value", None)
-    if isinstance(enum_value, str):
-        return enum_value
+    if isinstance(value, Enum) and isinstance(value.value, str):
+        return value.value
     return str(value)

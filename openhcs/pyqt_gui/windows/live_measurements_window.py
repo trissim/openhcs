@@ -23,12 +23,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from openhcs.core.artifacts import ArtifactScope
 from openhcs.core.progress.live_measurements import LiveMeasurementTablePreview
 from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
     LiveMeasurementAvailableNotification,
 )
 from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from openhcs.runtime.zmq_config import OpenHCSZMQConfig
+from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +48,9 @@ class LiveMeasurementTableEntry:
     def label(self) -> str:
         address = self.preview.address
         scope_text = _scope_text(address.key.scope)
-        object_text = f" [{self.preview.object_name}]" if self.preview.object_name else ""
+        object_text = (
+            f" [{self.preview.object_name}]" if self.preview.object_name else ""
+        )
         return f"{self.step_name}: {address.key.name}{object_text} ({scope_text})"
 
     @property
@@ -130,14 +133,17 @@ class LiveMeasurementsWindow(QDialog):
         *,
         orchestrator: object | None = None,
         color_scheme: ColorScheme | None = None,
+        zmq_config: OpenHCSZMQConfig,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._model = model
         self._orchestrator = orchestrator
+        self._zmq_config = zmq_config
         self.color_scheme = color_scheme or ColorScheme()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
         self._image_browser = None
+        self._image_browser_placeholder: QWidget | None = None
         self._image_browser_tab_index: int | None = None
         self.setWindowTitle("Live Results")
         self.setModal(False)
@@ -151,6 +157,7 @@ class LiveMeasurementsWindow(QDialog):
         self.tabs.setObjectName("LiveResultsTabs")
         self.tabs.tabBar().setObjectName("LiveResultsTabBar")
         self.tabs.setDocumentMode(True)
+        self.tabs.currentChanged.connect(self._activate_tab)
         layout.addWidget(self.tabs, 1)
 
         measurements_tab = QWidget(self)
@@ -235,7 +242,7 @@ class LiveMeasurementsWindow(QDialog):
         measurements_layout.addWidget(measurement_splitter, 1)
         self.tabs.addTab(measurements_tab, "Measurements")
 
-        self._install_image_browser_tab()
+        self._reset_image_browser_tab()
 
         self.refresh(select_latest=True)
 
@@ -244,7 +251,7 @@ class LiveMeasurementsWindow(QDialog):
         if orchestrator is self._orchestrator:
             return
         self._orchestrator = orchestrator
-        self._install_image_browser_tab()
+        self._reset_image_browser_tab()
 
     def refresh(self, *, select_latest: bool = False) -> None:
         entries = self._model.semantic_entries()
@@ -286,7 +293,7 @@ class LiveMeasurementsWindow(QDialog):
 
         preview = entry.preview
         self.view_artifact_button.setEnabled(
-            self._image_browser is not None and bool(preview.address.location.path)
+            self._orchestrator is not None and bool(preview.address.location.path)
         )
         status_parts = [
             f"{preview.row_count} row(s)",
@@ -325,31 +332,60 @@ class LiveMeasurementsWindow(QDialog):
 
     def _show_selected_artifact(self) -> None:
         entry = self._selected_entry()
-        if entry is None or self._image_browser is None:
+        if entry is None:
+            return
+        self._ensure_image_browser()
+        if self._image_browser is None:
             return
         self.tabs.setCurrentWidget(self._image_browser)
         self._image_browser.focus_file_by_path(entry.preview.address.location.path)
 
-    def _install_image_browser_tab(self) -> None:
+    def _activate_tab(self, index: int) -> None:
+        if index == self._image_browser_tab_index:
+            self._ensure_image_browser()
+
+    def _reset_image_browser_tab(self) -> None:
         if self._image_browser_tab_index is not None:
             self.tabs.removeTab(self._image_browser_tab_index)
             self._image_browser_tab_index = None
             self._image_browser = None
+            self._image_browser_placeholder = None
 
         if self._orchestrator is None:
             return
 
-        from openhcs.pyqt_gui.widgets.image_browser import ImageBrowserWidget
-
-        self._image_browser = ImageBrowserWidget(
-            orchestrator=self._orchestrator,
-            color_scheme=self.color_scheme,
-            parent=self,
-        )
+        self._image_browser_placeholder = QWidget(self)
+        self._image_browser_placeholder.setObjectName("LiveResultsImageBrowserPending")
         self._image_browser_tab_index = self.tabs.addTab(
-            self._image_browser,
+            self._image_browser_placeholder,
             "Images / Viewers",
         )
+
+    def _ensure_image_browser(self) -> None:
+        if self._image_browser is not None:
+            return
+        if self._orchestrator is None or self._image_browser_tab_index is None:
+            return
+
+        from openhcs.pyqt_gui.widgets.image_browser import ImageBrowserWidget
+
+        image_browser = ImageBrowserWidget(
+            orchestrator=self._orchestrator,
+            color_scheme=self.color_scheme,
+            zmq_config=self._zmq_config,
+            parent=self,
+        )
+        tab_index = self._image_browser_tab_index
+        self.tabs.removeTab(tab_index)
+        self.tabs.insertTab(
+            tab_index,
+            image_browser,
+            "Images / Viewers",
+        )
+        self._image_browser = image_browser
+        self._image_browser_placeholder = None
+        self.tabs.setCurrentIndex(tab_index)
+        self._render_selected_entry()
 
     def _apply_theme(self) -> None:
         cs = self.color_scheme
@@ -459,9 +495,5 @@ def _navigation_label(entry: LiveMeasurementTableEntry) -> str:
     )
 
 
-def _scope_text(scope: ArtifactScope) -> str:
-    return " / ".join(
-        str(part)
-        for part in astuple(scope)
-        if part not in (None, "")
-    )
+def _scope_text(scope: RuntimeExecutionAxisScope) -> str:
+    return " / ".join(str(part) for part in astuple(scope) if part not in (None, ""))

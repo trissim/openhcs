@@ -27,15 +27,21 @@ from openhcs.processing.backends.cellprofiler.thresholding_threshold_numba_otsu_
 
 CELLPROFILER_LI_TOLERANCE = 0.5 / 65536.0
 
+
 def _finite_flat_float64(values: np.ndarray) -> np.ndarray:
     flat = np.asarray(values, dtype=np.float64).ravel()
-    return np.ascontiguousarray(flat[np.isfinite(flat)], dtype=np.float64)
+    finite = np.isfinite(flat)
+    if bool(np.all(finite)):
+        return np.ascontiguousarray(flat)
+    return np.ascontiguousarray(flat[finite], dtype=np.float64)
 
 
 def _finite_flat_float32(values: np.ndarray) -> np.ndarray:
     flat = np.asarray(values, dtype=np.float32).ravel()
-    return np.ascontiguousarray(flat[np.isfinite(flat)], dtype=np.float32)
-
+    finite = np.isfinite(flat)
+    if bool(np.all(finite)):
+        return np.ascontiguousarray(flat)
+    return np.ascontiguousarray(flat[finite], dtype=np.float32)
 
 
 @njit(cache=True)
@@ -191,6 +197,5 @@ def _li_threshold_numba(values: np.ndarray, tolerance: float) -> float:
         )
         iterations += 1
     return threshold + minimum
-
 
 

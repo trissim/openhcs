@@ -10,11 +10,12 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QStyle,
+    QTableWidgetItem,
     QWidget,
 )
 from python_introspect import is_enableable
 
-from openhcs.core.pipeline_image_schema import ImageAssignment, PipelineImageSchema
 from openhcs.core.source_bindings import (
     ComponentSelector,
     MetadataExtractionRule,
@@ -29,6 +30,8 @@ from openhcs.core.source_bindings import (
     SourceFilterSubject,
     SourceSelector,
     SourceBindingOrigin,
+    SourceProjectionRole,
+    SourceSetRole,
     NamedSourceBinding,
 )
 from openhcs.core.config import (
@@ -39,12 +42,13 @@ from openhcs.core.config import (
     SourceBindingsConfig,
     StepSourceBindingsConfig,
 )
-from openhcs.constants.constants import AllComponents
+from openhcs.constants.constants import AllComponents, Backend
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.source_bindings_view import SourceInventory
 from openhcs.pyqt_gui.widgets.source_bindings_editor import (
     MatchPlanColumn,
     MetadataRuleColumn,
+    EditableTableLayout,
     FreeFormCellEditorKind,
     SourceBindingColumn,
     SourceBindingsEditorWidget,
@@ -72,6 +76,9 @@ from pyqt_reactive.forms.parameter_info_types import (
 )
 from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollableFormMixin
 from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollViewport
+from pyqt_reactive.widgets.shared.reflowing_vertical_scroll_area import (
+    ReflowingVerticalScrollArea,
+)
 from pyqt_reactive.widgets.structural_table import (
     StructuralDescendantMaskTarget,
     StructuralMaskedContainerTarget,
@@ -81,7 +88,7 @@ from pyqt_reactive.services.window_navigation import (
     NavigationWaitReason,
     RegisteredWindowNavigationRequest,
 )
-from pyqt_reactive.theming import ColorScheme
+from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
 from pyqt_reactive.animation.flash_mixin import create_groupbox_element
 from pyqt_reactive.widgets.shared.clickable_help_components import HelpButton
 from pyqt_reactive.widgets.shared.clickable_help_components import HelpContext
@@ -91,9 +98,6 @@ from pyqt_reactive.widgets.shared.clickable_help_components import ProvenanceLab
 from pyqt_reactive.widgets.no_scroll_spinbox import NoScrollComboBox, NoneAwareCheckBox
 from pyqt_reactive.widgets.shared.scoped_table_widget import ScopedTableWidget
 from pyqt_reactive.widgets.shared.scope_color_utils import get_scope_color_scheme
-from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollableFormMixin
-
-
 class QtApplicationHarness:
     """Nominal owner for the QApplication singleton used by GUI smoke tests."""
 
@@ -1294,6 +1298,51 @@ def test_source_bindings_enableable_only_updates_skip_table_rebuild() -> None:
         widget.deleteLater()
 
 
+def test_source_bindings_refresh_detaches_obsolete_subtrees_before_flash_replay() -> None:
+    from pyqt_reactive.animation.flash_mixin import WindowFlashOverlay
+    from PyQt6.QtWidgets import QDialog, QVBoxLayout
+
+    QtApplicationHarness.app()
+    dialog = QDialog()
+    dialog_layout = QVBoxLayout(dialog)
+    container = InlineDataclassGroupBox(
+        title="Source Bindings",
+        help_target=StepSourceBindingsConfig,
+        color_scheme=ColorScheme(),
+        flash_key="source_bindings",
+        parent=dialog,
+    )
+    widget = SourceBindingsEditorWidget.from_bindings(
+        StepSourceBindingsConfig(),
+        parent=container,
+    )
+    container.set_value_widget(widget)
+    dialog_layout.addWidget(container)
+    dialog.show()
+    QApplication.processEvents()
+    container.register_flash_groupbox("source_bindings", container)
+    obsolete_widgets = tuple(
+        item_widget
+        for index in range(widget.layout.count())
+        if (item_widget := widget.layout.itemAt(index).widget()) is not None
+    )
+
+    try:
+        widget.refresh()
+
+        descendants = set(container.findChildren(QWidget))
+        assert obsolete_widgets
+        assert all(obsolete not in descendants for obsolete in obsolete_widgets)
+        assert all(obsolete.parent() is None for obsolete in obsolete_widgets)
+
+        WindowFlashOverlay.cleanup_window(dialog)
+        container.reregister_flash_elements()
+        assert WindowFlashOverlay.get_for_window(container) is not None
+    finally:
+        WindowFlashOverlay.cleanup_window(dialog)
+        dialog.deleteLater()
+
+
 def test_source_bindings_table_child_reset_restores_inherited_placeholder_rows() -> None:
     QtApplicationHarness.app()
     ObjectStateRegistry.clear()
@@ -1664,7 +1713,7 @@ def test_source_bindings_inherited_table_first_edit_materializes_second_edit_fla
         assert value_item is not None
         assert value_item.data(Qt.ItemDataRole.UserRole) == "RNA"
         assert value_item.data(Qt.ItemDataRole.EditRole) == "RNA"
-        assert value_item.text() == "*RNA"
+        assert value_item.text() == '*_RNA'
         assert table_cell_text(
             step_widget.source_filters_table,
             0,
@@ -1704,7 +1753,7 @@ def test_source_bindings_inherited_table_first_edit_materializes_second_edit_fla
         assert value_item is not None
         assert value_item.data(Qt.ItemDataRole.UserRole) == "RNA2"
         assert value_item.data(Qt.ItemDataRole.EditRole) == "RNA2"
-        assert value_item.text() == "*RNA2"
+        assert value_item.text() == '*_RNA2'
 
         flash_key = "step_source_bindings_config.source_filters[0].value"
         assert flash_key in queued
@@ -2014,10 +2063,15 @@ def test_source_bindings_child_navigation_waits_for_stable_geometry() -> None:
         )
 
         first = driver.readiness(request)
-        second = driver.readiness(request)
+        settled = first
+        for _ in range(80):
+            app.processEvents()
+            settled = driver.readiness(request)
+            if not settled.needs_wait:
+                break
 
         assert first.wait_reason is NavigationWaitReason.LAYOUT
-        assert not second.needs_wait
+        assert not settled.needs_wait
     finally:
         scroll_area.deleteLater()
         manager.deleteLater()
@@ -2099,7 +2153,9 @@ def test_source_bindings_table_row_value_read_does_not_emit_item_changed() -> No
     emitted: list[object] = []
     widget.source_filters_table.itemChanged.connect(emitted.append)
 
-    assert widget.source_filters_controller.row_values() == (("file", "contains", "DNA"),)
+    assert widget.source_filters_controller.row_values() == (
+        ("file", "contains", "DNA", ""),
+    )
     assert emitted == []
 
 
@@ -2363,9 +2419,283 @@ def test_source_bindings_editor_tables_expand_without_vertical_scrollbars() -> N
         for row in range(table.rowCount())
     )
     assert table.height() >= expected_minimum_height
+    assert table.viewport().height() >= sum(
+        table.rowHeight(row) for row in range(table.rowCount())
+    )
+    final_index = table.model().index(table.rowCount() - 1, 0)
+    assert table.visualRect(final_index).bottom() <= table.viewport().rect().bottom()
 
 
-def test_source_bindings_editor_explains_binding_selector_identity_and_stack() -> None:
+def test_editable_table_layout_keeps_final_row_visible_with_or_without_scrollbar() -> None:
+    app = QtApplicationHarness.app()
+    table = ScopedTableWidget(2, 2)
+    table.setItem(0, 0, QTableWidgetItem("field"))
+    table.setItem(0, 1, QTableWidgetItem("short"))
+    table.setItem(1, 0, QTableWidgetItem("imported metadata tables"))
+    table.setItem(1, 1, QTableWidgetItem("a value wide enough to require scrolling"))
+    EditableTableLayout.configure(table)
+    EditableTableLayout.fit_to_rows(table)
+    table.resize(180, table.height())
+    table.show()
+    for _ in range(4):
+        app.processEvents()
+    EditableTableLayout.fit_to_rows(table)
+    app.processEvents()
+
+    expected_rows_height = sum(
+        table.rowHeight(row) for row in range(table.rowCount())
+    )
+    final_index = table.model().index(table.rowCount() - 1, 0)
+    assert table.horizontalScrollBar().isVisible()
+    assert table.viewport().height() >= expected_rows_height
+    assert table.visualRect(final_index).bottom() <= table.viewport().rect().bottom()
+    viewport_rect = QRect(
+        table.viewport().mapTo(table, table.viewport().rect().topLeft()),
+        table.viewport().size(),
+    )
+    horizontal_bar_rect = QRect(
+        table.horizontalScrollBar().mapTo(
+            table,
+            table.horizontalScrollBar().rect().topLeft(),
+        ),
+        table.horizontalScrollBar().size(),
+    )
+    assert not viewport_rect.intersects(horizontal_bar_rect)
+
+    table.resize(1200, table.height())
+    for _ in range(4):
+        app.processEvents()
+    EditableTableLayout.fit_to_rows(table)
+    app.processEvents()
+
+    assert not table.horizontalScrollBar().isVisible()
+    assert table.viewport().height() >= expected_rows_height
+    assert table.visualRect(final_index).bottom() <= table.viewport().rect().bottom()
+
+
+def test_pipeline_sources_preview_fits_rows_and_bar_in_reflowing_config_body() -> None:
+    app = QtApplicationHarness.app()
+    widget = SourceBindingsEditorWidget.from_bindings(StepSourceBindingsConfig())
+    widget.set_preview_context(source_bindings=SourceBindingsConfig())
+    scroll_area = ReflowingVerticalScrollArea()
+    scroll_area.setStyleSheet(
+        StyleSheetGenerator(ColorScheme()).generate_config_window_style()
+    )
+    scroll_area.setWidget(widget)
+    scroll_area.show()
+
+    try:
+        pipeline_sources_table = widget.findChildren(ScopedTableWidget)[0]
+        for width in (300, 150, 70, 300):
+            scroll_area.resize(width, 600)
+            for _ in range(8):
+                app.processEvents()
+
+            table = pipeline_sources_table
+            rows_height = sum(
+                table.rowHeight(row) for row in range(table.rowCount())
+            )
+            viewport_vertical_margin = 2 * table.style().pixelMetric(
+                QStyle.PixelMetric.PM_FocusFrameVMargin,
+                None,
+                table,
+            )
+            expected_height = (
+                max(
+                    table.horizontalHeader().height(),
+                    table.horizontalHeader().sizeHint().height(),
+                )
+                + rows_height
+                + table.horizontalScrollBar().sizeHint().height()
+                + 2 * table.frameWidth()
+                + viewport_vertical_margin
+            )
+            final_index = table.model().index(table.rowCount() - 1, 0)
+
+            assert table.height() >= expected_height
+            assert table.viewport().height() >= (
+                rows_height + viewport_vertical_margin
+            )
+            assert (
+                table.visualRect(final_index).bottom()
+                <= table.viewport().rect().bottom()
+            )
+            if table.horizontalScrollBar().isVisible():
+                viewport_rect = QRect(
+                    table.viewport().mapTo(
+                        table,
+                        table.viewport().rect().topLeft(),
+                    ),
+                    table.viewport().size(),
+                )
+                horizontal_bar_rect = QRect(
+                    table.horizontalScrollBar().mapTo(
+                        table,
+                        table.horizontalScrollBar().rect().topLeft(),
+                    ),
+                    table.horizontalScrollBar().size(),
+                )
+                assert not viewport_rect.intersects(horizontal_bar_rect)
+    finally:
+        scroll_area.close()
+        widget.deleteLater()
+
+
+def test_source_filters_fit_complete_rows_and_bar_inside_scoped_section() -> None:
+    app = QtApplicationHarness.app()
+    filters = tuple(
+        SourceFilterClause(
+            SourceFilterSubject.FILE,
+            SourceFilterMatchType.IS_IMAGE,
+            f"source-{index}",
+        )
+        for index in range(3)
+    )
+    widget = SourceBindingsEditorWidget.from_bindings(
+        StepSourceBindingsConfig(source_filters=filters)
+    )
+    scroll_area = ReflowingVerticalScrollArea()
+    scroll_area.setStyleSheet(
+        StyleSheetGenerator(ColorScheme()).generate_config_window_style()
+    )
+    scroll_area.setWidget(widget)
+    widget.set_scope_color_scheme(
+        get_scope_color_scheme("plate::step_0", step_index=0)
+    )
+    scroll_area.show()
+
+    try:
+        table = widget.source_filters_table
+        assert table is not None
+        section = table.parentWidget()
+        assert section is not None
+
+        for width in (360, 150, 70, 360):
+            scroll_area.resize(width, 900)
+            for _ in range(8):
+                app.processEvents()
+
+            rows_height = sum(
+                table.rowHeight(row) for row in range(table.rowCount())
+            )
+            viewport_vertical_margin = 2 * table.style().pixelMetric(
+                QStyle.PixelMetric.PM_FocusFrameVMargin,
+                None,
+                table,
+            )
+            viewport_rect = QRect(
+                table.viewport().mapTo(
+                    table,
+                    table.viewport().rect().topLeft(),
+                ),
+                table.viewport().size(),
+            )
+            horizontal_bar = table.horizontalScrollBar()
+            horizontal_bar_rect = QRect(
+                horizontal_bar.mapTo(
+                    table,
+                    horizontal_bar.rect().topLeft(),
+                ),
+                horizontal_bar.size(),
+            )
+
+            assert table.rowCount() == len(filters)
+            assert horizontal_bar.isVisible()
+            assert table.viewport().height() >= (
+                rows_height + viewport_vertical_margin
+            )
+            assert all(
+                table.visualRect(table.model().index(row, 0)).bottom()
+                <= table.viewport().rect().bottom()
+                for row in range(table.rowCount())
+            )
+            assert table.rect().contains(viewport_rect)
+            assert table.rect().contains(horizontal_bar_rect)
+            assert not viewport_rect.intersects(horizontal_bar_rect)
+            assert section.contentsRect().contains(table.geometry())
+            assert table._border_overlay.geometry() == table.rect()
+    finally:
+        scroll_area.close()
+        widget.deleteLater()
+
+
+def test_step_metadata_rule_cells_show_inherited_and_local_edit_markers() -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    ensure_global_config_context(GlobalPipelineConfig, GlobalPipelineConfig())
+    inherited_rule = MetadataExtractionRule(
+        source=MetadataSource.FILE_NAME,
+        pattern=r"(?P<well>A\d{2})_(?P<channel>DNA)\.tif",
+    )
+    state = ObjectState(
+        PipelineConfig(
+            source_bindings_config=SourceBindingsConfig(
+                metadata_rules=(inherited_rule,),
+            )
+        ),
+        scope_id="plate",
+    )
+    ObjectStateRegistry.register(state, _skip_snapshot=True)
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+            scope_id="plate",
+        ),
+    )
+
+    try:
+        for _ in range(80):
+            QApplication.processEvents()
+            if "step_source_bindings_config" in manager.widgets:
+                break
+
+        step_container = manager.widgets["step_source_bindings_config"]
+        assert isinstance(step_container, InlineDataclassGroupBox)
+        step_widget = step_container._inline_value_widget
+        assert isinstance(step_widget, SourceBindingsEditorWidget)
+        table = step_widget.metadata_rules_table
+        assert table is not None
+        assert table.rowCount() == 1
+        assert state.parameters["step_source_bindings_config.metadata_rules"] is None
+
+        source_widget = table.cellWidget(0, int(MetadataRuleColumn.SOURCE))
+        pattern_item = table.item(0, int(MetadataRuleColumn.PATTERN))
+        assert isinstance(source_widget, QComboBox)
+        assert pattern_item is not None
+        assert source_widget.currentText() == "_file_name"
+        assert pattern_item.text() == f"_{inherited_rule.pattern}"
+        assert table_cell_text(table, 0, int(MetadataRuleColumn.SOURCE)) == "file_name"
+        assert table_cell_text(table, 0, int(MetadataRuleColumn.PATTERN)) == inherited_rule.pattern
+
+        local_pattern = r"(?P<well>B\d{2})_(?P<channel>RNA)\.tif"
+        set_editable_cell_text(
+            table,
+            0,
+            int(MetadataRuleColumn.PATTERN),
+            local_pattern,
+        )
+        for _ in range(10):
+            QApplication.processEvents()
+
+        pattern_item = table.item(0, int(MetadataRuleColumn.PATTERN))
+        assert pattern_item is not None
+        assert pattern_item.text() == f"*_{local_pattern}"
+        assert pattern_item.data(Qt.ItemDataRole.UserRole) == local_pattern
+        assert table_cell_text(table, 0, int(MetadataRuleColumn.PATTERN)) == local_pattern
+        assert state.parameters["step_source_bindings_config.metadata_rules"] == (
+            MetadataExtractionRule(
+                source=MetadataSource.FILE_NAME,
+                pattern=local_pattern,
+            ),
+        )
+    finally:
+        manager.deleteLater()
+        ObjectStateRegistry.clear()
+
+
+def test_source_bindings_editor_explains_binding_selector_and_roles() -> None:
     QtApplicationHarness.app()
 
     widget = SourceBindingsEditorWidget.from_bindings(
@@ -2379,18 +2709,23 @@ def test_source_bindings_editor_explains_binding_selector_identity_and_stack() -
     select_axes = table.verticalHeaderItem(int(SourceBindingColumn.COMPONENTS))
     select_metadata = table.verticalHeaderItem(int(SourceBindingColumn.METADATA))
     assign_axes = table.verticalHeaderItem(int(SourceBindingColumn.IDENTITY))
-    primary_stack = table.verticalHeaderItem(int(SourceBindingColumn.STACK))
+    set_role = table.verticalHeaderItem(int(SourceBindingColumn.SET_ROLE))
+    projection_role = table.verticalHeaderItem(
+        int(SourceBindingColumn.PROJECTION_ROLE)
+    )
 
     assert select_axes.text() == "Select Axes"
     assert "choose sources" in select_axes.toolTip()
     assert "does not assign" in select_axes.toolTip()
     assert select_metadata.text() == "Select Metadata"
     assert "filters candidates" in select_metadata.toolTip()
-    assert "Image Set Pairing" in select_metadata.toolTip()
+    assert "Source Set Pairing" in select_metadata.toolTip()
     assert assign_axes.text() == "Assign Axes"
     assert "attached after selection" in assign_axes.toolTip()
-    assert primary_stack.text() == "Primary Stack"
-    assert "creates execution anchors" in primary_stack.toolTip()
+    assert set_role.text() == "Set Role"
+    assert "broadcast" in set_role.toolTip()
+    assert projection_role.text() == "Projection Role"
+    assert "typed source artifact" in projection_role.toolTip()
 
 
 def test_source_bindings_editor_explains_image_set_pairing_table() -> None:
@@ -2411,11 +2746,11 @@ def test_source_bindings_editor_explains_image_set_pairing_table() -> None:
     section_titles = tuple(label.text() for label in widget.findChildren(QLabel))
 
     assert method_header.text() == "Pairing Method"
-    assert "grouped into one image set" in method_header.toolTip()
+    assert "grouped into one source set" in method_header.toolTip()
     assert fields_header.text() == "Pairing Keys"
     assert "DNA=Well;GFP=Well" in fields_header.toolTip()
     assert "Add pairing key" in button_labels
-    assert "Image Set Pairing" in section_titles
+    assert "Source Set Pairing" in section_titles
 
 
 def test_source_bindings_editor_tables_use_scoped_table_abstraction() -> None:
@@ -2659,7 +2994,7 @@ def test_inline_step_source_bindings_time_travel_preserves_dirty_marker() -> Non
             int(SourceFilterColumn.MATCH_TYPE),
         )
         assert isinstance(match_type_widget, QComboBox)
-        assert match_type_widget.currentText() == "*contains"
+        assert match_type_widget.currentText() == '*_contains'
         assert match_type_widget.property("objectstate_dirty") is True
 
         assert ObjectStateRegistry.time_travel_back()
@@ -2677,7 +3012,7 @@ def test_inline_step_source_bindings_time_travel_preserves_dirty_marker() -> Non
         )
         assert isinstance(match_type_widget, QComboBox)
         assert match_type_widget.currentData() is SourceFilterMatchType.EQUALS
-        assert match_type_widget.currentText() == "*equals"
+        assert match_type_widget.currentText() == '*_equals'
         assert match_type_widget.property("objectstate_dirty") is True
         assert "source_bindings.source_filters" in state.dirty_fields
     finally:
@@ -2734,7 +3069,7 @@ def test_inline_step_source_bindings_undo_one_of_two_cell_edits_keeps_owner_dirt
             int(SourceFilterColumn.MATCH_TYPE),
         )
         assert isinstance(match_type_widget, QComboBox)
-        assert match_type_widget.currentText() == "*contains"
+        assert match_type_widget.currentText() == '*_contains'
 
         set_editable_cell_text(
             widget.source_filters_table,
@@ -2745,7 +3080,7 @@ def test_inline_step_source_bindings_undo_one_of_two_cell_edits_keeps_owner_dirt
         QApplication.processEvents()
         value_item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
         assert value_item is not None
-        assert value_item.text() == "*RNA"
+        assert value_item.text() == '*_RNA'
         assert "source_bindings.source_filters" in state.dirty_fields
 
         assert ObjectStateRegistry.time_travel_back()
@@ -2764,13 +3099,13 @@ def test_inline_step_source_bindings_undo_one_of_two_cell_edits_keeps_owner_dirt
         )
         assert isinstance(match_type_widget, QComboBox)
         assert match_type_widget.currentData() is SourceFilterMatchType.CONTAINS
-        assert match_type_widget.currentText() == "*contains"
+        assert match_type_widget.currentText() == '*_contains'
         assert match_type_widget.property("objectstate_dirty") is True
 
         value_item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
         assert value_item is not None
         assert value_item.data(Qt.ItemDataRole.UserRole) == "DNA"
-        assert value_item.text() == "DNA"
+        assert value_item.text() == "_DNA"
         assert "source_bindings.source_filters" in state.dirty_fields
         assert widget.child_field_label("source_filters")._dirty_label_state.is_dirty
     finally:
@@ -3522,7 +3857,7 @@ def test_source_bindings_dropdown_time_travel_restores_widget_value() -> None:
         )
         assert isinstance(match_type_widget, QComboBox)
         assert match_type_widget.currentData() is SourceFilterMatchType.CONTAINS
-        assert match_type_widget.currentText() == "*contains"
+        assert match_type_widget.currentText() == '*_contains'
         assert match_type_widget.property("objectstate_dirty") is True
         assert (
             state.last_changed_field
@@ -3549,7 +3884,7 @@ def test_source_bindings_dropdown_time_travel_restores_widget_value() -> None:
         )
         assert isinstance(match_type_widget, QComboBox)
         assert match_type_widget.currentData() is SourceFilterMatchType.EQUALS
-        assert match_type_widget.currentText() == "*equals"
+        assert match_type_widget.currentText() == '*_equals'
         assert match_type_widget.property("objectstate_dirty") is True
         assert (
             state.last_changed_field
@@ -3576,7 +3911,7 @@ def test_source_bindings_dropdown_time_travel_restores_widget_value() -> None:
         )
         assert isinstance(match_type_widget, QComboBox)
         assert match_type_widget.currentData() is SourceFilterMatchType.CONTAINS
-        assert match_type_widget.currentText() == "*contains"
+        assert match_type_widget.currentText() == '*_contains'
         assert match_type_widget.property("objectstate_dirty") is True
         assert (
             state.last_changed_field
@@ -3642,7 +3977,7 @@ def test_source_bindings_text_time_travel_restores_widget_value() -> None:
         item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
         assert item is not None
         assert item.data(Qt.ItemDataRole.UserRole) == "RNA"
-        assert item.text() == "*RNA"
+        assert item.text() == '*_RNA'
 
         assert ObjectStateRegistry.time_travel_back()
         QApplication.processEvents()
@@ -3661,7 +3996,7 @@ def test_source_bindings_text_time_travel_restores_widget_value() -> None:
         item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
         assert item is not None
         assert item.data(Qt.ItemDataRole.UserRole) == "DNA"
-        assert item.text() == "*DNA"
+        assert item.text() == '*_DNA'
 
         assert ObjectStateRegistry.time_travel_forward()
         QApplication.processEvents()
@@ -3680,7 +4015,7 @@ def test_source_bindings_text_time_travel_restores_widget_value() -> None:
         item = widget.source_filters_table.item(0, int(SourceFilterColumn.VALUE))
         assert item is not None
         assert item.data(Qt.ItemDataRole.UserRole) == "RNA"
-        assert item.text() == "*RNA"
+        assert item.text() == '*_RNA'
     finally:
         manager.deleteLater()
         ObjectStateRegistry.clear()
@@ -3897,7 +4232,7 @@ def test_source_bindings_flash_masks_nested_section_titles() -> None:
             "Bindings",
             "Source Filters",
             "Metadata Rules",
-            "Image Set Pairing",
+            "Source Set Pairing",
         }
     ]
 
@@ -3982,11 +4317,10 @@ def test_source_bindings_editor_renders_preview_context(tmp_path) -> None:
     QtApplicationHarness.app()
     source_path = tmp_path / "A01_DNA.tif"
     source_path.write_text("placeholder", encoding="utf-8")
-    schema = PipelineImageSchema(
-        assignments_by_alias={
-            "DNA": ImageAssignment(
+    source_bindings = SourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
                 alias="DNA",
-                image_type="Grayscale image",
                 origin=SourceBindingOrigin.PIPELINE_START,
                 selector=SourceSelector(
                     filters=(
@@ -3998,23 +4332,27 @@ def test_source_bindings_editor_renders_preview_context(tmp_path) -> None:
                     ),
                 ),
             ),
-        },
+        ),
     )
     inventory = SourceInventory.from_paths(
         (source_path,),
-        schema=schema,
         source_root=tmp_path,
+        source_backend=Backend.DISK,
+        source_bindings=source_bindings,
     )
     widget = SourceBindingsEditorWidget.from_bindings(
         StepSourceBindingsConfig(),
-        schema=schema,
+        source_bindings=source_bindings,
     )
 
-    widget.set_preview_context(schema=schema, inventory=inventory)
+    widget.set_preview_context(
+        source_bindings=source_bindings,
+        inventory=inventory,
+    )
 
     section_titles = {label.text() for label in widget.findChildren(QLabel)}
     assert "Preview Matches" in section_titles
-    assert "Image Sets" in section_titles
+    assert "Source Sets" in section_titles
 
 
 def test_source_bindings_editor_edits_step_binding_table() -> None:
@@ -4065,7 +4403,7 @@ def test_source_bindings_editor_preserves_binding_identity_on_basic_edits() -> N
     binding = NamedSourceBinding(
         alias="DNA",
         component_identity=(ComponentSelector(AllComponents.CHANNEL, "1"),),
-        participates_in_image_stack=False,
+        projection_role=SourceProjectionRole.SOURCE_ARTIFACT,
     )
     widget = SourceBindingsEditorWidget.from_bindings(
         StepSourceBindingsConfig(bindings=(binding,))
@@ -4080,7 +4418,7 @@ def test_source_bindings_editor_preserves_binding_identity_on_basic_edits() -> N
     assert edited.component_identity == (
         ComponentSelector(AllComponents.CHANNEL, "1"),
     )
-    assert edited.participates_in_image_stack is False
+    assert edited.projection_role is SourceProjectionRole.SOURCE_ARTIFACT
 
 
 def test_source_bindings_editor_edits_binding_identity_columns() -> None:
@@ -4095,7 +4433,18 @@ def test_source_bindings_editor_edits_binding_identity_columns() -> None:
         *binding_cell_position(0, SourceBindingColumn.IDENTITY),
         "channel=2;site=1",
     )
-    set_binding_cell_text(table, 0, SourceBindingColumn.STACK, "False")
+    set_binding_cell_text(
+        table,
+        0,
+        SourceBindingColumn.SET_ROLE,
+        SourceSetRole.BROADCAST.value,
+    )
+    set_binding_cell_text(
+        table,
+        0,
+        SourceBindingColumn.PROJECTION_ROLE,
+        SourceProjectionRole.SOURCE_ARTIFACT.value,
+    )
     widget._apply_step_bindings(dialog.bindings())
 
     binding = widget.get_value().bindings[0]
@@ -4103,7 +4452,8 @@ def test_source_bindings_editor_edits_binding_identity_columns() -> None:
         ComponentSelector(AllComponents.CHANNEL, "2"),
         ComponentSelector(AllComponents.SITE, "1"),
     )
-    assert binding.participates_in_image_stack is False
+    assert binding.source_set_role is SourceSetRole.BROADCAST
+    assert binding.projection_role is SourceProjectionRole.SOURCE_ARTIFACT
 
 
 def test_source_bindings_editor_edits_selector_columns() -> None:
@@ -4151,15 +4501,14 @@ def test_source_bindings_editor_uses_free_form_selector_pickers(tmp_path) -> Non
     QtApplicationHarness.app()
     source_path = tmp_path / "A01_DNA.tif"
     source_path.write_text("placeholder", encoding="utf-8")
-    schema = PipelineImageSchema(
-        assignments_by_alias={
-            "DNA": ImageAssignment(
+    source_bindings = SourceBindingsConfig(
+        bindings=(
+            NamedSourceBinding(
                 alias="DNA",
-                image_type="Grayscale image",
                 origin=SourceBindingOrigin.PIPELINE_START,
                 selector=SourceSelector(),
             ),
-        },
+        ),
         metadata_rules=(
             MetadataExtractionRule(
                 source=MetadataSource.FILE_NAME,
@@ -4169,12 +4518,13 @@ def test_source_bindings_editor_uses_free_form_selector_pickers(tmp_path) -> Non
     )
     inventory = SourceInventory.from_paths(
         (source_path,),
-        schema=schema,
         source_root=tmp_path,
+        source_backend=Backend.DISK,
+        source_bindings=source_bindings,
     )
     widget = SourceBindingsEditorWidget.from_bindings(
         StepSourceBindingsConfig(),
-        schema=schema,
+        source_bindings=source_bindings,
         inventory=inventory,
     )
 
@@ -4302,8 +4652,14 @@ def test_source_bindings_editor_enum_columns_use_typed_combos() -> None:
         *binding_cell_position(0, SourceBindingColumn.ORIGIN),
         "pipeline_start",
     )
+    set_combo_cell_text(
+        table,
+        *binding_cell_position(0, SourceBindingColumn.PROJECTION_ROLE),
+        "source_artifact",
+    )
     widget._apply_step_bindings(dialog.bindings())
 
     binding = widget.get_value().bindings[0]
     assert binding.artifact_kind.value == "object_labels"
     assert binding.origin is SourceBindingOrigin.PIPELINE_START
+    assert binding.projection_role is SourceProjectionRole.SOURCE_ARTIFACT

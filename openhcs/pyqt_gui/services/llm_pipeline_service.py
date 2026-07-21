@@ -185,16 +185,21 @@ def enhance_contrast(image, clip_limit: float = 0.03):
 ```
 
 === FUNCTION WITH CSV OUTPUT ===
-When you need to save measurements to CSV, use @artifact_outputs with csv_only() preset.
+Declare measurement semantics on the artifact and return schema-bearing ColumnarRows.
 
 RETURN SEMANTICS: With N artifact_outputs, return (image, output1, output2, ..., outputN)
 
 ```python
 from dataclasses import dataclass
-from typing import List, Tuple
 import numpy as np
 from skimage.measure import label, regionprops
+from openhcs.core.artifacts import (
+    ArtifactMeasurementSubjectRelation,
+    ArtifactSpec,
+    MeasurementsArtifactType,
+)
 from openhcs.core.memory import numpy
+from openhcs.core.measurement_row_materialization import DataclassMeasurementColumnarRows
 from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import csv_only
 
@@ -206,12 +211,19 @@ class CellMeasurement:
     mean_intensity: float
 
 @numpy
-@artifact_outputs(("cell_measurements", csv_only()))
+@artifact_outputs(
+    ArtifactSpec(
+        "cell_measurements",
+        MeasurementsArtifactType,
+        materialization=csv_only(),
+        relations=(ArtifactMeasurementSubjectRelation(),),
+    )
+)
 def count_cells_with_csv(
     image,
     threshold: float = 0.5,
     min_area: int = 50
-) -> Tuple[np.ndarray, List[CellMeasurement]]:
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows]:
     """Count cells and save measurements to CSV."""
     results = []
     for i, slice_2d in enumerate(image):
@@ -227,26 +239,32 @@ def count_cells_with_csv(
             mean_intensity=float(np.mean([p.mean_intensity for p in valid])) if valid else 0.0
         ))
 
-    return image, results  # 1 special_output -> return (image, results)
+    return image, DataclassMeasurementColumnarRows(results, row_type=CellMeasurement)
 ```
 
 === FUNCTION WITH ROI OUTPUT (for ImageJ/Napari) ===
 For segmentation masks that become ROIs, return labeled arrays (each region has unique int ID).
 
 ```python
-from typing import List, Tuple
 import numpy as np
 from skimage.measure import label
+from openhcs.core.artifacts import ArtifactSpec, ObjectLabelsArtifactType
 from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import artifact_outputs
-from openhcs.processing.materialization import roi_zip
+from openhcs.processing.materialization import segmentation_mask_rois
 
 @numpy
-@artifact_outputs(("segmentation_masks", roi_zip()))
+@artifact_outputs(
+    ArtifactSpec(
+        "segmentation_masks",
+        ObjectLabelsArtifactType,
+        materialization=segmentation_mask_rois(),
+    )
+)
 def segment_cells_with_rois(
     image,
     threshold: float = 0.5
-) -> Tuple[np.ndarray, List[np.ndarray]]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Segment cells and output ROIs for visualization."""
     masks = []
     for slice_2d in image:
@@ -254,39 +272,11 @@ def segment_cells_with_rois(
         labeled = label(binary)  # Each connected region gets unique ID
         masks.append(labeled)
 
-    return image, masks  # masks -> .roi.zip for Fiji, shapes for Napari
+    return image, np.stack(masks)
 ```
 
-=== FUNCTION WITH BOTH JSON AND CSV OUTPUT ===
-Use json_and_csv() preset for analysis results (most common pattern).
-
-```python
-from typing import List, Tuple
-import numpy as np
-from skimage.measure import label
-from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import artifact_outputs
-from openhcs.processing.materialization import json_and_csv, roi_zip
-
-@numpy
-@artifact_outputs(
-    ("segmentation_masks", roi_zip()),
-    ("cell_measurements", json_and_csv()),
-)
-def analyze_cells_full(
-    image,
-    threshold: float = 0.5
-) -> Tuple[np.ndarray, List[np.ndarray]]:
-    """Segmentation + analysis with both ROIs and metrics output."""
-    masks: List[np.ndarray] = []
-
-    for i, slice_2d in enumerate(image):
-        binary = slice_2d > (np.max(slice_2d) * threshold)
-        labeled = label(binary)
-        masks.append(labeled)
-
-    return image, masks
-```
+To produce measurements and labels together, list both typed artifact declarations and
+return `(image, measurement_rows, label_array)` in the same declared order.
 
 {materializers_section}
 

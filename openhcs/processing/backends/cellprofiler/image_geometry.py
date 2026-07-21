@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
+from typing import Annotated, TYPE_CHECKING, ClassVar
 
 from openhcs.core.steps.function_runtime import RuntimeCallableKwargs
 from collections.abc import Callable
 from dataclasses import replace
 from enum import Enum
 from openhcs.core.artifacts import (
+    ArtifactSpec,
     ArtifactSpecCollection,
     GroupLineageSourceRelation,
     ImageArtifactType,
+    ImageMeasurementSubjectRelation,
     InputStackBroadcastSourceRelation,
     ObjectLabelsArtifactType,
     SourceStackLineageSourceRelation,
@@ -34,7 +36,24 @@ from openhcs.interop.cellprofiler.module_declarations import (
     CellProfilerModule,
 )
 from openhcs.interop.cellprofiler.module_artifact_declarations import (
+    MeasurementArtifactOutputModule,
     ObjectArtifactInputModule,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    MeasurementFeatureRecord,
+    NoObjectNameMeasurementRecordMixin,
+    ProducedImageMeasurementRecordMixin,
+)
+from openhcs.interop.cellprofiler.runtime.measurement_rows import (
+    FormattingMeasurementFeatureTemplate,
+    ModuleOwnedResultMeasurementRows,
+)
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
+    MeasurementProjectedColumnarRows,
+)
+from openhcs.core.runtime_measurements import (
+    MeasurementRowAxisField,
 )
 from openhcs.interop.cellprofiler.setting_names import (
     optional_setting_value,
@@ -641,6 +660,24 @@ class AlignmentDirection(Enum):
     VERTICALLY = "vertically"
 
 
+FlipMethod.NONE.cellprofiler_literals = ("Do not flip",)
+FlipMethod.LEFT_TO_RIGHT.cellprofiler_literals = ("Left to right",)
+FlipMethod.TOP_TO_BOTTOM.cellprofiler_literals = ("Top to bottom",)
+FlipMethod.BOTH.cellprofiler_literals = ("Left to right and top to bottom",)
+RotateMethod.NONE.cellprofiler_literals = ("Do not rotate",)
+RotateMethod.ANGLE.cellprofiler_literals = ("Enter angle",)
+RotateMethod.COORDINATES.cellprofiler_literals = ("Enter coordinates",)
+
+
+def _parse_flip_coordinate_pair(value: str) -> tuple[int, int]:
+    parts = tuple(part.strip() for part in value.split(","))
+    if len(parts) != 2:
+        raise ValueError(
+            f"FlipAndRotate coordinate setting must be x,y, got {value!r}."
+        )
+    return (int(float(parts[0])), int(float(parts[1])))
+
+
 @dataclass(frozen=True, slots=True)
 class TileSettings:
     rows: int
@@ -851,8 +888,8 @@ class ResizeGeometry:
 
 
 @dataclass(frozen=True, slots=True)
-class RotationResult:
-    slice_index: int
+class RotationResult(MeasurementFeatureRecord):
+    slice_index: Annotated[int, MeasurementRowAxisField.SLICE_INDEX]
     rotation_angle: float
 
 
@@ -1289,7 +1326,7 @@ def flip_and_rotate(
     second_pixel_y: int = 100,
     alignment_direction: AlignmentDirection = AlignmentDirection.HORIZONTALLY,
     crop_rotated_edges: bool = True,
-) -> tuple[RuntimeArrayData, RotationResult]:
+) -> tuple[RuntimeArrayData, DataclassMeasurementColumnarRows]:
     """Flip and/or rotate a CellProfiler image plane.
 
     Args:
@@ -1363,12 +1400,178 @@ def flip_and_rotate(
         image_payload_metadata(image)
         .with_spatial_resize(pixel_data.shape[:2])
         .payload_with(pixel_data.astype(np.float32), None),
-        RotationResult(slice_index=0, rotation_angle=angle),
+        DataclassMeasurementColumnarRows(
+            (RotationResult(slice_index=0, rotation_angle=angle),),
+            row_type=RotationResult,
+        ),
     )
 
 
-class FlipAndRotateModule(CellProfilerModule):
+class FlipAndRotateModule(
+    NoObjectNameMeasurementRecordMixin,
+    ProducedImageMeasurementRecordMixin,
+    MeasurementArtifactOutputModule,
+):
     module_name = "FlipAndRotate"
     function_name = "flip_and_rotate"
     validated = True
     confidence = 1.0
+
+    input_image_setting = SettingNameFamily("Select the input image")
+    output_image_setting = SettingNameFamily("Name the output image")
+    flip_method_setting = SettingNameFamily("Select method to flip image")
+    rotate_method_setting = SettingNameFamily("Select method to rotate image")
+    crop_rotated_edges_setting = SettingNameFamily("Crop away the rotated edges?")
+    calculate_rotation_setting = SettingNameFamily("Calculate rotation")
+    first_pixel_setting = SettingNameFamily(
+        "Enter coordinates of the top or left pixel"
+    )
+    second_pixel_setting = SettingNameFamily(
+        "Enter the coordinates of the bottom or right pixel"
+    )
+    alignment_direction_setting = SettingNameFamily(
+        "Select how the specified points should be aligned"
+    )
+    rotation_angle_setting = SettingNameFamily("Enter angle of rotation")
+
+    input_image_binding = SettingToKeywordBinding.input(
+        input_image_setting,
+        ImageArtifactType,
+    )
+    output_image_binding = SettingToKeywordBinding.output(
+        output_image_setting,
+        ImageArtifactType,
+    )
+    setting_bindings = (
+        input_image_binding,
+        output_image_binding,
+        SettingToKeywordBinding(
+            flip_method_setting,
+            "flip_method",
+            cellprofiler_enum_value_setting_parser(FlipMethod),
+        ),
+        SettingToKeywordBinding(
+            rotate_method_setting,
+            "rotate_method",
+            cellprofiler_enum_value_setting_parser(RotateMethod),
+        ),
+        SettingToKeywordBinding(
+            crop_rotated_edges_setting,
+            "crop_rotated_edges",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            alignment_direction_setting,
+            "alignment_direction",
+            cellprofiler_enum_value_setting_parser(AlignmentDirection),
+        ),
+        SettingToKeywordBinding(
+            rotation_angle_setting,
+            "rotation_angle",
+            parse_cellprofiler_float,
+        ),
+    )
+    ignored_settings = (calculate_rotation_setting,)
+
+    class MeasurementFeatureTemplate(FormattingMeasurementFeatureTemplate):
+        """Exact native image measurement emitted by FlipAndRotate."""
+
+        ROTATION = ("Rotation_{output_image_name}", float)
+
+    @dataclass(frozen=True, slots=True)
+    class MeasurementRows(ModuleOwnedResultMeasurementRows):
+        """Project the rotation result through its declared output image name."""
+
+        output_image_name: str
+
+        @classmethod
+        def for_request(cls, module_type, request):
+            output_names = request.callable_contract.artifact_outputs.names_of_artifact_type(
+                ImageArtifactType
+            )
+            if len(output_names) != 1:
+                raise ValueError(
+                    f"{module_type.__name__} requires exactly one image output, "
+                    f"got {output_names!r}."
+                )
+            return cls(
+                request.output_value,
+                module_type=module_type,
+                output_image_name=output_names[0],
+            )
+
+        def rows(self) -> MeasurementProjectedColumnarRows:
+            source_rows = self.source_rows()
+            slice_field = self.source_field_annotated_by(
+                RotationResult,
+                MeasurementRowAxisField.SLICE_INDEX,
+            )
+            angle_field = self.source_field("rotation_angle")
+            feature = self.module_type.MeasurementFeatureTemplate.ROTATION
+            feature_name = feature.feature_name(
+                output_image_name=self.output_image_name,
+            )
+            return MeasurementProjectedColumnarRows(
+                {
+                    slice_field.name: source_rows.column_values(slice_field.name),
+                    feature_name: source_rows.column_values(angle_field.name),
+                },
+                fields=(
+                    slice_field,
+                    feature.field_spec(feature_name),
+                ),
+            )
+
+    @classmethod
+    def bind_settings(cls, module, *, binder):
+        """Bind scalar settings and expand CellProfiler coordinate pairs."""
+
+        bound = cls._bind_declared_settings(module, binder=binder)
+        coordinate_kwargs: RuntimeCallableKwargs = {}
+        first_pixel = optional_setting_value(module, cls.first_pixel_setting)
+        if first_pixel is not None:
+            first_pixel_x, first_pixel_y = _parse_flip_coordinate_pair(first_pixel)
+            coordinate_kwargs.update(
+                first_pixel_x=first_pixel_x,
+                first_pixel_y=first_pixel_y,
+            )
+        second_pixel = optional_setting_value(module, cls.second_pixel_setting)
+        if second_pixel is not None:
+            second_pixel_x, second_pixel_y = _parse_flip_coordinate_pair(second_pixel)
+            coordinate_kwargs.update(
+                second_pixel_x=second_pixel_x,
+                second_pixel_y=second_pixel_y,
+            )
+        bound = bound.with_kwargs(coordinate_kwargs)
+        bound = bound.with_consumed_settings(
+            cls.first_pixel_setting,
+            cls.second_pixel_setting,
+        )
+        return cls._finalize_bound_settings(module, binder=binder, bound=bound)
+
+    @classmethod
+    def measurement_output_relations(
+        cls,
+        module,
+        *,
+        invocation_key,
+        step_context,
+        artifact_inputs: ArtifactSpecCollection,
+    ):
+        """Declare the transformed image as the native rotation subject."""
+
+        inherited = super().measurement_output_relations(
+            module,
+            invocation_key=invocation_key,
+            step_context=step_context,
+            artifact_inputs=artifact_inputs,
+        )
+        output_name = optional_setting_value(module, cls.output_image_setting)
+        if output_name is None:
+            return inherited
+        return (
+            *inherited,
+            ImageMeasurementSubjectRelation(
+                source=ArtifactSpec.output(output_name, ImageArtifactType).ref()
+            ),
+        )

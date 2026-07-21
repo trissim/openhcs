@@ -10,6 +10,7 @@ class StepInputDependencyKind(str, Enum):
     """Closed family of main-input dependency kinds."""
 
     UNRESOLVED = "unresolved"
+    NO_MAIN_FLOW = "no_main_flow"
     PIPELINE_START = "pipeline_start"
     STEP_OUTPUT = "step_output"
 
@@ -29,6 +30,10 @@ class StepInputDependency:
     @classmethod
     def pipeline_start(cls) -> "StepInputDependency":
         return cls(StepInputDependencyKind.PIPELINE_START)
+
+    @classmethod
+    def no_main_flow(cls) -> "StepInputDependency":
+        return cls(StepInputDependencyKind.NO_MAIN_FLOW)
 
     @classmethod
     def step_output(
@@ -63,4 +68,3 @@ class StepInputDependency:
     @property
     def is_resolved(self) -> bool:
         return self.kind is not StepInputDependencyKind.UNRESOLVED
-

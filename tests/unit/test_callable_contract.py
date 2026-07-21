@@ -17,13 +17,15 @@ from openhcs.core.callable_contract import (
     runtime_image_execution_mode,
 )
 from openhcs.constants.constants import VariableComponents
+from openhcs.core.config import LazyDtypeConfig
 from openhcs.core.function_contract_metadata import FunctionContractAttribute
 from openhcs.core.function_reference import FunctionReference
+from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import (
     required_variable_components,
     runtime_bound_parameters,
 )
-from openhcs.core.runtime_invocation import SliceIndexRuntimeParameter
+from openhcs.core.runtime_batch_contracts import SliceIndexRuntimeParameter
 from openhcs.core.runtime_batch_contracts import (
     RuntimeBatchExecutionDomain,
     RuntimePure2DSliceBatchRequest,
@@ -89,6 +91,19 @@ def test_callable_contract_reads_runtime_bound_parameters() -> None:
     assert CallableMetadata.from_callable(process).as_namespace()[
         FunctionContractAttribute.runtime_bound_parameters
     ] == (SliceIndexRuntimeParameter,)
+
+
+def test_callable_contract_reads_wrapper_declared_config_parameters() -> None:
+    @numpy(contract=ProcessingContract.PURE_3D)
+    def process(image):
+        return image
+
+    contract = CallableContract.from_callable(process)
+
+    assert contract.config_bound_parameter_names == ("dtype_config",)
+    assert contract.runtime_owned_parameter_names == frozenset({"dtype_config"})
+    (parameter,) = contract.config_bound_parameters
+    assert parameter.annotation is LazyDtypeConfig
 
 
 def test_callable_contract_reads_required_variable_components() -> None:
@@ -300,3 +315,20 @@ def test_runtime_slice_batch_request_exposes_callable_defaults() -> None:
     assert request.kwargs["method"] == "otsu"
     assert request.kwargs["threshold"] == 0.75
     assert request.execute_one(0) == ("image", "otsu", 0.75)
+
+
+def test_runtime_slice_batch_request_preserves_callable_result_identity() -> None:
+    class MeasurementRows:
+        pass
+
+    rows = MeasurementRows()
+    result = ("image", rows)
+
+    request = RuntimePure2DSliceBatchRequest(
+        func=lambda image: image,
+        slices_2d=("image",),
+        kwargs={},
+        execute_slice=lambda func, image, kwargs, slice_index, slice_count: result,
+    )
+
+    assert request.execute_one(0) is result

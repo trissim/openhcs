@@ -54,27 +54,10 @@ def test_official30_portable_manifest_declares_roots_without_absolute_cases(
         ],
         "kind": "dataset_registry",
     }
-    assert all(not Path(case["dataset_path"]).is_absolute() for case in payload["cases"])
-    assert all(not Path(case["cppipe_path"]).is_absolute() for case in payload["cases"])
-    assert (
-        payload.get("default_source_schema_image_set_selection", {}).get(
-            "max_image_set_count"
-        )
-        is not None
-    )
-    sample_limited_cases = [
-        case
-        for case in payload["cases"]
-        if case.get("source_schema_image_set_selection", {}).get(
-            "max_image_set_count"
-        )
-        is not None
-    ]
     assert all(
-        case.get("dataset_path_root") != "axis_one_subsets"
-        for case in sample_limited_cases
+        not Path(case["dataset_path"]).is_absolute() for case in payload["cases"]
     )
-
+    assert all(not Path(case["cppipe_path"]).is_absolute() for case in payload["cases"])
     cases = load_comparison_cases(manifest_path)
 
     assert len(cases) == 30

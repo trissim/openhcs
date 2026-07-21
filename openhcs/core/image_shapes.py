@@ -34,6 +34,12 @@ class ArrayShape:
             return None
         return cls(ndim=int(array.ndim), shape=tuple(int(axis) for axis in array.shape))
 
+    @classmethod
+    def shape_for(cls, value: Any) -> tuple[int, ...] | None:
+        """Return concrete array geometry for diagnostics."""
+        array_shape = cls.from_value(value)
+        return None if array_shape is None else array_shape.shape
+
     def has_rank(self, ndim: int) -> bool:
         return self.ndim == ndim
 

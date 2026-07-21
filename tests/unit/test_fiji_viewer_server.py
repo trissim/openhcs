@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import numpy as np
+import tifffile
 
-from openhcs.core.config import FijiDisplayConfig, FijiLUT
+from openhcs.core.config import FijiDisplayConfig, FijiLUT, FijiStreamingConfig
 from openhcs.runtime.fiji_viewer_server import (
     FijiBatchWireParser,
+    FijiClearStateControlPlan,
     FijiControlMessageAuthority,
+    FijiControlMessagePlan,
+    FijiControlRequestContext,
     FijiDimensionAxis,
     FijiDisplayConfigWireAdapter,
     FijiImagePayload,
@@ -16,6 +20,10 @@ from openhcs.runtime.fiji_viewer_server import (
     FijiWindowItemProjection,
     FijiWindowRegistry,
     FijiWireItem,
+)
+from openhcs.runtime.fiji_macro_runtime import (
+    FijiMacroExecutionRequest,
+    FijiMacroExecutionResponse,
 )
 from openhcs.runtime.viewer_protocol import ViewerControlMessageType
 from openhcs.runtime.viewer_component_system import (
@@ -29,6 +37,7 @@ PRODUCER_IDENTITY = {
     "origin": "pipeline",
     "output_kind": "main",
     "output_key": "Nuclei",
+    "projection_key": "main",
     "step_name": "IdentifyPrimaryObjects",
     "pipeline_position": 0,
     "step_scope_id": None,
@@ -84,6 +93,18 @@ def test_fiji_display_config_wire_adapter_rehydrates_existing_config_type() -> N
     assert config.component_modes() == default_config.component_modes()
 
 
+def test_fiji_runtime_mode_follows_inherited_streaming_enablement() -> None:
+    assert FijiStreamingConfig(enabled=False).viewer_runtime_config().display_enabled is False
+    assert FijiStreamingConfig(enabled=True).viewer_runtime_config().display_enabled is True
+
+
+def test_fiji_control_dispatch_registry_is_module_local_and_eager() -> None:
+    registry = FijiControlMessagePlan.__registry__
+
+    assert type(registry) is dict
+    assert registry[ViewerControlMessageType.CLEAR_STATE.value] is FijiClearStateControlPlan
+
+
 def test_fiji_window_registry_owns_window_state_and_group_identity() -> None:
     registry = FijiWindowRegistry()
     image_plus = _FakeImagePlus()
@@ -120,9 +141,9 @@ def test_fiji_window_registry_closes_replaced_hyperstack() -> None:
 
 
 def test_fiji_state_control_message_fails_loudly_until_projector_exists() -> None:
-    response = FijiControlMessageAuthority(FijiWindowRegistry()).response_for(
-        {"type": ViewerControlMessageType.STATE.value}
-    )
+    response = FijiControlMessageAuthority(
+        FijiControlRequestContext(FijiWindowRegistry(), object())
+    ).response_for({"type": ViewerControlMessageType.STATE.value})
 
     wire_response = response.to_wire_mapping()
 
@@ -132,6 +153,45 @@ def test_fiji_state_control_message_fails_loudly_until_projector_exists() -> Non
         "Fiji live viewer state polling is not implemented"
         in wire_response["message"]
     )
+
+
+def test_fiji_macro_control_executes_inside_managed_imagej_runtime(tmp_path) -> None:
+    macro_path = tmp_path / "copy.ijm"
+    macro_path.write_text("// managed macro", encoding="utf-8")
+
+    class FakePyImageJ:
+        def run_script(self, extension, script, variables):
+            assert extension == "ijm"
+            assert script == "// managed macro"
+            assert variables["Threshold"] == "0.25"
+            tifffile.imwrite(
+                f"{variables['Directory']}/output.tif",
+                np.full((4, 5), 7, dtype=np.uint8),
+            )
+
+    class FakeImageJ:
+        py = FakePyImageJ()
+
+    request = FijiMacroExecutionRequest.from_arrays(
+        macro_path=macro_path,
+        input_filenames=("input.tif",),
+        output_filenames=("output.tif",),
+        directory_variable="Directory",
+        macro_variables={"Threshold": "0.25"},
+        input_images=(np.zeros((4, 5), dtype=np.uint8),),
+    )
+    response = FijiControlMessageAuthority(
+        FijiControlRequestContext(FijiWindowRegistry(), FakeImageJ())
+    ).response_for(
+        {
+            "type": FijiMacroExecutionRequest.message_type,
+            "payload": request,
+        }
+    )
+
+    assert response.header.status.value == "success"
+    assert isinstance(response.payload, FijiMacroExecutionResponse)
+    assert len(response.payload.outputs) == 1
 
 
 def test_fiji_batch_message_normalizes_wire_items() -> None:
@@ -219,7 +279,11 @@ def test_fiji_window_item_projection_preserves_nominal_items() -> None:
     assert window_items == items
     assert projection.coordinate_components.channel == ["channel"]
     assert projection.coordinate_components.z_axis_components == ["z_index"]
-    assert projection.coordinate_components.frame == ["well", "site", "timepoint"]
+    assert projection.coordinate_components.frame == [
+        component
+        for component in FijiDisplayConfig.COMPONENT_ORDER
+        if component in {"site", "well", "timepoint"}
+    ]
 
 
 def test_fiji_plane_geometry_owns_extraction_padding_and_shape() -> None:

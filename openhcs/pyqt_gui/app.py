@@ -20,7 +20,7 @@ from polystore.filemanager import FileManager
 from objectstate import spawn_thread_with_context
 
 from pyqt_reactive.utils.scroll_filter import install_shift_wheel_scrolling
-from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext
+from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, UIConfig
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
 
 logger = logging.getLogger(__name__)
@@ -79,6 +79,10 @@ class OpenHCSPyQtApp(QApplication):
     @property
     def pipeline_runtime_config(self) -> GlobalPipelineConfig:
         return self.runtime_context.pipeline_runtime
+
+    @property
+    def ui_config(self):
+        return self.runtime_context.ui_config
         logger.debug("Installed global Shift+Wheel horizontal scrolling")
 
         logger.info("OpenHCS PyQt6 application initialized")
@@ -139,6 +143,12 @@ class OpenHCSPyQtApp(QApplication):
         )
         ObjectStateRegistry.register(global_state, _skip_snapshot=True)
 
+        ui_state = ObjectState(
+            object_instance=self.ui_config,
+            scope_id=UIConfig.object_state_scope_id(),
+        )
+        ObjectStateRegistry.register(ui_state, _skip_snapshot=True)
+
         # ARCHITECTURAL FIX: Do NOT set contextvars at app startup
         # contextvars is ONLY for temporary nested contexts (inside with config_context() blocks)
         # threading.local() is the single source of truth for persistent global config
@@ -154,7 +164,7 @@ class OpenHCSPyQtApp(QApplication):
             register_reactor_providers,
         )
 
-        register_reactor_providers()
+        register_reactor_providers(lambda: self.runtime_context.ui_config.zmq)
 
         # Set application icon (if available)
         icon_path = Path(__file__).parent / "resources" / "openhcs_icon.png"
@@ -178,6 +188,7 @@ class OpenHCSPyQtApp(QApplication):
 
             # Connect application-level signals
             self.main_window.config_changed.connect(self.on_config_changed)
+            self.main_window.ui_config_changed.connect(self.on_ui_config_changed)
 
         return self.main_window
 
@@ -205,6 +216,10 @@ class OpenHCSPyQtApp(QApplication):
         """
         self.runtime_context = self.runtime_context.with_pipeline_runtime(new_config)
         logger.info("Global configuration updated")
+
+    def on_ui_config_changed(self, new_config: UIConfig) -> None:
+        self.runtime_context = self.runtime_context.with_ui_config(new_config)
+        logger.info("UI configuration updated")
 
     def handle_exception(self, exc_type, exc_value, exc_traceback):
         """

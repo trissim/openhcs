@@ -2,15 +2,19 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from dataclasses import replace
 
 import pytest
 
 from openhcs.core.config import (
     FijiDimensionMode,
     FijiStreamingConfig,
+    GlobalPipelineConfig,
     NapariDimensionMode,
     NapariStreamingConfig,
+    PipelineConfig,
     StreamingConfig,
+    get_all_streaming_ports,
 )
 from openhcs.core.viewer_streaming_service import (
     ImageStreamingRequest,
@@ -19,6 +23,8 @@ from openhcs.core.viewer_streaming_service import (
     StreamingViewerLifecycle,
 )
 from openhcs.runtime.napari_stream_visualizer import NapariStreamVisualizer
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+from polystore.zmq_config import POLYSTORE_ZMQ_CONFIG
 from polystore.streaming.viewer_transport import ViewerStreamKwarg
 from zmqruntime.viewer_protocol import ViewerBatchWireField
 
@@ -84,6 +90,13 @@ def test_streaming_config_separates_registry_key_from_viewer_identity() -> None:
     assert NapariStreamingConfig().display_name == "Napari"
 
 
+@pytest.mark.parametrize("config", (GlobalPipelineConfig(), PipelineConfig()))
+def test_all_streaming_ports_read_declared_registry_fields(config) -> None:
+    ports = get_all_streaming_ports(config, num_ports_per_type=1)
+
+    assert set(ports) == {5555, 5565}
+
+
 def test_streaming_config_component_modes_apply_display_defaults() -> None:
     assert NapariStreamingConfig().component_modes() == {
         component: NapariDimensionMode.STACK.value
@@ -107,6 +120,10 @@ def test_stream_images_uses_resolved_config_backend_not_viewer_name(monkeypatch)
     config = FijiStreamingConfig(enabled=True)
     statuses: list[str] = []
     errors: list[str] = []
+    transport_config = replace(
+        OPENHCS_ZMQ_CONFIG,
+        ipc_socket_prefix="test-openhcs-zmq",
+    )
 
     service = StreamingService(
         filemanager=filemanager,
@@ -125,6 +142,7 @@ def test_stream_images_uses_resolved_config_backend_not_viewer_name(monkeypatch)
             metadata_handler=FakeMetadataHandler(),
         ),
         plate_path=Path("/plate"),
+        transport_config=transport_config,
     )
     service.stream_images_async(
         ImageStreamingRequest(
@@ -145,6 +163,10 @@ def test_stream_images_uses_resolved_config_backend_not_viewer_name(monkeypatch)
     assert stream_request.display_config is config
     assert stream_request.host == config.host
     assert stream_request.transport_mode is config.transport_mode
+    assert (
+        stream_request.transport_config.resolve(POLYSTORE_ZMQ_CONFIG)
+        is transport_config
+    )
     assert stream_request.source.metadata.metadata_by_path == {
         "A01/img.tif": {
             "well": "A01",
@@ -163,10 +185,11 @@ def test_stream_images_uses_resolved_config_backend_not_viewer_name(monkeypatch)
         "z_index": [1],
         "well": ["A01"],
     }
-    assert stream_request.producer.identity.to_payload() == {
+    assert stream_request.producer.identities[0].to_payload() == {
         "origin": "manual",
         "output_kind": "manual",
         "output_key": "selected_images",
+        "projection_key": "selected_images",
         "step_name": None,
         "pipeline_position": None,
         "step_scope_id": None,

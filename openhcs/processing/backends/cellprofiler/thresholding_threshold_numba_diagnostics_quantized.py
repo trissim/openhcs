@@ -27,6 +27,102 @@ class QuantizedThresholdDiagnosticContext(NamedTuple):
     entropy_log_delta_values: np.ndarray
 
 
+class QuantizedThresholdCodebook(NamedTuple):
+    """Exact runtime values associated with one proven quantized image."""
+
+    codes: np.ndarray
+    values: np.ndarray
+
+
+@njit(cache=True)
+def _populate_quantized_threshold_codebook_numba(
+    image: np.ndarray,
+    scale: int,
+    codes: np.ndarray,
+    values: np.ndarray,
+    populated: np.ndarray,
+) -> bool:
+    flat_image = image.ravel()
+    flat_codes = codes.ravel()
+    scale_float = float(scale)
+    for index in range(flat_image.size):
+        value = flat_image[index]
+        if not np.isfinite(value):
+            return False
+        code = int(np.rint(value * scale_float))
+        if code < 0 or code > scale:
+            return False
+        if populated[code]:
+            if values[code] != value:
+                return False
+        else:
+            values[code] = value
+            populated[code] = True
+        flat_codes[index] = code
+    return True
+
+
+def quantized_threshold_codebook(
+    image: np.ndarray, scale: int
+) -> QuantizedThresholdCodebook | None:
+    """Return exact per-code runtime values for a proven quantized image."""
+    image_array = np.asarray(image)
+    scale_value = int(scale)
+    if scale_value <= 0 or not np.issubdtype(image_array.dtype, np.floating):
+        return None
+    code_dtype = (
+        np.uint8 if scale_value <= int(np.iinfo(np.uint8).max) else np.uint16
+    )
+    codes = np.empty(image_array.shape, dtype=code_dtype)
+    values = np.zeros(scale_value + 1, dtype=image_array.dtype)
+    populated = np.zeros(scale_value + 1, dtype=np.bool_)
+    if not _populate_quantized_threshold_codebook_numba(
+        image_array,
+        scale_value,
+        codes,
+        values,
+        populated,
+    ):
+        return None
+    return QuantizedThresholdCodebook(
+        codes=np.ascontiguousarray(codes),
+        values=values,
+    )
+
+
+def quantized_threshold_diagnostic_context(
+    image: np.ndarray,
+    binary_image: np.ndarray,
+    noise: np.ndarray,
+    scale: int,
+) -> QuantizedThresholdDiagnosticContext | None:
+    """Build exact producer-dtype log tables for the quantized fast path."""
+    codebook = quantized_threshold_codebook(image, scale)
+    if codebook is None:
+        return None
+    values = codebook.values
+    weighted_log_values = np.zeros(values.shape, dtype=np.float64)
+    positive_values = values > 0.0
+    weighted_log_values[positive_values] = np.log2(
+        values[positive_values].astype(np.float64)
+    )
+    delta = np.asarray(CELLPROFILER_THRESHOLD_ENTROPY_DELTA, dtype=values.dtype)
+    entropy_values = np.clip(
+        values,
+        delta,
+        np.asarray(1.0, dtype=values.dtype),
+    )
+    return QuantizedThresholdDiagnosticContext(
+        codes=codebook.codes,
+        binary_image=np.ascontiguousarray(binary_image),
+        noise=noise,
+        values=values,
+        weighted_log_values=weighted_log_values,
+        entropy_log_values=np.log2(entropy_values),
+        entropy_log_delta_values=np.log2(entropy_values + delta),
+    )
+
+
 def exact_quantized_threshold_codes(
     image: np.ndarray, scale: int
 ) -> np.ndarray | None:
@@ -42,6 +138,50 @@ def exact_quantized_threshold_codes(
         np.uint8 if scale_value <= int(np.iinfo(np.uint8).max) else np.uint16
     )
     return np.ascontiguousarray(rounded.astype(code_dtype, copy=False))
+
+
+@njit(cache=True, inline="always")
+def _numpy_uniform_histogram_bin_index_numba(
+    value: float,
+    lower: float,
+    upper: float,
+    bin_edges: np.ndarray,
+) -> int:
+    """Return NumPy's corrected uniform-histogram bin index."""
+    bin_count = CELLPROFILER_THRESHOLD_ENTROPY_BINS
+    bin_index = int(((value - lower) / (upper - lower)) * float(bin_count))
+    if bin_index == bin_count:
+        bin_index -= 1
+    if bin_index < 0 or bin_index >= bin_count:
+        return -1
+    if value < bin_edges[bin_index]:
+        bin_index -= 1
+    if bin_index < 0:
+        return -1
+    if value >= bin_edges[bin_index + 1] and bin_index != bin_count - 1:
+        bin_index += 1
+    return bin_index
+
+
+@njit(cache=True, inline="always")
+def _producer_dtype_clamped_entropy_logs_numba(
+    minval: float,
+    values: np.ndarray,
+) -> tuple[float, float]:
+    """Return clamp logs after NumPy's producer-dtype scalar cast."""
+    typed_scalars = np.empty(2, dtype=values.dtype)
+    typed_scalars[0] = minval
+    typed_scalars[1] = CELLPROFILER_THRESHOLD_ENTROPY_DELTA
+    clipped = typed_scalars[0]
+    delta = typed_scalars[1]
+    if clipped < delta:
+        clipped = delta
+    elif clipped > 1.0:
+        clipped = 1.0
+    clipped_plus_delta = clipped + delta
+    typed_scalars[0] = math.log2(float(clipped))
+    typed_scalars[1] = math.log2(float(clipped_plus_delta))
+    return float(typed_scalars[0]), float(typed_scalars[1])
 
 
 @njit(cache=True)
@@ -69,7 +209,10 @@ def _threshold_diagnostics_unmasked_finite_quantized_numba(
     weighted_variance = 0.0
     minval = max_value / 256.0
     minval_log = 0.0
-    delta = CELLPROFILER_THRESHOLD_ENTROPY_DELTA
+    (
+        clamped_entropy_log,
+        clamped_entropy_log_delta,
+    ) = _producer_dtype_clamped_entropy_logs_numba(minval, values)
     lower = np.inf
     upper = -np.inf
     foreground_count = 0
@@ -87,14 +230,9 @@ def _threshold_diagnostics_unmasked_finite_quantized_numba(
                 code = codes[y, x]
                 value = values[code]
                 if value < minval:
-                    clipped = minval
-                    if clipped < delta:
-                        clipped = delta
-                    elif clipped > 1.0:
-                        clipped = 1.0
                     weighted_log_value = minval_log
-                    entropy_log_value = math.log2(clipped)
-                    log_delta_value = math.log2(clipped + delta)
+                    entropy_log_value = clamped_entropy_log
+                    log_delta_value = clamped_entropy_log_delta
                 else:
                     weighted_log_value = weighted_log_values[code]
                     entropy_log_value = entropy_log_values[code]
@@ -148,19 +286,18 @@ def _threshold_diagnostics_unmasked_finite_quantized_numba(
 
     foreground_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
     background_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
-    scale = float(CELLPROFILER_THRESHOLD_ENTROPY_BINS) / (upper - lower)
+    bin_edges = np.linspace(
+        lower,
+        upper,
+        CELLPROFILER_THRESHOLD_ENTROPY_BINS + 1,
+    )
     for y in range(height):
         for x in range(width):
             code = codes[y, x]
             value = values[code]
             if value < minval:
-                clipped = minval
-                if clipped < delta:
-                    clipped = delta
-                elif clipped > 1.0:
-                    clipped = 1.0
-                entropy_log_value = math.log2(clipped)
-                log_delta_value = math.log2(clipped + delta)
+                entropy_log_value = clamped_entropy_log
+                log_delta_value = clamped_entropy_log_delta
             else:
                 entropy_log_value = entropy_log_values[code]
                 log_delta_value = entropy_log_delta_values[code]
@@ -171,14 +308,14 @@ def _threshold_diagnostics_unmasked_finite_quantized_numba(
             )
             if log_smoothed_value > 0.0:
                 log_smoothed_value = 0.0
-            bin_index = int((log_smoothed_value - lower) * scale)
+            bin_index = _numpy_uniform_histogram_bin_index_numba(
+                log_smoothed_value,
+                lower,
+                upper,
+                bin_edges,
+            )
             if bin_index < 0:
                 continue
-            if bin_index >= CELLPROFILER_THRESHOLD_ENTROPY_BINS:
-                if bin_index == CELLPROFILER_THRESHOLD_ENTROPY_BINS:
-                    bin_index = CELLPROFILER_THRESHOLD_ENTROPY_BINS - 1
-                else:
-                    continue
             if binary_image[y, x]:
                 foreground_hist[bin_index] += 1
             else:
@@ -221,6 +358,10 @@ def _threshold_diagnostics_rectangular_mask_quantized_numba(
 
     weighted_variance = 0.0
     minval = masked_max / 256.0
+    (
+        clamped_entropy_log,
+        clamped_entropy_log_delta,
+    ) = _producer_dtype_clamped_entropy_logs_numba(minval, values)
     if minval > 0.0:
         minval_log = math.log2(minval)
         fg_count = 0
@@ -263,7 +404,6 @@ def _threshold_diagnostics_rectangular_mask_quantized_numba(
     if minval == 0.0:
         return weighted_variance, 0.0
 
-    delta = CELLPROFILER_THRESHOLD_ENTROPY_DELTA
     lower = np.inf
     upper = -np.inf
     for y in range(height):
@@ -271,13 +411,8 @@ def _threshold_diagnostics_rectangular_mask_quantized_numba(
             code = codes[y, x]
             value = values[code]
             if value < minval:
-                clipped = minval
-                if clipped < delta:
-                    clipped = delta
-                elif clipped > 1.0:
-                    clipped = 1.0
-                log_value = math.log2(clipped)
-                log_delta_value = math.log2(clipped + delta)
+                log_value = clamped_entropy_log
+                log_delta_value = clamped_entropy_log_delta
             else:
                 log_value = entropy_log_values[code]
                 log_delta_value = entropy_log_delta_values[code]
@@ -309,19 +444,18 @@ def _threshold_diagnostics_rectangular_mask_quantized_numba(
 
     foreground_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
     background_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
-    histogram_scale = float(CELLPROFILER_THRESHOLD_ENTROPY_BINS) / (upper - lower)
+    bin_edges = np.linspace(
+        lower,
+        upper,
+        CELLPROFILER_THRESHOLD_ENTROPY_BINS + 1,
+    )
     for y in range(y0, y1):
         for x in range(x0, x1):
             code = codes[y, x]
             value = values[code]
             if value < minval:
-                clipped = minval
-                if clipped < delta:
-                    clipped = delta
-                elif clipped > 1.0:
-                    clipped = 1.0
-                log_value = math.log2(clipped)
-                log_delta_value = math.log2(clipped + delta)
+                log_value = clamped_entropy_log
+                log_delta_value = clamped_entropy_log_delta
             else:
                 log_value = entropy_log_values[code]
                 log_delta_value = entropy_log_delta_values[code]
@@ -332,14 +466,14 @@ def _threshold_diagnostics_rectangular_mask_quantized_numba(
             )
             if log_smoothed_value > 0.0:
                 log_smoothed_value = 0.0
-            bin_index = int((log_smoothed_value - lower) * histogram_scale)
+            bin_index = _numpy_uniform_histogram_bin_index_numba(
+                log_smoothed_value,
+                lower,
+                upper,
+                bin_edges,
+            )
             if bin_index < 0:
                 continue
-            if bin_index >= CELLPROFILER_THRESHOLD_ENTROPY_BINS:
-                if bin_index == CELLPROFILER_THRESHOLD_ENTROPY_BINS:
-                    bin_index = CELLPROFILER_THRESHOLD_ENTROPY_BINS - 1
-                else:
-                    continue
             if binary_image[y, x]:
                 foreground_hist[bin_index] += 1
             else:

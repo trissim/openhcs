@@ -32,7 +32,7 @@ from openhcs.config_framework.global_config import set_current_global_config
 from openhcs.config_framework.lazy_factory import create_dataclass_for_editing
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.constants import Microscope
-from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, get_default_pyqt_gui_config
+from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, get_default_ui_config
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import ParameterFormManager
@@ -509,7 +509,7 @@ def _launch_application(context: WorkflowContext) -> WorkflowContext:
     app = OpenHCSPyQtApp(
         sys.argv,
         runtime_context=PyQtGuiRuntimeContext(
-            get_default_pyqt_gui_config(),
+            get_default_ui_config(),
             pipeline_runtime=config,
         ),
     )

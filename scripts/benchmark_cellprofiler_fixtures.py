@@ -23,25 +23,23 @@ def _time_call(call: Callable[[], object], repeats: int) -> tuple[float, float]:
 
 
 def _benchmark_threshold_application(path: Path, repeats: int) -> tuple[float, float]:
-    from openhcs.interop.cellprofiler.thresholding import (
-        _threshold_application_smoothed_image,
+    from openhcs.processing.backends.cellprofiler.thresholding import (
+        ThresholdApplicationSmoothing,
     )
 
     fixture = np.load(path)
     smoothing = float(np.asarray(fixture["smoothing"]).reshape(-1)[0])
 
     def call() -> object:
-        return _threshold_application_smoothed_image(
-            fixture["image"],
-            fixture["mask"],
-            smoothing,
+        return ThresholdApplicationSmoothing(smoothing).smooth(
+            fixture["image"], fixture["mask"]
         )
 
     return _print_result(path, *_time_call(call, repeats))
 
 
 def _benchmark_threshold_diagnostics(path: Path, repeats: int) -> tuple[float, float]:
-    from openhcs.interop.cellprofiler.thresholding import (
+    from openhcs.processing.backends.cellprofiler.thresholding import (
         cellprofiler_threshold_diagnostics,
     )
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Callable
 
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
 from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
@@ -32,9 +31,6 @@ from zmqruntime.execution import (
 logger = logging.getLogger(__name__)
 
 
-CompletionCallback = Callable[[], None]
-
-
 class ExecutionSubmissionService:
     """Owns normal pipeline submission, execution id tracking, and polling."""
 
@@ -45,13 +41,11 @@ class ExecutionSubmissionService:
         context: BatchWorkflowContext,
         completion_poller: ExecutionStatusPoller,
         terminal_result_builder: TerminalExecutionResultBuilder,
-        on_completion_update: CompletionCallback,
     ) -> None:
         self._host = host
         self._context = context
         self._completion_poller = completion_poller
         self._terminal_result_builder = terminal_result_builder
-        self._on_completion_update = on_completion_update
 
     async def submit_plate(
         self,
@@ -135,10 +129,6 @@ class ExecutionSubmissionService:
                 return
             parsed_terminal_status = parse_terminal_status(terminal_status)
 
-            self._host.plate_terminal_activity_status.mark_terminal(
-                plate_path,
-                parsed_terminal_status,
-            )
             result = self._terminal_result_builder.build(
                 terminal_status=parsed_terminal_status.value,
                 execution_id=terminal_execution_id,
@@ -149,7 +139,6 @@ class ExecutionSubmissionService:
                 parsed_terminal_status.value,
                 result,
             )
-            self._on_completion_update()
 
         def on_status_error(execution_id_with_error: str, message: str) -> None:
             current_execution_id = self._current_execution_id_for_plate(plate_path)
@@ -161,10 +150,6 @@ class ExecutionSubmissionService:
                     current_execution_id,
                 )
                 return
-            self._host.plate_terminal_activity_status.mark_terminal(
-                plate_path,
-                TerminalExecutionStatus.FAILED,
-            )
             self._host.notify_plate_completed(
                 plate_path,
                 TerminalExecutionStatus.FAILED.value,
@@ -174,7 +159,6 @@ class ExecutionSubmissionService:
                     "message": message,
                 },
             )
-            self._on_completion_update()
 
         def on_poll_exception(_execution_id: str, error: Exception) -> bool:
             if isinstance(error, _ClientDisconnected):

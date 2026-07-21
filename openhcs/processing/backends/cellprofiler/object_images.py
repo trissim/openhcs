@@ -1,19 +1,62 @@
 """Object-label image rendering for CellProfiler-compatible processing."""
 
 from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from enum import Enum
+from typing import Annotated, ClassVar
+
+from metaclass_registry import AutoRegisterMeta
+import numpy as np
+
+from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
+from openhcs.core.memory import numpy as numpy_decorator
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
+)
+from openhcs.core.pipeline.function_contracts import (
+    ObjectLabelInputExecutionMode,
+    object_label_input_execution_mode,
+    special_inputs,
+)
+from openhcs.core.public_api import public_names_from_objects
+from openhcs.core.runtime_image_values import (
+    ImagePayloadMetadata,
+    image_payload_metadata,
+    with_image_payload_data,
+)
+from openhcs.core.runtime_measurements import MeasurementRowAxisField
+from openhcs.core.runtime_object_label_building import (
+    SourceImageObjectLabelBuildRequest,
+)
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelValue,
+    object_label_dense_array,
+)
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
+    MeasurementArtifactOutputModule,
+    ObjectArtifactInputModule,
+    ObjectArtifactOutputModule,
+)
+from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    MeasurementFeatureRecord,
+)
+from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     cellprofiler_enum_value_setting_parser,
+    coerce_cellprofiler_enum,
+    parse_cellprofiler_bool,
+    parse_cellprofiler_int,
 )
-from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
-from openhcs.interop.cellprofiler.module_declarations import (
-    CellProfilerModule,
+from openhcs.processing.backends.analysis.region_properties import (
+    LabelRegionPropertiesBackendStrategy,
 )
-from openhcs.interop.cellprofiler.module_artifact_declarations import (
-    ObjectArtifactInputModule,
+from openhcs.processing.backends.lib_registry.unified_registry import (
+    ProcessingContract,
 )
-from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
 
 
 class ConvertObjectsToImageMode(Enum):
@@ -48,39 +91,6 @@ class ConvertObjectsToImageModule(
         SettingToKeywordBinding("Select the colormap", "colormap_value"),
     )
 
-
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from enum import Enum
-from typing import ClassVar
-import numpy as np
-from metaclass_registry import AutoRegisterMeta
-from openhcs.core.memory import numpy as numpy_decorator
-from openhcs.core.pipeline.function_contracts import (
-    ObjectLabelInputExecutionMode,
-    object_label_input_execution_mode,
-    special_inputs,
-    )
-from openhcs.core.public_api import public_names_from_objects
-from openhcs.core.runtime_image_values import (
-    ImagePayloadMetadata,
-    image_payload_metadata,
-    with_image_payload_data,
-)
-from openhcs.core.runtime_object_labels import (
-    ObjectLabelValue,
-    object_label_dense_array,
-)
-from openhcs.core.runtime_object_label_building import (
-    SourceImageObjectLabelBuildRequest,
-)
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
-from openhcs.processing.backends.analysis.region_properties import (
-    LabelRegionPropertiesBackendStrategy,
-)
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-
-
 class ImageMode(Enum):
     BINARY = "binary"
     GRAYSCALE = "grayscale"
@@ -89,10 +99,10 @@ class ImageMode(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class ObjectConversionStats:
+class ObjectConversionStats(MeasurementFeatureRecord):
     """ConvertImageToObjects summary row."""
 
-    slice_index: int
+    slice_index: Annotated[int, MeasurementRowAxisField.SLICE_INDEX]
     object_count: int
     mean_area: float
     total_area: int
@@ -178,7 +188,7 @@ def convert_image_to_objects(
     preserve_label: bool = False,
     background: int = 0,
     connectivity: int = 1,
-) -> tuple[np.ndarray, ObjectConversionStats, ObjectLabelValue]:
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, ObjectLabelValue]:
     """Convert an image plane into CellProfiler-compatible object labels.
 
     Args:
@@ -212,11 +222,16 @@ def convert_image_to_objects(
         total_area = 0
     return (
         image,
-        ObjectConversionStats(
-            slice_index=0,
-            object_count=object_count,
-            mean_area=mean_area,
-            total_area=total_area,
+        DataclassMeasurementColumnarRows(
+            (
+                ObjectConversionStats(
+                    slice_index=0,
+                    object_count=object_count,
+                    mean_area=mean_area,
+                    total_area=total_area,
+                ),
+            ),
+            row_type=ObjectConversionStats,
         ),
         SourceImageObjectLabelBuildRequest(
             image=image,
@@ -262,11 +277,44 @@ def convert_objects_to_image(
     )
 
 
-class ConvertImageToObjectsModule(CellProfilerModule):
+class ConvertImageToObjectsModule(
+    MeasurementArtifactOutputModule,
+    ObjectArtifactOutputModule,
+    CellProfilerModule,
+):
     module_name = "ConvertImageToObjects"
     function_name = "convert_image_to_objects"
     validated = True
     confidence = 1.0
+    input_image_setting = SettingNameFamily("Select the input image")
+    output_objects_setting = SettingNameFamily("Name the output objects")
+    setting_bindings = (
+        SettingToKeywordBinding.input(input_image_setting, ImageArtifactType),
+        SettingToKeywordBinding.output(
+            output_objects_setting,
+            ObjectLabelsArtifactType,
+        ),
+        SettingToKeywordBinding(
+            "Convert to boolean image",
+            "cast_to_bool",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Preserve original labels",
+            "preserve_label",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Background label",
+            "background",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            "Connectivity",
+            "connectivity",
+            parse_cellprofiler_int,
+        ),
+    )
 
 
 __all__ = public_names_from_objects(

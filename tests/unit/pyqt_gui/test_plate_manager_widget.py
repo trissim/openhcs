@@ -1,34 +1,27 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
 from PyQt6.QtWidgets import QApplication, QListWidget, QPushButton
+from polystore.base import ensure_storage_registry, storage_registry
+from polystore.filemanager import FileManager
 from pyqt_reactive.theming import ColorScheme
 
 import openhcs.processing.backends.cellprofiler as cellprofiler_backend
-from openhcs.core.artifacts import ArtifactSpec, ImageArtifactType
-from openhcs.core.callable_contract import CallableContract
 from openhcs.core.config import (
     GlobalPipelineConfig,
+    LazyFijiStreamingConfig,
     LazyNapariStreamingConfig,
+    LazySourceBindingsConfig,
     PipelineConfig,
     WellFilterConfig,
 )
 from openhcs.constants.constants import OrchestratorState
 from openhcs.core.input_workspace import InputWorkspacePreparationResult
-from openhcs.core.module_artifact_contract import ModuleArtifactContract
-from openhcs.core.module_artifact_contract import (
-    DeclaredArtifactOutputPartition,
-    RecordedArtifactOutputPartition,
-    RuntimeArtifactInputPartition,
-    SourceArtifactInputPartition,
-)
-from openhcs.core.pipeline import Pipeline
-from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.pipeline.step_snapshot import StepSnapshot
-from openhcs.core.source_binding_context import SourceBindingContext
 from openhcs.core.source_bindings import (
     LazyStepSourceBindingsConfig,
     MetadataSelector,
@@ -42,21 +35,22 @@ from openhcs.core.steps.function_step import FunctionStep
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
+from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
+from openhcs.ui.shared.plate_manager_code_document import (
+    PlateManagerCodeDocumentAuthority,
+)
 from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
     PipelineObjectStateBinding,
 )
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
 from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
+from openhcs.pyqt_gui.config import get_default_ui_config
 from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
 from openhcs.pyqt_gui.widgets.plate_manager import (
     PlateManagerAction,
     PlateManagerWidget,
     PlateOperation,
     PlateOperationValidator,
-)
-from openhcs.interop.cellprofiler.runtime.module_execution import (
-    cellprofiler_module_callable,
 )
 from openhcs.pyqt_gui.widgets.shared.services.plate_manager_workflows import (
     PlateManagerCodeWorkflow,
@@ -106,9 +100,11 @@ class PlateManagerServiceStub:
     """Minimal service adapter surface needed by PlateManagerWidget construction."""
 
     def __init__(self) -> None:
+        ensure_storage_registry()
         self.global_config = GlobalPipelineConfig()
         self.color_scheme = ColorScheme()
         self.event_bus = GlobalEventBus()
+        self.filemanager = FileManager(storage_registry)
 
     def get_global_config(self) -> GlobalPipelineConfig:
         return self.global_config
@@ -121,6 +117,9 @@ class PlateManagerServiceStub:
 
     def get_event_bus(self) -> GlobalEventBus:
         return self.event_bus
+
+    def get_file_manager(self) -> FileManager:
+        return self.filemanager
 
     def execute_async_operation(self, operation):
         return operation()
@@ -140,7 +139,10 @@ class PlateManagerWidgetTestHarness:
         monkeypatch.setattr(
             PlateManagerWidget, "update_button_states", lambda self: None
         )
-        return PlateManagerWidget(PlateManagerServiceStub())
+        return PlateManagerWidget(
+            PlateManagerServiceStub(),
+            gui_config=get_default_ui_config(),
+        )
 
 
 class TestPlateManagerWidget:
@@ -166,13 +168,68 @@ class TestPlateManagerWidget:
 
         pipeline_steps = PipelineObjectStateBinding.steps_for_plate("/plate")
         assert [step.name for step in pipeline_steps] == ["Imported"]
-        context = widget.source_binding_context_for_plate("/plate")
-        assert context is not None
-        assert context.logical_plate_id == "/plate"
-        assert context.display_plate_root == Path("/source")
-        assert context.execution_plate_path == Path("/execution")
+        assert widget.source_binding_context_for_plate("/plate") is None
         close_widget(widget)
         ObjectStateRegistry.clear()
+
+    def test_source_binding_context_projects_current_orchestrator_state(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        source_root = tmp_path / "source"
+        execution_root = tmp_path / "execution"
+        source_root.mkdir()
+        execution_root.mkdir()
+        logical_plate_id = "/logical/plate"
+        orchestrator = PipelineOrchestrator(
+            source_root,
+            pipeline_config=PipelineConfig(
+                source_bindings_config=LazySourceBindingsConfig(
+                    bindings=(NamedSourceBinding(alias="Before"),),
+                ),
+            ),
+        )
+        orchestrator.bind_input_workspace(
+            InputWorkspacePreparationResult(
+                original_source_root=source_root,
+                execution_plate_path=execution_root,
+                pipeline_steps=[],
+                pipeline_config=orchestrator.pipeline_config,
+            )
+        )
+        ObjectStateRegistry.register(
+            ObjectState(orchestrator, scope_id=logical_plate_id),
+            _skip_snapshot=True,
+        )
+
+        try:
+            before = widget.source_binding_context_for_plate(logical_plate_id)
+            assert before is not None
+            assert before.logical_plate_id == logical_plate_id
+            assert before.display_plate_root == source_root
+            assert before.execution_plate_path == execution_root
+            assert tuple(binding.alias for binding in before.source_bindings.bindings) == (
+                "Before",
+            )
+
+            orchestrator.apply_pipeline_config(
+                PipelineConfig(
+                    source_bindings_config=LazySourceBindingsConfig(
+                        bindings=(NamedSourceBinding(alias="After"),),
+                    ),
+                )
+            )
+            after = widget.source_binding_context_for_plate(logical_plate_id)
+            assert after is not None
+            assert tuple(binding.alias for binding in after.source_bindings.bindings) == (
+                "After",
+            )
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
 
     def test_cellprofiler_workspace_import_keeps_public_steps_unbound(
         self,
@@ -187,32 +244,6 @@ class TestPlateManagerWidget:
             plate_root,
             plate_root / "crop.cppipe",
         ).scope_id
-        crop_metadata = cellprofiler_backend.CellProfilerFunctionCatalog.runtime_metadata(
-            cellprofiler_backend.crop,
-        )
-        contract = ModuleArtifactContract(
-            module_name=crop_metadata.module_name,
-            items=(
-                *ModuleArtifactContract.items_for_partition(
-                    RecordedArtifactOutputPartition,
-                    (ArtifactSpec.output("CropBlue", ImageArtifactType),),
-                ),
-                *ModuleArtifactContract.items_for_partition(
-                    DeclaredArtifactOutputPartition,
-                    (ArtifactSpec.output("CropBlue", ImageArtifactType),),
-                ),
-            ),
-        )
-        import_result = SimpleNamespace(
-            generated_module_name="generated_cellprofiler_pipeline",
-            provenance=SimpleNamespace(
-                processing_modules=(SimpleNamespace(module_num=1),),
-            ),
-            semantic_contracts=(SimpleNamespace(module_num=1),),
-            artifact_contracts=(contract,),
-            source_schema=PipelineImageSchema.empty(),
-            pipeline_config=None,
-        )
         raw_step = FunctionStep(
             func=(
                 cellprofiler_backend.crop,
@@ -228,20 +259,13 @@ class TestPlateManagerWidget:
         try:
             widget._load_cellprofiler_pipeline_from_workspace(
                 plate_scope,
-                CellProfilerWorkspaceResultFixture.with_steps(
-                    (raw_step,),
-                    import_result=import_result,
-                ),
+                CellProfilerWorkspaceResultFixture.with_steps((raw_step,)),
             )
 
             stored_step = PipelineObjectStateBinding.steps_for_plate(plate_scope)[0]
             stored_func, stored_kwargs = stored_step.func
-            stored_contract = CallableContract.from_callable(
-                stored_func,
-            ).module_artifact_contract
             assert stored_func.__name__ == "crop"
-            assert stored_contract is None
-            assert not stored_step.invocation_contracts.bindings
+            assert stored_func is cellprofiler_backend.crop
             assert stored_kwargs["crop_shape"] == "Rectangle"
             assert stored_kwargs["select_the_input_image"] == "OrigBlue"
             assert stored_kwargs["name_the_output_image"] == "CropBlue"
@@ -274,7 +298,7 @@ class TestPlateManagerWidget:
         assert result.reason == "orchestrator_not_initialized"
         assert result.recovery_action is PlateManagerAction.INIT_PLATE
 
-    def test_live_results_prefers_output_plate_orchestrator(
+    def test_live_results_use_source_orchestrator_for_source_and_output_rows(
         self,
         monkeypatch,
         tmp_path: Path,
@@ -303,45 +327,14 @@ class TestPlateManagerWidget:
         )
 
         try:
-            result = widget._live_results_viewer_orchestrator_for_row(source_row)
-
-            assert result is output_orchestrator
-        finally:
-            close_widget(widget)
-            ObjectStateRegistry.clear()
-
-    def test_live_results_allows_selected_output_plate_created_state(
-        self,
-        monkeypatch,
-        tmp_path: Path,
-    ) -> None:
-        ObjectStateRegistry.clear()
-        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
-        source_root = tmp_path / "source_plate"
-        output_root = tmp_path / "source_plate_openhcs"
-        source_root.mkdir()
-        output_root.mkdir()
-        source_row = PlateManagerRow.from_scope(str(source_root))
-        output_row = PlateManagerRow.from_scope(str(output_root))
-        widget._ensure_root_state().update_parameter(
-            "orchestrator_scope_ids",
-            [source_row.scope_id, output_row.scope_id],
-        )
-        source_orchestrator = SimpleNamespace(state=OrchestratorState.COMPLETED)
-        output_orchestrator = SimpleNamespace(state=OrchestratorState.CREATED)
-        ObjectStateRegistry.register(
-            ObjectState(source_orchestrator, scope_id=source_row.scope_id),
-            _skip_snapshot=True,
-        )
-        ObjectStateRegistry.register(
-            ObjectState(output_orchestrator, scope_id=output_row.scope_id),
-            _skip_snapshot=True,
-        )
-
-        try:
-            result = widget._live_results_viewer_orchestrator_for_row(output_row)
-
-            assert result is output_orchestrator
+            assert (
+                widget._live_results_viewer_orchestrator_for_row(source_row)
+                is source_orchestrator
+            )
+            assert (
+                widget._live_results_viewer_orchestrator_for_row(output_row)
+                is source_orchestrator
+            )
         finally:
             close_widget(widget)
             ObjectStateRegistry.clear()
@@ -417,9 +410,10 @@ class TestPlateManagerWidget:
             )
 
             plate_state = ObjectStateRegistry.get_by_scope(plate_scope)
-            binding = PipelineObjectStateBinding.for_plate(plate_scope)
+            editor_state = PipelineObjectStateBinding.editor_state_for_plate(
+                plate_scope
+            )
             assert plate_state is not None
-            assert binding is not None
             assert widget.plate_configs[plate_scope] == pipeline_config
             assert (
                 plate_state.get_saved_resolved_value(
@@ -428,15 +422,15 @@ class TestPlateManagerWidget:
                 == match_plan
             )
 
-            step_scope_id = binding.step_scope_ids[0]
+            step_scope_id = editor_state.step_scope_ids[0]
             step_state = ObjectStateRegistry.get_by_scope(step_scope_id)
             assert step_state is not None
-            snapshot = StepSnapshot.from_resolved_step(
+            snapshot = StepSnapshot(
                 index=0,
-                step=step_state.to_object(),
-                step_state=step_state,
+                scope_id=step_state.scope_id,
+                step=step_state.to_saved_resolved_object(),
             )
-            assert snapshot.source_bindings.match_plan == match_plan
+            assert snapshot.step.source_bindings.match_plan == match_plan
         finally:
             close_widget(widget)
             ObjectStateRegistry.clear()
@@ -456,7 +450,7 @@ class TestPlateManagerWidget:
             plate_root / "second.cppipe",
         ).scope_id
         orchestrator = PipelineOrchestrator(plate_path=plate_root)
-        orchestrator.input_workspace_preparation_result = (
+        orchestrator.bind_input_workspace(
             CellProfilerWorkspaceResultFixture.with_steps(
                 (FunctionStep(func=lambda image: image, name="Second"),)
             )
@@ -607,7 +601,7 @@ class TestPlateManagerWidget:
             close_widget(widget)
             ObjectStateRegistry.clear()
 
-    def test_code_mode_omits_default_orchestrator_per_plate_config(
+    def test_code_mode_renders_default_orchestrator_per_plate_config(
         self,
         monkeypatch,
         tmp_path: Path,
@@ -629,9 +623,114 @@ class TestPlateManagerWidget:
                 [PlateManagerRow.from_scope(plate_scope)]
             )
 
-            assert "per_plate_configs = {}" in context.source
-            assert "per_plate_configs = {}\n\npipeline_data" in context.source
-            assert context.payload.per_plate_configs == {}
+            assert "per_plate_configs = {" in context.source
+            config_source = context.source.split("per_plate_configs = {", 1)[1].split(
+                "pipeline_data = {", 1
+            )[0]
+            assert "path_1" in config_source
+            assert context.source.count(repr(plate_scope)) == 1
+            assert "PipelineConfig(" in config_source
+            assert tuple(context.payload.per_plate_configs) == (plate_scope,)
+            assert isinstance(
+                context.payload.per_plate_configs[plate_scope],
+                PipelineConfig,
+            )
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
+
+    def test_clean_code_mode_emits_only_authored_fiji_streaming_override(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        monkeypatch.setattr(PlateManagerWidget, "update_item_list", lambda self: None)
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        plate_root = tmp_path / "plate"
+        plate_root.mkdir()
+        plate_scope = str(plate_root)
+        orchestrator = PipelineOrchestrator(
+            plate_path=plate_root,
+            pipeline_config=PipelineConfig(
+                fiji_streaming_config=LazyFijiStreamingConfig(
+                    well_filter="333",
+                    enabled=False,
+                ),
+            ),
+        )
+        ObjectStateRegistry.register(
+            ObjectState(orchestrator, scope_id=plate_scope),
+            _skip_snapshot=True,
+        )
+
+        try:
+            context = widget.orchestrator_code_document_context_for_rows(
+                [PlateManagerRow.from_scope(plate_scope)]
+            )
+            restored = PlateManagerCodeDocumentAuthority.from_source(context.source)
+            imported_config_names = {
+                alias.name
+                for node in ast.parse(context.source).body
+                if isinstance(node, ast.ImportFrom)
+                and node.module == "openhcs.core.config"
+                for alias in node.names
+            }
+
+            assert imported_config_names == {
+                "GlobalPipelineConfig",
+                "LazyFijiStreamingConfig",
+                "PipelineConfig",
+            }
+            assert "from openhcs.core.source_bindings import" not in context.source
+            assert "fiji_streaming_config=LazyFijiStreamingConfig(" in context.source
+            assert "well_filter='333'" in context.source
+            assert "enabled=False" in context.source
+            assert "napari_streaming_config=" not in context.source
+            assert "path_planning_config=" not in context.source
+            assert "step_materialization_config=" not in context.source
+
+            restored_config = restored.per_plate_configs[plate_scope]
+            restored_fiji_config = object.__getattribute__(
+                restored_config,
+                "fiji_streaming_config",
+            )
+            assert object.__getattribute__(restored_fiji_config, "well_filter") == "333"
+            assert object.__getattribute__(restored_fiji_config, "enabled") is False
+        finally:
+            close_widget(widget)
+            ObjectStateRegistry.clear()
+
+    def test_code_mode_factors_common_plate_root_once(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        ObjectStateRegistry.clear()
+        monkeypatch.setattr(PlateManagerWidget, "update_item_list", lambda self: None)
+        widget = PlateManagerWidgetTestHarness.widget(monkeypatch)
+        plate_roots = (tmp_path / "screen" / "plate_A", tmp_path / "screen" / "plate_B")
+        for plate_root in plate_roots:
+            plate_root.mkdir(parents=True)
+            scope_id = str(plate_root)
+            ObjectStateRegistry.register(
+                ObjectState(
+                    PipelineOrchestrator(plate_path=plate_root),
+                    scope_id=scope_id,
+                ),
+                _skip_snapshot=True,
+            )
+
+        try:
+            context = widget.orchestrator_code_document_context_for_rows(
+                [PlateManagerRow.from_scope(str(path)) for path in plate_roots]
+            )
+
+            common_root = str(tmp_path / "screen")
+            assert f"path_root = Path({common_root!r})" in context.source
+            assert context.source.count(common_root) == 1
+            assert "path_1 = path_root / 'plate_A'" in context.source
+            assert "path_2 = path_root / 'plate_B'" in context.source
         finally:
             close_widget(widget)
             ObjectStateRegistry.clear()
@@ -759,7 +858,7 @@ class TestPlateManagerWidget:
         )
         imported_steps = [FunctionStep(func=lambda image: image, name="Imported")]
         orchestrator = PipelineOrchestrator(plate_path=plate_root)
-        orchestrator.input_workspace_preparation_result = (
+        orchestrator.bind_input_workspace(
             CellProfilerWorkspaceResultFixture.with_steps(
                 tuple(imported_steps),
                 pipeline_config=imported_config,
@@ -856,105 +955,18 @@ class TestPlateManagerWidget:
             plate_root,
             cppipe_path,
         ).scope_id
-        crop_metadata = cellprofiler_backend.CellProfilerFunctionCatalog.runtime_metadata(
-            cellprofiler_backend.crop,
-        )
-        contract = ModuleArtifactContract(
-            module_name=crop_metadata.module_name,
-            items=(
-                *ModuleArtifactContract.items_for_partition(
-                    RecordedArtifactOutputPartition,
-                    (ArtifactSpec.output("CropBlue", ImageArtifactType),),
-                ),
-                *ModuleArtifactContract.items_for_partition(
-                    DeclaredArtifactOutputPartition,
-                    (ArtifactSpec.output("CropBlue", ImageArtifactType),),
-                ),
-            ),
-        )
-        import_result = SimpleNamespace(
-            generated_module_name="generated_cellprofiler_pipeline",
-            provenance=SimpleNamespace(
-                processing_modules=(SimpleNamespace(module_num=1),),
-            ),
-            semantic_contracts=(SimpleNamespace(module_num=1),),
-            artifact_contracts=(contract,),
-            pipeline_config=None,
-        )
         manager = PlateManagerCodeWorkflowHarness(selected_plate_path=plate_scope)
-        manager._cellprofiler_import_results_by_plate[plate_scope] = import_result
         raw_step = FunctionStep(
             func=(cellprofiler_backend.crop, {"crop_shape": "Rectangle"}),
             name="Crop",
         )
 
-        PlateManagerCodeWorkflow(manager).apply_pipeline_data(
-            {plate_scope: [raw_step]}
-        )
+        PlateManagerCodeWorkflow(manager).apply_pipeline_data({plate_scope: [raw_step]})
 
         updated_steps = PipelineObjectStateBinding.steps_for_plate(plate_scope)
         rebound_func = updated_steps[0].func[0]
-        rebound_contract = CallableContract.from_callable(
-            rebound_func,
-        ).module_artifact_contract
         assert rebound_func.__name__ == "crop"
-        assert rebound_contract is None
-        assert not updated_steps[0].invocation_contracts.bindings
-
-    def test_plate_manager_code_mode_keeps_bound_cellprofiler_steps_without_import_context(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        plate_root = tmp_path / "BeginnerSegmentation"
-        plate_root.mkdir()
-        cppipe_path = plate_root / "segmentation_final.cppipe"
-        cppipe_path.write_text("Version:5", encoding="utf-8")
-        plate_scope = PlateScopeIdentity.from_cellprofiler_pipeline(
-            plate_root,
-            cppipe_path,
-        ).scope_id
-        crop_metadata = cellprofiler_backend.CellProfilerFunctionCatalog.runtime_metadata(
-            cellprofiler_backend.crop,
-        )
-        contract = ModuleArtifactContract(
-            module_name=crop_metadata.module_name,
-            items=(
-                *ModuleArtifactContract.items_for_partition(
-                    RecordedArtifactOutputPartition,
-                    (ArtifactSpec.output("CropBlue", ImageArtifactType),),
-                ),
-                *ModuleArtifactContract.items_for_partition(
-                    DeclaredArtifactOutputPartition,
-                    (ArtifactSpec.output("CropBlue", ImageArtifactType),),
-                ),
-            ),
-        )
-        bound_step = FunctionStep(
-            func=(
-                cellprofiler_module_callable(
-                    cellprofiler_backend.crop,
-                    contract,
-                    processing_contract=crop_metadata.processing_contract,
-                    declared_processing_contract=(
-                        crop_metadata.declared_processing_contract
-                    ),
-                ),
-                {"crop_shape": "Rectangle"},
-            ),
-            name="Crop",
-        )
-        manager = PlateManagerCodeWorkflowHarness(selected_plate_path=plate_scope)
-
-        PlateManagerCodeWorkflow(manager).apply_pipeline_data(
-            {plate_scope: [bound_step]}
-        )
-
-        updated_steps = PipelineObjectStateBinding.steps_for_plate(plate_scope)
-        updated_func = updated_steps[0].func[0]
-        updated_contract = CallableContract.from_callable(
-            updated_func,
-        ).module_artifact_contract
-        assert updated_contract == contract
+        assert rebound_func is cellprofiler_backend.crop
 
     def test_code_mode_pipeline_change_clears_stale_execution_state(self) -> None:
         ObjectStateRegistry.clear()
@@ -1066,9 +1078,6 @@ class PlatePipelineEditorRecorder:
         self.pipeline_steps = []
         self.pipeline_changed = PlatePipelineChangedSignalRecorder()
         self.updated_pipeline = None
-        self.cellprofiler_import_result = None
-        self.cellprofiler_import_results_by_plate = {}
-        self.source_binding_context = None
         self.current_plate = None
         self.status_message = PlatePipelineStatusSignalRecorder()
 
@@ -1082,25 +1091,6 @@ class PlatePipelineEditorRecorder:
     def update_pipeline_for_plate(self, plate_path: str, pipeline_steps) -> None:
         self.updated_pipeline = (plate_path, pipeline_steps)
         self.existing_steps = tuple(pipeline_steps)
-
-    def refresh_loaded_pipeline_for_plate(
-        self,
-        plate_path: str,
-        import_result,
-        pipeline_steps,
-    ) -> None:
-        if self.current_plate != plate_path:
-            return
-        self.cellprofiler_import_result = import_result
-        self.pipeline_steps = pipeline_steps
-        self.pipeline_changed.emit(pipeline_steps)
-
-    def set_source_binding_context_for_plate(
-        self,
-        plate_path: str,
-        context: SourceBindingContext,
-    ) -> None:
-        self.source_binding_context = context
 
     def update_item_list(self) -> None:
         return None
@@ -1116,12 +1106,16 @@ class PlateManagerCodeWorkflowHarness:
         self.event_bus = PlateManagerEventBusRecorder()
         self.status_message = PlatePipelineStatusSignalRecorder()
         self.plate_compiled_data = {}
+        self.compiled_state_emissions = []
         self.plate_execution_ids = {}
         self.plate_terminal_activity_status = ExecutionBatchRuntime()
-        self._cellprofiler_import_results_by_plate = {}
 
-    def cellprofiler_import_result_for_plate(self, plate_path: str):
-        return self._cellprofiler_import_results_by_plate.get(str(plate_path))
+    def emit_compiled_state(self, plate_path: str, state) -> None:
+        if state is None:
+            self.plate_compiled_data.pop(plate_path, None)
+        else:
+            self.plate_compiled_data[plate_path] = state
+        self.compiled_state_emissions.append((plate_path, state))
 
     def clear_plate_execution_tracking(
         self,
@@ -1185,28 +1179,13 @@ class CellProfilerWorkspaceResultFixture:
         cls,
         steps,
         pipeline_config: PipelineConfig | None = None,
-        import_result: object | None = None,
     ):
-        pipeline = Pipeline(steps=list(steps), name="ImportedCellProfilerPipeline")
-        if import_result is None:
-            import_result = SimpleNamespace(
-                pipeline=pipeline,
-                source_schema=PipelineImageSchema.empty(),
-                pipeline_config=pipeline_config,
-            )
+        if pipeline_config is None:
+            pipeline_config = PipelineConfig()
         return InputWorkspacePreparationResult(
             original_source_root=Path("/source"),
             execution_plate_path=Path("/execution"),
             pipeline_path=Path("/source/pipeline.cppipe"),
-            source_schema=PipelineImageSchema.empty(),
-            prepared_pipeline=CellProfilerPreparedPipelineFixture(
-                pipeline=pipeline,
-                import_result=import_result,
-            ),
+            pipeline_steps=list(steps),
+            pipeline_config=pipeline_config,
         )
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerPreparedPipelineFixture:
-    pipeline: object
-    import_result: object

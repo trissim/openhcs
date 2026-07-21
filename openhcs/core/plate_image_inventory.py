@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
+from polystore.base import ImageSamplingResult
 
 from openhcs.constants.constants import FileFormat
 from openhcs.core.plate_file_inventory import PlateFileInventoryQuery, PlateFileKind
@@ -17,6 +18,7 @@ from openhcs.core.pipeline.path_planner import PathPlannerPathAuthority
 from openhcs.core.source_workspace_projection import (
     VirtualWorkspacePathLookup,
     VirtualWorkspaceSourceProjection,
+    VirtualWorkspaceSourceProjectionAuthority,
 )
 from openhcs.core.virtual_workspace_metadata import (
     JsonScalar,
@@ -30,6 +32,7 @@ if TYPE_CHECKING:
         FilenameParser,
         MetadataHandler,
     )
+    from polystore.filemanager import FileManager
     from polystore.roi import ROI, ROIShape
 
 
@@ -42,6 +45,7 @@ class PlateImageRecord:
 
     virtual_path: str
     full_virtual_path: str
+    backend: str
     source_path: str
     metadata: Mapping[str, JsonValue] = field(default_factory=dict)
 
@@ -81,6 +85,11 @@ class PlateImageInventory:
             plate_path=Path(orchestrator.plate_path),
             metadata_handler=handler.metadata_handler,
             parser=handler.parser,
+            filemanager=orchestrator.filemanager,
+            backend=handler.get_primary_backend(
+                orchestrator.plate_path,
+                orchestrator.filemanager,
+            ),
             all_subdirs=all_subdirs,
         )
 
@@ -91,24 +100,36 @@ class PlateImageInventory:
         plate_path: Path,
         metadata_handler: "MetadataHandler",
         parser: "FilenameParser | None",
+        filemanager: "FileManager",
+        backend: str,
         all_subdirs: bool = True,
     ) -> "PlateImageInventory":
-        image_files = tuple(
-            str(image_file)
-            for image_file in sorted(
-                metadata_handler.get_image_files(
-                    plate_path,
-                    all_subdirs=all_subdirs,
+        projection = cls._projection(
+            plate_path,
+            metadata_handler,
+            filemanager,
+        )
+        image_files = (
+            tuple(sorted(projection.relative_virtual_paths()))
+            if projection is not None
+            else tuple(
+                str(image_file)
+                for image_file in sorted(
+                    metadata_handler.get_image_files(
+                        plate_path,
+                        all_subdirs=all_subdirs,
+                    )
                 )
             )
         )
-        projection = cls._projection(plate_path, metadata_handler)
         records = tuple(
             cls._record(
                 plate_path=plate_path,
                 image_file=image_file,
                 parser=parser,
                 projection=projection,
+                filemanager=filemanager,
+                backend=backend,
             )
             for image_file in image_files
         )
@@ -118,14 +139,13 @@ class PlateImageInventory:
     def _projection(
         plate_path: Path,
         metadata_handler: "MetadataHandler",
+        filemanager: "FileManager",
     ) -> VirtualWorkspaceSourceProjection | None:
-        metadata = metadata_handler.source_workspace_metadata_document(plate_path)
-        if not isinstance(metadata, Mapping):
-            return None
-        return VirtualWorkspaceSourceProjection.from_openhcs_metadata_if_available(
-            plate_path,
-            metadata,
-        )
+        return VirtualWorkspaceSourceProjectionAuthority.from_plate_metadata(
+            plate_path=plate_path,
+            metadata_handler=metadata_handler,
+            filemanager=filemanager,
+        ).projection_if_available()
 
     @staticmethod
     def _record(
@@ -134,6 +154,8 @@ class PlateImageInventory:
         image_file: str,
         parser: "FilenameParser | None",
         projection: VirtualWorkspaceSourceProjection | None,
+        filemanager: "FileManager",
+        backend: str,
     ) -> PlateImageRecord:
         full_virtual_path = str(plate_path / image_file)
         lookup = VirtualWorkspacePathLookup.from_paths(
@@ -143,7 +165,7 @@ class PlateImageInventory:
         source_path = (
             str(plate_path / image_file)
             if projection is None
-            else projection.source_path_for(lookup)
+            else projection.resolved_source_path_for(lookup, filemanager)
         )
         source_metadata = (
             None if projection is None else projection.source_metadata_for(lookup)
@@ -167,6 +189,7 @@ class PlateImageInventory:
         return PlateImageRecord(
             virtual_path=image_file,
             full_virtual_path=full_virtual_path,
+            backend=backend,
             source_path=source_path,
             metadata=metadata,
         )
@@ -785,6 +808,8 @@ class PlateFileInventory:
         plate_path: Path,
         metadata_handler: "MetadataHandler",
         parser: "FilenameParser | None",
+        filemanager: "FileManager",
+        backend: str,
         path_config=None,
         all_subdirs: bool = True,
     ) -> "PlateFileInventory":
@@ -793,6 +818,8 @@ class PlateFileInventory:
             plate_path=plate_path,
             metadata_handler=metadata_handler,
             parser=parser,
+            filemanager=filemanager,
+            backend=backend,
             all_subdirs=all_subdirs,
         )
         if path_config is None:
@@ -940,12 +967,17 @@ class PlateImageSample:
 
     record: PlateImageRecord
     shape: tuple[int, ...]
+    resolution_shape: tuple[int, ...]
     dtype: str
     minimum: JsonLike
     maximum: JsonLike
     mean: float | None
     sample_origin_yx: tuple[int, int]
     sample_shape: tuple[int, ...]
+    selected_resolution_index: int
+    resolution_count: int
+    downsample_yx: tuple[float, float]
+    statistics_scope: str
     sample_included: bool
     sample_values: JsonValue = ()
     sample_omitted_reason: str | None = None
@@ -957,6 +989,7 @@ class PlateImageSampler:
     @staticmethod
     def sample(
         record: PlateImageRecord,
+        image: object,
         *,
         y: int = 0,
         x: int = 0,
@@ -972,7 +1005,6 @@ class PlateImageSampler:
         if max_array_elements < 0:
             raise ValueError("max_array_elements must be nonnegative.")
 
-        image = _read_image(record.source_path_obj)
         array = np.asarray(image)
         if array.ndim < 2:
             raise ValueError(
@@ -982,6 +1014,70 @@ class PlateImageSampler:
         y_stop = min(array.shape[-2], y + height)
         x_stop = min(array.shape[-1], x + width)
         sample = array[..., y:y_stop, x:x_stop]
+        return PlateImageSampler._summarize(
+            record,
+            sample,
+            statistics_array=array,
+            source_shape=tuple(int(value) for value in array.shape),
+            resolution_shape=tuple(int(value) for value in array.shape),
+            sample_origin_yx=(int(y), int(x)),
+            selected_resolution_index=0,
+            resolution_count=1,
+            downsample_yx=(1.0, 1.0),
+            statistics_scope="source_resolution",
+            include_array_values=include_array_values,
+            max_array_elements=max_array_elements,
+        )
+
+    @staticmethod
+    def from_storage_sample(
+        record: PlateImageRecord,
+        sampled: ImageSamplingResult,
+        *,
+        include_array_values: bool = True,
+        max_array_elements: int = 4096,
+    ) -> PlateImageSample:
+        """Summarize pixels already bounded by the owning data source."""
+
+        if max_array_elements < 0:
+            raise ValueError("max_array_elements must be nonnegative.")
+        sample = np.asarray(sampled.data)
+        statistics_array = np.asarray(sampled.statistics_data)
+        if sample.ndim < 2:
+            raise ValueError(
+                f"Plate image {record.source_path!r} must have at least 2 dimensions."
+            )
+        return PlateImageSampler._summarize(
+            record,
+            sample,
+            statistics_array=statistics_array,
+            source_shape=sampled.source_shape,
+            resolution_shape=sampled.resolution_shape,
+            sample_origin_yx=sampled.sample_origin_yx,
+            selected_resolution_index=sampled.selected_resolution_index,
+            resolution_count=sampled.resolution_count,
+            downsample_yx=sampled.downsample_yx,
+            statistics_scope=sampled.statistics_scope.value,
+            include_array_values=include_array_values,
+            max_array_elements=max_array_elements,
+        )
+
+    @staticmethod
+    def _summarize(
+        record: PlateImageRecord,
+        sample: np.ndarray,
+        *,
+        statistics_array: np.ndarray,
+        source_shape: tuple[int, ...],
+        resolution_shape: tuple[int, ...],
+        sample_origin_yx: tuple[int, int],
+        selected_resolution_index: int,
+        resolution_count: int,
+        downsample_yx: tuple[float, float],
+        statistics_scope: str,
+        include_array_values: bool,
+        max_array_elements: int,
+    ) -> PlateImageSample:
         sample_included = include_array_values and sample.size <= max_array_elements
         omitted_reason = None
         sample_values: JsonValue = ()
@@ -997,13 +1093,28 @@ class PlateImageSampler:
 
         return PlateImageSample(
             record=record,
-            shape=tuple(int(value) for value in array.shape),
-            dtype=str(array.dtype),
-            minimum=_jsonable_scalar(array.min()) if array.size else None,
-            maximum=_jsonable_scalar(array.max()) if array.size else None,
-            mean=float(array.mean()) if array.size else None,
-            sample_origin_yx=(int(y), int(x)),
+            shape=tuple(int(value) for value in source_shape),
+            resolution_shape=tuple(int(value) for value in resolution_shape),
+            dtype=str(sample.dtype),
+            minimum=(
+                _jsonable_scalar(statistics_array.min())
+                if statistics_array.size
+                else None
+            ),
+            maximum=(
+                _jsonable_scalar(statistics_array.max())
+                if statistics_array.size
+                else None
+            ),
+            mean=(
+                float(statistics_array.mean()) if statistics_array.size else None
+            ),
+            sample_origin_yx=sample_origin_yx,
             sample_shape=tuple(int(value) for value in sample.shape),
+            selected_resolution_index=selected_resolution_index,
+            resolution_count=resolution_count,
+            downsample_yx=downsample_yx,
+            statistics_scope=statistics_scope,
             sample_included=sample_included,
             sample_values=sample_values,
             sample_omitted_reason=omitted_reason,
@@ -1027,18 +1138,6 @@ def file_modified_label(file_path: Path) -> str:
     return datetime.fromtimestamp(file_path.stat().st_mtime).isoformat(
         timespec="seconds"
     )
-
-
-def _read_image(path: Path) -> np.ndarray:
-    if not path.exists():
-        raise FileNotFoundError(path)
-    if path.suffix.lower() in {".tif", ".tiff"}:
-        import tifffile
-
-        return np.asarray(tifffile.imread(path))
-    import imageio.v3 as imageio
-
-    return np.asarray(imageio.imread(path))
 
 
 def _jsonable_array_values(array: np.ndarray) -> JsonValue:

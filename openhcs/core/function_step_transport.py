@@ -151,10 +151,11 @@ class FunctionStepTransportAuthority:
         reference: FunctionReference,
     ) -> FunctionReference:
         raw_processing_function = reference.metadata.raw_processing_function
-        if raw_processing_function is None:
-            normalized_raw = None
-        else:
-            normalized_raw = cls.normalize_function_spec(raw_processing_function)
+        normalized_raw = (
+            cls.normalize_function_reference(raw_processing_function)
+            if isinstance(raw_processing_function, FunctionReference)
+            else raw_processing_function
+        )
         raw_is_normalized = normalized_raw is raw_processing_function
         if reference.metadata.prepare is None and raw_is_normalized:
             return reference
@@ -211,9 +212,9 @@ class FunctionStepTransportAuthority:
     ) -> CallableContract:
         normalized_func = cls.normalize_function_spec(contract.func)
         normalized_raw = (
-            cls.normalize_function_spec(contract.raw_processing_function)
-            if contract.raw_processing_function is not None
-            else None
+            cls.normalize_function_reference(contract.raw_processing_function)
+            if isinstance(contract.raw_processing_function, FunctionReference)
+            else contract.raw_processing_function
         )
         if (
             normalized_func is contract.func

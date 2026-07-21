@@ -5,9 +5,8 @@ Main application window using WindowManager for clean window abstraction.
 """
 
 import logging
-from typing import Optional, Callable
+from typing import Callable
 from pathlib import Path
-import webbrowser
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -19,14 +18,14 @@ from PyQt6.QtWidgets import (
     QDialog,
     QProgressBar,
 )
-from PyQt6.QtCore import Qt, QSettings, QTimer, pyqtSignal, QUrl
-from PyQt6.QtGui import QAction, QKeySequence, QDesktopServices, QShowEvent
+from PyQt6.QtCore import Qt, QSettings, QTimer, pyqtSignal
+from PyQt6.QtGui import QAction, QKeySequence, QShowEvent
 
 from openhcs.core.config import GlobalPipelineConfig
 from polystore.filemanager import FileManager
 from polystore.base import storage_registry
 
-from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext
+from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, UIConfig
 from openhcs.pyqt_gui.services.service_adapter import PyQtServiceAdapter
 from openhcs.config_framework.object_state import ObjectState
 from pyqt_reactive.animation.flash_overlay_opengl import prewarm_opengl
@@ -43,6 +42,9 @@ from openhcs.pyqt_gui.services.main_window_workflows import (
     MainWindowUiBridgeLifecycle,
     MainWindowWidgetConnector,
     build_main_window_specs,
+)
+from openhcs.pyqt_gui.services.embedded_code_documents import (
+    EmbeddedCodeDocumentRegistrationABC,
 )
 from openhcs.pyqt_gui.services.time_travel_navigation import (
     TimeTravelNavigationTarget,
@@ -87,6 +89,7 @@ class MainWindowUiServices(PyQtServiceAdapter):
             ports_to_scan=ports_to_scan,
             title="ZMQ Servers",
             style_generator=self.get_style_generator(),
+            config=self.widget_gui_config.zmq,
         )
 
     def create_pipeline_editor_widget(self):
@@ -109,6 +112,7 @@ class OpenHCSMainWindow(QMainWindow):
 
     # Signals for application events
     config_changed = pyqtSignal(object)  # GlobalPipelineConfig
+    ui_config_changed = pyqtSignal(object)  # UIConfig
     status_message = pyqtSignal(str)  # Status message
 
     def __init__(
@@ -124,8 +128,6 @@ class OpenHCSMainWindow(QMainWindow):
 
         # Core configuration
         self.runtime_context = runtime_context
-        self.bridge_config = runtime_context.bridge_config
-        self.global_config = runtime_context.pipeline_runtime
 
         # Create shared components
         self.storage_registry = storage_registry
@@ -134,7 +136,7 @@ class OpenHCSMainWindow(QMainWindow):
         # Service adapter for Qt integration
         main_window_services = MainWindowUiServices(
             self,
-            widget_gui_config=runtime_context.widget_config(),
+            widget_gui_config=runtime_context.ui_config,
         )
         self.window_services = main_window_services
         self.widget_services = main_window_services
@@ -178,7 +180,17 @@ class OpenHCSMainWindow(QMainWindow):
 
     def set_pipeline_runtime_config(self, new_config: GlobalPipelineConfig) -> None:
         self.runtime_context = self.runtime_context.with_pipeline_runtime(new_config)
-        self.global_config = new_config
+
+    def set_ui_config(self, new_config: UIConfig) -> None:
+        self.runtime_context = self.runtime_context.with_ui_config(new_config)
+        self.window_services.widget_gui_config = new_config
+        self.plate_manager_widget.set_ui_config(new_config)
+        self.pipeline_editor_widget.gui_config = new_config
+        self.zmq_manager_widget.set_zmq_config(
+            new_config.zmq,
+            self.zmq_server_manager_ports_to_scan(),
+        )
+        self.ui_config_changed.emit(new_config)
 
     @property
     def service_adapter(self):
@@ -213,7 +225,7 @@ class OpenHCSMainWindow(QMainWindow):
         logger.info("Deferred initialization complete (UI ready)")
 
     def _start_ui_bridge_if_enabled(self) -> None:
-        bridge_config = self.bridge_config
+        bridge_config = self.runtime_context.ui_config.agent_bridge
         if not bridge_config.enabled:
             logger.debug("OpenHCS UI bridge is disabled")
             return
@@ -227,6 +239,7 @@ class OpenHCSMainWindow(QMainWindow):
             server = UiBridgeControlServer(
                 OpenHCSUiBridgeCompositionRoot.for_main_window(self).build_service(),
                 bridge_config,
+                self.runtime_context.ui_config.zmq,
             )
             binding = server.start()
             self.ui_bridge_lifecycle.set_server(server)
@@ -253,7 +266,7 @@ class OpenHCSMainWindow(QMainWindow):
 
         return factory
 
-    def show_window(self, window_id: str, hide_if_startup: bool = True) -> None:
+    def show_window(self, window_id: str, hide_if_startup: bool = True) -> QWidget:
         """Show window using WindowManager."""
         factory = self._create_window_factory(window_id)
         window = WindowManager.show_or_focus(window_id, factory)
@@ -263,6 +276,7 @@ class OpenHCSMainWindow(QMainWindow):
             window.hide()
 
         self._ensure_flash_overlay(window)
+        return window
 
     def setup_ui(self):
         """Setup basic UI structure."""
@@ -363,21 +377,19 @@ class OpenHCSMainWindow(QMainWindow):
 
     def _register_embedded_code_document_windows(self) -> None:
         """Register embedded widgets that expose shared code-mode documents."""
-        from pyqt_reactive.services.window_manager import WindowManager
-        from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
-
-        code_document_driver = self.pipeline_editor_widget.code_document_driver()
-        WindowManager.register(
-            OpenHCSUiWindowId.pipeline_editor,
-            self.pipeline_editor_widget,
-            code_document_driver=code_document_driver,
-        )
+        EmbeddedCodeDocumentRegistrationABC.register_all_for_main_window(self)
 
     def zmq_server_manager_ports_to_scan(self) -> list[int]:
         from openhcs.core.config import get_all_streaming_ports
 
-        ports_to_scan = list(get_all_streaming_ports(num_ports_per_type=10))
-        bridge_port = self.bridge_config.port
+        zmq_config = self.runtime_context.ui_config.zmq
+        ports_to_scan = [
+            zmq_config.default_port,
+            *get_all_streaming_ports(
+                num_ports_per_type=zmq_config.ports_per_server_type
+            ),
+        ]
+        bridge_port = self.runtime_context.ui_config.agent_bridge.port
         if bridge_port not in ports_to_scan:
             ports_to_scan.append(bridge_port)
         return ports_to_scan
@@ -441,9 +453,9 @@ class OpenHCSMainWindow(QMainWindow):
         """Show image browser window."""
         self.show_window("image_browser")
 
-    def show_log_viewer(self):
+    def show_log_viewer(self) -> QWidget:
         """Show log viewer window."""
-        self.show_window("log_viewer", hide_if_startup=False)
+        return self.show_window("log_viewer", hide_if_startup=False)
 
     def _open_log_file_in_viewer(self, log_file_path: str):
         """
@@ -452,13 +464,9 @@ class OpenHCSMainWindow(QMainWindow):
         Args:
             log_file_path: Path to log file to open
         """
-        self.show_log_viewer()
-
-        window = self._get_managed_window("log_viewer")
-        if window:
-            log_viewer_widget = window.get_widget()
-            log_viewer_widget.switch_to_log(Path(log_file_path))
-            logger.info(f"Switched log viewer to: {log_file_path}")
+        window = self.show_log_viewer()
+        window.switch_to_log(Path(log_file_path))
+        logger.info("Switched log viewer to: %s", log_file_path)
 
     def setup_menu_bar(self):
         """Setup application menu bar."""
@@ -501,9 +509,7 @@ class OpenHCSMainWindow(QMainWindow):
         file_menu.addAction(exit_action)
 
         # View menu - shortcuts come from declarative ShortcutConfig
-        from openhcs.pyqt_gui.config import get_shortcut_config
-
-        shortcuts = get_shortcut_config()
+        shortcuts = self.runtime_context.ui_config.shortcuts
 
         view_menu = menubar.addMenu("&View")
 
@@ -602,7 +608,7 @@ class OpenHCSMainWindow(QMainWindow):
         help_menu = menubar.addMenu("&Help")
 
         # General help action
-        help_action = QAction("&Documentation", self)
+        help_action = QAction("&Knowledge Base", self)
         help_action.setShortcut(shortcuts.show_help.key)
         help_action.triggered.connect(self.show_help)
         help_menu.addAction(help_action)
@@ -697,9 +703,7 @@ class OpenHCSMainWindow(QMainWindow):
         so time-travel always takes priority over widget-level undo/redo.
         """
         from PyQt6.QtWidgets import QApplication
-        from openhcs.pyqt_gui.config import get_shortcut_config
-
-        shortcuts = get_shortcut_config()
+        shortcuts = self.runtime_context.ui_config.shortcuts
         time_travel_workflow = MainWindowTimeTravelWorkflow(
             refresh_time_travel_widget=self.time_travel_widget.refresh
         )
@@ -766,43 +770,10 @@ class OpenHCSMainWindow(QMainWindow):
         MainWindowPipelineActions(self, self.pipeline_editor_widget).save_pipeline()
 
     def show_configuration(self):
-        """Show configuration dialog for global config editing."""
-        from openhcs.pyqt_gui.windows.config_window import ConfigWindow
+        """Open the registered application configuration window."""
+        from pyqt_reactive.services.scope_window_factory import WindowFactory
 
-        def handle_config_save(new_config):
-            """Handle configuration save (mirrors Textual TUI pattern)."""
-            # new_config is already a GlobalPipelineConfig (concrete class)
-            self.set_pipeline_runtime_config(new_config)
-
-            # Update thread-local storage for MaterializationPathConfig defaults
-            from openhcs.core.config import GlobalPipelineConfig
-            from openhcs.config_framework.global_config import (
-                set_global_config_for_editing,
-            )
-
-            set_global_config_for_editing(GlobalPipelineConfig, new_config)
-
-            # Emit signal for other components to update
-            self.config_changed.emit(new_config)
-
-            # Save config to cache for future sessions (matches TUI)
-            self._save_config_to_cache(new_config)
-
-        # Use concrete GlobalPipelineConfig for global config editing (static context)
-        # CRITICAL: Pass scope_id="" to match the ObjectState registered in app.py
-        # This ensures ConfigWindow reuses the existing ObjectState instead of creating a new one
-        config_window = ConfigWindow(
-            GlobalPipelineConfig,  # config_class (concrete class for static context)
-            self.config_services.get_global_config(),  # current_config (concrete instance)
-            handle_config_save,  # on_save_callback
-            self.window_color_scheme_services.get_current_color_scheme(),  # color_scheme
-            self,  # parent
-            scope_id="",  # Global scope - matches app.py registration
-        )
-        # Show as non-modal window (like plate manager and pipeline editor)
-        config_window.show()
-        config_window.raise_()
-        config_window.activateWindow()
+        WindowFactory.create_window_for_scope("")
 
     def _on_object_state_unregistered(self, scope_id: str, state: "ObjectState"):
         """Handle ObjectState unregistration by closing associated windows.
@@ -1179,8 +1150,6 @@ class OpenHCSMainWindow(QMainWindow):
     def _on_merge_metaxpress_summaries(self):
         """Open file dialog to select multiple MetaXpress summaries and merge them (concat rows)."""
         from PyQt6.QtWidgets import QFileDialog, QMessageBox
-        from pathlib import Path
-
         # Open file dialog to select multiple CSV files
         file_dialog = QFileDialog(self)
         file_dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
@@ -1237,7 +1206,6 @@ class OpenHCSMainWindow(QMainWindow):
     def _on_concat_metaxpress_summaries(self):
         """Open file dialog to select multiple MetaXpress summaries and concatenate them (keep all headers)."""
         from PyQt6.QtWidgets import QFileDialog, QMessageBox
-        from pathlib import Path
 
         # Open file dialog to select multiple CSV files
         file_dialog = QFileDialog(self)
@@ -1359,32 +1327,16 @@ class OpenHCSMainWindow(QMainWindow):
             )
 
     def show_help(self):
-        """Opens documentation URL in default web browser."""
-        from openhcs.constants.constants import DOCUMENTATION_URL
+        """Open the source-backed OpenHCS knowledge browser."""
+        from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 
-        url = DOCUMENTATION_URL
-        if not QDesktopServices.openUrl(QUrl.fromUserInput(url)):
-            # fallback for wsl users because it wants to be special
-            webbrowser.open(url)
+        self.show_window(OpenHCSUiWindowId.knowledge_base, hide_if_startup=False)
 
     def on_config_changed(self, new_config: GlobalPipelineConfig):
         """Handle global configuration changes."""
         self.set_pipeline_runtime_config(new_config)
         self.config_services.set_global_config(new_config)
         self.lifecycle_workflow.propagate_config(new_config)
-
-    def _save_config_to_cache(self, config):
-        """Save config to cache asynchronously (matches TUI pattern)."""
-        try:
-            from openhcs.pyqt_gui.services.config_cache_adapter import (
-                get_global_config_cache,
-            )
-
-            cache = get_global_config_cache()
-            cache.save_config_to_cache_async(config)
-            logger.info("Global config save to cache initiated")
-        except Exception as e:
-            logger.error(f"Error saving global config to cache: {e}")
 
     def closeEvent(self, event):
         """Handle application close event."""

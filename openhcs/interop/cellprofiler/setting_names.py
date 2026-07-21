@@ -22,18 +22,6 @@ class SettingNameFamily:
 
 
 @dataclass(frozen=True, slots=True)
-class SettingNameFamilySpec:
-    """Declarative source row for a CellProfiler setting-name family."""
-
-    canonical: str
-    aliases: tuple[str, ...] = ()
-
-    def materialize(self) -> SettingNameFamily:
-        """Build the runtime setting-name family from this declaration."""
-        return SettingNameFamily(self.canonical, aliases=self.aliases)
-
-
-@dataclass(frozen=True, slots=True)
 class OptionalSettingSymbol:
     """Optional CellProfiler artifact symbol selected by one setting family."""
 
@@ -97,16 +85,8 @@ def optional_setting_value(
     name: str | SettingNameFamily,
 ) -> str | None:
     """Return the first non-empty module setting matching a name family."""
-    setting_records = module.iter_settings()
-    for setting in setting_records:
-        if setting_name_matches(setting.name, name) and setting.value.strip():
-            return setting.value.strip()
-    if setting_records:
-        return None
-    for setting_name, value in module.settings.items():
-        if setting_name_matches(setting_name, name) and value.strip():
-            return value.strip()
-    return None
+    values = setting_values(module, name)
+    return values[0] if values else None
 
 
 def required_setting_value(
@@ -127,19 +107,26 @@ def setting_values(
     module: ModuleBlock,
     name: str | SettingNameFamily,
 ) -> tuple[str, ...]:
-    """Return all non-empty ordered values matching a setting name family."""
+    """Return repeated values for the first present label in a name family."""
     setting_records = module.iter_settings()
-    if not setting_records:
-        return tuple(
-            value.strip()
-            for setting_name, value in module.settings.items()
-            if setting_name_matches(setting_name, name) and value.strip()
+    for concrete_name in setting_names(name):
+        values = (
+            tuple(
+                setting.value.strip()
+                for setting in setting_records
+                if setting_name_matches(setting.name, concrete_name)
+                and setting.value.strip()
+            )
+            if setting_records
+            else tuple(
+                value.strip()
+                for setting_name, value in module.settings.items()
+                if setting_name_matches(setting_name, concrete_name) and value.strip()
+            )
         )
-    return tuple(
-        setting.value.strip()
-        for setting in setting_records
-        if setting_name_matches(setting.name, name) and setting.value.strip()
-    )
+        if values:
+            return values
+    return ()
 
 
 def split_symbol_names(value: str) -> tuple[str, ...]:

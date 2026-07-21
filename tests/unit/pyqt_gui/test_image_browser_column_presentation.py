@@ -1,5 +1,6 @@
 """Image Browser uses the generic table owner without filter UI plumbing."""
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from pyqt_reactive.widgets.shared.abstract_table_browser import ColumnPresentation
 
@@ -53,6 +54,20 @@ def test_image_browser_delegates_columns_filters_and_well_sync_to_table_owner(
         panel = table_browser.column_filter_panel
         presentation = table_browser.column_presentation
 
+        assert table_browser.column_filter_context_widget is browser.folder_tree
+        assert (
+            table_browser.column_filter_splitter.orientation()
+            is Qt.Orientation.Vertical
+        )
+        assert table_browser.column_filter_splitter.widget(0) is browser.folder_tree
+        assert table_browser.column_filter_splitter.widget(1) is panel
+        assert table_browser.content_splitter.orientation() is Qt.Orientation.Horizontal
+        assert (
+            table_browser.content_splitter.widget(0)
+            is table_browser.column_filter_splitter
+        )
+        assert table_browser.content_splitter.widget(1) is table_browser.table_widget
+        assert browser.main_splitter.indexOf(browser.folder_tree) == -1
         assert not hasattr(browser, "column_filter_panel")
         assert not hasattr(browser, "column_presentation")
         assert not hasattr(browser.filter_controller, "build_column_filters")

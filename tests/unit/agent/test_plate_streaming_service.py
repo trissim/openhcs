@@ -61,6 +61,7 @@ def test_plate_streaming_service_streams_virtual_image_path(monkeypatch):
             PlateImageRecord(
                 virtual_path="A01_s001_w1_z001_t001.tif",
                 full_virtual_path="/plate/A01_s001_w1_z001_t001.tif",
+                backend="virtual_workspace",
                 source_path="/raw/source_A01.tif",
                 metadata={"well": "A01"},
             ),

@@ -22,15 +22,17 @@ from zmqruntime.messages import (
 )
 
 from zmqruntime.transport import coerce_transport_mode
-from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-from openhcs.runtime.zmq_debug_control import DebugControlMessageRouter
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
+from openhcs.runtime.zmq_control import (
+    ZMQControlMessageRouter,
+    ZMQControlRequestContext,
+)
 from openhcs.runtime.zmq_compilation import (
     ZMQCompilationRequest,
     ZMQCompileArtifactRecord,
 )
 from openhcs.runtime.zmq_execution_signature import (
     OpenHCSExecutionConfigBundle,
-    OpenHCSExecutionConfigCarrier,
     ZMQExecutionRequestPayload,
 )
 from openhcs.runtime.zmq_orchestrator_environment import (
@@ -44,35 +46,16 @@ from openhcs.runtime.zmq_server_hooks import (
 )
 from openhcs.runtime.zmq_worker_execution import ZMQWorkerExecutionRequest
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
-from openhcs.core.progress import ProgressEvent, ProgressPhase
-from openhcs.core.steps.abstract import AbstractStep
-from openhcs.runtime.zmq_pipeline_transport import (
-    PipelineSourceExport,
-    PipelineStepsNamespaceProjection,
-    PipelineStepsBoundary,
-    PipelineStepsCarrier,
-)
+from openhcs.core.config_document import ConfigDocumentAuthority
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
+from openhcs.core.progress import ProgressEvent
+from openhcs.core.steps.function_step import FunctionStep
 
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from openhcs.core.debug import DebugExecutionConfig
-
-
-CONFIG_CODE_OBJECT_NAME = "config"
-
-
-@dataclass(frozen=True, slots=True)
-class ConfigCodeNamespace:
-    """Validated namespace produced by config-code execution."""
-
-    values: dict[str, Any]
-
-    def require_config(self, missing_message: str):
-        if CONFIG_CODE_OBJECT_NAME not in self.values:
-            raise ValueError(missing_message)
-        return self.values[CONFIG_CODE_OBJECT_NAME]
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,44 +133,17 @@ class ZMQAuxiliaryParamField(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class ZMQResolvedConfig(OpenHCSExecutionConfigCarrier):
-    """Resolved execution configs from one request payload."""
-
-    registry_key = "zmq_resolved_config"
-
-    configs: OpenHCSExecutionConfigBundle
-
-    @property
-    def execution_config_bundle(self) -> OpenHCSExecutionConfigBundle:
-        return self.configs
-
-
-@dataclass(frozen=True, slots=True)
-class ZMQExecutionContext(PipelineStepsCarrier, OpenHCSExecutionConfigCarrier):
+class ZMQExecutionContext:
     """Request context shared by compile and execution completion phases."""
-
-    registry_key = "zmq_execution_context"
 
     execution_id: str
     request_payload: ZMQExecutionRequestPayload
-    execution_pipeline: PipelineStepsBoundary
-    config_carrier: ZMQResolvedConfig | None
+    pipeline_steps: list[FunctionStep]
+    configs: OpenHCSExecutionConfigBundle
 
     @property
-    def pipeline_steps_boundary(self) -> PipelineStepsBoundary:
-        return self.execution_pipeline
-
-    @property
-    def execution_config_bundle(self) -> OpenHCSExecutionConfigBundle:
-        if self.config_carrier is None:
-            raise RuntimeError("Execution config is only available during compilation.")
-        return self.config_carrier.execution_config_bundle
-
-    @property
-    def pipeline_config(self) -> PipelineConfig | None:
-        if self.config_carrier is None:
-            return None
-        return self.config_carrier.pipeline_config
+    def pipeline_config(self) -> PipelineConfig:
+        return self.configs.plate_pipeline
 
     @property
     def plate_id(self) -> str:
@@ -247,27 +203,38 @@ class ZMQExecutionServer(ExecutionServer):
     def __init__(
         self,
         port: int | None = None,
-        host: str = "*",
+        host: str | None = None,
         log_file_path: str | None = None,
         transport_mode=None,
+        config: OpenHCSZMQConfig = OPENHCS_ZMQ_CONFIG,
     ):
         super().__init__(
-            port=port or OPENHCS_ZMQ_CONFIG.default_port,
-            host=host,
+            port=config.default_port if port is None else port,
+            host=config.server_host if host is None else host,
             log_file_path=log_file_path,
-            transport_mode=coerce_transport_mode(transport_mode),
-            config=OPENHCS_ZMQ_CONFIG,
+            transport_mode=(
+                config.transport_mode
+                if transport_mode is None
+                else coerce_transport_mode(transport_mode)
+            ),
+            config=config,
         )
         self._compile_status: str | None = None
         self._compile_message: str | None = None
         self._compile_status_expires_at: float | None = None
         self._worker_assignments_by_execution: dict[str, dict[str, list[str]]] = {}
         self._compiled_artifacts: dict[str, ZMQCompileArtifactRecord] = {}
-        self._compiled_artifact_ttl_seconds: float = 30.0 * 60.0
+        self._compiled_artifact_ttl_seconds = config.compiled_artifact_ttl_seconds
 
     def handle_control_message(self, message):
-        if DebugControlMessageRouter.handles(message):
-            return DebugControlMessageRouter.handle(message)
+        if ZMQControlMessageRouter.handles(message):
+            self._cleanup_compiled_artifacts()
+            return ZMQControlMessageRouter.handle(
+                message,
+                ZMQControlRequestContext(
+                    compiled_artifacts=self._compiled_artifacts,
+                ),
+            )
         return super().handle_control_message(message)
 
     @staticmethod
@@ -381,10 +348,26 @@ class ZMQExecutionServer(ExecutionServer):
             event = ProgressEvent.from_dict(progress_update)
             assignments = self._worker_assignments_for_execution(event.execution_id)
 
-            # Pipeline-level INIT events (e.g. viewer launch) bypass worker
-            # claim validation — they carry no worker_slot / owned_wells.
-            if event.phase == ProgressPhase.INIT and not event.axis_id:
-                self.progress_queue.put(event.to_dict())
+            # Axisless events are owned by the parent execution lifecycle, not
+            # by a worker lane. They carry topology but never a worker claim.
+            if not event.axis_id:
+                if event.worker_slot is not None or event.owned_wells is not None:
+                    raise ValueError(
+                        "Execution-level progress cannot carry a worker claim: "
+                        f"{progress_update}"
+                    )
+                self.progress_queue.put(
+                    event.with_worker_topology(
+                        worker_assignments=assignments,
+                        total_wells=sorted(
+                            {
+                                axis_id
+                                for assigned_axes in assignments.values()
+                                for axis_id in assigned_axes
+                            }
+                        ),
+                    ).to_dict()
+                )
                 continue
 
             if event.worker_slot is None:
@@ -511,12 +494,6 @@ class ZMQExecutionServer(ExecutionServer):
 
         self._cleanup_compiled_artifacts()
 
-        resolved_config = (
-            None
-            if request_payload.compile_artifact_id is not None
-            else self._resolve_request_config(request_payload)
-        )
-
         module_name = f"openhcs_zmq_pipeline_{request_payload.pipeline_sha}"
         module = ModuleType(module_name)
         module.__file__ = f"<{module_name}>"
@@ -532,18 +509,16 @@ class ZMQExecutionServer(ExecutionServer):
             )
         finally:
             sys.modules.pop(module_name, None)
-        execution_pipeline = PipelineStepsNamespaceProjection(
-            module.__dict__
-        ).boundary_or_none()
-        if not execution_pipeline:
-            raise ValueError(
-                f"Code must define {PipelineSourceExport.PIPELINE_STEPS.value!r}"
-            )
+        pipeline_document = PipelineDocumentAuthority.from_namespace(module.__dict__)
+        resolved_config = self._resolve_request_config(
+            request_payload,
+            pipeline_document.pipeline_config,
+        )
         request_context = ZMQExecutionContext(
             execution_id=execution_id,
             request_payload=request_payload,
-            execution_pipeline=execution_pipeline,
-            config_carrier=resolved_config,
+            pipeline_steps=pipeline_document.pipeline_steps,
+            configs=resolved_config,
         )
         request_context.validate_compile_request()
         logger.info(
@@ -567,37 +542,18 @@ class ZMQExecutionServer(ExecutionServer):
     def _resolve_request_config(
         self,
         request_payload: ZMQExecutionRequestPayload,
-    ) -> ZMQResolvedConfig:
+        pipeline_config: PipelineConfig,
+    ) -> OpenHCSExecutionConfigBundle:
         if request_payload.config_code is not None:
-            global_config = self._config_from_code(
+            global_config = ConfigDocumentAuthority.from_source(
                 request_payload.config_code,
-                "config_code must define 'config'",
+                expected_config_type=GlobalPipelineConfig,
             )
-            pipeline_config = self._pipeline_config_from_code(
-                request_payload.pipeline_config_code
-            )
-            return ZMQResolvedConfig(
-                configs=OpenHCSExecutionConfigBundle(
-                    global_pipeline=global_config,
-                    plate_pipeline=pipeline_config,
-                ),
+            return OpenHCSExecutionConfigBundle(
+                global_pipeline=global_config,
+                plate_pipeline=pipeline_config,
             )
         raise ValueError("config_code is required for execution config resolution")
-
-    @staticmethod
-    def _config_from_code(config_code: str, missing_message: str):
-        namespace = {}
-        exec(config_code, namespace)
-        return ConfigCodeNamespace(namespace).require_config(missing_message)
-
-    @staticmethod
-    def _pipeline_config_from_code(pipeline_config_code: str | None) -> PipelineConfig:
-        if pipeline_config_code is None:
-            raise ValueError("pipeline_config_code is required for execution config resolution")
-        return ZMQExecutionServer._config_from_code(
-            pipeline_config_code,
-            "pipeline_config_code must define 'config'",
-        )
 
     def _execute_with_orchestrator(
         self,
@@ -698,7 +654,7 @@ class ZMQExecutionServer(ExecutionServer):
     @staticmethod
     def _emit_compile_started(
         progress_emitter: ZMQProgressEmitter,
-        pipeline_steps: Sequence[AbstractStep],
+        pipeline_steps: Sequence[FunctionStep],
         compile_artifact_id: str | None,
     ) -> None:
         if compile_artifact_id is None:
@@ -720,6 +676,7 @@ class ZMQExecutionServer(ExecutionServer):
             pipeline_config=pipeline_config,
             selected_pipeline_path=selected_pipeline_path,
             progress_callback=None,
+            transport_config=self.config,
         )
         orchestrator.execution_id = execution_id
         orchestrator.initialize()
@@ -748,13 +705,15 @@ class ZMQExecutionServer(ExecutionServer):
 
         if axis_filter is not None:
             return list(axis_filter)
-        available_axis_ids = tuple(orchestrator.get_component_keys(MULTIPROCESSING_AXIS))
+        available_axis_ids = tuple(
+            orchestrator.get_component_keys(MULTIPROCESSING_AXIS)
+        )
         return debug_execution_policy.axis_filter_for_available(available_axis_ids)
 
     @staticmethod
     def _emit_planned_init_started(
         progress_emitter: ZMQProgressEmitter,
-        pipeline_steps: Sequence[AbstractStep],
+        pipeline_steps: Sequence[FunctionStep],
         wells: list[str],
         compile_artifact_id: str | None,
     ) -> None:
@@ -859,9 +818,7 @@ class ZMQExecutionServer(ExecutionServer):
         compilation,
         execution_results,
     ) -> None:
-        export_path = (
-            request_context.auxiliary_params.runtime_observation_export_path
-        )
+        export_path = request_context.auxiliary_params.runtime_observation_export_path
         if export_path is None:
             return
 
@@ -937,16 +894,13 @@ class ZMQExecutionServer(ExecutionServer):
     def _ensure_request_global_config_context(
         request_context: ZMQExecutionContext,
     ) -> None:
-        if request_context.config_carrier is None:
-            return
-
         from openhcs.config_framework.lazy_factory import (
             ensure_global_config_context,
         )
 
         ensure_global_config_context(
             GlobalPipelineConfig,
-            request_context.global_pipeline_config,
+            request_context.configs.global_pipeline,
         )
 
     @staticmethod

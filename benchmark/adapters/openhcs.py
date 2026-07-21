@@ -1,11 +1,12 @@
 """OpenHCS tool adapter."""
 
 from __future__ import annotations
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
 
+import hashlib
+import importlib.util
 import json
 import logging
-import pickle
-import importlib.util
 import os
 import signal
 import threading
@@ -22,15 +23,6 @@ from benchmark.adapters.cppipe_source import (
     materialize_cppipe_reference,
     resolve_cppipe_source,
 )
-from benchmark.converter.execution_validation import (
-    CPPipeExecutionValidation,
-    CPPipeExecutionValidationError,
-    validate_cppipe_runtime_observation,
-)
-from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
-from openhcs.interop.cellprofiler.measurement_dialect import (
-    cellprofiler_runtime_equivalence_policy,
-)
 from benchmark.contracts.tool_adapter import (
     BenchmarkResult,
     ToolAdapter,
@@ -38,31 +30,31 @@ from benchmark.contracts.tool_adapter import (
     ToolNotInstalledError,
 )
 from benchmark.contracts.metric import MetricCollector
+from benchmark.cellprofiler_export_equivalence import (
+    cellprofiler_database_export_equivalence,
+)
+from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
 from openhcs.core.config import (
     CompilationDebugConfig,
     GlobalPipelineConfig,
     LazyCompilationDebugConfig,
-    LazyWellFilterConfig,
 )
-from openhcs.core.equivalence import RuntimeEquivalencePolicy
+from openhcs.core.equivalence import RuntimeEquivalencePolicy, RuntimeEquivalenceReport
 from openhcs.core.equivalence.outputs import RuntimeOutputSnapshot
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
+from openhcs.core.input_workspace import InputWorkspacePreparationRequest
 from openhcs.core.runtime_equivalence import (
     runtime_reference_artifact_equivalence,
 )
 from openhcs.core.steps.abstract import AbstractStep
-from openhcs.core.runtime_exports import RuntimeExportObservation
-from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
-from openhcs.interop.cellprofiler.source_schema_ingestion import (
-    CellProfilerPipelinePreparationError,
-    CellProfilerSourceSchemaWorkspaceRequest,
-    CellProfilerSourceWorkspaceMaterializationError,
-    prepare_cellprofiler_source_schema_workspace,
+from openhcs.interop.cellprofiler.measurement_dialect import (
+    cellprofiler_runtime_equivalence_policy,
+)
+from openhcs.interop.cellprofiler.plate_workspace import (
+    prepare_cellprofiler_input_workspace,
 )
 from openhcs.runtime.zmq_execution_client import (
     OpenHCSExecutionSubmission,
-    PycodifiedPipelineCode,
-    PycodifiedSource,
     ZMQExecutionClient,
 )
 from openhcs.runtime.zmq_execution_observation import (
@@ -73,9 +65,8 @@ from zmqruntime.execution import ExecutionSubmissionResponse, ExecutionWaitResul
 logger = logging.getLogger(__name__)
 
 
-_RUNTIME_EXECUTION_CACHE_SCHEMA_VERSION = 1
-_RUNTIME_EXECUTION_OBSERVATION_PICKLE_NAME = "runtime_execution_observation.pkl"
 _DUMP_COMPILED_PLANS_ENV = "OPENHCS_BENCHMARK_DUMP_COMPILED_PLANS"
+ZMQ_RESULTS_SUMMARY_FILENAME = "zmq_results_summary.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,10 +198,11 @@ def _strict_cellprofiler_runtime_equivalence_policy() -> RuntimeEquivalencePolic
         numeric_rel_tolerance=1e-6,
         feature_numeric_tolerances=(),
         allow_extra_candidate_measurements=False,
-        allow_tie_sensitive_location_mismatches=True,
+        allow_tie_sensitive_location_mismatches=False,
         allow_unstable_shape_descriptors=False,
         allow_sparse_object_boundary_jitter=False,
         allow_unstable_zernike_descriptors=False,
+        threshold_entropy_abs_tolerance=1e-6,
         threshold_sensitive_pair_abs_tolerance=1e-6,
         threshold_sensitive_pair_rel_tolerance=1e-6,
         image_abs_tolerance=1e-6,
@@ -239,16 +231,17 @@ def _execute_pipeline_via_zmq_server(
         plate_id=plate_id,
         execution_plate_id=execution_plate_id,
         selected_pipeline_path=selected_pipeline_path,
-        pipeline_steps=transport_pipeline,
+        pipeline_document=PipelineDocumentAuthority.from_values(
+            pipeline_config=pipeline_config, pipeline_steps=transport_pipeline
+        ),
         global_config=global_config,
-        pipeline_config=pipeline_config,
         config_params={
             "runtime_observation_export_path": str(observation_export_path),
         },
     )
-    pipeline_source = PycodifiedPipelineCode.from_task(submission).source
+    pipeline_source = submission.pipeline_code()
     timing_observer = _ZMQProgressTimingObserver()
-    client = ZMQExecutionClient(persistent=True, progress_callback=timing_observer)
+    client = ZMQExecutionClient(persistent=False, progress_callback=timing_observer)
     try:
         with client:
             with phase_timing.phase(BenchmarkPhase.SUBMIT_OPENHCS):
@@ -273,9 +266,10 @@ def _execute_pipeline_via_zmq_server(
                 plate_id=plate_id,
                 execution_plate_id=execution_plate_id,
                 selected_pipeline_path=selected_pipeline_path,
-                pipeline_steps=transport_pipeline,
+                pipeline_document=PipelineDocumentAuthority.from_values(
+                    pipeline_config=pipeline_config, pipeline_steps=transport_pipeline
+                ),
                 global_config=global_config,
-                pipeline_config=pipeline_config,
                 config_params={
                     "runtime_observation_export_path": str(observation_export_path),
                 },
@@ -321,12 +315,20 @@ def _execute_pipeline_via_zmq_server(
     )
     if not isinstance(results_summary_payload, Mapping):
         results_summary_payload = {}
+    results_summary = dict(results_summary_payload)
+    results_summary_path = observation_export_path.with_name(
+        ZMQ_RESULTS_SUMMARY_FILENAME
+    )
+    results_summary_path.write_text(
+        json.dumps(results_summary, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
     return (
         _ZMQOpenHCSExecution(
             execution_id=execution_id,
             observation_export=observation_export,
             output_roots=output_roots,
-            results_summary=dict(results_summary_payload),
+            results_summary=results_summary,
         ),
         pipeline_source,
     )
@@ -341,7 +343,6 @@ class OpenHCSRunRequest:
     pipeline_params: dict[str, Any]
     metrics: tuple[MetricCollector, ...]
     output_dir: Path
-    source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "output_dir", Path(self.output_dir).resolve())
@@ -373,21 +374,6 @@ class OpenHCSRunRequest:
         return Path(value)
 
     @property
-    def runtime_execution_cache_manifest(self) -> Path | None:
-        value = self.pipeline_params.get("runtime_execution_cache_manifest")
-        if value is None:
-            return None
-        return Path(value)
-
-    @property
-    def runtime_execution_cache_key(self) -> object | None:
-        return self.pipeline_params.get("runtime_execution_cache_key")
-
-    @property
-    def reuse_runtime_execution_cache(self) -> bool:
-        return bool(self.pipeline_params.get("reuse_runtime_execution_cache", True))
-
-    @property
     def compare_image_outputs(self) -> bool:
         return bool(self.pipeline_params.get("compare_image_outputs", True))
 
@@ -417,46 +403,6 @@ class OpenHCSRunRequest:
         return _truthy_debug_flag(value)
 
 
-@dataclass(frozen=True, slots=True)
-class RuntimeExecutionCacheWritePolicy:
-    """Typed cache-write contract for OpenHCS runtime execution observations."""
-
-    write_manifest: bool
-
-    @classmethod
-    def for_request(
-        cls, request: OpenHCSRunRequest
-    ) -> "RuntimeExecutionCacheWritePolicy":
-        if (
-            request.runtime_execution_cache_manifest is None
-            or request.runtime_execution_cache_key is None
-        ):
-            return cls.disabled()
-        return cls(write_manifest=True)
-
-    @classmethod
-    def disabled(cls) -> "RuntimeExecutionCacheWritePolicy":
-        return cls(write_manifest=False)
-
-
-@dataclass(frozen=True, slots=True)
-class _RuntimeExecutionCacheHit:
-    """Cached OpenHCS execution state, before external equivalence comparison."""
-
-    validation: CPPipeExecutionValidation
-    output_roots: tuple[Path, ...]
-    execution_output_root: Path
-    axis_count: int
-
-
-def _runtime_execution_cache_key_matches(
-    cached_key: object,
-    expected_key: object,
-) -> bool:
-    """Return whether a runtime execution cache key is valid for this request."""
-    return cached_key == expected_key
-
-
 class OpenHCSAdapter(ToolAdapter):
     """OpenHCS tool adapter."""
 
@@ -466,17 +412,11 @@ class OpenHCSAdapter(ToolAdapter):
         self,
         *,
         global_config: GlobalPipelineConfig | None = None,
-        source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
     ) -> None:
         import openhcs
-        from polystore.base import ensure_storage_registry, storage_registry
-        from polystore.filemanager import FileManager
 
         self.version = openhcs.__version__
-        ensure_storage_registry()
-        self._filemanager = FileManager(storage_registry)
         self.global_config = global_config or GlobalPipelineConfig()
-        self.source_schema_image_set_selection = source_schema_image_set_selection
 
     def validate_installation(self) -> None:
         """Check OpenHCS is importable."""
@@ -497,7 +437,6 @@ class OpenHCSAdapter(ToolAdapter):
             AnalysisConsolidationConfig,
             MaterializationBackend,
             PathPlanningConfig,
-            PipelineConfig,
             VFSConfig,
         )
 
@@ -515,8 +454,7 @@ class OpenHCSAdapter(ToolAdapter):
         output_plate_root = (
             request.output_dir / f"{request.dataset_path.name}{output_suffix}"
         )
-        generated_module_path = request.output_dir / f"{cppipe_path.stem}_openhcs.py"
-        generated_pipeline_module_name = generated_module_path.stem
+        generated_source_path = request.output_dir / f"{cppipe_path.stem}_openhcs.py"
         source_workspace_path = (
             request.output_dir
             / f"{request.dataset_path.name}_{cppipe_path.stem}_source_workspace"
@@ -530,156 +468,105 @@ class OpenHCSAdapter(ToolAdapter):
             compilation_debug_config.compiled_execution_bundle_path
         )
 
-        with phase_timing.phase(BenchmarkPhase.READ_CACHE):
-            cache_hit = (
-                None
-                if compilation_debug_config.enabled
-                else self._load_runtime_execution_cache(request)
-            )
         equivalence_report = None
         equivalence_failure_message = None
-        submitted_pipeline_source_sha = None
-        if cache_hit is not None:
-            phase_timing.record(
-                BenchmarkPhase.COMPILE_OPENHCS, seconds=0.0, cached=True
-            )
-            phase_timing.record(
-                BenchmarkPhase.EXECUTE_OPENHCS, seconds=0.0, cached=True
-            )
-            phase_timing.record(
-                BenchmarkPhase.VALIDATE_RUNTIME,
-                seconds=0.0,
-                cached=True,
-            )
-            validation = cache_hit.validation
-            output_roots = cache_hit.output_roots
-            execution_output_root = cache_hit.execution_output_root
-            axis_count = cache_hit.axis_count
-            executed_axes = tuple(validation.observation.records_by_axis)
-            csv_output_count = len(validation.observation.exports.table_outputs)
-            image_output_count = len(validation.observation.exports.image_outputs)
-            reused_runtime_execution_cache = True
-        else:
-            try:
-                with phase_timing.phase(BenchmarkPhase.COMPILE_DIALECT):
-                    ingestion = prepare_cellprofiler_source_schema_workspace(
-                        CellProfilerSourceSchemaWorkspaceRequest(
-                            source_root=request.dataset_path,
-                            cppipe_path=cppipe_path,
-                            workspace_root=source_workspace_path,
-                            generated_pipeline_path=generated_module_path,
-                            filemanager=self._filemanager,
-                            image_set_selection=(
-                                request.source_schema_image_set_selection
-                            ),
-                        )
-                    )
-            except CellProfilerPipelinePreparationError as exc:
-                raise ToolExecutionError(str(exc)) from exc
-            except CellProfilerSourceWorkspaceMaterializationError as exc:
-                raise ToolExecutionError(str(exc)) from exc
-
-            prepared = ingestion.prepared_pipeline
-            generated_pipeline_module_name = prepared.module_name
-            execution_plate_path = ingestion.execution_plate_path
-            source_workspace_path = ingestion.source_workspace_path
-            pipeline_config = prepared.generated_pipeline.pipeline_config
-            selection = request.source_schema_image_set_selection
-            if selection is not None and selection.well_filter:
-                pipeline_config = replace(
-                    pipeline_config,
-                    well_filter_config=LazyWellFilterConfig(
-                        well_filter=list(selection.well_filter),
-                    ),
+        with phase_timing.phase(BenchmarkPhase.COMPILE_DIALECT):
+            ingestion = prepare_cellprofiler_input_workspace(
+                InputWorkspacePreparationRequest(
+                    selected_path=request.dataset_path,
+                    selected_pipeline_path=cppipe_path,
+                    workspace_root=source_workspace_path,
+                    generated_source_path=generated_source_path,
                 )
-            if compilation_debug_config.enabled:
-                pipeline_config = replace(
-                    pipeline_config,
-                    compilation_debug_config=LazyCompilationDebugConfig(
-                        enabled=compilation_debug_config.enabled,
-                        compiled_execution_bundle_path=(
-                            compilation_debug_config.compiled_execution_bundle_path
-                        ),
-                    ),
-                )
-
-            global_config = replace(
-                self.global_config,
-                analysis_consolidation_config=AnalysisConsolidationConfig(
-                    enabled=False,
-                ),
-                path_planning_config=PathPlanningConfig(
-                    global_output_folder=request.output_dir,
-                    output_dir_suffix=output_suffix,
-                ),
-                vfs_config=VFSConfig(
-                    materialization_backend=MaterializationBackend.DISK,
-                ),
-                compilation_debug_config=compilation_debug_config,
-                materialize_runtime_artifacts=request.materialize_runtime_artifacts,
-                materialization_results_path=output_plate_root / "results",
             )
-            ensure_global_config_context(GlobalPipelineConfig, global_config)
-            pipeline_config = rebuild_lazy_config_with_new_global_reference(
+        if ingestion.pipeline_import_error is not None:
+            raise ToolExecutionError(ingestion.pipeline_import_error.message)
+        pipeline_steps = ingestion.pipeline_steps
+        pipeline_config = ingestion.pipeline_config
+        if pipeline_steps is None or pipeline_config is None:
+            raise ToolExecutionError(
+                f"CellProfiler pipeline preparation produced no pipeline: {cppipe_path}"
+            )
+        execution_plate_path = ingestion.execution_plate_path
+        generated_pipeline_source = generated_source_path.read_text(encoding="utf-8")
+        canonical_pipeline_source = FunctionStepTransportAuthority.source_from_pipeline(
+            pipeline_steps
+        )
+        if generated_pipeline_source != canonical_pipeline_source:
+            raise ToolExecutionError(
+                "CellProfiler benchmark pipeline source differs from the canonical "
+                "UI/ZMQ FunctionStep source before execution."
+            )
+        if compilation_debug_config.enabled:
+            pipeline_config = replace(
                 pipeline_config,
-                global_config,
-                GlobalPipelineConfig,
+                compilation_debug_config=LazyCompilationDebugConfig(
+                    enabled=compilation_debug_config.enabled,
+                    compiled_execution_bundle_path=(
+                        compilation_debug_config.compiled_execution_bundle_path
+                    ),
+                ),
             )
-            observation_export_path = (
-                request.output_dir / "runtime_execution_server_observation.pkl"
-            )
-            with ExitStack() as stack:
-                for metric in request.metrics:
-                    stack.enter_context(metric)
-                with _openhcs_execution_watchdog(request.openhcs_timeout_seconds):
-                    server_execution, pipeline_source = (
-                        _execute_pipeline_via_zmq_server(
-                            plate_id=request.dataset_path,
-                            execution_plate_id=execution_plate_path,
-                            selected_pipeline_path=cppipe_path,
-                            pipeline_steps=prepared.runtime_pipeline_steps,
-                            global_config=global_config,
-                            pipeline_config=pipeline_config,
-                            observation_export_path=observation_export_path,
-                            phase_timing=phase_timing,
-                        )
-                    )
-            submitted_pipeline_source_sha = PycodifiedSource(
-                pipeline_source
-            ).sha_label()
-            output_roots = server_execution.output_roots
-            execution_output_root = (
-                server_execution.execution_output_root
-                if server_execution.output_roots
-                else request.output_dir
-            )
-            try:
-                with phase_timing.phase(BenchmarkPhase.VALIDATE_RUNTIME):
-                    validation = validate_cppipe_runtime_observation(
-                        prepared,
-                        server_execution.observation_export.observation(),
-                        execution_failures=(
-                            server_execution.observation_export.execution_failures()
-                        ),
-                        validate_table_exports=request.materialize_runtime_artifacts,
-                        validate_image_exports=request.compare_image_outputs,
-                    )
-            except CPPipeExecutionValidationError as exc:
-                raise ToolExecutionError(str(exc)) from exc
-            axis_count = server_execution.axis_count
-            executed_axes = tuple(validation.observation.records_by_axis)
-            csv_output_count = len(validation.observation.exports.table_outputs)
-            image_output_count = len(validation.observation.exports.image_outputs)
-            reused_runtime_execution_cache = False
-            with phase_timing.phase(BenchmarkPhase.WRITE_CACHE):
-                self._write_runtime_execution_cache(
-                    request,
-                    validation=validation,
-                    output_roots=output_roots,
-                    execution_output_root=execution_output_root,
-                    axis_count=axis_count,
+
+        global_config = replace(
+            self.global_config,
+            analysis_consolidation_config=AnalysisConsolidationConfig(
+                enabled=False,
+            ),
+            path_planning_config=PathPlanningConfig(
+                global_output_folder=request.output_dir,
+                output_dir_suffix=output_suffix,
+            ),
+            vfs_config=VFSConfig(
+                materialization_backend=MaterializationBackend.DISK,
+            ),
+            compilation_debug_config=compilation_debug_config,
+            materialize_runtime_artifacts=request.materialize_runtime_artifacts,
+            materialization_results_path=output_plate_root / "results",
+        )
+        ensure_global_config_context(GlobalPipelineConfig, global_config)
+        pipeline_config = rebuild_lazy_config_with_new_global_reference(
+            pipeline_config,
+            global_config,
+            GlobalPipelineConfig,
+        )
+        observation_export_path = (
+            request.output_dir / "runtime_execution_server_observation.pkl"
+        )
+        with ExitStack() as stack:
+            for metric in request.metrics:
+                stack.enter_context(metric)
+            with _openhcs_execution_watchdog(request.openhcs_timeout_seconds):
+                server_execution, pipeline_source = _execute_pipeline_via_zmq_server(
+                    plate_id=request.dataset_path,
+                    execution_plate_id=execution_plate_path,
+                    selected_pipeline_path=cppipe_path,
+                    pipeline_steps=pipeline_steps,
+                    global_config=global_config,
+                    pipeline_config=pipeline_config,
+                    observation_export_path=observation_export_path,
+                    phase_timing=phase_timing,
                 )
-            reused_runtime_execution_cache = False
+        submitted_pipeline_source_sha = hashlib.sha256(
+            pipeline_source.encode("utf-8")
+        ).hexdigest()[:12]
+        output_roots = server_execution.output_roots
+        execution_output_root = (
+            server_execution.execution_output_root
+            if server_execution.output_roots
+            else request.output_dir
+        )
+        try:
+            with phase_timing.phase(BenchmarkPhase.VALIDATE_RUNTIME):
+                observation = (
+                    server_execution.observation_export.require_valid_observation()
+                )
+        except RuntimeError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        axis_count = server_execution.axis_count
+        executed_axes = tuple(observation.records_by_axis)
+        csv_output_count = len(observation.exports.table_outputs)
+        image_output_count = len(observation.exports.image_outputs)
         equivalence_reference = request.equivalence_reference_output_dir
         if equivalence_reference is not None:
             if not equivalence_reference.exists():
@@ -698,17 +585,19 @@ class OpenHCSAdapter(ToolAdapter):
                     )
                 equivalence_report = runtime_reference_artifact_equivalence(
                     reference_snapshot,
-                    validation.observation,
+                    observation,
                     policy=equivalence_policy,
-                    candidate_image_artifact_names=(
-                        validation.expectation.exports.image_artifact_names
-                    ),
-                    candidate_image_export_specs=(
-                        validation.expectation.exports.image_export_specs
-                    ),
-                    candidate_image_snapshots=(
-                        _candidate_image_snapshots_for_equivalence(validation)
-                    ),
+                )
+                database_export_report = cellprofiler_database_export_equivalence(
+                    equivalence_reference,
+                    observation.exports,
+                    policy=equivalence_policy,
+                )
+                equivalence_report = RuntimeEquivalenceReport(
+                    (
+                        *equivalence_report.differences,
+                        *database_export_report.differences,
+                    )
                 )
             if not equivalence_report.is_equivalent:
                 equivalence_failure_message = (
@@ -731,20 +620,18 @@ class OpenHCSAdapter(ToolAdapter):
             "microscope_type": request.microscope_type,
             "pipeline_source": "converted_cppipe",
             "cppipe_path": str(cppipe_path),
-            "generated_pipeline_module": generated_pipeline_module_name,
+            "generated_source_path": str(generated_source_path),
             "submitted_pipeline_source_sha": submitted_pipeline_source_sha,
             "axis_count": axis_count,
             "csv_output_count": csv_output_count,
             "image_output_count": image_output_count,
             "compiled_output_roots": tuple(str(root) for root in output_roots),
-            "reused_runtime_execution_cache": reused_runtime_execution_cache,
             "phase_timing_records": phase_timing.payloads(),
             "executed_axes": executed_axes,
+            "zmq_results_summary_path": str(
+                observation_export_path.with_name(ZMQ_RESULTS_SUMMARY_FILENAME)
+            ),
         }
-        if request.runtime_execution_cache_manifest is not None:
-            provenance["runtime_execution_cache_manifest"] = str(
-                request.runtime_execution_cache_manifest
-            )
         if compiled_bundle_dump_path is not None:
             provenance["compiled_execution_bundle_path"] = str(
                 compiled_bundle_dump_path
@@ -766,103 +653,6 @@ class OpenHCSAdapter(ToolAdapter):
             success=equivalence_failure_message is None,
             error_message=equivalence_failure_message,
             provenance=provenance,
-        )
-
-    def _load_runtime_execution_cache(
-        self,
-        request: OpenHCSRunRequest,
-    ) -> _RuntimeExecutionCacheHit | None:
-        """Load a validated OpenHCS execution snapshot when cache identity matches."""
-        manifest_path = request.runtime_execution_cache_manifest
-        cache_key = request.runtime_execution_cache_key
-        if (
-            manifest_path is None
-            or cache_key is None
-            or not request.reuse_runtime_execution_cache
-            or not manifest_path.exists()
-        ):
-            return None
-        try:
-            manifest = json.loads(manifest_path.read_text())
-        except (OSError, json.JSONDecodeError):
-            return None
-        if manifest.get("schema_version") != _RUNTIME_EXECUTION_CACHE_SCHEMA_VERSION:
-            return None
-        if not _runtime_execution_cache_key_matches(
-            manifest.get("cache_key"),
-            cache_key,
-        ):
-            return None
-        validation_path = _cache_payload_path(
-            manifest_path,
-            manifest.get("validation_pickle_path"),
-        )
-        if validation_path is None or not validation_path.exists():
-            return None
-        output_roots = tuple(Path(path) for path in manifest.get("output_roots", ()))
-        execution_output_root_value = manifest.get("execution_output_root")
-        if not execution_output_root_value:
-            return None
-        execution_output_root = Path(str(execution_output_root_value))
-        if not execution_output_root.exists():
-            return None
-        if any(not root.exists() for root in output_roots):
-            return None
-        try:
-            with validation_path.open("rb") as handle:
-                validation_payload = pickle.load(handle)
-            validation = _validation_from_cache_payload(validation_payload)
-        except Exception:
-            logger.exception(
-                "Failed to load OpenHCS runtime execution cache %s",
-                validation_path,
-            )
-            return None
-        return _RuntimeExecutionCacheHit(
-            validation=validation,
-            output_roots=output_roots,
-            execution_output_root=execution_output_root,
-            axis_count=int(manifest.get("axis_count", 0)),
-        )
-
-    def _write_runtime_execution_cache(
-        self,
-        request: OpenHCSRunRequest,
-        *,
-        validation: CPPipeExecutionValidation,
-        output_roots: tuple[Path, ...],
-        execution_output_root: Path,
-        axis_count: int,
-    ) -> None:
-        """Persist completed OpenHCS execution state before equivalence comparison."""
-        manifest_path = request.runtime_execution_cache_manifest
-        cache_key = request.runtime_execution_cache_key
-        policy = RuntimeExecutionCacheWritePolicy.for_request(request)
-        if not policy.write_manifest or manifest_path is None or cache_key is None:
-            return
-        manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        validation_path = (
-            manifest_path.parent / _RUNTIME_EXECUTION_OBSERVATION_PICKLE_NAME
-        )
-        with validation_path.open("wb") as handle:
-            pickle.dump(
-                _validation_cache_payload(validation),
-                handle,
-                protocol=pickle.HIGHEST_PROTOCOL,
-            )
-        manifest_path.write_text(
-            json.dumps(
-                {
-                    "schema_version": _RUNTIME_EXECUTION_CACHE_SCHEMA_VERSION,
-                    "cache_key": cache_key,
-                    "validation_pickle_path": validation_path.name,
-                    "output_roots": tuple(str(root) for root in output_roots),
-                    "execution_output_root": str(execution_output_root),
-                    "axis_count": axis_count,
-                },
-                indent=2,
-                sort_keys=True,
-            )
         )
 
     def _metric_results(
@@ -913,7 +703,6 @@ class OpenHCSAdapter(ToolAdapter):
             pipeline_params=pipeline_params,
             metrics=self._validated_metric_collectors(metrics),
             output_dir=output_dir,
-            source_schema_image_set_selection=self.source_schema_image_set_selection,
         )
         return self._run_converted_cppipe_pipeline(request)
 
@@ -955,110 +744,6 @@ def _openhcs_execution_watchdog(timeout_seconds: float):
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0.0)
         signal.signal(signal.SIGALRM, previous_handler)
-
-
-def _validation_cache_payload(
-    validation: CPPipeExecutionValidation,
-) -> dict[str, Any]:
-    """Return a pickle-safe payload for runtime execution validation."""
-    exports = validation.observation.exports
-    return {
-        "expectation": validation.expectation,
-        "records_by_axis": {
-            axis: tuple(records)
-            for axis, records in validation.observation.records_by_axis.items()
-        },
-        "exports": {
-            "table_outputs": tuple(str(path) for path in exports.table_outputs),
-            "image_outputs": tuple(str(path) for path in exports.image_outputs),
-            "table_headers_by_path": {
-                str(path): tuple(headers)
-                for path, headers in exports.table_headers_by_path.items()
-            },
-            "table_row_counts_by_path": {
-                str(path): int(row_count)
-                for path, row_count in exports.table_row_counts_by_path.items()
-            },
-        },
-    }
-
-
-def _candidate_image_snapshots_for_equivalence(
-    validation: CPPipeExecutionValidation,
-) -> tuple[Any, ...] | None:
-    """Return candidate export snapshots when exports are the authoritative images.
-
-    SaveImages declares exact runtime image artifacts and export encodings.  In
-    that case equivalence must use the typed artifact records, not incidental
-    final-step image files that OpenHCS may also materialize.
-    """
-    if validation.expectation.exports.image_export_specs:
-        return None
-    if not validation.observation.exports.image_outputs:
-        return None
-    return RuntimeOutputSnapshot.from_export_observation(
-        validation.observation.exports
-    ).images
-
-
-def _validation_from_cache_payload(
-    payload: object,
-) -> CPPipeExecutionValidation:
-    """Rebuild runtime execution validation from a pickle-safe payload."""
-    if not isinstance(payload, Mapping):
-        raise TypeError(
-            "OpenHCS runtime execution cache payload must be a mapping, "
-            f"got {type(payload).__name__}."
-        )
-    exports_payload = payload.get("exports")
-    if not isinstance(exports_payload, Mapping):
-        raise TypeError("OpenHCS runtime execution cache exports are missing.")
-    exports = RuntimeExportObservation(
-        table_outputs=tuple(
-            Path(path) for path in exports_payload.get("table_outputs", ())
-        ),
-        image_outputs=tuple(
-            Path(path) for path in exports_payload.get("image_outputs", ())
-        ),
-        table_headers_by_path={
-            Path(path): tuple(headers)
-            for path, headers in (
-                exports_payload.get("table_headers_by_path", {}) or {}
-            ).items()
-        },
-        table_row_counts_by_path={
-            Path(path): int(row_count)
-            for path, row_count in (
-                exports_payload.get("table_row_counts_by_path", {}) or {}
-            ).items()
-        },
-    )
-    from openhcs.core.runtime_execution_validation import (
-        RuntimeArtifactExecutionObservation,
-    )
-
-    return CPPipeExecutionValidation(
-        expectation=payload["expectation"],
-        observation=RuntimeArtifactExecutionObservation(
-            records_by_axis={
-                str(axis): tuple(records)
-                for axis, records in (payload.get("records_by_axis", {}) or {}).items()
-            },
-            exports=exports,
-        ),
-    )
-
-
-def _cache_payload_path(
-    manifest_path: Path,
-    value: object,
-) -> Path | None:
-    if value is None:
-        return None
-    path = Path(str(value))
-    if path.is_absolute():
-        return path
-    return manifest_path.parent / path
 
 
 def _truthy_debug_flag(value: object) -> bool:

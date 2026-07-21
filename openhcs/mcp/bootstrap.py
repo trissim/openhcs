@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import argparse
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
+import logging
+import os
 from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
+    from openhcs.agent.capabilities import LocalCapabilitySurfaceProfile
     from mcp.server.fastmcp import FastMCP
 
 
@@ -15,6 +20,13 @@ MCP_BOOTSTRAP_FAILURE_HINT = (
     "The OpenHCS MCP process started, but the full agent server could not be "
     "constructed or run. Fix the startup exception and restart the MCP client."
 )
+MCP_BOOTSTRAP_SERVER_INSTRUCTIONS = (
+    "OpenHCS could not construct its full MCP server. Call openhcs_health_check "
+    "or openhcs_bootstrap_failure for the structured startup error, fix the local "
+    "installation, and restart this stdio process."
+)
+MCP_LOCAL_SURFACE_ENVIRONMENT_VARIABLE = "OPENHCS_MCP_LOCAL_SURFACE"
+MCP_VERBOSE_ENVIRONMENT_VARIABLE = "OPENHCS_MCP_VERBOSE"
 
 
 class McpBootstrapFailurePhase(str, Enum):
@@ -112,7 +124,7 @@ def build_bootstrap_failure_server(
     from mcp.server.fastmcp import FastMCP
 
     failure = McpBootstrapFailure.from_exception(exception, phase)
-    server = FastMCP("OpenHCS")
+    server = FastMCP("OpenHCS", instructions=MCP_BOOTSTRAP_SERVER_INSTRUCTIONS)
 
     @server.tool()
     def openhcs_health_check() -> McpBootstrapFailurePayloadWire:
@@ -127,26 +139,76 @@ def build_bootstrap_failure_server(
     return server
 
 
-def build_bootstrapped_server() -> "FastMCP":
+def build_bootstrapped_server(
+    capability_surface_profile: "LocalCapabilitySurfaceProfile | None" = None,
+) -> "FastMCP":
     """Build the full OpenHCS MCP server, or a fail-soft bootstrap server."""
     try:
+        from openhcs.agent.capabilities import DesktopLocalCapabilitySurfaceProfile
         from openhcs.mcp.server import build_server
 
-        return build_server()
+        return build_server(
+            capability_surface_profile=(
+                DesktopLocalCapabilitySurfaceProfile()
+                if capability_surface_profile is None
+                else capability_surface_profile
+            )
+        )
     except Exception as exc:
-        return build_bootstrap_failure_server(exc, McpBootstrapFailurePhase.BUILD_SERVER)
+        return build_bootstrap_failure_server(
+            exc, McpBootstrapFailurePhase.BUILD_SERVER
+        )
 
 
-def run_bootstrapped_server() -> None:
+def run_bootstrapped_server(
+    capability_surface_profile: "LocalCapabilitySurfaceProfile | None" = None,
+) -> None:
     """Run the OpenHCS MCP server, preserving stdio for early run failures."""
     try:
-        build_bootstrapped_server().run()
+        server = (
+            build_bootstrapped_server()
+            if capability_surface_profile is None
+            else build_bootstrapped_server(capability_surface_profile)
+        )
+        server.run(transport="stdio")
     except Exception as exc:
         build_bootstrap_failure_server(
             exc,
             McpBootstrapFailurePhase.RUN_SERVER,
-        ).run()
+        ).run(transport="stdio")
 
 
-def main() -> None:
-    run_bootstrapped_server()
+def _build_parser() -> argparse.ArgumentParser:
+    from openhcs.agent.capabilities import (
+        DesktopLocalCapabilitySurfaceProfile,
+        LocalCapabilitySurfaceProfile,
+    )
+
+    parser = argparse.ArgumentParser(description="Run the OpenHCS MCP stdio server.")
+    parser.add_argument(
+        "--surface",
+        choices=LocalCapabilitySurfaceProfile.names(),
+        default=os.environ.get(
+            MCP_LOCAL_SURFACE_ENVIRONMENT_VARIABLE,
+            DesktopLocalCapabilitySurfaceProfile.name,
+        ),
+        help=(
+            "Capability surface exposed to the MCP client. The default desktop "
+            "surface keeps normal UI and viewer workflows while hiding headless, "
+            "runtime-server, fallback, and expert-only tools."
+        ),
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    from openhcs.agent.capabilities import LocalCapabilitySurfaceProfile
+
+    disabled_level = logging.root.manager.disable
+    try:
+        if os.getenv(MCP_VERBOSE_ENVIRONMENT_VARIABLE) is None:
+            logging.disable(logging.INFO)
+        args = _build_parser().parse_args(argv)
+        run_bootstrapped_server(LocalCapabilitySurfaceProfile.for_name(args.surface))
+    finally:
+        logging.disable(disabled_level)

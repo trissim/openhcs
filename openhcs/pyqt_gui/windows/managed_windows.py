@@ -4,6 +4,8 @@ Managed window implementations using WindowManager.show_or_focus().
 Each window is created by a factory function passed to WindowManager.
 """
 
+from pathlib import Path
+
 from PyQt6.QtWidgets import QDialog, QVBoxLayout
 
 from openhcs.pyqt_gui.services.main_window_workflows import MainWindowWidgetConnector
@@ -48,6 +50,7 @@ class PlateManagerWindow(QDialog):
         self.widget = PlateManagerWidget(
             self.service_adapter,
             self.service_adapter.get_current_color_scheme(),
+            gui_config=self.service_adapter.widget_gui_config,
         )
         layout.addWidget(self.widget)
         self._setup_connections()
@@ -116,6 +119,10 @@ class ImageBrowserWindow(QDialog):
         self.widget = ImageBrowserWidget(
             orchestrator=None,
             color_scheme=self.service_adapter.get_current_color_scheme(),
+            zmq_config=self.main_window.runtime_context.ui_config.zmq,
+        )
+        self.main_window.ui_config_changed.connect(
+            lambda config: self.widget.set_zmq_config(config.zmq)
         )
         layout.addWidget(self.widget)
         self._setup_connections()
@@ -163,6 +170,10 @@ class LogViewerWindowWrapper(QDialog):
         )
         layout.addWidget(self.widget)
 
+    def switch_to_log(self, log_file_path: Path) -> None:
+        """Display one server log through the wrapped log-viewer owner."""
+        self.widget.switch_to_log(log_file_path)
+
 
 class ZMQServerManagerWindow(QDialog):
     def __init__(self, main_window, service_adapter):
@@ -184,6 +195,13 @@ class ZMQServerManagerWindow(QDialog):
             ports_to_scan=self.main_window.zmq_server_manager_ports_to_scan(),
             title="ZMQ Servers (Execution + UI Bridge + Napari + Fiji)",
             style_generator=self.service_adapter.get_style_generator(),
+            config=self.main_window.runtime_context.ui_config.zmq,
+        )
+        self.main_window.ui_config_changed.connect(
+            lambda config: self.widget.set_zmq_config(
+                config.zmq,
+                self.main_window.zmq_server_manager_ports_to_scan(),
+            )
         )
         layout.addWidget(self.widget)
         self.widget.log_file_opened.connect(self.main_window._open_log_file_in_viewer)

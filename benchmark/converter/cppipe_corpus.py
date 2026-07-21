@@ -32,6 +32,7 @@ class CPPipeCorpusCase:
     name: str
     cppipe_path: Path
     status: CPPipeCorpusStatus
+    source_root: Path | None = None
     expected_error_substring: str | None = None
 
 
@@ -53,7 +54,10 @@ def in_tree_cppipe_corpus() -> tuple[CPPipeCorpusCase, ...]:
         CPPipeCorpusCase(
             name="ExampleFly",
             cppipe_path=pipelines_dir / "ExampleFly.cppipe",
-            status=CPPipeCorpusStatus.SUPPORTED,
+            status=CPPipeCorpusStatus.KNOWN_INVALID,
+            expected_error_substring=(
+                "No CellProfiler module declaration is registered for 'LoadData'"
+            ),
         ),
         CPPipeCorpusCase(
             name="ExampleHuman",
@@ -116,6 +120,7 @@ def comparison_manifest_cppipe_corpus(
                 name=str(raw_case["name"]),
                 cppipe_path=manifest.path_resolver.resolve(raw_case, "cppipe_path"),
                 status=CPPipeCorpusStatus.SUPPORTED,
+                source_root=manifest.path_resolver.resolve(raw_case, "dataset_path"),
             )
         )
     return tuple(cases)

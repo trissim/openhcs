@@ -121,11 +121,6 @@ class CustomFunctionManager:
             if not hasattr(obj, 'input_memory_type'):
                 continue
 
-            # Set module name for custom functions (required for code generation)
-            # Custom functions executed via exec() don't have __module__ set properly
-            if not hasattr(obj, '__module__') or obj.__module__ is None or obj.__module__ == '__main__':
-                obj.__module__ = 'openhcs.processing.custom_functions'
-
             # Check for name collisions with existing OpenHCS functions
             self._check_name_collision(name, collision_metadata)
 
@@ -467,6 +462,7 @@ class CustomFunctionManager:
 
         # Import all memory type decorators
         namespace: Dict[str, Any] = {
+            '__name__': 'openhcs.processing.custom_functions',
             'numpy': decorators.numpy,
             'cupy': decorators.cupy,
             'torch': decorators.torch,

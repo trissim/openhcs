@@ -1,367 +1,377 @@
-"""
-Help Window for PyQt6
+"""Browsable OpenHCS help backed by the canonical agent knowledge service."""
 
-Help display dialog with OpenHCS documentation and usage information.
-Uses hybrid approach: extracted business logic + clean PyQt6 UI.
-"""
+from __future__ import annotations
 
-import logging
-from typing import Optional
+from dataclasses import dataclass
 
+from PyQt6.QtCore import QSignalBlocker, Qt
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QTextEdit, QFrame, QWidget
+    QComboBox,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPlainTextEdit,
+    QPushButton,
+    QSplitter,
+    QStyle,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
 
-from pyqt_reactive.theming import StyleSheetGenerator
-from pyqt_reactive.theming import ColorScheme
+from openhcs.agent.dto.knowledge import (
+    KnowledgeBaseCatalog,
+    KnowledgeBaseDocument,
+    KnowledgeBaseDocumentRequest,
+    KnowledgeBaseDocumentSummary,
+    KnowledgeBaseDocumentTarget,
+    KnowledgeBaseSearchHit,
+    KnowledgeBaseSearchRequest,
+    KnowledgeBaseSearchResult,
+)
+from openhcs.agent.services.knowledge_base_service import KnowledgeBaseService
+from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
 
-logger = logging.getLogger(__name__)
+
+KNOWLEDGE_ITEM_ROLE = Qt.ItemDataRole.UserRole
+KNOWLEDGE_DOCUMENT_MAX_CHARS = 50_000
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeDocumentSelection:
+    """Exact knowledge document/section identity carried by one UI row."""
+
+    document_id: str
+    section_id: str | None = None
+
+    @classmethod
+    def from_summary(
+        cls,
+        summary: KnowledgeBaseDocumentSummary,
+    ) -> "KnowledgeDocumentSelection":
+        return cls(document_id=summary.document_id)
+
+    @classmethod
+    def from_search_hit(
+        cls,
+        hit: KnowledgeBaseSearchHit,
+    ) -> "KnowledgeDocumentSelection":
+        return cls(
+            document_id=hit.document.document_id,
+            section_id=None if hit.section is None else hit.section.section_id,
+        )
 
 
 class HelpWindow(QDialog):
-    """
-    PyQt6 Help Window.
-    
-    Help display dialog with OpenHCS documentation and usage information.
-    Preserves all business logic from Textual version with clean PyQt6 UI.
-    """
-    
-    # Help content (extracted from Textual version)
-    HELP_TEXT = """OpenHCS - Open High-Content Screening
+    """Browse and search the same source-backed knowledge available to MCP agents."""
 
-🔬 Visual Programming for Cell Biology Research
-
-Key Features:
-• GPU-accelerated image processing
-• Visual pipeline building
-• Multi-backend storage support
-• Real-time parameter editing
-
-Workflow:
-1. Add Plate → Select microscopy data
-2. Edit Step → Visual function selection
-3. Compile → Create execution plan
-4. Run → Process images
-
-Navigation:
-• Use the Plate Manager to add and manage your microscopy plates
-• Build processing pipelines in the Pipeline Editor
-• Configure functions in the Function Library
-• Monitor system performance in real-time
-
-Keyboard Shortcuts:
-• Ctrl+N: New pipeline
-• Ctrl+O: Open pipeline
-• Ctrl+S: Save pipeline
-• F1: Show this help
-• Esc: Close current dialog
-
-Tips:
-• Right-click on widgets for context menus
-• Use drag-and-drop to reorder pipeline steps
-• Parameters are validated in real-time
-• GPU acceleration is automatic when available
-
-For detailed documentation, see the Nature Methods publication
-and the online documentation at https://openhcs.org
-
-Version: PyQt6 GUI 1.0.0
-"""
-    
-    def __init__(self, content: Optional[str] = None,
-                 color_scheme: Optional[ColorScheme] = None, parent=None):
-        """
-        Initialize the help window.
-
-        Args:
-            content: Custom help content (uses default if None)
-            color_scheme: Color scheme for styling (optional, uses default if None)
-            parent: Parent widget
-        """
-        super().__init__(parent)
-
-        # Initialize color scheme and style generator
-        self.color_scheme = color_scheme or ColorScheme()
+    def __init__(
+        self,
+        main_window=None,
+        service_adapter=None,
+        *,
+        knowledge_service: KnowledgeBaseService | None = None,
+        color_scheme: ColorScheme | None = None,
+        parent=None,
+    ) -> None:
+        parent_widget = parent or main_window
+        super().__init__(parent_widget)
+        self.main_window = main_window
+        self.service_adapter = service_adapter
+        self.knowledge_service = knowledge_service or KnowledgeBaseService()
+        self.color_scheme = color_scheme or self._resolved_color_scheme()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
+        self.catalog: KnowledgeBaseCatalog | None = None
+        self.search_result: KnowledgeBaseSearchResult | None = None
+        self.current_document: KnowledgeBaseDocument | None = None
+        self._active_document_id: str | None = None
+        self._updating_sections = False
 
-        # Business logic state
-        self.content = content or self.HELP_TEXT
-        self.content_text: QTextEdit | None = None
-        
-        # Setup UI
-        self.setup_ui()
-        self.setup_connections()
-        
-        logger.debug("Help window initialized")
-    
-    def setup_ui(self):
-        """Setup the user interface."""
-        self.setWindowTitle("OpenHCS Help")
-        self.setModal(True)
-        self.setMinimumSize(600, 500)
-        self.resize(800, 700)
-        
+        self.setWindowTitle("OpenHCS Knowledge Base")
+        self.setModal(False)
+        self.setMinimumSize(760, 520)
+        self.resize(980, 680)
+        self._setup_ui()
+        self._load_catalog()
+
+    def _resolved_color_scheme(self) -> ColorScheme:
+        if self.service_adapter is None:
+            return ColorScheme()
+        return self.service_adapter.get_current_color_scheme()
+
+    def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-        
-        # Header with OpenHCS logo/title
-        header_frame = self.create_header()
-        layout.addWidget(header_frame)
-        
-        # Scrollable content area
-        content_area = self.create_content_area()
-        layout.addWidget(content_area)
-        
-        # Button panel
-        button_panel = self.create_button_panel()
-        layout.addWidget(button_panel)
-        
-        # Apply centralized styling
-        self.setStyleSheet(self.style_generator.generate_dialog_style() + f"""
-            QTextEdit {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
-                color: {self.color_scheme.to_hex(self.color_scheme.text_primary)};
-                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
-                border-radius: 5px;
-                padding: 10px;
-                font-family: 'Courier New', monospace;
-                font-size: 11px;
-                line-height: 1.4;
-            }}
-        """)
-    
-    def create_header(self) -> QWidget:
-        """
-        Create the header section with title and version.
-        
-        Returns:
-            Widget containing header information
-        """
-        frame = QFrame()
-        frame.setFrameStyle(QFrame.Shape.Box)
-        frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
-                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
-                border-radius: 5px;
-                padding: 15px;
-            }}
-        """)
-        
-        layout = QVBoxLayout(frame)
-        
-        # ASCII art title
-        title_label = QLabel(self.get_ascii_title())
-        title_label.setFont(QFont("Courier New", 10, QFont.Weight.Bold))
-        title_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)};")
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(title_label)
-        
-        # Subtitle
-        subtitle_label = QLabel("Visual Programming for Cell Biology Research")
-        subtitle_label.setFont(QFont("Arial", 12))
-        subtitle_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_secondary)};")
-        subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(subtitle_label)
-        
-        return frame
-    
-    def create_content_area(self) -> QWidget:
-        """
-        Create the scrollable content area.
-        
-        Returns:
-            Widget containing help content
-        """
-        # Text edit for help content
-        self.content_text = QTextEdit()
-        self.content_text.setPlainText(self.content)
-        self.content_text.setReadOnly(True)
-        
-        # Enable rich text formatting
-        self.content_text.setHtml(self.format_help_content(self.content))
-        
-        return self.content_text
-    
-    def create_button_panel(self) -> QWidget:
-        """
-        Create the button panel.
-        
-        Returns:
-            Widget containing action buttons
-        """
-        panel = QFrame()
-        panel.setFrameStyle(QFrame.Shape.Box)
-        panel.setStyleSheet(f"""
-            QFrame {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
-                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
-                border-radius: 3px;
-                padding: 10px;
-            }}
-        """)
-        
-        layout = QHBoxLayout(panel)
-        layout.addStretch()
-        
-        # Close button
-        close_button = QPushButton("Close")
-        close_button.setMinimumWidth(100)
-        close_button.setMinimumHeight(35)
-        close_button.clicked.connect(self.accept)
-        close_button.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
-                color: white;
-                border: 1px solid #106ebe;
-                border-radius: 5px;
-                padding: 8px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #106ebe;
-            }
-            QPushButton:pressed {
-                background-color: #005a9e;
-            }
-        """)
-        layout.addWidget(close_button)
-        
-        return panel
-    
-    def setup_connections(self):
-        """Setup signal/slot connections."""
-        pass  # No additional connections needed
-    
-    def get_ascii_title(self) -> str:
-        """
-        Get ASCII art title.
-        
-        Returns:
-            ASCII art title string
-        """
-        return """
- ██████╗ ██████╗ ███████╗███╗   ██╗██╗  ██╗ ██████╗███████╗
-██╔═══██╗██╔══██╗██╔════╝████╗  ██║██║  ██║██╔════╝██╔════╝
-██║   ██║██████╔╝█████╗  ██╔██╗ ██║███████║██║     ███████╗
-██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║██╔══██║██║     ╚════██║
-╚██████╔╝██║     ███████╗██║ ╚████║██║  ██║╚██████╗███████║
- ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝╚══════╝
-        """
-    
-    def format_help_content(self, content: str) -> str:
-        """
-        Format help content with HTML for better display.
-        
-        Args:
-            content: Raw help content
-            
-        Returns:
-            HTML formatted content
-        """
-        # Convert plain text to HTML with basic formatting
-        html_content = content.replace('\n', '<br>')
-        
-        # Format headers (lines starting with uppercase words followed by colon)
-        import re
-        accent_color = self.color_scheme.to_hex(self.color_scheme.text_accent)
-        html_content = re.sub(
-            r'^([A-Z][A-Za-z\s]+:)$',
-            rf'<h3 style="color: {accent_color}; margin-top: 20px; margin-bottom: 10px;">\1</h3>',
-            html_content,
-            flags=re.MULTILINE
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        title = QLabel("OpenHCS Knowledge Base", self)
+        title.setObjectName("knowledge_title")
+        title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        layout.addWidget(title)
+
+        search_row = QHBoxLayout()
+        self.search_input = QLineEdit(self)
+        self.search_input.setObjectName("knowledge_search_input")
+        self.search_input.setPlaceholderText("Search documentation")
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.returnPressed.connect(self._search)
+        search_row.addWidget(self.search_input, 1)
+
+        self.search_button = QPushButton("Search", self)
+        self.search_button.setObjectName("knowledge_search_button")
+        self.search_button.setToolTip("Search the OpenHCS knowledge base")
+        self.search_button.clicked.connect(self._search)
+        search_row.addWidget(self.search_button)
+
+        self.browse_button = QToolButton(self)
+        self.browse_button.setObjectName("knowledge_browse_button")
+        self.browse_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogResetButton)
         )
-        
-        # Format bullet points
-        secondary_color = self.color_scheme.to_hex(self.color_scheme.text_secondary)
-        html_content = re.sub(
-            r'^• (.+)$',
-            rf'<li style="margin-left: 20px; color: {secondary_color};">\1</li>',
-            html_content,
-            flags=re.MULTILINE
+        self.browse_button.setToolTip("Clear search and browse all documents")
+        self.browse_button.clicked.connect(self._show_catalog)
+        search_row.addWidget(self.browse_button)
+        layout.addLayout(search_row)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.knowledge_index = QListWidget(splitter)
+        self.knowledge_index.setObjectName("knowledge_index")
+        self.knowledge_index.setMinimumWidth(260)
+        self.knowledge_index.currentItemChanged.connect(
+            self._open_selected_item
         )
-        
-        # Format numbered lists
-        html_content = re.sub(
-            r'^(\d+\.) (.+)$',
-            rf'<div style="margin-left: 20px; color: {secondary_color};"><strong style="color: {accent_color};">\1</strong> \2</div>',
-            html_content,
-            flags=re.MULTILINE
+
+        content_panel = QWidget(splitter)
+        content_layout = QVBoxLayout(content_panel)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(4)
+
+        self.document_title = QLabel(content_panel)
+        self.document_title.setObjectName("knowledge_document_title")
+        self.document_title.setWordWrap(True)
+        self.document_title.setStyleSheet("font-size: 14px; font-weight: bold;")
+        content_layout.addWidget(self.document_title)
+
+        self.section_selector = QComboBox(content_panel)
+        self.section_selector.setObjectName("knowledge_section_selector")
+        self.section_selector.currentIndexChanged.connect(self._section_changed)
+        content_layout.addWidget(self.section_selector)
+
+        self.document_content = QPlainTextEdit(content_panel)
+        self.document_content.setObjectName("knowledge_document_content")
+        self.document_content.setReadOnly(True)
+        self.document_content.setLineWrapMode(
+            QPlainTextEdit.LineWrapMode.WidgetWidth
         )
-        
-        # Format keyboard shortcuts
-        input_bg_color = self.color_scheme.to_hex(self.color_scheme.input_bg)
-        text_accent_color = self.color_scheme.to_hex(self.color_scheme.text_accent)
-        html_content = re.sub(
-            r'(Ctrl\+[A-Z]|F\d+|Esc)',
-            rf'<code style="background-color: {input_bg_color}; padding: 2px 4px; border-radius: 3px; color: {text_accent_color};">\1</code>',
-            html_content
+        content_layout.addWidget(self.document_content, 1)
+
+        splitter.addWidget(self.knowledge_index)
+        splitter.addWidget(content_panel)
+        splitter.setSizes((300, 680))
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        layout.addWidget(splitter, 1)
+
+        footer = QHBoxLayout()
+        self.status_label = QLabel(self)
+        self.status_label.setObjectName("knowledge_status")
+        footer.addWidget(self.status_label, 1)
+        close_button = QPushButton("Close", self)
+        close_button.setObjectName("knowledge_close_button")
+        close_button.clicked.connect(self.close)
+        footer.addWidget(close_button)
+        layout.addLayout(footer)
+
+        self.setStyleSheet(self.style_generator.generate_dialog_style())
+
+    def _load_catalog(self) -> None:
+        self.catalog = self.knowledge_service.list_documents()
+        self._show_catalog()
+
+    def open_target(self, target: KnowledgeBaseDocumentTarget) -> None:
+        """Show one exact canonical document/section and select its catalog row."""
+        self._show_catalog()
+        matching_row = None
+        for row in range(self.knowledge_index.count()):
+            item = self.knowledge_index.item(row)
+            selection = item.data(KNOWLEDGE_ITEM_ROLE)
+            if (
+                isinstance(selection, KnowledgeDocumentSelection)
+                and selection.document_id == target.document_id
+            ):
+                matching_row = row
+                break
+        if matching_row is None:
+            raise ValueError(
+                f"Unknown knowledge-base document target {target.document_id!r}"
+            )
+
+        blocker = QSignalBlocker(self.knowledge_index)
+        self.knowledge_index.setCurrentRow(matching_row)
+        del blocker
+        self._load_document(
+            KnowledgeDocumentSelection(
+                document_id=target.document_id,
+                section_id=target.section_id,
+            )
         )
-        
-        # Wrap in HTML structure
-        primary_text_color = self.color_scheme.to_hex(self.color_scheme.text_primary)
-        html_content = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; font-size: 12px; line-height: 1.6; color: {primary_text_color};">
-        {html_content}
-        </body>
-        </html>
-        """
-        
-        return html_content
-    
-    def set_content(self, content: str):
-        """
-        Set new help content.
-        
-        Args:
-            content: New help content
-        """
-        self.content = content
-        if self.content_text is None:
-            raise RuntimeError("Help content widget has not been initialized")
-        self.content_text.setHtml(self.format_help_content(content))
-    
-    def show_section(self, section_name: str):
-        """
-        Show specific help section.
-        
-        Args:
-            section_name: Name of the section to show
-        """
-        # This could be extended to show specific sections
-        # For now, just show the full help
-        self.show()
-    
+
+    def _show_catalog(self) -> None:
+        self.search_input.clear()
+        self.search_result = None
+        if self.catalog is None:
+            self.catalog = self.knowledge_service.list_documents()
+        self.knowledge_index.clear()
+        for document in self.catalog.documents:
+            item = QListWidgetItem(document.title)
+            item.setToolTip(document.summary)
+            item.setData(
+                KNOWLEDGE_ITEM_ROLE,
+                KnowledgeDocumentSelection.from_summary(document),
+            )
+            self.knowledge_index.addItem(item)
+        self.status_label.setText(self._catalog_status(self.catalog))
+        if self.knowledge_index.count():
+            self.knowledge_index.setCurrentRow(0)
+        else:
+            self._show_message("No knowledge documents are available.")
+
+    def _search(self) -> None:
+        query = self.search_input.text().strip()
+        if not query:
+            self._show_catalog()
+            return
+        self.search_result = self.knowledge_service.search(
+            KnowledgeBaseSearchRequest.from_fields(query=query)
+        )
+        self.knowledge_index.clear()
+        for hit in self.search_result.hits:
+            item = QListWidgetItem(self._search_hit_title(hit))
+            item.setToolTip(hit.snippet)
+            item.setData(
+                KNOWLEDGE_ITEM_ROLE,
+                KnowledgeDocumentSelection.from_search_hit(hit),
+            )
+            self.knowledge_index.addItem(item)
+        self.status_label.setText(self._search_status(self.search_result))
+        if self.knowledge_index.count():
+            self.knowledge_index.setCurrentRow(0)
+        else:
+            self._show_message(f"No results for {query!r}.")
+
+    def _open_selected_item(
+        self,
+        current: QListWidgetItem | None,
+        _previous: QListWidgetItem | None,
+    ) -> None:
+        if current is None:
+            return
+        selection = current.data(KNOWLEDGE_ITEM_ROLE)
+        if not isinstance(selection, KnowledgeDocumentSelection):
+            raise TypeError("Knowledge index item has no typed document selection")
+        self._load_document(selection)
+
+    def _load_document(self, selection: KnowledgeDocumentSelection) -> None:
+        document = self.knowledge_service.get_document(
+            KnowledgeBaseDocumentRequest.from_fields(
+                document_id=selection.document_id,
+                section_id=selection.section_id,
+                max_chars=KNOWLEDGE_DOCUMENT_MAX_CHARS,
+            )
+        )
+        self.current_document = document
+        self._active_document_id = selection.document_id
+        self._render_document(document)
+        self._populate_sections(document, selection.section_id)
+
+    def _section_changed(self, _index: int) -> None:
+        if self._updating_sections or self._active_document_id is None:
+            return
+        section_id = self.section_selector.currentData()
+        if section_id is not None and not isinstance(section_id, str):
+            raise TypeError("Knowledge section selector contains a non-string id")
+        self._load_document(
+            KnowledgeDocumentSelection(
+                document_id=self._active_document_id,
+                section_id=section_id,
+            )
+        )
+
+    def _populate_sections(
+        self,
+        document: KnowledgeBaseDocument,
+        selected_section_id: str | None,
+    ) -> None:
+        self._updating_sections = True
+        try:
+            self.section_selector.clear()
+            self.section_selector.addItem("All sections", None)
+            selected_index = 0
+            for section in document.sections:
+                self.section_selector.addItem(section.title, section.section_id)
+                if section.section_id == selected_section_id:
+                    selected_index = self.section_selector.count() - 1
+            self.section_selector.setCurrentIndex(selected_index)
+        finally:
+            self._updating_sections = False
+
+    def _render_document(self, document: KnowledgeBaseDocument) -> None:
+        if document.errors:
+            self.document_title.setText("Knowledge request failed")
+            self.document_content.setPlainText(
+                "\n".join(error.message for error in document.errors)
+            )
+            return
+        title = "Knowledge document"
+        if document.document is not None:
+            title = document.document.title
+        if document.selected_section_id is not None:
+            section = next(
+                (
+                    candidate
+                    for candidate in document.sections
+                    if candidate.section_id == document.selected_section_id
+                ),
+                None,
+            )
+            if section is not None:
+                title = f"{title} / {section.title}"
+        self.document_title.setText(title)
+        self.document_content.setPlainText(document.content)
+        if document.truncated:
+            self.status_label.setText(
+                f"Showing the first {document.max_chars:,} characters."
+            )
+
+    def _show_message(self, message: str) -> None:
+        self.current_document = None
+        self._active_document_id = None
+        self.document_title.setText("OpenHCS Knowledge Base")
+        self.document_content.setPlainText(message)
+        self._updating_sections = True
+        try:
+            self.section_selector.clear()
+        finally:
+            self._updating_sections = False
+
     @staticmethod
-    def show_help(parent=None, content: Optional[str] = None):
-        """
-        Static method to show help window.
-        
-        Args:
-            parent: Parent widget
-            content: Custom help content
-            
-        Returns:
-            Dialog result
-        """
-        help_window = HelpWindow(content, parent)
-        return help_window.exec()
+    def _search_hit_title(hit: KnowledgeBaseSearchHit) -> str:
+        if hit.section is None:
+            return hit.document.title
+        return f"{hit.document.title} / {hit.section.title}"
 
+    @staticmethod
+    def _catalog_status(catalog: KnowledgeBaseCatalog) -> str:
+        suffix = ""
+        if catalog.warnings:
+            suffix = f"; {len(catalog.warnings)} unavailable"
+        return f"{len(catalog.documents)} documents{suffix}"
 
-# Convenience function for showing help
-def show_help_dialog(parent=None, content: Optional[str] = None):
-    """
-    Show help dialog.
-    
-    Args:
-        parent: Parent widget
-        content: Custom help content
-        
-    Returns:
-        Dialog result
-    """
-    return HelpWindow.show_help(parent, content)
+    @staticmethod
+    def _search_status(result: KnowledgeBaseSearchResult) -> str:
+        if result.errors:
+            return result.errors[0].message
+        return f"{len(result.hits)} results for {result.query!r}"

@@ -101,14 +101,15 @@ class UiThreadDispatcher:
         if self._closed:
             raise UiThreadDispatcherClosed("UI bridge dispatcher is shutting down.")
 
+        if self._proxy is not None:
+            self._proxy.call_requested.emit(UiThreadCall(callback))
+            return
+
         if self._is_ui_thread():
             callback()
             return
 
-        if self._proxy is None:
-            raise UiThreadDispatchError("No Qt application is available for UI dispatch.")
-
-        self._proxy.call_requested.emit(UiThreadCall(callback))
+        raise UiThreadDispatchError("No Qt application is available for UI dispatch.")
 
     @staticmethod
     def _is_ui_thread() -> bool:

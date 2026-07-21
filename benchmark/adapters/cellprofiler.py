@@ -17,6 +17,10 @@ from typing import Any, ClassVar, Mapping
 from urllib.parse import quote
 
 from metaclass_registry import AutoRegisterMeta
+from polystore.base import _create_storage_registry
+from polystore.filemanager import FileManager
+from polystore.virtual_workspace import SourcePixelRef
+
 from benchmark.adapters.cellprofiler_installation import CellProfilerExecutableResolver
 from benchmark.adapters.cppipe_source import (
     CPPipeSourceRequest,
@@ -31,25 +35,32 @@ from benchmark.contracts.tool_adapter import (
     ToolNotInstalledError,
 )
 from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
-from openhcs.core.pipeline_image_schema import ImportedMetadataTable
-from openhcs.core.source_schema_workspace import (
-    ImportedMetadataPathResolver,
-    SourceSchemaImageSetSelection,
-    SourceSchemaWorkspaceMaterialization,
-    materialize_source_schema_workspace,
+from openhcs.constants import Backend
+from openhcs.core.config import GlobalPipelineConfig, WellFilterConfig
+from openhcs.core.source_binding_workspace import (
+    SourceBindingWorkspaceMaterialization,
+    materialize_source_binding_workspace,
 )
+from openhcs.core.source_bindings import (
+    ImportedMetadataTable,
+    SourceBindingsConfig,
+    source_bindings_defaults_to_base,
+)
+from openhcs.core.utils import WellFilterProcessor
 from openhcs.core.runtime_equivalence import RuntimeOutputSnapshot
 from openhcs.interop.cellprofiler.parser import CPPipeParser
-from openhcs.interop.cellprofiler.source_schema import (
-    compile_image_schema,
-    is_imported_metadata_method,
+from openhcs.interop.cellprofiler.pipeline_import import (
+    import_cellprofiler_pipeline,
 )
+from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
+from openhcs.processing.backends.cellprofiler.infrastructure import MetadataModule
 
-
-BENCHMARK_CACHE_DOMAINS = frozenset({"native_reference"})
 PYTHONHASHSEED_ENV = "PYTHONHASHSEED"
 DETERMINISTIC_PYTHONHASHSEED = "0"
+NUMPY_DISABLED_CPU_FEATURES_ENV = "NPY_DISABLE_CPU_FEATURES"
+DETERMINISTIC_NUMPY_DISABLED_CPU_FEATURES = "AVX512_SKX"
 NATIVE_CELLPROFILER_SUCCESS_MARKER = ".cellprofiler_benchmark_reference.json"
+NATIVE_CELLPROFILER_REFERENCE_SCHEMA_VERSION = 1
 CELLPROFILER_FIRST_IMAGE_SET_PARAM = "cellprofiler_first_image_set"
 CELLPROFILER_LAST_IMAGE_SET_PARAM = "cellprofiler_last_image_set"
 CELLPROFILER_IMAGE_SET_BOUND_PARAMS = frozenset(
@@ -63,7 +74,7 @@ CELLPROFILER_IMAGE_SET_BOUND_PARAMS = frozenset(
 class NativeCellProfilerInputDomainStrategyKey(StrEnum):
     """Registered native CellProfiler input-domain identities."""
 
-    SELECTED_SOURCE_SCHEMA_WELLS = "selected_source_schema_wells"
+    SELECTED_WELLS = "selected_wells"
     EMBEDDED_IMAGE_PLANES = "embedded_image_planes"
     DATASET_FOLDER = "dataset_folder"
 
@@ -103,7 +114,6 @@ class NativeCellProfilerProvenanceField(StrEnum):
     """Native CellProfiler provenance fields with cross-run semantics."""
 
     INPUT_DOMAIN_STRATEGY = "native_input_domain_strategy"
-    SOURCE_SCHEMA_IMAGE_SET_SELECTION = "native_source_schema_image_set_selection"
     SOURCE_WORKSPACE = "native_source_workspace"
     SOURCE_PLANE_COUNT = "native_source_plane_count"
     SELECTED_WELLS = "native_selected_wells"
@@ -112,6 +122,7 @@ class NativeCellProfilerProvenanceField(StrEnum):
     SELECTED_SOURCE_FLATTENED = "native_selected_source_flattened"
     SELECTED_SOURCE_STAGING_ROOT = "native_selected_source_staging_root"
     FILE_LIST_PATH = "native_file_list_path"
+    NUMPY_DISABLED_CPU_FEATURES = "native_numpy_disabled_cpu_features"
 
 
 class HeadlessCellProfilerPipelinePolicy:
@@ -187,7 +198,10 @@ class NativeCellProfilerImportedMetadataPipelinePatch:
                 continue
             setting_name, setting_value, newline = setting
             if setting_name == "Metadata extraction method":
-                in_imported_metadata_block = is_imported_metadata_method(setting_value)
+                in_imported_metadata_block = (
+                    setting_value.strip()
+                    == MetadataModule.ExtractionMethod.IMPORTED.value
+                )
                 patched_lines.append(line)
                 continue
             if not in_imported_metadata_block:
@@ -239,7 +253,7 @@ class CellProfilerRunRequest:
     pipeline_params: dict[str, Any]
     metrics: tuple[MetricCollector, ...]
     output_dir: Path
-    source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None
+    global_config: GlobalPipelineConfig
 
     @property
     def dataset_id(self) -> str:
@@ -310,7 +324,7 @@ class NativeCellProfilerSourcePlacement:
 
 @dataclass(frozen=True, slots=True)
 class NativeCellProfilerSelectedSourceUniverse:
-    """Selected source-schema files projected into a native CP input directory."""
+    """Selected source-binding files projected into a native CP input directory."""
 
     source_paths: tuple[Path, ...]
     placements: tuple[NativeCellProfilerSourcePlacement, ...] = ()
@@ -341,26 +355,73 @@ class NativeCellProfilerSelectedSourceUniverse:
     @classmethod
     def from_workspace_wells(
         cls,
-        workspace: SourceSchemaWorkspaceMaterialization,
+        workspace: SourceBindingWorkspaceMaterialization,
         well_ids: tuple[str, ...],
         *,
+        filemanager: FileManager,
         imported_metadata_tables: tuple[ImportedMetadataTable, ...] = (),
     ) -> "NativeCellProfilerSelectedSourceUniverse":
-        source_paths = workspace.source_paths_for_primary_wells(
-            well_ids,
-            imported_metadata_tables=imported_metadata_tables,
+        selected_wells = set(well_ids)
+        if not selected_wells:
+            raise ValueError("well_ids must contain at least one well.")
+        parser = SourceSchemaFilenameParser()
+        source_paths = [
+            cls._workspace_source_path(workspace, mapping, filemanager)
+            for virtual_path, mapping in workspace.plane_mappings.items()
+            if cls._virtual_path_well(parser, virtual_path) in selected_wells
+        ]
+        source_paths.extend(
+            cls._workspace_source_path(workspace, mapping, filemanager)
+            for mapping in workspace.artifact_mappings.values()
         )
+        source_paths = [path for path in source_paths if path.is_file()]
         placement_plan = NativeCellProfilerImportedMetadataPlacementPlan(
             workspace.source_root,
             imported_metadata_tables,
-            source_paths,
+            tuple(source_paths),
         )
-        placements = placement_plan.placements()
         imported_metadata_paths = tuple(
             placement_plan.imported_metadata_path(table)
             for table in imported_metadata_tables
         )
-        return cls(source_paths, placements, imported_metadata_paths)
+        source_paths.extend(imported_metadata_paths)
+        unique_source_paths = tuple(dict.fromkeys(source_paths))
+        placement_plan = NativeCellProfilerImportedMetadataPlacementPlan(
+            workspace.source_root,
+            imported_metadata_tables,
+            unique_source_paths,
+        )
+        return cls(
+            unique_source_paths,
+            placement_plan.placements(),
+            imported_metadata_paths,
+        )
+
+    @staticmethod
+    def _virtual_path_well(
+        parser: SourceSchemaFilenameParser,
+        virtual_path: str,
+    ) -> str:
+        parsed = parser.parse_filename(virtual_path)
+        if parsed is None:
+            raise ValueError(
+                f"Cannot parse source-binding virtual filename {virtual_path!r}."
+            )
+        return str(parsed["well"])
+
+    @staticmethod
+    def _workspace_source_path(
+        workspace: SourceBindingWorkspaceMaterialization,
+        mapping: Mapping[str, object],
+        filemanager: FileManager,
+    ) -> Path:
+        source_ref = SourcePixelRef.from_workspace_mapping(mapping)
+        address = filemanager.resolve_address(
+            source_ref.backend_address,
+            source_ref.backend,
+            base_path=workspace.source_root,
+        )
+        return Path(address).resolve()
 
     def materialize_flat_input_dir(self, input_dir: Path) -> tuple[Path, ...]:
         input_dir = Path(input_dir)
@@ -444,13 +505,9 @@ class NativeCellProfilerScannerSafeInputPath:
         return Path("/tmp") / "openhcsnativecellprofiler" / _alpha_slug(digest[:16])
 
     def identity(self) -> str:
-        selection = self.request.source_schema_image_set_selection
         return json.dumps(
             {
                 "dataset": str(self.request.dataset_path),
-                "source_schema_image_set_selection": _source_schema_selection_payload(
-                    selection
-                ),
                 "pipeline": str(self.source.path),
             },
             sort_keys=True,
@@ -521,15 +578,20 @@ class NativeCellProfilerImportedMetadataPlacementPlan:
         return relative_paths
 
     def imported_metadata_path(self, table: ImportedMetadataTable) -> Path:
-        resolver = ImportedMetadataPathResolver(self.source_root)
-        for candidate in resolver.path_candidates(table):
-            if candidate.is_file():
-                return candidate
-        raise ToolExecutionError(
-            "Imported metadata table does not exist for native CellProfiler: "
-            f"{table.location!r}. Searched: "
-            f"{tuple(str(candidate) for candidate in resolver.path_candidates(table))!r}."
-        )
+        if table.location is None:
+            raise ValueError("Imported metadata tables require a location.")
+        location = Path(table.location)
+        if not location.is_absolute():
+            raise ToolExecutionError(
+                "Native CellProfiler requires imported metadata locations resolved by "
+                f"the source-binding authority, got {table.location!r}."
+            )
+        if not location.is_file():
+            raise ToolExecutionError(
+                "Resolved imported metadata table does not exist for native "
+                f"CellProfiler: {location}."
+            )
+        return location
 
 
 class NativeCellProfilerInputDomainStrategy(ABC, metaclass=AutoRegisterMeta):
@@ -563,6 +625,18 @@ class NativeCellProfilerInputDomainStrategy(ABC, metaclass=AutoRegisterMeta):
             return matching_strategies[0]
         return DefaultNativeCellProfilerInputDomainStrategy()
 
+    @classmethod
+    def select_for_request(
+        cls,
+        request: CellProfilerRunRequest,
+    ) -> "NativeCellProfilerInputDomainStrategy":
+        """Select the input-domain owner from one complete run request."""
+
+        return cls.select_for(
+            request,
+            resolve_cppipe_source(request.cppipe_source),
+        )
+
     @abstractmethod
     def accepts(
         self,
@@ -580,47 +654,46 @@ class NativeCellProfilerInputDomainStrategy(ABC, metaclass=AutoRegisterMeta):
     ) -> NativeCellProfilerInputDomain:
         """Return the concrete native CellProfiler input domain."""
 
-    def accepts_success_marker_source_schema(
-        self,
-        source_schema: Any,
-        provenance: Mapping[str, Any],
-        *,
-        source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
-    ) -> bool:
-        """Return whether a success marker from this domain is reusable."""
-        del source_schema_image_set_selection
-        return True
-
     def reference_scope_slugs(
         self,
         request: CellProfilerRunRequest,
-        source: CPPipeSourceResolution,
     ) -> tuple[str, ...]:
         """Return native-reference scope suffixes owned by this input domain."""
         slug = native_cellprofiler_image_set_scope_slug(request.pipeline_params)
         return (slug,) if slug is not None else ()
 
+    def accepts_reference_provenance(
+        self,
+        provenance: Mapping[str, Any],
+    ) -> bool:
+        """Return whether provenance proves this exact input-domain strategy."""
+        declared = provenance.get(
+            NativeCellProfilerProvenanceField.INPUT_DOMAIN_STRATEGY
+        )
+        try:
+            declared_strategy = NativeCellProfilerInputDomainStrategyKey(declared)
+        except (TypeError, ValueError):
+            return False
+        return declared_strategy is self.strategy_key
 
-class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
+
+class SelectedWellNativeCellProfilerInputDomainStrategy(
     NativeCellProfilerInputDomainStrategy
 ):
-    """Run native CellProfiler on the same source-schema wells selected for OpenHCS."""
+    """Run native CellProfiler on wells selected by public pipeline config."""
 
-    strategy_key = NativeCellProfilerInputDomainStrategyKey.SELECTED_SOURCE_SCHEMA_WELLS
+    strategy_key = NativeCellProfilerInputDomainStrategyKey.SELECTED_WELLS
 
     def accepts(
         self,
         request: CellProfilerRunRequest,
         source: CPPipeSourceResolution,
     ) -> bool:
-        modules = CPPipeParser().parse(source.path)
-        schema = compile_image_schema(modules)
-        selection = request.source_schema_image_set_selection
-        return (
-            not schema.is_empty
-            and selection is not None
-            and selection.constrains_image_sets()
+        source_bindings = _cellprofiler_source_bindings(
+            source,
+            source_root=request.dataset_path,
         )
+        return not source_bindings.is_empty and _request_has_well_filter(request)
 
     def prepare(
         self,
@@ -628,20 +701,22 @@ class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
         source: CPPipeSourceResolution,
         execution_cppipe_path: Path,
     ) -> NativeCellProfilerInputDomain:
-        modules = CPPipeParser().parse(source.path)
-        schema = compile_image_schema(modules)
-        workspace = materialize_source_schema_workspace(
-            request.dataset_path,
-            request.output_dir / "native_cellprofiler_selected_source_workspace",
-            schema,
-            image_set_selection=request.source_schema_image_set_selection,
+        source_bindings = _cellprofiler_source_bindings(
+            source,
+            source_root=request.dataset_path,
         )
-        selected_wells = workspace.primary_wells()
+        workspace, filemanager = _materialize_native_source_workspace(
+            request,
+            source_bindings,
+            workspace_name="native_cellprofiler_selected_source_workspace",
+        )
+        selected_wells = _selected_source_wells(request, workspace)
         selected_source_universe = (
             NativeCellProfilerSelectedSourceUniverse.from_workspace_wells(
                 workspace,
                 selected_wells,
-                imported_metadata_tables=schema.imported_metadata_tables,
+                filemanager=filemanager,
+                imported_metadata_tables=source_bindings.imported_metadata_tables,
             )
         )
         selected_paths = selected_source_universe.source_paths
@@ -660,7 +735,7 @@ class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
             selected_cppipe_path,
             request.output_dir,
         )
-        if schema.image_plane_sources:
+        if source_bindings.image_plane_sources:
             embedded_strategy = (
                 EmbeddedImagePlaneNativeCellProfilerInputDomainStrategy()
             )
@@ -682,11 +757,6 @@ class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
                     NativeCellProfilerProvenanceField.INPUT_DOMAIN_STRATEGY: (
                         self.strategy_key
                     ),
-                    NativeCellProfilerProvenanceField.SOURCE_SCHEMA_IMAGE_SET_SELECTION: (
-                        _source_schema_selection_payload(
-                            request.source_schema_image_set_selection
-                        )
-                    ),
                     NativeCellProfilerProvenanceField.SOURCE_WORKSPACE: str(
                         workspace.workspace_root
                     ),
@@ -700,7 +770,7 @@ class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
                 },
             )
         requires_flat_input_dir = bool(
-            workspace.auxiliary_mappings or schema.imported_metadata_tables
+            workspace.artifact_mappings or source_bindings.imported_metadata_tables
         )
         selected_input_path = NativeCellProfilerScannerSafeInputPath(request, source)
         selected_input_dir = selected_input_path.input_dir()
@@ -721,11 +791,6 @@ class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
             provenance={
                 NativeCellProfilerProvenanceField.INPUT_DOMAIN_STRATEGY: (
                     self.strategy_key
-                ),
-                NativeCellProfilerProvenanceField.SOURCE_SCHEMA_IMAGE_SET_SELECTION: (
-                    _source_schema_selection_payload(
-                        request.source_schema_image_set_selection
-                    )
                 ),
                 NativeCellProfilerProvenanceField.SOURCE_WORKSPACE: str(
                     workspace.workspace_root
@@ -762,31 +827,18 @@ class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
     def reference_scope_slugs(
         self,
         request: CellProfilerRunRequest,
-        source: CPPipeSourceResolution,
     ) -> tuple[str, ...]:
-        sample_slug = native_cellprofiler_sample_scope_slug(
-            request.source_schema_image_set_selection
+        well_filter_slug = native_cellprofiler_well_filter_scope_slug(
+            request.global_config.well_filter_config
         )
         return tuple(
             slug
             for slug in (
-                sample_slug,
-                *super().reference_scope_slugs(request, source),
+                well_filter_slug,
+                *super().reference_scope_slugs(request),
             )
             if slug is not None
         )
-
-    def accepts_success_marker_source_schema(
-        self,
-        source_schema: Any,
-        provenance: Mapping[str, Any],
-        *,
-        source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
-    ) -> bool:
-        del source_schema
-        return provenance.get(
-            NativeCellProfilerProvenanceField.SOURCE_SCHEMA_IMAGE_SET_SELECTION
-        ) == _source_schema_selection_payload(source_schema_image_set_selection)
 
 
 class EmbeddedImagePlaneNativeCellProfilerInputDomainStrategy(
@@ -801,10 +853,14 @@ class EmbeddedImagePlaneNativeCellProfilerInputDomainStrategy(
         request: CellProfilerRunRequest,
         source: CPPipeSourceResolution,
     ) -> bool:
-        if _request_has_source_schema_image_set_selection(request):
+        if _request_has_well_filter(request):
             return False
-        modules = CPPipeParser().parse(source.path)
-        return bool(compile_image_schema(modules).image_plane_sources)
+        return bool(
+            _cellprofiler_source_bindings(
+                source,
+                source_root=request.dataset_path,
+            ).image_plane_sources
+        )
 
     def prepare(
         self,
@@ -812,20 +868,30 @@ class EmbeddedImagePlaneNativeCellProfilerInputDomainStrategy(
         source: CPPipeSourceResolution,
         execution_cppipe_path: Path,
     ) -> NativeCellProfilerInputDomain:
-        modules = CPPipeParser().parse(source.path)
-        schema = compile_image_schema(modules)
-        workspace = materialize_source_schema_workspace(
-            request.dataset_path,
-            request.output_dir / "native_cellprofiler_source_workspace",
-            schema,
+        source_bindings = _cellprofiler_source_bindings(
+            source,
+            source_root=request.dataset_path,
         )
+        workspace, filemanager = _materialize_native_source_workspace(
+            request,
+            source_bindings,
+            workspace_name="native_cellprofiler_source_workspace",
+        )
+        source_paths = tuple(
+            dict.fromkeys(
+                NativeCellProfilerSelectedSourceUniverse._workspace_source_path(
+                    workspace,
+                    mapping,
+                    filemanager,
+                )
+                for mapping in workspace.plane_mappings.values()
+            )
+        )
+        source_paths = tuple(path for path in source_paths if path.is_file())
         patched_cppipe_path = self.rewrite_embedded_image_plane_sources(
             execution_cppipe_path,
             request.output_dir / "native_cellprofiler_headless",
-            tuple(
-                self.file_uri((workspace.workspace_root / real_path).resolve())
-                for real_path in workspace.primary_mappings.values()
-            ),
+            tuple(self.file_uri(path) for path in source_paths),
         )
         input_dir = request.output_dir / "native_cellprofiler_empty_input"
         if input_dir.exists():
@@ -841,9 +907,7 @@ class EmbeddedImagePlaneNativeCellProfilerInputDomainStrategy(
                 NativeCellProfilerProvenanceField.SOURCE_WORKSPACE: str(
                     workspace.workspace_root
                 ),
-                NativeCellProfilerProvenanceField.SOURCE_PLANE_COUNT: len(
-                    workspace.primary_mappings
-                ),
+                NativeCellProfilerProvenanceField.SOURCE_PLANE_COUNT: len(source_paths),
             },
         )
 
@@ -915,7 +979,7 @@ class DefaultNativeCellProfilerInputDomainStrategy(
 ):
     """Run native CellProfiler against the visible dataset directory."""
 
-    strategy_key = None
+    strategy_key = NativeCellProfilerInputDomainStrategyKey.DATASET_FOLDER
 
     def accepts(
         self,
@@ -937,7 +1001,7 @@ class DefaultNativeCellProfilerInputDomainStrategy(
             input_dir=request.dataset_path,
             provenance={
                 NativeCellProfilerProvenanceField.INPUT_DOMAIN_STRATEGY: (
-                    NativeCellProfilerInputDomainStrategyKey.DATASET_FOLDER
+                    self.strategy_key
                 )
             },
         )
@@ -952,13 +1016,13 @@ class CellProfilerAdapter(ToolAdapter):
         self,
         executable: str | Path | None = None,
         *,
-        source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
+        global_config: GlobalPipelineConfig | None = None,
     ) -> None:
         self._executable_resolver = CellProfilerExecutableResolver(
             Path(executable) if executable is not None else None
         )
         self.version = "unknown"
-        self.source_schema_image_set_selection = source_schema_image_set_selection
+        self.global_config = global_config or GlobalPipelineConfig()
 
     def validate_installation(self) -> None:
         """Check that the CellProfiler command-line runner is available."""
@@ -996,7 +1060,7 @@ class CellProfilerAdapter(ToolAdapter):
             pipeline_params=dict(pipeline_params),
             metrics=self._validated_metric_collectors(metrics),
             output_dir=Path(output_dir).resolve(),
-            source_schema_image_set_selection=(self.source_schema_image_set_selection),
+            global_config=self.global_config,
         )
         request.output_dir.mkdir(parents=True, exist_ok=True)
         phase_timing = PhaseTimingTrace(
@@ -1046,6 +1110,9 @@ class CellProfilerAdapter(ToolAdapter):
                 PYTHONHASHSEED_ENV,
                 DETERMINISTIC_PYTHONHASHSEED,
             ),
+            NUMPY_DISABLED_CPU_FEATURES_ENV: (
+                DETERMINISTIC_NUMPY_DISABLED_CPU_FEATURES
+            ),
         }
 
         with ExitStack() as stack:
@@ -1087,6 +1154,9 @@ class CellProfilerAdapter(ToolAdapter):
             "csv_output_count": len(snapshot.tables),
             "image_output_count": len(snapshot.images),
             "pythonhashseed": subprocess_env[PYTHONHASHSEED_ENV],
+            NativeCellProfilerProvenanceField.NUMPY_DISABLED_CPU_FEATURES: (
+                subprocess_env[NUMPY_DISABLED_CPU_FEATURES_ENV]
+            ),
             "phase_timing_records": phase_timing.payloads(),
             **native_input_domain.provenance,
         }
@@ -1157,20 +1227,22 @@ def native_cellprofiler_image_set_scope_slug(
     return "image_sets_" + "_".join(parts)
 
 
-def native_cellprofiler_sample_scope_slug(
-    selection: SourceSchemaImageSetSelection | None,
+def native_cellprofiler_well_filter_scope_slug(
+    well_filter_config: WellFilterConfig,
 ) -> str | None:
-    """Return a stable native-reference scope suffix for source-schema selection."""
-    if selection is None:
+    """Return a stable native-reference suffix for public well filtering."""
+    well_filter = well_filter_config.well_filter
+    if well_filter is None:
         return None
-    parts: list[str] = []
-    if selection.well_filter:
-        parts.append("wells_" + "_".join(selection.well_filter))
-    if selection.max_image_set_count is not None:
-        parts.append(f"first{selection.max_image_set_count}imagesets")
-    if not parts:
-        return None
-    return "samples_" + "_".join(parts)
+    if isinstance(well_filter, int):
+        filter_slug = f"first{well_filter}"
+    elif isinstance(well_filter, str):
+        filter_slug = _scope_slug_fragment(well_filter)
+    else:
+        filter_slug = (
+            "_".join(_scope_slug_fragment(value) for value in well_filter) or "empty"
+        )
+    return f"wells_{well_filter_config.well_filter_mode.value}_{filter_slug}"
 
 
 def native_cellprofiler_reference_scope_slugs(
@@ -1179,7 +1251,7 @@ def native_cellprofiler_reference_scope_slugs(
     pipeline_name: str,
     pipeline_params: Mapping[str, Any],
     output_dir: Path,
-    source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
+    global_config: GlobalPipelineConfig,
 ) -> tuple[str, ...]:
     """Return native-reference scope suffixes from the selected input domain."""
     request = CellProfilerRunRequest(
@@ -1188,11 +1260,35 @@ def native_cellprofiler_reference_scope_slugs(
         pipeline_params=dict(pipeline_params),
         metrics=(),
         output_dir=Path(output_dir),
-        source_schema_image_set_selection=source_schema_image_set_selection,
+        global_config=global_config,
     )
-    source = resolve_cppipe_source(request.cppipe_source)
-    strategy = NativeCellProfilerInputDomainStrategy.select_for(request, source)
-    return strategy.reference_scope_slugs(request, source)
+    strategy = NativeCellProfilerInputDomainStrategy.select_for_request(request)
+    return strategy.reference_scope_slugs(request)
+
+
+def native_cellprofiler_reference_matches_scope(
+    reference_output_dir: Path,
+    *,
+    dataset_path: Path,
+    pipeline_name: str,
+    pipeline_params: Mapping[str, Any],
+    output_dir: Path,
+    global_config: GlobalPipelineConfig,
+) -> bool:
+    """Return whether a completed reference proves the selected input domain."""
+
+    request = CellProfilerRunRequest(
+        dataset_path=Path(dataset_path),
+        pipeline_name=pipeline_name,
+        pipeline_params=dict(pipeline_params),
+        metrics=(),
+        output_dir=Path(output_dir),
+        global_config=global_config,
+    )
+    strategy = NativeCellProfilerInputDomainStrategy.select_for_request(request)
+    return strategy.accepts_reference_provenance(
+        native_cellprofiler_reference_provenance(reference_output_dir)
+    )
 
 
 def native_cellprofiler_output_root(request: CellProfilerRunRequest) -> Path:
@@ -1216,45 +1312,110 @@ def _alpha_slug(value: str) -> str:
     return "".join(chr(ord("a") + int(char, 16)) for char in value.lower())
 
 
-def _request_has_source_schema_image_set_selection(
+def _scope_slug_fragment(value: object) -> str:
+    return (
+        "".join(
+            character if character.isalnum() else "_"
+            for character in str(value).strip()
+        ).strip("_")
+        or "empty"
+    )
+
+
+def _cellprofiler_source_bindings(
+    source: CPPipeSourceResolution,
+    *,
+    source_root: Path,
+) -> SourceBindingsConfig:
+    _steps, pipeline_config = import_cellprofiler_pipeline(
+        source.path,
+        source_root=source_root,
+    )
+    source_bindings = source_bindings_defaults_to_base(
+        pipeline_config.source_bindings_config
+    ).resolved_imported_metadata_locations(
+        source_root,
+        portable_roots=(source.path.parent,),
+    )
+    return source_bindings
+
+
+def _materialize_native_source_workspace(
     request: CellProfilerRunRequest,
-) -> bool:
-    selection = request.source_schema_image_set_selection
-    return selection is not None and selection.constrains_image_sets()
+    source_bindings: SourceBindingsConfig,
+    *,
+    workspace_name: str,
+) -> tuple[SourceBindingWorkspaceMaterialization, FileManager]:
+    filemanager = FileManager(_create_storage_registry())
+    source_files = tuple(
+        filemanager.list_files(
+            request.dataset_path,
+            Backend.DISK.value,
+            recursive=True,
+        )
+    )
+    workspace = materialize_source_binding_workspace(
+        request.dataset_path,
+        request.output_dir / workspace_name,
+        source_bindings,
+        filemanager=filemanager,
+        source_backend=Backend.DISK,
+        workspace_backend=Backend.DISK,
+        source_files=source_files,
+        parser=SourceSchemaFilenameParser(),
+    )
+    return workspace, filemanager
 
 
-def _source_schema_selection_payload(
-    selection: SourceSchemaImageSetSelection | None,
-) -> dict[str, object] | None:
-    if selection is None:
-        return None
-    return {
-        "well_filter": list(selection.well_filter),
-        "max_image_set_count": selection.max_image_set_count,
-    }
+def _primary_workspace_wells(
+    workspace: SourceBindingWorkspaceMaterialization,
+) -> tuple[str, ...]:
+    parser = SourceSchemaFilenameParser()
+    return tuple(
+        dict.fromkeys(
+            NativeCellProfilerSelectedSourceUniverse._virtual_path_well(
+                parser,
+                virtual_path,
+            )
+            for virtual_path in workspace.plane_mappings
+        )
+    )
+
+
+def _selected_source_wells(
+    request: CellProfilerRunRequest,
+    workspace: SourceBindingWorkspaceMaterialization,
+) -> tuple[str, ...]:
+    available_wells = _primary_workspace_wells(workspace)
+    well_filter_config = request.global_config.well_filter_config
+    well_filter = well_filter_config.well_filter
+    if well_filter is None:
+        return available_wells
+    selected_wells = tuple(
+        WellFilterProcessor.resolve_filter_with_mode(
+            well_filter,
+            well_filter_config.well_filter_mode,
+            list(available_wells),
+        )
+    )
+    if not selected_wells:
+        raise ToolExecutionError(
+            "Native CellProfiler public well filter selected no source wells."
+        )
+    return selected_wells
+
+
+def _request_has_well_filter(request: CellProfilerRunRequest) -> bool:
+    return request.global_config.well_filter_config.well_filter is not None
 
 
 def native_cellprofiler_reference_is_complete(
     reference_output_dir: Path,
-    *,
-    source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
 ) -> bool:
     """Return whether a native reference has a registered completeness proof."""
     reference = Path(reference_output_dir)
-    if (reference / NATIVE_CELLPROFILER_SUCCESS_MARKER).is_file():
-        return (
-            NativeCellProfilerSuccessMarkerReferenceCompletenessStrategy().is_complete(
-                reference,
-                source_schema_image_set_selection=source_schema_image_set_selection,
-            )
-        )
-    if source_schema_image_set_selection is not None:
-        return False
     return any(
-        strategy_type().is_complete(
-            reference,
-            source_schema_image_set_selection=source_schema_image_set_selection,
-        )
+        strategy_type().is_complete(reference)
         for strategy_type in NativeCellProfilerReferenceCompletenessStrategy.__registry__.values()
     )
 
@@ -1273,8 +1434,6 @@ class NativeCellProfilerReferenceCompletenessStrategy(
     def is_complete(
         self,
         reference_output_dir: Path,
-        *,
-        source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
     ) -> bool:
         """Return whether this proof accepts the reference directory."""
 
@@ -1289,43 +1448,10 @@ class NativeCellProfilerSuccessMarkerReferenceCompletenessStrategy(
     def is_complete(
         self,
         reference_output_dir: Path,
-        *,
-        source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
     ) -> bool:
-        marker = reference_output_dir / NATIVE_CELLPROFILER_SUCCESS_MARKER
-        if not marker.is_file():
-            return False
-        provenance = native_cellprofiler_reference_provenance(reference_output_dir)
-        selection_payload = _source_schema_selection_payload(
-            source_schema_image_set_selection
-        )
-        if selection_payload is not None and provenance.get(
-            NativeCellProfilerProvenanceField.SOURCE_SCHEMA_IMAGE_SET_SELECTION
-        ) != selection_payload:
-            return False
-        cppipe_path = provenance.get("cppipe_path")
-        if not isinstance(cppipe_path, str):
-            return selection_payload is None
-        source_path = Path(cppipe_path)
-        if not source_path.exists():
-            return selection_payload is None
-        modules = CPPipeParser().parse(source_path)
-        source_schema = compile_image_schema(modules)
-        if source_schema.is_empty:
-            return selection_payload is None
-        strategy_key = provenance.get(
-            NativeCellProfilerProvenanceField.INPUT_DOMAIN_STRATEGY
-        )
-        strategy_type = NativeCellProfilerInputDomainStrategy.__registry__.get(
-            strategy_key
-        )
-        if strategy_type is None:
-            return False
-        return strategy_type().accepts_success_marker_source_schema(
-            source_schema,
-            provenance,
-            source_schema_image_set_selection=source_schema_image_set_selection,
-        )
+        return (
+            reference_output_dir / NATIVE_CELLPROFILER_SUCCESS_MARKER
+        ).is_file()
 
 
 class NativeCellProfilerSemanticSnapshotReferenceCompletenessStrategy(
@@ -1338,10 +1464,7 @@ class NativeCellProfilerSemanticSnapshotReferenceCompletenessStrategy(
     def is_complete(
         self,
         reference_output_dir: Path,
-        *,
-        source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
     ) -> bool:
-        del source_schema_image_set_selection
         if not reference_output_dir.exists():
             return False
         try:
@@ -1359,6 +1482,8 @@ def native_cellprofiler_reference_provenance(
     if not marker.is_file():
         return {}
     payload = json.loads(marker.read_text(encoding="utf-8"))
+    if payload.get("schema_version") != NATIVE_CELLPROFILER_REFERENCE_SCHEMA_VERSION:
+        return {}
     provenance = payload.get("provenance")
     return dict(provenance) if isinstance(provenance, dict) else {}
 
@@ -1371,7 +1496,7 @@ def _write_native_reference_success_marker(
     marker.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": NATIVE_CELLPROFILER_REFERENCE_SCHEMA_VERSION,
                 "provenance": provenance,
             },
             indent=2,

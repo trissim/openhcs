@@ -13,10 +13,12 @@ from typing import ClassVar, TypeAlias
 import numpy as np
 
 from polystore.streaming_constants import StreamingDataType
+from polystore.streaming.identity import StreamProducerIdentity
 from zmqruntime.viewer_protocol import ViewerComponentMode
 
-from openhcs.core.aligned_image_payload import project_singleton_stack_image_domain
-from openhcs.core.image_shapes import ArrayShape
+from openhcs.core.runtime_image_values import (
+    ImagePayloadMetadata,
+)
 from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from openhcs.runtime.viewer_protocol import (
     NapariLayerKind,
@@ -27,6 +29,7 @@ from openhcs.runtime.viewer_component_system import (
     ComponentValue,
     ComponentValues,
     ViewerComponentAxisSemantics,
+    ViewerComponentValueDomainPayload,
     ViewerLayerAxisProjection,
 )
 
@@ -192,7 +195,10 @@ class NapariStreamLayerItem:
     """One component-addressed payload staged for a Napari layer update."""
 
     data: LayerData
+    producer: StreamProducerIdentity
     address: NapariStreamLayerAddress
+    image_metadata: ImagePayloadMetadata
+    plane_component_domain: ViewerComponentValueDomainPayload
 
 
 class NapariImagePayloadAxisLabelPolicy:
@@ -204,40 +210,42 @@ class NapariImagePayloadAxisLabelPolicy:
     def axis_labels(
         cls,
         data: LayerData,
+        image_metadata: ImagePayloadMetadata,
         consumed_payload_axes: tuple[int, ...] = (),
     ) -> tuple[str, ...]:
-        shape = tuple(int(dimension) for dimension in np.shape(data))
-        local_axis_count = cls.local_axis_count(shape)
+        local_axis_count = len(cls.local_axis_indices(data, image_metadata))
         consumed = frozenset(consumed_payload_axes)
-        return tuple(
-            cls.axis_label(index)
+        unbound_axes = tuple(
+            index
             for index in range(local_axis_count)
             if index not in consumed
         )
+        if unbound_axes:
+            raise ValueError(
+                "Napari image payload exposes non-spatial, non-color axes without "
+                "an exact OpenHCS component-axis binding: "
+                f"{unbound_axes!r}."
+            )
+        return ()
 
     @classmethod
-    def local_axis_count(cls, shape: tuple[int, ...]) -> int:
-        if len(shape) <= cls.SPATIAL_AXIS_COUNT:
-            return 0
-
-        color_axis_count = 0
-        if cls.has_color_axis(shape):
-            color_axis_count = 1
-        return max(0, len(shape) - cls.SPATIAL_AXIS_COUNT - color_axis_count)
-
-    @classmethod
-    def has_color_axis(cls, shape: tuple[int, ...]) -> bool:
-        return len(shape) >= 3 and ArrayShape(
-            ndim=len(shape),
-            shape=shape,
-        ).has_channel_last()
-
-    @staticmethod
-    def axis_label(index: int) -> str:
-        if index == 0:
-            return "plane"
-        return f"plane_{index + 1}"
-
+    def local_axis_indices(
+        cls,
+        data: LayerData,
+        image_metadata: ImagePayloadMetadata,
+    ) -> tuple[int, ...]:
+        ndim = int(np.ndim(data))
+        spatial_axes = image_metadata.spatial_axes_yx(data)
+        if spatial_axes is None:
+            raise ValueError(
+                "Napari image payload requires two declared spatial axes."
+            )
+        channel_axis = image_metadata.normalized_source_channel_axis(data)
+        return tuple(
+            axis
+            for axis in range(ndim)
+            if axis not in spatial_axes and axis != channel_axis
+        )
 
 @dataclass(frozen=True, slots=True)
 class NapariAggregateAxisBinding:
@@ -277,6 +285,24 @@ class NapariAggregateAxisBindingSet:
     def payload_axes(self) -> tuple[int, ...]:
         return tuple(binding.payload_axis for binding in self.bindings)
 
+    @property
+    def scalar_component_values(self) -> ComponentMap:
+        """Return payload-axis components whose exact domain is one value."""
+
+        return {
+            binding.component: binding.values[0]
+            for binding in self.bindings
+            if binding.extent == 1
+        }
+
+    def item_scalar_components(self, item: NapariStreamLayerItem) -> ComponentMap:
+        """Return the exact scalar identity represented by one payload item."""
+
+        return {
+            **item.address.components,
+            **self.scalar_component_values,
+        }
+
     def item_component_values(
         self,
         item: NapariStreamLayerItem,
@@ -306,7 +332,7 @@ class NapariAggregateAxisBindingSet:
 
 
 class NapariAggregateAxisBindingAuthority:
-    """Resolve payload-local stack axes against declared viewer component domains."""
+    """Bind payload-local axes through their exact declared component domains."""
 
     @classmethod
     def bindings(
@@ -322,27 +348,80 @@ class NapariAggregateAxisBindingAuthority:
         declared_component_values = (
             component_axis_semantics.required_component_values(axis_components)
         )
-        route_component_values = cls._route_component_values(items, axis_components)
         extents = cls._aggregate_extents(items)
         if not extents:
+            if any(item.plane_component_domain for item in items):
+                raise ValueError(
+                    "Napari payload declares plane component values without a "
+                    "payload-local plane axis."
+                )
             return NapariAggregateAxisBindingSet()
-        bindings = []
-        used_components: set[str] = set()
-        for payload_axis, extent in enumerate(extents):
-            component = cls._component_for_extent(
-                extent=extent,
-                axis_components=axis_components,
-                declared_component_values=declared_component_values,
-                route_component_values=route_component_values,
-                used_components=used_components,
+        plane_domains = tuple(
+            item.plane_component_domain.entries
+            for item in items
+        )
+        present_domains = tuple(domain for domain in plane_domains if domain)
+        if not present_domains:
+            raise ValueError(
+                "Napari aggregate payload axes require an exact "
+                "plane_component_values declaration."
             )
-            if component is None:
-                continue
+        first_domain = present_domains[0]
+        if len(present_domains) != len(items) or any(
+            domain != first_domain for domain in present_domains[1:]
+        ):
+            raise ValueError(
+                "Napari aggregate payload route has inconsistent plane component "
+                f"domains: {plane_domains!r}."
+            )
+        if len(first_domain) > len(extents):
+            raise ValueError(
+                "Napari aggregate payload declares more component axes than its "
+                f"payload shape exposes: {len(first_domain)} > {len(extents)}."
+            )
+
+        route_component_values = cls._route_component_values(items, axis_components)
+        bindings: list[NapariAggregateAxisBinding] = []
+        used_components: set[str] = set()
+        for payload_axis, entry in enumerate(first_domain):
+            component = entry.component
+            values = tuple(entry.values)
+            if component not in axis_components:
+                raise ValueError(
+                    "Napari aggregate payload component axis is not configured for "
+                    f"stack display: {component!r}."
+                )
+            if component in used_components:
+                raise ValueError(
+                    "Napari aggregate payload declares component axis more than once: "
+                    f"{component!r}."
+                )
+            if len(values) != extents[payload_axis]:
+                raise ValueError(
+                    "Napari aggregate payload component axis cardinality mismatch: "
+                    f"{component!r} declares {len(values)} value(s) for extent "
+                    f"{extents[payload_axis]}."
+                )
+            unknown_values = tuple(
+                value
+                for value in values
+                if value not in declared_component_values[component]
+            )
+            if unknown_values:
+                raise ValueError(
+                    "Napari aggregate payload component axis contains values outside "
+                    f"the viewer domain for {component!r}: {unknown_values!r}."
+                )
+            if len(route_component_values[component]) > 1:
+                raise ValueError(
+                    "Napari aggregate payload component axis is also varying across "
+                    f"routed items: {component!r}."
+                )
             bindings.append(
                 NapariAggregateAxisBinding(
                     component=component,
                     payload_axis=payload_axis,
-                    values=tuple(declared_component_values[component]),
+                    values=values,
                 )
             )
             used_components.add(component)
@@ -388,17 +467,23 @@ class NapariAggregateAxisBindingAuthority:
         item: NapariStreamLayerItem,
     ) -> tuple[int, ...]:
         if item.address.stream_layer_data_type is StreamingDataType.IMAGE:
-            data = project_singleton_stack_image_domain(item.data)
-            return cls._image_aggregate_extents(data)
+            return cls._image_aggregate_extents(item)
         if item.address.stream_layer_data_type is StreamingDataType.SHAPES:
             return cls._shape_aggregate_extents(item.data)
         return ()
 
     @staticmethod
-    def _image_aggregate_extents(data: LayerData) -> tuple[int, ...]:
-        shape = tuple(int(dimension) for dimension in np.shape(data))
-        local_axis_count = NapariImagePayloadAxisLabelPolicy.local_axis_count(shape)
-        return shape[:local_axis_count]
+    def _image_aggregate_extents(
+        item: NapariStreamLayerItem,
+    ) -> tuple[int, ...]:
+        shape = tuple(int(dimension) for dimension in np.shape(item.data))
+        return tuple(
+            shape[axis]
+            for axis in NapariImagePayloadAxisLabelPolicy.local_axis_indices(
+                item.data,
+                item.image_metadata,
+            )
+        )
 
     @staticmethod
     def _shape_aggregate_extents(data: LayerData) -> tuple[int, ...]:
@@ -428,32 +513,6 @@ class NapariAggregateAxisBindingAuthority:
                 f"{shapes!r}."
             )
         return first
-
-    @staticmethod
-    def _component_for_extent(
-        *,
-        extent: int,
-        axis_components: Sequence[str],
-        declared_component_values: ComponentValues,
-        route_component_values: ComponentValues,
-        used_components: set[str],
-    ) -> str | None:
-        candidates = tuple(
-            component
-            for component in axis_components
-            if component not in used_components
-            and len(declared_component_values[component]) == extent
-            and len(route_component_values[component]) <= 1
-        )
-        if not candidates:
-            return None
-        if len(candidates) > 1:
-            raise ValueError(
-                "Napari aggregate payload axis is ambiguous for extent "
-                f"{extent}: {candidates!r}."
-            )
-        return candidates[0]
-
 
 @dataclass(frozen=True, slots=True)
 class NapariShapePlaneMetadata:
@@ -599,23 +658,37 @@ class NapariImageLayerPresentationPolicy:
     def layer_kwargs(
         cls,
         image_data: LayerData,
+        image_metadata: ImagePayloadMetadata,
         colormap: str | None,
     ) -> dict[str, LayerKwargValue]:
         kwargs: dict[str, LayerKwargValue] = {"blending": cls.DEFAULT_BLEND_MODE}
-        if cls.is_rgb(image_data):
+        if cls.is_rgb(image_data, image_metadata):
             kwargs["rgb"] = True
             return kwargs
         kwargs["colormap"] = cls.colormap(colormap)
         return kwargs
 
     @classmethod
-    def is_rgb(cls, image_data: LayerData) -> bool:
-        array_shape = ArrayShape.from_value(image_data)
-        return (
-            array_shape is not None
-            and array_shape.ndim >= 3
-            and array_shape.has_channel_last()
-        )
+    def is_rgb(
+        cls,
+        image_data: LayerData,
+        image_metadata: ImagePayloadMetadata,
+    ) -> bool:
+        channel_axis = image_metadata.normalized_source_channel_axis(image_data)
+        if channel_axis is None:
+            return False
+        shape = tuple(int(dimension) for dimension in np.shape(image_data))
+        if channel_axis != len(shape) - 1:
+            raise ValueError(
+                "Napari RGB payload requires its declared source channel axis "
+                f"to be last; got axis {channel_axis} for shape {shape!r}."
+            )
+        if shape[channel_axis] not in (3, 4):
+            raise ValueError(
+                "Napari RGB payload requires three or four values on its declared "
+                f"source channel axis; got shape {shape!r}."
+            )
+        return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -820,7 +893,10 @@ class NapariAxisPresentation(ViewerComponentAxisSemantics):
         )
 
     def label_index(self, viewer_step: int, axis_index: int) -> int:
-        return viewer_step - self.projection.axis_offset(axis_index)
+        del axis_index
+        # Napari current_step is normalized against each dimension range start,
+        # so it is already route-local even when the layer carries a translate.
+        return viewer_step
 
 
 @dataclass(slots=True)
@@ -831,6 +907,7 @@ class NapariLayerRouteStateStore:
     layer_titles: dict[str, str]
     layer_dimension_states: dict[str, NapariDimensionLayerState]
     layer_pending_updates: dict[str, NapariPendingLayerUpdate]
+    layer_update_errors: dict[str, str]
     active_dimension_label_route: str | None
 
     @classmethod
@@ -840,6 +917,7 @@ class NapariLayerRouteStateStore:
             layer_titles={},
             layer_dimension_states={},
             layer_pending_updates={},
+            layer_update_errors={},
             active_dimension_label_route=None,
         )
 
@@ -860,6 +938,7 @@ class NapariLayerRouteStateStore:
         self.layer_titles.pop(layer_key, None)
         self.layer_dimension_states.pop(layer_key, None)
         self.layer_pending_updates.pop(layer_key, None)
+        self.layer_update_errors.pop(layer_key, None)
         if self.active_dimension_label_route == layer_key:
             self.active_dimension_label_route = None
 
@@ -903,6 +982,24 @@ class NapariLayerRouteStateStore:
         for _, update in updates:
             update.stop_timer()
         return updates
+
+    def record_update_error(self, layer_key: str, error: Exception) -> None:
+        self.layer_update_errors[layer_key] = str(error)
+
+    def clear_update_error(self, layer_key: str) -> None:
+        self.layer_update_errors.pop(layer_key, None)
+
+    def clear_update_errors(self) -> None:
+        self.layer_update_errors.clear()
+
+    def require_updates_succeeded(self) -> None:
+        if not self.layer_update_errors:
+            return
+        failures = "; ".join(
+            f"{layer_key}: {message}"
+            for layer_key, message in self.layer_update_errors.items()
+        )
+        raise RuntimeError(f"Napari layer updates failed: {failures}")
 
     def has_layer(self, layer_key: str) -> bool:
         return layer_key in self.layers

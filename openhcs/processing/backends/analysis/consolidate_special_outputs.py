@@ -23,6 +23,7 @@ from enum import Enum
 
 from openhcs.core.memory import numpy as numpy_func
 from openhcs.core.pipeline.function_contracts import artifact_outputs
+from openhcs.core.vfs_protocol import PlateInputDirectory
 from openhcs.processing.materialization import CsvOptions, JsonOptions, MaterializationSpec, TextOptions
 from openhcs.constants.constants import Backend
 
@@ -152,7 +153,7 @@ def aggregate_series(series: pd.Series, strategy: AggregationStrategy) -> Dict[s
 )
 def consolidate_special_outputs(
     image_stack: np.ndarray,
-    results_directory: str,
+    results_directory: PlateInputDirectory,
     well_pattern: str = WellPatternType.STANDARD_96.value,
     file_extensions: List[str] = [".csv"],
     include_patterns: Optional[List[str]] = None,

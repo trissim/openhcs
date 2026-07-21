@@ -6,6 +6,10 @@ from collections import Counter
 
 import numpy as np
 
+from openhcs.core.equivalence.cells import (
+    RuntimeCellSignature,
+    runtime_cell_signature_counters_equivalent,
+)
 from openhcs.core.equivalence.images import RuntimeImageSnapshot
 from openhcs.core.equivalence.policy import (
     RuntimeEquivalencePolicy,
@@ -114,13 +118,7 @@ def _table_content_differences(
     if not policy.compare_table_values:
         return tuple(differences)
 
-    reference_content = Counter(
-        table.content_key(policy) for table in reference_group
-    )
-    candidate_content = Counter(
-        table.content_key(policy) for table in candidate_group
-    )
-    if reference_content != candidate_content:
+    if not _table_snapshots_equivalent(reference_group, candidate_group, policy):
         differences.append(
             RuntimeEquivalenceDifference(
                 RuntimeEquivalenceDifferenceKind.TABLE_CONTENT,
@@ -128,6 +126,84 @@ def _table_content_differences(
             )
         )
     return tuple(differences)
+
+
+def _table_snapshots_equivalent(
+    reference_tables: tuple[RuntimeTableSnapshot, ...],
+    candidate_tables: tuple[RuntimeTableSnapshot, ...],
+    policy: RuntimeEquivalencePolicy,
+) -> bool:
+    unmatched = list(candidate_tables)
+    for reference_table in reference_tables:
+        match_index = next(
+            (
+                index
+                for index, candidate_table in enumerate(unmatched)
+                if reference_table.content_key(policy)
+                == candidate_table.content_key(policy)
+            ),
+            None,
+        )
+        if match_index is None:
+            match_index = next(
+                (
+                    index
+                    for index, candidate_table in enumerate(unmatched)
+                    if _table_rows_equivalent(
+                        reference_table,
+                        candidate_table,
+                        policy,
+                    )
+                ),
+                None,
+            )
+        if match_index is None:
+            return False
+        unmatched.pop(match_index)
+    return not unmatched
+
+
+def _table_rows_equivalent(
+    reference_table: RuntimeTableSnapshot,
+    candidate_table: RuntimeTableSnapshot,
+    policy: RuntimeEquivalencePolicy,
+) -> bool:
+    reference_rows = reference_table.row_signatures(policy)
+    unmatched = list(candidate_table.row_signatures(policy))
+    if len(reference_rows) != len(unmatched):
+        return False
+    for reference_row in reference_rows:
+        match_index = next(
+            (
+                index
+                for index, candidate_row in enumerate(unmatched)
+                if _table_row_equivalent(reference_row, candidate_row, policy)
+            ),
+            None,
+        )
+        if match_index is None:
+            return False
+        unmatched.pop(match_index)
+    return not unmatched
+
+
+def _table_row_equivalent(
+    reference_row: tuple[RuntimeCellSignature, ...],
+    candidate_row: tuple[RuntimeCellSignature, ...],
+    policy: RuntimeEquivalencePolicy,
+) -> bool:
+    return len(reference_row) == len(candidate_row) and all(
+        runtime_cell_signature_counters_equivalent(
+            Counter((reference_cell,)),
+            Counter((candidate_cell,)),
+            policy,
+        )
+        for reference_cell, candidate_cell in zip(
+            reference_row,
+            candidate_row,
+            strict=True,
+        )
+    )
 
 
 def _tables_by_schema(

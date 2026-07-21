@@ -80,10 +80,7 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin):
         filemanager: FileManager,
         runtime_config: StreamingViewerRuntimeConfig,
     ):
-        super().__init__(
-            runtime_config=runtime_config,
-            transport_config=OPENHCS_ZMQ_CONFIG,
-        )
+        super().__init__(runtime_config=runtime_config)
         self.filemanager = filemanager
 
     def detached_server_arguments(
@@ -96,6 +93,7 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin):
             self.viewer_title,
             None,
             str(log_file),
+            self.display_enabled,
         ).append(
             DetachedViewerPythonExpression.symbol("transport_mode"),
             DetachedViewerPythonExpression.symbol("OPENHCS_ZMQ_CONFIG"),
@@ -130,52 +128,14 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin):
                 with _global_fiji_lock:
                     _global_fiji_process = self.process
 
-            # Wait for server to be ready before setting is_running flag
-            # This ensures the viewer is actually ready to receive messages
-            if async_mode:
-                # For async mode, wait in background thread
-                def wait_and_set_ready():
-                    if self._wait_for_server_ready(timeout=10.0):
-                        self.lifecycle_state.mark_owned_process()
-                        logger.info(
-                            f"🔬 FIJI VISUALIZER: Fiji viewer server ready (PID: {self.process_pid_label})"
-                        )
-                    else:
-                        logger.error(
-                            "🔬 FIJI VISUALIZER: Fiji viewer server failed to become ready"
-                        )
-
-                thread = threading.Thread(target=wait_and_set_ready, daemon=True)
-                thread.start()
+            if ViewerProcessHandle.from_process(self.process).is_alive():
+                self.lifecycle_state.mark_owned_process()
+                logger.info(
+                    "🔬 FIJI VISUALIZER: Fiji viewer process started "
+                    f"(PID: {self.process_pid_label})"
+                )
             else:
-                # For sync mode, wait immediately
-                if self._wait_for_server_ready(timeout=10.0):
-                    self.lifecycle_state.mark_owned_process()
-                    logger.info(
-                        f"🔬 FIJI VISUALIZER: Fiji viewer server ready (PID: {self.process_pid_label})"
-                    )
-                else:
-                    logger.error(
-                        "🔬 FIJI VISUALIZER: Fiji viewer server failed to become ready"
-                    )
-
-    def _wait_for_server_ready(self, timeout: float = 10.0) -> bool:
-        """Wait for Fiji server to be ready via ping/pong."""
-        logger.info(
-            f"🔬 FIJI VISUALIZER: Waiting for server on port {self.required_port} to be ready..."
-        )
-        ready = self.runtime_endpoint.wait_ready(
-            timeout=timeout,
-            require_ready=True,
-        )
-        if ready:
-            logger.info(f"🔬 FIJI VISUALIZER: Server ready on port {self.required_port}")
-            return True
-
-        logger.warning(
-            f"🔬 FIJI VISUALIZER: Timeout waiting for server on port {self.required_port}"
-        )
-        return False
+                logger.error("🔬 FIJI VISUALIZER: Failed to start Fiji viewer process")
 
     def stop_viewer(self) -> None:
         """Stop Fiji viewer server (only if not persistent)."""

@@ -105,7 +105,6 @@ def basic_flatfield_correction_numpy(
     (e.g., nuclei, structures) as sparse features.
 
     Args:
-        image: 3D NumPy array of shape (Z, Y, X)
         max_iters: Maximum number of iterations for the alternating minimization
         lambda_sparse: Regularization parameter for the sparse component
         lambda_lowrank: Regularization parameter for the low-rank component

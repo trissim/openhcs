@@ -25,23 +25,24 @@ class RuntimeSliceAlignedValueSet(ABC, Generic[SliceValueT]):
     def value_for_aligned_slice(
         self,
         slice_index: int,
-        slice_count: int,
+        slice_count: int | None,
     ) -> SliceValueT:
-        """Return the value in an outer aligned slice context.
-
-        A single carried slice is broadcast across the outer alignment; otherwise
-        the carried slice count must match the outer count exactly.
-        """
-        if self.slice_count == slice_count:
-            return self.value_for_slice(slice_index)
-        if self.slice_count == 1:
-            return self.value_for_slice(0)
-        if slice_count % self.slice_count == 0:
-            return self.value_for_slice(slice_index % self.slice_count)
-        raise ValueError(
-            "Runtime-slice-aligned value has incompatible slice count "
-            f"{self.slice_count}; expected a divisor of {slice_count}."
-        )
+        """Return the value for an explicitly declared, exactly aligned slice."""
+        if slice_count is None:
+            raise ValueError(
+                "Runtime-slice-aligned value requires a declared outer slice count."
+            )
+        if self.slice_count != slice_count:
+            raise ValueError(
+                "Runtime-slice-aligned value count must exactly match the declared "
+                f"outer slice count: {self.slice_count} != {slice_count}."
+            )
+        if slice_index < 0 or slice_index >= slice_count:
+            raise ValueError(
+                "Runtime-slice-aligned value index is outside the declared outer "
+                f"slice count: index {slice_index}, count {slice_count}."
+            )
+        return self.value_for_slice(slice_index)
 
 
 @dataclass(frozen=True, slots=True)

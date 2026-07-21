@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from types import SimpleNamespace
 
 import pytest
 from PyQt6.QtWidgets import QApplication
@@ -28,17 +27,18 @@ from openhcs.core.config import (
     LazyStepWellFilterConfig,
     PipelineConfig,
 )
-from openhcs.core.module_artifact_contract import ModuleArtifactContract
-from openhcs.core.pipeline import Pipeline
 from openhcs.core.debug import DebugCommandType
 from openhcs.core.execution_state import ManagerExecutionState
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
+from openhcs.core.pipeline.function_contracts import artifact_inputs
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
-from openhcs.pyqt_gui.services.plate_scope_identity import (
+from openhcs.ui.shared.plate_scope_identity import (
     PipelineScopeIdentity,
     PlateScopeIdentity,
 )
 from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
+    PipelineEditorStateRoot,
     PipelineObjectStateBinding,
 )
 from openhcs.pyqt_gui.services.step_scope_identity import StepEditorScope
@@ -135,6 +135,8 @@ class PlateManagerDefinitionChangeRecorder:
 
     def __init__(self) -> None:
         self.changed_plates: list[str] = []
+        self.plate_configs: dict[str, PipelineConfig] = {}
+        self.event_bus = None
         self.plate_compiled_data: dict[str, object] = {}
         self.plate_terminal_activity_status = PlateTerminalStatusRecorder()
         self.execution_state = ManagerExecutionState.IDLE
@@ -142,9 +144,11 @@ class PlateManagerDefinitionChangeRecorder:
     def notify_pipeline_definition_changed(self, plate_path: str) -> None:
         self.changed_plates.append(plate_path)
 
-    def cellprofiler_import_result_for_plate(self, plate_path: str):
-        del plate_path
-        return None
+    def authored_pipeline_config_for_code_document(
+        self,
+        plate_path: str,
+    ) -> PipelineConfig:
+        return self.plate_configs.get(plate_path, PipelineConfig())
 
     def debug_session_context_for_plate(
         self,
@@ -226,16 +230,21 @@ def test_pipeline_editor_code_document_driver_reads_validates_and_applies() -> N
         assert driver is not None
         document = driver.read_document(clean=True)
 
-        assert document.title == "Edit Pipeline Steps"
+        assert document.title == "Edit Pipeline"
+        assert "pipeline_config" in document.source
         assert "pipeline_steps" in document.source
         assert "Original" in document.source
         driver.validate_source(
-            "from openhcs.core.steps.function_step import FunctionStep\n"
-            "pipeline_steps = [FunctionStep(name='Applied')]\n"
+            PipelineDocumentAuthority.render(
+                PipelineDocumentAuthority.from_values(
+                    pipeline_config=PipelineConfig(),
+                    pipeline_steps=[FunctionStep(name="Applied")],
+                )
+            )
         )
         with pytest.raises(SyntaxError):
             driver.validate_source("pipeline_steps = [\n")
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="pipeline_config"):
             driver.validate_source("not_pipeline_steps = []\n")
     finally:
         widget.close()
@@ -245,9 +254,6 @@ def test_pipeline_editor_code_document_driver_reads_validates_and_applies() -> N
 def test_function_pattern_form_exposes_explicit_kwargs_outside_callable_signature() -> None:
     QtApplicationHarness.app()
     ObjectStateRegistry.clear()
-    parent = ObjectState(Pipeline(name="plate"), scope_id="plate::pipeline")
-    ObjectStateRegistry.register(parent, _skip_snapshot=True)
-    binding = PipelineObjectStateBinding(parent)
     step = FunctionStep(
         func=(
             correct_illumination_apply,
@@ -265,15 +271,17 @@ def test_function_pattern_form_exposes_explicit_kwargs_outside_callable_signatur
     )
 
     try:
-        step_state, states = binding.collect_step_registration_states(
-            step=step,
-            scope_id="plate::pipeline::step",
-            parent_state=parent,
+        PipelineObjectStateBinding.update_plate_steps("plate", [step])
+        editor_state = PipelineObjectStateBinding.editor_state_for_plate("plate")
+        step_state = ObjectStateRegistry.get_by_scope(editor_state.step_scope_ids[0])
+        assert step_state is not None
+        child_state = ObjectStateRegistry.get_by_scope(
+            ScopeTokenService.build_scope_id(
+                step_state.scope_id,
+                correct_illumination_apply,
+            )
         )
-        for state in (step_state, *states):
-            if ObjectStateRegistry.get_by_scope(state.scope_id) is None:
-                ObjectStateRegistry.register(state, _skip_snapshot=True)
-        child_state = next(state for state in states if callable(state.object_instance))
+        assert child_state is not None
         manager = ParameterFormManager(
             child_state,
             FormManagerConfig(color_scheme=ColorScheme()),
@@ -309,8 +317,12 @@ def test_pipeline_editor_code_document_driver_apply_mutates_pipeline() -> None:
     try:
         assert driver is not None
         driver.apply_source(
-            "from openhcs.core.steps.function_step import FunctionStep\n"
-            "pipeline_steps = [FunctionStep(name='Applied')]\n"
+            PipelineDocumentAuthority.render(
+                PipelineDocumentAuthority.from_values(
+                    pipeline_config=PipelineConfig(),
+                    pipeline_steps=[FunctionStep(name="Applied")],
+                )
+            )
         )
 
         assert [step.name for step in widget.pipeline_steps] == ["Applied"]
@@ -333,46 +345,15 @@ def test_pipeline_editor_code_document_apply_notifies_plate_manager() -> None:
     try:
         assert driver is not None
         driver.apply_source(
-            "from openhcs.core.steps.function_step import FunctionStep\n"
-            "pipeline_steps = [FunctionStep(name='Replacement')]\n"
+            PipelineDocumentAuthority.render(
+                PipelineDocumentAuthority.from_values(
+                    pipeline_config=PipelineConfig(),
+                    pipeline_steps=[FunctionStep(name="Replacement")],
+                )
+            )
         )
 
         assert [step.name for step in widget.pipeline_steps] == ["Replacement"]
-        assert plate_manager.changed_plates == [TEST_PLATE_SCOPE]
-    finally:
-        widget.close()
-        ObjectStateRegistry.clear()
-
-
-def test_pipeline_editor_code_apply_ignores_cellprofiler_import_result_from_other_plate() -> None:
-    QtApplicationHarness.app()
-    ObjectStateRegistry.clear()
-
-    widget = PipelineEditorWidget(PipelineEditorServiceStub())
-    plate_manager = PlateManagerDefinitionChangeRecorder()
-    widget.current_plate = TEST_PLATE_SCOPE
-    widget.plate_manager = plate_manager
-    widget.cellprofiler_import_results_by_plate["old-cppipe-plate"] = SimpleNamespace(
-        generated_module_name="stale_generated_cellprofiler_pipeline",
-        provenance=SimpleNamespace(
-            processing_modules=(SimpleNamespace(module_num=1),),
-        ),
-        artifact_contracts=(
-            ModuleArtifactContract(module_name="ColorToGray"),
-        ),
-    )
-    driver = widget.code_document_driver()
-
-    try:
-        assert driver is not None
-        driver.apply_source(
-            "from openhcs.core.steps.function_step import FunctionStep\n"
-            "pipeline_steps = [FunctionStep(name='SyntheticTestPipeline')]\n"
-        )
-
-        assert [step.name for step in widget.pipeline_steps] == [
-            "SyntheticTestPipeline"
-        ]
         assert plate_manager.changed_plates == [TEST_PLATE_SCOPE]
     finally:
         widget.close()
@@ -560,6 +541,266 @@ def test_pipeline_editor_step_display_is_numbered_without_renaming_step() -> Non
     widget.close()
 
 
+def test_add_step_action_registers_state_before_opening_and_supports_edit(
+    monkeypatch,
+) -> None:
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    ScopeTokenService.clear_scope(TEST_PLATE_SCOPE)
+
+    class CallbackSignal:
+        def __init__(self) -> None:
+            self.callbacks = []
+
+        def connect(self, callback) -> None:
+            self.callbacks.append(callback)
+
+        def emit(self) -> None:
+            for callback in self.callbacks:
+                callback()
+
+    opened_editors = []
+
+    class EditorRecorder:
+        def __init__(
+            self,
+            *,
+            step_data,
+            is_new,
+            on_save_callback,
+            plate_scope,
+            **kwargs,
+        ) -> None:
+            del kwargs
+            self.step_data = step_data
+            self.is_new = is_new
+            self.on_save_callback = on_save_callback
+            self.rejected = CallbackSignal()
+            self.scope_id = ScopeTokenService.build_scope_id(plate_scope, step_data)
+            assert ObjectStateRegistry.get_by_scope(self.scope_id) is not None
+            opened_editors.append(self)
+
+        def set_original_step_for_change_detection(self) -> None:
+            pass
+
+        def show(self) -> None:
+            pass
+
+        def raise_(self) -> None:
+            pass
+
+        def activateWindow(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "openhcs.pyqt_gui.widgets.pipeline_editor.DualEditorWindow",
+        EditorRecorder,
+    )
+
+    widget = PipelineEditorWidget(PipelineEditorServiceStub())
+    widget.current_plate = TEST_PLATE_SCOPE
+    widget.buttons["add_step"].setEnabled(True)
+
+    try:
+        widget.buttons["add_step"].click()
+
+        assert len(opened_editors) == 1
+        add_editor = opened_editors[0]
+        assert add_editor.is_new is True
+        assert widget.pipeline_steps == []
+        assert PipelineObjectStateBinding.editor_state_for_plate(
+            TEST_PLATE_SCOPE
+        ).step_scope_ids == (add_editor.scope_id,)
+
+        step_state = ObjectStateRegistry.get_by_scope(add_editor.scope_id)
+        assert step_state is not None
+        step_state.update_parameter("name", "Added Step")
+        edited_step = step_state.to_object()
+        assert edited_step is not add_editor.step_data
+        add_editor.on_save_callback(edited_step)
+
+        assert [step.name for step in widget.pipeline_steps] == ["Added Step"]
+        assert [
+            step.name
+            for step in PipelineObjectStateBinding.steps_for_plate(TEST_PLATE_SCOPE)
+        ] == ["Added Step"]
+        accepted_history = ObjectStateRegistry.get_branch_history()
+        assert accepted_history[-2].label.startswith("edit name")
+        assert accepted_history[-1].label.startswith("add step Added Step")
+        assert accepted_history[-1].parent_id == accepted_history[-2].id
+        assert add_editor.scope_id in accepted_history[-2].all_states
+        assert add_editor.scope_id in accepted_history[-1].all_states
+
+        widget.show_item_editor(widget.pipeline_steps[0])
+
+        assert len(opened_editors) == 2
+        edit_editor = opened_editors[1]
+        assert edit_editor.is_new is False
+        assert edit_editor.scope_id == add_editor.scope_id
+        assert ObjectStateRegistry.get_by_scope(edit_editor.scope_id) is not None
+
+        widget.buttons["add_step"].setEnabled(True)
+        widget.buttons["add_step"].click()
+        rejected_editor = opened_editors[2]
+        rejected_state = ObjectStateRegistry.get_by_scope(rejected_editor.scope_id)
+        assert rejected_state is not None
+        rejected_state.update_parameter("name", "Rejected Staged Edit")
+        rejected_editor.rejected.emit()
+
+        assert PipelineObjectStateBinding.editor_state_for_plate(
+            TEST_PLATE_SCOPE
+        ).step_scope_ids == (add_editor.scope_id,)
+        assert ObjectStateRegistry.get_by_scope(rejected_editor.scope_id) is None
+        assert [
+            step.name
+            for step in PipelineObjectStateBinding.steps_for_plate(TEST_PLATE_SCOPE)
+        ] == ["Added Step"]
+
+        discard_snapshot = ObjectStateRegistry.get_branch_history()[-1]
+        assert discard_snapshot.label.startswith("discard staged step Step_2")
+        assert rejected_editor.scope_id not in discard_snapshot.all_states
+
+        assert ObjectStateRegistry.time_travel_back()
+        assert (
+            ObjectStateRegistry.get_by_scope(rejected_editor.scope_id) is rejected_state
+        )
+        assert [step.name for step in widget.pipeline_steps] == ["Added Step"]
+
+        assert ObjectStateRegistry.time_travel_forward()
+        assert ObjectStateRegistry.get_by_scope(rejected_editor.scope_id) is None
+        assert ObjectStateRegistry.get_by_scope(add_editor.scope_id) is step_state
+        assert [step.name for step in widget.pipeline_steps] == ["Added Step"]
+
+        history_head_id = ObjectStateRegistry.get_branch_history()[-1].id
+        widget.buttons["add_step"].setEnabled(True)
+        widget.buttons["add_step"].click()
+        unedited_rejected_editor = opened_editors[3]
+        unedited_rejected_editor.rejected.emit()
+
+        assert (
+            ObjectStateRegistry.get_by_scope(unedited_rejected_editor.scope_id) is None
+        )
+        assert ObjectStateRegistry.get_branch_history()[-1].id == history_head_id
+        assert [step.name for step in widget.pipeline_steps] == ["Added Step"]
+    finally:
+        widget.close()
+        ObjectStateRegistry.clear()
+
+
+def test_add_step_history_preserves_open_step_across_edit_rewind_and_forward(
+    monkeypatch,
+) -> None:
+    """Accepted Add owns a snapshot before later field edits can be rewound."""
+
+    QtApplicationHarness.app()
+    ObjectStateRegistry.clear()
+    ScopeTokenService.clear_scope(TEST_PLATE_SCOPE)
+
+    class CallbackSignal:
+        def __init__(self) -> None:
+            self.callbacks = []
+
+        def connect(self, callback) -> None:
+            self.callbacks.append(callback)
+
+    opened_editors = []
+
+    class EditorRecorder:
+        def __init__(
+            self,
+            *,
+            step_data,
+            is_new,
+            on_save_callback,
+            plate_scope,
+            **kwargs,
+        ) -> None:
+            del kwargs
+            self.step_data = step_data
+            self.is_new = is_new
+            self.on_save_callback = on_save_callback
+            self.rejected = CallbackSignal()
+            self.scope_id = ScopeTokenService.build_scope_id(plate_scope, step_data)
+            self.state = ObjectStateRegistry.get_by_scope(self.scope_id)
+            assert self.state is not None
+            opened_editors.append(self)
+
+        def set_original_step_for_change_detection(self) -> None:
+            pass
+
+        def show(self) -> None:
+            pass
+
+        def raise_(self) -> None:
+            pass
+
+        def activateWindow(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "openhcs.pyqt_gui.widgets.pipeline_editor.DualEditorWindow",
+        EditorRecorder,
+    )
+
+    unrelated_state = ObjectState(
+        FunctionStep(name="Existing History"),
+        scope_id="other-plate::functionstep_0",
+    )
+    ObjectStateRegistry.register(unrelated_state, _skip_snapshot=True)
+    unrelated_state.update_parameter("name", "Existing History Edited")
+
+    widget = PipelineEditorWidget(PipelineEditorServiceStub())
+    widget.current_plate = TEST_PLATE_SCOPE
+    widget.buttons["add_step"].setEnabled(True)
+
+    try:
+        widget.buttons["add_step"].click()
+        add_editor = opened_editors[0]
+        add_editor.on_save_callback(add_editor.step_data)
+
+        add_history = ObjectStateRegistry.get_branch_history()
+        add_snapshot = add_history[-1]
+        assert add_snapshot.label.startswith("add step Step_1")
+        assert add_editor.scope_id in add_snapshot.all_states
+        add_parent = add_history[-2]
+        assert add_snapshot.parent_id == add_parent.id
+        assert add_editor.scope_id not in add_parent.all_states
+
+        add_editor.state.update_parameter("name", "Edited Step")
+        edit_snapshot = ObjectStateRegistry.get_branch_history()[-1]
+        assert edit_snapshot.label.startswith("edit name")
+        assert edit_snapshot.parent_id == add_snapshot.id
+        assert ObjectStateRegistry.time_travel_back()
+
+        assert ObjectStateRegistry.get_by_scope(add_editor.scope_id) is add_editor.state
+        assert [step.name for step in widget.pipeline_steps] == ["Step_1"]
+        assert [
+            step.name
+            for step in PipelineObjectStateBinding.steps_for_plate(TEST_PLATE_SCOPE)
+        ] == ["Step_1"]
+
+        assert ObjectStateRegistry.time_travel_back()
+        assert ObjectStateRegistry.get_by_scope(add_editor.scope_id) is None
+        assert widget.pipeline_steps == []
+
+        assert ObjectStateRegistry.time_travel_forward()
+        assert ObjectStateRegistry.get_by_scope(add_editor.scope_id) is add_editor.state
+        assert [step.name for step in widget.pipeline_steps] == ["Step_1"]
+
+        assert ObjectStateRegistry.time_travel_forward()
+        assert ObjectStateRegistry.get_by_scope(add_editor.scope_id) is add_editor.state
+        assert [step.name for step in widget.pipeline_steps] == ["Edited Step"]
+
+        add_editor.state.update_parameter("name", "Editable After Rewind")
+        assert [
+            step.name
+            for step in PipelineObjectStateBinding.steps_for_plate(TEST_PLATE_SCOPE)
+        ] == ["Editable After Rewind"]
+    finally:
+        widget.close()
+        ObjectStateRegistry.clear()
+
+
 class RuntimeCallable:
     """Callable object with a non-function scope prefix."""
 
@@ -569,33 +810,64 @@ class RuntimeCallable:
 
 def test_step_registration_persists_function_editor_scope_tokens() -> None:
     ObjectStateRegistry._states.clear()
-    ScopeTokenService.clear_scope("plate::functionstep_0")
+    ScopeTokenService.clear_scope("plate")
 
     runtime_callable = RuntimeCallable()
     step = FunctionStep(
         func=(runtime_callable, {"threshold": 3}),
         name="Crop",
     )
-    binding = PipelineObjectStateBinding.for_plate("plate")
-    assert binding is not None
-    step_state, states = binding.collect_step_registration_states(
-        step=step,
-        scope_id="plate::functionstep_0",
-        parent_state=None,
-    )
+    PipelineObjectStateBinding.update_plate_steps("plate", [step])
+    editor_state = PipelineObjectStateBinding.editor_state_for_plate("plate")
+    step_state = ObjectStateRegistry.get_by_scope(editor_state.step_scope_ids[0])
+    assert step_state is not None
 
     assert step_state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY] == [
         "runtimecallable_0",
     ]
-    assert [state.scope_id for state in states] == [
-        "plate::functionstep_0",
-        "plate::functionstep_0::runtimecallable_0",
+    assert len(editor_state.step_scope_ids) == 1
+    step_scope_id = editor_state.step_scope_ids[0]
+    child_scope_id = f"{step_scope_id}::runtimecallable_0"
+    assert ObjectStateRegistry.get_by_scope(child_scope_id) is not None
+    assert sorted(
+        scope_id
+        for scope_id in ObjectStateRegistry._states
+        if scope_id.startswith(step_scope_id)
+    ) == [
+        step_scope_id,
+        child_scope_id,
     ]
+
+
+def test_step_registration_does_not_publish_runtime_artifact_parameters() -> None:
+    ObjectStateRegistry._states.clear()
+    ScopeTokenService.clear_scope("plate")
+
+    @artifact_inputs("positions")
+    def assemble(image, positions=None, threshold: int = 1):
+        del positions, threshold
+        return image
+
+    PipelineObjectStateBinding.update_plate_steps(
+        "plate",
+        [FunctionStep(func=assemble, name="Assemble")],
+    )
+    editor_state = PipelineObjectStateBinding.editor_state_for_plate("plate")
+    step_scope_id = editor_state.step_scope_ids[0]
+    step_state = ObjectStateRegistry.get_by_scope(step_scope_id)
+    assert step_state is not None
+    token = step_state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY][0]
+    child_state = ObjectStateRegistry.get_by_scope(f"{step_scope_id}::{token}")
+    assert child_state is not None
+
+    assert "positions" not in child_state.parameters
+    reconstructed_step = PipelineObjectStateBinding.steps_for_plate("plate")[0]
+    assert reconstructed_step.func == (assemble, {"threshold": 1})
 
 
 def test_step_registration_exposes_public_cellprofiler_settings_in_function_child_state() -> None:
     ObjectStateRegistry._states.clear()
-    ScopeTokenService.clear_scope("plate::functionstep_0")
+    ScopeTokenService.clear_scope("plate")
 
     runtime_callable = RuntimeCallable()
     step = FunctionStep(
@@ -608,18 +880,17 @@ def test_step_registration_exposes_public_cellprofiler_settings_in_function_chil
         ),
         name="Crop",
     )
-    binding = PipelineObjectStateBinding.for_plate("plate")
-    assert binding is not None
-
-    _step_state, states = binding.collect_step_registration_states(
-        step=step,
-        scope_id="plate::functionstep_0",
-        parent_state=None,
+    PipelineObjectStateBinding.update_plate_steps("plate", [step])
+    editor_state = PipelineObjectStateBinding.editor_state_for_plate("plate")
+    step_scope_id = editor_state.step_scope_ids[0]
+    step_state = ObjectStateRegistry.get_by_scope(step_scope_id)
+    assert step_state is not None
+    token = step_state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY][0]
+    child_state = ObjectStateRegistry.get_by_scope(
+        f"{step_scope_id}::{token}"
     )
-    child_state = states[1]
-    for state in states:
-        ObjectStateRegistry.register(state, _skip_snapshot=True)
-    reconstructed_step = PipelineObjectStateBinding.step_from_state(states[0])
+    assert child_state is not None
+    reconstructed_step = PipelineObjectStateBinding.steps_for_plate("plate")[0]
     reconstructed_kwargs = reconstructed_step.func[1]
 
     assert child_state.reconstruct_top_level_parameters() == {
@@ -630,29 +901,66 @@ def test_step_registration_exposes_public_cellprofiler_settings_in_function_chil
     assert reconstructed_kwargs["select_the_input_image"] == "OrigBlue"
 
 
-def test_pipeline_update_preserves_pipeline_metadata() -> None:
+def test_pipeline_editor_root_preserves_only_text_and_step_scope_ids() -> None:
     ObjectStateRegistry.clear()
-    ScopeTokenService.clear_scope("plate::functionstep_0")
+    ScopeTokenService.clear_scope("plate")
 
-    pipeline = Pipeline(
-        steps=[
-            FunctionStep(
-                func=(RuntimeCallable(), {"threshold": 3}),
-                name="ImportedStep",
-            )
-        ],
+    steps = [
+        FunctionStep(
+            func=(RuntimeCallable(), {"threshold": 3}),
+            name="ImportedStep",
+        )
+    ]
+    PipelineObjectStateBinding.update_plate_steps("plate", steps)
+    PipelineObjectStateBinding.update_editor_text(
+        "plate",
         name="ImportedPipeline",
-        metadata={"custom_metadata": {"1": "value"}},
+        description="Imported description",
     )
 
-    PipelineObjectStateBinding.for_plate("plate")
-    PipelineObjectStateBinding.update_plate_pipeline("plate", pipeline)
-    binding = PipelineObjectStateBinding.for_plate("plate")
-    assert binding is not None
+    editor_state = PipelineObjectStateBinding.editor_state_for_plate("plate")
+    step_scope_id = editor_state.step_scope_ids[0]
+    assert editor_state == PipelineEditorStateRoot(
+        name="ImportedPipeline",
+        description="Imported description",
+        step_scope_ids=(step_scope_id,),
+    )
+    assert [
+        step.name for step in PipelineObjectStateBinding.steps_for_plate("plate")
+    ] == ["ImportedStep"]
+    assert not hasattr(editor_state, "metadata")
+    assert not hasattr(editor_state, "pipeline_config")
 
-    restored_pipeline = binding.state.to_object()
-    assert restored_pipeline.metadata["custom_metadata"] == {"1": "value"}
-    assert [step.name for step in binding.steps()] == ["ImportedStep"]
+
+def test_pipeline_object_state_binding_public_surface_is_editor_list_only() -> None:
+    public_methods = {
+        name
+        for name, value in PipelineObjectStateBinding.__dict__.items()
+        if not name.startswith("_")
+        and (
+            isinstance(value, (classmethod, staticmethod))
+            or callable(value)
+        )
+    }
+
+    assert public_methods == {
+        "editor_state_for_plate",
+        "registered_plate_steps",
+        "replace_steps",
+        "steps_for_plate",
+        "update_editor_text",
+        "update_plate_steps",
+    }
+    assert tuple(PipelineEditorStateRoot.__dataclass_fields__) == (
+        "name",
+        "description",
+        "step_scope_ids",
+    )
+    assert PipelineEditorStateRoot.__slots__ == (
+        "name",
+        "description",
+        "step_scope_ids",
+    )
 
 
 def test_pipeline_update_refreshes_existing_step_scope_state() -> None:
@@ -717,9 +1025,9 @@ def test_pipeline_update_transfers_existing_step_scope_token_for_reapply() -> No
     pipeline_scope = f"{TEST_PLATE_SCOPE}::pipeline"
     pipeline_state = ObjectStateRegistry.get_by_scope(pipeline_scope)
     assert pipeline_state is not None
-    assert pipeline_state.parameters["step_scope_ids"] == [
-        f"{TEST_PLATE_SCOPE}::functionstep_0"
-    ]
+    assert pipeline_state.parameters["step_scope_ids"] == (
+        f"{TEST_PLATE_SCOPE}::functionstep_0",
+    )
     assert ObjectStateRegistry.get_by_scope(
         f"{TEST_PLATE_SCOPE}::functionstep_1"
     ) is None

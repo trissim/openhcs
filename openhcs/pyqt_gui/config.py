@@ -12,14 +12,18 @@ import secrets
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Optional, Dict, Callable
+from typing import Dict, Callable
 from enum import Enum
 
 from zmqruntime.transport import get_default_transport_mode
 
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
-from openhcs.agent.services.ui_bridge_service import UiBridgeDescriptorDirectoryAuthority
+from openhcs.agent.services.ui_bridge_service import (
+    UiBridgeDescriptorDirectoryAuthority,
+)
+from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs.runtime.zmq_config import OpenHCSZMQConfig
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +50,14 @@ GUIPluginSettingValue = (
 class Shortcut:
     """Single keyboard shortcut binding."""
 
-    key: str  # e.g., "Ctrl+Z", "F1", "Ctrl+Shift+S"
-    action: str  # Method/action name to invoke
-    description: str  # Human-readable description
+    key: str
+    """Qt key sequence that triggers the shortcut, such as Ctrl+Z or F1."""
+
+    action: str
+    """OpenHCS action route invoked when the configured key sequence is pressed."""
+
+    description: str
+    """User-facing description of the command performed by this shortcut."""
 
 
 ShortcutItem = tuple[str, Shortcut]
@@ -119,18 +128,6 @@ class ShortcutConfig:
         )
 
 
-# Global shortcut config instance
-_shortcut_config: Optional[ShortcutConfig] = None
-
-
-def get_shortcut_config() -> ShortcutConfig:
-    """Get the global shortcut configuration (singleton)."""
-    global _shortcut_config
-    if _shortcut_config is None:
-        _shortcut_config = ShortcutConfig()
-    return _shortcut_config
-
-
 class PlotTheme(Enum):
     """Available plot themes for PyQtGraph components."""
 
@@ -178,7 +175,7 @@ class PerformanceMonitorConfig:
     update_strategy: UpdateStrategy = UpdateStrategy.FIXED_RATE
     """Strategy for updating the display."""
 
-    max_data_points: Optional[int] = None
+    max_data_points: int | None = None
     """Maximum number of data points to keep. If None, calculated from update_fps and history_duration."""
 
     # GPU monitoring settings
@@ -271,7 +268,7 @@ class WindowConfig:
     minimize_to_tray: bool = False
     """Minimize to system tray instead of taskbar."""
 
-    auto_save_interval_minutes: Optional[int] = 5
+    auto_save_interval_minutes: int | None = 5
     """Auto-save interval in minutes. None to disable auto-save."""
 
 
@@ -353,23 +350,41 @@ class AgentUiBridgeConfig(ExecutionConnectionSpec):
     """Configuration for the local agent/MCP bridge into the running PyQt UI."""
 
     host: str = "127.0.0.1"
+    """Network interface or host used by local MCP clients. Keep 127.0.0.1 for local-only access."""
     port: int | None = 7888
+    """UI bridge data port. Set an explicit free port when the bridge is enabled."""
     transport_mode: str | None = DEFAULT_AGENT_UI_BRIDGE_TRANSPORT
+    """ZMQ transport mode for bridge traffic, typically tcp or ipc."""
     persistent: bool = True
+    """Keep the bridge connection available across multiple client requests."""
     enabled: bool = True
+    """Start the UI bridge with the PyQt application."""
     timeout_ms: int = 5000
+    """Default client request timeout in milliseconds."""
     descriptor_directory_path: str | Path | None = None
+    """Directory for generated bridge descriptor files. None uses the runtime default directory."""
     descriptor_file_path: str | Path | None = None
+    """Exact descriptor file path. When set, this overrides descriptor_directory_path."""
     bridge_instance_id: str | None = None
+    """Stable bridge instance identifier. None generates a fresh ui-prefixed identifier at startup."""
     auth_token: str | None = None
+    """Authentication token required by bridge clients. None generates a random token at startup."""
     poll_timeout_ms: int = 100
+    """Bridge server socket polling interval in milliseconds. Must be positive."""
     shutdown_timeout_seconds: float = 2.0
+    """Maximum time to wait for the bridge server thread to stop."""
     max_code_document_bytes: int = 2_000_000
+    """Reserved maximum code-document payload size in bytes; the current bridge does not yet enforce this limit."""
     max_request_bytes: int = 4_000_000
+    """Reserved maximum request size in bytes; the current bridge transport does not yet enforce this limit."""
     max_response_bytes: int = 4_000_000
+    """Reserved maximum response size in bytes; the current bridge transport does not yet enforce this limit."""
     confirmation_timeout_ms: int = 30_000
+    """Reserved mutation-confirmation timeout in milliseconds; interactive confirmation is not yet enforced."""
     require_confirmation_for_mutations: bool = True
+    """Reserved policy requiring confirmation before mutations; the current bridge does not yet enforce it."""
     allow_unsafe_code_documents: bool = False
+    """Reserved opt-in for unsafe code-document operations; the current bridge does not expose an unsafe bypass."""
 
     @classmethod
     def from_environment(
@@ -431,20 +446,24 @@ class AgentUiBridgeConfig(ExecutionConnectionSpec):
 
     def descriptor_path_for(self, bridge_instance_id: str) -> Path:
         if self.descriptor_file_path is not None:
-            return Path(self.descriptor_file_path).expanduser()
+            return AgentRuntimePlatformAuthority.resolved_path(
+                self.descriptor_file_path
+            )
         return (
             self.descriptor_directory_or_default()
             / f"ui_bridge_{bridge_instance_id}.json"
-        )
+        ).resolve(strict=False)
 
     def descriptor_directory_or_default(self) -> Path:
         if self.descriptor_directory_path is not None:
-            return Path(self.descriptor_directory_path).expanduser()
+            return AgentRuntimePlatformAuthority.resolved_path(
+                self.descriptor_directory_path
+            )
         return UiBridgeDescriptorDirectoryAuthority.default_descriptor_dir()
 
 
 @dataclass(frozen=True)
-class PyQtGUIConfig:
+class UIConfig:
     """
     Root configuration object for the PyQt GUI application.
 
@@ -460,6 +479,12 @@ class PyQtGUIConfig:
 
     progress: ProgressUIConfig = field(default_factory=ProgressUIConfig)
     """Configuration for progress UI update coalescing."""
+
+    shortcuts: ShortcutConfig = field(default_factory=ShortcutConfig)
+    """Application-wide keyboard shortcut bindings."""
+
+    zmq: OpenHCSZMQConfig = field(default_factory=OpenHCSZMQConfig)
+    """Process-level execution transport settings."""
 
     agent_bridge: AgentUiBridgeConfig = field(default_factory=AgentUiBridgeConfig)
     """Configuration for the local agent/MCP bridge into the running UI."""
@@ -484,26 +509,28 @@ class PyQtGUIConfig:
     plugin_settings: Dict[str, GUIPluginSettingValue] = field(default_factory=dict)
     """Settings for GUI plugins and extensions."""
 
+    @classmethod
+    def object_state_scope_id(cls) -> str:
+        """Return the ObjectState scope owned by this process-global config type."""
+
+        return f"{cls.__module__}.{cls.__qualname__}"
+
 
 @dataclass(frozen=True)
 class PyQtGuiRuntimeContext:
     """Startup-resolved GUI runtime context shared by app and main window."""
 
-    config: PyQtGUIConfig
+    ui_config: UIConfig
     pipeline_runtime: GlobalPipelineConfig = field(default_factory=GlobalPipelineConfig)
-
-    @property
-    def bridge_config(self) -> AgentUiBridgeConfig:
-        return self.config.agent_bridge
-
-    def widget_config(self) -> PyQtGUIConfig:
-        return self.config
 
     def with_pipeline_runtime(
         self,
         pipeline_runtime: GlobalPipelineConfig,
     ) -> "PyQtGuiRuntimeContext":
         return replace(self, pipeline_runtime=pipeline_runtime)
+
+    def with_ui_config(self, ui_config: UIConfig) -> "PyQtGuiRuntimeContext":
+        return replace(self, ui_config=ui_config)
 
 
 # --- Default Configuration Providers ---
@@ -532,18 +559,18 @@ _DEFAULT_LOGGING_CONFIG = LoggingConfig(
 )
 
 
-def get_default_pyqt_gui_config() -> PyQtGUIConfig:
+def get_default_ui_config() -> UIConfig:
     """
-    Provides a default instance of PyQtGUIConfig.
+    Provides a default instance of UIConfig.
 
     This function provides sensible defaults for the PyQt GUI application,
     following the same pattern as GlobalPipelineConfig().
 
     Returns:
-        PyQtGUIConfig: Default configuration instance
+        UIConfig: Default configuration instance
     """
-    logger.debug("Initializing with default PyQtGUIConfig.")
-    return PyQtGUIConfig(
+    logger.debug("Initializing with default UIConfig.")
+    return UIConfig(
         performance_monitor=_DEFAULT_PERFORMANCE_MONITOR_CONFIG,
         agent_bridge=AgentUiBridgeConfig.from_environment(),
         window=_DEFAULT_WINDOW_CONFIG,
@@ -596,14 +623,14 @@ class EnvironmentValueAuthority:
         raise ValueError(f"{name} must be a boolean value.")
 
 
-def create_high_performance_config() -> PyQtGUIConfig:
+def create_high_performance_config() -> UIConfig:
     """
     Create a high-performance configuration preset.
 
     Returns:
-        PyQtGUIConfig: High-performance configuration
+        UIConfig: High-performance configuration
     """
-    return PyQtGUIConfig(
+    return UIConfig(
         performance_monitor=PerformanceMonitorConfig(
             update_fps=30.0,  # High refresh rate
             render_fps=30.0,
@@ -618,14 +645,14 @@ def create_high_performance_config() -> PyQtGUIConfig:
     )
 
 
-def create_low_resource_config() -> PyQtGUIConfig:
+def create_low_resource_config() -> UIConfig:
     """
     Create a low-resource configuration preset.
 
     Returns:
-        PyQtGUIConfig: Low-resource configuration
+        UIConfig: Low-resource configuration
     """
-    return PyQtGUIConfig(
+    return UIConfig(
         performance_monitor=PerformanceMonitorConfig(
             update_fps=1.0,  # Very low refresh rate
             render_fps=1.0,

@@ -36,7 +36,7 @@ except ImportError:
     
 
 from openhcs.pyqt_gui.app import OpenHCSPyQtApp
-from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, get_default_pyqt_gui_config
+from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, get_default_ui_config
 from pyqt_reactive.utils.window_utils import install_global_window_bounds_filter
 
 
@@ -405,7 +405,7 @@ def main():
         # Load configuration
         config = load_configuration(args.config)
         runtime_context = PyQtGuiRuntimeContext(
-            get_default_pyqt_gui_config(),
+            get_default_ui_config(),
             pipeline_runtime=config,
         )
 

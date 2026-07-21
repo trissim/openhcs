@@ -81,6 +81,7 @@ from openhcs.processing.backends.cellprofiler.object_filtering import (
     FilterObjectsRemovedObjectSourceRelation,
     filter_objects,
 )
+from openhcs.processing.backends.lib_registry.registry_service import RegistryService
 
 PUBLIC_IMPORT_CPIPE = """CellProfiler Pipeline: https://cellprofiler.org
 NamesAndTypes:[module_num:1|enabled:True]
@@ -185,7 +186,9 @@ def test_compiler_derives_runtime_executor_after_generic_transport(
     )
     _source, transported_steps = _transport_round_trip([declared_step])
     transported_callable = get_core_callable(transported_steps[0].func)
-    assert transported_callable is correct_illumination_calculate
+    assert transported_callable is RegistryService.registered_callable(
+        correct_illumination_calculate
+    )
     assert not isinstance(transported_callable, CellProfilerModuleExecutor)
 
     global_config = GlobalPipelineConfig()

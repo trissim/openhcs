@@ -1,20 +1,117 @@
 import numpy as np
 
-from benchmark.cellprofiler_library.functions.measuregranularity import (
-    measure_granularity_objects,
+from openhcs.core.measurement_row_materialization import (
+    MeasurementProjectedColumnarRows,
 )
+from openhcs.core.runtime_tabular_values import FieldSpec
 from openhcs.processing.backends.cellprofiler.granularity import (
     GRANULARITY_IMAGE_SERIES_CACHE,
+    GRANULARITY_SPECTRUM_LENGTH,
     GranularityImageSeriesRequest,
+    GranularitySpectrumDescriptor,
+    GranularitySpectrumDescriptorDeclaration,
+    MeasureGranularityModule,
     NativeGranularityReconstructionBackendStrategy,
     NumbaGranularityReconstructionBackendStrategy,
+    ObjectGranularityMeasurementRows,
     OpenCVGranularityReconstructionBackendStrategy,
     background_corrected_pixels,
+    granularity_grey_erosion,
     granularity_reconstruction_backend,
     granularity_reconstruction_series,
-    granularity_grey_erosion,
+    measure_granularity_objects,
 )
 from openhcs.core.config import DtypeConfig
+
+
+def test_measure_granularity_declares_one_indexed_spectrum_feature_authority():
+    feature = MeasureGranularityModule.MeasurementFeature.SPECTRUM
+    descriptor = GranularitySpectrumDescriptor(GRANULARITY_SPECTRUM_LENGTH)
+
+    assert tuple(MeasureGranularityModule.MeasurementFeature) == (feature,)
+    assert MeasureGranularityModule.numbered_measurement_feature_prefix_aliases == {}
+    assert MeasureGranularityModule.source_qualified_measurement_feature_types() == (
+        MeasureGranularityModule.MeasurementFeature,
+    )
+    assert feature.indexed_descriptor_declarations() == (
+        GranularitySpectrumDescriptorDeclaration,
+    )
+    assert (
+        GranularitySpectrumDescriptorDeclaration.from_measurement_row_field_name("gs16")
+        == descriptor
+    )
+    assert (
+        GranularitySpectrumDescriptorDeclaration.from_feature_name("Granularity_16")
+        == descriptor
+    )
+    assert (
+        GranularitySpectrumDescriptorDeclaration.source_qualified_feature_name(
+            descriptor,
+            source_image_name="BF_image",
+        )
+        == "Granularity_16_BF_image"
+    )
+
+
+def test_measure_granularity_projects_exact_image_feature_identities_at_producer():
+    projected = MeasureGranularityModule.prepare_measurement_record_rows(
+        MeasurementProjectedColumnarRows(
+            {
+                "slice_index": (0,),
+                "gs1": (1.25,),
+                "gs16": (16.25,),
+            },
+            fields=(
+                FieldSpec("slice_index", int),
+                FieldSpec("gs1", float),
+                FieldSpec("gs16", float),
+            ),
+        ),
+        source_image_name="BF_image",
+    )
+
+    assert tuple(projected.columns) == (
+        "slice_index",
+        "Granularity_1_BF_image",
+        "Granularity_16_BF_image",
+    )
+    assert projected.column_values("Granularity_1_BF_image") == (1.25,)
+    assert projected.column_values("Granularity_16_BF_image") == (16.25,)
+
+
+def test_measure_granularity_projects_exact_object_feature_identities_at_producer():
+    rows = ObjectGranularityMeasurementRows(
+        np.asarray((3,), dtype=np.int32),
+        np.arange(1.0, 17.0, dtype=np.float64).reshape(1, 16),
+    )
+
+    projected = MeasureGranularityModule.prepare_measurement_record_rows(
+        rows,
+        source_image_name="BF_image",
+    )
+
+    assert "gs1" not in projected.columns
+    assert "gs16" not in projected.columns
+    np.testing.assert_array_equal(
+        projected.column_values("Granularity_1_BF_image"),
+        np.asarray((1.0,)),
+    )
+    np.testing.assert_array_equal(
+        projected.column_values("Granularity_16_BF_image"),
+        np.asarray((16.0,)),
+    )
+
+
+def test_object_granularity_rows_preserve_exact_zero_row_schema():
+    rows = ObjectGranularityMeasurementRows(
+        np.empty(0, dtype=np.int32),
+        np.empty((0, GRANULARITY_SPECTRUM_LENGTH), dtype=np.float64),
+    )
+
+    assert tuple(field.name for field in rows.fields) == tuple(rows.columns)
+    assert tuple(field.dtype for field in rows.fields[:2]) == (int, int)
+    assert all(field.dtype is float for field in rows.fields[2:])
+    assert rows.row_count() == 0
 
 
 def test_measure_granularity_objects_preserves_sparse_label_ids():
@@ -107,7 +204,7 @@ def test_measure_granularity_objects_uses_order_one_coordinate_sampling_after_su
     rec = series.reconstructions[0]
     row_scale = float(series.new_shape[0] - 1) / float(labels.shape[0] - 1)
     col_scale = float(series.new_shape[1] - 1) / float(labels.shape[1] - 1)
-    ri, rj = np.mgrid[0:labels.shape[0], 0:labels.shape[1]].astype(np.float64)
+    ri, rj = np.mgrid[0 : labels.shape[0], 0 : labels.shape[1]].astype(np.float64)
     ri *= row_scale
     rj *= col_scale
     rec_full = scipy.ndimage.map_coordinates(rec, (ri, rj), order=1)
@@ -131,12 +228,12 @@ def test_background_corrected_pixels_match_reference_operations():
     )
 
     back_shape = np.asarray(image.shape) * 0.5
-    bi, bj = np.mgrid[0:back_shape[0], 0:back_shape[1]].astype(float) / 0.5
+    bi, bj = np.mgrid[0 : back_shape[0], 0 : back_shape[1]].astype(float) / 0.5
     back_pixels = scipy.ndimage.map_coordinates(image, (bi, bj), order=1)
     footprint = skimage.morphology.disk(1, dtype=bool)
     back_pixels = skimage.morphology.erosion(back_pixels, footprint=footprint)
     back_pixels = skimage.morphology.dilation(back_pixels, footprint=footprint)
-    ui, uj = np.mgrid[0:image.shape[0], 0:image.shape[1]].astype(float)
+    ui, uj = np.mgrid[0 : image.shape[0], 0 : image.shape[1]].astype(float)
     ui *= float(back_shape[0] - 1) / float(image.shape[0] - 1)
     uj *= float(back_shape[1] - 1) / float(image.shape[1] - 1)
     expected = image - scipy.ndimage.map_coordinates(back_pixels, (ui, uj), order=1)
@@ -164,9 +261,11 @@ def test_numba_granularity_reconstruction_matches_native_radius_one():
         seed,
         pixels,
     )
-    accelerated = NumbaGranularityReconstructionBackendStrategy().reconstruct_radius_one(
-        seed,
-        pixels,
+    accelerated = (
+        NumbaGranularityReconstructionBackendStrategy().reconstruct_radius_one(
+            seed,
+            pixels,
+        )
     )
 
     np.testing.assert_array_equal(accelerated, native)
@@ -184,9 +283,11 @@ def test_opencv_granularity_reconstruction_matches_native_radius_one():
         seed,
         pixels,
     )
-    accelerated = OpenCVGranularityReconstructionBackendStrategy().reconstruct_radius_one(
-        seed,
-        pixels,
+    accelerated = (
+        OpenCVGranularityReconstructionBackendStrategy().reconstruct_radius_one(
+            seed,
+            pixels,
+        )
     )
 
     np.testing.assert_array_equal(accelerated, native)
@@ -268,10 +369,7 @@ def test_measure_granularity_objects_matches_reference_operations():
         expected.append((previous_means - current_means) * 100 / start_means)
 
     actual = np.array(
-        [
-            [measurement.gs1, measurement.gs2]
-            for measurement in actual_measurements
-        ]
+        [[measurement.gs1, measurement.gs2] for measurement in actual_measurements]
     )
     np.testing.assert_allclose(actual, np.asarray(expected).T)
 

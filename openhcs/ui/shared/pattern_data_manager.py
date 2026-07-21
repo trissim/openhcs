@@ -10,9 +10,6 @@ Framework-agnostic - can be used by any UI framework (PyQt, Textual, etc.).
 import copy
 from typing import Union, List, Dict, Tuple, Optional, Callable, Any
 
-from openhcs.core.runtime_invocation import RuntimeInvocationOptions
-
-
 class PatternDataManager:
     """
     Pure data operations for function patterns.
@@ -77,10 +74,7 @@ class PatternDataManager:
     @staticmethod
     def extract_func_and_kwargs(func_item) -> Tuple[Optional[Callable], Dict]:
         """
-        Parse (func, kwargs), (func, kwargs, invocation_options), and bare callables.
-
-        Invocation options are non-editable runtime metadata and are not returned
-        as function kwargs.
+        Parse an exact ``(func, kwargs)`` leaf or a bare callable.
 
         Args:
             func_item: Either tuple function spec or bare callable
@@ -88,19 +82,23 @@ class PatternDataManager:
         Returns:
             Tuple of (callable, kwargs_dict)
         """
-        if isinstance(func_item, tuple) and len(func_item) in {2, 3} and callable(func_item[0]):
-            if len(func_item) == 3 and not isinstance(
-                func_item[2], RuntimeInvocationOptions
-            ):
+        if isinstance(func_item, tuple):
+            if len(func_item) != 2:
                 raise TypeError(
-                    "Function tuple invocation metadata must inherit "
-                    f"RuntimeInvocationOptions, got {type(func_item[2]).__name__}."
+                    "Function-pattern tuple leaves must contain exactly two "
+                    "members: (callable, kwargs)."
                 )
-            return func_item[0], func_item[1]
-        elif callable(func_item):
+            func, kwargs = func_item
+            if not callable(func):
+                return None, {}
+            if not isinstance(kwargs, dict):
+                raise TypeError(
+                    f"Function kwargs must be a dict, got {type(kwargs).__name__}."
+                )
+            return func, kwargs
+        if callable(func_item):
             return func_item, {}
-        else:
-            return None, {}
+        return None, {}
     
     @staticmethod
     def validate_pattern_structure(pattern: Union[List, Dict]) -> bool:

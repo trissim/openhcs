@@ -1,129 +1,7 @@
-"""Parameter help should use CellProfiler function documentation."""
+"""Generic parameter-help behavior used by CellProfiler function panes."""
 
-
-def test_cellprofiler_parameter_help_uses_function_docstring() -> None:
-    import openhcs  # noqa: F401 - activates source-checkout externals first
-    from openhcs.processing.backends import cellprofiler
-    from pyqt_reactive.windows.help_window_manager import (
-        resolved_parameter_description,
-    )
-
-    description = resolved_parameter_description(
-        help_target=cellprofiler.measure_object_intensity,
-        param_name="labels",
-        widget_description="Parameter: Labels",
-    )
-
-    assert "ObjectIntensityLabelInput" in description
-    assert "CellProfiler MeasureObjectIntensity execution" in description
-    assert description != "Parameter: Labels"
-
-
-def test_cellprofiler_parameter_help_content_hides_raw_union_annotation() -> None:
-    import openhcs  # noqa: F401 - activates source-checkout externals first
-    from openhcs.processing.backends import cellprofiler
-    from pyqt_reactive.windows.help_window_manager import (
-        parameter_help_content,
-        resolved_parameter_description,
-    )
-
-    description = resolved_parameter_description(
-        help_target=cellprofiler.measure_object_size_shape,
-        param_name="shape_backend_provider",
-        widget_description="Parameter: Shape Backend Provider",
-    )
-    content = parameter_help_content(
-        param_name="shape_backend_provider",
-        param_type=None,
-        description=description,
-    )
-
-    assert content.summary == "• shape_backend_provider (BackendProviderInput)"
-    assert "Default: DefaultCellProfilerBackendProviderSelection()" in content.description
-    assert "Controls shape backend provider" in content.description
-    assert "openhcs.processing.backends" not in content.summary
-
-
-def test_cellprofiler_parameter_help_formats_long_setting_docs() -> None:
-    import openhcs  # noqa: F401 - activates source-checkout externals first
-    from openhcs.processing.backends import cellprofiler
-    from pyqt_reactive.windows.help_window_manager import (
-        parameter_help_content,
-        resolved_parameter_description,
-    )
-
-    description = resolved_parameter_description(
-        help_target=cellprofiler.threshold,
-        param_name="threshold_method",
-        widget_description="Parameter: Threshold Method",
-    )
-    content = parameter_help_content(
-        param_name="threshold_method",
-        param_type=None,
-        description=description,
-    )
-
-    assert content.summary == "• threshold_method (ThresholdMethod | str)"
-    assert "Default: 'Otsu'\n\nCellProfiler setting: Thresholding method" in content.description
-    assert "\n\n- {TM_OTSU}:" in content.description
-    assert ".. image::" not in content.description
-
-
-def test_cellprofiler_parameter_help_deduplicates_default_sentences() -> None:
-    import openhcs  # noqa: F401 - activates source-checkout externals first
-    from openhcs.processing.backends import cellprofiler
-    from pyqt_reactive.windows.help_window_manager import (
-        parameter_help_content,
-        resolved_parameter_description,
-    )
-
-    description = resolved_parameter_description(
-        help_target=cellprofiler.gaussian_filter,
-        param_name="sigma",
-        widget_description="Parameter: Sigma",
-    )
-    content = parameter_help_content(
-        param_name="sigma",
-        param_type=None,
-        description=description,
-    )
-
-    assert content.summary == "• sigma (float)"
-    assert content.description.count("Default: 1.0") == 1
-    assert "Default is 1.0" not in content.description
-    assert "CellProfiler setting: Sigma" in content.description
-
-
-def test_parameter_help_long_content_uses_readable_window_width() -> None:
-    import openhcs  # noqa: F401 - activates source-checkout externals first
-    from openhcs.processing.backends import cellprofiler
-    from pyqt_reactive.windows.help_window_manager import (
-        HELP_WINDOW_LARGE_WIDTH,
-        help_window_width_for_content,
-        parameter_help_content,
-        resolved_parameter_description,
-    )
-    from python_introspect.signature_analyzer import DocstringInfo
-
-    description = resolved_parameter_description(
-        help_target=cellprofiler.threshold,
-        param_name="threshold_method",
-        widget_description="Parameter: Threshold Method",
-    )
-    content = parameter_help_content(
-        param_name="threshold_method",
-        param_type=None,
-        description=description,
-    )
-    docstring_info = DocstringInfo(
-        summary=content.summary,
-        description=content.description,
-        parameters={},
-        returns="",
-        examples="",
-    )
-
-    assert help_window_width_for_content(docstring_info) == HELP_WINDOW_LARGE_WIDTH
+import ast
+import inspect
 
 
 def test_parameter_help_content_uses_parameter_window_not_docstring_mirror(
@@ -176,6 +54,110 @@ def test_parameter_help_content_uses_parameter_window_not_docstring_mirror(
         if HelpWindowManager._help_window is not None:
             HelpWindowManager._help_window.close()
         HelpWindowManager._help_window = None
+
+
+def test_callable_parameter_popup_uses_wrapper_owned_descriptions(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+    import openhcs  # noqa: F401 - activates source-checkout externals first
+    from arraybridge.decorators import numpy
+    from PyQt6.QtWidgets import QApplication
+    from python_introspect import mark_enableable
+    from pyqt_reactive.windows.help_window_manager import (
+        HelpWindowManager,
+        ParameterHelpWindow,
+    )
+
+    @numpy
+    def slice_probe(image):
+        """Return the input image.
+
+        Args:
+            image: Input image stack.
+        """
+
+        return image
+
+    def enableable_probe(image, *, enabled: bool = True):
+        """Return the input image when enabled.
+
+        Args:
+            image: Input image stack.
+        """
+
+        return image
+
+    mark_enableable(enableable_probe)
+    app = QApplication.instance() or QApplication([])
+    HelpWindowManager._help_window = None
+
+    try:
+        cases = (
+            (
+                slice_probe,
+                "slice_by_slice",
+                ("numpy memory decorator", "Process 3D arrays slice-by-slice"),
+            ),
+            (
+                enableable_probe,
+                "enabled",
+                (
+                    "Run this callable or configuration when enabled; "
+                    "skip it when disabled.",
+                ),
+            ),
+        )
+        for target, parameter_name, expected_fragments in cases:
+            HelpWindowManager.show_parameter_help(
+                parameter_name,
+                f"Parameter: {parameter_name}",
+                help_target=target,
+                parent=None,
+            )
+            for _ in range(20):
+                app.processEvents()
+
+            window = HelpWindowManager._help_window
+            assert isinstance(window, ParameterHelpWindow)
+            assert window.content.summary == f"• {parameter_name}"
+            assert window.content.description != f"Parameter: {parameter_name}"
+            assert all(
+                fragment in window.content.description
+                for fragment in expected_fragments
+            )
+    finally:
+        if HelpWindowManager._help_window is not None:
+            HelpWindowManager._help_window.close()
+        HelpWindowManager._help_window = None
+
+
+def test_callable_popup_projection_has_no_parameter_name_dispatch() -> None:
+    import openhcs  # noqa: F401 - activates source-checkout externals first
+    from pyqt_reactive.services.parameter_help_service import (
+        parameter_description_from_target,
+    )
+
+    source = inspect.getsource(parameter_description_from_target)
+    tree = ast.parse(source)
+    string_literals = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    called_names = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+
+    assert "docstring_info_for_target" in called_names
+    assert "dataclass_type_for_target" not in called_names
+    assert {"enabled", "slice_by_slice"}.isdisjoint(string_literals)
 
 
 def test_dataclass_help_replaces_parameter_window_without_reusing_parameter_dialog(

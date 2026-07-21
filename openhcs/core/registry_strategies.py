@@ -15,7 +15,7 @@ from metaclass_registry import (
     RegistryFamily,
     RegistryConfig,
     RegistryKeyAttribute,
-    RegisteredEnumMeta,
+    RegisteredEnumMeta as RegisteredEnumMeta,
     extract_key_from_class_name,
 )
 
@@ -155,6 +155,22 @@ class NominalTypeKeyedStrategyMixin(RegisteredStrategyTypesMixin[_TypeStrategyT]
         """Instantiate the most specific registered strategy owning ``value``."""
         strategy_types = cls.strategy_types_for_nominal_value(value)
         return None if not strategy_types else strategy_types[0]()
+
+    @classmethod
+    def require_nominal_value(
+        cls: type[_TypeStrategyT],
+        value: object,
+        *,
+        context: str,
+    ) -> _TypeStrategyT:
+        """Require an explicitly registered strategy for ``value``."""
+        strategy = cls.for_nominal_value(value)
+        if strategy is None:
+            raise TypeError(
+                f"{context} has no registered nominal strategy for "
+                f"{type(value).__module__}.{type(value).__qualname__}."
+            )
+        return strategy
 
     @classmethod
     def strategy_types_for_nominal_value(

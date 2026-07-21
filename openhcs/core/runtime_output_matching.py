@@ -2,229 +2,209 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeAlias
 
-from openhcs.core.artifacts import (
-    ArtifactSpec,
-    ImageArtifactType,
-    ObjectLabelsArtifactType,
-    MeasurementsArtifactType,
+from openhcs.core.aligned_image_payload import (
+    AlignedImageSliceContext,
+    AlignedImageStack,
 )
+from openhcs.core.artifacts import (
+    ArtifactOutputPlan,
+    ArtifactSpec,
+    ArtifactSpecRef,
+)
+from openhcs.core.callable_contract import CallableContract
 
 
-def artifact_spec_participates_in_main_flow(spec: ArtifactSpec) -> bool:
-    """Return whether a returned artifact spec is the main runtime-flow value."""
-    return (
-        spec.artifact_type.participates_in_main_flow_output
-        and spec.sidecar_role is None
-    )
+class RuntimeOutputBundle(ABC):
+    """Nominal multi-output value exposed to generic runtime matching."""
+
+    @abstractmethod
+    def as_runtime_tuple(self) -> tuple[object, ...]:
+        """Return the canonical main output followed by artifact outputs."""
+
+
+RuntimeMatchedOutput: TypeAlias = tuple[ArtifactOutputPlan, ArtifactSpec, Any]
+
+
+def runtime_output_tuple(value: Any) -> Any:
+    """Lower a nominal output bundle to the generic positional output ABI."""
+
+    if isinstance(value, RuntimeOutputBundle):
+        return value.as_runtime_tuple()
+    return value
+
+
+def split_runtime_output(value: Any) -> tuple[Any, tuple[Any, ...]]:
+    """Split one runtime return into its canonical and artifact positions."""
+
+    positional = runtime_output_tuple(value)
+    if isinstance(positional, tuple):
+        if not positional:
+            raise ValueError("Runtime output tuples cannot be empty.")
+        return positional[0], tuple(positional[1:])
+    return positional, ()
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeReturnedOutputMatcher:
-    """Resolve retained output specs against generic callable return values."""
+    """Resolve one complete callable return against its declared positional ABI."""
 
-    retained_specs: tuple[ArtifactSpec, ...]
-    declared_specs: tuple[ArtifactSpec, ...]
-    main_output: Any
-    artifact_values: tuple[Any, ...]
-    returned_specs: tuple[ArtifactSpec, ...] = ()
+    callable_contract: CallableContract
+    returned_output: Any
 
-    def resolve(self) -> dict[str, Any] | None:
-        if not self.retained_specs:
-            return {}
-        if (
-            len(self.retained_specs) == 1
-            and self.retained_specs[0].artifact_type is ImageArtifactType
-            and self.retained_specs[0].sidecar_role is None
-        ):
-            return {self.retained_specs[0].name: self.main_output}
-        declared_resolution = self.resolve_from_declared_outputs()
-        if declared_resolution is not None:
-            return declared_resolution
+    @property
+    def canonical_output(self) -> Any:
+        """Return the unmodified first position of the callable ABI."""
 
-        if len(self.retained_specs) == 1:
-            return {self.retained_specs[0].name: self.single_output_value(self.retained_specs[0])}
+        return split_runtime_output(self.returned_output)[0]
 
-        positional_resolution = self.resolve_positional_outputs()
-        if positional_resolution is not None:
-            return positional_resolution
+    def resolve(self) -> dict[ArtifactSpecRef, Any]:
+        """Resolve every output in the callable ABI."""
 
-        return self.resolve_from_returned_specs()
-
-    def single_output_value(self, spec: ArtifactSpec) -> Any:
-        if spec.artifact_type is ImageArtifactType:
-            return self.main_output
-        if not self.artifact_values:
+        output_specs = self.callable_contract.artifact_outputs.specs
+        self._specs_by_ref(
+            output_specs,
+            contract_name="Callable output ABI",
+        )
+        canonical_output, trailing_values = split_runtime_output(self.returned_output)
+        trailing_specs = self.callable_contract.trailing_return_output_specs.specs
+        if len(trailing_values) != len(trailing_specs):
             raise ValueError(
-                f"Runtime callable did not return a value for output '{spec.name}'."
+                "Runtime callable trailing return count does not match its "
+                f"declared trailing output slots: {len(trailing_values)} != "
+                f"{len(trailing_specs)}."
             )
-        if spec.artifact_type is ObjectLabelsArtifactType:
-            return self.artifact_values[-1]
-        if spec.artifact_type is MeasurementsArtifactType:
-            return self.artifact_values[-1]
-        return self.artifact_values[0]
-
-    def resolve_from_declared_outputs(self) -> dict[str, Any] | None:
-        if not self.declared_specs:
-            return None
-        return self.resolve_from_candidates(
-            self.declared_return_candidates(),
-            require_exact_names=True,
-        )
-
-    def declared_return_candidates(self) -> tuple[tuple[ArtifactSpec, Any], ...]:
-        main_index = self.declared_main_output_index()
-        if main_index is None:
-            if len(self.declared_specs) < len(self.artifact_values):
-                return ()
-            return tuple(
-                zip(
-                    self.declared_specs[: len(self.artifact_values)],
-                    self.artifact_values,
-                    strict=True,
-                )
+        resolved = {
+            spec.ref(): value
+            for spec, value in zip(
+                trailing_specs,
+                trailing_values,
+                strict=True,
             )
-        artifact_specs = (
-            *self.declared_specs[:main_index],
-            *self.declared_specs[main_index + 1 :],
-        )
-        artifact_candidates = tuple(
-            zip(artifact_specs, self.artifact_values, strict=True)
-        )
-        return (
-            *artifact_candidates[:main_index],
-            (self.declared_specs[main_index], self.main_output),
-            *artifact_candidates[main_index:],
-        )
-
-    def declared_main_output_index(self) -> int | None:
-        if len(self.declared_specs) != len(self.artifact_values) + 1:
-            return None
-        return self.first_declared_main_output_index()
-
-    def first_declared_main_output_index(self) -> int | None:
-        for index, spec in enumerate(self.declared_specs):
-            if artifact_spec_participates_in_main_flow(spec):
-                return index
-        return None
-
-    def resolve_positional_outputs(self) -> dict[str, Any] | None:
-        if (
-            self.retained_specs[0].artifact_type is ImageArtifactType
-            and len(self.retained_specs) == len(self.artifact_values) + 1
-        ):
-            return {
-                self.retained_specs[0].name: self.main_output,
-                **{
-                    spec.name: value
-                    for spec, value in zip(
-                        self.retained_specs[1:],
-                        self.artifact_values,
-                        strict=True,
-                    )
-                },
-            }
-        if len(self.retained_specs) != len(self.artifact_values):
-            return None
-        return {
-            spec.name: value
-            for spec, value in zip(self.retained_specs, self.artifact_values, strict=True)
         }
-
-    def resolve_from_returned_specs(self) -> dict[str, Any] | None:
-        if not self.returned_specs:
-            return None
-        candidate_specs = self.returned_specs_with_retained_tail(
-            self.returned_specs,
-            len(self.artifact_values),
-        )
-        return self.resolve_from_candidates(
-            (
-                (ArtifactSpec.output("<main>", ImageArtifactType), self.main_output),
-                *zip(candidate_specs, self.artifact_values, strict=False),
-            ),
-            require_exact_names=False,
-        )
-
-    def resolve_from_candidates(
-        self,
-        candidates: tuple[tuple[ArtifactSpec, Any], ...],
-        *,
-        require_exact_names: bool,
-    ) -> dict[str, Any] | None:
-        if not candidates:
-            return None
-        resolved: dict[str, Any] = {}
-        cursor = 0
-        for spec in self.retained_specs:
-            match_index = self.next_candidate_index(
-                candidates,
-                spec,
-                cursor,
-                require_exact_names=require_exact_names,
+        resolved.update(
+            self._canonical_values(
+                self.callable_contract.canonical_return_output_specs.specs,
+                canonical_output,
             )
-            if match_index is None:
-                return None
-            resolved[spec.name] = candidates[match_index][1]
-            cursor = match_index + 1
+        )
         return resolved
 
-    def next_candidate_index(
+    def resolve_plan_values(
         self,
-        candidates: tuple[tuple[ArtifactSpec, Any], ...],
-        retained_spec: ArtifactSpec,
-        cursor: int,
-        *,
-        require_exact_names: bool,
-    ) -> int | None:
-        for index in range(cursor, len(candidates)):
-            if self.same_artifact_identity(candidates[index][0], retained_spec):
-                return index
-        if require_exact_names:
-            return None
-        for index in range(cursor, len(candidates)):
-            if self.same_artifact_semantics(candidates[index][0], retained_spec):
-                return index
-        return None
+        selected_output_plans: tuple[ArtifactOutputPlan, ...],
+    ) -> tuple[
+        dict[ArtifactSpecRef, Any],
+        tuple[RuntimeMatchedOutput, ...],
+    ]:
+        """Resolve the complete ABI and bind exact selected runtime plans once."""
 
-    @staticmethod
-    def same_artifact_identity(left: ArtifactSpec, right: ArtifactSpec) -> bool:
-        return (
-            left.name == right.name
-            and left.artifact_type is right.artifact_type
-            and left.sidecar_role is right.sidecar_role
+        returned_values = self.resolve()
+        specs_by_ref = self._specs_by_ref(
+            self.callable_contract.artifact_outputs.specs,
+            contract_name="Callable output ABI",
         )
+        selected_refs: set[ArtifactSpecRef] = set()
+        matched_outputs: list[RuntimeMatchedOutput] = []
+        for plan in selected_output_plans:
+            if not isinstance(plan, ArtifactOutputPlan):
+                raise TypeError(
+                    "Selected runtime outputs must be ArtifactOutputPlan values, "
+                    f"got {type(plan).__name__}."
+                )
+            ref = plan.ref()
+            if ref in selected_refs:
+                raise ValueError(
+                    f"Selected runtime output plans contain duplicate ref {ref!r}."
+                )
+            selected_refs.add(ref)
+            spec = specs_by_ref.get(ref)
+            if spec is None:
+                raise ValueError(
+                    f"Selected output plan {ref!r} is not declared by the callable ABI."
+                )
+            matched_outputs.append((plan, spec, returned_values[ref]))
+        return returned_values, tuple(matched_outputs)
+
+    @classmethod
+    def _canonical_values(
+        cls,
+        canonical_specs: tuple[ArtifactSpec, ...],
+        canonical_output: Any,
+    ) -> dict[ArtifactSpecRef, Any]:
+        """Resolve named outputs represented by the one canonical return slot."""
+
+        if not canonical_specs:
+            return {}
+        if len(canonical_specs) == 1:
+            spec = canonical_specs[0]
+            return {spec.ref(): canonical_output}
+        if not isinstance(canonical_output, AlignedImageStack):
+            raise TypeError(
+                "Multiple canonical output specs require an AlignedImageStack with "
+                "one exact named slice context per output."
+            )
+        if not canonical_output.slice_contexts:
+            raise ValueError(
+                "Multiple canonical output specs require exact AlignedImageStack "
+                "slice contexts; positional slice order is not artifact identity."
+            )
+
+        specs_by_context = {
+            (spec.name, spec.artifact_type.value): spec for spec in canonical_specs
+        }
+        if len(specs_by_context) != len(canonical_specs):
+            raise ValueError("Canonical output ABI contains duplicate named contexts.")
+        resolved: dict[ArtifactSpecRef, Any] = {}
+        for payload, context in zip(
+            canonical_output.slices,
+            canonical_output.slice_contexts,
+            strict=True,
+        ):
+            if context.output_kind != AlignedImageSliceContext.MAIN_FLOW_OUTPUT_KIND:
+                raise ValueError(
+                    "Canonical AlignedImageStack contains a non-main-flow slice "
+                    f"context: {context!r}."
+                )
+            context_key = (context.output_key, context.artifact_kind)
+            spec = specs_by_context.get(context_key)
+            if spec is None:
+                raise ValueError(
+                    "Canonical AlignedImageStack context is not declared by the "
+                    f"callable ABI: {context!r}."
+                )
+            ref = spec.ref()
+            if ref in resolved:
+                raise ValueError(
+                    "Canonical AlignedImageStack contains duplicate context for "
+                    f"{ref!r}."
+                )
+            resolved[ref] = payload
+        missing = tuple(
+            spec.ref() for spec in canonical_specs if spec.ref() not in resolved
+        )
+        if missing:
+            raise ValueError(
+                "Canonical AlignedImageStack does not carry every declared output: "
+                f"{missing!r}."
+            )
+        return resolved
 
     @staticmethod
-    def same_artifact_semantics(left: ArtifactSpec, right: ArtifactSpec) -> bool:
-        return left.artifact_type is right.artifact_type and left.sidecar_role is right.sidecar_role
-
-    def returned_specs_with_retained_tail(
-        self,
-        candidate_specs: tuple[ArtifactSpec, ...],
-        artifact_value_count: int,
-    ) -> tuple[ArtifactSpec, ...]:
-        if len(candidate_specs) >= artifact_value_count:
-            return candidate_specs
-        remaining_counts: dict[tuple[type[ArtifactType], Any], int] = {}
-        for spec in self.retained_specs:
-            key = (spec.artifact_type, spec.sidecar_role)
-            remaining_counts[key] = remaining_counts.get(key, 0) + 1
-        for spec in candidate_specs:
-            key = (spec.artifact_type, spec.sidecar_role)
-            if key not in remaining_counts:
-                continue
-            remaining_counts[key] -= 1
-            if remaining_counts[key] <= 0:
-                remaining_counts.pop(key)
-        tail: list[ArtifactSpec] = []
-        for spec in self.retained_specs:
-            key = (spec.artifact_type, spec.sidecar_role)
-            count = remaining_counts.get(key, 0)
-            if count <= 0:
-                continue
-            tail.append(spec)
-            remaining_counts[key] = count - 1
-        return (*candidate_specs, *tail[: artifact_value_count - len(candidate_specs)])
+    def _specs_by_ref(
+        specs: tuple[ArtifactSpec, ...],
+        *,
+        contract_name: str,
+    ) -> dict[ArtifactSpecRef, ArtifactSpec]:
+        by_ref: dict[ArtifactSpecRef, ArtifactSpec] = {}
+        for spec in specs:
+            ref = spec.ref()
+            if ref in by_ref:
+                raise ValueError(
+                    f"{contract_name} contains duplicate artifact ref {ref!r}."
+                )
+            by_ref[ref] = spec
+        return by_ref

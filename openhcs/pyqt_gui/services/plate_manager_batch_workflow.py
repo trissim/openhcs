@@ -27,6 +27,9 @@ from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
 from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
     LiveMeasurementAvailableNotification,
 )
+from openhcs.pyqt_gui.widgets.shared.services.runtime_artifact_progress_service import (
+    RuntimeArtifactAvailableNotification,
+)
 from openhcs.pyqt_gui.widgets.shared.services.debug_workflow_service import (
     DebugPlateRunRequest,
 )
@@ -54,11 +57,10 @@ class PlateManagerBatchWorkflow:
         host,
         *,
         zmq: ZMQExecutionClientBoundary,
-        port: int = 7777,
         server_info_parser: ServerInfoParserABC | None = None,
     ) -> None:
         self.host = host
-        self.port = port
+        self.port = zmq.config.default_port
         self._execution_zmq = zmq
         self._context = BatchWorkflowContext(
             zmq=self._execution_zmq,
@@ -126,6 +128,14 @@ class PlateManagerBatchWorkflow:
         """Subscribe to live measurement previews announced through progress."""
 
         self.components.live_measurements.add_listener(listener)
+
+    def add_runtime_artifact_listener(
+        self,
+        listener: Callable[[RuntimeArtifactAvailableNotification], None],
+    ) -> None:
+        """Subscribe to generic runtime artifact addresses from progress."""
+
+        self.components.runtime_artifacts.add_listener(listener)
 
     async def run_plates(self, ready_items: list[PlateManagerRow]) -> None:
         """Run selected plates using compile-all then execute-all workflow."""

@@ -5,6 +5,15 @@ Plate management widget with complete button set and reactive state management.
 Matches the functionality from the current prompt-toolkit TUI.
 """
 
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
+from openhcs.textual_tui.services.plate_manager_code_document import (
+    TextualPlateManagerCodeDocumentController,
+)
+from openhcs.ui.shared.plate_manager_code_document import (
+    PlateManagerCodeDocumentAuthority,
+    PlateManagerOrchestratorCodePayload,
+)
+
 import asyncio
 import copy
 import dataclasses
@@ -26,6 +35,7 @@ from typing import Dict, List, Optional, Callable, Any, Tuple
 from openhcs.core.config import PipelineConfig
 from openhcs.core.log_utils import get_current_log_file_path
 from openhcs.runtime.zmq_execution_client import OpenHCSExecutionSubmission
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 from PIL import Image
 from textual.reactive import reactive
@@ -33,7 +43,6 @@ from .button_list_widget import ButtonListWidget, ButtonConfig
 from textual import work
 
 from openhcs.core.config import GlobalPipelineConfig, VFSConfig, MaterializationBackend
-from openhcs.core.pipeline import Pipeline
 from polystore.filemanager import FileManager
 from polystore.zarr import ZarrStorageBackend
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
@@ -808,7 +817,7 @@ class PlateManagerWidget(ButtonListWidget):
 
             # Create ZMQ client (non-persistent mode for UI-managed execution)
             self.zmq_client = ZMQExecutionClient(
-                port=7777,
+                config=OPENHCS_ZMQ_CONFIG,
                 persistent=False,  # UI manages lifecycle
                 progress_callback=self._on_zmq_progress,
             )
@@ -854,9 +863,11 @@ class PlateManagerWidget(ButtonListWidget):
                     return self.zmq_client.execute_pipeline(
                         OpenHCSExecutionSubmission(
                             plate_id=str(plate_path),
-                            pipeline_steps=definition_pipeline,
+                            pipeline_document=PipelineDocumentAuthority.from_values(
+                                pipeline_config=pipeline_config,
+                                pipeline_steps=definition_pipeline,
+                            ),
                             global_config=effective_config,
-                            pipeline_config=pipeline_config,
                         )
                     )
 
@@ -1728,10 +1739,6 @@ class PlateManagerWidget(ButtonListWidget):
                             VariableComponents.SITE
                         ]
 
-                # Get wells and compile (async - run in executor to avoid blocking UI)
-                # Wrap in Pipeline object like test_main.py does
-                pipeline_obj = Pipeline(steps=execution_pipeline)
-
                 # Run heavy operations in executor to avoid blocking UI
                 # Get wells using multiprocessing axis (WELL in default config)
                 from openhcs.constants import MULTIPROCESSING_AXIS
@@ -1740,7 +1747,7 @@ class PlateManagerWidget(ButtonListWidget):
                     None, lambda: orchestrator.get_component_keys(MULTIPROCESSING_AXIS)
                 )
                 compiled_contexts = await asyncio.get_event_loop().run_in_executor(
-                    None, orchestrator.compile_pipelines, pipeline_obj.steps, wells
+                    None, orchestrator.compile_pipelines, execution_pipeline, wells
                 )
 
                 # Store state simply - no reactive property issues
@@ -1829,123 +1836,22 @@ class PlateManagerWidget(ButtonListWidget):
             return
 
         try:
-            # Get pipeline data for selected plates
-            plate_paths = [item["path"] for item in selected_items]
-            pipeline_data = {}
-
-            # Collect pipeline steps for each plate
-            for plate_path in plate_paths:
-                if hasattr(self, "pipeline_editor") and self.pipeline_editor:
-                    # Get pipeline steps from pipeline editor if available
-                    if plate_path in self.pipeline_editor.plate_pipelines:
-                        pipeline_data[plate_path] = (
-                            self.pipeline_editor.plate_pipelines[plate_path]
-                        )
-                    else:
-                        pipeline_data[plate_path] = []
-                else:
-                    pipeline_data[plate_path] = []
-
-            # Use pycodify-based serializer to generate complete script
             from openhcs.textual_tui.services.terminal_launcher import TerminalLauncher
 
-            # Create data structure the serializer expects
-            data = {
-                "plate_paths": plate_paths,
-                "pipeline_data": pipeline_data,
-                "global_config": self.app.global_config,
-            }
-
-            # Extract variables from data dict
-            plate_paths = data["plate_paths"]
-            pipeline_data = data["pipeline_data"]
-
-            # Generate just the orchestrator configuration (no execution wrapper)
-            import openhcs.serialization.pycodify_formatters  # noqa: F401
-            from pycodify import (
-                Assignment,
-                BlankLine,
-                CodeBlock,
-                generate_python_source,
+            payload = self._plate_manager_code_document_payload(selected_items)
+            python_code = PlateManagerCodeDocumentAuthority.render(
+                payload,
+                clean_mode=True,
             )
 
-            python_code = generate_python_source(
-                CodeBlock.from_items(
-                    [
-                        Assignment("plate_paths", plate_paths),
-                        BlankLine(),
-                        Assignment("global_config", self.app.global_config),
-                        BlankLine(),
-                        Assignment("pipeline_data", pipeline_data),
-                    ]
-                ),
-                header="# Edit this orchestrator configuration and save to apply changes",
-                clean_mode=True,  # Default to clean mode - only show non-default values
-            )
-
-            # Create callback to handle edited code
             def handle_edited_code(edited_code: str):
                 logger.debug("Orchestrator code edited, processing changes...")
                 try:
-                    # Execute the code (it has all necessary imports)
-                    namespace = {}
-                    exec(edited_code, namespace)
-
-                    # Update pipeline data if present (composition: orchestrator contains pipelines)
-                    if "pipeline_data" in namespace:
-                        new_pipeline_data = namespace["pipeline_data"]
-                        # Update pipeline editor using reactive system (like pipeline code button does)
-                        if hasattr(self, "pipeline_editor") and self.pipeline_editor:
-                            # Update plate pipelines storage
-                            current_pipelines = dict(
-                                self.pipeline_editor.plate_pipelines
-                            )
-                            current_pipelines.update(new_pipeline_data)
-                            self.pipeline_editor.plate_pipelines = current_pipelines
-
-                            # If current plate is in the edited data, update the current view too
-                            current_plate = self.pipeline_editor.current_plate
-                            if current_plate and current_plate in new_pipeline_data:
-                                self.pipeline_editor.pipeline_steps = new_pipeline_data[
-                                    current_plate
-                                ]
-
-                        self.app.current_status = (
-                            f"Pipeline data updated for {len(new_pipeline_data)} plates"
-                        )
-
-                    # Update global config if present
-                    elif "global_config" in namespace:
-                        new_global_config = namespace["global_config"]
-                        import asyncio
-
-                        for plate_path in plate_paths:
-                            if plate_path in self.orchestrators:
-                                orchestrator = self.orchestrators[plate_path]
-                                asyncio.create_task(
-                                    orchestrator.apply_new_global_config(
-                                        new_global_config
-                                    )
-                                )
-                        self.app.current_status = (
-                            f"Global config updated for {len(plate_paths)} plates"
-                        )
-
-                    # Update orchestrators list if present
-                    elif "orchestrators" in namespace:
-                        new_orchestrators = namespace["orchestrators"]
-                        self.app.current_status = f"Orchestrator list updated with {len(new_orchestrators)} orchestrators"
-
-                    else:
-                        self.app.show_error(
-                            "Parse Error", "No valid assignments found in edited code"
-                        )
-
-                except SyntaxError as e:
-                    self.app.show_error("Syntax Error", f"Invalid Python syntax: {e}")
+                    edited_payload = PlateManagerCodeDocumentAuthority.from_source(
+                        edited_code
+                    )
+                    self._apply_plate_manager_code_document(edited_payload)
                 except Exception as e:
-                    import traceback
-
                     full_traceback = traceback.format_exc()
                     logger.error(
                         f"Failed to parse edited orchestrator code: {e}\nFull traceback:\n{full_traceback}"
@@ -1962,10 +1868,21 @@ class PlateManagerWidget(ButtonListWidget):
                 file_extension=".py",
                 on_save_callback=handle_edited_code,
             )
-
         except Exception as e:
             logger.error(f"Failed to generate plate code: {e}")
             self.app.current_status = f"Failed to generate code: {e}"
+
+    def _plate_manager_code_document_payload(
+        self,
+        selected_items: List[Dict],
+    ) -> PlateManagerOrchestratorCodePayload:
+        return TextualPlateManagerCodeDocumentController(self).payload(selected_items)
+
+    def _apply_plate_manager_code_document(
+        self,
+        payload: PlateManagerOrchestratorCodePayload,
+    ) -> None:
+        TextualPlateManagerCodeDocumentController(self).apply(payload)
 
     async def action_save_python_script(self) -> None:
         """Save Python script for selected plates (like special_io_pipeline.py)."""

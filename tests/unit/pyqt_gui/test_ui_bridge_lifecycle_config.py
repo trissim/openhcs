@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import replace
 import pickle
 import socket
+from types import SimpleNamespace
 
 import zmq
 
-from openhcs.constants.constants import CONTROL_PORT_OFFSET
 from openhcs.pyqt_gui.config import (
     DEFAULT_AGENT_UI_BRIDGE_TRANSPORT,
     AgentUiBridgeConfig,
-    get_default_pyqt_gui_config,
+    PyQtGuiRuntimeContext,
+    get_default_ui_config,
 )
 from openhcs.pyqt_gui.main import OpenHCSMainWindow
 from openhcs.pyqt_gui.services.main_window_workflows import MainWindowUiBridgeLifecycle
@@ -33,7 +34,7 @@ def test_agent_ui_bridge_config_reads_environment(monkeypatch) -> None:
     monkeypatch.setenv("OPENHCS_UI_BRIDGE_TIMEOUT_MS", "1234")
     monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR", "/tmp/openhcs-bridge")
 
-    config = get_default_pyqt_gui_config().agent_bridge
+    config = get_default_ui_config().agent_bridge
 
     assert config.enabled is True
     assert config.host == "127.0.0.2"
@@ -65,17 +66,23 @@ def test_main_window_ui_bridge_lifecycle_stop_is_idempotent() -> None:
 def test_main_window_zmq_scan_ports_include_ui_bridge(monkeypatch) -> None:
     monkeypatch.setattr(
         "openhcs.core.config.get_all_streaming_ports",
-        lambda num_ports_per_type: [7777],
+        lambda num_ports_per_type: [5555],
     )
-    harness = _MainWindowPortScanHarness(
-        bridge_config=AgentUiBridgeConfig(
+    ui_config = replace(
+        get_default_ui_config(),
+        agent_bridge=AgentUiBridgeConfig(
             host="127.0.0.1",
             port=7999,
             transport_mode=DEFAULT_AGENT_UI_BRIDGE_TRANSPORT,
         ),
     )
+    harness = SimpleNamespace(runtime_context=PyQtGuiRuntimeContext(ui_config))
 
-    assert OpenHCSMainWindow.zmq_server_manager_ports_to_scan(harness) == [7777, 7999]
+    assert OpenHCSMainWindow.zmq_server_manager_ports_to_scan(harness) == [
+        OPENHCS_ZMQ_CONFIG.default_port,
+        5555,
+        7999,
+    ]
 
 
 def test_ui_bridge_answers_zmq_browser_control_ping(tmp_path) -> None:
@@ -98,7 +105,9 @@ def test_ui_bridge_answers_zmq_browser_control_ping(tmp_path) -> None:
         socket = context.socket(zmq.REQ)
         socket.setsockopt(zmq.LINGER, 0)
         socket.setsockopt(zmq.RCVTIMEO, 1000)
-        socket.connect(f"tcp://127.0.0.1:{port + CONTROL_PORT_OFFSET}")
+        socket.connect(
+            f"tcp://127.0.0.1:{port + OPENHCS_ZMQ_CONFIG.control_port_offset}"
+        )
         socket.send(
             pickle.dumps({"type": UiBridgeBrowserControlMessageType.PING.value})
         )
@@ -113,7 +122,9 @@ def test_ui_bridge_answers_zmq_browser_control_ping(tmp_path) -> None:
     assert response["type"] == UI_BRIDGE_BROWSER_PONG_TYPE
     assert response["server"] == UI_BRIDGE_BROWSER_SERVER_NAME
     assert response["port"] == port
-    assert response["control_port"] == port + CONTROL_PORT_OFFSET
+    assert response["control_port"] == (
+        port + OPENHCS_ZMQ_CONFIG.control_port_offset
+    )
     assert response["ready"] is True
     assert response["bridge_instance_id"] == binding.bridge_instance_id
 
@@ -130,7 +141,7 @@ def test_zmq_browser_scan_service_discovers_ui_bridge_default_transport(tmp_path
         ),
     )
     scan_service = ZMQServerScanService(
-        control_port_offset=CONTROL_PORT_OFFSET,
+        control_port_offset=OPENHCS_ZMQ_CONFIG.control_port_offset,
         config=OPENHCS_ZMQ_CONFIG,
         host="localhost",
         timeout_ms=1000,
@@ -156,17 +167,12 @@ class _FakeBridgeServer:
         self.stop_count += 1
 
 
-@dataclass(frozen=True)
-class _MainWindowPortScanHarness:
-    bridge_config: AgentUiBridgeConfig
-
-
 class TcpDataControlPortPairAuthority:
     @classmethod
     def acquire(cls) -> int:
         for _attempt in range(100):
             port = cls._free_tcp_port()
-            control_port = port + CONTROL_PORT_OFFSET
+            control_port = port + OPENHCS_ZMQ_CONFIG.control_port_offset
             if control_port > 65535:
                 continue
             if cls._tcp_port_is_available(control_port):

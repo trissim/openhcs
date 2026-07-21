@@ -1,9 +1,12 @@
 """CellProfiler-compatible image projection backend."""
 
 from __future__ import annotations
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.interop.cellprofiler.module_declarations import (
-    ProcessingContract,
     CellProfilerModule,
+)
+from openhcs.interop.cellprofiler.module_artifact_declarations import (
+    MeasurementArtifactOutputModule,
 )
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -11,26 +14,31 @@ from enum import Enum
 from typing import ClassVar
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
-from openhcs.constants.constants import VariableComponents
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
-from openhcs.core.public_api import public_names_from_objects
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
-from openhcs.processing.materialization import (
-    csv_dataclass_materializer,
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
 )
+from openhcs.core.public_api import public_names_from_objects
+from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
+from openhcs.interop.cellprofiler.settings_binder import (
+    SettingToKeywordBinding,
+    cellprofiler_enum_setting_parser,
+    coerce_cellprofiler_enum,
+    parse_cellprofiler_float,
+)
+from openhcs.core.artifacts import ImageArtifactType
 
 
 class ProjectionType(Enum):
-    AVERAGE = "average"
-    MAXIMUM = "maximum"
-    MINIMUM = "minimum"
-    SUM = "sum"
-    VARIANCE = "variance"
-    POWER = "power"
-    BRIGHTFIELD = "brightfield"
-    MASK = "mask"
+    AVERAGE = "Average"
+    MAXIMUM = "Maximum"
+    MINIMUM = "Minimum"
+    SUM = "Sum"
+    VARIANCE = "Variance"
+    POWER = "Power"
+    BRIGHTFIELD = "Brightfield"
+    MASK = "Mask"
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,52 +99,52 @@ class Float32ProjectionStrategy(ProjectionStrategy):
     """Template for projection algorithms that materialize float32 output."""
 
     def apply(self, request: ProjectionRequest) -> np.ndarray:
-        return self.project(request).astype(np.float32)
+        return self.compute(request).astype(np.float32)
 
     @abstractmethod
-    def project(self, request: ProjectionRequest) -> np.ndarray:
+    def compute(self, request: ProjectionRequest) -> np.ndarray:
         """Return the projection before final CellProfiler float32 materialization."""
 
 
 class AverageProjectionStrategy(Float32ProjectionStrategy):
     projection_type = ProjectionType.AVERAGE
 
-    def project(self, request: ProjectionRequest) -> np.ndarray:
+    def compute(self, request: ProjectionRequest) -> np.ndarray:
         return np.mean(request.stack, axis=0)
 
 
 class MaximumProjectionStrategy(Float32ProjectionStrategy):
     projection_type = ProjectionType.MAXIMUM
 
-    def project(self, request: ProjectionRequest) -> np.ndarray:
+    def compute(self, request: ProjectionRequest) -> np.ndarray:
         return np.max(request.stack, axis=0)
 
 
 class MinimumProjectionStrategy(Float32ProjectionStrategy):
     projection_type = ProjectionType.MINIMUM
 
-    def project(self, request: ProjectionRequest) -> np.ndarray:
+    def compute(self, request: ProjectionRequest) -> np.ndarray:
         return np.min(request.stack, axis=0)
 
 
 class SumProjectionStrategy(Float32ProjectionStrategy):
     projection_type = ProjectionType.SUM
 
-    def project(self, request: ProjectionRequest) -> np.ndarray:
+    def compute(self, request: ProjectionRequest) -> np.ndarray:
         return np.sum(request.stack, axis=0)
 
 
 class VarianceProjectionStrategy(Float32ProjectionStrategy):
     projection_type = ProjectionType.VARIANCE
 
-    def project(self, request: ProjectionRequest) -> np.ndarray:
+    def compute(self, request: ProjectionRequest) -> np.ndarray:
         return np.var(request.stack.astype(np.float64), axis=0)
 
 
 class PowerProjectionStrategy(Float32ProjectionStrategy):
     projection_type = ProjectionType.POWER
 
-    def project(self, request: ProjectionRequest) -> np.ndarray:
+    def compute(self, request: ProjectionRequest) -> np.ndarray:
         stack = request.stack.astype(np.float64)
         depth, height, width = stack.shape
         summed = np.sum(stack, axis=0)
@@ -153,7 +161,7 @@ class PowerProjectionStrategy(Float32ProjectionStrategy):
 class BrightfieldProjectionStrategy(Float32ProjectionStrategy):
     projection_type = ProjectionType.BRIGHTFIELD
 
-    def project(self, request: ProjectionRequest) -> np.ndarray:
+    def compute(self, request: ProjectionRequest) -> np.ndarray:
         stack = request.stack.astype(np.float64)
         norm0 = np.mean(stack[0])
         bright_max = stack[0].copy()
@@ -172,41 +180,51 @@ class BrightfieldProjectionStrategy(Float32ProjectionStrategy):
 class MaskProjectionStrategy(Float32ProjectionStrategy):
     projection_type = ProjectionType.MASK
 
-    def project(self, request: ProjectionRequest) -> np.ndarray:
+    def compute(self, request: ProjectionRequest) -> np.ndarray:
         return np.all(request.stack > 0, axis=0)
 
 
 @numpy(contract=ProcessingContract.VOLUMETRIC_TO_SLICE)
-@special_outputs(
-    (
-        "projection_stats",
-        csv_dataclass_materializer(
-            ProjectionStats,
-            analysis_type="projection",
-        ),
-    )
-)
 def make_projection(
     image: np.ndarray,
     projection_type: ProjectionType = ProjectionType.AVERAGE,
     frequency: float = 6.0,
-) -> tuple[np.ndarray, ProjectionStats]:
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows]:
     """Combine a stack of 2-D images into a single 2-D projection image."""
     projection_type = coerce_cellprofiler_enum(ProjectionType, projection_type)
     request = ProjectionRequest(
         image=image, projection_type=projection_type, frequency=frequency
     )
     result = ProjectionStrategy.for_projection_type(projection_type).apply(request)
-    return (result, request.stats(result))
+    return (
+        result,
+        DataclassMeasurementColumnarRows(
+            (request.stats(result),),
+            row_type=ProjectionStats,
+        ),
+    )
 
 
-class MakeProjectionModule(CellProfilerModule):
+class MakeProjectionModule(
+    MeasurementArtifactOutputModule,
+    CellProfilerModule,
+):
     module_name = "MakeProjection"
     function_name = "make_projection"
     validated = True
-    contract = ProcessingContract.VOLUMETRIC_TO_SLICE
-    default_variable_components = (VariableComponents.Z_INDEX,)
     confidence = 1.0
+    image_input_setting = SettingNameFamily("Select the input image")
+    image_output_setting = SettingNameFamily("Name the output image")
+    setting_bindings = (SettingToKeywordBinding.input(image_input_setting, ImageArtifactType),SettingToKeywordBinding.output(image_output_setting, ImageArtifactType),SettingToKeywordBinding(
+            "Type of projection",
+            "projection_type",
+            cellprofiler_enum_setting_parser(ProjectionType),
+        ),
+        SettingToKeywordBinding(
+            "Frequency",
+            "frequency",
+            parse_cellprofiler_float,
+        ),)
 
 
 __all__ = public_names_from_objects(

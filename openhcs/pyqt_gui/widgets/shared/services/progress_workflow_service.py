@@ -19,8 +19,12 @@ from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
     DebugProgressNotificationService,
 )
 from openhcs.core.progress.live_measurements import LiveMeasurementPayloadError
+from openhcs.core.progress.runtime_artifacts import RuntimeArtifactPayloadError
 from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
     LiveMeasurementProgressNotificationService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.runtime_artifact_progress_service import (
+    RuntimeArtifactProgressNotificationService,
 )
 from openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter import (
     ExecutionServerStatusPresenter,
@@ -55,6 +59,7 @@ class ProgressWorkflowService:
         debug_notifications: DebugProgressNotificationService,
         status_presenter: ExecutionServerStatusPresenter,
         live_measurements: LiveMeasurementProgressNotificationService | None = None,
+        runtime_artifacts: RuntimeArtifactProgressNotificationService | None = None,
         debug_session_context_provider: (
             Callable[[], DebugSessionProjectionContext | None] | None
         ) = None,
@@ -67,6 +72,9 @@ class ProgressWorkflowService:
         self._debug_notifications = debug_notifications
         self._live_measurements = (
             live_measurements or LiveMeasurementProgressNotificationService()
+        )
+        self._runtime_artifacts = (
+            runtime_artifacts or RuntimeArtifactProgressNotificationService()
         )
         self._status_presenter = status_presenter
         self._debug_session_context_provider = debug_session_context_provider
@@ -158,6 +166,17 @@ class ProgressWorkflowService:
             except LiveMeasurementPayloadError as error:
                 logger.warning(
                     "Malformed live measurement progress context for "
+                    "execution_id=%s axis_id=%s step_name=%s: %s",
+                    event.execution_id,
+                    event.axis_id,
+                    event.step_name,
+                    error,
+                )
+            try:
+                self._runtime_artifacts.notify_from_progress_event(event)
+            except RuntimeArtifactPayloadError as error:
+                logger.warning(
+                    "Malformed runtime artifact progress context for "
                     "execution_id=%s axis_id=%s step_name=%s: %s",
                     event.execution_id,
                     event.axis_id,

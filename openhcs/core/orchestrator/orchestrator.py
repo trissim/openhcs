@@ -21,14 +21,14 @@ from openhcs.constants import Microscope
 from openhcs.core.compiled_execution import CompiledExecutionBundle
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.config_framework.object_state import ObjectState
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 
 
 from openhcs.core.metadata_cache import get_metadata_cache, MetadataCache
 from openhcs.core.context.processing_context import ProcessingContext
-from openhcs.core.input_workspace import (
-    InputWorkspacePreparationRequest,
-    InputWorkspacePreparationResult,
-)
+from openhcs.core.input_workspace import InputWorkspacePreparationResult
+from openhcs.core.source_binding_context import SourceBindingContext
+from openhcs.core.source_bindings import source_bindings_defaults_to_base
 from openhcs.core.pipeline.compiler import PipelineCompiler
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.components.validation import convert_enum_by_value
@@ -105,9 +105,9 @@ class PipelineOrchestrator:
         *,
         pipeline_config: Optional["PipelineConfig"] = None,
         storage_registry: Optional[Any] = None,
-        input_workspace_preparation: InputWorkspacePreparationRequest | None = None,
         selected_pipeline_path: Union[str, Path, None] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        transport_config: OpenHCSZMQConfig = OPENHCS_ZMQ_CONFIG,
     ):
         # Lock removed - was orphaned code never used
 
@@ -115,6 +115,7 @@ class PipelineOrchestrator:
         self._executor = None
         self._cancelled = False  # Track cancellation requests
         self.execution_id = f"local::{plate_path}"
+        self.transport_config = transport_config
 
         # Initialize auto-sync control for pipeline config
         self._pipeline_config = None
@@ -171,10 +172,7 @@ class PipelineOrchestrator:
         self.plate_path = plate_path
         self.workspace_path = workspace_path
         self.source_plate_path = plate_path
-        self.input_workspace_preparation = input_workspace_preparation
         self.input_workspace_preparation_result: InputWorkspacePreparationResult | None = None
-        if selected_pipeline_path is None and input_workspace_preparation is not None:
-            selected_pipeline_path = input_workspace_preparation.selected_pipeline_path
         self.selected_pipeline_path = (
             Path(selected_pipeline_path)
             if selected_pipeline_path is not None
@@ -218,6 +216,7 @@ class PipelineOrchestrator:
         self.filemanager = FileManager(self.registry)
         self.input_dir: Optional[Path] = None
         self.microscope_handler: Optional[MicroscopeHandler] = None
+        self._microscope_handler_rebuild_type: type[MicroscopeHandler] | None = None
         self.default_pipeline_definition: Optional[List[AbstractStep]] = None
         self._initialized: bool = False
         self._state: OrchestratorState = OrchestratorState.CREATED
@@ -287,6 +286,7 @@ class PipelineOrchestrator:
                 filemanager=self.filemanager,
                 config=config,
                 visualizer_config=vis_config,
+                transport_config=self.transport_config,
                 fresh=True,
                 ready_timeout=30.0,
             )
@@ -296,7 +296,11 @@ class PipelineOrchestrator:
             return viewer
 
         # Non-streaming (local) visualizers: create and start synchronously
-        vis = config.create_visualizer(self.filemanager, vis_config)
+        vis = config.create_visualizer(
+            self.filemanager,
+            vis_config,
+            self.transport_config,
+        )
         vis.start_viewer()
 
         # Store for compatibility
@@ -322,12 +326,20 @@ class PipelineOrchestrator:
                 if shared_context.microscope != Microscope.AUTO
                 else "auto"
             )
-            self.microscope_handler = create_microscope_handler(
-                plate_folder=str(self.plate_path),
-                filemanager=self.filemanager,
-                microscope_type=microscope_type,
-                source_bindings_config=shared_context.source_bindings_config,
-            )
+            if self._microscope_handler_rebuild_type is None:
+                self.microscope_handler = create_microscope_handler(
+                    plate_folder=str(self.plate_path),
+                    filemanager=self.filemanager,
+                    microscope_type=microscope_type,
+                    source_bindings_config=shared_context.source_bindings_config,
+                )
+            else:
+                self.microscope_handler = self._microscope_handler_rebuild_type.create(
+                    filemanager=self.filemanager,
+                    source_bindings_config=shared_context.source_bindings_config,
+                )
+                self.microscope_handler.plate_folder = Path(self.plate_path)
+                self._microscope_handler_rebuild_type = None
             logger.info(
                 f"Initialized microscope handler: {type(self.microscope_handler).__name__}"
             )
@@ -336,42 +348,41 @@ class PipelineOrchestrator:
             logger.error(error_msg)
             raise RuntimeError(error_msg) from e
 
-    def set_input_workspace_preparation(
+    def bind_input_workspace(
         self,
-        request: InputWorkspacePreparationRequest | None,
+        result: InputWorkspacePreparationResult,
     ) -> None:
-        """Set the external input preparation request before initialization."""
+        """Bind a caller-prepared generic input workspace before initialization."""
 
         if self._initialized or self.state is not OrchestratorState.CREATED:
             raise RuntimeError(
-                "Input workspace preparation can only be set before initialization."
+                "An input workspace can only be bound before initialization."
             )
-        self.input_workspace_preparation = request
-
-    def _prepare_input_workspace_if_needed(self) -> None:
-        """Prepare external input semantics before microscope detection."""
-
-        request = self.input_workspace_preparation
-        if request is None:
-            return
-        pipeline_path = request.selected_pipeline_path
-        if pipeline_path is None:
-            return
-        if pipeline_path.suffix != ".cppipe":
-            raise ValueError(
-                "Unsupported input workspace pipeline dialect: "
-                f"{pipeline_path.suffix or pipeline_path.name}"
-            )
-
-        from openhcs.interop.cellprofiler.plate_workspace import (
-            prepare_cellprofiler_input_workspace,
-        )
-
-        result = prepare_cellprofiler_input_workspace(request)
         self.input_workspace_preparation_result = result
+        self.source_plate_path = Path(result.original_source_root)
         if Path(result.execution_plate_path) == Path(self.plate_path):
             return
         self._rebind_plate_path_for_prepared_workspace(result.execution_plate_path)
+
+    def source_binding_context(self, logical_plate_id: str) -> SourceBindingContext:
+        """Project the current source declaration and workspace owned by this plate."""
+
+        if not logical_plate_id:
+            raise ValueError("Source-binding context requires a logical plate id.")
+        if self.source_plate_path is None or self.plate_path is None:
+            raise RuntimeError("Source-binding context requires a bound plate path.")
+        if self.pipeline_config is None:
+            raise RuntimeError("Source-binding context requires a PipelineConfig.")
+        return SourceBindingContext(
+            logical_plate_id=logical_plate_id,
+            display_plate_root=self.source_plate_path,
+            execution_plate_path=self.plate_path,
+            source_bindings=source_bindings_defaults_to_base(
+                self.pipeline_config.source_bindings_config
+            ),
+            filemanager=self.filemanager,
+            source_backend=Backend.DISK.value,
+        )
 
     def _rebind_plate_path_for_prepared_workspace(
         self,
@@ -410,7 +421,6 @@ class PipelineOrchestrator:
             return self
 
         try:
-            self._prepare_input_workspace_if_needed()
             self.initialize_microscope_handler()
 
             # Delegate workspace initialization to microscope handler
@@ -571,6 +581,7 @@ class PipelineOrchestrator:
             auto_add_output_plate_to_plate_manager=(
                 effective_config.auto_add_output_plate_to_plate_manager
             ),
+            transport_config=self.transport_config,
         )
         # Orchestrator reference removed - was orphaned and unpickleable
         context.microscope_handler = self.microscope_handler
@@ -592,7 +603,13 @@ class PipelineOrchestrator:
         return context
 
     def source_workspace_projection(self):
-        """Return virtual source-workspace projection for the initialized plate."""
+        """Return the canonical resolved source state for the initialized plate.
+
+        The projection carries every named alias, sample/well, site, channel, Z,
+        timepoint, and backend-owned pixel reference used by compilation, runtime,
+        and UI inspection. Consumers must query this view rather than constructing
+        a second metadata model.
+        """
         if not self.is_initialized():
             raise RuntimeError(
                 "Orchestrator must be initialized before source workspace inspection."
@@ -938,12 +955,33 @@ class PipelineOrchestrator:
         if not isinstance(pipeline_config, PipelineConfig):
             raise TypeError(f"Expected PipelineConfig, got {type(pipeline_config)}")
 
+        previous_config = self._pipeline_config
+        previous_source_bindings = None
+        if previous_config is not None:
+            previous_source_bindings = ObjectState(
+                previous_config
+            ).to_saved_resolved_object().source_bindings_config
+        current_source_bindings = ObjectState(
+            pipeline_config
+        ).to_saved_resolved_object().source_bindings_config
+        source_bindings_changed = (
+            previous_source_bindings is not None
+            and previous_source_bindings != current_source_bindings
+        )
+        if source_bindings_changed and self.state is OrchestratorState.EXECUTING:
+            raise RuntimeError(
+                "Source bindings cannot change while the plate is executing."
+            )
+
         # Temporarily disable auto-sync to prevent recursion
         self._auto_sync_enabled = False
         try:
             self._pipeline_config = pipeline_config
         finally:
             self._auto_sync_enabled = True
+
+        if source_bindings_changed:
+            self._invalidate_source_projection()
 
         # CRITICAL FIX: Do NOT contaminate thread-local context during PipelineConfig editing
         # The orchestrator should maintain its own internal context without modifying
@@ -954,6 +992,21 @@ class PipelineOrchestrator:
         # but should NOT be set as the global thread-local context.
 
         logger.info(f"Applied orchestrator config for plate: {self.plate_path}")
+
+    def _invalidate_source_projection(self) -> None:
+        """Require normal initialization to rebuild source-owned plate state."""
+
+        if (
+            self.microscope_handler is not None
+            and type(self.microscope_handler).projects_declared_source_bindings()
+        ):
+            self._microscope_handler_rebuild_type = type(self.microscope_handler)
+        self.microscope_handler = None
+        self.input_dir = None
+        self._initialized = False
+        self._state = OrchestratorState.CREATED
+        self._component_keys_cache.clear()
+        self._metadata_cache_service.clear_cache()
 
     def get_effective_config(
         self, *, for_serialization: bool = False

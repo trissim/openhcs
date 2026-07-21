@@ -4,30 +4,34 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from enum import Enum
 from pathlib import Path
 
-
-DEFAULT_KNOWLEDGE_BASE_MANIFEST_PATH = Path(
-    "docs/source/development/mcp_knowledge_base_manifest.json"
+from openhcs.agent.knowledge_manifest_schema import (
+    DEFAULT_KNOWLEDGE_BASE_MANIFEST_PATH,
+    PACKAGED_KNOWLEDGE_BASE_ROOT,
+    KnowledgeBaseManifestField,
 )
 
 
-class KnowledgeBaseManifestField(str, Enum):
-    """JSON field names for the source-backed knowledge-base manifest."""
+def source_checkout_root() -> Path:
+    """Return the repository root implied by this module's source location."""
+    return Path(__file__).resolve().parents[2]
 
-    DOCUMENTS = "documents"
-    DOCUMENT_ID = "document_id"
-    TITLE = "title"
-    SUMMARY = "summary"
-    SOURCE_PATH = "source_path"
-    TAGS = "tags"
-    SECTION_COUNT = "section_count"
+
+def packaged_knowledge_base_root() -> Path:
+    """Return the package-resource root populated by the release build."""
+    return Path(__file__).resolve().parent / PACKAGED_KNOWLEDGE_BASE_ROOT
 
 
 def default_repo_root() -> Path:
-    """Return the repository root containing the default knowledge manifest."""
-    return Path(__file__).resolve().parents[2]
+    """Return the available root containing the canonical knowledge projection."""
+    source_root = source_checkout_root()
+    if (source_root / DEFAULT_KNOWLEDGE_BASE_MANIFEST_PATH).is_file():
+        return source_root
+    packaged_root = packaged_knowledge_base_root()
+    if (packaged_root / DEFAULT_KNOWLEDGE_BASE_MANIFEST_PATH).is_file():
+        return packaged_root
+    return source_root
 
 
 def default_knowledge_base_manifest_path() -> Path:
@@ -40,7 +44,7 @@ def knowledge_base_source_paths_from_manifest(
 ) -> tuple[Path, ...]:
     """Return manifest and declared document paths without importing services."""
     selected_manifest_path = manifest_path or default_knowledge_base_manifest_path()
-    repo_root = default_repo_root()
+    repo_root = _knowledge_base_root_for_manifest(selected_manifest_path)
     try:
         manifest = json.loads(selected_manifest_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -58,3 +62,15 @@ def knowledge_base_source_paths_from_manifest(
         if isinstance(source_path, str):
             source_paths.append((repo_root / source_path).resolve())
     return tuple(source_paths)
+
+
+def _knowledge_base_root_for_manifest(manifest_path: Path) -> Path:
+    """Recover the root that owns a canonical-relative manifest path."""
+    resolved_manifest_path = manifest_path.resolve()
+    relative_parts = DEFAULT_KNOWLEDGE_BASE_MANIFEST_PATH.parts
+    if resolved_manifest_path.parts[-len(relative_parts) :] == relative_parts:
+        root = resolved_manifest_path
+        for _ in relative_parts:
+            root = root.parent
+        return root
+    return default_repo_root()

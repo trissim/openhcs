@@ -32,15 +32,19 @@ class CellProfilerMeasurementFeature:
     @classmethod
     def parse(cls, feature_name: str | None) -> "CellProfilerMeasurementFeature | None":
         """Parse a CellProfiler feature name into nominal feature semantics."""
-        candidate = CellProfilerMeasurementFeatureParseCandidate.from_feature_name(
-            feature_name
-        )
-        if candidate.is_absent:
+        if feature_name is None:
             return None
-        parsed = candidate.parse_registered()
-        if parsed is not None:
-            return parsed
-        return candidate.other_feature()
+        normalized = feature_name.strip()
+        if not normalized:
+            return None
+        for parser_type in CellProfilerMeasurementFeatureParser.__registry__.values():
+            parsed = parser_type().parse_feature(normalized)
+            if parsed is not None:
+                return parsed
+        return cls(
+            normalized,
+            CellProfilerMeasurementFeatureKind.OTHER,
+        )
 
     @classmethod
     def object_count(cls, object_name: str) -> "CellProfilerMeasurementFeature":
@@ -71,45 +75,6 @@ class CellProfilerMeasurementFeature:
             )
         )
         return tuple(dict.fromkeys(child_names))
-
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerMeasurementFeatureParseCandidate:
-    """Normalized candidate for fail-soft CellProfiler feature parsing."""
-
-    normalized: str | None
-
-    @classmethod
-    def from_feature_name(
-        cls,
-        feature_name: str | None,
-    ) -> "CellProfilerMeasurementFeatureParseCandidate":
-        if feature_name is None:
-            return cls(None)
-        normalized = feature_name.strip()
-        return cls(normalized or None)
-
-    @property
-    def is_absent(self) -> bool:
-        return self.normalized is None
-
-    def parse_registered(self) -> CellProfilerMeasurementFeature | None:
-        if self.normalized is None:
-            return None
-        for parser_type in CellProfilerMeasurementFeatureParser.__registry__.values():
-            parsed = parser_type().parse_feature(self.normalized)
-            if parsed is not None:
-                return parsed
-        return None
-
-    def other_feature(self) -> CellProfilerMeasurementFeature:
-        if self.normalized is None:
-            raise ValueError("Cannot materialize an absent measurement feature.")
-        return CellProfilerMeasurementFeature(
-            self.normalized,
-            CellProfilerMeasurementFeatureKind.OTHER,
-        )
-
 
 class CellProfilerMeasurementFeatureParser(ABC, metaclass=AutoRegisterMeta):
     """Registered parser/renderer for one CellProfiler measurement feature family."""

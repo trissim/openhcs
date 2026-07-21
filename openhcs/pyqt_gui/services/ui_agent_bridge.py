@@ -11,6 +11,7 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import ClassVar, TypeAlias
 
 from metaclass_registry import AutoRegisterMeta
@@ -81,6 +82,7 @@ from openhcs.agent.dto.ui_bridge import (
 )
 from openhcs.agent.ui_bridge_identities import (
     PlateManagerOrchestratorCodeDocumentIdentity,
+    PlateManagerStateSurfaceIdentityDeclaration,
     PlateManagerWidgetIdentity,
 )
 from openhcs.agent.services.ui_bridge_service import (
@@ -95,7 +97,6 @@ from openhcs.agent.services.ui_bridge_service import (
     UiBridgeTimeTravelHeadOperation,
 )
 from openhcs.config_framework.object_state import ObjectStateRegistry
-from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     CONFIRMATION_REQUIRED_GUARD,
     RESTORE_TIME_TRAVEL_OPT_IN_GUARD,
@@ -113,11 +114,13 @@ from openhcs.pyqt_gui.services.ui_bridge_object_state_scope_policy import (
     ObjectStateScopeVisibility,
 )
 from openhcs.pyqt_gui.services.ui_bridge_registry import (
+    UiBridgeProviderSetABC,
     UiBridgeRegistrationContext,
     UiBridgeSurfaceRegistry,
 )
 from openhcs.pyqt_gui.services.ui_thread_dispatch import UiThreadDispatcher
-from openhcs.pyqt_gui.widgets.shared.services.plate_manager_workflows import (
+from openhcs.ui.shared.plate_manager_code_document import (
+    PlateManagerCodeDocumentAuthority,
     PlateManagerCodeNamespace,
     PlateManagerCodeNamespaceField,
     PlateManagerOrchestratorCodePayload,
@@ -126,10 +129,13 @@ from openhcs.pyqt_gui.widgets.shared.services.plate_manager_workflows import (
 
 ORCHESTRATOR_CODE_DOCUMENT_PAYLOAD_HINT = (
     "Use the plate-manager orchestrator code document shape: "
-    "plate_paths = ['/path/to/plate']; "
-    "global_config = GlobalPipelineConfig(...) or omit global_config; "
-    "per_plate_configs = {'/path/to/plate': PipelineConfig(...)} or omit it; "
-    "pipeline_data = {'/path/to/plate': [FunctionStep(...), ...]}. "
+    f"{PlateManagerCodeNamespaceField.PLATE_PATHS.value} = ['/path/to/plate']; "
+    f"{PlateManagerCodeNamespaceField.GLOBAL_CONFIG.value} = "
+    "GlobalPipelineConfig(...); "
+    f"{PlateManagerCodeNamespaceField.PER_PLATE_CONFIGS.value} = "
+    "{'/path/to/plate': PipelineConfig(...)}; "
+    f"{PlateManagerCodeNamespaceField.PIPELINE_DATA.value} = "
+    "{'/path/to/plate': [FunctionStep(...), ...]}. "
     f"Read {PlateManagerOrchestratorCodeDocumentIdentity.require_value()} "
     "for the current template."
 )
@@ -177,7 +183,7 @@ class CodeDocumentExecutionResult(PlateManagerOrchestratorCodePayload):
         return self.plate_paths[0]
 
     def apply_namespace(self) -> PlateManagerCodeNamespace:
-        return self.to_namespace()
+        return PlateManagerCodeDocumentAuthority.to_namespace(self)
 
 
 class UiCodeDocumentSourcePolicy:
@@ -208,6 +214,8 @@ class DeclarativeCodeDocumentAstValidator(ast.NodeVisitor):
     ) -> None:
         self._allowed_import_roots = allowed_import_roots
         self._imported_names: set[str] = set()
+        self._path_constructor_names: set[str] = set()
+        self._path_bindings: set[str] = set()
         self.errors: list[AgentError] = []
 
     def visit_Import(self, node: ast.Import) -> None:
@@ -223,6 +231,18 @@ class DeclarativeCodeDocumentAstValidator(ast.NodeVisitor):
             self._error("unsafe_import", "Relative imports are not allowed.")
             return
         module_name = node.module
+        if module_name == "pathlib":
+            for alias in node.names:
+                if alias.name != "Path":
+                    self._error(
+                        "unsafe_import",
+                        f"Import is not allowed: pathlib.{alias.name}",
+                    )
+                    continue
+                imported_name = alias.asname or alias.name
+                self._imported_names.add(imported_name)
+                self._path_constructor_names.add(imported_name)
+            return
         root_name = module_name.split(".", maxsplit=1)[0]
         if root_name not in self._allowed_import_roots:
             self._error("unsafe_import", f"Import is not allowed: {module_name}")
@@ -234,19 +254,23 @@ class DeclarativeCodeDocumentAstValidator(ast.NodeVisitor):
             self._imported_names.add(alias.asname or alias.name)
 
     def visit_Assign(self, node: ast.Assign) -> None:
-        for target in node.targets:
-            if not isinstance(target, ast.Name):
-                self._error("unsafe_assignment", "Only named assignments are allowed.")
-                continue
-            if (
-                target.id
-                not in PlateManagerCodeNamespaceField.allowed_assignment_names()
-            ):
-                self._error(
-                    "unexpected_assignment",
-                    f"Unexpected assignment target: {target.id}",
-                )
-        self.visit(node.value)
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            self._error("unsafe_assignment", "Only one named assignment is allowed.")
+            return
+        target = node.targets[0]
+        if target.id in PlateManagerCodeNamespaceField.allowed_assignment_names():
+            self.visit(node.value)
+            return
+        if target.id in self._path_bindings or not (
+            self._is_absolute_path_binding(node.value)
+            or self._is_path_expression(node.value)
+        ):
+            self._error(
+                "unexpected_assignment",
+                f"Unexpected assignment target: {target.id}",
+            )
+            return
+        self._path_bindings.add(target.id)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         self._error("unsafe_assignment", "Annotated assignments are not allowed.")
@@ -269,12 +293,20 @@ class DeclarativeCodeDocumentAstValidator(ast.NodeVisitor):
     def visit_Name(self, node: ast.Name) -> None:
         if not isinstance(node.ctx, ast.Load):
             return
-        if node.id in self._imported_names:
+        if node.id in self._imported_names or node.id in self._path_bindings:
             return
         self._error("unknown_name", f"Name is not imported by the document: {node.id}")
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         self.visit(node.value)
+
+    def visit_BinOp(self, node: ast.BinOp) -> None:
+        if self._is_path_expression(node):
+            return
+        self._error(
+            "unsafe_path_expression",
+            "Only validated Path bindings may use the / operator.",
+        )
 
     def visit_List(self, node: ast.List) -> None:
         self._visit_sequence(node.elts)
@@ -314,12 +346,39 @@ class DeclarativeCodeDocumentAstValidator(ast.NodeVisitor):
 
     def _is_approved_constructor_call(self, func: ast.expr) -> bool:
         if isinstance(func, ast.Name):
-            return func.id in self._imported_names and (
-                func.id[:1].isupper()
-                or func.id
-                in FunctionStepTransportAuthority.approved_code_document_factory_names()
-            )
+            return func.id in self._imported_names and func.id[:1].isupper()
         return False
+
+    def _is_absolute_path_binding(self, node: ast.expr) -> bool:
+        if not isinstance(node, ast.Call):
+            return False
+        if not isinstance(node.func, ast.Name):
+            return False
+        if node.func.id not in self._path_constructor_names:
+            return False
+        if node.keywords or len(node.args) != 1:
+            return False
+        value = node.args[0]
+        return (
+            isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+            and Path(value.value).is_absolute()
+        )
+
+    def _is_path_expression(self, node: ast.expr) -> bool:
+        if isinstance(node, ast.Name):
+            return node.id in self._path_bindings
+        if not isinstance(node, ast.BinOp) or not isinstance(node.op, ast.Div):
+            return False
+        if not self._is_path_expression(node.left):
+            return False
+        if not isinstance(node.right, ast.Constant) or not isinstance(
+            node.right.value,
+            str,
+        ):
+            return False
+        relative = Path(node.right.value)
+        return not relative.is_absolute() and ".." not in relative.parts
 
     def _error(self, code: str, message: str) -> None:
         self.errors.append(AgentError(code=code, message=message))
@@ -351,27 +410,7 @@ class UiCodeDocumentExecutionService:
             namespace = PlateManagerCodeNamespace.from_mapping(migrated_namespace)
 
         try:
-            payload = PlateManagerOrchestratorCodePayload.from_namespace(namespace)
-            if payload is None:
-                raise UiCodeDocumentValidationError(
-                    (
-                        AgentError(
-                            code="missing_code_document_payload",
-                            message=(
-                                "Code document did not define plate_paths and "
-                                "pipeline_data."
-                            ),
-                            hint=ORCHESTRATOR_CODE_DOCUMENT_PAYLOAD_HINT,
-                        ),
-                    )
-                )
-
-            normalized_pipeline_data = {
-                plate_path: FunctionStepTransportAuthority.normalize_pipeline(
-                    pipeline_steps
-                )
-                for plate_path, pipeline_steps in payload.pipeline_data.items()
-            }
+            payload = PlateManagerCodeDocumentAuthority.from_namespace(namespace)
         except UiCodeDocumentValidationError:
             raise
         except Exception as exc:
@@ -384,8 +423,7 @@ class UiCodeDocumentExecutionService:
                     ),
                 )
             ) from exc
-        normalized_payload = replace(payload, pipeline_data=normalized_pipeline_data)
-        return CodeDocumentExecutionResult.from_payload(normalized_payload)
+        return CodeDocumentExecutionResult.from_payload(payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -434,7 +472,9 @@ class UiBridgeMutationGate:
     ) -> UiBridgeOperationRef:
         """Start one serialized mutation and return its pollable operation ref."""
         if not self._lock.acquire(blocking=False):
-            raise UiBridgeBusyError("A mutating UI bridge operation is already running.")
+            raise UiBridgeBusyError(
+                "A mutating UI bridge operation is already running."
+            )
         return self._tracker.start(operation_name, target_id)
 
     def complete(
@@ -466,7 +506,9 @@ class UiBridgeMutationGate:
                 operation.identity.operation_id,
                 status=UiBridgeOperationStatus.FAILED,
                 outcome="error",
-                errors=(AgentError.from_exception("ui_bridge_operation_failed", exception),),
+                errors=(
+                    AgentError.from_exception("ui_bridge_operation_failed", exception),
+                ),
             )
         finally:
             self._lock.release()
@@ -553,7 +595,9 @@ class UiBridgeOperationTracker(UiLiveOverviewContributorABC):
     def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
         operations = self.operations()
         status_counts = {
-            status: sum(1 for operation in operations if operation.status == status.value)
+            status: sum(
+                1 for operation in operations if operation.status == status.value
+            )
             for status in UiBridgeOperationStatus
         }
         recent_operations = tuple(reversed(operations[-5:]))
@@ -1188,9 +1232,9 @@ class UiObjectStateSnapshotProvider(UiBridgeSnapshotProviderABC):
             branch=ObjectStateRegistry.get_current_branch(),
             parent_snapshot_id=snapshot.parent_id,
             timestamp_unix=snapshot.timestamp,
-            timestamp=_datetime.datetime.fromtimestamp(
-                snapshot.timestamp
-            ).isoformat(timespec="milliseconds"),
+            timestamp=_datetime.datetime.fromtimestamp(snapshot.timestamp).isoformat(
+                timespec="milliseconds"
+            ),
             label=snapshot.label or f"Snapshot #{index}",
             num_states=(
                 len(snapshot.all_states)
@@ -1264,7 +1308,7 @@ class UiAgentBridgeService:
     def __init__(
         self,
         *,
-        plate_manager=None,
+        provider_set: UiBridgeProviderSetABC | None = None,
         registry: UiBridgeSurfaceRegistry | None = None,
         dispatcher: UiThreadDispatcher | None = None,
         snapshot_provider: UiObjectStateSnapshotProvider | None = None,
@@ -1275,12 +1319,8 @@ class UiAgentBridgeService:
         self._operation_tracker = operation_tracker or UiBridgeOperationTracker()
         self._mutation_gate = UiBridgeMutationGate(self._operation_tracker)
         self._registry = registry or UiBridgeSurfaceRegistry()
-        if plate_manager is not None:
-            from openhcs.pyqt_gui.services.ui_bridge_plate_manager import (
-                PlateManagerBridgeProviderSet,
-            )
-
-            PlateManagerBridgeProviderSet(plate_manager).register(
+        if provider_set is not None:
+            provider_set.register(
                 UiBridgeRegistrationContext(
                     registry=self._registry,
                     snapshot_provider=self._snapshot_provider,
@@ -1469,9 +1509,7 @@ class UiAgentBridgeService:
             return self._dispatcher.call(
                 lambda: self._mutation_gate.run(
                     operation_name=UiBridgeMutateObjectStateFieldOperation.require_name(),
-                    target_id=(
-                        f"{request.object_state_scope_id}:{request.field_path}"
-                    ),
+                    target_id=(f"{request.object_state_scope_id}:{request.field_path}"),
                     callback=run,
                 )
             )
@@ -1492,7 +1530,9 @@ class UiAgentBridgeService:
             )
         )
 
-    def get_state_surface(self, request: UiStateSurfaceRequest) -> UiStateSurfaceDocument:
+    def get_state_surface(
+        self, request: UiStateSurfaceRequest
+    ) -> UiStateSurfaceDocument:
         return self._dispatcher.call(
             lambda: self._registry.state_surface_provider(request.surface_id).read(
                 request
@@ -1500,29 +1540,15 @@ class UiAgentBridgeService:
         )
 
     def invoke_action(self, request: UiActionInvokeRequest) -> UiActionInvokeResult:
-        def invoke() -> UiActionInvokeResult:
+        def run(operation: UiBridgeOperationRef) -> UiActionInvokeResult:
             provider = self._registry.action_provider(request.widget_id)
             summary = provider.summary(request.action_id)
             guard_error = self._action_invocation_guard_error(request, summary)
-            if guard_error is not None:
-                return self._action_error(request, guard_error)
-            return self._submit_action_invocation(provider, request)
-
-        try:
-            return self._dispatcher.call(invoke)
-        except UiBridgeBusyError as exc:
-            return self._action_error(
-                request,
-                AgentError.from_exception("ui_bridge_busy", exc),
+            result = (
+                self._action_error(request, guard_error)
+                if guard_error is not None
+                else provider.invoke(request)
             )
-
-    def _submit_action_invocation(
-        self,
-        provider: UiActionProviderABC,
-        request: UiActionInvokeRequest,
-    ) -> UiActionInvokeResult:
-        def run(operation: UiBridgeOperationRef) -> UiActionInvokeResult:
-            result = provider.invoke(request)
             return replace(
                 result,
                 receipt=replace(
@@ -1531,12 +1557,18 @@ class UiAgentBridgeService:
                 ),
             )
 
-        return self._submit_mutation(
-            operation_type=UiBridgeInvokeActionOperation,
-            target_id=request.action_id,
-            request=request,
-            callback=run,
-        )
+        try:
+            return self._submit_mutation(
+                operation_type=UiBridgeInvokeActionOperation,
+                target_id=request.action_id,
+                request=request,
+                callback=run,
+            )
+        except UiBridgeBusyError as exc:
+            return self._action_error(
+                request,
+                AgentError.from_exception("ui_bridge_busy", exc),
+            )
 
     @staticmethod
     def _action_invocation_guard_error(
@@ -1558,7 +1590,10 @@ class UiAgentBridgeService:
                     "to dispatch it."
                 ),
             )
-        if summary.selection_mode == "targeted" and len(request.selected_scope_ids) != 1:
+        if (
+            summary.selection_mode == "targeted"
+            and len(request.selected_scope_ids) != 1
+        ):
             return AgentError(
                 code="ui_action_target_required",
                 message=f"UI action {request.action_id!r} requires exactly one target scope.",
@@ -1588,7 +1623,8 @@ class UiAgentBridgeService:
         if (
             request.observed_selection_revision_token is not None
             and summary.selection_revision_token is not None
-            and request.observed_selection_revision_token != summary.selection_revision_token
+            and request.observed_selection_revision_token
+            != summary.selection_revision_token
         ):
             return AgentError(
                 code="stale_ui_action_revision",
@@ -1634,64 +1670,31 @@ class UiAgentBridgeService:
         self,
         request: UiSelectedPlateWorkflowRequest,
     ) -> UiSelectedPlateWorkflowResult:
-        summary = self._dispatcher.call(
-            lambda: self._registry.action_provider(
-                PlateManagerWidgetIdentity.require_value()
-            ).summary(request.workflow.value)
+        action_result = self.invoke_action(
+            UiActionInvokeRequest(
+                widget_id=PlateManagerWidgetIdentity.require_value(),
+                action_id=request.workflow.value,
+                selected_scope_ids=request.selected_scope_ids,
+                observed_selection_revision_token=(
+                    request.observed_selection_revision_token
+                ),
+                request_token=request.request_token,
+                confirmation_requirement=request.confirmation_requirement,
+            )
         )
-        selected_scope_ids = request.selected_scope_ids
-        observed_revision = request.observed_selection_revision_token
-        if not selected_scope_ids:
-            selected_scope_ids = summary.target_scope_ids
-            if observed_revision is None:
-                observed_revision = summary.selection_revision_token
-
-        action_request = UiActionInvokeRequest(
-            widget_id=PlateManagerWidgetIdentity.require_value(),
-            action_id=request.workflow.value,
-            selected_scope_ids=selected_scope_ids,
-            observed_selection_revision_token=observed_revision,
-            request_token=request.request_token,
-            confirmation_requirement=request.confirmation_requirement,
-        )
-        action_result = self.invoke_action(action_request)
-        action_result = self._selected_plate_workflow_action_result(
-            action_result,
-            summary,
-            selected_scope_ids=selected_scope_ids,
-            observed_revision=observed_revision,
-        )
+        if not action_result.workflow_status_surface_ids:
+            action_result = replace(
+                action_result,
+                workflow_status_surface_ids=(
+                    PlateManagerStateSurfaceIdentityDeclaration.require_value(),
+                ),
+            )
         return UiSelectedPlateWorkflowResult(
             schema_version=SCHEMA_VERSION,
             workflow=request.workflow,
             action_result=action_result,
             errors=action_result.errors,
             warnings=action_result.warnings,
-        )
-
-    @staticmethod
-    def _selected_plate_workflow_action_result(
-        action_result: UiActionInvokeResult,
-        summary: UiActionSummary,
-        *,
-        selected_scope_ids: tuple[str, ...],
-        observed_revision: str | None,
-    ) -> UiActionInvokeResult:
-        target_scope_ids = action_result.target_scope_ids or selected_scope_ids
-        selection_revision_token = (
-            action_result.selection_revision_token
-            or observed_revision
-            or summary.selection_revision_token
-        )
-        workflow_status_surface_ids = (
-            action_result.workflow_status_surface_ids
-            or summary.related_state_surface_ids
-        )
-        return replace(
-            action_result,
-            target_scope_ids=target_scope_ids,
-            selection_revision_token=selection_revision_token,
-            workflow_status_surface_ids=workflow_status_surface_ids,
         )
 
     def focus_window(self, request: UiWindowFocusRequest) -> UiWindowFocusResult:
@@ -1763,9 +1766,9 @@ class UiAgentBridgeService:
         request: UiCodeDocumentValidationRequest,
     ) -> UiCodeDocumentValidationResult:
         return self._dispatcher.call(
-            lambda: self._registry.code_document_provider(
-                request.document_id
-            ).validate(request)
+            lambda: self._registry.code_document_provider(request.document_id).validate(
+                request
+            )
         )
 
     def apply_document(
@@ -1799,7 +1802,9 @@ class UiAgentBridgeService:
             )
 
     def list_snapshots(self, request: UiSnapshotListRequest) -> UiSnapshotCatalog:
-        return self._dispatcher.call(lambda: self._snapshot_provider.list_snapshots(request))
+        return self._dispatcher.call(
+            lambda: self._snapshot_provider.list_snapshots(request)
+        )
 
     def restore_snapshot(
         self,
@@ -1936,7 +1941,9 @@ class InProcessUiBridgeGateway(UiBridgeGatewayABC):
         del connection
         return self._bridge.status()
 
-    def list_documents(self, connection: UiBridgeConnectionSpec) -> UiCodeDocumentCatalog:
+    def list_documents(
+        self, connection: UiBridgeConnectionSpec
+    ) -> UiCodeDocumentCatalog:
         del connection
         return self._bridge.list_documents()
 

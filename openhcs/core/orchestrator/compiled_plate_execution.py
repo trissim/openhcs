@@ -2,20 +2,45 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 import logging
+import threading
 import time
 from concurrent.futures.process import BrokenProcessPool
-from dataclasses import dataclass
-from typing import Dict, List, Mapping, Optional, Protocol, TYPE_CHECKING
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import (
+    ClassVar,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    TYPE_CHECKING,
+)
 
-from openhcs.constants.constants import OrchestratorState
+from openhcs.constants.constants import Backend, OrchestratorState
+from openhcs.core.artifacts import (
+    SpecialArtifactType,
+)
+from openhcs.core.callable_contract import (
+    CallableContract,
+    FunctionStepExecutionScope,
+)
 from openhcs.core.compiled_execution import (
     CompiledExecutionBundle,
     CompiledRuntimeEnvironmentPlan,
 )
-from openhcs.core.context.processing_context import ProcessingContext, RequiredVisualizer
+from openhcs.core.compiled_step_plan import CompiledStepPlan
+from openhcs.core.context.processing_context import (
+    ProcessingContext,
+    RequiredVisualizer,
+)
 from openhcs.core.debug import DebugExecutionPolicy
-from openhcs.core.orchestrator.analysis_consolidation import AnalysisConsolidationPlan
+from openhcs.core.function_patterns import CompiledFunctionInvocation
+from openhcs.core.orchestrator.analysis_consolidation import (
+    consolidate_analysis_outputs,
+)
 from openhcs.core.orchestrator.execution_result import (
     ExecutionResult,
     RuntimeObservationMode,
@@ -36,13 +61,31 @@ from openhcs.core.progress import (
     create_event,
     set_progress_queue,
 )
+from openhcs.core.pipeline.funcstep_contract_validator import (
+    FuncStepContractValidator,
+)
+from openhcs.core.runtime_stores import (
+    RuntimeArtifactBatch,
+    RuntimeArtifactLocation,
+    RuntimeArtifactQuery,
+    StoredRuntimeValue,
+    replace_runtime_artifact_payload,
+)
+from openhcs.core.source_bindings import CompiledSourceBindingPlan
 from openhcs.core.steps.abstract import AbstractStep
+from openhcs.core.steps.function_outputs import (
+    RuntimeArtifactMaterializationAuthority,
+)
+from openhcs.core.runtime_artifact_values import RuntimeValue
 
 if TYPE_CHECKING:
     from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+    from openhcs.core.source_matching import SourceImageSetIdentityPolicy
+    from openhcs.runtime.viewer_protocol import ViewerControlResponse
 
 
 logger = logging.getLogger(__name__)
+PLATE_STEP_PROGRESS_HEARTBEAT_SECONDS = 2.0
 
 
 class ExecutionVisualizer(Protocol):
@@ -55,8 +98,39 @@ class ExecutionVisualizer(Protocol):
     def clear_viewer_state(self) -> bool:
         """Clear all viewer state before a new execution."""
 
-    def stop_viewer(self) -> None:
-        """Stop the viewer process/window."""
+    def settle_viewer_state(self, timeout: float = 30.0) -> bool:
+        """Drain all queued viewer updates before execution completes."""
+
+    def read_viewer_state(self, timeout: float = 30.0) -> "ViewerControlResponse":
+        """Read typed viewer state while the settled endpoint is still active."""
+
+    def force_stop(self, timeout: float = 5.0) -> None:
+        """Stop the viewer process and release its transport endpoint."""
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledPlateExecutionExtras:
+    """Diagnostics captured at the parent-owned execution boundary."""
+
+    EXECUTION_RECORD_KEY: ClassVar[str] = "compiled_plate_execution_extras"
+    RESULTS_SUMMARY_KEY: ClassVar[str] = "viewer_states_by_port"
+
+    viewer_states_by_port: Mapping[int, "ViewerControlResponse"]
+
+
+class CompiledPlateExecutionResults(dict[str, ExecutionResult]):
+    """Axis results plus parent-owned diagnostics from one compiled execution."""
+
+    def __init__(
+        self,
+        results: Mapping[str, ExecutionResult] | None = None,
+        *,
+        extras: CompiledPlateExecutionExtras | None = None,
+    ) -> None:
+        super().__init__(results or {})
+        self.extras = extras or CompiledPlateExecutionExtras(
+            viewer_states_by_port=MappingProxyType({})
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,12 +187,12 @@ class ValidatedCompiledPlateExecution(ProgressExecutionContext):
 def execute_compiled_plate_request(
     orchestrator: "PipelineOrchestrator",
     request: CompiledPlateExecutionRequest,
-) -> Dict[str, ExecutionResult]:
+) -> CompiledPlateExecutionResults:
     """Execute compiled plate contexts through the runtime worker lanes."""
 
     validated = validate_compiled_plate_execution(orchestrator, request)
     if validated is None:
-        return {}
+        return CompiledPlateExecutionResults()
 
     visualizers = bootstrap_execution_visualizers(
         orchestrator=orchestrator,
@@ -180,18 +254,46 @@ def execute_compiled_plate_request(
             executor_resources.clear_execution_bundle()
 
         executor_resources.cleanup_parent_gpu()
-        AnalysisConsolidationPlan(orchestrator.microscope_handler).run(
-            validated.compiled_contexts
-        )
+        if all(result.is_success() for result in execution_results.values()):
+            execute_plate_scoped_steps(
+                validated.compiled_contexts,
+                progress_queue=validated.progress_queue,
+                progress_context=validated,
+            )
+            consolidate_analysis_outputs(
+                validated.compiled_contexts,
+                orchestrator.microscope_handler,
+            )
+            viewer_states_by_port = settle_viewer_state(visualizers)
+        else:
+            viewer_states_by_port = MappingProxyType({})
         project_execution_state(orchestrator, execution_results)
-        stop_execution_visualizers(visualizers)
-        return execution_results
+        if all(result.is_success() for result in execution_results.values()):
+            _emit_execution_progress(
+                progress_queue=validated.progress_queue,
+                progress_context=validated,
+                step_name="pipeline",
+                phase=ProgressPhase.SUCCESS,
+                status=ProgressStatus.SUCCESS,
+                completed=len(validated.pipeline_definition),
+                total=len(validated.pipeline_definition),
+                percent=100.0,
+            )
+        return CompiledPlateExecutionResults(
+            execution_results,
+            extras=CompiledPlateExecutionExtras(
+                viewer_states_by_port=viewer_states_by_port
+            ),
+        )
     except Exception as exc:
         orchestrator._state = OrchestratorState.EXEC_FAILED
         logger.error(f"Failed to execute compiled plate: {exc}")
         raise
     finally:
-        set_progress_queue(None)
+        try:
+            stop_execution_visualizers(visualizers)
+        finally:
+            set_progress_queue(None)
 
 
 def validate_compiled_plate_execution(
@@ -213,6 +315,16 @@ def validate_compiled_plate_execution(
         raise ValueError(
             "progress_queue is required for execute_compiled_plate invariant path"
         )
+    plate_step_indexes = validate_plate_scoped_contexts(compiled_contexts)
+    if (
+        plate_step_indexes
+        and request.runtime_observation_mode is RuntimeObservationMode.OMIT
+    ):
+        raise ValueError(
+            "Plate-scoped FunctionSteps require RuntimeObservationMode."
+            "MERGE_INTO_PARENT so compiled artifact inputs are available after "
+            "worker execution."
+        )
     runtime_environment = request.execution_bundle.runtime_environment
     return ValidatedCompiledPlateExecution(
         execution_id=request.execution_id,
@@ -223,6 +335,467 @@ def validate_compiled_plate_execution(
         progress_queue=request.progress_queue,
         runtime_environment=runtime_environment,
     )
+
+
+def validate_plate_scoped_contexts(
+    compiled_contexts: Mapping[str, ProcessingContext],
+) -> tuple[int, ...]:
+    """Validate plate lifecycle invariants shared by compilation contexts."""
+
+    memberships = {
+        context_key: tuple(
+            step_index
+            for step_index, step_plan in sorted(context.step_plans.items())
+            if step_plan.execution_scope is FunctionStepExecutionScope.PLATE
+        )
+        for context_key, context in compiled_contexts.items()
+    }
+    distinct_memberships = frozenset(memberships.values())
+    if len(distinct_memberships) != 1:
+        raise ValueError(
+            "Plate-scoped step membership drifted between compiled contexts: "
+            f"{memberships!r}."
+        )
+    (plate_step_indexes,) = distinct_memberships
+    if not plate_step_indexes:
+        return ()
+
+    first_plate_index = plate_step_indexes[0]
+    axis_successors = {
+        context_key: tuple(
+            step_plan.step_name
+            for step_index, step_plan in sorted(context.step_plans.items())
+            if step_index > first_plate_index
+            and step_plan.execution_scope is FunctionStepExecutionScope.AXIS
+        )
+        for context_key, context in compiled_contexts.items()
+    }
+    contexts_with_axis_successors = {
+        context_key: successors
+        for context_key, successors in axis_successors.items()
+        if successors
+    }
+    if contexts_with_axis_successors:
+        raise ValueError(
+            "Plate-scoped FunctionSteps must be terminal; axis-scoped successors "
+            "are not executable after post-plate processing: "
+            f"{contexts_with_axis_successors!r}."
+        )
+
+    for step_index in plate_step_indexes:
+        baseline_invocations: tuple[CompiledFunctionInvocation, ...] | None = None
+        baseline_source_binding_plan: CompiledSourceBindingPlan | None = None
+        metadata_owners = 0
+        for context_key, context in compiled_contexts.items():
+            step_plan = context.step_plans[step_index]
+            _validate_plate_step_plan(step_plan)
+            invocations = step_plan.compiled_function_pattern.default_group.invocations
+            if baseline_invocations is None:
+                baseline_invocations = invocations
+                baseline_source_binding_plan = step_plan.source_binding_plan
+            else:
+                if invocations != baseline_invocations:
+                    raise ValueError(
+                        "Plate-scoped compiled invocations drifted between contexts "
+                        f"for step {step_index} ({step_plan.step_name!r}); context "
+                        f"{context_key!r} differs."
+                    )
+                if step_plan.source_binding_plan != baseline_source_binding_plan:
+                    raise ValueError(
+                        "Plate-scoped source-binding plan drifted between contexts "
+                        f"for step {step_index} ({step_plan.step_name!r}); context "
+                        f"{context_key!r} differs."
+                    )
+            if step_plan.create_openhcs_metadata:
+                metadata_owners += 1
+        if metadata_owners != 1:
+            raise ValueError(
+                f"Plate-scoped step {step_index} requires exactly one "
+                f"metadata-writer output owner, got {metadata_owners}."
+            )
+    return plate_step_indexes
+
+
+def execute_plate_scoped_steps(
+    compiled_contexts: Mapping[str, ProcessingContext],
+    *,
+    progress_queue: ProgressQueue,
+    progress_context: ProgressExecutionContext,
+    heartbeat_interval_seconds: float = PLATE_STEP_PROGRESS_HEARTBEAT_SECONDS,
+) -> None:
+    """Invoke plate-scoped FunctionSteps once from merged runtime records."""
+
+    plate_step_indexes = validate_plate_scoped_contexts(compiled_contexts)
+    total_steps = max(next(iter(compiled_contexts.values())).step_plans) + 1
+    records_by_axis = _runtime_record_snapshot(compiled_contexts)
+    for step_index in plate_step_indexes:
+        owner_context, owner_plan = _plate_output_owner(
+            compiled_contexts,
+            step_index,
+        )
+        with _PlateStepProgressHeartbeat(
+            progress_queue=progress_queue,
+            progress_context=progress_context,
+            step_index=step_index,
+            step_name=owner_plan.step_name,
+            total_steps=total_steps,
+            interval_seconds=heartbeat_interval_seconds,
+        ):
+            owner_invocations = (
+                owner_plan.compiled_function_pattern.default_group.invocations
+            )
+            for invocation_position, owner_invocation in enumerate(owner_invocations):
+                contract = owner_invocation.contract
+                output_plans = tuple(
+                    owner_invocation.select_outputs(
+                        owner_plan.artifact_outputs
+                    ).values()
+                )
+                (output_plan,) = output_plans
+                resolved_output_plan = output_plan.for_group(
+                    output_plan.require_single_group_key()
+                )
+                batch = _plate_artifact_batch(
+                    compiled_contexts=compiled_contexts,
+                    step_index=step_index,
+                    invocation_position=invocation_position,
+                    contract=contract,
+                    records_by_axis=records_by_axis,
+                    source_binding_plan=owner_plan.source_binding_plan,
+                    source_image_set_identity_policy=(
+                        owner_context.source_image_set_identity_policy
+                    ),
+                )
+                kwargs = owner_invocation.kwargs_dict
+                batch_parameter = RuntimeArtifactBatch.require_parameter_name()
+                runtime_kwargs: dict[str, object] = {batch_parameter: batch}
+                context_parameter = owner_invocation.contract.runtime_context_parameter
+                if context_parameter is not None:
+                    runtime_kwargs[context_parameter] = owner_context
+                conflicting_parameters = kwargs.keys() & runtime_kwargs.keys()
+                if conflicting_parameters:
+                    raise ValueError(
+                        f"Plate-scoped callable "
+                        f"{owner_invocation.contract.function_name!r} cannot provide "
+                        "runtime-owned kwargs "
+                        f"{tuple(sorted(conflicting_parameters))!r}."
+                    )
+                result = owner_invocation.contract.resolve_runtime_callable()(
+                    **kwargs,
+                    **runtime_kwargs,
+                )
+                owner_axis_id = _require_context_axis_id(owner_context)
+                runtime_value = RuntimeValue.normalize(
+                    resolved_output_plan,
+                    result,
+                    axis_id=owner_axis_id,
+                )
+                location = RuntimeArtifactLocation(
+                    path=resolved_output_plan.path,
+                    backend=Backend.MEMORY.value,
+                )
+                record = owner_context.runtime_value_store.replace(
+                    runtime_value,
+                    path=location.path,
+                    backend=location.backend,
+                )
+                replace_runtime_artifact_payload(
+                    owner_context.filemanager,
+                    runtime_value.data,
+                    location,
+                )
+                records_by_axis = _records_with_output(records_by_axis, record)
+
+            RuntimeArtifactMaterializationAuthority.materialize(
+                owner_context,
+                owner_plan.require_function_execution_ready(),
+            )
+        _emit_execution_progress(
+            progress_queue=progress_queue,
+            progress_context=progress_context,
+            step_name=owner_plan.step_name,
+            phase=ProgressPhase.STEP_COMPLETED,
+            status=ProgressStatus.SUCCESS,
+            completed=step_index + 1,
+            total=total_steps,
+            percent=((step_index + 1) / total_steps) * 100.0,
+        )
+
+
+@dataclass(slots=True)
+class _PlateStepProgressHeartbeat:
+    """Keep one compiler-owned plate step visible while it is executing."""
+
+    progress_queue: ProgressQueue
+    progress_context: ProgressExecutionContext
+    step_index: int
+    step_name: str
+    total_steps: int
+    interval_seconds: float = PLATE_STEP_PROGRESS_HEARTBEAT_SECONDS
+    _stop_event: threading.Event = field(init=False, repr=False)
+    _thread: threading.Thread | None = field(init=False, default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        self._stop_event = threading.Event()
+
+    def __enter__(self) -> "_PlateStepProgressHeartbeat":
+        self._emit(ProgressPhase.STEP_STARTED, ProgressStatus.STARTED)
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=self.interval_seconds + 1.0)
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self.interval_seconds):
+            self._emit(ProgressPhase.RUNNING, ProgressStatus.RUNNING)
+
+    def _emit(self, phase: ProgressPhase, status: ProgressStatus) -> None:
+        _emit_execution_progress(
+            progress_queue=self.progress_queue,
+            progress_context=self.progress_context,
+            step_name=self.step_name,
+            phase=phase,
+            status=status,
+            completed=self.step_index,
+            total=self.total_steps,
+            percent=(self.step_index / self.total_steps) * 100.0,
+        )
+
+
+def _emit_execution_progress(
+    *,
+    progress_queue: ProgressQueue,
+    progress_context: ProgressExecutionContext,
+    step_name: str,
+    phase: ProgressPhase,
+    status: ProgressStatus,
+    completed: int,
+    total: int,
+    percent: float,
+) -> None:
+    """Publish one parent-owned execution event without a worker claim."""
+
+    progress_queue.put(
+        create_event(
+            ProgressEventPayload(
+                identity=progress_context.identity_for_event(
+                    axis_id="",
+                    step_name=step_name,
+                ),
+                phase=phase,
+                status=status,
+                completed=completed,
+                total=total,
+                percent=percent,
+            )
+        ).to_dict()
+    )
+
+
+def _validate_plate_step_plan(step_plan: CompiledStepPlan) -> None:
+    pattern = step_plan.compiled_function_pattern
+    if pattern is None:
+        raise ValueError(
+            f"Plate-scoped step {step_plan.step_name!r} has no compiled pattern."
+        )
+    if pattern.is_grouped or len(pattern.groups) != 1:
+        raise ValueError(
+            f"Plate-scoped step {step_plan.step_name!r} must use one default group."
+        )
+    FuncStepContractValidator.validate_compiled_step_plan(step_plan)
+    for invocation in pattern.default_group.invocations:
+        _validate_plate_invocation(invocation, step_plan)
+
+
+def _validate_plate_invocation(
+    invocation: CompiledFunctionInvocation,
+    step_plan: CompiledStepPlan,
+) -> None:
+    contract = invocation.contract
+    FuncStepContractValidator.validate_plate_callable_contracts(
+        (contract,),
+        step_plan.step_name,
+    )
+    if invocation.runtime_parameter_bindings:
+        raise ValueError(
+            f"Plate-scoped callable {contract.function_name!r} cannot declare "
+            "axis runtime parameter bindings."
+        )
+    declared_outputs = tuple(contract.artifact_outputs)
+    if (
+        len(declared_outputs) != 1
+        or declared_outputs[0].artifact_type is not SpecialArtifactType
+    ):
+        raise ValueError(
+            f"Plate-scoped callable {contract.function_name!r} must declare "
+            "exactly one SpecialArtifactType output."
+        )
+
+    declared_input_refs = contract.artifact_inputs.ref_set()
+    selected_input_refs = tuple(edge.spec.ref() for edge in invocation.artifact_input_edges)
+    undeclared_input_refs = tuple(
+        ref for ref in selected_input_refs if ref not in declared_input_refs
+    )
+    missing_required_input_refs = tuple(
+        spec.ref()
+        for spec in contract.artifact_inputs
+        if spec.required and spec.ref() not in selected_input_refs
+    )
+    if undeclared_input_refs or missing_required_input_refs:
+        raise ValueError(
+            f"Plate-scoped invocation {invocation.key!r} artifact input refs drifted "
+            f"from its module contract; undeclared={undeclared_input_refs!r}, "
+            f"missing_required={missing_required_input_refs!r}."
+        )
+
+    invocation.select_inputs(step_plan.artifact_inputs)
+    selected_output_refs = tuple(plan.ref() for plan in invocation.artifact_output_plans)
+    expected_output_refs = tuple(spec.ref() for spec in declared_outputs)
+    if selected_output_refs != expected_output_refs:
+        raise ValueError(
+            f"Plate-scoped invocation {invocation.key!r} compiled outputs drifted "
+            f"from declarations; expected={expected_output_refs!r}, "
+            f"actual={selected_output_refs!r}."
+        )
+
+
+def _runtime_record_snapshot(
+    compiled_contexts: Mapping[str, ProcessingContext],
+) -> Mapping[str, tuple[StoredRuntimeValue, ...]]:
+    records: OrderedDict[
+        str,
+        OrderedDict[tuple[object, RuntimeArtifactLocation], StoredRuntimeValue],
+    ] = OrderedDict()
+    for context in compiled_contexts.values():
+        for record in context.runtime_value_store.values():
+            axis_id = record.key.scope.axis_id
+            records.setdefault(axis_id, OrderedDict()).setdefault(
+                (record.key, record.location),
+                record,
+            )
+    return MappingProxyType(
+        {
+            axis_id: tuple(axis_records.values())
+            for axis_id, axis_records in records.items()
+        }
+    )
+
+
+def _plate_output_owner(
+    compiled_contexts: Mapping[str, ProcessingContext],
+    step_index: int,
+) -> tuple[ProcessingContext, CompiledStepPlan]:
+    owners = tuple(
+        (context, context.step_plans[step_index])
+        for context in compiled_contexts.values()
+        if context.step_plans[step_index].owns_runtime_outputs
+    )
+    if len(owners) != 1:
+        raise ValueError(
+            f"Plate-scoped step {step_index} requires exactly one output owner, "
+            f"got {len(owners)}."
+        )
+    return owners[0]
+
+
+def _plate_artifact_batch(
+    *,
+    compiled_contexts: Mapping[str, ProcessingContext],
+    step_index: int,
+    invocation_position: int,
+    contract: CallableContract,
+    records_by_axis: Mapping[str, tuple[StoredRuntimeValue, ...]],
+    source_binding_plan: CompiledSourceBindingPlan,
+    source_image_set_identity_policy: "SourceImageSetIdentityPolicy",
+) -> RuntimeArtifactBatch:
+    selected: OrderedDict[
+        str,
+        OrderedDict[tuple[object, RuntimeArtifactLocation], StoredRuntimeValue],
+    ] = OrderedDict()
+    for context in compiled_contexts.values():
+        selected.setdefault(_require_context_axis_id(context), OrderedDict())
+
+    for input_spec in contract.artifact_inputs:
+        selected_for_spec = 0
+        for context in compiled_contexts.values():
+            axis_id = _require_context_axis_id(context)
+            step_plan = context.step_plans[step_index]
+            invocation = step_plan.compiled_function_pattern.default_group.invocations[
+                invocation_position
+            ]
+            selected_input_edges = {
+                edge.spec.ref(): edge
+                for edge in invocation.select_inputs(
+                    step_plan.artifact_inputs
+                ).values()
+                if edge.storage_plan is not None and edge.projection is not None
+            }
+            input_ref = input_spec.ref()
+            if input_ref not in selected_input_edges:
+                continue
+            input_edge = selected_input_edges[input_ref]
+            input_plan = input_edge.storage_plan
+            projection = input_edge.projection
+            if input_plan is None or projection is None:
+                raise RuntimeError("Selected plate artifact input lost its storage plan.")
+            for group_key in projection.producer_selection_scope.keys:
+                query = RuntimeArtifactQuery.from_input_plan(
+                    input_plan,
+                    axis_id=axis_id,
+                    backend=Backend.MEMORY.value,
+                    group_key=group_key,
+                )
+                matches = tuple(
+                    record
+                    for record in records_by_axis.get(axis_id, ())
+                    if query.matches(record)
+                )
+                for record in matches:
+                    selected[axis_id].setdefault(
+                        (record.key, record.location),
+                        record,
+                    )
+                selected_for_spec += len(matches)
+        if input_spec.required and selected_for_spec == 0:
+            raise ValueError(
+                f"Plate-scoped callable {contract.function_name!r} is missing required "
+                f"input {input_spec.artifact_type.value}:"
+                f"{input_spec.name!r}."
+            )
+
+    return RuntimeArtifactBatch(
+        input_specs=contract.artifact_inputs,
+        records_by_axis={
+            axis_id: tuple(axis_records.values())
+            for axis_id, axis_records in selected.items()
+        },
+        source_binding_plan=source_binding_plan,
+        source_image_set_identity_policy=source_image_set_identity_policy,
+    )
+
+
+def _records_with_output(
+    records_by_axis: Mapping[str, tuple[StoredRuntimeValue, ...]],
+    record: StoredRuntimeValue,
+) -> Mapping[str, tuple[StoredRuntimeValue, ...]]:
+    updated = OrderedDict(records_by_axis)
+    axis_id = record.key.scope.axis_id
+    existing = OrderedDict(
+        ((item.key, item.location), item) for item in updated.get(axis_id, ())
+    )
+    existing[(record.key, record.location)] = record
+    updated[axis_id] = tuple(existing.values())
+    return MappingProxyType(dict(updated))
+
+
+def _require_context_axis_id(context: ProcessingContext) -> str:
+    if not context.axis_id:
+        raise ValueError("Plate-scoped execution requires a compiled context axis_id.")
+    return str(context.axis_id)
 
 
 def actual_max_workers(
@@ -355,43 +928,63 @@ def wait_until_visualizers_ready(
         time.sleep(0.2)
 
     not_ready = [v.port for v in visualizers if not v.is_running]
-    logger.warning(
-        f"🔬 ORCHESTRATOR: Timeout waiting for streaming viewers. Not ready: {not_ready}"
-    )
+    message = f"Timeout waiting for streaming viewers. Not ready: {not_ready}"
+    logger.error(f"🔬 ORCHESTRATOR: {message}")
     progress_queue.put(
         create_event(
             ProgressEventPayload(
                 identity=progress_context.identity_for_event(axis_id="", step_name=""),
                 phase=ProgressPhase.INIT,
-                status=ProgressStatus.RUNNING,
+                status=ProgressStatus.FAILED,
                 percent=0.0,
-                message=f"Timeout waiting for streaming viewers. Not ready: {not_ready}",
+                message=message,
             )
         ).to_dict()
     )
+    raise TimeoutError(message)
 
 
 def clear_viewer_state(visualizers: list[ExecutionVisualizer]) -> None:
     """Clear viewer state before sending a new execution stream."""
 
     for vis in visualizers:
-        success = vis.clear_viewer_state()
-        if not success:
-            logger.warning(
-                f"🔬 ORCHESTRATOR: Failed to clear state for viewer on port {vis.port}"
+        if not vis.clear_viewer_state():
+            raise RuntimeError(f"Failed to clear state for viewer on port {vis.port}.")
+
+
+def settle_viewer_state(
+    visualizers: list[ExecutionVisualizer],
+) -> Mapping[int, "ViewerControlResponse"]:
+    """Drain queued updates and capture state before transient viewer shutdown."""
+
+    for vis in visualizers:
+        if not vis.settle_viewer_state():
+            raise RuntimeError(
+                f"Failed to settle streamed updates for viewer on port {vis.port}."
             )
+
+    viewer_states: dict[int, ViewerControlResponse] = {}
+    for vis in visualizers:
+        if vis.persistent:
+            continue
+        if vis.port in viewer_states:
+            raise RuntimeError(
+                f"Multiple execution viewers declared the same port {vis.port}."
+            )
+        viewer_states[vis.port] = vis.read_viewer_state()
+    return MappingProxyType(viewer_states)
 
 
 def stop_execution_visualizers(visualizers: list[ExecutionVisualizer]) -> None:
     """Stop auto-created non-persistent visualizers after execution."""
 
-    for idx, vis in enumerate(visualizers):
-        try:
-            if not vis.persistent:
-                vis.stop_viewer()
-        except Exception as exc:
-            logger.warning(
-                f"🔬 ORCHESTRATOR: Failed to cleanup visualizer {idx + 1}: {exc}"
+    for vis in visualizers:
+        if vis.persistent:
+            continue
+        vis.force_stop()
+        if vis.is_running:
+            raise RuntimeError(
+                f"Non-persistent viewer on port {vis.port} remained active after cleanup."
             )
 
 

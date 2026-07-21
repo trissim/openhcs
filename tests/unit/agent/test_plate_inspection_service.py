@@ -4,11 +4,14 @@ from pathlib import Path
 
 import numpy as np
 import tifffile
+from polystore.virtual_workspace import SourcePixelRef
 
 from openhcs.agent.dto.plate import (
     PlateFileQueryRequest,
     PlateImageSampleRequest,
     PlateInspectionConfidence,
+    PlateInspectionIngestionRoute,
+    PlateInspectionSourceBindingRole,
     PlateInspectionStatus,
     PlatePathInspectionRequest,
     SyntheticPlateGenerationRequest,
@@ -20,12 +23,20 @@ from openhcs.agent.services.stdio import AgentStdoutRedirect
 from openhcs.agent.services.plate_inspection_service import (
     PlateInspectionIssueCode,
     PlateInspectionService,
+    PlateInspectionWorkflowAdvicePolicy,
 )
 from openhcs.agent.services.synthetic_plate_service import (
     SyntheticPlateGenerationService,
 )
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.pipeline.path_planner import PathPlannerPathAuthority
+from openhcs.microscopes.bioformats import BioFormatsHandler
+from openhcs.microscopes.microscope_base import MicroscopeSourceSelectionRole
+from openhcs.microscopes.source_bindings_handler import SourceBindingsHandler
+from tests.unit.bioformats_fixture import (
+    bioformats_filemanager,
+    write_bioformats_manifest_fixture,
+)
 
 
 class ImageXpressPlateFixture:
@@ -116,6 +127,8 @@ def test_plate_request_dtos_own_mcp_tool_argument_projection():
     sample_request = PlateImageSampleRequest.from_fields(
         plate_path="/tmp/plate",
         image_path="A01.tif",
+        resolution_index=0,
+        max_auto_resolution_size=512,
         include_array_values=False,
     )
     synthetic_request = SyntheticPlateGenerationRequest.from_fields(
@@ -128,6 +141,8 @@ def test_plate_request_dtos_own_mcp_tool_argument_projection():
     assert query_request.as_tool_arguments()["kind"] == "all"
     assert query_request.as_tool_arguments()["include_previews"] is False
     assert sample_request.as_tool_arguments()["include_array_values"] is False
+    assert sample_request.as_tool_arguments()["resolution_index"] == 0
+    assert sample_request.as_tool_arguments()["max_auto_resolution_size"] == 512
     assert synthetic_request.as_tool_arguments()["wells"] == ["A01"]
     assert synthetic_request.as_tool_arguments()["format"] == "ImageXpress"
 
@@ -220,7 +235,156 @@ def test_plate_inspection_auto_detects_imagexpress_without_mutating(tmp_path: Pa
     assert channel_summary.count == 2
     assert result.workspace_preparation.read_only_inspection is True
     assert result.workspace_preparation.required_before_execution is True
+    assert (
+        result.workflow_advice.ingestion_route
+        is PlateInspectionIngestionRoute.DETECTED_HANDLER
+    )
+    assert result.workflow_advice.ingestion_owner == "imagexpress"
+    assert (
+        result.workflow_advice.source_binding_role
+        is PlateInspectionSourceBindingRole.NOT_PROJECTED_BY_HANDLER
+    )
+    assert result.workflow_advice.ui_code_document_id == (
+        "plate_manager.orchestrator_config"
+    )
+    assert result.workflow_advice.ui_operation == "init"
     assert not (plate / "openhcs_metadata.json").exists()
+
+
+def test_plate_inspection_replays_declared_bioformats_workspace_backends(
+    tmp_path: Path,
+) -> None:
+    write_bioformats_manifest_fixture(tmp_path)
+    filemanager = bioformats_filemanager()
+    BioFormatsHandler(filemanager).initialize_workspace(tmp_path, filemanager)
+    service = PlateInspectionService(
+        AgentPathPolicy.with_roots(
+            readable_roots=(tmp_path,),
+            writable_roots=(tmp_path,),
+        ),
+        filemanager_factory=type(
+            "BioFormatsFileManagerFactory",
+            (),
+            {"create": staticmethod(bioformats_filemanager)},
+        )(),
+    )
+
+    result = service.inspect(
+        PlatePathInspectionRequest.from_fields(
+            plate_path=str(tmp_path),
+            microscope_type="bioformats",
+        )
+    )
+
+    assert result.errors == ()
+    assert result.image_files.count == 2
+    assert not any(
+        warning.code == PlateInspectionIssueCode.IMAGE_FILE_LISTING_FAILED.value
+        for warning in result.warnings
+    )
+
+
+def test_plate_inspection_workflow_advice_keeps_projecting_store_as_owner():
+    advice = PlateInspectionWorkflowAdvicePolicy.for_handler(
+        BioFormatsHandler(bioformats_filemanager())
+    )
+
+    assert advice.ingestion_route is PlateInspectionIngestionRoute.DETECTED_HANDLER
+    assert advice.ingestion_owner == "bioformats"
+    assert (
+        advice.source_binding_role
+        is PlateInspectionSourceBindingRole.SEMANTIC_SELECTION
+    )
+    assert "does not open or replace the detected store" in advice.message
+
+
+def test_plate_inspection_auto_surfaces_native_parser_for_incomplete_export(
+    tmp_path: Path,
+) -> None:
+    images = tmp_path / "Images"
+    images.mkdir()
+    for channel in (1, 2, 4):
+        tifffile.imwrite(
+            images / f"r04c09f11p01-ch{channel}sk1fk1fl1.tiff",
+            np.full((8, 8), channel, dtype=np.uint16),
+        )
+    service = PlateInspectionService(
+        AgentPathPolicy.with_roots(
+            readable_roots=(tmp_path,),
+            writable_roots=(tmp_path,),
+        ),
+        filemanager_factory=type(
+            "BioFormatsFileManagerFactory",
+            (),
+            {"create": staticmethod(bioformats_filemanager)},
+        )(),
+    )
+
+    result = service.inspect(
+        PlatePathInspectionRequest.from_fields(plate_path=str(tmp_path))
+    )
+
+    assert result.detected_microscope_type == "bioformats"
+    assert len(result.format_specific_handler_candidates) == 1
+    candidate = result.format_specific_handler_candidates[0]
+    assert candidate.microscope_type == "opera_phenix"
+    assert candidate.parser_class == "OperaPhenixFilenameParser"
+    assert candidate.root_dir == "Images"
+    assert candidate.recognized_file_count == candidate.tested_file_count == 3
+    assert candidate.recognizes_all_tested_files is True
+    assert candidate.files_under_expected_root is True
+    assert candidate.metadata_detected is False
+    assert candidate.metadata_file_path is None
+    assert "Index.xml" in (candidate.metadata_diagnostic or "")
+    assert result.workflow_advice.probable_native_ingestion_owners == ()
+    assert (
+        result.workflow_advice.ingestion_route
+        is PlateInspectionIngestionRoute.SOURCE_BINDINGS_HANDLER
+    )
+    assert result.workflow_advice.ingestion_owner == "source_bindings"
+    assert (
+        result.workflow_advice.source_binding_role
+        is PlateInspectionSourceBindingRole.INGESTION_OWNER
+    )
+    assert "requires the complete native detection contract" in (
+        result.workflow_advice.message
+    )
+    assert "SourceBindingsConfig" in result.workflow_advice.message
+    assert any(
+        warning.code == PlateInspectionIssueCode.PROBABLE_NATIVE_HANDLER.value
+        for warning in result.warnings
+    )
+    probable_native_warning = next(
+        warning
+        for warning in result.warnings
+        if warning.code == PlateInspectionIssueCode.PROBABLE_NATIVE_HANDLER.value
+    )
+    assert "requires its complete metadata detection contract" in (
+        probable_native_warning.hint or ""
+    )
+
+
+def test_registered_handler_selection_roles_are_owned_polymorphically() -> None:
+    from openhcs.microscopes.opera_phenix import OperaPhenixHandler
+
+    assert (
+        BioFormatsHandler.source_selection_role()
+        is MicroscopeSourceSelectionRole.BROAD_STRUCTURED_STORE
+    )
+    assert (
+        SourceBindingsHandler.source_selection_role()
+        is MicroscopeSourceSelectionRole.DECLARED_FILE_FALLBACK
+    )
+    assert "structured or rich container" in (
+        BioFormatsHandler.source_selection_guidance()
+    )
+    assert "arbitrary ordinary image files" in (
+        SourceBindingsHandler.source_selection_guidance()
+    )
+    assert OperaPhenixHandler.supports_explicit_incomplete_export() is False
+    assert "not a valid native dataset" in (
+        OperaPhenixHandler.source_selection_guidance()
+    )
 
 
 def test_synthetic_plate_generation_service_writes_inspectable_plate(tmp_path: Path):
@@ -334,11 +498,14 @@ def test_plate_image_sample_resolves_openhcs_virtual_workspace(tmp_path: Path):
     (plate / "openhcs_metadata.json").write_text(
         json.dumps(
             {
-                "subdirectories": {
-                    ".": {
-                        "workspace_mapping": {
-                            virtual_name: str(source_image.relative_to(plate)),
-                        },
+                    "subdirectories": {
+                        ".": {
+                            "workspace_mapping": {
+                                virtual_name: SourcePixelRef(
+                                    backend="disk",
+                                    backend_address=str(source_image.relative_to(plate)),
+                                ).to_workspace_mapping(),
+                            },
                         "available_backends": {
                             "disk": True,
                             "virtual_workspace": True,
@@ -353,6 +520,15 @@ def test_plate_image_sample_resolves_openhcs_virtual_workspace(tmp_path: Path):
                         "sites": {"1": None},
                         "z_indexes": {"1": None},
                         "timepoints": {"1": None},
+                        "source_diagnostics": [
+                            {
+                                "diagnostic_type": (
+                                    "bioformats_packed_rgb_series_exclusion"
+                                ),
+                                "message": "Packed RGB label series was excluded.",
+                                "series_index": 7,
+                            }
+                        ],
                         "results_dir": "results",
                         "main": True,
                     }
@@ -388,9 +564,15 @@ def test_plate_image_sample_resolves_openhcs_virtual_workspace(tmp_path: Path):
         source_image.resolve(strict=False)
     )
     assert result.shape == (4, 4)
+    assert result.resolution_shape == (4, 4)
     assert result.dtype == "uint16"
     assert result.minimum == 0
     assert result.maximum == 15
+    assert result.requested_resolution_index is None
+    assert result.selected_resolution_index == 0
+    assert result.resolution_count == 1
+    assert result.downsample_yx == (1.0, 1.0)
+    assert result.statistics_scope == "source_resolution"
     assert result.sample_shape == (2, 2)
     assert result.sample_included is True
     assert result.sample_values == [[5, 6], [9, 10]]
@@ -404,6 +586,13 @@ def test_plate_image_sample_resolves_openhcs_virtual_workspace(tmp_path: Path):
     )
 
     assert inspection.image_files.sampled_files == (virtual_name,)
+    assert inspection.source_diagnostics == (
+        {
+            "diagnostic_type": "bioformats_packed_rgb_series_exclusion",
+            "message": "Packed RGB label series was excluded.",
+            "series_index": 7,
+        },
+    )
     assert len(inspection.image_files.sampled_records) == 1
     inspection_record = inspection.image_files.sampled_records[0]
     assert inspection_record.virtual_path == virtual_name
@@ -1100,3 +1289,6 @@ def test_plate_inspection_reports_path_policy_errors(tmp_path: Path):
 
     assert result.status is PlateInspectionStatus.ERROR
     assert result.errors[0].code == PlateInspectionIssueCode.PATH_POLICY_REJECTED.value
+    assert result.workflow_advice.ingestion_route is PlateInspectionIngestionRoute.UNRESOLVED
+    assert "arbitrary TIFF, PNG" in result.workflow_advice.message
+    assert "CZI, OME" in result.workflow_advice.message

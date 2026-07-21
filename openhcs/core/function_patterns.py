@@ -507,6 +507,19 @@ class CompiledFunctionGroup:
                 plans = ()
         return plans
 
+    def resulting_implicit_main_flow_invocation(
+        self,
+    ) -> CompiledFunctionInvocation | None:
+        """Return the invocation owning the final unnamed main-flow value."""
+
+        owner: CompiledFunctionInvocation | None = None
+        for invocation in self.invocations:
+            if invocation.main_flow_output_plans:
+                owner = None
+            elif not invocation.contract.preserves_input_main_flow():
+                owner = invocation
+        return owner
+
     def preserves_input_main_flow(self) -> bool:
         """Return whether every invocation leaves the group's input flow unchanged."""
 

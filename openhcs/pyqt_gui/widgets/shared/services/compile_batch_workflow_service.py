@@ -19,6 +19,7 @@ from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileJobErrorCallback,
     CompileJobStatusCallback,
     CompileWorkflowService,
+    PlateCompiledState,
 )
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     ManagerExecutionState,
@@ -136,9 +137,6 @@ class CompileBatchWorkflowService:
             def _on_wait_success(
                 job: CompileJob, _execution_id: str, _idx: int, _total: int
             ) -> None:
-                self.host.plate_compiled_data[job.plate_path] = {
-                    "definition_pipeline": job.definition_pipeline,
-                }
                 self.host.clear_plate_execution_tracking(job.plate_path)
                 self._set_orchestrator_state(job.plate_path, OrchestratorState.COMPILED)
                 self.host.emit_orchestrator_state(job.plate_path, "COMPILED")
@@ -284,6 +282,7 @@ class CompileBatchWorkflowService:
         )
 
     async def _submit_compile_job(self, *, job: CompileJob, zmq_client, loop) -> str:
+        self.host.emit_compiled_state(job.plate_path, None)
         execution_id = await self._compile_workflow.submit_compile_job(
             job=job,
             zmq_client=zmq_client,
@@ -295,12 +294,18 @@ class CompileBatchWorkflowService:
     async def _wait_compile_job(
         self, *, submission_id: str, job: CompileJob, zmq_client, loop
     ) -> None:
-        await self._compile_workflow.wait_compile_job(
+        inspection = await self._compile_workflow.wait_compile_job(
             submission_id=submission_id,
             job=job,
             zmq_client=zmq_client,
             loop=loop,
         )
+        compiled_state = PlateCompiledState(
+            compile_artifact_id=submission_id,
+            definition_pipeline=tuple(job.definition_pipeline),
+            inspection=inspection,
+        )
+        self.host.emit_compiled_state(job.plate_path, compiled_state)
 
     def _mark_execution_compile_failed(self, plate_path: str, error: Exception) -> None:
         logger.error(

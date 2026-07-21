@@ -45,12 +45,13 @@ class ExecutionControlService:
         host,
         context: BatchWorkflowContext,
         port: int,
+        config,
     ) -> "ExecutionControlService":
         return cls(
             host=host,
             context=context,
             port=port,
-            server_kill_service=ServerKillService.openhcs_default(),
+            server_kill_service=ServerKillService.openhcs_default(config),
         )
 
     def check_all_completed(self) -> None:

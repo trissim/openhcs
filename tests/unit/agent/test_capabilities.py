@@ -1,5 +1,6 @@
 from openhcs.agent.capabilities import (
     AgentCapabilitySpec,
+    AgentDataclassRequestServiceInvocation,
     CapabilityCliConnectionProfile,
     CapabilityKind,
     CapabilityRole,
@@ -7,9 +8,23 @@ from openhcs.agent.capabilities import (
     CapabilityVisibility,
     CapabilityWorkflowGroup,
     CapabilityWorkflowStage,
+    CapabilityTransport,
+    AuthoringLocalCapabilitySurfaceProfile,
+    CoreLocalCapabilitySurfaceProfile,
+    DesktopLocalCapabilitySurfaceProfile,
+    FullLocalCapabilitySurfaceProfile,
+    HeadlessExecutionCapability,
+    HostedTransportCapabilityMixin,
+    PipelineDraftCapability,
+    PlatePathCapability,
+    RuntimeServerCliConnectionCapability,
+    UiBridgeCapability,
+    ViewerWindowCliConnectionCapability,
+    agent_capability_declarations,
     get_capability_registry,
     validate_capability_registry,
 )
+from openhcs.agent.dto.pipeline import CreatePipelineRequest
 
 
 def test_capability_registry_declares_schema_and_unique_names():
@@ -19,6 +34,133 @@ def test_capability_registry_declares_schema_and_unique_names():
 
     assert registry.schema_version == "openhcs.agent.v1"
     assert len(names) == len(set(names))
+
+
+def test_create_pipeline_capability_accepts_optional_pipeline_config_reference():
+    declarations = {
+        declaration.name: declaration for declaration in agent_capability_declarations()
+    }
+    create_pipeline = declarations["openhcs_create_pipeline"]
+
+    assert create_pipeline.input_contract is CreatePipelineRequest
+    assert isinstance(
+        create_pipeline.request_invocation,
+        AgentDataclassRequestServiceInvocation,
+    )
+
+
+def test_capability_transport_defaults_to_local_stdio():
+    capability = AgentCapabilitySpec(
+        name="openhcs_local_default",
+        kind=CapabilityKind.TOOL,
+        title="Local default",
+        description="Transport default test.",
+        service="test",
+    )
+
+    assert capability.transport_availability == (CapabilityTransport.LOCAL_STDIO,)
+    assert capability.supports_transport(CapabilityTransport.LOCAL_STDIO)
+    assert not capability.supports_transport(CapabilityTransport.HOSTED_STREAMABLE_HTTP)
+
+
+def test_hosted_capabilities_are_nominal_opt_ins_and_read_only():
+    declarations = agent_capability_declarations()
+    hosted_declarations = tuple(
+        declaration
+        for declaration in declarations
+        if CapabilityTransport.HOSTED_STREAMABLE_HTTP
+        in declaration.transport_availability
+    )
+
+    assert hosted_declarations
+    assert all(
+        issubclass(declaration, HostedTransportCapabilityMixin)
+        for declaration in hosted_declarations
+    )
+    assert all(not declaration.mutating for declaration in hosted_declarations)
+    assert all(not declaration.side_effects for declaration in hosted_declarations)
+    assert all(not declaration.requires_network for declaration in hosted_declarations)
+    assert all(
+        not declaration.security_requirements for declaration in hosted_declarations
+    )
+
+
+def test_local_runtime_capability_families_are_not_hosted():
+    local_runtime_roots = (
+        PlatePathCapability,
+        PipelineDraftCapability,
+        HeadlessExecutionCapability,
+        UiBridgeCapability,
+        ViewerWindowCliConnectionCapability,
+        RuntimeServerCliConnectionCapability,
+    )
+
+    for declaration in agent_capability_declarations():
+        if issubclass(declaration, local_runtime_roots):
+            assert CapabilityTransport.HOSTED_STREAMABLE_HTTP not in (
+                declaration.transport_availability
+            )
+
+
+def test_transport_filtered_registry_rebuilds_groups_from_eligible_declarations():
+    hosted = get_capability_registry(CapabilityTransport.HOSTED_STREAMABLE_HTTP)
+
+    assert hosted.capabilities
+    assert all(
+        capability.supports_transport(CapabilityTransport.HOSTED_STREAMABLE_HTTP)
+        for capability in hosted.capabilities
+    )
+    grouped_names = {
+        capability_name
+        for group in hosted.groups
+        for capability_name in group.capability_names
+    }
+    assert grouped_names == {capability.name for capability in hosted.capabilities}
+
+
+def test_local_surface_profiles_filter_declaration_metadata_without_name_lists():
+    profiles = (
+        FullLocalCapabilitySurfaceProfile(),
+        DesktopLocalCapabilitySurfaceProfile(),
+        AuthoringLocalCapabilitySurfaceProfile(),
+        CoreLocalCapabilitySurfaceProfile(),
+    )
+    full_registry = get_capability_registry()
+
+    for profile in profiles:
+        registry = get_capability_registry(
+            capability_surface_profile=profile,
+        )
+        assert registry.surface_profile == profile.name
+        assert {capability.name for capability in registry.capabilities} == {
+            capability.name
+            for capability in full_registry.capabilities
+            if profile.includes(capability)
+        }
+        assert all(profile.includes(capability) for capability in registry.capabilities)
+        assert {
+            capability_name
+            for group in registry.groups
+            for capability_name in group.capability_names
+        } == {capability.name for capability in registry.capabilities}
+
+    desktop = get_capability_registry(
+        capability_surface_profile=DesktopLocalCapabilitySurfaceProfile(),
+    )
+    desktop_names = {capability.name for capability in desktop.capabilities}
+    assert "openhcs_ui_bridge_status" in desktop_names
+    assert "openhcs_get_viewer_window_state" in desktop_names
+    assert "openhcs_describe_config_schema" in desktop_names
+    assert "openhcs_create_orchestrator_session" not in desktop_names
+    assert "openhcs_ui_invoke_widget_action" not in desktop_names
+
+    core = get_capability_registry(
+        capability_surface_profile=CoreLocalCapabilitySurfaceProfile(),
+    )
+    core_names = {capability.name for capability in core.capabilities}
+    assert "openhcs_create_orchestrator_session" in core_names
+    assert "openhcs_stream_plate_files_to_viewer" not in core_names
+    assert "openhcs_ui_bridge_status" not in core_names
 
 
 def test_health_capability_declares_mcp_reliability_contract():
@@ -31,6 +173,9 @@ def test_health_capability_declares_mcp_reliability_contract():
     assert "process identity" in health.description
     assert "source freshness" in health.description
     assert health.data_exposure == (
+        "installed_openhcs_version",
+        "packaged_resource_readiness",
+        "packaged_resource_paths",
         "mcp_process_identity",
         "mcp_source_freshness",
     )
@@ -109,12 +254,17 @@ def test_similar_mcp_tool_names_are_disambiguated_by_target_context_and_role():
     assert capabilities["openhcs_get_execution_status"].target_context is (
         CapabilityTargetContext.SUBMITTED_JOB
     )
-    assert capabilities[
-        "openhcs_get_runtime_server_execution_status"
-    ].target_context is CapabilityTargetContext.RUNTIME_SERVER
+    assert (
+        capabilities["openhcs_get_runtime_server_execution_status"].target_context
+        is CapabilityTargetContext.RUNTIME_SERVER
+    )
     assert capabilities["openhcs_ui_get_operation_status"].target_context is (
         CapabilityTargetContext.UI_BRIDGE
     )
+    assert capabilities["openhcs_ui_wait_for_operation"].target_context is (
+        CapabilityTargetContext.UI_BRIDGE
+    )
+    assert capabilities["openhcs_ui_wait_for_operation"].role is CapabilityRole.PRIMARY
     assert capabilities["openhcs_ui_invoke_action"].role is CapabilityRole.PRIMARY
     assert capabilities["openhcs_ui_invoke_widget_action"].role is (
         CapabilityRole.FALLBACK
@@ -144,6 +294,7 @@ def test_ui_bridge_capabilities_declare_runtime_security_and_data_exposure():
     widget_tree = capabilities["openhcs_ui_get_widget_tree"]
     restore_snapshot = capabilities["openhcs_ui_restore_snapshot"]
     operation_status = capabilities["openhcs_ui_get_operation_status"]
+    operation_wait = capabilities["openhcs_ui_wait_for_operation"]
 
     assert status.runtime_requirements == ("running_openhcs_ui_bridge",)
     assert read_document.runtime_requirements == ("running_openhcs_ui_bridge",)
@@ -171,6 +322,9 @@ def test_ui_bridge_capabilities_declare_runtime_security_and_data_exposure():
         "time_travels_ui_state",
     )
     assert operation_status.side_effects == ()
+    assert operation_wait.side_effects == ()
+    assert operation_wait.input_type == "UiBridgeOperationWaitRequest"
+    assert operation_wait.output_type == "UiBridgeOperationRef"
 
 
 def test_viewer_probe_capability_declares_compact_liveness_contract():

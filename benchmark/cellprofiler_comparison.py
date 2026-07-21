@@ -12,7 +12,7 @@ import time
 import traceback
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -21,10 +21,10 @@ from benchmark.contracts.tool_adapter import ToolExecutionError
 from benchmark.adapters.cellprofiler import (
     CellProfilerAdapter,
     native_cellprofiler_reference_is_complete,
+    native_cellprofiler_reference_matches_scope,
     native_cellprofiler_reference_scope_slugs,
 )
 from benchmark.adapters.openhcs import OpenHCSAdapter
-from benchmark.converter.execution_validation import CPPipeInfrastructureProfile
 from benchmark.datasets.visible_source import resolve_visible_source_path
 from benchmark.metrics.memory import MemoryMetric
 from benchmark.metrics.time import TimeMetric
@@ -32,15 +32,13 @@ from benchmark.runner import CellProfilerCompatibilityResult
 from benchmark.runner import run_cellprofiler_cppipe_parity
 from benchmark.contracts.metric import MetricCollector
 from benchmark.contracts.comparison_manifest import ComparisonManifest
-from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.config import GlobalPipelineConfig, WellFilterConfig
 from openhcs.core.equivalence.outputs import image_paths, table_paths
-from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
 
 if TYPE_CHECKING:
     from benchmark.converter.compatibility_matrix import CellProfilerCompatibilityReport
 
 
-BENCHMARK_CACHE_DOMAINS = frozenset({"harness"})
 SUITE_ID_FIELD = "suite_id"
 CASE_NAME_FIELD = "case_name"
 REPETITION_FIELD = "repetition"
@@ -89,25 +87,18 @@ CORPUS_COVERAGE_FIELD = "corpus_coverage"
 ABSORPTION_COVERAGE_FIELD = "absorption_coverage"
 CPPIPE_CASE_NAMES_FIELD = "cppipe_case_names"
 IMPORTABLE_FIELD = "importable"
+FUNCTION_NAMES_FIELD = "function_names"
+EXECUTION_SCOPE_FIELD = "execution_scope"
 PROCESSING_CONTRACT_FIELD = "processing_contract"
-PROCESSING_CONTRACT_SOURCE_FIELD = "processing_contract_source"
-ARTIFACT_CONTRACT_COVERAGE_FIELD = "artifact_contract_coverage"
+EMITS_FUNCTION_STEP_FIELD = "emits_function_step"
 SOURCE_COVERAGE_FIELD = "source_coverage"
-SEMANTIC_FAMILY_FIELD = "semantic_family"
-FAMILY_COVERAGE_FIELD = "family_coverage"
-FAMILY_SUPPORTED_MODULES_FIELD = "family_supported_modules"
-FAMILY_ABSORBED_MODULES_FIELD = "family_absorbed_modules"
-CATEGORY_FIELD = "category"
-DIMENSIONALITY_FIELD = "dimensionality"
 RESPECTS_MASKS_FIELD = "respects_masks"
 DEFAULT_SPEEDUP_TARGET = 5.0
-OPENHCS_BENCHMARK_CACHE_MARKER = ".openhcs_benchmark_cache.json"
 MODULE_COVERAGE_SUMMARY_JSON = "module_coverage_summary.json"
 MODULE_COVERAGE_CPPIPE_MODULES_CSV = "module_coverage_cppipe_modules.csv"
 MODULE_COVERAGE_CPPIPE_SETTINGS_CSV = "module_coverage_cppipe_settings.csv"
 MODULE_COVERAGE_ABSORBED_MODULES_CSV = "module_coverage_absorbed_modules.csv"
 MODULE_COVERAGE_SOURCE_MODULES_CSV = "module_coverage_source_modules.csv"
-MODULE_COVERAGE_SEMANTIC_FAMILIES_CSV = "module_coverage_semantic_families.csv"
 CsvRow = Mapping[str, object]
 CsvRowBuilder = Callable[
     [Sequence["CellProfilerComparisonObservation"]],
@@ -163,9 +154,11 @@ class AbsorbedModuleCoverageRow:
     module_name: str
     corpus_coverage: str
     importable: bool
+    function_names: str
+    execution_scope: str
     processing_contract: str
-    processing_contract_source: str
-    artifact_contract_coverage: str
+    emits_function_step: bool
+    respects_masks: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,21 +167,6 @@ class SourceModuleCoverageRow:
 
     module_name: str
     source_coverage: str
-
-
-@dataclass(frozen=True, slots=True)
-class SemanticFamilyCoverageRow:
-    """CSV row for semantic-family coverage evidence."""
-
-    module_name: str
-    semantic_family: str
-    family_coverage: str
-    corpus_coverage: str
-    category: str
-    dimensionality: str
-    respects_masks: bool
-    family_supported_modules: str
-    family_absorbed_modules: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,7 +225,6 @@ class ModuleCoverageArtifacts:
     cppipe_settings: tuple[CPPipeSettingCoverageRow, ...]
     absorbed_modules: tuple[AbsorbedModuleCoverageRow, ...]
     source_modules: tuple[SourceModuleCoverageRow, ...]
-    semantic_families: tuple[SemanticFamilyCoverageRow, ...]
 
     @classmethod
     def from_report(
@@ -334,19 +311,19 @@ class ModuleCoverageArtifacts:
                     module_name=module.module_name,
                     corpus_coverage=module.corpus_coverage.value,
                     importable=module.importable,
+                    function_names=";".join(module.function_names),
+                    execution_scope=(
+                        module.execution_scope.value
+                        if module.execution_scope is not None
+                        else ""
+                    ),
                     processing_contract=(
                         module.processing_contract.value
                         if module.processing_contract is not None
                         else ""
                     ),
-                    processing_contract_source=(
-                        module.processing_contract_source.value
-                        if module.processing_contract_source is not None
-                        else ""
-                    ),
-                    artifact_contract_coverage=(
-                        module.artifact_contract_coverage.value
-                    ),
+                    emits_function_step=module.emits_function_step,
+                    respects_masks=module.respects_masks,
                 )
                 for module in report.modules
             ),
@@ -356,28 +333,6 @@ class ModuleCoverageArtifacts:
                     source_coverage=module.coverage.value,
                 )
                 for module in report.source_modules
-            ),
-            semantic_families=tuple(
-                SemanticFamilyCoverageRow(
-                    module_name=family.module_name,
-                    semantic_family=family.family_name,
-                    family_coverage=family.family_coverage.value,
-                    corpus_coverage=family.corpus_coverage.value,
-                    category=(
-                        family.category.value if family.category is not None else ""
-                    ),
-                    dimensionality=(
-                        family.dimensionality.name
-                        if family.dimensionality is not None
-                        else ""
-                    ),
-                    respects_masks=family.respects_masks,
-                    family_supported_modules=";".join(
-                        family.family_supported_modules
-                    ),
-                    family_absorbed_modules=";".join(family.family_absorbed_modules),
-                )
-                for family in report.semantic_families
             ),
         )
 
@@ -408,9 +363,11 @@ class ModuleCoverageArtifacts:
                     MODULE_NAME_FIELD,
                     CORPUS_COVERAGE_FIELD,
                     IMPORTABLE_FIELD,
+                    FUNCTION_NAMES_FIELD,
+                    EXECUTION_SCOPE_FIELD,
                     PROCESSING_CONTRACT_FIELD,
-                    PROCESSING_CONTRACT_SOURCE_FIELD,
-                    ARTIFACT_CONTRACT_COVERAGE_FIELD,
+                    EMITS_FUNCTION_STEP_FIELD,
+                    RESPECTS_MASKS_FIELD,
                 ),
                 rows=self.absorbed_modules,
             ),
@@ -432,21 +389,6 @@ class ModuleCoverageArtifacts:
                 filename=MODULE_COVERAGE_SOURCE_MODULES_CSV,
                 fieldnames=(MODULE_NAME_FIELD, SOURCE_COVERAGE_FIELD),
                 rows=self.source_modules,
-            ),
-            CsvRowsArtifact(
-                filename=MODULE_COVERAGE_SEMANTIC_FAMILIES_CSV,
-                fieldnames=(
-                    MODULE_NAME_FIELD,
-                    SEMANTIC_FAMILY_FIELD,
-                    FAMILY_COVERAGE_FIELD,
-                    CORPUS_COVERAGE_FIELD,
-                    CATEGORY_FIELD,
-                    DIMENSIONALITY_FIELD,
-                    RESPECTS_MASKS_FIELD,
-                    FAMILY_SUPPORTED_MODULES_FIELD,
-                    FAMILY_ABSORBED_MODULES_FIELD,
-                ),
-                rows=self.semantic_families,
             ),
         )
 
@@ -470,14 +412,12 @@ class ComparisonSuiteRunContext:
 
     suite_id: str
     speedup_target: float
-    reuse_openhcs_cache: bool
     native_reference_root: Path | None
     require_native_reference: bool
     discard_openhcs_outputs: bool
     continue_on_error: bool
     metric_policy: ComparisonMetricPolicy
     openhcs_global_config: GlobalPipelineConfig
-    source_schema_image_set_selection: SourceSchemaImageSetSelection | None
 
     def validate(self) -> None:
         if self.speedup_target <= 0:
@@ -499,11 +439,26 @@ class CellProfilerComparisonCase:
     equivalence_reference_output_dir: Path | None = None
     cellprofiler_timeout_seconds: float | None = None
     pipeline_params: Mapping[str, object] = field(default_factory=dict)
-    source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None
+    well_filter_config: WellFilterConfig | None = None
 
     @property
     def resolved_dataset_id(self) -> str:
         return self.dataset_id or self.dataset_path.name
+
+    def effective_global_config(
+        self,
+        global_config: GlobalPipelineConfig,
+    ) -> GlobalPipelineConfig:
+        """Apply the case's declared well scope unless the caller supplied one."""
+        if (
+            self.well_filter_config is None
+            or global_config.well_filter_config.well_filter is not None
+        ):
+            return global_config
+        return replace(
+            global_config,
+            well_filter_config=self.well_filter_config,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -561,7 +516,12 @@ class NativeCellProfilerReferenceScope:
     case: CellProfilerComparisonCase
     native_reference_root: Path
     pipeline_params: Mapping[str, object]
-    source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None
+    global_config: GlobalPipelineConfig = field(default_factory=GlobalPipelineConfig)
+
+    @property
+    def effective_global_config(self) -> GlobalPipelineConfig:
+        """Return the same declared scope used for benchmark execution."""
+        return self.case.effective_global_config(self.global_config)
 
     @property
     def output_dir(self) -> Path:
@@ -576,13 +536,11 @@ class NativeCellProfilerReferenceScope:
                 dataset_path=self.case.dataset_path,
                 pipeline_name=self.case.name,
                 pipeline_params=effective_pipeline_params,
-                source_schema_image_set_selection=(
-                    self.source_schema_image_set_selection
-                ),
                 output_dir=Path(self.native_reference_root).resolve()
                 / _benchmark_path_slug(
                     "_".join([self.case.resolved_dataset_id, self.case.name])
                 ),
+                global_config=self.effective_global_config,
             )
         )
         return Path(self.native_reference_root).resolve() / _benchmark_path_slug(
@@ -599,10 +557,7 @@ class NativeCellProfilerReferenceScope:
 
     def resolve(self) -> NativeReferenceLocation:
         expected_reference = self.expected_reference
-        if native_cellprofiler_reference_is_complete(
-            expected_reference,
-            source_schema_image_set_selection=self.source_schema_image_set_selection,
-        ):
+        if self._is_compatible_reference(expected_reference):
             return NativeReferenceLocation(
                 output_dir=self.output_dir,
                 reference_output_dir=expected_reference,
@@ -622,12 +577,7 @@ class NativeCellProfilerReferenceScope:
             for path in sorted(self.output_dir.iterdir())
             if path.is_dir()
             and path.name.endswith("_native_cellprofiler")
-            and native_cellprofiler_reference_is_complete(
-                path,
-                source_schema_image_set_selection=(
-                    self.source_schema_image_set_selection
-                ),
-            )
+            and self._is_compatible_reference(path)
         )
         if len(candidates) > 1:
             raise RuntimeError(
@@ -635,6 +585,23 @@ class NativeCellProfilerReferenceScope:
                 f"{self.case.name!r}: {candidates!r}."
             )
         return candidates[0] if candidates else None
+
+    def _is_compatible_reference(self, reference_output_dir: Path) -> bool:
+        if not native_cellprofiler_reference_is_complete(reference_output_dir):
+            return False
+        effective_pipeline_params = {
+            "dataset_id": self.case.resolved_dataset_id,
+            "cppipe_path": str(self.case.cppipe_path),
+            **dict(self.pipeline_params),
+        }
+        return native_cellprofiler_reference_matches_scope(
+            reference_output_dir,
+            dataset_path=self.case.dataset_path,
+            pipeline_name=self.case.name,
+            pipeline_params=effective_pipeline_params,
+            output_dir=self.output_dir,
+            global_config=self.effective_global_config,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -684,43 +651,6 @@ class CellProfilerComparisonObservation:
         return payload
 
 
-@dataclass(frozen=True, slots=True)
-class CachedNativeReferenceTimingPolicy:
-    """Timing contract for reused native references with timeout-backed evidence."""
-
-    case: CellProfilerComparisonCase
-    summary: ToolExecutionSummary
-
-    @property
-    def has_timeout_lower_bound(self) -> bool:
-        return (
-            self.summary.success
-            and self.summary.cached
-            and self.summary.execution_seconds is None
-            and self.case.cellprofiler_timeout_seconds is not None
-        )
-
-    def apply(self) -> ToolExecutionSummary:
-        if not self.has_timeout_lower_bound:
-            return self.summary
-        timeout_seconds = float(self.case.cellprofiler_timeout_seconds)
-        return ToolExecutionSummary(
-            tool=self.summary.tool,
-            success=self.summary.success,
-            output_path=self.summary.output_path,
-            execution_seconds=timeout_seconds,
-            total_metric_seconds=(
-                self.summary.total_metric_seconds
-                if self.summary.total_metric_seconds is not None
-                else timeout_seconds
-            ),
-            peak_memory_mb=self.summary.peak_memory_mb,
-            cached=self.summary.cached,
-            error_message=self.summary.error_message,
-            phase_seconds=self.summary.phase_seconds,
-        )
-
-
 def load_comparison_cases(path: Path) -> tuple[CellProfilerComparisonCase, ...]:
     """Load benchmark cases from a JSON manifest."""
     manifest = ComparisonManifest.load(path)
@@ -730,11 +660,12 @@ def load_comparison_cases(path: Path) -> tuple[CellProfilerComparisonCase, ...]:
         raise ValueError("Benchmark manifest must contain a 'cases' sequence.")
     default_pipeline_params = payload.get("default_pipeline_params", {})
     if not isinstance(default_pipeline_params, Mapping):
-        raise ValueError("Benchmark manifest default_pipeline_params must be an object.")
-    default_source_schema_image_set_selection = (
-        _source_schema_image_set_selection_from_manifest(
-            payload.get("default_source_schema_image_set_selection"),
+        raise ValueError(
+            "Benchmark manifest default_pipeline_params must be an object."
         )
+    default_well_filter_config = _manifest_well_filter_config(
+        payload,
+        "default_well_filter",
     )
     cases: list[CellProfilerComparisonCase] = []
     for raw_case in raw_cases:
@@ -785,15 +716,41 @@ def load_comparison_cases(path: Path) -> tuple[CellProfilerComparisonCase, ...]:
                     **dict(default_pipeline_params),
                     **dict(raw_pipeline_params),
                 },
-                source_schema_image_set_selection=(
-                    _source_schema_image_set_selection_from_manifest(
-                        raw_case.get("source_schema_image_set_selection"),
-                    )
-                    or default_source_schema_image_set_selection
+                well_filter_config=(
+                    _manifest_well_filter_config(raw_case, "well_filter")
+                    if "well_filter" in raw_case
+                    else default_well_filter_config
                 ),
             )
         )
     return tuple(cases)
+
+
+def _manifest_well_filter_config(
+    payload: Mapping[str, object],
+    key: str,
+) -> WellFilterConfig | None:
+    """Parse one public well-filter value from a benchmark manifest."""
+    if key not in payload:
+        return None
+    raw_value = payload.get(key)
+    if raw_value is None:
+        return WellFilterConfig(well_filter=None)
+    if isinstance(raw_value, bool):
+        raise ValueError(f"Benchmark manifest {key} must not be boolean.")
+    if isinstance(raw_value, int):
+        if raw_value <= 0:
+            raise ValueError(f"Benchmark manifest {key} must be positive.")
+        well_filter: int | str | list[str] = raw_value
+    elif isinstance(raw_value, str):
+        well_filter = raw_value
+    elif isinstance(raw_value, Sequence) and not isinstance(raw_value, (str, bytes)):
+        well_filter = [str(value) for value in raw_value]
+    else:
+        raise ValueError(
+            f"Benchmark manifest {key} must be an integer, string, list, or null."
+        )
+    return WellFilterConfig(well_filter=well_filter)
 
 
 def run_comparison_suite(
@@ -802,7 +759,6 @@ def run_comparison_suite(
     output_root: Path,
     suite_id: str,
     repeats: int = 1,
-    reuse_openhcs_cache: bool = True,
     speedup_target: float = DEFAULT_SPEEDUP_TARGET,
     native_reference_root: Path | None = None,
     require_native_reference: bool = False,
@@ -811,7 +767,6 @@ def run_comparison_suite(
     metric_policy: ComparisonMetricPolicy = ComparisonMetricPolicy(),
     coverage_manifest_path: Path | None = None,
     openhcs_global_config: GlobalPipelineConfig | None = None,
-    source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
 ) -> tuple[CellProfilerComparisonObservation, ...]:
     """Run all cases and write raw benchmark observations."""
     if repeats < 1:
@@ -819,14 +774,12 @@ def run_comparison_suite(
     context = ComparisonSuiteRunContext(
         suite_id=suite_id,
         speedup_target=speedup_target,
-        reuse_openhcs_cache=reuse_openhcs_cache,
         native_reference_root=native_reference_root,
         require_native_reference=require_native_reference,
         discard_openhcs_outputs=discard_openhcs_outputs,
         continue_on_error=continue_on_error,
         metric_policy=metric_policy,
         openhcs_global_config=openhcs_global_config or GlobalPipelineConfig(),
-        source_schema_image_set_selection=source_schema_image_set_selection,
     )
     context.validate()
     output_root.mkdir(parents=True, exist_ok=True)
@@ -1127,53 +1080,9 @@ def write_suite_metadata(
         "discard_openhcs_outputs": context.discard_openhcs_outputs,
         "continue_on_error": context.continue_on_error,
         "collect_memory_metric": context.metric_policy.collect_memory,
-        "source_schema_image_set_selection": _source_schema_selection_payload(
-            context.source_schema_image_set_selection
-        ),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-
-
-def _source_schema_selection_payload(
-    selection: SourceSchemaImageSetSelection | None,
-) -> dict[str, object] | None:
-    if selection is None:
-        return None
-    return {
-        "well_filter": list(selection.well_filter),
-        "max_image_set_count": selection.max_image_set_count,
-    }
-
-
-def _source_schema_image_set_selection_from_manifest(
-    raw_selection: object,
-) -> SourceSchemaImageSetSelection | None:
-    if raw_selection is None:
-        return None
-    if not isinstance(raw_selection, Mapping):
-        raise ValueError(
-            "source_schema_image_set_selection must be an object when provided."
-        )
-    raw_well_filter = raw_selection.get("well_filter", ())
-    if raw_well_filter is None:
-        well_filter = ()
-    elif isinstance(raw_well_filter, str):
-        well_filter = (raw_well_filter,)
-    elif isinstance(raw_well_filter, Sequence):
-        well_filter = tuple(str(well) for well in raw_well_filter)
-    else:
-        raise ValueError(
-            "source_schema_image_set_selection.well_filter must be a string "
-            "or sequence of strings."
-        )
-    raw_max_count = raw_selection.get("max_image_set_count")
-    return SourceSchemaImageSetSelection(
-        well_filter=well_filter,
-        max_image_set_count=(
-            int(raw_max_count) if raw_max_count is not None else None
-        ),
-    )
 
 
 def _run_comparison_case(
@@ -1183,8 +1092,8 @@ def _run_comparison_case(
     repetition: int,
     context: ComparisonSuiteRunContext,
 ) -> CellProfilerComparisonObservation:
-    cppipe_infrastructure = CPPipeInfrastructureProfile.from_cppipe_path(
-        case.cppipe_path
+    effective_global_config = case.effective_global_config(
+        context.openhcs_global_config
     )
     pipeline_params: dict[str, object] = {
         **case.pipeline_params,
@@ -1199,28 +1108,17 @@ def _run_comparison_case(
         pipeline_params["cellprofiler_timeout_seconds"] = (
             case.cellprofiler_timeout_seconds
         )
-    source_schema_image_set_selection = (
-        context.source_schema_image_set_selection
-        or case.source_schema_image_set_selection
-    )
-    pipeline_params["source_schema_image_set_selection"] = (
-        _source_schema_selection_payload(source_schema_image_set_selection)
-    )
     native_reference = _native_reference_location(
         case,
         context.native_reference_root,
         pipeline_params,
-        source_schema_image_set_selection=source_schema_image_set_selection,
+        global_config=effective_global_config,
     )
     native_reference_profile = NativeReferenceArtifactProfile.from_reference_output_dir(
         native_reference.reference_output_dir
     )
     pipeline_params["compare_image_outputs"] = (
         not case.value_only or native_reference_profile.image_only
-        or (
-            native_reference.reference_output_dir is None
-            and cppipe_infrastructure.image_exports_without_table_exports
-        )
     )
     if (
         context.require_native_reference
@@ -1239,6 +1137,7 @@ def _run_comparison_case(
             "Required cached native CellProfiler reference is missing or incomplete"
             f" for case {case.name!r}: {expected_reference}"
         )
+    tool_output_root = output_root / "tool_outputs"
     result = run_cellprofiler_cppipe_parity(
         case.dataset_path,
         case.cppipe_path,
@@ -1247,20 +1146,14 @@ def _run_comparison_case(
         pipeline_name=case.name,
         microscope_type=case.microscope_type,
         pipeline_params=pipeline_params,
-        output_root=output_root / "tool_outputs",
+        output_root=tool_output_root,
         equivalence_reference_output_dir=native_reference.reference_output_dir,
         native_cellprofiler_output_dir=native_reference.output_dir,
-        reuse_openhcs_cache=context.reuse_openhcs_cache,
         cellprofiler_adapter=CellProfilerAdapter(
-            source_schema_image_set_selection=(
-                source_schema_image_set_selection
-            ),
+            global_config=effective_global_config,
         ),
         openhcs_adapter=OpenHCSAdapter(
-            global_config=context.openhcs_global_config,
-            source_schema_image_set_selection=(
-                source_schema_image_set_selection
-            ),
+            global_config=effective_global_config,
         ),
     )
     observation = comparison_observation_from_result(
@@ -1272,7 +1165,7 @@ def _run_comparison_case(
     if context.discard_openhcs_outputs:
         _discard_successful_openhcs_benchmark_tree(
             observation,
-            suite_output_root=output_root,
+            tool_output_root=tool_output_root,
         )
     return observation
 
@@ -1281,7 +1174,7 @@ def _native_reference_location(
     case: CellProfilerComparisonCase,
     native_reference_root: Path | None,
     pipeline_params: Mapping[str, object] | None = None,
-    source_schema_image_set_selection: SourceSchemaImageSetSelection | None = None,
+    global_config: GlobalPipelineConfig | None = None,
 ) -> NativeReferenceLocation:
     if case.equivalence_reference_output_dir is not None:
         return NativeReferenceLocation(
@@ -1295,7 +1188,7 @@ def _native_reference_location(
         case=case,
         native_reference_root=Path(native_reference_root),
         pipeline_params=effective_pipeline_params,
-        source_schema_image_set_selection=source_schema_image_set_selection,
+        global_config=global_config or GlobalPipelineConfig(),
     ).resolve()
 
 
@@ -1360,14 +1253,10 @@ def comparison_observation_from_result(
     repetition: int,
 ) -> CellProfilerComparisonObservation:
     """Convert adapter results into a stable observation payload."""
-    openhcs_provenance = result.openhcs_converted.provenance or {}
-    native_summary = CachedNativeReferenceTimingPolicy(
-        case=case,
-        summary=_tool_execution_summary(
-            result.native_cellprofiler,
-            execution_phase="EXECUTE_NATIVE_CP",
-        ),
-    ).apply()
+    native_summary = _tool_execution_summary(
+        result.native_cellprofiler,
+        execution_phase="EXECUTE_NATIVE_CP",
+    )
     return CellProfilerComparisonObservation(
         suite_id=suite_id,
         case_name=case.name,
@@ -1384,10 +1273,6 @@ def comparison_observation_from_result(
         openhcs=_tool_execution_summary(
             result.openhcs_converted,
             execution_phase="EXECUTE_OPENHCS",
-            cached=bool(
-                openhcs_provenance.get("reused_cached_output")
-                or openhcs_provenance.get("reused_runtime_execution_cache")
-            ),
         ),
     )
 
@@ -1441,11 +1326,7 @@ def _difference_count(result: CellProfilerCompatibilityResult) -> int | None:
 
 def _result_is_cached(result: BenchmarkResult) -> bool:
     provenance = result.provenance or {}
-    return bool(
-        provenance.get("reused_reference_output")
-        or provenance.get("reused_cached_output")
-        or provenance.get("reused_runtime_execution_cache")
-    )
+    return bool(provenance.get("reused_reference_output"))
 
 
 def _observation_csv_row(
@@ -1507,56 +1388,41 @@ def _benchmark_path_slug(value: str) -> str:
 def _discard_openhcs_benchmark_tree(
     output_path: Path,
     *,
-    suite_output_root: Path,
+    tool_output_root: Path,
 ) -> None:
-    """Delete one OpenHCS output tree only when benchmark ownership is proven."""
-    target = _marked_openhcs_output_tree(Path(output_path), suite_output_root)
-    suite_root = Path(suite_output_root).resolve()
+    """Delete the adapter-owned tree containing an exact benchmark output path."""
+    tool_root = Path(tool_output_root).resolve()
+    resolved_output = Path(output_path).resolve()
+    try:
+        relative_output = resolved_output.relative_to(tool_root)
+    except ValueError as exc:
+        raise ToolExecutionError(
+            "Refusing OpenHCS discard target outside the tool output root: "
+            f"{resolved_output} not under {tool_root}"
+        ) from exc
+    if not relative_output.parts:
+        raise ToolExecutionError(
+            f"Refusing to discard the tool output root itself: {tool_root}"
+        )
+    target = tool_root / relative_output.parts[0]
     if not target.exists():
         return
     if not target.is_dir():
         raise NotADirectoryError(f"OpenHCS discard target is not a directory: {target}")
-    if target == Path(".").resolve() or target == suite_root or target.parent == target:
+    if target.parent != tool_root:
         raise ToolExecutionError(f"Refusing unsafe OpenHCS discard target: {target}")
-    try:
-        target.relative_to(suite_root)
-    except ValueError as exc:
-        raise ToolExecutionError(
-            "Refusing OpenHCS discard target outside suite output root: "
-            f"{target} not under {suite_root}"
-        ) from exc
     shutil.rmtree(target)
 
 
 def _discard_successful_openhcs_benchmark_tree(
     observation: CellProfilerComparisonObservation,
     *,
-    suite_output_root: Path,
+    tool_output_root: Path,
 ) -> None:
     """Delete successful OpenHCS outputs while preserving failed debug artifacts."""
     if not observation.openhcs.success:
         return
     _discard_openhcs_benchmark_tree(
         Path(observation.openhcs.output_path),
-        suite_output_root=suite_output_root,
-    )
-
-
-def _marked_openhcs_output_tree(output_path: Path, suite_output_root: Path) -> Path:
-    """Find the benchmark-owned OpenHCS tree containing an output path."""
-    suite_root = Path(suite_output_root).resolve()
-    start = Path(output_path).resolve()
-    candidates = (start, *start.parents)
-    for candidate in candidates:
-        if candidate == suite_root:
-            break
-        try:
-            candidate.relative_to(suite_root)
-        except ValueError:
-            break
-        if (candidate / OPENHCS_BENCHMARK_CACHE_MARKER).is_file():
-            return candidate
-    raise ToolExecutionError(
-        "Refusing to discard OpenHCS output because no benchmark cache marker "
-        f"was found between {start} and {suite_root}."
+        tool_output_root=tool_output_root,
     )

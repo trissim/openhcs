@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
+from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 
 
 @dataclass(frozen=True, slots=True)

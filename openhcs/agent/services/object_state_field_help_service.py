@@ -589,7 +589,7 @@ def _function_artifact_for_parameter(
     contract = detail.runtime_contract
     if contract is None:
         return None
-    for artifact in (*contract.artifact_inputs, *contract.runtime_artifact_inputs):
+    for artifact in contract.artifact_inputs:
         if artifact.name == parameter_name:
             return artifact
     return None

@@ -76,10 +76,17 @@ class LLMPromptResourceCatalog:
 # Backend decorators
 from openhcs.core.memory import numpy, pyclesperanto, cupy
 
-# Special outputs/inputs (for analysis functions)
+# Typed artifact declarations (for analysis functions)
+from openhcs.core.artifacts import (
+    ArtifactMeasurementSubjectRelation,
+    ArtifactSpec,
+    MeasurementsArtifactType,
+    ObjectLabelsArtifactType,
+)
+from openhcs.core.measurement_row_materialization import DataclassMeasurementColumnarRows
 from openhcs.core.pipeline.function_contracts import artifact_outputs, artifact_inputs
 
-# Materializers for CSV/JSON and ROI outputs
+# Materializers for measurements and object labels
 from openhcs.processing.materialization import (
     MaterializationSpec,
     CsvOptions,
@@ -91,44 +98,42 @@ from openhcs.processing.materialization import (
 
 # Standard library (include as needed)
 from dataclasses import dataclass
-from typing import List, Tuple, Optional
 import numpy as np"""
 
     def dynamic_materializers_section(self) -> str:
-        """Generate materializers section with simple presets and advanced options."""
-        try:
-            from openhcs.processing.materialization import (
-                CsvOptions,
-                JsonOptions,
-                ROIOptions,
-            )
-            from openhcs.processing.materialization.presets import (
-                csv_only,
-                json_and_csv,
-                json_only,
-                roi_zip,
-            )
+        """Generate typed artifact materialization examples from live options."""
+        from openhcs.processing.materialization import CsvOptions, JsonOptions, ROIOptions
 
-            del csv_only, json_and_csv, json_only, roi_zip
+        csv_sig = str(inspect.signature(CsvOptions))
+        json_sig = str(inspect.signature(JsonOptions))
+        roi_sig = str(inspect.signature(ROIOptions))
 
-            csv_sig = str(inspect.signature(CsvOptions))
-            json_sig = str(inspect.signature(JsonOptions))
-            roi_sig = str(inspect.signature(ROIOptions))
+        return f"""=== TYPED ARTIFACT MATERIALIZATION ===
+from openhcs.core.artifacts import (
+    ArtifactMeasurementSubjectRelation,
+    ArtifactSpec,
+    MeasurementsArtifactType,
+    ObjectLabelsArtifactType,
+)
+from openhcs.processing.materialization import csv_only, segmentation_mask_rois
 
-            return f"""=== SIMPLE MATERIALIZATION (Use These!) ===
-from openhcs.processing.materialization import json_and_csv, csv_only, json_only, roi_zip
+@artifact_outputs(
+    ArtifactSpec(
+        "measurements",
+        MeasurementsArtifactType,
+        materialization=csv_only(),
+        relations=(ArtifactMeasurementSubjectRelation(),),
+    ),
+    ArtifactSpec(
+        "masks",
+        ObjectLabelsArtifactType,
+        materialization=segmentation_mask_rois(),
+    ),
+)
 
-# JSON + CSV (most common for analysis)
-@artifact_outputs(("results", json_and_csv()))
-
-# CSV only
-@artifact_outputs(("measurements", csv_only()))
-
-# JSON only
-@artifact_outputs(("metadata", json_only()))
-
-# ROI zip for ImageJ/Fiji
-@artifact_outputs(("masks", roi_zip()))
+Measurement outputs return schema-bearing ColumnarRows. Object-label outputs return
+the complete integer label array. OpenHCS binds compiled names, materializes CSV/ROI
+files, streams labels to Napari/Fiji, and exposes measurement snapshots.
 
 === ADVANCED CUSTOMIZATION (When needed) ===
 CsvOptions{csv_sig}
@@ -136,17 +141,6 @@ JsonOptions{json_sig}
 ROIOptions{roi_sig}
 
 Usage: MaterializationSpec(CsvOptions(filename_suffix="_custom.csv", fields=["x", "y"]))"""
-        except Exception:
-            return """=== SIMPLE MATERIALIZATION (Use These!) ===
-from openhcs.processing.materialization import json_and_csv, csv_only, json_only, roi_zip
-
-# Most common patterns - just use these:
-@artifact_outputs(("results", json_and_csv()))  # JSON + CSV
-@artifact_outputs(("measurements", csv_only()))  # CSV only
-@artifact_outputs(("masks", roi_zip()))  # ROIs for ImageJ
-
-=== ADVANCED CUSTOMIZATION ===
-MaterializationSpec(CsvOptions(...), JsonOptions(...))"""
 
     def registry_function_docs(
         self,

@@ -21,6 +21,7 @@ from benchmark.cellprofiler_comparison import (
     write_summary_csv,
 )
 from benchmark.adapters.cellprofiler import (
+    NATIVE_CELLPROFILER_REFERENCE_SCHEMA_VERSION,
     NativeCellProfilerInputDomainStrategyKey,
     NativeCellProfilerProvenanceField,
 )
@@ -29,7 +30,7 @@ import pytest
 from benchmark.contracts.tool_adapter import ToolExecutionError
 from benchmark.contracts.tool_adapter import BenchmarkResult
 from benchmark.runner import CellProfilerCompatibilityResult
-from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
+from openhcs.core.config import GlobalPipelineConfig, WellFilterConfig
 
 
 def test_comparison_observation_extracts_execution_only_speedup(
@@ -72,7 +73,7 @@ def test_comparison_observation_extracts_execution_only_speedup(
     assert observation.parity_accuracy == 1.0
 
 
-def test_cached_native_reference_uses_timeout_as_conservative_speed_lower_bound(
+def test_cached_native_reference_without_measured_timing_has_no_speedup(
     tmp_path: Path,
 ) -> None:
     case = CellProfilerComparisonCase(
@@ -109,10 +110,11 @@ def test_cached_native_reference_uses_timeout_as_conservative_speed_lower_bound(
         repetition=1,
     )
 
-    assert observation.native_cellprofiler.execution_seconds == 900.0
-    assert observation.native_cellprofiler.total_metric_seconds == 900.0
-    assert observation.speedup == 450.0
-    assert observation.total_phase_speedup == 450.0
+    assert observation.native_cellprofiler.cached is True
+    assert observation.native_cellprofiler.execution_seconds is None
+    assert observation.native_cellprofiler.total_metric_seconds is None
+    assert observation.speedup is None
+    assert observation.total_phase_speedup is None
 
 
 def test_required_native_reference_does_not_rerun_cellprofiler(
@@ -121,7 +123,21 @@ def test_required_native_reference_does_not_rerun_cellprofiler(
     dataset_path = tmp_path / "ExampleFly" / "images"
     dataset_path.mkdir(parents=True)
     cppipe_path = tmp_path / "ExampleFly" / "ExampleFly.cppipe"
-    cppipe_path.write_text("CellProfiler Pipeline: http://www.cellprofiler.org\n")
+    cppipe_path.write_text(
+        "\n".join(
+            (
+                "CellProfiler Pipeline: http://www.cellprofiler.org",
+                "Version:5",
+                "ModuleCount:1",
+                "HasImagePlaneDetails:False",
+                "",
+                "Images:[module_num:1|enabled:True]",
+                "    Filter images?:No filtering",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
     case = CellProfilerComparisonCase(
         name="ExampleFly",
         dataset_path=dataset_path,
@@ -170,7 +186,7 @@ def test_failed_comparison_observation_records_traceback(tmp_path: Path) -> None
     assert "TypeError: broken metadata" in observation.native_cellprofiler.error_message
 
 
-def test_native_reference_scope_rejects_unscoped_selected_source_reference(
+def test_native_reference_scope_rejects_unscoped_public_well_filter_reference(
     tmp_path: Path,
 ) -> None:
     dataset_path = tmp_path / "tutorial" / "translocation_axis1_20260512"
@@ -193,8 +209,9 @@ def test_native_reference_scope_rejects_unscoped_selected_source_reference(
                 "    Image set matching method:Order",
                 "    Assignments count:1",
                 "    Single images count:0",
-                "    Select the rule criteria:and (file does contain \"\")",
+                '    Select the rule criteria:and (file does contain "")',
                 "    Name to assign these images:DNA",
+                "    Select the image type:Grayscale image",
             ]
         ),
         encoding="utf-8",
@@ -209,8 +226,8 @@ def test_native_reference_scope_rejects_unscoped_selected_source_reference(
         case=case,
         native_reference_root=tmp_path / "native_refs",
         pipeline_params={},
-        source_schema_image_set_selection=SourceSchemaImageSetSelection(
-            max_image_set_count=1,
+        global_config=GlobalPipelineConfig(
+            well_filter_config=WellFilterConfig(well_filter=1),
         ),
     )
     reference = (
@@ -229,7 +246,7 @@ def test_native_reference_scope_rejects_unscoped_selected_source_reference(
     assert location.reference_output_dir is None
 
 
-def test_native_reference_scope_accepts_matching_selected_source_reference(
+def test_native_reference_scope_accepts_manifest_declared_well_filter_reference(
     tmp_path: Path,
 ) -> None:
     dataset_path = tmp_path / "tutorial" / "translocation_axis1_20260512"
@@ -252,24 +269,24 @@ def test_native_reference_scope_accepts_matching_selected_source_reference(
                 "    Image set matching method:Order",
                 "    Assignments count:1",
                 "    Single images count:0",
-                "    Select the rule criteria:and (file does contain \"\")",
+                '    Select the rule criteria:and (file does contain "")',
                 "    Name to assign these images:DNA",
+                "    Select the image type:Grayscale image",
             ]
         ),
         encoding="utf-8",
     )
-    selection = SourceSchemaImageSetSelection(max_image_set_count=1)
     case = CellProfilerComparisonCase(
         name="cp_tutorial_translocation_final",
         dataset_path=dataset_path,
         cppipe_path=cppipe_path,
         dataset_id="CellProfiler_tutorials",
+        well_filter_config=WellFilterConfig(well_filter=1),
     )
     scope = NativeCellProfilerReferenceScope(
         case=case,
         native_reference_root=tmp_path / "native_refs",
         pipeline_params={},
-        source_schema_image_set_selection=selection,
     )
     reference = (
         scope.output_dir
@@ -279,16 +296,12 @@ def test_native_reference_scope_accepts_matching_selected_source_reference(
     (reference / ".cellprofiler_benchmark_reference.json").write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": NATIVE_CELLPROFILER_REFERENCE_SCHEMA_VERSION,
                 "provenance": {
                     "cppipe_path": str(cppipe_path),
                     NativeCellProfilerProvenanceField.INPUT_DOMAIN_STRATEGY: (
-                        NativeCellProfilerInputDomainStrategyKey.SELECTED_SOURCE_SCHEMA_WELLS
+                        NativeCellProfilerInputDomainStrategyKey.SELECTED_WELLS
                     ),
-                    NativeCellProfilerProvenanceField.SOURCE_SCHEMA_IMAGE_SET_SELECTION: {
-                        "well_filter": [],
-                        "max_image_set_count": 1,
-                    },
                 },
             }
         ),
@@ -299,6 +312,20 @@ def test_native_reference_scope_accepts_matching_selected_source_reference(
 
     assert location.output_dir == scope.output_dir
     assert location.reference_output_dir == reference
+
+
+def test_case_well_filter_preserves_explicit_caller_scope(tmp_path: Path) -> None:
+    case = CellProfilerComparisonCase(
+        name="ExampleScope",
+        dataset_path=tmp_path / "images",
+        cppipe_path=tmp_path / "pipeline.cppipe",
+        well_filter_config=WellFilterConfig(well_filter=1),
+    )
+    caller_config = GlobalPipelineConfig(
+        well_filter_config=WellFilterConfig(well_filter="B02"),
+    )
+
+    assert case.effective_global_config(caller_config) is caller_config
 
 
 def test_native_reference_scope_resolves_relative_root(
@@ -313,8 +340,11 @@ def test_native_reference_scope_resolves_relative_root(
         "\n".join(
             [
                 "CellProfiler Pipeline: http://www.cellprofiler.org",
-                "Images:[module_num:1|enabled:True]",
-                "    Filter images?:Images only",
+                "NamesAndTypes:[module_num:1|enabled:True]",
+                "    Assignments count:1",
+                "    Select the rule criteria:and (file does contain \"DNA\")",
+                "    Name to assign these images:DNA",
+                "    Select the image type:Grayscale image",
             ]
         ),
         encoding="utf-8",
@@ -469,6 +499,7 @@ def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
         json.dumps(
             {
                 "default_pipeline_params": {"compare_image_outputs": True},
+                "default_well_filter": 1,
                 "cases": [
                     {
                         "name": "ExampleHuman",
@@ -483,7 +514,7 @@ def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
                         "cellprofiler_timeout_seconds": 120,
                         "pipeline_params": {"compare_image_outputs": False},
                     }
-                ]
+                ],
             }
         ),
         encoding="utf-8",
@@ -506,6 +537,7 @@ def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
             pipeline_params={
                 "compare_image_outputs": False,
             },
+            well_filter_config=WellFilterConfig(well_filter=1),
         ),
     )
 
@@ -609,8 +641,11 @@ def test_write_module_coverage_artifacts_for_manifest(tmp_path: Path) -> None:
             (
                 "CellProfiler Pipeline: http://www.cellprofiler.org",
                 "Version:3",
-                "Images:[module_num:1|enabled:True]",
-                "    Filter images?:Images only",
+                "NamesAndTypes:[module_num:1|enabled:True]",
+                "    Assignments count:1",
+                "    Select the rule criteria:and (file does contain \"DNA\")",
+                "    Name to assign these images:DNA",
+                "    Select the image type:Grayscale image",
                 "IdentifyPrimaryObjects:[module_num:2|enabled:True]",
                 "    Select the input image:DNA",
                 "    Name the primary objects to be identified:Nuclei",
@@ -647,25 +682,24 @@ def test_write_module_coverage_artifacts_for_manifest(tmp_path: Path) -> None:
     setting_rows = _csv_rows(
         tmp_path / "artifacts" / "module_coverage_cppipe_settings.csv"
     )
-    semantic_rows = _csv_rows(
-        tmp_path / "artifacts" / "module_coverage_semantic_families.csv"
+    declaration_rows = _csv_rows(
+        tmp_path / "artifacts" / "module_coverage_absorbed_modules.csv"
     )
 
     assert summary["cppipe_case_count"] == 1
     assert summary["missing_processing_cppipe_module_count"] == 0
-    assert summary["cppipe_setting_row_count"] == 3
-    assert summary["covered_cppipe_setting_row_count"] == 3
+    assert summary["cppipe_setting_row_count"] == 2
+    assert summary["covered_cppipe_setting_row_count"] == 2
     assert summary["unmapped_cppipe_setting_row_count"] == 0
     assert "IdentifyPrimaryObjects" in summary["supported_absorbed_processing_modules"]
     assert {row["module_name"] for row in cppipe_rows} == {
         "IdentifyPrimaryObjects",
-        "Images",
+        "NamesAndTypes",
     }
     assert {
         (row["module_name"], row["setting_name"], row["coverage"])
         for row in setting_rows
     } == {
-        ("Images", "Filter images?", "infrastructure"),
         ("IdentifyPrimaryObjects", "Select the input image", "bound"),
         (
             "IdentifyPrimaryObjects",
@@ -673,47 +707,45 @@ def test_write_module_coverage_artifacts_for_manifest(tmp_path: Path) -> None:
             "bound",
         ),
     }
-    semantic_rows_by_module = {row["module_name"]: row for row in semantic_rows}
-    assert (
-        semantic_rows_by_module["IdentifyPrimaryObjects"]["family_coverage"]
-        == "direct_supported"
-    )
-    assert (
-        "IdentifyPrimaryObjects"
-        in semantic_rows_by_module["IdentifyPrimaryObjects"][
-            "family_supported_modules"
-        ]
-    )
+    declarations_by_module = {
+        row["module_name"]: row for row in declaration_rows
+    }
+    identify = declarations_by_module["IdentifyPrimaryObjects"]
+    assert identify["execution_scope"] == "axis"
+    assert identify["processing_contract"]
+    assert identify["emits_function_step"] == "True"
 
 
-def test_discard_openhcs_benchmark_tree_requires_marker_and_suite_containment(
+def test_discard_openhcs_benchmark_tree_removes_containing_adapter_output(
     tmp_path: Path,
 ) -> None:
-    suite_root = tmp_path / "suite"
-    marked_tree = suite_root / "tool_outputs" / "OpenHCS_case"
-    nested_output = marked_tree / "nested" / "result"
+    tool_output_root = tmp_path / "suite" / "tool_outputs"
+    adapter_output = tool_output_root / "OpenHCS_case"
+    nested_output = adapter_output / "nested" / "result"
     nested_output.mkdir(parents=True)
-    (marked_tree / ".openhcs_benchmark_cache.json").write_text(
-        "{}",
-        encoding="utf-8",
+
+    _discard_openhcs_benchmark_tree(
+        nested_output,
+        tool_output_root=tool_output_root,
     )
 
-    _discard_openhcs_benchmark_tree(nested_output, suite_output_root=suite_root)
-
-    assert not marked_tree.exists()
+    assert not adapter_output.exists()
 
 
-def test_discard_openhcs_benchmark_tree_refuses_unmarked_directory(
+def test_discard_openhcs_benchmark_tree_refuses_path_outside_tool_output_root(
     tmp_path: Path,
 ) -> None:
-    suite_root = tmp_path / "suite"
-    unmarked = suite_root / "tool_outputs" / "OpenHCS_case"
-    unmarked.mkdir(parents=True)
+    tool_output_root = tmp_path / "suite" / "tool_outputs"
+    outside = tmp_path / "outside"
+    outside.mkdir(parents=True)
 
     with pytest.raises(ToolExecutionError):
-        _discard_openhcs_benchmark_tree(unmarked, suite_output_root=suite_root)
+        _discard_openhcs_benchmark_tree(
+            outside,
+            tool_output_root=tool_output_root,
+        )
 
-    assert unmarked.exists()
+    assert outside.exists()
 
 
 def test_discard_successful_openhcs_benchmark_tree_preserves_failed_outputs(
@@ -750,7 +782,7 @@ def test_discard_successful_openhcs_benchmark_tree_preserves_failed_outputs(
 
     _discard_successful_openhcs_benchmark_tree(
         observation,
-        suite_output_root=tmp_path / "suite",
+        tool_output_root=tmp_path / "suite" / "tool_outputs",
     )
 
     assert output_tree.exists()

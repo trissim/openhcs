@@ -13,6 +13,8 @@ class MaterializationFormat(str, Enum):
     ROI_ZIP = "roi_zip"
     TIFF_STACK = "tiff_stack"
     TEXT = "text"
+    IMAGE_FILE = "image_file"
+    FILE_BUNDLE = "file_bundle"
 
 
 class WriteMode(str, Enum):

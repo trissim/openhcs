@@ -6,15 +6,12 @@ supporting both single-channel and multi-channel analysis with various detection
 methods and colocalization metrics.
 """
 
-import numpy as np
 import logging
-from typing import Callable, Dict, List, Tuple, Any, Optional, Union
-
-logger = logging.getLogger(__name__)
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # Core scientific computing imports
-import pandas as pd
-import json
+import numpy as np
 from scipy import ndimage
 from skimage.feature import blob_log, blob_dog, blob_doh, peak_local_max
 from skimage.filters import threshold_otsu, threshold_li, gaussian, median
@@ -23,7 +20,16 @@ from skimage.morphology import remove_small_objects, disk
 from skimage.measure import label, regionprops, regionprops_table
 
 # OpenHCS imports
+from openhcs.core.artifacts import (
+    ArtifactMeasurementSubjectRelation,
+    ArtifactSpec,
+    MeasurementsArtifactType,
+    ObjectLabelsArtifactType,
+)
 from openhcs.core.memory import numpy as numpy_func
+from openhcs.core.measurement_row_materialization import (
+    DataclassMeasurementColumnarRows,
+)
 from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import (
     MaterializationSpec,
@@ -31,7 +37,6 @@ from openhcs.processing.materialization import (
     JsonOptions,
     ROIOptions,
 )
-from openhcs.constants.constants import Backend
 from openhcs.processing.backends.analysis.cell_counting_common import (
     AreaFilter,
     AreaFilterRequest,
@@ -47,24 +52,59 @@ from openhcs.processing.backends.analysis.cell_counting_common import (
     detection_method_catalog,
 )
 
+logger = logging.getLogger(__name__)
+
+DEFAULT_WATERSHED_MAX_ECCENTRICITY = 0.95
+
 WATERSHED_THRESHOLD_BACKEND = WatershedThresholdBackend(
     otsu=threshold_otsu,
     li=threshold_li,
 )
 
 
+@dataclass(frozen=True)
+class CellCountMeasurementRow:
+    """Serializable per-plane measurements without the label-array payload."""
+
+    slice_index: int
+    method: str
+    cell_count: int
+    cell_positions: list[tuple[float, float]]
+    cell_areas: list[float]
+    cell_intensities: list[float]
+    detection_confidence: list[float]
+    parameters_used: dict[str, Any]
+
+    @classmethod
+    def from_result(cls, result: CellCountResult) -> "CellCountMeasurementRow":
+        return cls(
+            slice_index=result.slice_index,
+            method=result.method,
+            cell_count=result.cell_count,
+            cell_positions=result.cell_positions,
+            cell_areas=result.cell_areas,
+            cell_intensities=result.cell_intensities,
+            detection_confidence=result.detection_confidence,
+            parameters_used=result.parameters_used,
+        )
+
+
 
 @numpy_func
 @artifact_outputs(
-    (
+    ArtifactSpec(
         "cell_counts",
-        MaterializationSpec(
-            JsonOptions(filename_suffix=".json", wrap_list=True),
-            CsvOptions(filename_suffix="_details.csv"),
-            primary=0,
+        MeasurementsArtifactType,
+        materialization=MaterializationSpec(
+            CsvOptions(filename_suffix="_details.csv")
         ),
+        relations=(ArtifactMeasurementSubjectRelation(),),
     ),
-    ("segmentation_masks", MaterializationSpec(ROIOptions()))
+    ArtifactSpec(
+        "segmentation_masks",
+        ObjectLabelsArtifactType,
+        materialization=MaterializationSpec(ROIOptions()),
+    ),
 )
 def count_cells_single_channel(
     image_stack: np.ndarray,
@@ -80,7 +120,7 @@ def count_cells_single_channel(
     watershed_footprint_size: int = 3,                            # Local maxima footprint size
     watershed_min_distance: Optional[int] = None,                 # Minimum distance between peaks (None = auto-calculate)
     watershed_threshold_method: ThresholdMethod = ThresholdMethod.OTSU,  # UI will show threshold methods
-    watershed_max_eccentricity: float = 0.95,                     # Max eccentricity to apply watershed (0=circle, 1=line)
+    watershed_max_eccentricity: float = DEFAULT_WATERSHED_MAX_ECCENTRICITY,  # Max eccentricity to apply watershed (0=circle, 1=line)
     # Preprocessing parameters
     enable_preprocessing: bool = True,
     gaussian_sigma: float = 1.0,                                  # Gaussian blur sigma
@@ -91,7 +131,7 @@ def count_cells_single_channel(
     remove_border_cells: bool = True,                             # Remove cells touching image border
     # Output parameters
     return_segmentation_mask: bool = False
-) -> Tuple[np.ndarray, List[CellCountResult]]:
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows, np.ndarray]:
     """
     Count cells in single-channel image stack using various detection methods.
     
@@ -106,6 +146,7 @@ def count_cells_single_channel(
         watershed_footprint_size: Footprint size for local maxima detection
         watershed_min_distance: Minimum distance between watershed peaks
         watershed_threshold_method: Thresholding method for watershed
+        watershed_max_eccentricity: Maximum object eccentricity eligible for watershed splitting (0=circle, 1=line)
         enable_preprocessing: Apply Gaussian and median filtering
         gaussian_sigma: Standard deviation for Gaussian blur
         median_disk_size: Disk size for median filtering
@@ -166,16 +207,25 @@ def count_cells_single_channel(
 
         results.append(result)
 
-        # Create segmentation mask if requested
-        if return_segmentation_mask:
-            segmentation_mask = _create_segmentation_visualization(
-                slice_img, result.cell_positions, max_sigma, result.cell_areas, result.binary_mask
-            )
-            segmentation_masks.append(segmentation_mask)
+        segmentation_mask = _create_segmentation_visualization(
+            slice_img,
+            result.cell_positions,
+            max_sigma,
+            result.cell_areas,
+            result.binary_mask,
+        )
+        segmentation_masks.append(segmentation_mask)
 
     # Return preprocessed stack if preprocessing was enabled, otherwise original
     # This ensures consistent return signature for special outputs system
-    return output_stack, results, segmentation_masks
+    return (
+        output_stack,
+        DataclassMeasurementColumnarRows(
+            tuple(CellCountMeasurementRow.from_result(result) for result in results),
+            row_type=CellCountMeasurementRow,
+        ),
+        np.stack(segmentation_masks),
+    )
 
 
 @numpy_func
@@ -303,7 +353,7 @@ def count_cells_multi_channel(
     # Count cells in each channel separately using the single-channel function
     # Channel 1 parameters (all explicit)
     chan_1_params = {
-        "detection_method": chan_1_method,
+        "detection_method": chan_1_method.value,
         "min_sigma": chan_1_min_sigma,
         "max_sigma": chan_1_max_sigma,
         "num_sigma": chan_1_num_sigma,
@@ -311,19 +361,18 @@ def count_cells_multi_channel(
         "overlap": chan_1_overlap,
         "watershed_footprint_size": chan_1_watershed_footprint_size,
         "watershed_min_distance": chan_1_watershed_min_distance,
-        "watershed_threshold_method": chan_1_watershed_threshold_method,
-        "enable_preprocessing": chan_1_enable_preprocessing,
+        "watershed_threshold_method": chan_1_watershed_threshold_method.value,
+        "watershed_max_eccentricity": DEFAULT_WATERSHED_MAX_ECCENTRICITY,
         "gaussian_sigma": chan_1_gaussian_sigma,
         "median_disk_size": chan_1_median_disk_size,
         "min_cell_area": chan_1_min_area,
         "max_cell_area": chan_1_max_area,
         "remove_border_cells": chan_1_remove_border_cells,
-        "return_segmentation_mask": False
     }
 
     # Channel 2 parameters (all explicit)
     chan_2_params = {
-        "detection_method": chan_2_method,
+        "detection_method": chan_2_method.value,
         "min_sigma": chan_2_min_sigma,
         "max_sigma": chan_2_max_sigma,
         "num_sigma": chan_2_num_sigma,
@@ -331,27 +380,53 @@ def count_cells_multi_channel(
         "overlap": chan_2_overlap,
         "watershed_footprint_size": chan_2_watershed_footprint_size,
         "watershed_min_distance": chan_2_watershed_min_distance,
-        "watershed_threshold_method": chan_2_watershed_threshold_method,
-        "enable_preprocessing": chan_2_enable_preprocessing,
+        "watershed_threshold_method": chan_2_watershed_threshold_method.value,
+        "watershed_max_eccentricity": DEFAULT_WATERSHED_MAX_ECCENTRICITY,
         "gaussian_sigma": chan_2_gaussian_sigma,
         "median_disk_size": chan_2_median_disk_size,
         "min_cell_area": chan_2_min_area,
         "max_cell_area": chan_2_max_area,
         "remove_border_cells": chan_2_remove_border_cells,
-        "return_segmentation_mask": False
     }
 
-    # Process each channel
-    _, chan_1_results, _ = count_cells_single_channel(chan_1_img, **chan_1_params)
-    _, chan_2_results, _ = count_cells_single_channel(chan_2_img, **chan_2_params)
+    # Keep the detector's canonical result objects for colocalization instead of
+    # round-tripping through the public measurement-row projection.
+    channel_results: list[CellCountResult] = []
+    for channel_image, method, parameters, preprocess, sigma, disk_size in (
+        (
+            chan_1_img,
+            chan_1_method,
+            chan_1_params,
+            chan_1_enable_preprocessing,
+            chan_1_gaussian_sigma,
+            chan_1_median_disk_size,
+        ),
+        (
+            chan_2_img,
+            chan_2_method,
+            chan_2_params,
+            chan_2_enable_preprocessing,
+            chan_2_gaussian_sigma,
+            chan_2_median_disk_size,
+        ),
+    ):
+        channel_slice = channel_image[0].astype(np.float64)
+        if preprocess:
+            channel_slice = _preprocess_image(channel_slice, sigma, disk_size)
+        channel_results.append(
+            _detect_cells_single_method(
+                channel_slice,
+                0,
+                method.value,
+                parameters,
+            )
+        )
 
     # Perform colocalization analysis
     multi_results = []
     output_stack = image_stack.copy()
 
-    # Since we're processing single slices from each channel, we only have one result each
-    chan_1_result = chan_1_results[0]
-    chan_2_result = chan_2_results[0]
+    chan_1_result, chan_2_result = channel_results
 
     # Analyze colocalization
     coloc_result = _analyze_colocalization(
@@ -396,7 +471,7 @@ def _detect_cells_single_method(
     """Detect cells using specified method."""
     try:
         detector = DETECTION_METHODS[method]
-    except KeyError as exc:
+    except KeyError:
         raise ValueError(f"Unknown detection method: {method}")
     return detector(image, slice_idx, params)
 
@@ -780,7 +855,7 @@ def _analyze_colocalization(
     """Analyze colocalization between two channels."""
     try:
         analyzer = COLOCALIZATION_ANALYZERS[method]
-    except KeyError as exc:
+    except KeyError:
         raise ValueError(f"Unknown colocalization method: {method}")
     return analyzer(
         chan_1_result,
@@ -856,14 +931,15 @@ def _create_segmentation_visualization(
         return binary_mask.astype(np.uint16)
 
     # Fallback to original circular marker approach for blob methods
-    visualization = image.copy()
+    visualization = np.zeros(image.shape, dtype=np.int32)
 
     # Mark detected cells with their actual sizes
-    for i, (x, y) in enumerate(positions):
+    for position_index, (x, y) in enumerate(positions):
+        label_id = position_index + 1
         # Use actual cell area if available, otherwise fall back to max_sigma
-        if cell_areas and i < len(cell_areas):
+        if cell_areas and position_index < len(cell_areas):
             # Convert area to radius (assuming circular cells)
-            radius = np.sqrt(cell_areas[i] / np.pi)
+            radius = np.sqrt(cell_areas[position_index] / np.pi)
         else:
             # Fallback to max_sigma for backward compatibility
             radius = max_sigma * 2
@@ -876,7 +952,7 @@ def _create_segmentation_visualization(
         valid_mask = (rr >= 0) & (rr < image.shape[0]) & (cc >= 0) & (cc < image.shape[1])
         mask = mask & valid_mask
 
-        visualization[mask] = visualization.max()  # Bright markers
+        visualization[mask] = label_id
 
     return visualization
 

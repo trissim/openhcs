@@ -24,6 +24,7 @@ from polystore.streaming.viewer_transport import (
     ViewerStreamProducer,
     ViewerStreamSourceIdentity,
 )
+from zmqruntime.config import ZMQConfig
 from zmqruntime.viewer_protocol import ViewerWireMapping
 
 from openhcs.core.streaming_config_factory import StreamingViewerSurface
@@ -31,6 +32,7 @@ from openhcs.core.steps.stream_component_semantics import (
     StreamComponentMessageExtraAuthority,
     StreamSourceComponentMetadataItems,
 )
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 if TYPE_CHECKING:
     from openhcs.core.config import StreamingConfig
@@ -95,6 +97,7 @@ class StreamingViewerLifecycle:
         filemanager: FileManager,
         config: StreamingConfig,
         visualizer_config=None,
+        transport_config: ZMQConfig = OPENHCS_ZMQ_CONFIG,
         fresh: bool = True,
         ready_timeout: float = 30.0,
     ) -> VisualizerProcessManager:
@@ -118,7 +121,11 @@ class StreamingViewerLifecycle:
             if managed_viewer is not None:
                 return managed_viewer
 
-            external_viewer = config.create_visualizer(filemanager, visualizer_config)
+            external_viewer = config.create_visualizer(
+                filemanager,
+                visualizer_config,
+                transport_config,
+            )
             if not isinstance(external_viewer, ManagedViewerLifecycleMixin):
                 raise TypeError(
                     "Streaming viewer config produced an unsupported viewer "
@@ -131,7 +138,11 @@ class StreamingViewerLifecycle:
         viewer, _created = get_or_create_viewer(
             viewer_type=config.viewer_type,
             port=config.port,
-            factory=lambda: config.create_visualizer(filemanager, visualizer_config),
+            factory=lambda: config.create_visualizer(
+                filemanager,
+                visualizer_config,
+                transport_config,
+            ),
             wait_for_ready=True,
             ready_timeout=ready_timeout,
         )
@@ -263,12 +274,14 @@ class StreamingService:
         filemanager: FileManager,
         microscope_handler: MicroscopeHandler,
         plate_path: Path,
+        transport_config: ZMQConfig = OPENHCS_ZMQ_CONFIG,
     ):
         self.source = ViewerStreamingSource(
             filemanager=filemanager,
             microscope_handler=microscope_handler,
             plate_path=plate_path,
         )
+        self.transport_config = transport_config
 
     def _wait_for_viewer_ready(
         self,
@@ -355,7 +368,10 @@ class StreamingService:
         all_metadata_by_path = self.source.image_component_metadata_by_path(
             list(request.filenames)
         )
-        viewer_surface = request.config.viewer_surface(self.source)
+        viewer_surface = request.config.viewer_surface(
+            self.source,
+            self.transport_config,
+        )
         source_metadata_items = StreamSourceComponentMetadataItems.from_values(
             all_metadata_by_path[path] for path in request.filenames
         )
@@ -516,7 +532,10 @@ class StreamingService:
             len(paths),
         )
 
-        viewer_surface = request.config.viewer_surface(self.source)
+        viewer_surface = request.config.viewer_surface(
+            self.source,
+            self.transport_config,
+        )
         if request.component_metadata_by_path:
             missing_metadata = tuple(
                 path for path in paths if path not in request.component_metadata_by_path

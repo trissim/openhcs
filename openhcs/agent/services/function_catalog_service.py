@@ -4,11 +4,13 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, EnumType
 from typing import ClassVar
+from pyqt_reactive.services.parameter_help_service import docstring_info_for_target
 from python_introspect import parameter_exclusions
 from openhcs.agent.dto.common import SCHEMA_VERSION
 from openhcs.agent.dto.functions import (
+    CellProfilerArtifactBindingSummary,
     CellProfilerModuleDeclarationSummary,
     CustomFunctionRegistrationRequest,
     CustomFunctionRegistrationResult,
@@ -23,16 +25,16 @@ from openhcs.agent.dto.functions import (
 )
 from openhcs.agent.exceptions import AgentFacingErrorMixin
 from openhcs.core.artifacts import (
+    ArtifactInputPlan,
     ArtifactSpec,
-    ArtifactType,
     MeasurementsArtifactType,
     RelationshipsArtifactType,
 )
 from openhcs.core.callable_contract import CallableContract
-from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.agent.services.stdio import AgentStdoutRedirect
 from openhcs.processing.backends.lib_registry.registry_service import RegistryService
 from openhcs.processing.backends.lib_registry.unified_registry import FunctionMetadata
+from openhcs.interop.cellprofiler.setting_names import setting_names
 import openhcs.processing.custom_functions.manager as custom_function_manager
 
 MAX_FUNCTION_DETAIL_DOC_CHARS = 50000
@@ -167,8 +169,18 @@ class CatalogFilterText:
             seen.add(token)
         return cls(text, tuple(tokens))
 
-    def accepts_library(self, library: str) -> bool:
-        return not self.text or library.casefold() == self.text
+    def accepts_library_or_tag(
+        self,
+        library: str,
+        backend_tags: tuple[str, ...],
+    ) -> bool:
+        """Match the registry library or one declaration-owned backend tag."""
+
+        if not self.text:
+            return True
+        return self.text in {
+            _normalized_search_text(value) for value in (library, *backend_tags)
+        }
 
     def search_rank(
         self, entry: FunctionCatalogEntry, metadata: FunctionMetadata
@@ -332,6 +344,7 @@ class ParameterDocumentationPolicy:
         sig = inspect.signature(func)
         supplied_by = self.supplied_by(func, contract)
         hidden_names = parameter_exclusions(func)
+        authored_descriptions = docstring_info_for_target(func).parameters or {}
         specs = []
         for name, parameter in sig.parameters.items():
             if not self.should_document(name, parameter, hidden_names=hidden_names):
@@ -345,7 +358,13 @@ class ParameterDocumentationPolicy:
                     required=supplier is FunctionParameterSource.AGENT
                     and parameter.default is inspect.Parameter.empty,
                     supplied_by=supplier.value,
-                    description=self.parameter_description(name, supplier),
+                    description=self.parameter_description(
+                        authored_descriptions.get(name),
+                        supplier,
+                    ),
+                    enum_import_path=_enum_import_path(parameter.annotation),
+                    enum_members=_enum_members(parameter.annotation),
+                    enum_values=_enum_values(parameter.annotation),
                 )
             )
         return tuple(specs)
@@ -379,7 +398,7 @@ class ParameterDocumentationPolicy:
         primary_input_name = callable_contract.primary_input_parameter_name
         if primary_input_name in supplied_by:
             supplied_by[primary_input_name] = FunctionParameterSource.PRIMARY_INPUT
-        for name in callable_contract.artifact_input_names:
+        for name in callable_contract.artifact_inputs.names():
             if name in supplied_by:
                 supplied_by[name] = FunctionParameterSource.ARTIFACT_INPUT
         for name in callable_contract.runtime_bound_parameters:
@@ -396,7 +415,18 @@ class ParameterDocumentationPolicy:
         return supplied_by
 
     def parameter_description(
-        self, name: str, supplier: FunctionParameterSource
+        self,
+        authored_description: str | None,
+        supplier: FunctionParameterSource,
+    ) -> str | None:
+        runtime_description = self.runtime_parameter_description(supplier)
+        if authored_description and runtime_description:
+            return f"{authored_description.rstrip()} {runtime_description}"
+        return authored_description or runtime_description
+
+    @staticmethod
+    def runtime_parameter_description(
+        supplier: FunctionParameterSource,
     ) -> str | None:
         if supplier is FunctionParameterSource.PRIMARY_INPUT:
             return "Supplied by OpenHCS from the FunctionStep input image payload; do not pass this as a function kwarg."
@@ -477,7 +507,10 @@ class FunctionCatalogService:
         candidates = []
         for function_id, metadata in sorted(self._all_metadata().items()):
             entry = self._entry(function_id, metadata, signature_view, summary_view)
-            if not library_filter.accepts_library(entry.library):
+            if not library_filter.accepts_library_or_tag(
+                entry.library,
+                entry.backend_tags,
+            ):
                 continue
             match = query_filter.search_match(entry, metadata)
             if not match.matched:
@@ -526,7 +559,7 @@ class FunctionCatalogService:
             ),
             parameters=PARAMETER_DOCUMENTATION_POLICY.parameter_specs(func, contract),
             doc=bounded_doc,
-            runtime_contract=_runtime_contract_summary(func, metadata, contract),
+            runtime_contract=_runtime_contract_summary(func, contract),
             doc_truncated=doc_truncated,
             doc_chars=len(doc or ""),
             max_doc_chars=effective_max_doc_chars,
@@ -666,6 +699,36 @@ def _format_default(default) -> str | None:
     return repr(default)
 
 
+def _enum_type(annotation) -> EnumType | None:
+    if isinstance(annotation, EnumType):
+        return annotation
+    return None
+
+
+def _enum_import_path(annotation) -> str | None:
+    enum_type = _enum_type(annotation)
+    if enum_type is None:
+        return None
+    return f"{enum_type.__module__}.{enum_type.__qualname__}"
+
+
+def _enum_members(annotation) -> tuple[str, ...]:
+    enum_type = _enum_type(annotation)
+    if enum_type is None:
+        return ()
+    return tuple(member.name for member in enum_type)
+
+
+def _enum_values(annotation) -> tuple[str, ...]:
+    enum_type = _enum_type(annotation)
+    if enum_type is None:
+        return ()
+    return tuple(
+        member.value if isinstance(member.value, str) else repr(member.value)
+        for member in enum_type
+    )
+
+
 def _summary(func: Callable, metadata_doc: str | None, view: SummaryView) -> str | None:
     doc = _detail_doc(func, metadata_doc)
     if doc is None:
@@ -730,73 +793,31 @@ def _metadata_module(metadata: FunctionMetadata) -> str:
 
 
 def _runtime_contract_summary(
-    func: Callable, metadata: FunctionMetadata, contract: CallableContract | None = None
+    func: Callable, contract: CallableContract | None = None
 ) -> FunctionRuntimeContractSummary:
     contract = contract or CallableContract.from_callable(func)
-    module_contract = contract.module_artifact_contract
-    cellprofiler_module = _cellprofiler_module_summary(func, metadata, module_contract)
+    artifact_inputs = _artifact_specs(contract.artifact_inputs)
+    artifact_outputs = _artifact_specs(contract.artifact_outputs)
+    cellprofiler_module = _cellprofiler_module_summary(contract)
     callable_kind = (
         "cellprofiler_module" if cellprofiler_module is not None else "regular"
-    )
-    required_variable_components = tuple(
-        dict.fromkeys(
-            (
-                *(
-                    component.name
-                    for component in contract.required_variable_components
-                ),
-                *(
-                    ()
-                    if cellprofiler_module is None
-                    else cellprofiler_module.required_variable_components
-                ),
-            )
-        )
     )
     return FunctionRuntimeContractSummary(
         callable_kind=callable_kind,
         processing_contract=_enum_member_name(contract.processing_contract),
         declared_processing_contract=contract.declared_processing_contract,
         runtime_bound_parameters=contract.runtime_bound_parameters,
-        required_variable_components=required_variable_components,
-        artifact_inputs=_artifact_specs_from_contract_inputs(contract, module_contract),
-        runtime_artifact_inputs=(
-            ()
-            if module_contract is None
-            else _artifact_specs(module_contract.runtime_artifact_inputs)
+        required_variable_components=tuple(
+            component.name for component in contract.required_variable_components
         ),
-        artifact_outputs=_artifact_specs_from_contract_outputs(
-            contract, module_contract
-        ),
-        declared_artifact_outputs=(
-            ()
-            if module_contract is None
-            else _artifact_specs(module_contract.declared_outputs)
-        ),
+        artifact_inputs=artifact_inputs,
+        artifact_outputs=artifact_outputs,
         cellprofiler_module=cellprofiler_module,
-        source_binding_rule=_source_binding_rule(cellprofiler_module, module_contract),
-        materialization_rule=_materialization_rule(
-            cellprofiler_module, module_contract
-        ),
-        measurement_rule=_measurement_rule(cellprofiler_module, module_contract),
+        source_binding_rule=_source_binding_rule(cellprofiler_module, contract),
+        materialization_rule=_materialization_rule(cellprofiler_module, contract),
+        measurement_rule=_measurement_rule(cellprofiler_module, contract),
         pattern_compatibility_rule=_pattern_compatibility_rule(cellprofiler_module),
     )
-
-
-def _artifact_specs_from_contract_inputs(
-    contract: CallableContract, module_contract: ModuleArtifactContract | None
-) -> tuple[FunctionArtifactSpec, ...]:
-    if module_contract is not None:
-        return _artifact_specs(module_contract.inputs)
-    return _artifact_specs((spec for _, spec in contract.artifact_inputs))
-
-
-def _artifact_specs_from_contract_outputs(
-    contract: CallableContract, module_contract: ModuleArtifactContract | None
-) -> tuple[FunctionArtifactSpec, ...]:
-    if module_contract is not None:
-        return _artifact_specs(module_contract.outputs)
-    return _artifact_specs((spec for _, spec in contract.artifact_outputs))
 
 
 def _artifact_specs(specs) -> tuple[FunctionArtifactSpec, ...]:
@@ -814,106 +835,75 @@ def _artifact_spec(spec: ArtifactSpec) -> FunctionArtifactSpec:
 
 
 def _cellprofiler_module_summary(
-    func: Callable,
-    metadata: FunctionMetadata,
-    module_contract: ModuleArtifactContract | None,
+    contract: CallableContract,
 ) -> CellProfilerModuleDeclarationSummary | None:
-    module_type = _cellprofiler_module_type(func, metadata, module_contract)
+    module_type = _cellprofiler_module_type(contract)
     if module_type is None:
         return None
-    declared_input_settings = tuple(
-        (
-            _declared_setting_summary(setting, capability_type.require_artifact_type())
-            for setting, capability_type in module_type.declared_artifact_input_settings()
-        )
-    )
-    declared_output_settings = tuple(
-        (
-            _declared_setting_summary(setting, capability_type.require_artifact_type())
-            for setting, capability_type in module_type.declared_artifact_output_settings()
-        )
-    )
     return CellProfilerModuleDeclarationSummary(
-        module_name=str(module_type.module_name),
+        module_name=module_type.require_module_name(),
         declaration_class=f"{module_type.__module__}.{module_type.__qualname__}",
         validated=bool(module_type.validated),
         function_names=module_type.declared_function_names(),
         aliases=tuple(module_type.aliases),
-        declared_artifact_input_settings=declared_input_settings,
-        declared_artifact_output_settings=declared_output_settings,
-        default_variable_components=tuple(
-            component.name for component in module_type.default_variable_components
-        ),
-        required_variable_components=tuple(
-            (component.name for component in module_type.required_variable_components)
+        artifact_bindings=tuple(
+            _cellprofiler_artifact_binding_summary(binding)
+            for binding in module_type.declared_artifact_bindings()
         ),
     )
 
 
-def _cellprofiler_module_type(
-    func: Callable,
-    metadata: FunctionMetadata,
-    module_contract: ModuleArtifactContract | None,
-):
+def _cellprofiler_artifact_binding_summary(
+    binding,
+) -> CellProfilerArtifactBindingSummary:
+    plan_type = binding.require_artifact_plan_type()
+    return CellProfilerArtifactBindingSummary(
+        direction="input" if plan_type is ArtifactInputPlan else "output",
+        kind=binding.require_artifact_type().require_value(),
+        setting_names=setting_names(binding.setting_name),
+        parameter_name=binding.parameter_name,
+        runtime_parameter_name=binding.runtime_parameter_name,
+        repeated=binding.repeated,
+    )
+
+
+def _cellprofiler_module_type(contract: CallableContract):
     from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
 
-    if module_contract is not None:
-        return CellProfilerModule.for_module(module_contract.module_name)
-    function_names = tuple(
-        dict.fromkeys((metadata.original_name, metadata.name, func.__name__))
-    )
-    for module_type in CellProfilerModule.__registry__.values():
-        declared_names = module_type.declared_function_names()
-        if any((function_name in declared_names for function_name in function_names)):
-            return module_type
-    return None
-
-
-def _declared_setting_summary(setting, kind: ArtifactType) -> str:
-    return f"{_declared_setting_name(setting)}:{kind.value}"
-
-
-def _declared_setting_name(setting) -> str:
-    if isinstance(setting, Enum):
-        return setting.value
-    return str(setting)
+    return CellProfilerModule.for_function_name(contract.function_name)
 
 
 def _source_binding_rule(
     cellprofiler_module: CellProfilerModuleDeclarationSummary | None,
-    module_contract: ModuleArtifactContract | None,
+    contract: CallableContract,
 ) -> str | None:
     if cellprofiler_module is not None:
-        return "CellProfiler source bindings are generated from the module declaration and .cppipe settings, then validated by the compiler."
-    if module_contract is not None and module_contract.declared_input_specs():
-        return "Source and runtime artifact bindings are resolved from the callable ModuleArtifactContract during compilation."
+        return "CellProfiler exact artifact names are resolved from the module declaration, concrete FunctionStep groups, and compile-time setting identities. Callable-level artifact arrays can therefore be empty before compilation; inspect the module artifact_bindings here and the compiled artifact plan for exact names."
+    if contract.artifact_inputs:
+        return "Artifact input bindings are resolved from canonical CallableContract artifact_inputs during compilation."
     return None
 
 
 def _materialization_rule(
     cellprofiler_module: CellProfilerModuleDeclarationSummary | None,
-    module_contract: ModuleArtifactContract | None,
+    contract: CallableContract,
 ) -> str | None:
     if cellprofiler_module is not None:
-        return "Concrete CellProfiler sidecars and materialized artifacts are derived from the generated module contract and runtime plan, not chosen by MCP."
-    if module_contract is not None and module_contract.outputs:
+        return "Concrete CellProfiler sidecars and materialized artifacts are derived from canonical callable artifact outputs and the runtime plan, not chosen by MCP."
+    if contract.artifact_outputs:
         return "Artifact output materialization is derived from output artifact kinds and compile/runtime materialization policy."
     return None
 
 
 def _measurement_rule(
     cellprofiler_module: CellProfilerModuleDeclarationSummary | None,
-    module_contract: ModuleArtifactContract | None,
+    contract: CallableContract,
 ) -> str | None:
     measurement_kinds = {MeasurementsArtifactType, RelationshipsArtifactType}
-    if module_contract is not None and any(
+    if any(
         (
             spec.artifact_type in measurement_kinds
-            for spec in (
-                *module_contract.inputs,
-                *module_contract.runtime_artifact_inputs,
-                *module_contract.outputs,
-            )
+            for spec in (*contract.artifact_inputs, *contract.artifact_outputs)
         )
     ):
         return "Measurement and relationship rows are projected by the selected runtime plan and materialized as declared artifacts."
@@ -925,9 +915,10 @@ def _measurement_rule(
 def _pattern_compatibility_rule(
     cellprofiler_module: CellProfilerModuleDeclarationSummary | None,
 ) -> str | None:
+    dict_rule = "Dictionary keys are normalized group identities selected by group_by, may intentionally cover only a subset of available component values, and omit groups that should not be invoked; compilation rejects keys absent from the available component domain."
     if cellprofiler_module is None:
-        return "Regular OpenHCS callables may participate in standard FunctionStep callable, tuple, list, or dict patterns subject to compiler validation."
-    return "Generated CellProfiler lowering uses one CP module contract per FunctionStep by default. Do not mix multiple CP module callables in one generated step unless declarations and compile-time invocation contracts explicitly allow it."
+        return f"Regular OpenHCS callables may participate in standard FunctionStep callable, tuple, list, or dict patterns subject to compiler validation. {dict_rule}"
+    return f"Generated CellProfiler lowering uses one CP module contract per FunctionStep by default. Do not mix multiple CP module callables in one generated step unless declarations and compile-time invocation contracts explicitly allow it. {dict_rule}"
 
 
 def _enum_member_name(value: Enum | None) -> str | None:

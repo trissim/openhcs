@@ -11,9 +11,7 @@ self-materializing roots:
   `~/.cache/openhcs/benchmark_datasets`.
 - `OPENHCS_AXISONE_SUBSETS_ROOT`: compatibility root for older axis-one
   manifests. The official 30-case manifest uses full dataset-cache roots and
-  applies `default_source_schema_image_set_selection.max_image_set_count` as a
-  source-schema sample selector so all sites and channels for the selected
-  sample remain present.
+  contains no benchmark-private execution subset.
 
 The benchmark manifest loader materializes missing acquisition-enabled roots
 before resolving case paths. Set `OPENHCS_BENCHMARK_AUTO_ACQUIRE=0` to disable

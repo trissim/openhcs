@@ -30,6 +30,9 @@ from openhcs.pyqt_gui.widgets.shared.services.execution_submission_service impor
 from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
     LiveMeasurementProgressNotificationService,
 )
+from openhcs.pyqt_gui.widgets.shared.services.runtime_artifact_progress_service import (
+    RuntimeArtifactProgressNotificationService,
+)
 from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder import (
     PlatePipelineRequestBuilder,
 )
@@ -65,6 +68,7 @@ class BatchWorkflowComponents:
         self._compile_batch: CompileBatchWorkflowService | None = None
         self._debug_notifications: DebugProgressNotificationService | None = None
         self._live_measurements: LiveMeasurementProgressNotificationService | None = None
+        self._runtime_artifacts: RuntimeArtifactProgressNotificationService | None = None
         self._plate_request_builder: PlatePipelineRequestBuilder | None = None
         self._terminal_result_builder: TerminalExecutionResultBuilder | None = None
         self._execution_control: ExecutionControlService | None = None
@@ -104,6 +108,12 @@ class BatchWorkflowComponents:
         return self._live_measurements
 
     @property
+    def runtime_artifacts(self) -> RuntimeArtifactProgressNotificationService:
+        if self._runtime_artifacts is None:
+            self._runtime_artifacts = RuntimeArtifactProgressNotificationService()
+        return self._runtime_artifacts
+
+    @property
     def plate_request_builder(self) -> PlatePipelineRequestBuilder:
         if self._plate_request_builder is None:
             self._plate_request_builder = PlatePipelineRequestBuilder(self.host)
@@ -122,6 +132,7 @@ class BatchWorkflowComponents:
                 host=self.host,
                 context=self.context,
                 port=self.port,
+                config=self.context.zmq.config,
             )
         return self._execution_control
 
@@ -133,7 +144,6 @@ class BatchWorkflowComponents:
                 context=self.context,
                 completion_poller=self.execution_status_poller,
                 terminal_result_builder=self.terminal_result_builder,
-                on_completion_update=self.execution_control.check_all_completed,
             )
         return self._execution_submission
 
@@ -157,6 +167,7 @@ class BatchWorkflowComponents:
                 server_info_parser=self.server_info_parser,
                 debug_notifications=self.debug_notifications,
                 live_measurements=self.live_measurements,
+                runtime_artifacts=self.runtime_artifacts,
                 status_presenter=self.server_status_presenter,
                 debug_session_context_provider=self.debug_session_context,
             )

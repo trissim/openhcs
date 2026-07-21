@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
-from typing import ClassVar, Generic, TypeAlias, TypeVar
+from dataclasses import dataclass, fields as dataclass_fields, replace
+from operator import attrgetter
+from typing import Generic, TypeAlias, TypeVar
 
 import numpy as np
 from numba import njit
@@ -46,68 +47,15 @@ class ObjectIntensityFeatureValues(Generic[ObjectIntensityFeatureValueT]):
     max_intensity_y: ObjectIntensityFeatureValueT
     max_intensity_z: ObjectIntensityFeatureValueT
 
-    feature_names: ClassVar[tuple[str, ...]] = (
-        "integrated_intensity",
-        "mean_intensity",
-        "std_intensity",
-        "min_intensity",
-        "max_intensity",
-        "integrated_intensity_edge",
-        "mean_intensity_edge",
-        "std_intensity_edge",
-        "min_intensity_edge",
-        "max_intensity_edge",
-        "mass_displacement",
-        "lower_quartile_intensity",
-        "median_intensity",
-        "mad_intensity",
-        "upper_quartile_intensity",
-        "center_mass_intensity_x",
-        "center_mass_intensity_y",
-        "center_mass_intensity_z",
-        "max_intensity_x",
-        "max_intensity_y",
-        "max_intensity_z",
-    )
-
-    def feature_items(
-        self,
-    ) -> tuple[tuple[str, ObjectIntensityFeatureValueT], ...]:
-        """Return object-intensity feature names with their carried values."""
-        return (
-            ("integrated_intensity", self.integrated_intensity),
-            ("mean_intensity", self.mean_intensity),
-            ("std_intensity", self.std_intensity),
-            ("min_intensity", self.min_intensity),
-            ("max_intensity", self.max_intensity),
-            ("integrated_intensity_edge", self.integrated_intensity_edge),
-            ("mean_intensity_edge", self.mean_intensity_edge),
-            ("std_intensity_edge", self.std_intensity_edge),
-            ("min_intensity_edge", self.min_intensity_edge),
-            ("max_intensity_edge", self.max_intensity_edge),
-            ("mass_displacement", self.mass_displacement),
-            ("lower_quartile_intensity", self.lower_quartile_intensity),
-            ("median_intensity", self.median_intensity),
-            ("mad_intensity", self.mad_intensity),
-            ("upper_quartile_intensity", self.upper_quartile_intensity),
-            ("center_mass_intensity_x", self.center_mass_intensity_x),
-            ("center_mass_intensity_y", self.center_mass_intensity_y),
-            ("center_mass_intensity_z", self.center_mass_intensity_z),
-            ("max_intensity_x", self.max_intensity_x),
-            ("max_intensity_y", self.max_intensity_y),
-            ("max_intensity_z", self.max_intensity_z),
-        )
-
-    @classmethod
+    @staticmethod
     def scalar_kwargs_from_columns(
-        cls,
         columns: Mapping[str, np.ndarray],
         index: int,
     ) -> dict[str, float]:
         """Return one row's scalar feature kwargs from columnar storage."""
         return {
-            name: float(columns[name][index])
-            for name in cls.feature_names
+            feature_field.name: float(columns[feature_field.name][index])
+            for feature_field in dataclass_fields(ObjectIntensityFeatureValues)
         }
 
 
@@ -124,16 +72,22 @@ class ObjectIntensityArrays(ObjectIntensityFeatureValues[np.ndarray]):
         return cls(
             object_labels=object_labels.astype(np.int32, copy=False),
             **{
-                feature_name: empty
-                for feature_name in cls.feature_names
+                feature_field.name: empty
+                for feature_field in dataclass_fields(ObjectIntensityFeatureValues)
             },
         )
 
     def scalar_kwargs(self, index: int) -> dict[str, float]:
         """Return scalar feature kwargs for one measured object index."""
+        feature_fields = dataclass_fields(ObjectIntensityFeatureValues)
+        feature_values = attrgetter(
+            *(feature_field.name for feature_field in feature_fields)
+        )(self)
         return {
-            name: float(values[index])
-            for name, values in self.feature_items()
+            feature_field.name: float(values[index])
+            for feature_field, values in zip(
+                feature_fields, feature_values, strict=True
+            )
         }
 
     def aligned_feature_columns(
@@ -141,19 +95,32 @@ class ObjectIntensityArrays(ObjectIntensityFeatureValues[np.ndarray]):
         align_column: Callable[[np.ndarray], np.ndarray],
     ) -> dict[str, np.ndarray]:
         """Return feature columns aligned through the supplied label-domain mapper."""
+        feature_fields = dataclass_fields(ObjectIntensityFeatureValues)
+        feature_values = attrgetter(
+            *(feature_field.name for feature_field in feature_fields)
+        )(self)
         return {
-            name: align_column(values)
-            for name, values in self.feature_items()
+            feature_field.name: align_column(values)
+            for feature_field, values in zip(
+                feature_fields, feature_values, strict=True
+            )
         }
 
     def with_max_intensity_positions(
         self,
-        *,
-        max_intensity_x: np.ndarray,
-        max_intensity_y: np.ndarray,
-        max_intensity_z: np.ndarray,
+        positions: tuple[np.ndarray, ...],
     ) -> "ObjectIntensityArrays":
         """Return these measurements with CP-native max-location coordinates."""
+        if len(positions) == 2:
+            max_intensity_y, max_intensity_x = positions
+            max_intensity_z = np.zeros_like(max_intensity_x)
+        elif len(positions) == 3:
+            max_intensity_z, max_intensity_y, max_intensity_x = positions
+        else:
+            raise ValueError(
+                "Object-intensity maximum positions require a 2-D or 3-D domain, "
+                f"got {len(positions)} axes."
+            )
         return replace(
             self,
             max_intensity_x=max_intensity_x,
@@ -191,9 +158,9 @@ class ObjectIntensityArrays(ObjectIntensityFeatureValues[np.ndarray]):
             center_mass_intensity_x=scan_result[12],
             center_mass_intensity_y=scan_result[13],
             center_mass_intensity_z=scan_result[14],
-            max_intensity_x=scan_result[15],
-            max_intensity_y=scan_result[16],
-            max_intensity_z=scan_result[17],
+            max_intensity_x=np.zeros(object_labels.size, dtype=np.float64),
+            max_intensity_y=np.zeros(object_labels.size, dtype=np.float64),
+            max_intensity_z=np.zeros(object_labels.size, dtype=np.float64),
         )
 
     @classmethod
@@ -587,8 +554,6 @@ def _object_intensity_scan_numba(
     sum_y = np.zeros(object_count, dtype=np.float64)
     weighted_x = np.zeros(object_count, dtype=np.float64)
     weighted_y = np.zeros(object_count, dtype=np.float64)
-    max_x = np.zeros(object_count, dtype=np.float64)
-    max_y = np.zeros(object_count, dtype=np.float64)
 
     edge_counts = np.zeros(object_count, dtype=np.float64)
     edge_sums = np.zeros(object_count, dtype=np.float64)
@@ -615,10 +580,8 @@ def _object_intensity_scan_numba(
             weighted_y[index] += y * value
             if value < min_values[index]:
                 min_values[index] = value
-            if value >= max_values[index]:
+            if value > max_values[index]:
                 max_values[index] = value
-                max_x[index] = x
-                max_y[index] = y
 
             if _is_inner_boundary_pixel(labels, y, x, label):
                 edge_counts[index] += 1.0
@@ -679,8 +642,6 @@ def _object_intensity_scan_numba(
         mass_displacement,
         center_mass_x,
         center_mass_y,
-        max_x,
-        max_y,
     )
 
 
@@ -746,70 +707,6 @@ def _object_intensity_std_2d_numba(
                 edge_variance_sums[index] / edge_counts[index]
             )
     return stds, edge_stds
-
-
-@njit(cache=True)
-def _object_intensity_quantiles_3d_numba(
-    image: np.ndarray,
-    labels: np.ndarray,
-    label_to_index: np.ndarray,
-    counts: np.ndarray,
-    mad_fraction: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    object_count = counts.size
-    lower = np.zeros(object_count, dtype=np.float64)
-    median = np.zeros(object_count, dtype=np.float64)
-    upper = np.zeros(object_count, dtype=np.float64)
-    mad = np.zeros(object_count, dtype=np.float64)
-
-    total_count = 0
-    for index in range(object_count):
-        total_count += int(counts[index])
-    if total_count <= 0:
-        return lower, median, upper, mad
-
-    offsets = np.empty(object_count + 1, dtype=np.int64)
-    offsets[0] = 0
-    for index in range(object_count):
-        offsets[index + 1] = offsets[index] + int(counts[index])
-
-    write_offsets = offsets[:-1].copy()
-    values = np.empty(total_count, dtype=np.float64)
-    z_size, y_size, x_size = image.shape
-    for z_index in range(z_size):
-        for y_index in range(y_size):
-            for x_index in range(x_size):
-                label = int(labels[z_index, y_index, x_index])
-                if label <= 0 or label >= label_to_index.size:
-                    continue
-                index = int(label_to_index[label])
-                if index < 0:
-                    continue
-                value = float(image[z_index, y_index, x_index])
-                if not np.isfinite(value):
-                    continue
-                offset = write_offsets[index]
-                values[offset] = value
-                write_offsets[index] = offset + 1
-
-    for index in range(object_count):
-        start = int(offsets[index])
-        count = int(counts[index])
-        if count <= 0:
-            continue
-        group = values[start:start + count]
-        (
-            lower[index],
-            median[index],
-            upper[index],
-        ) = _quartiles_from_dense_group_partition(group)
-        mad[index] = _median_absolute_deviation_from_dense_group_partition(
-            group,
-            median[index],
-            mad_fraction,
-        )
-
-    return lower, median, upper, mad
 
 
 @njit(cache=True)
@@ -885,154 +782,6 @@ def _object_intensity_quantiles_3d_batch_numba(
 
 
 @njit(cache=True)
-def _object_intensity_scan_3d_numba(
-    image: np.ndarray,
-    labels: np.ndarray,
-    object_labels: np.ndarray,
-    label_to_index: np.ndarray,
-) -> tuple[
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-]:
-    z_size, y_size, x_size = image.shape
-    object_count = object_labels.size
-    counts = np.zeros(object_count, dtype=np.float64)
-    sums = np.zeros(object_count, dtype=np.float64)
-    min_values = np.full(object_count, np.inf, dtype=np.float64)
-    max_values = np.full(object_count, -np.inf, dtype=np.float64)
-    sum_x = np.zeros(object_count, dtype=np.float64)
-    sum_y = np.zeros(object_count, dtype=np.float64)
-    sum_z = np.zeros(object_count, dtype=np.float64)
-    weighted_x = np.zeros(object_count, dtype=np.float64)
-    weighted_y = np.zeros(object_count, dtype=np.float64)
-    weighted_z = np.zeros(object_count, dtype=np.float64)
-    max_x = np.zeros(object_count, dtype=np.float64)
-    max_y = np.zeros(object_count, dtype=np.float64)
-    max_z = np.zeros(object_count, dtype=np.float64)
-
-    edge_counts = np.zeros(object_count, dtype=np.float64)
-    edge_sums = np.zeros(object_count, dtype=np.float64)
-    edge_min_values = np.full(object_count, np.inf, dtype=np.float64)
-    edge_max_values = np.full(object_count, -np.inf, dtype=np.float64)
-
-    for z_index in range(z_size):
-        for y_index in range(y_size):
-            for x_index in range(x_size):
-                label = labels[z_index, y_index, x_index]
-                if label <= 0 or label >= label_to_index.size:
-                    continue
-                index = label_to_index[label]
-                if index < 0:
-                    continue
-                value = image[z_index, y_index, x_index]
-                if not np.isfinite(value):
-                    continue
-
-                counts[index] += 1.0
-                sums[index] += value
-                sum_x[index] += x_index
-                sum_y[index] += y_index
-                sum_z[index] += z_index
-                weighted_x[index] += x_index * value
-                weighted_y[index] += y_index * value
-                weighted_z[index] += z_index * value
-                if value < min_values[index]:
-                    min_values[index] = value
-                if value >= max_values[index]:
-                    max_values[index] = value
-                    max_x[index] = x_index
-                    max_y[index] = y_index
-                    max_z[index] = z_index
-
-                if _is_inner_boundary_voxel(labels, z_index, y_index, x_index, label):
-                    edge_counts[index] += 1.0
-                    edge_sums[index] += value
-                    if value < edge_min_values[index]:
-                        edge_min_values[index] = value
-                    if value > edge_max_values[index]:
-                        edge_max_values[index] = value
-
-    means = np.zeros(object_count, dtype=np.float64)
-    stds = np.zeros(object_count, dtype=np.float64)
-    edge_means = np.zeros(object_count, dtype=np.float64)
-    edge_stds = np.zeros(object_count, dtype=np.float64)
-    mass_displacement = np.zeros(object_count, dtype=np.float64)
-    center_mass_x = np.zeros(object_count, dtype=np.float64)
-    center_mass_y = np.zeros(object_count, dtype=np.float64)
-    center_mass_z = np.zeros(object_count, dtype=np.float64)
-    for index in range(object_count):
-        if counts[index] > 0.0:
-            means[index] = sums[index] / counts[index]
-            center_x = sum_x[index] / counts[index]
-            center_y = sum_y[index] / counts[index]
-            center_z = sum_z[index] / counts[index]
-            if sums[index] != 0.0:
-                center_mass_x[index] = weighted_x[index] / sums[index]
-                center_mass_y[index] = weighted_y[index] / sums[index]
-                center_mass_z[index] = weighted_z[index] / sums[index]
-            diff_x = center_x - center_mass_x[index]
-            diff_y = center_y - center_mass_y[index]
-            diff_z = center_z - center_mass_z[index]
-            mass_displacement[index] = np.sqrt(
-                diff_x * diff_x + diff_y * diff_y + diff_z * diff_z
-            )
-        else:
-            min_values[index] = 0.0
-            max_values[index] = 0.0
-
-        if edge_counts[index] > 0.0:
-            edge_means[index] = edge_sums[index] / edge_counts[index]
-        else:
-            edge_min_values[index] = 0.0
-            edge_max_values[index] = 0.0
-
-    stds, edge_stds = _object_intensity_std_3d_numba(
-        image,
-        labels,
-        label_to_index,
-        means,
-        edge_means,
-    )
-
-    return (
-        counts,
-        sums,
-        means,
-        stds,
-        min_values,
-        max_values,
-        edge_sums,
-        edge_means,
-        edge_stds,
-        edge_min_values,
-        edge_max_values,
-        mass_displacement,
-        center_mass_x,
-        center_mass_y,
-        center_mass_z,
-        max_x,
-        max_y,
-        max_z,
-    )
-
-
-@njit(cache=True)
 def _object_intensity_scan_3d_batch_numba(
     images: np.ndarray,
     labels: np.ndarray,
@@ -1051,9 +800,6 @@ def _object_intensity_scan_3d_batch_numba(
     weighted_x = np.zeros((image_count, object_count), dtype=np.float64)
     weighted_y = np.zeros((image_count, object_count), dtype=np.float64)
     weighted_z = np.zeros((image_count, object_count), dtype=np.float64)
-    max_x = np.zeros((image_count, object_count), dtype=np.float64)
-    max_y = np.zeros((image_count, object_count), dtype=np.float64)
-    max_z = np.zeros((image_count, object_count), dtype=np.float64)
 
     edge_counts = np.zeros((image_count, object_count), dtype=np.float64)
     edge_sums = np.zeros((image_count, object_count), dtype=np.float64)
@@ -1099,11 +845,8 @@ def _object_intensity_scan_3d_batch_numba(
                     weighted_z[image_index, object_index] += z_index * value
                     if value < min_values[image_index, object_index]:
                         min_values[image_index, object_index] = value
-                    if value >= max_values[image_index, object_index]:
+                    if value > max_values[image_index, object_index]:
                         max_values[image_index, object_index] = value
-                        max_x[image_index, object_index] = x_index
-                        max_y[image_index, object_index] = y_index
-                        max_z[image_index, object_index] = z_index
 
                     if is_edge:
                         edge_counts[image_index, object_index] += 1.0
@@ -1196,9 +939,6 @@ def _object_intensity_scan_3d_batch_numba(
         center_mass_x,
         center_mass_y,
         center_mass_z,
-        max_x,
-        max_y,
-        max_z,
     )
 
 
@@ -1441,9 +1181,6 @@ def _object_intensity_scan_3d_sparse_batch_numba(
     weighted_x = np.zeros((image_count, object_count), dtype=np.float64)
     weighted_y = np.zeros((image_count, object_count), dtype=np.float64)
     weighted_z = np.zeros((image_count, object_count), dtype=np.float64)
-    max_x = np.zeros((image_count, object_count), dtype=np.float64)
-    max_y = np.zeros((image_count, object_count), dtype=np.float64)
-    max_z = np.zeros((image_count, object_count), dtype=np.float64)
 
     edge_counts = np.zeros((image_count, object_count), dtype=np.float64)
     edge_sums = np.zeros((image_count, object_count), dtype=np.float64)
@@ -1479,11 +1216,8 @@ def _object_intensity_scan_3d_sparse_batch_numba(
             weighted_z[image_index, object_index] += z_index * value
             if value < min_values[image_index, object_index]:
                 min_values[image_index, object_index] = value
-            if value >= max_values[image_index, object_index]:
+            if value > max_values[image_index, object_index]:
                 max_values[image_index, object_index] = value
-                max_x[image_index, object_index] = x_index
-                max_y[image_index, object_index] = y_index
-                max_z[image_index, object_index] = z_index
 
             if is_edge:
                 edge_counts[image_index, object_index] += 1.0
@@ -1579,9 +1313,6 @@ def _object_intensity_scan_3d_sparse_batch_numba(
         center_mass_x,
         center_mass_y,
         center_mass_z,
-        max_x,
-        max_y,
-        max_z,
     )
 
 

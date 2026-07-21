@@ -5,9 +5,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import TypeAlias, TypeVar
+from typing import ClassVar, TypeAlias, TypeVar
 
-from metaclass_registry import AutoRegisterMeta
+from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict, RegistryConfig
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiBridgeRegistryKeyMixin,
     UiLiveOverviewContributorABC,
@@ -52,12 +52,31 @@ class UiBridgeRegistrationContext:
     snapshot_provider: UiBridgeSnapshotProviderABC
 
 
+_UI_BRIDGE_PROVIDER_SET_REGISTRY = LazyDiscoveryDict(enable_cache=False)
+
+
 class UiBridgeProviderSetABC(
     UiBridgeRegistryKeyMixin,
     ABC,
     metaclass=AutoRegisterMeta,
+    registry_config=RegistryConfig(
+        registry_dict=_UI_BRIDGE_PROVIDER_SET_REGISTRY,
+        key_attribute="registry_key",
+        skip_if_no_key=True,
+        registry_name="PyQt UI bridge provider set",
+        discovery_package="openhcs.pyqt_gui.services",
+    ),
 ):
     """Composable collection of providers for one widget/domain."""
+
+    __registry__ = _UI_BRIDGE_PROVIDER_SET_REGISTRY
+    compose_for_main_window: ClassVar[bool] = True
+
+    @classmethod
+    @abstractmethod
+    def for_main_window(cls, main_window) -> "UiBridgeProviderSetABC":
+        """Construct this declaration's provider set for the owning main window."""
+        raise NotImplementedError
 
     @abstractmethod
     def register(self, context: UiBridgeRegistrationContext) -> None:
@@ -68,9 +87,17 @@ class CompositeUiBridgeProviderSet(UiBridgeProviderSetABC):
     """Register several provider sets through one composition stage."""
 
     registry_key = "composite"
+    compose_for_main_window = False
 
     def __init__(self, provider_sets: tuple[UiBridgeProviderSetABC, ...]) -> None:
         self._provider_sets = provider_sets
+
+    @classmethod
+    def for_main_window(cls, main_window) -> "UiBridgeProviderSetABC":
+        del main_window
+        raise TypeError(
+            "Composite provider sets are assembled by the composition root."
+        )
 
     def register(self, context: UiBridgeRegistrationContext) -> None:
         for provider_set in self._provider_sets:

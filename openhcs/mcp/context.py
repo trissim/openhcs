@@ -20,7 +20,9 @@ if TYPE_CHECKING:
     )
     from openhcs.agent.services.plate_inspection_service import PlateInspectionService
     from openhcs.agent.services.plate_streaming_service import PlateStreamingService
-    from openhcs.agent.services.pipeline_authoring_service import PipelineAuthoringService
+    from openhcs.agent.services.pipeline_authoring_service import (
+        PipelineAuthoringService,
+    )
     from openhcs.agent.services.runtime_server_service import RuntimeServerService
     from openhcs.agent.services.selected_plate_service import SelectedPlateService
     from openhcs.agent.services.synthetic_plate_service import (
@@ -124,7 +126,10 @@ class OpenHCSAgentContext:
                 PipelineAuthoringService,
             )
 
-            self._pipeline_service = PipelineAuthoringService(self.function_catalog)
+            self._pipeline_service = PipelineAuthoringService(
+                self.function_catalog,
+                self.config_service,
+            )
         return self._pipeline_service
 
     @property
@@ -143,7 +148,9 @@ class OpenHCSAgentContext:
     @property
     def knowledge_base_service(self) -> "KnowledgeBaseService":
         if self._knowledge_base_service is None:
-            from openhcs.agent.services.knowledge_base_service import KnowledgeBaseService
+            from openhcs.agent.services.knowledge_base_service import (
+                KnowledgeBaseService,
+            )
 
             self._knowledge_base_service = KnowledgeBaseService.from_path_policy(
                 self.path_policy
@@ -202,7 +209,9 @@ class OpenHCSAgentContext:
     @property
     def runtime_server_service(self) -> "RuntimeServerService":
         if self._runtime_server_service is None:
-            from openhcs.agent.services.runtime_server_service import RuntimeServerService
+            from openhcs.agent.services.runtime_server_service import (
+                RuntimeServerService,
+            )
 
             self._runtime_server_service = RuntimeServerService()
         return self._runtime_server_service
@@ -218,7 +227,9 @@ class OpenHCSAgentContext:
     @property
     def selected_plate_service(self) -> "SelectedPlateService":
         if self._selected_plate_service is None:
-            from openhcs.agent.services.selected_plate_service import SelectedPlateService
+            from openhcs.agent.services.selected_plate_service import (
+                SelectedPlateService,
+            )
 
             self._selected_plate_service = SelectedPlateService(
                 self.ui_bridge_service,

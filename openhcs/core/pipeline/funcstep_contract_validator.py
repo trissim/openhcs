@@ -16,24 +16,34 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Callable, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    get_type_hints,
+)
 
 from openhcs.constants.constants import (
-    AllComponents,
     GroupBy,
     VALID_MEMORY_TYPES,
     get_openhcs_config,
 )
-from openhcs.core.artifacts import ArtifactOutputPlan
-from openhcs.core.callable_contract import CallableContract
-from openhcs.core.compiled_step_plan import CompiledStepPlan
+from openhcs.core.callable_contract import CallableContract, FunctionStepExecutionScope
 from openhcs.core.function_patterns import (
-    CompiledFunctionPattern,
     FunctionPatternSyntax,
     NormalizedFunctionItem,
+    NormalizedFunctionPattern,
     normalize_function_pattern,
 )
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.core.runtime_stores import RuntimeArtifactBatch
+from openhcs.core.step_dependencies import StepInputDependencyKind
 from openhcs.core.variable_component_stack_requirement import (
     VariableComponentStackRequirementRequest,
 )
@@ -52,115 +62,6 @@ class ParameterKindPolicy:
 
     kind: inspect._ParameterKind
     required_in_kwargs: bool
-
-
-@dataclass(frozen=True)
-class FunctionStepArtifactContractScope:
-    """Compiled execution scope for FunctionStep artifact contract validation."""
-
-    step_name: str
-    variable_components: tuple[Enum, ...]
-    group_by: Enum | None
-    artifact_outputs: Mapping[str, ArtifactOutputPlan]
-    compiled_function_pattern: CompiledFunctionPattern
-
-    @classmethod
-    def from_step_plan(
-        cls,
-        step_plan: CompiledStepPlan,
-        *,
-        group_by: Enum | None = None,
-        variable_components: tuple[Enum, ...] | None = None,
-    ) -> "FunctionStepArtifactContractScope":
-        resolved_components = step_plan.variable_components
-        if resolved_components is None:
-            resolved_components = ()
-        resolved_outputs = step_plan.artifact_outputs
-        return cls(
-            step_name=step_plan.step_name,
-            variable_components=(
-                tuple(resolved_components)
-                if variable_components is None
-                else variable_components
-            ),
-            group_by=step_plan.group_by if group_by is None else group_by,
-            artifact_outputs=resolved_outputs,
-            compiled_function_pattern=step_plan.compiled_function_pattern,
-        )
-
-    def variable_component_axes(self) -> frozenset[str]:
-        """Return axes stacked inside one function invocation."""
-        return frozenset(
-            str(component.value)
-            for component in self.variable_components
-            if component.value is not None
-        )
-
-    def expansion_axes(self) -> frozenset[str]:
-        """Return execution axes that can fan out one semantic invocation."""
-        axes = set(self.variable_component_axes())
-        if self.group_by is not None and self.group_by.value is not None:
-            axes.add(str(self.group_by.value))
-        return frozenset(axes)
-
-    def projected_group_axes(self) -> frozenset[str]:
-        """Return grouped axes that also project runtime stack planes."""
-        if self.group_by is None or self.group_by.value is None:
-            return frozenset()
-        group_axis = str(self.group_by.value)
-        if group_axis not in self.variable_component_axes():
-            return frozenset()
-        return frozenset((group_axis,))
-
-    def artifact_managed_invocation_names(self) -> tuple[str, ...]:
-        """Return runtime-adapter invocation names that consume and produce artifacts."""
-        names: list[str] = []
-        for invocation in self.compiled_function_pattern.iter_invocations():
-            if not invocation.runtime_domain.adapter_manages_artifact_inputs:
-                continue
-            if not any(
-                key in self.artifact_outputs
-                for key in invocation.artifact_output_keys
-            ):
-                continue
-            names.append(invocation.key.function_name)
-        return tuple(names)
-
-
-@dataclass(frozen=True)
-class ArtifactManagedRuntimeScopePolicy:
-    """Validation policy for adapter-managed runtime artifact execution axes."""
-
-    forbidden_expansion_axes: frozenset[str]
-
-    def validate(self, scope: FunctionStepArtifactContractScope) -> None:
-        invocation_names = scope.artifact_managed_invocation_names()
-        if not invocation_names:
-            return
-
-        # group_by is a batch partition, not by itself a runtime-artifact fanout.
-        # Runtime-plane projection only happens when the grouped axis is also a
-        # variable component; that conflict is normalized before compiled
-        # execution.  Keep this policy as a guard for genuinely projected axes,
-        # but do not reject ordinary batch grouping by source identity.
-        forbidden_axes = self.forbidden_expansion_axes & scope.projected_group_axes()
-        if not forbidden_axes:
-            return
-
-        raise ValueError(
-            "Adapter-managed runtime artifact step "
-            f"{scope.step_name!r} cannot expand named runtime artifacts by "
-            f"{', '.join(sorted(forbidden_axes)).upper()}. "
-            "Named CellProfiler artifacts already encode semantic image source "
-            "identity; split by SITE/TIMEPOINT or group an explicit source-image "
-            "stack instead. "
-            f"Artifact-managed invocation(s): {', '.join(invocation_names)}."
-        )
-
-
-_ARTIFACT_MANAGED_RUNTIME_SCOPE_POLICY = ArtifactManagedRuntimeScopePolicy(
-    forbidden_expansion_axes=frozenset((AllComponents.CHANNEL.value,)),
-)
 
 
 def _parameter_kind_policy_by_kind(
@@ -586,13 +487,15 @@ class FuncStepContractValidator:
         group_by,
         variable_components,
         step_name: str,
+        pattern: NormalizedFunctionPattern,
     ):
-        """Return compiled grouping semantics after rejecting invalid overlap."""
+        """Return pattern-aware grouping semantics for compiled execution."""
         variable_components = () if variable_components is None else variable_components
         if group_by and group_by.value in [vc.value for vc in variable_components]:
+            if not pattern.is_grouped:
+                return GroupBy.NONE
             variable_component_names = tuple(
-                getattr(component, "name", str(component))
-                for component in variable_components
+                component.name for component in variable_components
             )
             raise ValueError(
                 f"Step '{step_name}' has invalid processing_config: "
@@ -655,6 +558,8 @@ class FuncStepContractValidator:
                 "read_backend/write_backend fields."
             )
 
+        plate_scope_started = False
+
         # Process each step in the pipeline
         for i, step in enumerate(steps):
             # Only validate FunctionStep instances
@@ -668,16 +573,32 @@ class FuncStepContractValidator:
                     raise AssertionError(
                         f"Clause 101 Violation: Step {step.name} (index: {i}) missing compiled_function_pattern."
                     )
-                FuncStepContractValidator.validate_compiled_step_plan(
-                    step_plan,
-                    orchestrator,
-                )
-                input_type, output_type = (
-                    FuncStepContractValidator.validate_compiled_function_pattern(
-                        step_plan.compiled_function_pattern,
-                        step_plan.step_name,
+                try:
+                    execution_scope = (
+                        step_plan.compiled_function_pattern.execution_scope
                     )
-                )
+                    if execution_scope is FunctionStepExecutionScope.PLATE:
+                        plate_scope_started = True
+                    elif plate_scope_started:
+                        raise ValueError(
+                            f"Axis-scoped FunctionStep {step.name!r} cannot follow a "
+                            "plate-scoped FunctionStep. Plate execution is terminal."
+                        )
+                    FuncStepContractValidator.validate_compiled_step_plan(
+                        step_plan,
+                        orchestrator,
+                    )
+                    input_type, output_type = (
+                        FuncStepContractValidator.validate_compiled_function_pattern(
+                            step_plan.compiled_function_pattern,
+                            step_plan.step_name,
+                        )
+                    )
+                except ValueError as exc:
+                    raise ValueError(
+                        f"FunctionStep {step_plan.step_name!r} (index: {i}) failed "
+                        f"compile-time contract validation: {exc}"
+                    ) from exc
                 step_plan.input_memory_type = input_type
                 step_plan.output_memory_type = output_type
 
@@ -686,11 +607,41 @@ class FuncStepContractValidator:
         """Validate FunctionStep structure from the compiled plan SSOT."""
         func_pattern = step_plan.func
         step_name = step_plan.step_name
-        contracts = FuncStepContractValidator._contracts_from_pattern(
-            func_pattern,
-            step_name,
+        compiled_pattern = step_plan.compiled_function_pattern
+        invocations = tuple(compiled_pattern.iter_invocations())
+        contracts = tuple(invocation.contract for invocation in invocations)
+        FuncStepContractValidator.validate_artifact_input_scope_availability(
+            step_plan
         )
-
+        if (
+            compiled_pattern.execution_scope
+            is FunctionStepExecutionScope.PLATE
+        ):
+            if compiled_pattern.is_grouped:
+                raise ValueError(
+                    f"Plate-scoped FunctionStep {step_name!r} cannot use a dict pattern."
+                )
+            if (
+                step_plan.main_input_dependency.kind
+                is not StepInputDependencyKind.NO_MAIN_FLOW
+            ):
+                raise ValueError(
+                    f"Plate-scoped FunctionStep {step_name!r} must compile with "
+                    "StepInputDependency.no_main_flow()."
+                )
+            FuncStepContractValidator.validate_plate_callable_contracts(
+                contracts,
+                step_name,
+            )
+            for invocation in invocations:
+                if invocation.runtime_parameter_bindings:
+                    raise ValueError(
+                        f"Plate-scoped callable "
+                        f"{invocation.contract.function_name!r} in step "
+                        f"{step_name!r} cannot use axis runtime parameter "
+                        "bindings."
+                    )
+            return
         config = get_openhcs_config()
         validator = GenericValidator(config)
         group_by = step_plan.group_by
@@ -703,6 +654,7 @@ class FuncStepContractValidator:
             group_by,
             variable_components,
             step_name,
+            normalize_function_pattern(func_pattern),
         )
 
         validation_result = validator.validate_step(
@@ -721,7 +673,7 @@ class FuncStepContractValidator:
         )
         FuncStepContractValidator.validate_processing_contract_variable_components(
             variable_components,
-            tuple(step_plan.compiled_function_pattern.iter_invocations()),
+            invocations,
             step_name,
         )
         FuncStepContractValidator.validate_allowed_group_by(
@@ -744,34 +696,26 @@ class FuncStepContractValidator:
             if not dict_validation_result.is_valid:
                 raise ValueError(dict_validation_result.error_message)
 
-        artifact_scope = FunctionStepArtifactContractScope.from_step_plan(
-            step_plan,
-            group_by=group_by,
-            variable_components=tuple(variable_components),
-        )
-        FuncStepContractValidator.validate_artifact_contract_scope(artifact_scope)
-
     @staticmethod
-    def validate_artifact_contract_scope(
-        scope: FunctionStepArtifactContractScope,
-    ) -> None:
-        """Validate every artifact contract policy for one compiled step scope."""
-        _ARTIFACT_MANAGED_RUNTIME_SCOPE_POLICY.validate(scope)
+    def validate_artifact_input_scope_availability(step_plan) -> None:
+        """Require one exact validated projection for every invocation input edge."""
 
-    @staticmethod
-    def validate_artifact_managed_runtime_scope(
-        step_plan,
-        *,
-        group_by: Enum | None = None,
-        variable_components: tuple[Enum, ...] | None = None,
-    ) -> None:
-        """Reject execution axes that duplicate named runtime artifact semantics."""
-        scope = FunctionStepArtifactContractScope.from_step_plan(
-            step_plan,
-            group_by=group_by,
-            variable_components=variable_components,
-        )
-        _ARTIFACT_MANAGED_RUNTIME_SCOPE_POLICY.validate(scope)
+        compiled_pattern = step_plan.compiled_function_pattern
+        compiled_pattern.artifact_input_edges_by_key()
+        for invocation in compiled_pattern.iter_invocations():
+            invocation.select_inputs(step_plan.artifact_inputs)
+            for edge in invocation.artifact_input_edges:
+                if edge.storage_plan is None or edge.projection is None:
+                    continue
+                if (
+                    invocation.contract.execution_scope
+                    is FunctionStepExecutionScope.PLATE
+                ):
+                    edge.projection.validate_complete_producer_projection(
+                        edge.storage_plan
+                    )
+                else:
+                    edge.projection.validate_axis_projection(edge.storage_plan)
 
     @staticmethod
     def validate_funcstep(
@@ -805,6 +749,17 @@ class FuncStepContractValidator:
         contracts = [item.contract for item in normalized.iter_items()]
         if not contracts:
             raise ValueError(f"No valid functions found in pattern for step {step_name}")
+        execution_scope = FunctionStepExecutionScope.require_uniform(contracts)
+        if execution_scope is FunctionStepExecutionScope.PLATE:
+            if isinstance(func_pattern, dict):
+                raise ValueError(
+                    f"Plate-scoped FunctionStep {step_name!r} cannot use a dict pattern."
+                )
+            FuncStepContractValidator.validate_plate_callable_contracts(
+                contracts,
+                step_name,
+            )
+            return
 
         # Validate using generic validation system
         config = get_openhcs_config()
@@ -815,6 +770,7 @@ class FuncStepContractValidator:
             group_by,
             variable_components,
             step_name,
+            normalized,
         )
 
         # Sequential processing validation removed - it's now pipeline-level, not per-step
@@ -858,11 +814,18 @@ class FuncStepContractValidator:
     def validate_compiled_function_pattern(
         compiled_pattern,
         step_name: str,
-    ) -> Tuple[str, str]:
+    ) -> Tuple[str | None, str | None]:
         """Validate memory contracts from the compiled function-pattern graph."""
         invocations = tuple(compiled_pattern.iter_invocations())
         if not invocations:
             raise ValueError(f"No valid functions found in compiled pattern for step {step_name}")
+
+        if compiled_pattern.execution_scope is FunctionStepExecutionScope.PLATE:
+            FuncStepContractValidator.validate_plate_callable_contracts(
+                tuple(invocation.contract for invocation in invocations),
+                step_name,
+            )
+            return None, None
 
         first = invocations[0]
         input_type, output_type = (
@@ -879,6 +842,83 @@ class FuncStepContractValidator:
             )
 
         return input_type, invocations[-1].output_memory_type
+
+    @staticmethod
+    def validate_plate_callable_contracts(
+        contracts: Sequence[CallableContract],
+        step_name: str,
+    ) -> None:
+        """Require the exact generic ABI for plate-scoped callables."""
+        for contract in contracts:
+            FuncStepContractValidator.validate_external_library_installation(
+                contract.func,
+                step_name,
+            )
+            if (
+                contract.input_memory_type is not None
+                or contract.output_memory_type is not None
+                or contract.processing_contract is not None
+            ):
+                raise ValueError(
+                    f"Plate-scoped callable {contract.function_name!r} in step "
+                    f"{step_name!r} cannot declare axis-local memory or processing "
+                    "contracts."
+                )
+            if not contract.artifact_outputs:
+                raise ValueError(
+                    f"Plate-scoped callable {contract.function_name!r} in step "
+                    f"{step_name!r} must declare artifact outputs."
+                )
+            if contract.runtime_adapter is not None:
+                raise ValueError(
+                    f"Plate-scoped callable {contract.function_name!r} in step "
+                    f"{step_name!r} cannot declare a runtime image adapter."
+                )
+            if contract.runtime_bound_parameter_types != (RuntimeArtifactBatch,):
+                raise ValueError(
+                    f"Plate-scoped callable {contract.function_name!r} in step "
+                    f"{step_name!r} must declare RuntimeArtifactBatch as its "
+                    "only runtime-bound parameter."
+                )
+            if contract.runtime_image_execution_mode is not None:
+                raise ValueError(
+                    f"Plate-scoped callable {contract.function_name!r} in step "
+                    f"{step_name!r} cannot declare an image execution mode."
+                )
+
+            runtime_callable = contract.resolve_runtime_callable()
+            parameter_name = RuntimeArtifactBatch.require_parameter_name()
+            parameter = inspect.signature(runtime_callable).parameters.get(
+                parameter_name
+            )
+            if parameter is None:
+                raise ValueError(
+                    f"Plate-scoped callable {contract.function_name!r} in step "
+                    f"{step_name!r} must declare keyword-only parameter "
+                    f"{parameter_name!r}."
+                )
+            if (
+                parameter.kind is not inspect.Parameter.KEYWORD_ONLY
+                or parameter.default is not inspect.Parameter.empty
+            ):
+                raise ValueError(
+                    f"Plate-scoped callable {contract.function_name!r} in step "
+                    f"{step_name!r} parameter {parameter_name!r} must be required "
+                    "and keyword-only."
+                )
+            try:
+                annotation = get_type_hints(runtime_callable).get(parameter_name)
+            except Exception as exc:
+                raise ValueError(
+                    f"Cannot resolve {contract.function_name!r} plate batch "
+                    "annotation."
+                ) from exc
+            if annotation is not RuntimeArtifactBatch:
+                raise TypeError(
+                    f"Plate-scoped callable {contract.function_name!r} in step "
+                    f"{step_name!r} parameter {parameter_name!r} must be "
+                    "annotated RuntimeArtifactBatch."
+                )
 
     @staticmethod
     def _validate_invocation_contract(invocation, step_name: str) -> Tuple[str, str]:
@@ -971,7 +1011,11 @@ class FuncStepContractValidator:
         return input_type, contracts[-1].output_memory_type
 
     @staticmethod
-    def _validate_required_args(func: Callable, kwargs: Dict[str, Any], step_name: str) -> None:
+    def _validate_required_args(
+        func: Callable,
+        kwargs: dict[str, Any],
+        step_name: str,
+    ) -> None:
         """
         Validate that all required positional arguments are provided in kwargs.
 

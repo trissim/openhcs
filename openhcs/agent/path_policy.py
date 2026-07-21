@@ -2,14 +2,48 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
-from os import environ
 from pathlib import Path
 
 from openhcs.agent.exceptions import AgentFacingErrorMixin
+from openhcs.agent.runtime_platform import AgentRuntimePlatformAuthority
 
 
-DEFAULT_AGENT_WINDOW_SNAPSHOT_DIR = Path("/tmp/openhcs-mcp-window-snapshots")
+class AgentPathLocationAuthority:
+    """Own cross-platform default roots for agent-visible filesystem access."""
+
+    @staticmethod
+    def package_root() -> Path:
+        return Path(__file__).resolve().parents[1]
+
+    @classmethod
+    def source_checkout_root(cls) -> Path | None:
+        candidate = cls.package_root().parent
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+        return None
+
+    @staticmethod
+    def temporary_root() -> Path:
+        return AgentRuntimePlatformAuthority.current().temporary_root()
+
+    @staticmethod
+    def user_data_root() -> Path:
+        return AgentRuntimePlatformAuthority.current().application_data_root("OpenHCS")
+
+    @classmethod
+    def default_output_root(cls) -> Path:
+        return cls.user_data_root() / "mcp_outputs"
+
+    @classmethod
+    def default_window_snapshot_dir(cls) -> Path:
+        return cls.temporary_root() / "openhcs-mcp-window-snapshots"
+
+
+DEFAULT_AGENT_WINDOW_SNAPSHOT_DIR = (
+    AgentPathLocationAuthority.default_window_snapshot_dir()
+)
 
 
 class AgentPathPolicyError(AgentFacingErrorMixin, ValueError):
@@ -44,18 +78,17 @@ class AgentPathRootSet:
         name: str,
         fallback: "AgentPathRootSet",
     ) -> "AgentPathRootSet":
-        raw = environ.get(name)
+        raw = os.environ.get(name)
         if not raw:
             return fallback
         return cls.from_paths(
-            tuple(Path(item) for item in raw.split(":") if item.strip())
+            tuple(Path(item) for item in raw.split(os.pathsep) if item.strip())
         )
 
     def __contains__(self, path: Path) -> bool:
         candidate = path.expanduser().resolve(strict=False)
         return any(
-            candidate == root or root in candidate.parents
-            for root in self.roots
+            candidate == root or root in candidate.parents for root in self.roots
         )
 
 
@@ -78,20 +111,21 @@ class AgentPathPolicy:
 
     @classmethod
     def default(cls) -> "AgentPathPolicy":
-        repo_root = Path(__file__).resolve().parents[2]
+        package_root = AgentPathLocationAuthority.package_root()
+        source_checkout_root = AgentPathLocationAuthority.source_checkout_root()
+        temporary_root = AgentPathLocationAuthority.temporary_root()
+        user_data_root = AgentPathLocationAuthority.user_data_root()
+        readable_roots = [package_root, temporary_root, user_data_root]
+        writable_roots = [
+            temporary_root,
+            AgentPathLocationAuthority.default_output_root(),
+        ]
+        if source_checkout_root is not None:
+            readable_roots.insert(0, source_checkout_root)
+            writable_roots.append(source_checkout_root / "mcp_outputs")
         return cls(
-            readable_roots=AgentPathRootSet.from_paths(
-                (
-                    repo_root,
-                    Path("/tmp"),
-                )
-            ),
-            writable_roots=AgentPathRootSet.from_paths(
-                (
-                    Path("/tmp"),
-                    repo_root / "mcp_outputs",
-                )
-            ),
+            readable_roots=AgentPathRootSet.from_paths(tuple(readable_roots)),
+            writable_roots=AgentPathRootSet.from_paths(tuple(writable_roots)),
         )
 
     @classmethod
@@ -122,16 +156,8 @@ class AgentPathPolicy:
 
     def assert_writable(self, path: str | Path) -> Path:
         candidate = Path(path).expanduser().resolve(strict=False)
-        existing_parent = _nearest_existing_parent(candidate)
-        if existing_parent not in self.writable_roots:
+        if candidate not in self.writable_roots:
             raise AgentPathPolicyError(
                 f"Writable path is outside allowed roots: {candidate}"
             )
         return candidate
-
-
-def _nearest_existing_parent(path: Path) -> Path:
-    candidate = path if path.exists() else path.parent
-    while not candidate.exists() and candidate != candidate.parent:
-        candidate = candidate.parent
-    return candidate.resolve(strict=False)

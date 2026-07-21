@@ -184,27 +184,31 @@ class CellProfilerTranslationArchitectureTopic(ArchitectureTopicProjection):
     title = "CellProfiler to OpenHCS translation"
     summary = (
         "How .cppipe modules, images, objects, and measurements are parsed and "
-        "compiled into OpenHCS runtime semantics."
+        "translated into ordinary public OpenHCS pipeline declarations."
     )
     concepts_text = (
         "CellProfiler .cppipe text is parsed into ordered ModuleBlock records.",
-        "The symbol table validates image/object/measurement production and consumption before generated OpenHCS code is emitted.",
-        "PipelineGenerator projects CellProfiler module contracts into OpenHCS FunctionStep declarations and source bindings.",
-        "CellProfilerFunctionCatalog is the nominal authority for absorbed backend functions; OpenHCS executes CellProfiler-compatible semantics through OpenHCS runtime adapters and compiled plans rather than shelling out to CellProfiler as the engine.",
+        "CellProfilerModule is the nominal registry whose declarations own module lookup, settings lowering, artifact contracts, callable selection, and processing configuration.",
+        "import_cellprofiler_pipeline translates parsed modules into the same FunctionStep and PipelineConfig declarations authored by native OpenHCS pipelines.",
+        "The importer derives stack axes, post-stack grouping, previous-step versus pipeline-start main flow, and exact named artifact contracts from source, module, callable, and producer declarations.",
+        "The returned public declarations enter the ordinary OpenHCS compile and execution path without a generated-pipeline or retained .cppipe runtime carrier.",
     )
     cellprofiler_translation_notes_text = (
         "A CellProfiler Image name becomes an OpenHCS semantic source binding or runtime image input.",
         "A CellProfiler Object name becomes an OpenHCS object-label runtime value or artifact contract.",
-        "A CellProfiler Measure module usually becomes a backend function plus runtime artifact materialization.",
-        "A CellProfiler SaveImages/ExportToDatabase module is infrastructure unless it creates an externally required materialized result.",
+        "A CellProfiler Measure module becomes a backend function whose typed measurement or relationship observations are recorded in RuntimeValueStore independently of file materialization.",
+        "CellProfiler SaveImages, ExportToSpreadsheet, and ExportToDatabase are explicit executable FunctionStep declarations; plate-wide table/database exporters use terminal PLATE execution scope.",
+        "A .cppipe does not choose native OpenHCS viewer, checkpoint, VFS, or persistence intent that it never declared; inspect the compiled materialization plans separately.",
     )
 
     def symbol_specs(self) -> tuple[InternalApiSymbolSpec, ...]:
+        from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+        from openhcs.core.steps.function_step import FunctionStep
+        from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
         from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock
-        from openhcs.interop.cellprofiler.pipeline_generator import PipelineGenerator
-        from openhcs.interop.cellprofiler.runtime_pipeline import prepare_generated_pipeline
-        from openhcs.interop.cellprofiler.symbol_table import CellProfilerSymbolTable
-        from openhcs.processing.backends.cellprofiler import CellProfilerFunctionCatalog
+        from openhcs.interop.cellprofiler.pipeline_import import (
+            import_cellprofiler_pipeline,
+        )
 
         return (
             InternalApiSymbolSpec(
@@ -220,41 +224,42 @@ class CellProfilerTranslationArchitectureTopic(ArchitectureTopicProjection):
                 ModuleBlock,
             ),
             InternalApiSymbolSpec(
-                "cellprofiler.CellProfilerSymbolTable",
-                "CellProfilerSymbolTable",
-                "Validates CellProfiler image/object/measurement symbol flow.",
-                CellProfilerSymbolTable,
+                "cellprofiler.CellProfilerModule",
+                "CellProfilerModule",
+                "Nominal declaration registry for CellProfiler module semantics.",
+                CellProfilerModule,
             ),
             InternalApiSymbolSpec(
-                "cellprofiler.PipelineGenerator",
-                "PipelineGenerator",
-                "Projects CellProfiler modules into OpenHCS FunctionStep source.",
-                PipelineGenerator,
+                "cellprofiler.import_cellprofiler_pipeline",
+                "import_cellprofiler_pipeline",
+                "Pure translation boundary returning public steps and configuration.",
+                import_cellprofiler_pipeline,
             ),
             InternalApiSymbolSpec(
-                "cellprofiler.prepare_generated_pipeline",
-                "prepare_generated_pipeline",
-                "End-to-end generated pipeline preparation boundary.",
-                prepare_generated_pipeline,
+                "core.FunctionStep",
+                "FunctionStep",
+                "Ordinary public processing-step declaration returned by translation.",
+                FunctionStep,
             ),
             InternalApiSymbolSpec(
-                "cellprofiler.CellProfilerFunctionCatalog",
-                "CellProfilerFunctionCatalog",
-                "Nominal lookup authority for absorbed CellProfiler backend functions.",
-                CellProfilerFunctionCatalog,
+                "core.PipelineConfig",
+                "PipelineConfig",
+                "Ordinary public pipeline configuration returned by translation.",
+                PipelineConfig,
+                GlobalPipelineConfig,
             ),
         )
 
 
 class SourceSemanticsArchitectureTopic(ArchitectureTopicProjection):
     topic_id = "source_semantics"
-    title = "Source schema and semantic image names"
+    title = "Source bindings and semantic image names"
     summary = (
         "How filenames, metadata, source bindings, and virtual workspace names "
         "preserve image/object semantics."
     )
     concepts_text = (
-        "Source schema ingestion is the bridge between CellProfiler's Images/Metadata/NamesAndTypes modules and OpenHCS source bindings.",
+        "CellProfiler setup modules lower directly into the same SourceBindingsConfig used by native OpenHCS pipelines.",
         "Filename-derived axes and semantic aliases must enter through MetadataExtractionRule and StepSourceBindingsConfig rather than ad hoc parsing at call sites.",
         "Prepared CellProfiler workspaces are logical OpenHCS input workspaces, not native microscope folders.",
     )
@@ -262,20 +267,16 @@ class SourceSemanticsArchitectureTopic(ArchitectureTopicProjection):
     def symbol_specs(self) -> tuple[InternalApiSymbolSpec, ...]:
         from openhcs.core.source_bindings import (
             MetadataExtractionRule,
+            SourceBindingsConfig,
             StepSourceBindingsConfig,
+        )
+        from openhcs.core.source_binding_workspace import (
+            SourceBindingWorkspaceProjector,
         )
         from openhcs.interop.cellprofiler.plate_workspace import (
             CellProfilerPlateWorkspacePreparer,
             prepare_cellprofiler_input_workspace,
         )
-        from openhcs.interop.cellprofiler.source_schema import (
-            CellProfilerSourceBindingMatchMetadataParser,
-        )
-        from openhcs.interop.cellprofiler.source_schema_ingestion import (
-            CellProfilerSourceSchemaWorkspaceRequest,
-            prepare_cellprofiler_source_schema_workspace,
-        )
-
         return (
             InternalApiSymbolSpec(
                 "source.MetadataExtractionRule",
@@ -284,28 +285,22 @@ class SourceSemanticsArchitectureTopic(ArchitectureTopicProjection):
                 MetadataExtractionRule,
             ),
             InternalApiSymbolSpec(
+                "source.SourceBindingsConfig",
+                "SourceBindingsConfig",
+                "Pipeline-level source-universe and semantic binding declaration.",
+                SourceBindingsConfig,
+            ),
+            InternalApiSymbolSpec(
                 "source.StepSourceBindingsConfig",
                 "StepSourceBindingsConfig",
                 "First-class FunctionStep field for semantic input bindings.",
                 StepSourceBindingsConfig,
             ),
             InternalApiSymbolSpec(
-                "cellprofiler.CellProfilerSourceBindingMatchMetadataParser",
-                "CellProfilerSourceBindingMatchMetadataParser",
-                "CellProfiler-specific parser for source-binding match metadata.",
-                CellProfilerSourceBindingMatchMetadataParser,
-            ),
-            InternalApiSymbolSpec(
-                "cellprofiler.CellProfilerSourceSchemaWorkspaceRequest",
-                "CellProfilerSourceSchemaWorkspaceRequest",
-                "Request DTO for preparing CellProfiler source-schema workspaces.",
-                CellProfilerSourceSchemaWorkspaceRequest,
-            ),
-            InternalApiSymbolSpec(
-                "cellprofiler.prepare_cellprofiler_source_schema_workspace",
-                "prepare_cellprofiler_source_schema_workspace",
-                "Source-schema ingestion and workspace preparation boundary.",
-                prepare_cellprofiler_source_schema_workspace,
+                "source.SourceBindingWorkspaceProjector",
+                "SourceBindingWorkspaceProjector",
+                "Projects resolved source bindings into an OpenHCS workspace.",
+                SourceBindingWorkspaceProjector,
             ),
             InternalApiSymbolSpec(
                 "cellprofiler.CellProfilerPlateWorkspacePreparer",

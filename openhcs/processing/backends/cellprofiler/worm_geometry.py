@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import centrosome.cpmorphology
 import numpy as np
 from numba import njit
 from scipy.interpolate import interp1d
@@ -356,232 +357,77 @@ def rebuild_worm_from_control_points_approx(
     worm_radii: np.ndarray,
     shape: tuple[int, int],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Rebuild a CP-style worm mask from control points and trained radii."""
+    """Rebuild a worm using CellProfiler's canonical line rasterization."""
     if len(control_coords) < 2:
         return np.zeros(0, dtype=int), np.zeros(0, dtype=int)
+    control_coords = np.asarray(control_coords, dtype=np.float64)
     radii = np.asarray(worm_radii, dtype=np.float64)
     if len(radii) < len(control_coords):
         radii = np.pad(radii, (0, len(control_coords) - len(radii)), mode="edge")
-    return _rebuild_worm_from_control_points_numba(
-        np.ascontiguousarray(control_coords, dtype=np.float64),
-        np.ascontiguousarray(radii, dtype=np.float64),
-        int(shape[0]),
-        int(shape[1]),
+
+    index, count, rows, columns = centrosome.cpmorphology.get_line_pts(
+        control_coords[:-1, 0],
+        control_coords[:-1, 1],
+        control_coords[1:, 0],
+        control_coords[1:, 1],
+    )
+    rows = np.delete(rows, index[1:])
+    columns = np.delete(columns, index[1:])
+    index = index - np.arange(len(index))
+    count -= 1
+
+    nonempty_segments = count != 0
+    index = index[nonempty_segments]
+    count = count[nonempty_segments]
+
+    segment_labels = np.zeros(len(rows), dtype=int)
+    segment_labels[index[1:]] = 1
+    segment_labels = np.cumsum(segment_labels)
+    order_within_segment = np.arange(len(rows)) - index[segment_labels]
+    fractions = order_within_segment.astype(float) / count[segment_labels].astype(
+        float
+    )
+    point_radii = (
+        radii[segment_labels] * (1.0 - fractions)
+        + radii[segment_labels + 1] * fractions
     )
 
+    max_radius = int(np.max(np.ceil(point_radii)))
+    row_offsets, column_offsets = np.mgrid[
+        -max_radius : max_radius + 1,
+        -max_radius : max_radius + 1,
+    ]
+    distances = np.sqrt((row_offsets**2 + column_offsets**2).astype(float))
+    disk_mask = row_offsets**2 + column_offsets**2 <= max_radius**2
+    row_offsets = row_offsets[disk_mask]
+    column_offsets = column_offsets[disk_mask]
+    distances = distances[disk_mask]
 
-@njit(cache=True)
-def _rebuild_worm_from_control_points_numba(
-    control_coords: np.ndarray,
-    worm_radii: np.ndarray,
-    height: int,
-    width: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    segment_count = control_coords.shape[0] - 1
-    if segment_count <= 0:
-        return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64)
+    rows = (rows[:, np.newaxis] + row_offsets[np.newaxis, :]).flatten()
+    columns = (columns[:, np.newaxis] + column_offsets[np.newaxis, :]).flatten()
+    radius_mask = (
+        point_radii[:, np.newaxis] >= distances[np.newaxis, :]
+    ).flatten()
+    rows = rows[radius_mask]
+    columns = columns[radius_mask]
 
-    total_line_points = 0
-    max_radius = 0
-    for segment_index in range(segment_count):
-        row0 = int(control_coords[segment_index, 0])
-        col0 = int(control_coords[segment_index, 1])
-        row1 = int(control_coords[segment_index + 1, 0])
-        col1 = int(control_coords[segment_index + 1, 1])
-        count = max(abs(row0 - row1), abs(col0 - col1)) + 1
-        denominator = count - 1
-        if denominator == 0:
-            continue
-        emitted_count = count if segment_index == segment_count - 1 else count - 1
-        total_line_points += emitted_count
-        radius0 = worm_radii[segment_index]
-        radius1 = worm_radii[segment_index + 1]
-        for order in range(emitted_count):
-            fraction = float(order) / float(denominator)
-            radius = radius0 * (1.0 - fraction) + radius1 * fraction
-            radius_int = int(np.ceil(radius))
-            if radius_int > max_radius:
-                max_radius = radius_int
+    order = np.lexsort((rows, columns))
+    rows = rows[order]
+    columns = columns[order]
+    unique_mask = np.hstack(
+        ([True], (rows[:-1] != rows[1:]) | (columns[:-1] != columns[1:]))
+    )
+    rows = rows[unique_mask]
+    columns = columns[unique_mask]
 
-    if total_line_points == 0:
-        return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64)
-
-    disk_count = 0
-    for row_delta in range(-max_radius, max_radius + 1):
-        for col_delta in range(-max_radius, max_radius + 1):
-            if row_delta * row_delta + col_delta * col_delta <= max_radius * max_radius:
-                disk_count += 1
-    disk_rows = np.empty(disk_count, dtype=np.int64)
-    disk_cols = np.empty(disk_count, dtype=np.int64)
-    disk_distances = np.empty(disk_count, dtype=np.float64)
-    disk_index = 0
-    for row_delta in range(-max_radius, max_radius + 1):
-        for col_delta in range(-max_radius, max_radius + 1):
-            distance2 = row_delta * row_delta + col_delta * col_delta
-            if distance2 <= max_radius * max_radius:
-                disk_rows[disk_index] = row_delta
-                disk_cols[disk_index] = col_delta
-                disk_distances[disk_index] = np.sqrt(float(distance2))
-                disk_index += 1
-
-    expanded_count = 0
-    for segment_index in range(segment_count):
-        expanded_count += _count_expanded_segment_pixels(
-            control_coords,
-            worm_radii,
-            segment_index,
-            disk_distances,
-        )
-    if expanded_count == 0:
-        return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64)
-
-    expanded_rows = np.empty(expanded_count, dtype=np.int64)
-    expanded_cols = np.empty(expanded_count, dtype=np.int64)
-    write_index = 0
-    for segment_index in range(segment_count):
-        write_index = _write_expanded_segment_pixels(
-            control_coords,
-            worm_radii,
-            segment_index,
-            disk_rows,
-            disk_cols,
-            disk_distances,
-            expanded_rows,
-            expanded_cols,
-            write_index,
-        )
-
-    keys = expanded_cols * height + expanded_rows
-    order = np.argsort(keys)
-    unique_count = 0
-    previous_key = -1
-    for order_index in range(order.shape[0]):
-        row = expanded_rows[order[order_index]]
-        col = expanded_cols[order[order_index]]
-        if row < 0 or col < 0 or row >= height or col >= width:
-            continue
-        key = col * height + row
-        if key == previous_key:
-            continue
-        unique_count += 1
-        previous_key = key
-    rows = np.empty(unique_count, dtype=np.int64)
-    cols = np.empty(unique_count, dtype=np.int64)
-    previous_key = -1
-    output_index = 0
-    for order_index in range(order.shape[0]):
-        row = expanded_rows[order[order_index]]
-        col = expanded_cols[order[order_index]]
-        if row < 0 or col < 0 or row >= height or col >= width:
-            continue
-        key = col * height + row
-        if key == previous_key:
-            continue
-        rows[output_index] = row
-        cols[output_index] = col
-        output_index += 1
-        previous_key = key
-    return rows, cols
-
-
-@njit(cache=True)
-def _count_expanded_segment_pixels(
-    control_coords: np.ndarray,
-    worm_radii: np.ndarray,
-    segment_index: int,
-    disk_distances: np.ndarray,
-) -> int:
-    row0 = int(control_coords[segment_index, 0])
-    col0 = int(control_coords[segment_index, 1])
-    row1 = int(control_coords[segment_index + 1, 0])
-    col1 = int(control_coords[segment_index + 1, 1])
-    diff_i = abs(row0 - row1)
-    diff_j = abs(col0 - col1)
-    count = max(diff_i, diff_j) + 1
-    denominator = count - 1
-    if denominator == 0:
-        return 0
-    segment_count = control_coords.shape[0] - 1
-    emitted_count = count if segment_index == segment_count - 1 else count - 1
-    total = 0
-    for order in range(emitted_count):
-        fraction = float(order) / float(denominator)
-        radius = (
-            worm_radii[segment_index] * (1.0 - fraction)
-            + worm_radii[segment_index + 1] * fraction
-        )
-        for disk_index in range(disk_distances.shape[0]):
-            if radius >= disk_distances[disk_index]:
-                total += 1
-    return total
-
-
-@njit(cache=True)
-def _write_expanded_segment_pixels(
-    control_coords: np.ndarray,
-    worm_radii: np.ndarray,
-    segment_index: int,
-    disk_rows: np.ndarray,
-    disk_cols: np.ndarray,
-    disk_distances: np.ndarray,
-    expanded_rows: np.ndarray,
-    expanded_cols: np.ndarray,
-    write_index: int,
-) -> int:
-    row0 = int(control_coords[segment_index, 0])
-    col0 = int(control_coords[segment_index, 1])
-    row1 = int(control_coords[segment_index + 1, 0])
-    col1 = int(control_coords[segment_index + 1, 1])
-    diff_i = abs(row0 - row1)
-    diff_j = abs(col0 - col1)
-    count = max(diff_i, diff_j) + 1
-    denominator = count - 1
-    if denominator == 0:
-        return write_index
-    step_i = 1 if row1 > row0 else -1
-    step_j = 1 if col1 > col0 else -1
-    current_i = row0
-    current_j = col0
-    for point_index in range(count):
-        if point_index > 0:
-            if diff_i >= diff_j:
-                # CP/centrosome Bresenham branch where row changes every step.
-                remainder = diff_j * 2 - diff_i
-                current_i = row0
-                current_j = col0
-                for n in range(1, point_index + 1):
-                    if remainder >= 0:
-                        current_j += step_j
-                        remainder -= diff_i * 2
-                    current_i += step_i
-                    remainder += diff_j * 2
-            else:
-                remainder = diff_i * 2 - diff_j
-                current_i = row0
-                current_j = col0
-                for n in range(1, point_index + 1):
-                    if remainder >= 0:
-                        current_i += step_i
-                        remainder -= diff_j * 2
-                    current_j += step_j
-                    remainder += diff_i * 2
-        if (
-            segment_index != control_coords.shape[0] - 2
-            and point_index == count - 1
-        ):
-            continue
-        order = point_index
-        fraction = float(order) / float(denominator)
-        radius = (
-            worm_radii[segment_index] * (1.0 - fraction)
-            + worm_radii[segment_index + 1] * fraction
-        )
-        for disk_index in range(disk_distances.shape[0]):
-            if radius >= disk_distances[disk_index]:
-                expanded_rows[write_index] = current_i + disk_rows[disk_index]
-                expanded_cols[write_index] = current_j + disk_cols[disk_index]
-                write_index += 1
-    return write_index
+    height, width = shape
+    in_bounds = (
+        (rows >= 0)
+        & (columns >= 0)
+        & (rows < int(height))
+        & (columns < int(width))
+    )
+    return rows[in_bounds], columns[in_bounds]
 
 
 def control_points_for_label_image(

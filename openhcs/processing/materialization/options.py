@@ -102,7 +102,6 @@ class TiffStackOptions(FileOutputOptions, SourceOptions):
     """TIFF stack writer options (per-slice TIFF + summary)."""
 
     normalize_uint8: bool = False
-    preserve_channels_last_color: bool = True
     slice_pattern: str = "_slice_{index:03d}.tif"
     summary_suffix: str = "_summary.txt"
     empty_summary: str = "No images generated (empty data)\n"
@@ -117,3 +116,19 @@ class TextOptions(FileOutputOptions, SourceOptions):
     """Text writer options."""
 
     filename_suffix: str = ".txt"
+
+
+@dataclass(frozen=True)
+class ImageFileOptions(FileOutputOptions, SourceOptions):
+    """One image file written through the registered image format family."""
+
+    relative_path_template: str | None = None
+
+
+@dataclass(frozen=True)
+class FileBundleOptions(FileOutputOptions):
+    """A validated mapping of relative output paths to file bytes or text."""
+
+    filename_identity: MaterializedFilenameIdentity = (
+        MaterializedFilenameIdentity.ARTIFACT_NAME
+    )

@@ -1,34 +1,47 @@
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 
 import pytest
 
 from openhcs.constants import GroupBy, VariableComponents
+from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import (
+    ArtifactInputProjectionPlan,
+    ArtifactInputPlan,
     ArtifactOutputPlan,
     ArtifactSpec,
+    ArtifactSpecRef,
     ImageArtifactType,
-    ObjectLabelsArtifactType,
 )
-from openhcs.core.callable_contract import CallableContract
-from openhcs.core.function_patterns import compile_function_pattern
+from openhcs.core.callable_contract import CallableContract, CallableMetadata
+from openhcs.core.compiled_step_plan import CompiledStepPlan
+from openhcs.core.component_group_scope import ComponentGroupScope
+from openhcs.core.function_patterns import (
+    CompiledFunctionPattern,
+    FunctionPatternSyntax,
+    InvocationArtifactInputEdgePlan,
+    InvocationArtifactInputProjectionKey,
+    NormalizedFunctionItem,
+    compile_function_pattern,
+    normalize_function_pattern,
+)
+from openhcs.core.invocation_artifacts import (
+    ArtifactDeclarationStepContext,
+    InvocationContractPlan,
+    InvocationContractProvider,
+)
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.module_artifact_contract import (
-    ModuleArtifactContract,
-    module_artifact_contract,
-)
 from openhcs.core.pipeline.funcstep_contract_validator import (
     FuncStepContractValidator,
-    FunctionStepArtifactContractScope,
 )
 from openhcs.core.pipeline.function_contracts import (
     allowed_group_by,
     artifact_inputs,
-    artifact_outputs,
     require_variable_component_stack,
     required_variable_components,
 )
 from openhcs.core.config import LazyProcessingConfig
-from openhcs.core.runtime_adapters import runtime_adapter
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
@@ -42,8 +55,107 @@ def _function(name="function"):
     return func
 
 
+def _runtime_sentinel(
+    name: str,
+    calls: list[str],
+) -> Callable[[object], object]:
+    def func(image: object) -> object:
+        calls.append(name)
+        return image
+
+    func.__name__ = name
+    func.__module__ = "builtins"
+    return func
+
+
 def _compiled_pattern(func):
     return compile_function_pattern(func, {}, {})
+
+
+def _compiled_pattern_with_exact_input_edges(
+    func: FunctionPatternSyntax,
+    input_plans: Mapping[ArtifactSpecRef, ArtifactInputPlan],
+) -> CompiledFunctionPattern:
+    compiled = compile_function_pattern(func, input_plans, {})
+    groups = []
+    for group in compiled.groups:
+        invocations = []
+        for invocation in group.invocations:
+            edges = []
+            for input_index, spec in enumerate(invocation.contract.artifact_inputs):
+                storage_plan = next(
+                    plan
+                    for plan in input_plans.values()
+                    if plan.ref() == spec.ref()
+                )
+                producer_scope = storage_plan.producer_group_scope()
+                invocation_scope = (
+                    producer_scope
+                    if compiled.is_grouped
+                    else ComponentGroupScope.ungrouped()
+                )
+                edges.append(
+                    InvocationArtifactInputEdgePlan(
+                        key=InvocationArtifactInputProjectionKey(
+                            invocation_key=invocation.key,
+                            input_index=input_index,
+                        ),
+                        spec=spec,
+                        storage_plan=storage_plan,
+                        projection=ArtifactInputProjectionPlan(
+                            invocation_scope=invocation_scope,
+                            producer_selection_scope=producer_scope,
+                            component_scopes=(
+                                () if producer_scope.is_ungrouped else (producer_scope,)
+                            ),
+                        ),
+                    )
+                )
+            invocations.append(invocation.with_artifact_input_edges(edges))
+        groups.append(replace(group, invocations=tuple(invocations)))
+    return replace(compiled, groups=tuple(groups))
+
+
+@dataclass(frozen=True)
+class _MetadataTransformProvider(InvocationContractProvider):
+    transform: Callable[[CallableMetadata], CallableMetadata]
+
+    def __call__(
+        self,
+        invocation: NormalizedFunctionItem,
+        step_context: ArtifactDeclarationStepContext,
+    ) -> InvocationContractPlan:
+        del step_context
+        return InvocationContractPlan(
+            contract=replace(
+                invocation.contract,
+                metadata=self.transform(invocation.contract.metadata),
+            )
+        )
+
+
+def _compiled_semantic_step_plan(
+    pattern: FunctionPatternSyntax,
+    *,
+    provider: InvocationContractProvider,
+    variable_components: tuple[VariableComponents, ...] = (),
+    group_by: GroupBy = GroupBy.NONE,
+) -> CompiledStepPlan:
+    return CompiledStepPlan(
+        step_index=0,
+        step_name="enriched-contract-step",
+        step_type="FunctionStep",
+        axis_id="A01",
+        func=pattern,
+        variable_components=variable_components,
+        group_by=group_by,
+        compiled_function_pattern=compile_function_pattern(
+            pattern,
+            {},
+            {},
+            invocation_contract_provider=provider,
+        ),
+    )
 
 
 def _artifact_output(
@@ -93,7 +205,19 @@ def test_validate_compiled_function_pattern_reports_invocation_identity():
         )
 
 
-def test_normalized_group_by_rejects_variable_component_conflict():
+def test_normalized_group_by_resolves_non_grouped_variable_component_conflict():
+    assert (
+        FuncStepContractValidator.normalized_group_by(
+            GroupBy.CHANNEL,
+            (VariableComponents.CHANNEL,),
+            "step",
+            normalize_function_pattern(_function()),
+        )
+        is GroupBy.NONE
+    )
+
+
+def test_normalized_group_by_rejects_grouped_variable_component_conflict():
     with pytest.raises(
         ValueError,
         match=(
@@ -106,6 +230,7 @@ def test_normalized_group_by_rejects_variable_component_conflict():
             GroupBy.CHANNEL,
             (VariableComponents.CHANNEL,),
             "step",
+            normalize_function_pattern({"1": _function()}),
         )
 
 
@@ -287,24 +412,156 @@ def test_validate_allowed_group_by_rejects_forbidden_fanout():
         )
 
 
-def test_validate_required_variable_components_reads_module_contract_axis():
-    @module_artifact_contract(
-        ModuleArtifactContract(
-            "TrackObjects",
-            required_variable_components=(VariableComponents.TIMEPOINT,),
+def test_compiled_group_rejects_enriched_allowed_group_by_before_runtime():
+    runtime_calls: list[str] = []
+    first = _runtime_sentinel("first", runtime_calls)
+    second = _runtime_sentinel("second", runtime_calls)
+    provider = _MetadataTransformProvider(
+        lambda metadata: replace(
+            metadata,
+            allowed_group_by=(GroupBy.SITE,),
         )
     )
-    def process(image):
+    step_plan = _compiled_semantic_step_plan(
+        {"1": first, "2": second},
+        provider=provider,
+        group_by=GroupBy.CHANNEL,
+    )
+
+    with pytest.raises(ValueError, match="allows group_by SITE; resolved CHANNEL"):
+        FuncStepContractValidator.validate_compiled_step_plan(step_plan)
+
+    assert runtime_calls == []
+
+
+def test_compiled_step_rejects_enriched_stack_requirement_before_runtime():
+    runtime_calls: list[str] = []
+    process = _runtime_sentinel("full_stack", runtime_calls)
+    provider = _MetadataTransformProvider(
+        lambda metadata: replace(
+            metadata,
+            processing_contract=ProcessingContract.PURE_3D,
+        )
+    )
+    step_plan = _compiled_semantic_step_plan(process, provider=provider)
+
+    with pytest.raises(ValueError, match="PURE_3D stack semantics"):
+        FuncStepContractValidator.validate_compiled_step_plan(step_plan)
+
+    assert runtime_calls == []
+
+
+def test_compiled_step_accepts_exact_input_edges_across_scheduler_scope():
+    @artifact_inputs(
+        ArtifactSpec.input("left", ImageArtifactType),
+        ArtifactSpec.input("right", ImageArtifactType),
+    )
+    @numpy(contract=ProcessingContract.PURE_2D)
+    def combine(image):
         return image
 
-    contract = CallableContract.from_callable(process)
-
-    with pytest.raises(ValueError, match="TrackObjects"):
-        FuncStepContractValidator.validate_required_variable_components(
-            (),
-            (contract,),
-            "TrackObjects",
+    input_plan_values = tuple(
+        ArtifactInputPlan(
+            name=name,
+            path=f"/memory/{name}.pkl",
+            artifact_type=ImageArtifactType,
+            group_keys=(key,),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={
+                key: f"/memory/{name}.pkl",
+            },
         )
+        for name, key in (("left", "1"), ("right", "2"))
+    )
+    input_plans = {plan.ref(): plan for plan in input_plan_values}
+    step_plan = CompiledStepPlan(
+        step_index=0,
+        step_name="combine",
+        step_type="FunctionStep",
+        axis_id="A01",
+        func=combine,
+        variable_components=(),
+        group_by=GroupBy.CHANNEL,
+        artifact_inputs=input_plans,
+        execution_group_scope=ComponentGroupScope.from_raw(
+            ("1", "2"),
+            component=AllComponents.CHANNEL,
+        ),
+        compiled_function_pattern=_compiled_pattern_with_exact_input_edges(
+            combine,
+            input_plans,
+        ),
+    )
+
+    FuncStepContractValidator.validate_compiled_step_plan(step_plan)
+
+
+def test_compiled_dict_branches_accept_their_exact_input_scopes():
+    @artifact_inputs(ArtifactSpec.input("left", ImageArtifactType))
+    @numpy(contract=ProcessingContract.PURE_2D)
+    def process_left(image):
+        return image
+
+    @artifact_inputs(ArtifactSpec.input("right", ImageArtifactType))
+    @numpy(contract=ProcessingContract.PURE_2D)
+    def process_right(image):
+        return image
+
+    pattern = {"1": process_left, "2": process_right}
+    input_plan_values = tuple(
+        ArtifactInputPlan(
+            name=name,
+            path=f"/memory/{name}.pkl",
+            artifact_type=ImageArtifactType,
+            group_keys=(key,),
+            group_component=AllComponents.CHANNEL,
+            paths_by_group={key: f"/memory/{name}.pkl"},
+        )
+        for name, key in (("left", "1"), ("right", "2"))
+    )
+    input_plans = {plan.ref(): plan for plan in input_plan_values}
+    step_plan = CompiledStepPlan(
+        step_index=0,
+        step_name="branch",
+        step_type="FunctionStep",
+        axis_id="A01",
+        func=pattern,
+        variable_components=(),
+        group_by=GroupBy.CHANNEL,
+        artifact_inputs=input_plans,
+        execution_group_scope=ComponentGroupScope.from_raw(
+            ("1", "2"),
+            component=AllComponents.CHANNEL,
+        ),
+        compiled_function_pattern=_compiled_pattern_with_exact_input_edges(
+            pattern,
+            input_plans,
+        ),
+    )
+
+    FuncStepContractValidator.validate_compiled_step_plan(step_plan)
+
+
+def test_compiled_group_allows_distinct_enriched_callables_for_resolved_config():
+    runtime_calls: list[str] = []
+    first = _runtime_sentinel("first", runtime_calls)
+    second = _runtime_sentinel("second", runtime_calls)
+    provider = _MetadataTransformProvider(
+        lambda metadata: replace(
+            metadata,
+            allowed_group_by=(GroupBy.CHANNEL,),
+            processing_contract=ProcessingContract.PURE_2D,
+        )
+    )
+    step_plan = _compiled_semantic_step_plan(
+        {"1": first, "2": second},
+        provider=provider,
+        group_by=GroupBy.CHANNEL,
+    )
+
+    FuncStepContractValidator.validate_compiled_step_plan(step_plan)
+
+    assert runtime_calls == []
 
 
 def test_validate_funcstep_enforces_required_variable_components():
@@ -325,98 +582,3 @@ def test_validate_funcstep_enforces_required_variable_components():
 
     with pytest.raises(ValueError, match="requires variable_components TIMEPOINT"):
         FuncStepContractValidator.validate_funcstep(step)
-
-
-def _runtime_artifact_step_plan(
-    *,
-    variable_components=(),
-    group_by=GroupBy.NONE,
-):
-    @runtime_adapter(
-        "runtime",
-        lambda _request: object(),
-        manages_artifact_inputs=True,
-    )
-    @artifact_inputs(ArtifactSpec.input("InputImage", ImageArtifactType))
-    @artifact_outputs(ArtifactSpec.output("OutputImage", ImageArtifactType))
-    def runtime_artifact_step(image, *, runtime):
-        return image
-
-    runtime_artifact_step.input_memory_type = "numpy"
-    runtime_artifact_step.output_memory_type = "numpy"
-    artifact_outputs_by_key = {"OutputImage": _artifact_output()}
-    step_plan = SimpleNamespace(
-        step_name="EnhanceOrSuppressFeatures",
-        variable_components=variable_components,
-        artifact_outputs=artifact_outputs_by_key,
-        compiled_function_pattern=compile_function_pattern(
-            runtime_artifact_step,
-            {"InputImage": object()},
-            artifact_outputs_by_key,
-        ),
-        group_by=group_by,
-    )
-    return step_plan
-
-
-def test_validate_artifact_managed_runtime_scope_allows_channel_variable_axis():
-    step_plan = _runtime_artifact_step_plan(
-        variable_components=(VariableComponents.CHANNEL,),
-    )
-
-    FuncStepContractValidator.validate_artifact_managed_runtime_scope(step_plan)
-
-
-def test_validate_artifact_managed_runtime_scope_allows_channel_group_by_batch_axis():
-    step_plan = _runtime_artifact_step_plan(
-        variable_components=(VariableComponents.SITE,),
-        group_by=GroupBy.CHANNEL,
-    )
-
-    FuncStepContractValidator.validate_artifact_managed_runtime_scope(step_plan)
-
-
-def test_validate_artifact_managed_runtime_scope_rejects_projected_channel_group_axis():
-    step_plan = _runtime_artifact_step_plan(
-        variable_components=(VariableComponents.CHANNEL,),
-        group_by=GroupBy.CHANNEL,
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="cannot expand named runtime artifacts by CHANNEL",
-    ):
-        FuncStepContractValidator.validate_artifact_managed_runtime_scope(step_plan)
-
-
-def test_validate_artifact_managed_runtime_scope_allows_site_axis():
-    step_plan = _runtime_artifact_step_plan(
-        variable_components=(VariableComponents.SITE,),
-        group_by=GroupBy.NONE,
-    )
-
-    FuncStepContractValidator.validate_artifact_managed_runtime_scope(step_plan)
-
-
-def _artifact_contract_scope():
-    func = _function("plain")
-    func.input_memory_type = "numpy"
-    func.output_memory_type = "numpy"
-    return FunctionStepArtifactContractScope(
-        step_name="IdentifyPrimaryObjects",
-        variable_components=(VariableComponents.SITE,),
-        group_by=GroupBy.NONE,
-        artifact_outputs={
-            "Nuclei": _artifact_output(
-                "Nuclei",
-                kind=ObjectLabelsArtifactType,
-            )
-        },
-        compiled_function_pattern=_compiled_pattern(func),
-    )
-
-
-def test_validate_artifact_contract_scope_allows_variable_components():
-    FuncStepContractValidator.validate_artifact_contract_scope(
-        _artifact_contract_scope()
-    )

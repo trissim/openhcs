@@ -401,11 +401,13 @@ def test_compile_transport_rejects_cellprofiler_module_objects():
         CompileWorkflowService.normalize_pipeline_for_transport(pipeline)
 
 
-def test_compile_transport_preserves_stable_cellprofiler_function_wrappers():
-    import pickle
-
+def test_compile_transport_preserves_registered_cellprofiler_function_identity():
     import openhcs.processing.backends.cellprofiler as cellprofiler_backend
+    from openhcs.core.function_step_transport import FunctionStepTransportAuthority
     from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.processing.backends.lib_registry.registry_service import (
+        RegistryService,
+    )
 
     crop = cellprofiler_backend.crop
 
@@ -413,8 +415,11 @@ def test_compile_transport_preserves_stable_cellprofiler_function_wrappers():
 
     normalized = CompileWorkflowService.normalize_pipeline_for_transport(pipeline)
 
-    assert normalized[0].func is cellprofiler_backend.crop
-    pickle.dumps(normalized)
+    assert normalized[0].func is RegistryService.registered_callable(
+        cellprofiler_backend.crop
+    )
+    source = FunctionStepTransportAuthority.source_from_pipeline(normalized)
+    compile(source, "<pipeline>", "exec")
 
 
 def test_plate_pipeline_submission_normalizes_compile_and_run_signatures():

@@ -1,6 +1,8 @@
 """Tests for ImageBrowser filter projection without constructing the widget."""
 
 from pathlib import Path
+from polystore.disk import DiskStorageBackend
+from polystore.filemanager import FileManager
 from openhcs.constants.constants import FileFormat
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.pipeline.path_planner import PathPlannerPathAuthority
@@ -149,6 +151,9 @@ class _InventoryMicroscopeHandler:
         self.metadata_handler = _InventoryMetadataHandler(handler_result_dir)
         self.parser = _InventoryParser()
 
+    def get_primary_backend(self, _plate_path: Path, _filemanager: FileManager) -> str:
+        return "disk"
+
 
 class _LazyInventoryOrchestrator:
     def __init__(self, plate_path: Path, handler_result_dir: Path) -> None:
@@ -156,6 +161,7 @@ class _LazyInventoryOrchestrator:
         self.microscope_handler = None
         self._handler = _InventoryMicroscopeHandler(handler_result_dir)
         self._config = GlobalPipelineConfig()
+        self.filemanager = FileManager({"disk": DiskStorageBackend()})
         self.initialized = False
 
     def initialize_microscope_handler(self) -> None:
@@ -309,6 +315,8 @@ def test_plate_file_inventory_from_handler_matches_browser_file_shape(
         plate_path=plate_root,
         metadata_handler=_InventoryMetadataHandler(handler_result_dir),
         parser=_InventoryParser(),
+        filemanager=FileManager({"disk": DiskStorageBackend()}),
+        backend="disk",
         path_config=config.path_planning_config,
         all_subdirs=True,
     )
@@ -346,6 +354,8 @@ def test_plate_file_inventory_query_returns_unified_browser_records(
         plate_path=plate_root,
         metadata_handler=_InventoryMetadataHandler(handler_result_dir),
         parser=_InventoryParser(),
+        filemanager=FileManager({"disk": DiskStorageBackend()}),
+        backend="disk",
         all_subdirs=True,
     )
 

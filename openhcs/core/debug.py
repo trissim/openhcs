@@ -9,7 +9,7 @@ import time
 import traceback
 import threading
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass, field, fields, is_dataclass
+from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
@@ -17,15 +17,24 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Mapping
 from uuid import uuid4
 
 from metaclass_registry import AutoRegisterMeta
+import numpy as np
 
 from openhcs.core.artifacts import (
     ArtifactOutputPlan,
     ArtifactPlan,
+    ArtifactSpecRef,
     ArtifactType,
     MeasurementsArtifactType,
     RelationshipsArtifactType,
 )
 from openhcs.core.function_patterns import CompiledFunctionInvocation
+from openhcs.core.runtime_plane_projection import RuntimePlaneAxis, RuntimePlaneAxisProjector, RuntimePlaneAxisValueProjection, RuntimePlaneProjection
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelValue,
+)
+from openhcs.core.runtime_array_values import RuntimeArrayPayload
+from openhcs.core.runtime_image_values import image_payload_metadata
 from openhcs.core.progress import (
     ProgressEvent,
     ProgressIdentity,
@@ -457,6 +466,32 @@ class DebugArtifactRef:
             identity=DebugArtifactIdentity.from_artifact_plan(plan),
         )
 
+    @classmethod
+    def from_bound_artifact(
+        cls,
+        *,
+        plan: ArtifactPlan,
+        cursor: DebugCursor,
+        value: object,
+    ) -> "DebugArtifactRef":
+        """Build a reference carrying shape facts from one bound artifact value."""
+
+        shape: tuple[int, ...] | None = None
+        dtype: str | None = None
+        if isinstance(value, RuntimeArrayPayload):
+            shape = tuple(int(axis_size) for axis_size in value.shape)
+            payload_data = value.array_payload_data()
+            if isinstance(payload_data, np.ndarray):
+                dtype = str(payload_data.dtype)
+        elif isinstance(value, np.ndarray):
+            shape = tuple(int(axis_size) for axis_size in value.shape)
+            dtype = str(value.dtype)
+        return replace(
+            cls.from_artifact_plan(plan=plan, cursor=cursor),
+            shape=shape,
+            dtype=dtype,
+        )
+
     def to_json_dict(self) -> dict[str, Any]:
         return {
             "kind": self.kind.value,
@@ -599,12 +634,41 @@ class DebugArtifactRefProjection:
     def from_artifact_plans(
         cls,
         *,
-        artifact_plans: Mapping[str, ArtifactPlan],
+        artifact_plans: Mapping[ArtifactSpecRef, ArtifactPlan],
         cursor: DebugCursor,
+        artifact_values: Mapping[ArtifactSpecRef, object] | None = None,
     ) -> "DebugArtifactRefProjection":
+        ArtifactPlan.require_exact_map(
+            artifact_plans,
+            boundary="Debug artifact plan",
+        )
+        values = {} if artifact_values is None else artifact_values
+        for ref in values:
+            if not isinstance(ref, ArtifactSpecRef):
+                raise TypeError(
+                    "Debug artifact value maps require ArtifactSpecRef keys, "
+                    f"got {type(ref).__name__}."
+                )
+        unknown_value_refs = tuple(ref for ref in values if ref not in artifact_plans)
+        if unknown_value_refs:
+            raise ValueError(
+                "Debug artifact values require selected exact plans; missing plans "
+                f"for {unknown_value_refs!r}."
+            )
         return cls(
             refs=tuple(
-                DebugArtifactRef.from_artifact_plan(plan=plan, cursor=cursor)
+                (
+                    DebugArtifactRef.from_bound_artifact(
+                        plan=plan,
+                        cursor=cursor,
+                        value=values[plan.ref()],
+                    )
+                    if plan.ref() in values
+                    else DebugArtifactRef.from_artifact_plan(
+                        plan=plan,
+                        cursor=cursor,
+                    )
+                )
                 for plan in artifact_plans.values()
             )
         )
@@ -633,12 +697,160 @@ class DebugInvocationParameter:
     value_repr: str
 
     @classmethod
+    def from_value(
+        cls,
+        *,
+        name: str,
+        value: Any,
+        plane_projector: RuntimePlaneAxisProjector | None = None,
+    ) -> "DebugInvocationParameter":
+        """Project one bound call value without materializing or repr-ing payloads."""
+
+        value_type = f"{type(value).__module__}.{type(value).__qualname__}"
+        facts: list[str] = []
+        projection_facts: tuple[str, ...] = ()
+        projection: RuntimePlaneAxisValueProjection | None = None
+
+        if isinstance(value, ObjectLabelValue):
+            domain = value.object_label_domain()
+            facts.extend(
+                (
+                    f"representation={value.representation.value!r}",
+                    f"domain_scope={domain.scope.value!r}",
+                    f"declared_object_count={domain.declared_object_count!r}",
+                    f"declared_object_id_count={len(domain.declared_object_ids)}",
+                    "declared_object_plane_count="
+                    f"{len(domain.declared_object_id_domains)}",
+                    f"source_plane_count={value.source_provenance.source_plane_count}",
+                    f"source_image_name_count={len(value.source_image_names)}",
+                )
+            )
+            projection = value.declared_plane_projection()
+            facts.extend(
+                (
+                    "declared_plane_axis="
+                    f"{None if value.plane_axis is None else value.plane_axis.value!r}",
+                    "declared_cardinality="
+                    f"{None if projection is None else projection.axis_size!r}",
+                )
+            )
+            if isinstance(value, RuntimeArrayPayload):
+                facts.append(f"shape={value.shape!r}")
+                label_data = value.array_payload_data()
+                if isinstance(label_data, np.ndarray):
+                    facts.append(f"dtype={str(label_data.dtype)!r}")
+        elif isinstance(value, RuntimeArrayPayload):
+            facts.append(f"shape={value.shape!r}")
+            image_data = value.array_payload_data()
+            if isinstance(image_data, np.ndarray):
+                facts.append(f"dtype={str(image_data.dtype)!r}")
+            metadata = image_payload_metadata(value)
+            if metadata.has_values:
+                facts.extend(
+                    (
+                        f"source_dtype={metadata.source_dtype!r}",
+                        f"source_channel_axis={metadata.source_channel_axis!r}",
+                        "source_plane_count="
+                        f"{metadata.source_provenance.source_plane_count}",
+                        "source_image_name_count="
+                        f"{len(metadata.source_image_names)}",
+                    )
+                )
+            if metadata.plane_axis is not None:
+                payload_shape = tuple(int(axis_size) for axis_size in value.shape)
+                if plane_projector is not None and (
+                    metadata.plane_axis is RuntimePlaneAxis.RUNTIME_SLICE
+                    or not isinstance(plane_projector, RuntimePlaneProjection)
+                ):
+                    projection = RuntimePlaneAxisValueProjection.from_projector(
+                        plane_projector,
+                        metadata.plane_axis,
+                        metadata.source_image_names,
+                    )
+                if projection is None:
+                    facts.append(f"plane_axis={metadata.plane_axis.value!r}")
+                facts.extend(
+                    (
+                        f"declared_plane_axis={metadata.plane_axis.value!r}",
+                        f"declared_cardinality={payload_shape[0]}",
+                    )
+                )
+            else:
+                facts.extend(
+                    (
+                        "declared_plane_axis=None",
+                        "declared_cardinality=None",
+                    )
+                )
+        elif isinstance(value, np.ndarray):
+            facts.extend(
+                (
+                    f"shape={value.shape!r}",
+                    f"dtype={str(value.dtype)!r}",
+                )
+            )
+        elif isinstance(value, RuntimeSliceAlignedValueSet):
+            facts.extend(
+                (
+                    f"slice_count={value.slice_count}",
+                    f"declared_cardinality={value.slice_count}",
+                )
+            )
+        elif isinstance(value, RuntimePlaneAxisValueProjection):
+            projection = value
+            facts.append(f"declared_cardinality={value.axis_size}")
+        elif isinstance(value, Enum):
+            facts.append(f"member={value.name}")
+        elif isinstance(value, str):
+            facts.extend(
+                (
+                    f"value={value[:128]!r}",
+                    f"length={len(value)}",
+                )
+            )
+        elif value is None or isinstance(value, (int, float, bool)):
+            facts.append(f"value={value!r}")
+        elif isinstance(value, Mapping):
+            facts.append(f"item_count={len(value)}")
+        elif isinstance(value, (tuple, list, set, frozenset)):
+            facts.append(f"item_count={len(value)}")
+
+        if projection is not None:
+            plane_coordinate = (
+                "preserved"
+                if projection.plane_index is None
+                else str(projection.plane_index)
+            )
+            projection_facts = (
+                f"plane_axis={projection.axis.value!r}",
+                f"plane_index={plane_coordinate}",
+                f"axis_size={projection.axis_size}",
+                f"source_alias_count={len(projection.source_aliases)}",
+            )
+        facts = [*projection_facts, *facts]
+
+        value_text = (
+            value_type
+            if not facts
+            else f"{value_type}({', '.join(facts)})"
+        )
+        if len(value_text) > 512:
+            value_text = f"{value_text[:509]}..."
+        return cls(name=name, value_repr=value_text)
+
+    @classmethod
     def from_kwargs(
         cls,
         kwargs: Mapping[str, Any],
+        *,
+        plane_projector: RuntimePlaneAxisProjector | None = None,
     ) -> tuple["DebugInvocationParameter", ...]:
         return tuple(
-            cls(name=str(name), value_repr=repr(value))
+            cls.from_value(
+                name=str(name),
+                value=value,
+                plane_projector=plane_projector,
+            )
             for name, value in sorted(kwargs.items(), key=lambda item: str(item[0]))
         )
 
@@ -1115,7 +1327,7 @@ class DebugWarmReplayArtifactReusePlan:
     def from_artifact_plans(
         cls,
         *,
-        artifact_plans: Mapping[str, ArtifactPlan],
+        artifact_plans: Mapping[ArtifactSpecRef, ArtifactPlan],
         cursor: DebugCursor,
         snapshot_store: "DebugSnapshotStore | None" = None,
     ) -> "DebugWarmReplayArtifactReusePlan":
@@ -2285,7 +2497,7 @@ class DebugExecutionPolicy(ABC, metaclass=AutoRegisterMeta):
         step_name: str,
         step_scope_id: str | None,
         context: object,
-        artifact_outputs: Mapping[str, ArtifactPlan],
+        artifact_outputs: Mapping[ArtifactSpecRef, ArtifactPlan],
     ) -> None:
         """Validate/hydrate outputs for a skipped warm-replay step."""
 
@@ -2445,7 +2657,7 @@ class ProgressDebugExecutionPolicy(DebugExecutionPolicy):
         step_name: str,
         step_scope_id: str | None,
         context: object,
-        artifact_outputs: Mapping[str, ArtifactPlan],
+        artifact_outputs: Mapping[ArtifactSpecRef, ArtifactPlan],
     ) -> None:
         if not self.should_reuse_step_outputs(step_index):
             return

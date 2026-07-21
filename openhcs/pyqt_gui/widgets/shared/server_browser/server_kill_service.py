@@ -20,10 +20,9 @@ class ServerKillService:
     """Performs server kill operations with explicit policy."""
 
     @classmethod
-    def openhcs_default(cls) -> Self:
+    def openhcs_default(cls, config: object) -> Self:
         """Build the OpenHCS ZMQ kill service with the runtime dependencies."""
 
-        from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
         from zmqruntime.client import ZMQClient
         from zmqruntime.queue_tracker import GlobalQueueTrackerRegistry
 
@@ -32,7 +31,7 @@ class ServerKillService:
                 port, graceful=graceful, config=cfg
             ),
             queue_tracker_registry_factory=GlobalQueueTrackerRegistry,
-            config=OPENHCS_ZMQ_CONFIG,
+            config=config,
         )
 
     def __init__(

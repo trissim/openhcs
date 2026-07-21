@@ -3,9 +3,21 @@
 from __future__ import annotations
 
 from abc import ABC
+from dataclasses import dataclass
 from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
+
+from openhcs.agent.dto.knowledge import KnowledgeBaseDocumentTarget
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoringContextRoute:
+    """Intent and deepening targets owned by one authoring-context kind."""
+
+    title: str
+    use_when: str
+    knowledge_targets: tuple[KnowledgeBaseDocumentTarget, ...] = ()
 
 
 class AuthoringContextDeclaration(ABC, metaclass=AutoRegisterMeta):
@@ -16,6 +28,7 @@ class AuthoringContextDeclaration(ABC, metaclass=AutoRegisterMeta):
     __skip_if_no_key__ = True
 
     kind: ClassVar[str | None] = None
+    route: ClassVar[AuthoringContextRoute | None] = None
 
     @classmethod
     def context_facets(cls) -> tuple[type["AuthoringContextDeclaration"], ...]:
@@ -58,6 +71,12 @@ class AuthoringContextDeclaration(ABC, metaclass=AutoRegisterMeta):
             raise ValueError(f"{cls.__name__} must declare an authoring context kind.")
         return cls.kind
 
+    @classmethod
+    def require_route(cls) -> AuthoringContextRoute:
+        if cls.route is None:
+            raise ValueError(f"{cls.__name__} must declare an authoring context route.")
+        return cls.route
+
 
 class PipelineSystemModelContext(AuthoringContextDeclaration):
     """Sections that explain the FunctionStep/config/compiler model."""
@@ -99,10 +118,6 @@ class FirstUseWorkflowContext(AuthoringContextDeclaration):
     """Sections for contextless first-use MCP onboarding."""
 
 
-class CoreOpenHCSModelContext(AuthoringContextDeclaration):
-    """Sections that explain OpenHCS as a compiler/runtime system."""
-
-
 class FolderOnboardingContext(AuthoringContextDeclaration):
     """Sections for taking a user from an image folder to a validated setup."""
 
@@ -119,6 +134,10 @@ class HeadlessExecutionContext(AuthoringContextDeclaration):
     """Sections for direct orchestrator compile/run sessions."""
 
 
+class DebuggingWorkflowContext(AuthoringContextDeclaration):
+    """Sections for compiled-plan and paused-runtime diagnosis."""
+
+
 class ViewerReviewContext(AuthoringContextDeclaration):
     """Sections for image, payload, and ROI review through viewer tools."""
 
@@ -127,70 +146,21 @@ class ObjectStateEditingContext(AuthoringContextDeclaration):
     """Sections for typed ObjectState inspection and mutation."""
 
 
-class PipelineMentalModelContext(
-    PipelineSystemModelContext,
-    CellProfilerTranslationContext,
-    RuntimeUiCoordinationContext,
-    StateCodeRoundtripContext,
-    CustomFunctionRuntimeContext,
-    SourceBindingWorkflowContext,
-    ExampleCorpusContext,
-):
-    """Composable bundle for the core OpenHCS authoring mental model."""
-
-
-class AgentCapabilityIndexContext(AuthoringContextDeclaration):
-    """Sections that project the capability registry into prompt context."""
-
-
-class PipelineAuthoringContext(
-    PipelineMentalModelContext,
-    PipelineAuthoringRulesContext,
-    AuthoringContextDeclaration,
-):
-    kind = "pipeline"
-
-
-class CustomFunctionAuthoringContext(
-    StateCodeRoundtripContext,
-    CustomFunctionRuntimeContext,
-    CustomFunctionAuthoringRulesContext,
-    AuthoringContextDeclaration,
-):
-    kind = "custom_function"
-
-
 class FirstUseAuthoringContext(
-    CoreOpenHCSModelContext,
-    CellProfilerTranslationContext,
     FirstUseWorkflowContext,
-    FolderOnboardingContext,
-    UiVisibleWorkflowContext,
-    ViewerReviewContext,
-    AgentCapabilityIndexContext,
     AuthoringContextDeclaration,
 ):
     kind = "first_use"
-
-
-class FolderOnboardingAuthoringContext(
-    PipelineSystemModelContext,
-    SourceBindingWorkflowContext,
-    ExampleCorpusContext,
-    FolderOnboardingContext,
-    AuthoringContextDeclaration,
-):
-    kind = "folder_onboarding"
-
-
-class DomainExpertAssistedSetupAuthoringContext(
-    DomainExpertAssistedSetupContext,
-    FolderOnboardingContext,
-    UiVisibleWorkflowContext,
-    ViewerReviewContext,
-    AuthoringContextDeclaration,
-):
-    kind = "domain_expert_assisted_setup"
+    route = AuthoringContextRoute(
+        title="Choose an OpenHCS workflow",
+        use_when=(
+            "you do not yet know which OpenHCS state owner or workflow matches "
+            "the request"
+        ),
+        knowledge_targets=(
+            KnowledgeBaseDocumentTarget("openhcs_architecture_quick_start"),
+        ),
+    )
 
 
 class UiVisibleWorkflowAuthoringContext(
@@ -200,6 +170,101 @@ class UiVisibleWorkflowAuthoringContext(
     AuthoringContextDeclaration,
 ):
     kind = "ui_visible_workflow"
+    route = AuthoringContextRoute(
+        title="Work in the running desktop UI",
+        use_when=(
+            "the user asks to open, show, continue, or edit work in the visible "
+            "OpenHCS desktop"
+        ),
+        knowledge_targets=(
+            KnowledgeBaseDocumentTarget("openhcs_basic_interface"),
+            KnowledgeBaseDocumentTarget("openhcs_code_ui_editing"),
+        ),
+    )
+
+
+class DomainExpertAssistedSetupAuthoringContext(
+    DomainExpertAssistedSetupContext,
+    AuthoringContextDeclaration,
+):
+    kind = "domain_expert_assisted_setup"
+    route = AuthoringContextRoute(
+        title="Set up a workflow from biological intent",
+        use_when=(
+            "a domain expert describes the experiment and expected result but wants "
+            "the agent to handle OpenHCS mechanics"
+        ),
+        knowledge_targets=(
+            KnowledgeBaseDocumentTarget("openhcs_domain_expert_onboarding"),
+            KnowledgeBaseDocumentTarget("openhcs_example_corpus_map"),
+        ),
+    )
+
+
+class FolderOnboardingAuthoringContext(
+    SourceBindingWorkflowContext,
+    ExampleCorpusContext,
+    FolderOnboardingContext,
+    AuthoringContextDeclaration,
+):
+    kind = "folder_onboarding"
+    route = AuthoringContextRoute(
+        title="Inspect and onboard image data",
+        use_when=(
+            "the task starts from a local plate, image folder, or rich image "
+            "container and does not require visible UI ownership"
+        ),
+        knowledge_targets=(
+            KnowledgeBaseDocumentTarget("openhcs_image_sources"),
+            KnowledgeBaseDocumentTarget("openhcs_source_model"),
+            KnowledgeBaseDocumentTarget("openhcs_example_corpus_map"),
+            KnowledgeBaseDocumentTarget("openhcs_official30_benchmark_recipes"),
+        ),
+    )
+
+
+class PipelineAuthoringContext(
+    PipelineSystemModelContext,
+    ExampleCorpusContext,
+    PipelineAuthoringRulesContext,
+    AuthoringContextDeclaration,
+):
+    kind = "pipeline"
+    route = AuthoringContextRoute(
+        title="Author or revise a typed pipeline",
+        use_when=(
+            "the sources are understood and the next task is choosing functions, "
+            "axes, grouping, configuration, or artifact contracts"
+        ),
+        knowledge_targets=(
+            KnowledgeBaseDocumentTarget("openhcs_configuration_reference"),
+            KnowledgeBaseDocumentTarget("openhcs_data_dimensions"),
+            KnowledgeBaseDocumentTarget("openhcs_function_patterns"),
+            KnowledgeBaseDocumentTarget("openhcs_processing_semantics"),
+            KnowledgeBaseDocumentTarget("openhcs_artifact_contract_system"),
+            KnowledgeBaseDocumentTarget("openhcs_official30_benchmark_recipes"),
+        ),
+    )
+
+
+class CustomFunctionAuthoringContext(
+    CustomFunctionRuntimeContext,
+    CustomFunctionAuthoringRulesContext,
+    AuthoringContextDeclaration,
+):
+    kind = "custom_function"
+    route = AuthoringContextRoute(
+        title="Author a custom processing function",
+        use_when=(
+            "the required operation is not already in the function registry or "
+            "needs a typed custom artifact contract"
+        ),
+        knowledge_targets=(
+            KnowledgeBaseDocumentTarget("openhcs_custom_functions"),
+            KnowledgeBaseDocumentTarget("openhcs_custom_function_management"),
+            KnowledgeBaseDocumentTarget("openhcs_artifact_contract_system"),
+        ),
+    )
 
 
 class HeadlessExecutionAuthoringContext(
@@ -209,6 +274,38 @@ class HeadlessExecutionAuthoringContext(
     AuthoringContextDeclaration,
 ):
     kind = "headless_execution"
+    route = AuthoringContextRoute(
+        title="Compile and execute headlessly",
+        use_when=(
+            "a reviewed pipeline should run without becoming selected or editable "
+            "in the desktop UI"
+        ),
+        knowledge_targets=(
+            KnowledgeBaseDocumentTarget("openhcs_pipeline_compilation_system"),
+            KnowledgeBaseDocumentTarget("openhcs_runtime_value_system"),
+            KnowledgeBaseDocumentTarget("openhcs_measurement_equivalence"),
+        ),
+    )
+
+
+class DebuggingAuthoringContext(
+    DebuggingWorkflowContext,
+    AuthoringContextDeclaration,
+):
+    kind = "debugging"
+    route = AuthoringContextRoute(
+        title="Diagnose compiled and runtime behavior",
+        use_when=(
+            "a compile, execution, step output, runtime value, or artifact must "
+            "be inspected at its owning boundary"
+        ),
+        knowledge_targets=(
+            KnowledgeBaseDocumentTarget("openhcs_pipeline_debugging"),
+            KnowledgeBaseDocumentTarget("openhcs_pipeline_compilation_system"),
+            KnowledgeBaseDocumentTarget("openhcs_runtime_value_system"),
+            KnowledgeBaseDocumentTarget("openhcs_artifact_contract_system"),
+        ),
+    )
 
 
 class ViewerReviewAuthoringContext(
@@ -216,6 +313,16 @@ class ViewerReviewAuthoringContext(
     AuthoringContextDeclaration,
 ):
     kind = "viewer_review"
+    route = AuthoringContextRoute(
+        title="Validate results in a managed viewer",
+        use_when=(
+            "execution produced images, labels, or ROIs that need bounded visual "
+            "and structured validation"
+        ),
+        knowledge_targets=(
+            KnowledgeBaseDocumentTarget("openhcs_viewer_management"),
+        ),
+    )
 
 
 class ObjectStateEditingAuthoringContext(
@@ -224,6 +331,17 @@ class ObjectStateEditingAuthoringContext(
     AuthoringContextDeclaration,
 ):
     kind = "objectstate_editing"
+    route = AuthoringContextRoute(
+        title="Inspect or edit typed UI state",
+        use_when=(
+            "one exact UI-backed field, inheritance value, snapshot, or branch "
+            "must be inspected or changed"
+        ),
+        knowledge_targets=(
+            KnowledgeBaseDocumentTarget("openhcs_code_ui_editing"),
+            KnowledgeBaseDocumentTarget("openhcs_code_ui_interconversion"),
+        ),
+    )
 
 
 class CellProfilerTranslationAuthoringContext(
@@ -233,3 +351,14 @@ class CellProfilerTranslationAuthoringContext(
     AuthoringContextDeclaration,
 ):
     kind = "cellprofiler_translation"
+    route = AuthoringContextRoute(
+        title="Translate or validate a CellProfiler workflow",
+        use_when=(
+            "the intent begins with a .cppipe, CellProfiler module vocabulary, or "
+            "an exact parity claim"
+        ),
+        knowledge_targets=(
+            KnowledgeBaseDocumentTarget("openhcs_cellprofiler_interop"),
+            KnowledgeBaseDocumentTarget("openhcs_official30_benchmark_recipes"),
+        ),
+    )

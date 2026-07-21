@@ -7,7 +7,7 @@ from collections.abc import Hashable
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
-from typing import ClassVar, TypeAlias, TypeVar, cast
+from typing import Annotated, ClassVar, TypeAlias, TypeVar, cast
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -16,6 +16,7 @@ from openhcs.core.callable_contract import (
     CallableContract,
     CompilerPreparedAutoRegisterFamily,
 )
+from openhcs.core.runtime_plane_projection import RuntimeSliceInvariantValue
 
 
 class CellProfilerBackendProvider(str, Enum):
@@ -75,7 +76,11 @@ class CellProfilerBackendRegistrySnapshot:
         return tuple(sorted(set(providers), key=lambda provider: provider.value))
 
 
-class CellProfilerBackendProviderSelection(ABC, metaclass=AutoRegisterMeta):
+class CellProfilerBackendProviderSelection(
+    RuntimeSliceInvariantValue,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Nominal provider-selection policy for CellProfiler backend families."""
 
     __registry_key__ = "registry_key"
@@ -190,9 +195,11 @@ class ExplicitCellProfilerBackendProviderSelection(CellProfilerBackendProviderSe
 DEFAULT_CELLPROFILER_BACKEND_SELECTION = (
     DefaultCellProfilerBackendProviderSelection()
 )
-BackendProviderInput: TypeAlias = (
-    CellProfilerBackendProvider | CellProfilerBackendProviderSelection | None
-)
+BackendProviderInput: TypeAlias = Annotated[
+    CellProfilerBackendProvider | CellProfilerBackendProviderSelection | None,
+    "Processing implementation selection for the parameter's named "
+    "CellProfiler operation; leave the default to use its registered implementation.",
+]
 
 
 class CellProfilerBackendAuthority:

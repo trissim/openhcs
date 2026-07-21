@@ -3,25 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 import logging
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING
 
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
-from openhcs.core.pipeline import Pipeline
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
+from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 from openhcs.pyqt_gui.services.plate_manager_root_state import (
     root_orchestrator_scope_ids,
 )
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
 from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
     PipelineObjectStateBinding,
-)
-from openhcs.pyqt_gui.widgets.shared.services.cellprofiler_pipeline_rebinding import (
-    CellProfilerPipelineRuntimeBindingService,
 )
 from pyqt_reactive.widgets.shared.manager_workflows import (
     ManagerCodeExecutionWorkflow,
@@ -30,180 +25,15 @@ from pyqt_reactive.widgets.shared.manager_workflows import (
 from openhcs.pyqt_gui.widgets.shared.services.gui_event_bus_broadcast import (
     GuiEventBusBroadcaster,
 )
+from openhcs.ui.shared.plate_manager_code_document import (
+    PlateManagerCodeDocumentAuthority,
+)
 
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
-
-
-class PlateManagerCodeNamespaceField(str, Enum):
-    """Field authority for executed plate-manager code namespaces."""
-
-    GLOBAL_CONFIG = "global_config"
-    PER_PLATE_CONFIGS = "per_plate_configs"
-    PIPELINE_DATA = "pipeline_data"
-    PLATE_PATHS = "plate_paths"
-
-    @classmethod
-    def allowed_assignment_names(cls) -> frozenset[str]:
-        """Return names accepted in plate-manager code-document assignments."""
-        return frozenset(field.value for field in cls)
-
-
-class RemovedPlateManagerCodeNamespaceField(str, Enum):
-    """Removed plate-manager code fields with explicit migration messages."""
-
-    PIPELINE_CONFIG = "pipeline_config"
-
-    @classmethod
-    def reject_present_fields(cls, namespace: "PlateManagerCodeNamespace") -> None:
-        for field in cls:
-            if namespace.has_field(field.value):
-                raise ValueError(field.error_message())
-
-    def error_message(self) -> str:
-        if self is RemovedPlateManagerCodeNamespaceField.PIPELINE_CONFIG:
-            return (
-                f"{self.value} is not a plate-manager code document field; "
-                "use per_plate_configs keyed by plate path."
-            )
-        raise RuntimeError(f"Unhandled removed plate-manager field: {self.value}.")
-
-
-class PlateManagerCodeNamespace(dict):
-    """Nominal exec namespace for plate-manager code documents."""
-
-    @classmethod
-    def from_mapping(cls, namespace) -> Self:
-        code_namespace = cls()
-        code_namespace.update(namespace)
-        return code_namespace
-
-    def has_field(self, field_name: str) -> bool:
-        return field_name in self
-
-    def has_orchestrator_payload_fields(self) -> bool:
-        return (
-            PlateManagerCodeNamespaceField.PLATE_PATHS.value in self
-            and PlateManagerCodeNamespaceField.PIPELINE_DATA.value in self
-        )
-
-    def plate_paths(self) -> tuple[str, ...]:
-        field_name = PlateManagerCodeNamespaceField.PLATE_PATHS.value
-        value = self[field_name]
-        if not isinstance(value, list):
-            raise TypeError("plate_paths must be a list of strings.")
-        if not all(isinstance(path, str) for path in value):
-            raise TypeError("plate_paths must be a list of strings.")
-        return tuple(value)
-
-    def pipeline_data(self) -> dict[str, list[FunctionStep]]:
-        field_name = PlateManagerCodeNamespaceField.PIPELINE_DATA.value
-        value = self[field_name]
-        if not isinstance(value, dict):
-            raise TypeError(
-                "pipeline_data must be a dict of plate paths to FunctionStep lists."
-            )
-
-        pipeline_data: dict[str, list[FunctionStep]] = {}
-        for plate_path, pipeline_value in value.items():
-            if not isinstance(plate_path, str):
-                raise TypeError("pipeline_data keys must be plate path strings.")
-            if isinstance(pipeline_value, Pipeline):
-                pipeline_steps = list(pipeline_value.steps)
-            elif isinstance(pipeline_value, list):
-                pipeline_steps = pipeline_value
-            else:
-                raise TypeError(
-                    "pipeline_data values must be FunctionStep lists."
-                )
-            if not all(isinstance(step, FunctionStep) for step in pipeline_steps):
-                raise TypeError(
-                    "pipeline_data values must contain FunctionStep instances."
-                )
-            pipeline_data[plate_path] = pipeline_steps
-        return pipeline_data
-
-    def global_config(self) -> GlobalPipelineConfig | None:
-        field_name = PlateManagerCodeNamespaceField.GLOBAL_CONFIG.value
-        if field_name not in self:
-            return None
-        value = self[field_name]
-        if not isinstance(value, GlobalPipelineConfig):
-            raise TypeError("global_config must be a GlobalPipelineConfig.")
-        return value
-
-    def per_plate_configs(self) -> dict[str, PipelineConfig] | None:
-        field_name = PlateManagerCodeNamespaceField.PER_PLATE_CONFIGS.value
-        if field_name not in self:
-            return None
-        value = self[field_name]
-        if not isinstance(value, dict):
-            raise TypeError("per_plate_configs must be a dict of PipelineConfig values.")
-
-        per_plate_configs: dict[str, PipelineConfig] = {}
-        for plate_path, pipeline_config in value.items():
-            if not isinstance(plate_path, str):
-                raise TypeError("per_plate_configs keys must be plate path strings.")
-            if not isinstance(pipeline_config, PipelineConfig):
-                raise TypeError(
-                    "per_plate_configs values must be PipelineConfig instances."
-                )
-            per_plate_configs[plate_path] = pipeline_config
-        return per_plate_configs
-
-    def set_orchestrator_payload(
-        self,
-        payload: "PlateManagerOrchestratorCodePayload",
-    ) -> None:
-        self[PlateManagerCodeNamespaceField.PLATE_PATHS.value] = list(
-            payload.plate_paths
-        )
-        self[PlateManagerCodeNamespaceField.PIPELINE_DATA.value] = (
-            payload.pipeline_data
-        )
-        if payload.global_pipeline_config is not None:
-            self[PlateManagerCodeNamespaceField.GLOBAL_CONFIG.value] = (
-                payload.global_pipeline_config
-            )
-        if payload.per_plate_configs is not None:
-            self[PlateManagerCodeNamespaceField.PER_PLATE_CONFIGS.value] = (
-                payload.per_plate_configs
-            )
-
-
-@dataclass(frozen=True, slots=True)
-class PlateManagerOrchestratorCodePayload:
-    """Authoritative payload for plate-manager orchestrator code documents."""
-
-    plate_paths: tuple[str, ...]
-    pipeline_data: dict[str, list[FunctionStep]]
-    global_pipeline_config: GlobalPipelineConfig | None = None
-    per_plate_configs: dict[str, PipelineConfig] | None = None
-
-    @classmethod
-    def from_namespace(
-        cls,
-        namespace: PlateManagerCodeNamespace,
-    ) -> "PlateManagerOrchestratorCodePayload | None":
-        RemovedPlateManagerCodeNamespaceField.reject_present_fields(namespace)
-
-        if not namespace.has_orchestrator_payload_fields():
-            return None
-
-        return cls(
-            plate_paths=namespace.plate_paths(),
-            pipeline_data=namespace.pipeline_data(),
-            global_pipeline_config=namespace.global_config(),
-            per_plate_configs=namespace.per_plate_configs(),
-        )
-
-    def to_namespace(self) -> PlateManagerCodeNamespace:
-        namespace = PlateManagerCodeNamespace()
-        namespace.set_orchestrator_payload(self)
-        return namespace
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,27 +48,18 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
         return None
 
     def apply_namespace(self, namespace) -> bool:
-        payload = PlateManagerOrchestratorCodePayload.from_namespace(
-            PlateManagerCodeNamespace.from_mapping(namespace)
-        )
-        if payload is None:
-            return False
+        payload = PlateManagerCodeDocumentAuthority.from_namespace(namespace)
 
         self.sync_plate_entries(payload.plate_paths)
 
-        if payload.global_pipeline_config is not None:
-            self.apply_global_config(payload.global_pipeline_config)
-
-        if payload.per_plate_configs is not None:
-            self.apply_per_plate_configs(payload.per_plate_configs)
-
+        self.apply_global_config(payload.global_pipeline_config)
+        self.apply_per_plate_configs(payload.per_plate_configs)
         self.apply_pipeline_data(payload.pipeline_data)
         return True
 
     def validate_namespace(self, namespace) -> bool:
-        return PlateManagerOrchestratorCodePayload.from_namespace(
-            PlateManagerCodeNamespace.from_mapping(namespace)
-        ) is not None
+        PlateManagerCodeDocumentAuthority.from_namespace(namespace)
+        return True
 
     def sync_plate_entries(self, plate_paths: tuple[str, ...]) -> None:
         """Make visible plate rows match the code document's plate path list."""
@@ -410,27 +231,8 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
 
     def apply_pipeline_data(self, pipeline_data: dict[str, list[FunctionStep]]) -> None:
         for plate_path, submitted_steps in pipeline_data.items():
-            if isinstance(submitted_steps, Pipeline):
-                existing_pipeline = submitted_steps
-                submitted_steps = list(submitted_steps.steps)
-            else:
-                existing_pipeline = PipelineObjectStateBinding.pipeline_for_plate(
-                    plate_path
-                )
-            pipeline_steps = self.runtime_bound_pipeline_for_plate(
-                plate_path,
-                list(submitted_steps),
-            )
-            PipelineObjectStateBinding.update_plate_pipeline(
-                plate_path,
-                Pipeline(
-                    steps=pipeline_steps,
-                    name=existing_pipeline.name
-                    or PlateScopeIdentity.from_scope_id(plate_path).display_name,
-                    metadata=dict(existing_pipeline.metadata),
-                    description=existing_pipeline.description,
-                ),
-            )
+            pipeline_steps = list(submitted_steps)
+            PipelineObjectStateBinding.update_plate_steps(plate_path, pipeline_steps)
             logger.debug(
                 "Updated pipeline for %s with %d steps",
                 plate_path,
@@ -447,21 +249,9 @@ class PlateManagerCodeWorkflow(ManagerCodeExecutionWorkflow):
 
         self.manager.pipeline_data_changed.emit()
 
-    def runtime_bound_pipeline_for_plate(
-        self,
-        plate_path: str,
-        pipeline_steps: list[FunctionStep],
-    ) -> list[FunctionStep]:
-        """Preserve generated CellProfiler artifact bindings through code mode."""
-        return CellProfilerPipelineRuntimeBindingService.runtime_bound_pipeline_for_plate(
-            import_result_provider=self.manager,
-            plate_path=plate_path,
-            pipeline_steps=pipeline_steps,
-        )
-
     def invalidate_orchestrator_compilation_state(self, plate_path: str) -> None:
         if plate_path in self.manager.plate_compiled_data:
-            del self.manager.plate_compiled_data[plate_path]
+            self.manager.emit_compiled_state(plate_path, None)
             logger.debug("Cleared compiled data for %s", plate_path)
         self.manager.clear_plate_execution_tracking(plate_path)
 

@@ -19,18 +19,20 @@ from PyQt6.QtWidgets import (
     QTreeWidget,
     QTreeWidgetItem,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtCore import pyqtSignal, QTimer
 
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.introspection import SignatureAnalyzer
 from openhcs.core.config import PipelineConfig
-from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.path_cache import PathCacheKey
 from openhcs.core.source_binding_context import SourceBindingContext
-from openhcs.core.source_bindings_view import SchemaContextSourceInventoryProvider
+from openhcs.core.source_bindings import SourceBindingsConfig
 from openhcs.pyqt_gui.widgets.source_bindings_editor import SourceBindingsEditorWidget
-from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager, FormManagerConfig
+from pyqt_reactive.forms.parameter_form_manager import (
+    ParameterFormManager,
+    FormManagerConfig,
+)
 from pyqt_reactive.widgets.shared.config_hierarchy_tree import (
     ConfigHierarchyTreeHelper,
 )
@@ -43,18 +45,21 @@ from pyqt_reactive.widgets.shared import (
     HeaderAction,
     HeaderActionGroup,
 )
-from pyqt_reactive.widgets.shared.scrollable_form_body import create_scrollable_form_body
+from pyqt_reactive.widgets.shared.scrollable_form_body import (
+    create_scrollable_form_body,
+)
 from pyqt_reactive.widgets.shared.scrollable_form_mixin import ScrollableFormMixin
 from pyqt_reactive.services.parameter_ops_service import ParameterOpsService
 from pyqt_reactive.services.window_code_document import WindowCodeDocumentDriver
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
 from pyqt_reactive.theming import ColorScheme, WidgetTheme
 from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
-from openhcs.pyqt_gui.config import PyQtGUIConfig, get_default_pyqt_gui_config
+from openhcs.pyqt_gui.config import UIConfig, get_default_ui_config
+from openhcs.pyqt_gui.services.function_step_code_document import (
+    FunctionStepCodeDocumentDriver,
+)
 from openhcs.pyqt_gui.services.pycodified_window_code_document import (
     ExternalCodeEditorPreference,
-    PycodifiedObjectCodeDocumentDriver,
-    PycodifiedObjectDocumentSpec,
 )
 
 # REMOVED: LazyDataclassFactory import - no longer needed since step editor
@@ -69,6 +74,7 @@ logger = logging.getLogger(__name__)
 @dataclasses.dataclass(frozen=True)
 class StepSettingsDialogRequest:
     """Cached file-dialog request for loading or saving step settings."""
+
     title: str
     mode: str
     cache_key: PathCacheKey = PathCacheKey.STEP_SETTINGS
@@ -79,12 +85,12 @@ class StepSettingsDialogRequest:
 class StepEditorGuiConfigRequest:
     """Explicit GUI-config resolution request for the step editor."""
 
-    gui_config: PyQtGUIConfig | None
+    gui_config: UIConfig | None
 
-    def resolve(self) -> PyQtGUIConfig:
+    def resolve(self) -> UIConfig:
         if self.gui_config is not None:
             return self.gui_config
-        return get_default_pyqt_gui_config()
+        return get_default_ui_config()
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -208,7 +214,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
         step: FunctionStep,
         service_adapter=None,
         color_scheme: Optional[ColorScheme] = None,
-        gui_config: Optional[PyQtGUIConfig] = None,
+        gui_config: Optional[UIConfig] = None,
         parent=None,
         pipeline_config=None,
         scope_id: Optional[str] = None,
@@ -216,9 +222,8 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
         scope_accent_color=None,
         render_header: bool = True,
         button_style: Optional[str] = None,
-        source_schema: PipelineImageSchema | None = None,
+        source_bindings: SourceBindingsConfig | None = None,
         source_binding_context: SourceBindingContext | None = None,
-        source_root: str | Path | None = None,
     ):
         super().__init__(parent)
 
@@ -237,9 +242,8 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
         )
         self.scope_id = scope_id  # Store scope_id for cross-window update scoping
         self.step_index = step_index  # Step position index for tree registry
-        self.source_schema = source_schema
+        self.source_bindings = source_bindings
         self.source_binding_context = source_binding_context
-        self.source_root = source_root
 
         self.header_label: Optional[QLabel] = None
 
@@ -335,15 +339,10 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
             state=self.state,  # ObjectState (MODEL) from registry
             config=config,  # Pass configuration object
         )
-        self._code_document_driver = PycodifiedObjectCodeDocumentDriver(
-            spec=PycodifiedObjectDocumentSpec(
-                assignment_name="step",
-                title=f"Edit Step: {self.step.name}",
-                header="# Function Step",
-                expected_type=FunctionStep,
-            ),
-            current_object=self._current_step_for_code_document,
-            apply_object=self._apply_step_from_code_document,
+        self._code_document_driver = FunctionStepCodeDocumentDriver(
+            title=f"Edit Step: {self.step.name}",
+            current_step=self._current_step_for_code_document,
+            apply_step=self._apply_step_from_code_document,
             before_read=self._refresh_code_document_context,
         )
         self.hierarchy_tree = None
@@ -376,27 +375,25 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
         return self._code_document_driver
 
     def apply_source_bindings_preview_context(self) -> None:
-        """Pass imported pipeline source-schema context to source-binding editors."""
+        """Pass pipeline source-binding context to source-binding editors."""
 
-        schema = (
-            self.source_binding_context.source_schema
+        source_bindings = (
+            self.source_binding_context.source_bindings
             if self.source_binding_context is not None
-            else self.source_schema
+            else self.source_bindings
         )
-        if schema is None:
+        if source_bindings is None:
             return
         for widget in self.findChildren(SourceBindingsEditorWidget):
+            view_source_bindings, step_bindings = widget.resolved_view_inputs(
+                source_bindings
+            )
             if self.source_binding_context is not None:
-                inventory = self.source_binding_context.inventory(widget.get_value())
+                inventory = self.source_binding_context.inventory(step_bindings)
             else:
-                inventory = SchemaContextSourceInventoryProvider(
-                    self.source_root,
-                ).inventory(
-                    schema=schema,
-                    bindings=widget.get_value(),
-                )
+                inventory = None
             widget.set_preview_context(
-                schema=schema,
+                source_bindings=view_source_bindings,
                 inventory=inventory,
             )
 
@@ -559,20 +556,20 @@ class StepParameterEditorWidget(ScrollableFormMixin, DetachableActionBarHost, QW
             return self.theme.styles.require_config_button_style(self._button_style)
 
         return f"""
-            QPushButton {
+            QPushButton {{
                 background-color: {self.theme.scheme.to_hex(self.theme.scheme.input_bg)};
                 color: white;
                 border: none;
                 border-radius: 3px;
                 padding: 6px 12px;
                 font-size: 11px;
-            }
-            QPushButton:hover {
+            }}
+            QPushButton:hover {{
                 background-color: {self.theme.scheme.to_hex(self.theme.scheme.button_hover_bg)};
-            }
-            QPushButton:pressed {
+            }}
+            QPushButton:pressed {{
                 background-color: {self.theme.scheme.to_hex(self.theme.scheme.button_pressed_bg)};
-            }
+            }}
         """
 
     def setup_connections(self):

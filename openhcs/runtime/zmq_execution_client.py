@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TypeAlias
 
@@ -20,33 +20,27 @@ from zmqruntime.messages import ControlMessageType, MessageFields
 
 from zmqruntime.transport import coerce_transport_mode, get_zmq_transport_url
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+from openhcs.core.config_document import ConfigDocumentAuthority
+from openhcs.core.artifact_inspection import CompiledArtifactInspection
 from openhcs.core.debug import DebugExecutionConfig
-from openhcs.core.steps.abstract import AbstractStep
-from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
+from openhcs.core.pipeline_document import (
+    PipelineDocument,
+    PipelineDocumentAuthority,
+)
+from openhcs.core.steps.function_step import FunctionStep
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 from openhcs.runtime.zmq_execution_signature import (
-    OpenHCSExecutionConfigBundle,
-    OpenHCSExecutionConfigCarrier,
     ZMQExecutionConfigTransport,
     ZMQExecutionCompileControl,
     ZMQExecutionIdentity,
     ZMQExecutionRequestPayload,
 )
-from openhcs.runtime.zmq_pipeline_transport import (
-    PipelineSourceExport,
-    PipelineStepsBoundary,
-    PipelineStepsCarrier,
-)
 
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_ZMQ_CONTROL_TIMEOUT_MS = 5000
 ZMQScalar: TypeAlias = str | int | float | bool | None
-ZMQValue: TypeAlias = (
-    ZMQScalar
-    | Mapping[str, "ZMQValue"]
-    | Sequence["ZMQValue"]
-)
+ZMQValue: TypeAlias = ZMQScalar | Mapping[str, "ZMQValue"] | Sequence["ZMQValue"]
 ZMQParams: TypeAlias = Mapping[str, ZMQValue]
 PlateIdentifier: TypeAlias = str | Path
 
@@ -58,32 +52,35 @@ def _optional_plate_identifier(value: PlateIdentifier | None) -> str | None:
 
 
 @dataclass(slots=True, init=False)
-class OpenHCSExecutionSubmission(PipelineStepsCarrier, OpenHCSExecutionConfigCarrier):
+class OpenHCSExecutionSubmission:
     """Nominal client-side submission payload for OpenHCS ZMQ execution."""
 
-    registry_key = "openhcs_execution_submission"
-
     identity: ZMQExecutionIdentity
-    submission_pipeline: PipelineStepsBoundary
-    configs: OpenHCSExecutionConfigBundle
+    pipeline_document: PipelineDocument
+    global_pipeline_config: GlobalPipelineConfig
     config_boundary: ZMQConfigParamsBoundary
     compile_control: ZMQExecutionCompileControl = ZMQExecutionCompileControl()
-    pipeline_source: str | None = None
 
     def __init__(
         self,
         *,
         plate_id: PlateIdentifier,
-        pipeline_steps: Sequence[AbstractStep],
+        pipeline_document: PipelineDocument,
         global_config: GlobalPipelineConfig,
         execution_plate_id: PlateIdentifier | None = None,
         selected_pipeline_path: PlateIdentifier | None = None,
-        pipeline_config: PipelineConfig | None = None,
         config_params: ZMQParams | None = None,
         compile_artifact_id: str | None = None,
-        pipeline_source: str | None = None,
         compile_only: bool = False,
     ) -> None:
+        normalized_document = PipelineDocumentAuthority.from_values(
+            pipeline_config=pipeline_document.pipeline_config,
+            pipeline_steps=pipeline_document.pipeline_steps,
+        )
+        normalized_document = replace(
+            normalized_document,
+            original_source=pipeline_document.original_source,
+        )
         self._set_parts(
             identity=ZMQExecutionIdentity(
                 plate_id=str(plate_id),
@@ -92,17 +89,13 @@ class OpenHCSExecutionSubmission(PipelineStepsCarrier, OpenHCSExecutionConfigCar
                     selected_pipeline_path
                 ),
             ),
-            submission_pipeline=PipelineStepsBoundary(pipeline_steps),
-            configs=OpenHCSExecutionConfigBundle(
-                global_pipeline=global_config,
-                plate_pipeline=pipeline_config,
-            ),
+            pipeline_document=normalized_document,
+            global_pipeline_config=global_config,
             config_boundary=ZMQConfigParamsBoundary(config_params),
             compile_control=ZMQExecutionCompileControl(
                 compile_artifact_id=compile_artifact_id,
                 compile_only=compile_only,
             ),
-            pipeline_source=pipeline_source,
         )
 
     @classmethod
@@ -110,20 +103,18 @@ class OpenHCSExecutionSubmission(PipelineStepsCarrier, OpenHCSExecutionConfigCar
         cls,
         *,
         identity: ZMQExecutionIdentity,
-        submission_pipeline: PipelineStepsBoundary,
-        configs: OpenHCSExecutionConfigBundle,
+        pipeline_document: PipelineDocument,
+        global_pipeline_config: GlobalPipelineConfig,
         config_boundary: ZMQConfigParamsBoundary,
         compile_control: ZMQExecutionCompileControl,
-        pipeline_source: str | None,
     ) -> "OpenHCSExecutionSubmission":
         submission = cls.__new__(cls)
         submission._set_parts(
             identity=identity,
-            submission_pipeline=submission_pipeline,
-            configs=configs,
+            pipeline_document=pipeline_document,
+            global_pipeline_config=global_pipeline_config,
             config_boundary=config_boundary,
             compile_control=compile_control,
-            pipeline_source=pipeline_source,
         )
         return submission
 
@@ -131,18 +122,16 @@ class OpenHCSExecutionSubmission(PipelineStepsCarrier, OpenHCSExecutionConfigCar
         self,
         *,
         identity: ZMQExecutionIdentity,
-        submission_pipeline: PipelineStepsBoundary,
-        configs: OpenHCSExecutionConfigBundle,
+        pipeline_document: PipelineDocument,
+        global_pipeline_config: GlobalPipelineConfig,
         config_boundary: ZMQConfigParamsBoundary,
         compile_control: ZMQExecutionCompileControl,
-        pipeline_source: str | None,
     ) -> None:
         self.identity = identity
-        self.submission_pipeline = submission_pipeline
-        self.configs = configs
+        self.pipeline_document = pipeline_document
+        self.global_pipeline_config = global_pipeline_config
         self.config_boundary = config_boundary
         self.compile_control = compile_control
-        self.pipeline_source = pipeline_source
 
     @property
     def plate_id(self) -> str:
@@ -157,16 +146,16 @@ class OpenHCSExecutionSubmission(PipelineStepsCarrier, OpenHCSExecutionConfigCar
         return self.identity.selected_pipeline_path
 
     @property
-    def pipeline_steps_boundary(self) -> PipelineStepsBoundary:
-        return self.submission_pipeline
+    def pipeline_steps(self) -> list[FunctionStep]:
+        return self.pipeline_document.pipeline_steps
+
+    @property
+    def pipeline_config(self) -> PipelineConfig:
+        return self.pipeline_document.pipeline_config
 
     @property
     def config_params(self) -> ZMQParams | None:
         return self.config_boundary.params
-
-    @property
-    def execution_config_bundle(self) -> OpenHCSExecutionConfigBundle:
-        return self.configs
 
     @property
     def compile_artifact_id(self) -> str | None:
@@ -179,115 +168,46 @@ class OpenHCSExecutionSubmission(PipelineStepsCarrier, OpenHCSExecutionConfigCar
     def to_task(self) -> "OpenHCSExecutionSubmission":
         return self
 
-    def with_config_params(self, config_params: ZMQParams) -> "OpenHCSExecutionSubmission":
+    def with_config_params(
+        self, config_params: ZMQParams
+    ) -> "OpenHCSExecutionSubmission":
         return self._from_parts(
             identity=self.identity,
-            submission_pipeline=self.submission_pipeline,
-            configs=self.configs,
+            pipeline_document=self.pipeline_document,
+            global_pipeline_config=self.global_pipeline_config,
             config_boundary=ZMQConfigParamsBoundary(config_params),
             compile_control=self.compile_control,
-            pipeline_source=self.pipeline_source,
         )
 
     def compile_request(self) -> "OpenHCSExecutionSubmission":
         return self._from_parts(
             identity=self.identity,
-            submission_pipeline=self.submission_pipeline,
-            configs=self.configs,
+            pipeline_document=self.pipeline_document,
+            global_pipeline_config=self.global_pipeline_config,
             config_boundary=self.config_boundary,
             compile_control=self.compile_control.as_compile_request(),
-            pipeline_source=self.pipeline_source,
         )
+
+    def pipeline_code(self) -> str:
+        return PipelineDocumentAuthority.execution_source(self.pipeline_document)
 
     def step_count_label(self) -> str:
-        return str(len(self.submission_pipeline))
+        return str(len(self.pipeline_steps))
 
 
-@dataclass(frozen=True, slots=True)
-class PycodifiedSource:
-    source: str
-
-    def sha_label(self) -> str:
-        return hashlib.sha256(self.source.encode("utf-8")).hexdigest()[:12]
-
-
-@dataclass(frozen=True, slots=True)
-class PycodifiedPipelineCode(PycodifiedSource):
-    @classmethod
-    def from_task(cls, task: OpenHCSExecutionSubmission) -> "PycodifiedPipelineCode":
-        if task.pipeline_source is not None:
-            return cls(source=task.pipeline_source)
-        step_source = PycodifiedPipelineStepSource(task.submission_pipeline)
-        return cls(source=step_source.source())
-
-
-@dataclass(frozen=True, slots=True)
-class PycodifiedPipelineStepSource(PipelineStepsCarrier):
-    registry_key = "pycodified_pipeline_step_source"
-
-    source_pipeline: PipelineStepsBoundary
-
-    @property
-    def pipeline_steps_boundary(self) -> PipelineStepsBoundary:
-        return self.source_pipeline
-
-    def source(self) -> str:
-        from openhcs.runtime.zmq_pipeline_transport import (
-            ZMQPipelineCodeTransport,
-            ZMQPipelineSourcePayload,
-        )
-
-        generated_source = PycodifyAssignmentSourceRequest(
-            variable_name=PipelineSourceExport.PIPELINE_STEPS.value,
-            value=self.source_pipeline.steps,
-            header="# Edit this pipeline and save to apply changes",
-            clean_mode=True,
-        ).source()
-        return ZMQPipelineCodeTransport.from_pipeline_source(
-            ZMQPipelineSourcePayload(
-                source=generated_source,
-                source_pipeline=self.source_pipeline,
-            )
-        ).source
-
-
-@dataclass(frozen=True, slots=True)
-class PycodifiedConfigSource(PycodifiedSource):
-    @classmethod
-    def from_config(
-        cls,
-        config: GlobalPipelineConfig | PipelineConfig,
-    ) -> "PycodifiedConfigSource":
-        source_request = PycodifyAssignmentSourceRequest(
-            variable_name="config",
-            value=config,
-            header="# Configuration Code",
-        )
-        return cls(source=source_request.source())
-
-
-@dataclass(frozen=True, slots=True)
-class PycodifyAssignmentSourceRequest:
-    variable_name: str
-    value: Sequence[AbstractStep] | GlobalPipelineConfig | PipelineConfig
-    header: str
-    clean_mode: bool = True
-
-    def source(self) -> str:
-        import openhcs.serialization.pycodify_formatters  # noqa: F401
-        from pycodify import Assignment, generate_python_source
-
-        return generate_python_source(
-            Assignment(self.variable_name, self.value),
-            self.header,
-            self.clean_mode,
-        )
+def _pycodify_config_source(
+    config: GlobalPipelineConfig | OpenHCSZMQConfig,
+) -> str:
+    return ConfigDocumentAuthority.render(
+        config,
+        expected_config_type=type(config),
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class ZMQExecutionRequestBuilder:
     task: OpenHCSExecutionSubmission
-    pipeline_transport: PycodifiedPipelineCode
+    pipeline_code: str
     config_projection: "ZMQConfigProjection"
 
     @classmethod
@@ -297,7 +217,7 @@ class ZMQExecutionRequestBuilder:
     ) -> "ZMQExecutionRequestBuilder":
         return cls(
             task=task,
-            pipeline_transport=PycodifiedPipelineCode.from_task(task),
+            pipeline_code=task.pipeline_code(),
             config_projection=ZMQConfigProjection.from_task(task),
         )
 
@@ -305,7 +225,7 @@ class ZMQExecutionRequestBuilder:
     def request_payload(self) -> ZMQExecutionRequestPayload:
         return ZMQExecutionRequestPayload(
             identity=self.task.identity,
-            pipeline_code=self.pipeline_transport.source,
+            pipeline_code=self.pipeline_code,
             config_transport=self.config_projection.signature_transport(),
             compile_control=self.task.compile_control,
         )
@@ -314,7 +234,7 @@ class ZMQExecutionRequestBuilder:
         return ZMQRequest.from_items(
             (
                 (MessageFields.TYPE, ControlMessageType.EXECUTE.value),
-                (MessageFields.PIPELINE_CODE, self.pipeline_transport.source),
+                (MessageFields.PIPELINE_CODE, self.pipeline_code),
                 *self.task.identity.request_items(),
                 *self.task.compile_control.request_items(),
                 *self.config_projection.request_items(),
@@ -380,16 +300,11 @@ class ZMQConfigParamsBoundary:
 @dataclass(frozen=True, slots=True)
 class ZMQConfigSourceFields:
     config_code: str | None = None
-    pipeline_config_code: str | None = None
 
     def request_items(self) -> tuple[tuple[str, ZMQValue], ...]:
         items: list[tuple[str, ZMQValue]] = []
         if self.config_code is not None:
             items.append((MessageFields.CONFIG_CODE, self.config_code))
-        if self.pipeline_config_code is not None:
-            items.append(
-                (MessageFields.PIPELINE_CONFIG_CODE, self.pipeline_config_code)
-            )
         return tuple(items)
 
 
@@ -398,36 +313,21 @@ class ZMQConfigProjection:
     params_boundary: ZMQConfigParamsBoundary | None
     source_fields: ZMQConfigSourceFields | None
     config_sha: str
-    pipeline_config_sha: str
 
     @classmethod
     def from_task(
         cls,
         task: OpenHCSExecutionSubmission,
     ) -> "ZMQConfigProjection":
-        config_source = PycodifiedConfigSource.from_config(task.global_pipeline_config)
-        if task.pipeline_config is None:
-            pipeline_config_source = PycodifiedConfigSource.from_config(
-                PipelineConfig()
-            )
-        else:
-            pipeline_config_source = PycodifiedConfigSource.from_config(
-                task.pipeline_config
-            )
-        pipeline_config_code = pipeline_config_source.source
-        pipeline_config_sha = pipeline_config_source.sha_label()
+        config_source = _pycodify_config_source(task.global_pipeline_config)
         return cls(
             params_boundary=(
                 task.config_boundary
                 if task.config_boundary.params is not None
                 else None
             ),
-            source_fields=ZMQConfigSourceFields(
-                config_source.source,
-                pipeline_config_code,
-            ),
-            config_sha=config_source.sha_label(),
-            pipeline_config_sha=pipeline_config_sha,
+            source_fields=ZMQConfigSourceFields(config_source),
+            config_sha=hashlib.sha256(config_source.encode("utf-8")).hexdigest()[:12],
         )
 
     def request_items(self) -> tuple[tuple[str, ZMQValue], ...]:
@@ -451,9 +351,6 @@ class ZMQConfigProjection:
                 )
             ),
             config_code=None if source_fields is None else source_fields.config_code,
-            pipeline_config_code=(
-                None if source_fields is None else source_fields.pipeline_config_code
-            ),
         )
 
 
@@ -474,24 +371,30 @@ class ZMQClientResponseView:
             raise RuntimeError("Accepted execution response has null execution_id")
         return str(value)
 
+
 class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
     """ZMQ client for OpenHCS pipeline execution with progress streaming."""
 
     def __init__(
         self,
-        port: int = OPENHCS_ZMQ_CONFIG.default_port,
-        host: str = "localhost",
-        persistent: bool = True,
+        port: int | None = None,
+        host: str | None = None,
+        persistent: bool | None = None,
         progress_callback=None,
         transport_mode=None,
+        config: OpenHCSZMQConfig = OPENHCS_ZMQ_CONFIG,
     ):
         super().__init__(
-            port,
-            host,
-            persistent,
+            config.default_port if port is None else port,
+            config.client_host if host is None else host,
+            config.persistent if persistent is None else persistent,
             progress_callback=progress_callback,
-            transport_mode=coerce_transport_mode(transport_mode),
-            config=OPENHCS_ZMQ_CONFIG,
+            transport_mode=(
+                config.transport_mode
+                if transport_mode is None
+                else coerce_transport_mode(transport_mode)
+            ),
+            config=config,
         )
 
     def serialize_task(
@@ -501,15 +404,15 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
     ) -> dict[str, ZMQValue]:
         request_builder = ZMQExecutionRequestBuilder.from_task(task)
         request = request_builder.request()
+        request_payload = request_builder.request_payload
         logger.info(
-            "Serialize task: plate=%s compile_only=%s artifact_id=%s step_count=%s pipeline_sha=%s config_sha=%s pipeline_config_sha=%s",
+            "Serialize task: plate=%s compile_only=%s artifact_id=%s step_count=%s pipeline_sha=%s config_sha=%s",
             task.plate_id,
             task.compile_only,
             task.compile_artifact_id,
             task.step_count_label(),
-            request_builder.pipeline_transport.sha_label(),
+            request_payload.pipeline_sha,
             request_builder.config_projection.config_sha,
-            request_builder.config_projection.pipeline_config_sha,
         )
         return request.as_wire_payload()
 
@@ -517,34 +420,37 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
         self,
         submission: OpenHCSExecutionSubmission,
         *,
-        timeout_ms: int = DEFAULT_ZMQ_CONTROL_TIMEOUT_MS,
+        timeout_ms: int | None = None,
     ):
-        return self._submit_submission(submission.to_task(), timeout_ms=timeout_ms)
+        return self._submit_submission(
+            submission.to_task(),
+            timeout_ms=self._control_timeout_ms(timeout_ms),
+        )
 
     def submit_debug_pipeline(
         self,
         submission: OpenHCSExecutionSubmission,
         *,
         debug_config: DebugExecutionConfig,
-        timeout_ms: int = DEFAULT_ZMQ_CONTROL_TIMEOUT_MS,
+        timeout_ms: int | None = None,
     ):
         config_params_boundary = ZMQConfigParamsBoundary.from_optional(
             submission.config_params
         ).with_updates(debug_config.to_config_params())
         return self._submit_submission(
             submission.with_config_params(config_params_boundary.params).to_task(),
-            timeout_ms=timeout_ms,
+            timeout_ms=self._control_timeout_ms(timeout_ms),
         )
 
     def submit_compile(
         self,
         submission: OpenHCSExecutionSubmission,
         *,
-        timeout_ms: int = DEFAULT_ZMQ_CONTROL_TIMEOUT_MS,
+        timeout_ms: int | None = None,
     ):
         return self._submit_submission(
             submission.compile_request().to_task(),
-            timeout_ms=timeout_ms,
+            timeout_ms=self._control_timeout_ms(timeout_ms),
         )
 
     def execute_pipeline(
@@ -561,12 +467,18 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
         self,
         execution_id=None,
         *,
-        timeout_ms: int = DEFAULT_ZMQ_CONTROL_TIMEOUT_MS,
+        timeout_ms: int | None = None,
     ):
         request = {MessageFields.TYPE: ControlMessageType.STATUS.value}
         if execution_id:
             request[MessageFields.EXECUTION_ID] = execution_id
-        return self._send_control_request_bounded(request, timeout_ms=timeout_ms)
+        return self._send_control_request_bounded(
+            request,
+            timeout_ms=self._control_timeout_ms(timeout_ms),
+        )
+
+    def _control_timeout_ms(self, timeout_ms: int | None) -> int:
+        return self.config.control_timeout_ms if timeout_ms is None else timeout_ms
 
     def _submit_submission(
         self,
@@ -657,6 +569,30 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
         )
         return DebugSnapshotReadResponse.from_control_response(response).snapshot
 
+    def get_compiled_artifact_inspection(
+        self,
+        compile_artifact_id: str,
+    ) -> CompiledArtifactInspection:
+        """Read the compiler-owned artifact inspection projection."""
+
+        from openhcs.core.artifact_inspection import (
+            CompiledArtifactInspectionControlPayload,
+            CompiledArtifactInspectionRequest,
+            CompiledArtifactInspectionResponse,
+        )
+
+        if not self._connected and not self.connect():
+            raise RuntimeError("Failed to connect to execution server")
+        request = CompiledArtifactInspectionRequest(
+            compile_artifact_id=compile_artifact_id
+        )
+        response = self._send_control_request(
+            CompiledArtifactInspectionControlPayload.from_request(request).to_dict()
+        )
+        return CompiledArtifactInspectionResponse.from_control_response(
+            response
+        ).inspection
+
     def send_debug_worker_command(
         self,
         *,
@@ -698,9 +634,7 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
         response = self._send_control_request(
             DebugRuntimeInspectionControlPayload.from_request(request).to_dict()
         )
-        return DebugRuntimeInspectionResponse.from_control_response(
-            response
-        ).view_model
+        return DebugRuntimeInspectionResponse.from_control_response(response).view_model
 
     def export_debug_artifact(
         self,
@@ -743,17 +677,19 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
             log_dir
             / f"openhcs_zmq_server_port_{self.port}_{int(time.time() * 1000000)}.log"
         )
+        server_config = replace(
+            self.config,
+            default_port=self.port,
+            persistent=self.persistent,
+            transport_mode=self.transport_mode,
+        )
         cmd = [
             sys.executable,
             "-m",
             "openhcs.runtime.zmq_execution_server_launcher",
-            "--port",
-            str(self.port),
         ]
-        if self.persistent:
-            cmd.append("--persistent")
         cmd.extend(["--log-file-path", str(log_file_path)])
-        cmd.extend(["--transport-mode", self.transport_mode.value])
+        cmd.extend(["--config-source", _pycodify_config_source(server_config)])
 
         # Pass the current process's logging level to the server
         # Get the root logger's effective level
@@ -763,7 +699,9 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
 
         # Log what we're passing to help debug
         logger = logging.getLogger(__name__)
-        logger.debug(f"Spawning ZMQ server with log level: {log_level_name} (numeric: {current_log_level})")
+        logger.debug(
+            f"Spawning ZMQ server with log level: {log_level_name} (numeric: {current_log_level})"
+        )
 
         cmd.extend(["--log-level", log_level_name])
 

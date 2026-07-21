@@ -6,54 +6,57 @@ view them in Napari with configurable display settings.
 """
 
 import logging
-import time
 import re
 import subprocess
+import time
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, make_dataclass
 from pathlib import Path
-from typing import Callable, Optional, List, Dict, Set
+from typing import Callable, Dict, List, Optional, Set
 
+from polystore.base import storage_registry
+from polystore.filemanager import FileManager
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QTableWidgetItem,
-    QPushButton,
-    QLabel,
-    QHeaderView,
     QAbstractItemView,
-    QMessageBox,
-    QSplitter,
     QGroupBox,
-    QTreeWidget,
-    QTreeWidgetItem,
-    QScrollArea,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
     QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSplitter,
+    QTableWidgetItem,
     QTabWidget,
     QTextEdit,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer
-
-from openhcs.constants.constants import AllComponents, Backend, FileFormat
-from polystore.filemanager import FileManager
-from polystore.base import storage_registry
-from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.theming import StyleSheetGenerator
+from pyqt_reactive.forms.parameter_form_manager import (
+    FormManagerConfig,
+    ParameterFormManager,
+)
+from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from pyqt_reactive.widgets.shared import TabbedFormConfig, TabbedFormWidget, TabConfig
 from pyqt_reactive.widgets.shared.image_table_browser import (
     ImageTableBrowser,
     ImageTableValue,
 )
-from pyqt_reactive.widgets.shared import TabbedFormWidget, TabConfig, TabbedFormConfig
+
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
+from openhcs.constants.constants import AllComponents, Backend, FileFormat
 from openhcs.core.config import StreamingConfig
 from openhcs.core.plate_image_inventory import (
-    PlateFileKind,
     PlateFileInventory,
+    PlateFileKind,
     PlateFileRecord,
     PlateResultFileInventory,
 )
-from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager, FormManagerConfig
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +289,6 @@ class ImageBrowserMetadataDisplayResolver:
             if metadata_key not in ALL_COMPONENT_VALUES:
                 return value_str
             component = AllComponents(metadata_key)
-
             metadata_name = (
                 orchestrator._metadata_cache_service.get_component_metadata(
                     component,
@@ -432,11 +434,16 @@ class ImageBrowserWidget(QWidget):
     )  # Internal signal for thread-safe status updates
 
     def __init__(
-        self, orchestrator=None, color_scheme: Optional[ColorScheme] = None, parent=None
+        self,
+        orchestrator=None,
+        color_scheme: Optional[ColorScheme] = None,
+        zmq_config: OpenHCSZMQConfig = OPENHCS_ZMQ_CONFIG,
+        parent=None,
     ):
         super().__init__(parent)
 
         self.orchestrator = orchestrator
+        self._zmq_config = zmq_config
         self.color_scheme = color_scheme or ColorScheme()
         self.style_gen = StyleSheetGenerator(self.color_scheme)
         # Fallback for standalone browsing; orchestrator-owned runs derive their
@@ -514,6 +521,7 @@ class ImageBrowserWidget(QWidget):
                 filemanager=self.filemanager,
                 microscope_handler=self.orchestrator.microscope_handler,
                 plate_path=self.orchestrator.plate_path,
+                transport_config=self.orchestrator.transport_config,
             )
             self._streaming_service_orchestrator = self.orchestrator
         return self._streaming_service_cache
@@ -568,13 +576,14 @@ class ImageBrowserWidget(QWidget):
 
         layout.addLayout(search_layout)
 
-        # Create main splitter (tree+filters | table | config)
+        # Create main splitter ((tree above filters) | table | config)
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.main_splitter = main_splitter
 
-        # Folder tree
+        # The generic table owner keeps its filter panel and table side by side;
+        # contribute the folder navigator as spatial context above that exact
+        # filter-panel instance.
         tree_widget = self._create_folder_tree()
-        main_splitter.addWidget(tree_widget)
 
         # Middle: Vertical splitter for plate view and tabs
         self.middle_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -592,6 +601,7 @@ class ImageBrowserWidget(QWidget):
 
         # Single table for both images and results (no tabs needed)
         image_table_widget = self._create_table_widget()
+        image_table_widget.set_column_filter_context_widget(tree_widget)
         self.middle_splitter.addWidget(image_table_widget)
 
         # Set initial sizes (30% plate view, 70% table when visible)
@@ -604,9 +614,8 @@ class ImageBrowserWidget(QWidget):
         self.right_panel = right_panel
         main_splitter.addWidget(right_panel)
 
-        # Set initial splitter sizes (100px left, flexible middle, 400px right)
-        # Middle uses large value so it takes remaining space proportionally
-        main_splitter.setSizes([100, 2000, 400])
+        # The browser consumes the flexible space; viewer controls remain right.
+        main_splitter.setSizes([2000, 400])
 
         # Add splitter with stretch factor to fill vertical space
         layout.addWidget(main_splitter, 1)
@@ -705,31 +714,44 @@ class ImageBrowserWidget(QWidget):
 
     def _create_instance_manager_panel(self):
         """Create the viewer instance manager panel using ZMQServerManagerWidget."""
+        from openhcs.core.config import get_all_streaming_ports
         from openhcs.pyqt_gui.widgets.shared.zmq_server_manager import (
             ZMQServerManagerWidget,
         )
-        from openhcs.core.config import get_all_streaming_ports
 
-        # Scan all streaming ports using orchestrator's pipeline config
-        # This ensures we find viewers launched with custom ports
-        # Exclude execution server port (only want viewer ports)
-        from openhcs.constants.constants import DEFAULT_EXECUTION_SERVER_PORT
-
-        all_ports = get_all_streaming_ports(
+        ports_to_scan = get_all_streaming_ports(
             config=self.orchestrator.pipeline_config if self.orchestrator else None,
-            num_ports_per_type=10,
+            num_ports_per_type=self._zmq_config.ports_per_server_type,
         )
-        ports_to_scan = [p for p in all_ports if p != DEFAULT_EXECUTION_SERVER_PORT]
 
         # Create ZMQ server manager widget
         zmq_manager = ZMQServerManagerWidget(
             ports_to_scan=ports_to_scan,
             title="Viewer Instances",
             style_generator=self.style_gen,
+            config=self._zmq_config,
             parent=self,
         )
-
+        self.zmq_manager = zmq_manager
         return zmq_manager
+
+    def set_zmq_config(self, config: OpenHCSZMQConfig) -> None:
+        """Use the resolved process transport config for viewer discovery."""
+
+        self._zmq_config = config
+        if self.zmq_manager is None:
+            return
+        from openhcs.core.config import get_all_streaming_ports
+
+        self.zmq_manager.set_zmq_config(
+            config,
+            get_all_streaming_ports(
+                config=(
+                    self.orchestrator.pipeline_config if self.orchestrator else None
+                ),
+                num_ports_per_type=config.ports_per_server_type,
+            ),
+        )
 
     def _create_state_for_orchestrator(self, orchestrator):
         """Create browser config state under the selected plate hierarchy."""
@@ -1105,6 +1127,11 @@ class ImageBrowserWidget(QWidget):
 
         # Strip leading dot if present (root PFM with field_id='' emits paths like ".napari_streaming_config.enabled")
         normalized_param = param_name.lstrip(".")
+
+        # Streaming controls are a live surface rather than a save/cancel editor.
+        # Advance the ObjectState baseline with every edit so current and saved
+        # resolution stay identical and no false unsaved marker is presented.
+        self.state.mark_saved()
 
         # Check if this is an 'enabled' field for any streaming config
         for viewer_type in _streaming_config_field_names():

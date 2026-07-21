@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import ClassVar
 
 from openhcs.core.source_matching import is_image_path
-from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -117,26 +116,6 @@ class RunBenchmarkCommand(BenchmarkCliCommand):
             help="Minimum acceptable OpenHCS speedup recorded in summary artifacts.",
         )
         parser.add_argument(
-            "--force-openhcs-run",
-            action="store_true",
-            help="Disable OpenHCS benchmark/runtime execution cache reuse.",
-        )
-        parser.add_argument(
-            "--source-schema-well",
-            action="append",
-            dest="source_schema_wells",
-            default=None,
-            help=(
-                "Source-schema well/sample to execute. Repeat for multiple "
-                "samples. Defaults to all samples."
-            ),
-        )
-        parser.add_argument(
-            "--source-schema-max-image-set-count",
-            type=int,
-            help="Execute only the first N source-schema samples.",
-        )
-        parser.add_argument(
             "--figures",
             action=argparse.BooleanOptionalAction,
             default=True,
@@ -163,26 +142,16 @@ class RunBenchmarkCommand(BenchmarkCliCommand):
             load_comparison_cases(args.manifest),
             tuple(args.case_names or ()),
         )
-        source_schema_image_set_selection = None
-        if args.source_schema_wells is not None or (
-            args.source_schema_max_image_set_count is not None
-        ):
-            source_schema_image_set_selection = SourceSchemaImageSetSelection(
-                well_filter=tuple(args.source_schema_wells or ()),
-                max_image_set_count=args.source_schema_max_image_set_count,
-            )
         observations = run_comparison_suite(
             cases,
             output_root=args.output_dir,
             suite_id=suite_id,
             repeats=args.repeats,
-            reuse_openhcs_cache=not args.force_openhcs_run,
             speedup_target=args.speedup_target,
             native_reference_root=args.native_reference_root,
             require_native_reference=args.require_native_reference,
             discard_openhcs_outputs=args.discard_openhcs_outputs,
             continue_on_error=args.continue_on_error,
-            source_schema_image_set_selection=source_schema_image_set_selection,
             metric_policy=ComparisonMetricPolicy(
                 collect_memory=not args.no_memory_metric,
             ),

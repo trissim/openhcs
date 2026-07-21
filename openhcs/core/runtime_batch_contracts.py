@@ -3,26 +3,88 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
+import inspect
 from types import MappingProxyType
 from typing import ClassVar, Generic, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
 
-from openhcs.core.runtime_invocation import runtime_callable_defaults
-from openhcs.core.runtime_slice_projection import (
-    RuntimeSliceProjection,
-    RuntimeSliceProjectionStrategy,
-    RuntimeProjectionAxis,
-)
+from openhcs.core.callable_contract import KeywordRuntimeParameter
+from openhcs.core.runtime_adapters import RuntimeImageExecutionContext
+from openhcs.core.runtime_plane_projection import RuntimePlaneAxisValueProjection
 
 
 F = TypeVar("F", bound=Callable)
 RuntimeSliceDataT = TypeVar("RuntimeSliceDataT")
 RuntimeSliceResultT = TypeVar("RuntimeSliceResultT")
 RuntimeKwargValueT = TypeVar("RuntimeKwargValueT")
+
+
+class SliceIndexRuntimeParameter(KeywordRuntimeParameter):
+    """Runtime-supplied pure-2D plane index parameter."""
+
+    parameter_name = "slice_index"
+    annotation_type = int | None
+    parameter_default = None
+
+
+class RuntimePlaneAxisValueProjectionParameter(KeywordRuntimeParameter):
+    """Runtime-supplied exact image plane-axis projection."""
+
+    parameter_name = "runtime_plane_projection"
+    annotation_type = RuntimePlaneAxisValueProjection | None
+    parameter_default = None
+
+
+@lru_cache(maxsize=1024)
+def runtime_callable_defaults(func: Callable[..., object]) -> Mapping[str, object]:
+    """Return callable defaults visible to runtime batch executors."""
+    try:
+        callable_signature = inspect.signature(func)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(
+            f"Runtime batch function {func!r} must expose an inspectable signature."
+        ) from exc
+    defaults: dict[str, object] = {}
+    for parameter in callable_signature.parameters.values():
+        if parameter.default is inspect.Parameter.empty:
+            continue
+        if parameter.kind in {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }:
+            continue
+        defaults[parameter.name] = parameter.default
+    return MappingProxyType(defaults)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RuntimeBatchInvocationRequest(RuntimeImageExecutionContext):
+    """One invocation inside a nominal runtime batch."""
+
+    func: Callable[..., object]
+    image: object
+    kwargs: Mapping[str, object]
+    batch_index: int
+    batch_count: int
+    semantic_group_key: tuple[Hashable, ...] | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "kwargs",
+            MappingProxyType(
+                {
+                    **runtime_callable_defaults(self.func),
+                    **dict(self.kwargs),
+                }
+            ),
+        )
 
 
 class RuntimeBatchExecutionDomain(str, Enum):
@@ -91,19 +153,13 @@ class RuntimePure2DSliceBatchRequest(
         slice_index: int,
         kwargs: Mapping[str, RuntimeKwargValueT],
     ) -> RuntimeSliceResultT:
-        """Execute one slice and stamp the result with its runtime-slice identity."""
-        result = self.execute_slice(
+        """Execute one slice through the callable's declared runtime contract."""
+        return self.execute_slice(
             self.func,
             self.slices_2d[slice_index],
             kwargs,
             slice_index,
             self.slice_count,
-        )
-        return RuntimeSliceProjectionStrategy.strategy_for_value(
-            result
-        ).identity_projected_value(
-            result,
-            RuntimeProjectionAxis(slice_index=slice_index, extent=self.slice_count),
         )
 
 

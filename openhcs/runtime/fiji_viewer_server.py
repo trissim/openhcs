@@ -36,6 +36,7 @@ from openhcs.runtime.viewer_protocol import (
     ViewerBatchContextWireField,
     ViewerBatchWireField,
     ViewerControlMessageType,
+    ViewerControlResponseField,
     ViewerControlReplyHeader,
     ViewerControlReplyPayload,
     ViewerComponentValueOrdering,
@@ -53,6 +54,10 @@ from openhcs.runtime.viewer_component_system import (
     ViewerObjectDisplayConfigInput,
     ViewerStreamingDataTypeHandler,
     ViewerStreamingDataTypeHandlerMeta,
+)
+from openhcs.runtime.fiji_macro_runtime import (
+    FijiMacroExecutionRequest,
+    FijiMacroExecutionResponse,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from zmqruntime.config import ZMQConfig
@@ -926,9 +931,18 @@ class FijiControlMessageResponse(ViewerControlReplyPayload):
     shutdown_requested: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class FijiControlRequestContext:
+    """Managed ImageJ runtime state available to nominal control plans."""
+
+    windows: FijiWindowRegistry
+    imagej_runtime: object
+
+
 class FijiControlMessagePlan(ABC, metaclass=AutoRegisterMeta):
     """Executable behavior for one Fiji control message type."""
 
+    __registry__: ClassVar[dict[str, type["FijiControlMessagePlan"]]] = {}
     __registry_key__ = "wire_value"
     __skip_if_no_key__ = True
 
@@ -944,15 +958,23 @@ class FijiControlMessagePlan(ABC, metaclass=AutoRegisterMeta):
         return plan_type()
 
     @abstractmethod
-    def response(self, windows: FijiWindowRegistry) -> FijiControlMessageResponse:
+    def response(
+        self,
+        context: FijiControlRequestContext,
+        payload: object | None,
+    ) -> FijiControlMessageResponse:
         """Return the response for one Fiji viewer control request."""
 
 
 class FijiShutdownControlPlan(FijiControlMessagePlan):
     """Acknowledge shutdown and ask the server loop to stop."""
 
-    def response(self, windows: FijiWindowRegistry) -> FijiControlMessageResponse:
-        del windows
+    def response(
+        self,
+        context: FijiControlRequestContext,
+        payload: object | None,
+    ) -> FijiControlMessageResponse:
+        del context, payload
         logger.info(
             "🔬 FIJI SERVER: %s requested, will close after sending acknowledgment",
             self.wire_value,
@@ -984,7 +1006,13 @@ class FijiClearStateControlPlan(FijiControlMessagePlan):
 
     wire_value = "clear_state"
 
-    def response(self, windows: FijiWindowRegistry) -> FijiControlMessageResponse:
+    def response(
+        self,
+        context: FijiControlRequestContext,
+        payload: object | None,
+    ) -> FijiControlMessageResponse:
+        del payload
+        windows = context.windows
         logger.info(
             "🔬 FIJI SERVER: Clearing dimension values (had %d windows)",
             windows.count_with_dimensions(),
@@ -1004,8 +1032,12 @@ class FijiSettleControlPlan(FijiControlMessagePlan):
 
     wire_value = ViewerControlMessageType.SETTLE.value
 
-    def response(self, windows: FijiWindowRegistry) -> FijiControlMessageResponse:
-        del windows
+    def response(
+        self,
+        context: FijiControlRequestContext,
+        payload: object | None,
+    ) -> FijiControlMessageResponse:
+        del context, payload
         return FijiControlMessageResponse(
             ViewerControlReplyHeader(
                 ViewerProtocolStatus.SUCCESS,
@@ -1021,8 +1053,12 @@ class FijiUnsupportedStateControlPlan(FijiControlMessagePlan):
 
     wire_value = ViewerControlMessageType.STATE.value
 
-    def response(self, windows: FijiWindowRegistry) -> FijiControlMessageResponse:
-        del windows
+    def response(
+        self,
+        context: FijiControlRequestContext,
+        payload: object | None,
+    ) -> FijiControlMessageResponse:
+        del context, payload
         return FijiControlMessageResponse(
             ViewerControlReplyHeader(
                 ViewerProtocolStatus.ERROR,
@@ -1042,8 +1078,12 @@ class FijiUnsupportedPayloadsControlPlan(FijiControlMessagePlan):
 
     wire_value = ViewerControlMessageType.PAYLOADS.value
 
-    def response(self, windows: FijiWindowRegistry) -> FijiControlMessageResponse:
-        del windows
+    def response(
+        self,
+        context: FijiControlRequestContext,
+        payload: object | None,
+    ) -> FijiControlMessageResponse:
+        del context, payload
         return FijiControlMessageResponse(
             ViewerControlReplyHeader(
                 ViewerProtocolStatus.ERROR,
@@ -1057,24 +1097,62 @@ class FijiUnsupportedPayloadsControlPlan(FijiControlMessagePlan):
         )
 
 
+class FijiRunMacroControlPlan(FijiControlMessagePlan):
+    """Execute an ImageJ macro inside the managed PyImageJ process."""
+
+    wire_value = FijiMacroExecutionRequest.message_type
+
+    def response(
+        self,
+        context: FijiControlRequestContext,
+        payload: object | None,
+    ) -> FijiControlMessageResponse:
+        try:
+            if not isinstance(payload, FijiMacroExecutionRequest):
+                raise TypeError(
+                    "Fiji macro control payload must be a "
+                    "FijiMacroExecutionRequest."
+                )
+            outputs = payload.execute(context.imagej_runtime)
+        except Exception as error:
+            logger.exception("Managed Fiji macro execution failed")
+            return FijiControlMessageResponse(
+                ViewerControlReplyHeader(
+                    ViewerProtocolStatus.ERROR,
+                    message=str(error),
+                )
+            )
+        return FijiControlMessageResponse(
+            ViewerControlReplyHeader(
+                ViewerProtocolStatus.SUCCESS,
+            ),
+            payload=FijiMacroExecutionResponse(outputs),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class FijiControlMessageAuthority:
     """Handle Fiji control messages without leaking control literals into server."""
 
-    windows: FijiWindowRegistry
+    context: FijiControlRequestContext
 
     def response_for(
         self,
         message: Mapping[str, FijiWireValue],
     ) -> FijiControlMessageResponse:
         plan = FijiControlMessagePlan.for_message_type(
-            None if "type" not in message else str(message["type"])
+            None
+            if ViewerControlResponseField.TYPE.value not in message
+            else str(message[ViewerControlResponseField.TYPE.value])
         )
         if plan is None:
             return FijiControlMessageResponse(
                 ViewerControlReplyHeader(ViewerProtocolStatus.SUCCESS)
             )
-        return plan.response(self.windows)
+        return plan.response(
+            self.context,
+            message.get(ViewerControlResponseField.PAYLOAD.value),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1583,6 +1661,7 @@ class FijiViewerServerLaunchConfig(ViewerServerLaunchRequest):
 
     fiji_viewer_title: str
     fiji_display_config: FijiDisplayConfig | None
+    display_enabled: bool = True
     zmq_config: ZMQConfig | None = None
 
     @property
@@ -1712,44 +1791,49 @@ class FijiViewerServer(StreamingVisualizerServer):
 
     def start(self):
         """Start server and initialize PyImageJ."""
-        super().start()
-
-        # Initialize PyImageJ in this process
+        # Initialize PyImageJ before publishing transport endpoints. A bound
+        # control socket means this process can service control requests.
         try:
             import imagej
 
             logger.info("🔬 FIJI SERVER: Initializing PyImageJ...")
 
-            # Try interactive mode first, fall back to headless mode on macOS
-            try:
-                self.ij = imagej.init(mode="interactive")
-                # Show Fiji UI so users can interact with images and menus
-                self.ij.ui().showUI()
-                logger.info(
-                    "🔬 FIJI SERVER: PyImageJ initialized in interactive mode with UI shown"
-                )
-
-                # Wait for Java Swing UI to be fully initialized
-                # This is critical for IPC mode where messages arrive very fast
-                # RoiManager creation requires the Swing event dispatch thread to be ready
-                if not self._wait_for_swing_ui_ready(timeout=5.0):
-                    logger.warning(
-                        "🔬 FIJI SERVER: Swing UI may not be fully initialized, proceeding anyway"
+            if not self.launch_config.display_enabled:
+                self.ij = imagej.init(mode="headless")
+                logger.info("🔬 FIJI SERVER: PyImageJ initialized in headless mode")
+            else:
+                # Try interactive mode first, fall back to headless mode on macOS
+                try:
+                    self.ij = imagej.init(mode="interactive")
+                    # Show Fiji UI so users can interact with images and menus
+                    self.ij.ui().showUI()
+                    logger.info(
+                        "🔬 FIJI SERVER: PyImageJ initialized in interactive mode with UI shown"
                     )
 
-            except OSError as e:
-                if FijiInteractiveModeFailure(e).is_supported_headless_fallback():
-                    logger.warning(
-                        "🔬 FIJI SERVER: Interactive mode failed (likely macOS), using headless mode"
-                    )
-                    self.ij = imagej.init(mode="headless")
-                    logger.info("🔬 FIJI SERVER: PyImageJ initialized in headless mode")
-                else:
-                    raise
+                    # Wait for Java Swing UI to be fully initialized
+                    # This is critical for IPC mode where messages arrive very fast
+                    # RoiManager creation requires the Swing event dispatch thread to be ready
+                    if not self._wait_for_swing_ui_ready(timeout=5.0):
+                        logger.warning(
+                            "🔬 FIJI SERVER: Swing UI may not be fully initialized, proceeding anyway"
+                        )
+
+                except OSError as e:
+                    if FijiInteractiveModeFailure(e).is_supported_headless_fallback():
+                        logger.warning(
+                            "🔬 FIJI SERVER: Interactive mode failed (likely macOS), using headless mode"
+                        )
+                        self.ij = imagej.init(mode="headless")
+                        logger.info("🔬 FIJI SERVER: PyImageJ initialized in headless mode")
+                    else:
+                        raise
         except ImportError:
             raise ImportError(
                 "PyImageJ not available. Install with: pip install 'openhcs[viz]'"
             )
+
+        super().start()
 
     def _create_pong_response(self) -> dict[str, FijiWireScalar]:
         """Override to add Fiji-specific fields and memory usage."""
@@ -1760,7 +1844,9 @@ class FijiViewerServer(StreamingVisualizerServer):
         message: Mapping[str, FijiWireValue],
     ) -> dict[str, FijiWireScalar]:
         """Handle control messages beyond ping/pong."""
-        response = FijiControlMessageAuthority(self.windows).response_for(message)
+        response = FijiControlMessageAuthority(
+            FijiControlRequestContext(self.windows, self.ij)
+        ).response_for(message)
         if response.shutdown_requested:
             self._shutdown_requested = True
         return response.to_wire_mapping()
@@ -2693,6 +2779,7 @@ def fiji_viewer_server_process(
     viewer_title: str,
     display_config: FijiDisplayConfig | None,
     log_file_path: str = None,
+    display_enabled: bool = True,
     transport_mode: OpenHCSTransportMode = OpenHCSTransportMode.IPC,
     zmq_config: ZMQConfig | None = None,
 ):
@@ -2718,6 +2805,7 @@ def fiji_viewer_server_process(
                 fiji_viewer_title=viewer_title,
                 fiji_display_config=display_config,
                 log_file_path=log_file_path,
+                display_enabled=display_enabled,
                 transport_mode=transport_mode,
                 zmq_config=zmq_config,
             )

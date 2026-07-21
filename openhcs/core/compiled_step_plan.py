@@ -8,11 +8,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from openhcs.constants.constants import (
-    AllComponents,
+    VALID_GPU_MEMORY_TYPES,
     SequentialComponents,
     VariableComponents,
 )
-from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
+from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ArtifactOutputPlan,
+    ArtifactSpecRef,
+)
+from openhcs.core.callable_contract import FunctionStepExecutionScope
+from openhcs.core.component_group_scope import ComponentGroupScope
 from openhcs.core.function_patterns import CompiledFunctionPattern
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
@@ -26,8 +32,8 @@ if TYPE_CHECKING:
 else:
     StreamingConfig = Any
 
-ArtifactInputPlans = Mapping[str, ArtifactInputPlan]
-ArtifactOutputPlans = Mapping[str, ArtifactOutputPlan]
+ArtifactInputPlans = Mapping[ArtifactSpecRef, ArtifactInputPlan]
+ArtifactOutputPlans = Mapping[ArtifactSpecRef, ArtifactOutputPlan]
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,20 +147,15 @@ class CompiledStepPlan:
     runtime_artifact_materialization: RuntimeArtifactMaterializationPlan = field(
         default_factory=RuntimeArtifactMaterializationPlan.disabled
     )
-    artifact_inputs: OrderedDict[str, ArtifactInputPlan] = field(
+    artifact_inputs: OrderedDict[ArtifactSpecRef, ArtifactInputPlan] = field(
         default_factory=OrderedDict
     )
-    artifact_outputs: OrderedDict[str, ArtifactOutputPlan] = field(
+    artifact_outputs: OrderedDict[ArtifactSpecRef, ArtifactOutputPlan] = field(
         default_factory=OrderedDict
     )
-    artifact_inputs_by_group: dict[
-        Any, OrderedDict[str, ArtifactInputPlan]
-    ] = field(default_factory=dict)
-    artifact_outputs_by_group: dict[
-        Any, OrderedDict[str, ArtifactOutputPlan]
-    ] = field(default_factory=dict)
-    execution_groups: list[str | None] = field(default_factory=lambda: [None])
-    execution_group_component: AllComponents | None = None
+    execution_group_scope: ComponentGroupScope = field(
+        default_factory=ComponentGroupScope.ungrouped
+    )
     compiled_function_pattern: CompiledFunctionPattern | None = None
     input_conversion: InputConversionPlan | None = None
     input_conversion_config: Any = None
@@ -171,3 +172,124 @@ class CompiledStepPlan:
     create_openhcs_metadata: bool = False
     chainbreaker: bool = False
     error: str | None = None
+
+    def require_function_execution_ready(self) -> "CompiledStepPlan":
+        """Validate the compiler-owned fields required by FunctionStep runtime."""
+        if not self.axis_id:
+            raise ValueError(
+                f"Compiled plan for step {self.step_index} ({self.step_name}) "
+                "has no axis_id."
+            )
+        if self.input_dir is None:
+            raise ValueError(
+                f"Compiled plan for step {self.step_index} ({self.step_name}) "
+                "has no input_dir."
+            )
+        if self.output_dir is None:
+            raise ValueError(
+                f"Compiled plan for step {self.step_index} ({self.step_name}) "
+                "has no output_dir."
+            )
+        self.require_variable_components()
+        if self.read_backend is None:
+            raise ValueError(
+                f"Compiled plan for step {self.step_index} ({self.step_name}) "
+                "has no read_backend."
+            )
+        if self.write_backend is None:
+            raise ValueError(
+                f"Compiled plan for step {self.step_index} ({self.step_name}) "
+                "has no write_backend."
+            )
+        if self.pipeline_position is None:
+            raise ValueError(
+                f"Compiled plan for step {self.step_index} ({self.step_name}) "
+                "has no pipeline_position."
+            )
+        if self.output_plate_root is None:
+            raise ValueError(
+                f"Compiled plan for step {self.step_index} ({self.step_name}) "
+                "has no output_plate_root."
+            )
+        if self.sub_dir is None:
+            raise ValueError(
+                f"Compiled plan for step {self.step_index} ({self.step_name}) "
+                "has no sub_dir."
+            )
+        if self.compiled_function_pattern is None:
+            raise ValueError(
+                f"Compiled plan for step {self.step_index} ({self.step_name}) "
+                "has no compiled_function_pattern."
+            )
+        return self
+
+    def require_variable_components(self) -> Sequence[VariableComponents]:
+        variable_components = self.variable_components
+        if variable_components is None:
+            raise ValueError(
+                f"Step {self.step_index} ({self.step_name}) is missing compiled "
+                "variable_components. Stack-axis semantics must be resolved "
+                "before runtime execution."
+            )
+        return variable_components
+
+    @property
+    def execution_scope(self) -> FunctionStepExecutionScope:
+        """Return the scope owned by the compiled function pattern."""
+        pattern = self.compiled_function_pattern
+        if pattern is None:
+            raise ValueError(
+                f"Compiled plan for step {self.step_index} ({self.step_name}) "
+                "has no compiled_function_pattern."
+            )
+        return pattern.execution_scope
+
+    @property
+    def owns_runtime_outputs(self) -> bool:
+        """Return whether this context owns the step's runtime outputs."""
+        return self.execution_scope.context_owns_outputs(
+            metadata_writer=self.create_openhcs_metadata,
+        )
+
+    @property
+    def device_id(self) -> int | None:
+        requires_gpu = (
+            self.input_memory_type in VALID_GPU_MEMORY_TYPES
+            or self.output_memory_type in VALID_GPU_MEMORY_TYPES
+        )
+        return self.gpu_id if requires_gpu else None
+
+    @property
+    def variable_component_values(self) -> list[str]:
+        return [component.value for component in self.require_variable_components()]
+
+    @property
+    def group_by_value(self) -> str | None:
+        return self.group_by.value if self.group_by else None
+
+    @property
+    def execution_group_value(self) -> str | None:
+        component = self.execution_group_scope.component
+        return None if component is None else component.value
+
+    @property
+    def artifact_analysis_output_dir(self) -> Path:
+        output_dir = self.analysis_results_dir
+        if self.materialized_output is not None:
+            output_dir = self.materialized_output.analysis_results_dir
+        if output_dir is None:
+            raise ValueError(
+                f"Step {self.step_index} ({self.step_name}) has no analysis results directory."
+            )
+        return Path(output_dir)
+
+    @property
+    def artifact_images_dir(self) -> str:
+        if self.materialized_output is not None:
+            return str(self.materialized_output.output_dir)
+        if self.output_dir is None:
+            raise ValueError(
+                f"Compiled plan for step {self.step_index} ({self.step_name}) "
+                "has no output_dir."
+            )
+        return str(self.output_dir)

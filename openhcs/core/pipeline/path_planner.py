@@ -6,52 +6,62 @@ This version ACTUALLY eliminates duplication instead of adding abstraction theat
 
 from __future__ import annotations
 
+import inspect
 import logging
-from abc import ABC, abstractmethod
-from collections import defaultdict, OrderedDict
+from collections import defaultdict
 from collections.abc import Hashable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Set
 
-from metaclass_registry import AutoRegisterMeta
 from openhcs.constants import AllComponents, GroupBy, VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.axis_filter import StepAxisFilterSet
 from openhcs.core.artifacts import (
-    ArtifactGroupScopeSourceRelation,
+    ArtifactInputProjectionPlan,
     ArtifactInputPlan,
     ArtifactOutputPlan,
-    ArtifactPlan,
+    ArtifactSpecCollection,
     ArtifactSpecRef,
-    ArtifactSpecRelation,
     ArtifactSpec,
+    ImageArtifactType,
     grouped_artifact_path,
 )
-from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.function_patterns import (
+    CompiledFunctionGroup,
+    CompiledFunctionInvocation,
     CompiledFunctionPattern,
     FunctionPatternSyntax,
+    InvocationArtifactInputEdgePlan,
+    InvocationArtifactInputProjectionKey,
+    RuntimeParameterBinding,
     compile_function_pattern,
     inject_artifact_input_values,
+    normalize_function_pattern,
+    resolve_function_pattern_contracts,
     strip_disabled_functions,
 )
+from openhcs.core.callable_contract import CallableContract, FunctionStepExecutionScope
+from objectstate import get_base_type_for_lazy
 from openhcs.core.invocation_artifacts import (
     ArtifactDeclarationStepContext,
-    InvocationContractProviderLike,
+    CompositeInvocationContractProvider,
+    InvocationContractProvider,
     InvocationArtifactDeclarationProviderLike,
     callable_contract_artifact_declarations,
-    public_callable_invocation_contract,
+    unnamed_main_flow_artifact_name,
 )
 from openhcs.core.compiled_step_plan import (
     CompiledStepPlan,
     InputConversionPlan,
     MaterializedOutputPlan,
 )
+from openhcs.core.component_group_scope import ComponentGroupScope
 from openhcs.core.component_set import ComponentSet
 from openhcs.core.pipeline.artifact_planning import (
     ArtifactGraph,
+    ArtifactOutputMaterializationPlanner,
     ArtifactProducer,
     extract_artifact_declarations,
 )
@@ -62,16 +72,18 @@ from openhcs.core.pipeline.compilation_session import (
 from openhcs.core.pipeline.step_snapshot import (
     StepSnapshot,
 )
-from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
 from openhcs.core.source_bindings import (
-    NamedSourceBinding,
+    CompiledSourceBindingPlan,
+    CompiledSourceUniversePlan,
+    EMPTY_SOURCE_BINDINGS,
     StepSourceBindingsConfig,
-    resolve_effective_step_source_bindings,
+    source_binding_group_keys_for_group_by,
 )
 from openhcs.core.step_dependencies import (
     StepInputDependency,
     StepInputDependencyKind,
 )
+from openhcs.core.steps.function_step import FunctionStep
 
 logger = logging.getLogger(__name__)
 
@@ -101,36 +113,8 @@ class MissingArtifactInputError(ValueError):
         )
 
 
-@dataclass(frozen=True)
-class PathPlannerGroupScope:
-    """Nominal scope for artifact execution-group planning."""
-
-    keys: tuple[PlannerGroupKey, ...]
-    component: AllComponents | None = None
-
-    def __post_init__(self) -> None:
-        if self.component is not None:
-            object.__setattr__(
-                self,
-                "component",
-                ComponentSet.coerce_component(self.component),
-            )
-
-    @classmethod
-    def ungrouped(cls) -> "PathPlannerGroupScope":
-        return cls((None,))
-
-    @classmethod
-    def from_raw(
-        cls,
-        group_keys: Iterable[Hashable | None],
-        *,
-        component: AllComponents | None = None,
-    ) -> "PathPlannerGroupScope":
-        return cls(
-            tuple(cls.normalize_key(group_key) for group_key in group_keys),
-            component=component,
-        )
+class PathPlannerGroupScope(ComponentGroupScope):
+    """Component-group scope with artifact-planner projections."""
 
     @classmethod
     def from_output_plan(
@@ -156,34 +140,53 @@ class PathPlannerGroupScope:
             )
         return cls.ungrouped()
 
-    @staticmethod
-    def normalize_key(key: Hashable | None) -> PlannerGroupKey:
-        if key is None:
-            return None
-        return str(key)
+    @classmethod
+    def relation_scope_from_plan(
+        cls,
+        plan: ArtifactInputPlan | ArtifactOutputPlan,
+        component: AllComponents | None,
+    ) -> "PathPlannerGroupScope":
+        """Return the plan domain relevant to one relation component."""
 
-    @property
-    def is_ungrouped(self) -> bool:
-        return self.keys == (None,) and self.component is None
+        domain = None if component is None else plan.component_domain(component)
+        if domain is None:
+            return cls.from_plan(plan)
+        return cls.from_raw(domain.keys, component=domain.component)
 
     def output_groups_for(
         self,
-        output_names: Iterable[str],
-    ) -> dict[str, tuple[PlannerGroupKey, ...]]:
-        return {
-            output_name: self.keys
-            for output_name in output_names
-        }
+        output_refs: Iterable[ArtifactSpecRef],
+    ) -> dict[ArtifactSpecRef, tuple[PlannerGroupKey, ...]]:
+        return {output_ref: self.keys for output_ref in output_refs}
+
+    @classmethod
+    def union_compatible(
+        cls,
+        scopes: Sequence["PathPlannerGroupScope"],
+    ) -> "PathPlannerGroupScope | None":
+        """Union scopes that describe the same grouped component."""
+
+        if not scopes:
+            return None
+        component = scopes[0].component
+        if any(scope.component != component for scope in scopes[1:]):
+            return None
+        if any(scope.is_dynamic for scope in scopes):
+            if component is None:
+                raise RuntimeError(
+                    "Dynamic component scope lost its component identity."
+                )
+            return cls.dynamic(component)
+        return cls.from_raw(
+            dict.fromkeys(key for scope in scopes for key in scope.keys),
+            component=component,
+        )
 
     def missing_from(
         self,
         producer_scope: "PathPlannerGroupScope",
     ) -> list[PlannerGroupKey]:
-        return [
-            group
-            for group in self.keys
-            if group not in producer_scope.keys
-        ]
+        return [group for group in self.keys if group not in producer_scope.keys]
 
     def single_group_key(self) -> PlannerGroupKey | None:
         if len(self.keys) != 1:
@@ -216,12 +219,22 @@ class PathPlannerComponentScopes:
         self,
         snapshot: StepSnapshot,
         execution_scope: PathPlannerGroupScope,
+        compiled_pattern: CompiledFunctionPattern | None,
     ) -> "PathPlannerComponentScopes":
-        if not snapshot.is_function_step:
+        if not isinstance(snapshot.step, FunctionStep):
+            return self
+        if compiled_pattern is None:
+            raise TypeError(
+                "FunctionStep component-scope planning requires its compiled "
+                "function pattern."
+            )
+        if compiled_pattern.preserves_input_main_flow():
             return self
 
         scopes = dict(self.scopes)
-        variable_components = tuple(snapshot.variable_components or ())
+        variable_components = tuple(
+            snapshot.step.processing_config.variable_components or ()
+        )
         for component in variable_components:
             scopes[component] = PathPlannerGroupScope.ungrouped()
 
@@ -242,77 +255,18 @@ class PathPlannerComponentScopes:
             return None
         return VariableComponents(group_by.value)
 
+
 @dataclass(frozen=True)
 class ArtifactPlanMaps:
     """Compiled artifact I/O maps for one step."""
 
     declarations: ArtifactGraph
     group_scope: PathPlannerGroupScope
-    inputs: dict[str, ArtifactInputPlan]
-    outputs: dict[str, ArtifactOutputPlan]
-    inputs_by_group: dict[Optional[str], OrderedDict]
-    outputs_by_group: dict[Optional[str], OrderedDict]
-
-
-class PathPlannerArtifactRelationEffect(
-    NominalTypeKeyedStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """MRO-selected path-planner behavior for declared artifact relations."""
-
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
-
-    @abstractmethod
-    def apply_output_groups(
-        self,
-        *,
-        relation: ArtifactSpecRelation,
-        producer: ArtifactProducer,
-        plans_by_ref: Mapping[ArtifactSpecRef, ArtifactPlan],
-        output_groups: dict[str, PathPlannerGroupScope],
-        step_index: int,
-        step_name: str | None,
-    ) -> None:
-        """Apply this relation's output-group effect in place."""
-
-
-class GroupScopeSourceRelationPathPlannerEffect(PathPlannerArtifactRelationEffect):
-    """Propagate output group scope from the relation source artifact."""
-
-    value_type = ArtifactGroupScopeSourceRelation
-
-    def apply_output_groups(
-        self,
-        *,
-        relation: ArtifactSpecRelation,
-        producer: ArtifactProducer,
-        plans_by_ref: Mapping[ArtifactSpecRef, ArtifactPlan],
-        output_groups: dict[str, PathPlannerGroupScope],
-        step_index: int,
-        step_name: str | None,
-    ) -> None:
-        if not isinstance(relation, ArtifactGroupScopeSourceRelation):
-            raise TypeError(
-                "GroupScopeSourceRelationPathPlannerEffect requires "
-                "ArtifactGroupScopeSourceRelation."
-            )
-        source_plan = plans_by_ref.get(relation.source)
-        if source_plan is None:
-            raise MissingArtifactInputError(
-                step_id=step_index,
-                artifact_key=relation.source.name,
-                step_name=step_name,
-            )
-        if source_plan.artifact_type is not relation.source.artifact_type:
-            raise ValueError(
-                f"Artifact output '{producer.name}' declares group lineage "
-                f"from {relation.source.artifact_type.value}:{relation.source.name}, "
-                f"but the resolved input is "
-                f"{source_plan.artifact_type.value}:{source_plan.name}."
-            )
-        output_groups[producer.name] = PathPlannerGroupScope.from_plan(source_plan)
+    inputs: dict[ArtifactSpecRef, ArtifactInputPlan]
+    outputs: dict[ArtifactSpecRef, ArtifactOutputPlan]
+    relation_source_scopes: Mapping[ArtifactSpecRef, PathPlannerGroupScope]
+    source_binding_plan: CompiledSourceBindingPlan
+    source_universe_plan: CompiledSourceUniversePlan
 
 
 @dataclass(frozen=True)
@@ -329,19 +283,22 @@ class PathPlannerExecutionGroups:
         self,
         snapshot: StepSnapshot,
         input_component_scopes: PathPlannerComponentScopes | None = None,
+        *,
+        source_bindings: StepSourceBindingsConfig | None = None,
+        contracts: Sequence[CallableContract] = (),
     ) -> PathPlannerGroupScope:
         """Determine which component groups this step will execute for."""
-        if not snapshot.is_function_step:
+        if not isinstance(snapshot.step, FunctionStep):
             return PathPlannerGroupScope.ungrouped()
 
-        func_pattern = snapshot.func
+        func_pattern = snapshot.step.func
         group_by = self.normalized_group_by(snapshot)
         if isinstance(func_pattern, dict):
             scope = PathPlannerGroupScope.from_raw(
                 func_pattern.keys(),
                 component=self.execution_component_for_dict_pattern(
                     group_by,
-                    snapshot.name,
+                    snapshot.step.name,
                 ),
             )
             logger.debug("Dict function pattern groups: %s", scope.keys)
@@ -356,43 +313,186 @@ class PathPlannerExecutionGroups:
             group_by,
         )
         if scope.is_ungrouped:
-            source_scope = self.source_binding_scope_for_group_by(snapshot, group_by)
+            source_scope = self.source_binding_scope_for_group_by(
+                snapshot,
+                group_by,
+                source_bindings=source_bindings,
+            )
             if not source_scope.is_ungrouped:
                 scope = source_scope
         if scope.is_ungrouped:
-            scope = self.dynamic_source_scope_for_group_by(snapshot, group_by)
-        logger.debug("FunctionStep groups for %s: %s", snapshot.name, scope.keys)
+            scope = self.dynamic_execution_scope_for_group_by(snapshot, group_by)
+        if contracts and all(contract.group_scope_inputs for contract in contracts):
+            scope = self.artifact_owned_execution_scope(
+                snapshot,
+                contracts,
+                consumer_scope=scope,
+            )
+            logger.debug(
+                "Artifact-managed FunctionStep groups for %s: %s",
+                snapshot.step.name,
+                scope.keys,
+            )
+            return scope
+        logger.debug("FunctionStep groups for %s: %s", snapshot.step.name, scope.keys)
         return scope
 
-    def dynamic_source_scope_for_group_by(
+    def artifact_owned_execution_scope(
+        self,
+        snapshot: StepSnapshot,
+        contracts: Sequence[CallableContract],
+        *,
+        consumer_scope: PathPlannerGroupScope,
+    ) -> PathPlannerGroupScope:
+        """Resolve non-dict invocation groups from declared artifact owners."""
+
+        owner_specs = tuple(
+            dict.fromkeys(
+                spec for contract in contracts for spec in contract.group_scope_inputs
+            )
+        )
+        if not owner_specs:
+            raise ValueError(
+                f"Artifact-owned FunctionStep {snapshot.step.name!r} declares no "
+                "artifact group-scope owner."
+            )
+
+        available_artifacts = self.planner.artifact_context.available_artifacts
+        contract_source_bindings = self.planner.source_bindings_for_snapshot(snapshot)
+        group_by = self.normalized_group_by(snapshot)
+        group_component = PathPlannerComponentScopes.component_from_group_by(group_by)
+        normalized_group_component = (
+            None
+            if group_component is None
+            else ComponentSet.coerce_component(group_component)
+        )
+        scopes: list[PathPlannerGroupScope] = []
+        for spec in owner_specs:
+            producer_ref = spec.ref().for_plan_type(ArtifactOutputPlan)
+            producer = self.planner.declared.get(producer_ref)
+            if producer is not None:
+                scopes.append(
+                    PathPlannerGroupScope.relation_scope_from_plan(
+                        producer,
+                        normalized_group_component,
+                    )
+                )
+                continue
+
+            context_producer = (
+                self.planner.artifact_context.available_artifact_producer_for(spec)
+            )
+            if context_producer is not None:
+                scopes.append(
+                    PathPlannerGroupScope.from_raw(
+                        context_producer.groups,
+                        component=normalized_group_component,
+                    )
+                )
+                continue
+
+            has_source_lineage = (
+                contract_source_bindings.binding_for_artifact_ref(spec.ref())
+                is not None
+                or available_artifacts.by_name_and_artifact_type(
+                    spec.name,
+                    spec.artifact_type,
+                )
+                is not None
+            )
+            if not has_source_lineage:
+                if self.planner.ctx.microscope_handler.can_resolve_metadata_artifact(
+                    spec.name
+                ):
+                    continue
+                if group_by is not GroupBy.NONE:
+                    raise ValueError(
+                        f"Artifact-owned FunctionStep {snapshot.step.name!r} cannot "
+                        f"resolve group scope for {spec.ref()!r}."
+                    )
+                scopes.append(PathPlannerGroupScope.ungrouped())
+                continue
+
+            source_group_keys = (
+                ()
+                if normalized_group_component is None
+                else contract_source_bindings.component_group_keys_for_artifact_specs(
+                    normalized_group_component,
+                    (spec,),
+                    available_artifacts,
+                    realized_source_metadata=(
+                        self.planner.session.realized_source_metadata
+                    ),
+                )
+            )
+            source_scope = (
+                PathPlannerGroupScope.from_raw(
+                    source_group_keys,
+                    component=normalized_group_component,
+                )
+                if source_group_keys
+                else PathPlannerGroupScope.ungrouped()
+            )
+            if source_scope.is_ungrouped and group_by is not GroupBy.NONE:
+                raise ValueError(
+                    f"Artifact-owned FunctionStep {snapshot.step.name!r} cannot "
+                    f"resolve group scope for {spec.ref()!r}."
+            )
+            scopes.append(source_scope)
+
+        if not scopes:
+            return consumer_scope
+
+        consumer_variable_components = ComponentSet.from_enum_values(
+            snapshot.step.processing_config.variable_components or ()
+        )
+        projected_scopes = tuple(
+            scope.output_lineage_scope(
+                consumer_scope,
+                consumer_variable_components,
+            )
+            for scope in scopes
+        )
+        execution_scope = PathPlannerGroupScope.union_compatible(projected_scopes)
+        if execution_scope is None:
+            raise ValueError(
+                f"Artifact-owned FunctionStep {snapshot.step.name!r} has "
+                f"incompatible declared owner scopes {projected_scopes!r}."
+            )
+        return execution_scope
+
+    def dynamic_execution_scope_for_group_by(
         self,
         snapshot: StepSnapshot,
         group_by: GroupBy | None,
     ) -> PathPlannerGroupScope:
-        """Return a runtime-discovered source scope for source-loaded inputs."""
-        if snapshot.input_source is not InputSource.PIPELINE_START:
-            return PathPlannerGroupScope.ungrouped()
-
+        """Return a typed runtime-discovered scope for a concrete group axis."""
         group_by_component = PathPlannerComponentScopes.component_from_group_by(
             group_by
         )
         if group_by_component is None:
             return PathPlannerGroupScope.ungrouped()
-        source_keys = tuple(self.planner.orchestrator.get_component_keys(group_by_component))
+        source_keys = (
+            tuple(self.planner.orchestrator.get_component_keys(group_by_component))
+            if snapshot.step.processing_config.input_source
+            is InputSource.PIPELINE_START
+            else ()
+        )
         if source_keys:
             return PathPlannerGroupScope.from_raw(
                 source_keys,
                 component=ComponentSet.coerce_component(group_by_component),
             )
-        return PathPlannerGroupScope.from_raw(
-            (None,),
-            component=ComponentSet.coerce_component(group_by_component),
+        return PathPlannerGroupScope.dynamic(
+            ComponentSet.coerce_component(group_by_component)
         )
 
     def source_binding_scope_for_group_by(
         self,
         snapshot: StepSnapshot,
         group_by: GroupBy | None,
+        *,
+        source_bindings: StepSourceBindingsConfig | None = None,
     ) -> PathPlannerGroupScope:
         """Derive execution groups declared by source-binding component identity."""
         group_by_component = PathPlannerComponentScopes.component_from_group_by(
@@ -401,18 +501,20 @@ class PathPlannerExecutionGroups:
         if group_by_component is None:
             return PathPlannerGroupScope.ungrouped()
 
-        source_bindings = self.planner.source_bindings_for_snapshot(snapshot)
-        if not source_bindings.enabled:
+        if source_bindings is None:
+            source_bindings = self.planner.source_bindings_for_snapshot(snapshot)
+        compiled_source_bindings = CompiledSourceBindingPlan.from_config(
+            source_bindings,
+            input_source=snapshot.step.processing_config.input_source,
+            realized_source_metadata=self.planner.session.realized_source_metadata,
+        )
+        if not compiled_source_bindings.binding_declarations:
             return PathPlannerGroupScope.ungrouped()
-
         component = ComponentSet.coerce_component(group_by_component)
-        group_keys = tuple(
-            dict.fromkeys(
-                selector.value
-                for binding in source_bindings.image_stack_bindings
-                for selector in binding.component_identity
-                if selector.component is component
-            )
+        group_keys = source_binding_group_keys_for_group_by(
+            source_bindings,
+            group_by,
+            realized_source_metadata=self.planner.session.realized_source_metadata,
         )
         if not group_keys:
             return PathPlannerGroupScope.ungrouped()
@@ -440,9 +542,10 @@ class PathPlannerExecutionGroups:
         )
 
         return FuncStepContractValidator.normalized_group_by(
-            snapshot.group_by,
-            snapshot.variable_components,
-            snapshot.name,
+            snapshot.step.processing_config.group_by,
+            snapshot.step.processing_config.variable_components,
+            snapshot.step.name,
+            normalize_function_pattern(snapshot.step.func),
         )
 
 
@@ -455,34 +558,130 @@ class PathPlannerArtifactStage:
     def prepare_step_declarations(
         self,
         snapshot: StepSnapshot,
-        input_component_scopes: PathPlannerComponentScopes | None = None,
-    ) -> tuple[ArtifactGraph, PathPlannerGroupScope, FunctionPatternSyntax | None]:
+    ) -> tuple[
+        ArtifactGraph,
+        FunctionPatternSyntax | None,
+        FunctionStepExecutionScope,
+        tuple[CallableContract, ...],
+    ]:
         """Normalize a step's function pattern and collect artifact declarations."""
-        if not snapshot.is_function_step:
-            return ArtifactGraph.empty(), PathPlannerGroupScope.ungrouped(), None
+        if not isinstance(snapshot.step, FunctionStep):
+            return (
+                ArtifactGraph.empty(),
+                None,
+                FunctionStepExecutionScope.AXIS,
+                (),
+            )
 
-        func_pattern = strip_disabled_functions(snapshot.func)
+        func_pattern = strip_disabled_functions(snapshot.step.func)
         source_bindings = self.planner.source_bindings_for_snapshot(snapshot)
-
+        declaration_context = self.artifact_declaration_context(
+            snapshot,
+            source_bindings=source_bindings,
+        )
+        contracts = resolve_function_pattern_contracts(
+            self.declaration_pattern(func_pattern),
+            self.planner.invocation_contract_provider,
+            declaration_context,
+        )
         declarations = extract_artifact_declarations(
             self.declaration_pattern(func_pattern),
             declaration_provider=self.planner.declaration_provider,
             invocation_contract_provider=self.planner.invocation_contract_provider,
-            step_context=self.artifact_declaration_context(
-                snapshot,
-                source_bindings=source_bindings,
-            ),
+            step_context=declaration_context,
         )
-        group_scope = self.planner.execution_groups.get_execution_groups(
-            snapshot,
-            input_component_scopes,
-        )
-        declarations = self.namespace_grouped_outputs_for_runtime_consumers(
-            func_pattern,
+        execution_scope = FunctionStepExecutionScope.require_uniform(contracts)
+        return (
             declarations,
-            group_scope,
+            func_pattern,
+            execution_scope,
+            contracts,
         )
-        return declarations, group_scope, func_pattern
+
+    def source_bindings_for_contracts(
+        self,
+        snapshot: StepSnapshot,
+        contracts: Iterable[CallableContract],
+    ) -> StepSourceBindingsConfig:
+        """Project bindings to every exact public source input in the contracts."""
+
+        source_bindings = self.planner.source_bindings_for_snapshot(snapshot)
+        available_artifacts = self.planner.artifact_context.available_artifacts
+        source_specs = tuple(
+            dict.fromkeys(
+                spec
+                for contract in contracts
+                for spec in contract.artifact_inputs
+                if (
+                    source_bindings.binding_for_artifact_ref(spec.ref()) is not None
+                    or available_artifacts.by_name_and_artifact_type(
+                        spec.name,
+                        spec.artifact_type,
+                    )
+                    is not None
+                )
+            )
+        )
+        if not source_specs:
+            return EMPTY_SOURCE_BINDINGS
+        return source_bindings.for_artifact_specs(
+            source_specs,
+            available_artifacts,
+        )
+
+    def source_binding_component_domains(
+        self,
+        specs: Iterable[ArtifactSpec],
+        source_bindings: StepSourceBindingsConfig,
+        available_artifacts: ArtifactSpecCollection,
+    ) -> tuple[PathPlannerGroupScope, ...]:
+        """Compile every declared component domain owned by source bindings."""
+
+        bindings = source_bindings.bindings_for_artifact_specs(
+            specs,
+            available_artifacts,
+        )
+        return tuple(
+            PathPlannerGroupScope.from_raw(values, component=component)
+            for component in AllComponents
+            for values in (
+                tuple(
+                    dict.fromkeys(
+                        value
+                        for binding in bindings
+                        for value in binding.component_values(
+                            component,
+                            realized_source_metadata=(
+                                self.planner.session.realized_source_metadata
+                            ),
+                        )
+                    )
+                ),
+            )
+            if values
+        )
+
+    def compile_source_plans(
+        self,
+        snapshot: StepSnapshot,
+        source_bindings: StepSourceBindingsConfig,
+    ) -> tuple[CompiledSourceBindingPlan, CompiledSourceUniversePlan]:
+        """Freeze invocation-scoped source declarations into runtime plans."""
+
+        if not source_bindings.binding_declarations:
+            binding_plan = CompiledSourceBindingPlan.empty()
+        else:
+            binding_plan = CompiledSourceBindingPlan.from_config(
+                source_bindings,
+                input_source=snapshot.step.processing_config.input_source,
+                realized_source_metadata=(
+                    self.planner.session.realized_source_metadata
+                ),
+            )
+        return (
+            binding_plan,
+            CompiledSourceUniversePlan.from_source_binding_plan(binding_plan),
+        )
 
     @staticmethod
     def declaration_pattern(
@@ -510,16 +709,16 @@ class PathPlannerArtifactStage:
         group_scope: PathPlannerGroupScope,
     ) -> ArtifactGraph:
         """Namespace grouped outputs by the step execution groups."""
-        output_names = tuple(declarations.outputs)
+        output_refs = tuple(declarations.outputs)
         if (
             isinstance(func_pattern, dict)
             or group_scope.is_ungrouped
-            or not output_names
+            or not output_refs
         ):
             return declarations
 
         return declarations.with_output_groups(
-            group_scope.output_groups_for(output_names)
+            group_scope.output_groups_for(output_refs)
         )
 
     def compile_plan_maps(
@@ -528,284 +727,648 @@ class PathPlannerArtifactStage:
         step_index: int,
         declarations: ArtifactGraph,
         group_scope: PathPlannerGroupScope,
+        execution_scope: FunctionStepExecutionScope = FunctionStepExecutionScope.AXIS,
+        source_bindings: StepSourceBindingsConfig = EMPTY_SOURCE_BINDINGS,
     ) -> ArtifactPlanMaps:
         """Compile artifact declarations into runtime I/O maps."""
-        step_name = snapshot.name
+        step_name = snapshot.step.name
         group_by = PathPlannerExecutionGroups.normalized_group_by(snapshot)
-        source_bindings = self.planner.source_bindings_for_snapshot(snapshot)
+        source_binding_plan, source_universe_plan = self.compile_source_plans(
+            snapshot,
+            source_bindings,
+        )
+        consumer_variable_components = ComponentSet.from_enum_values(
+            snapshot.step.processing_config.variable_components or ()
+        )
         artifact_inputs = self.process_artifact_inputs(
-            declarations.inputs,
-            declarations.outputs,
+            declarations,
             step_index,
             consumer_scope=group_scope,
+            source_bindings=source_bindings,
+            variable_components=consumer_variable_components,
             step_name=step_name,
+            execution_scope=execution_scope,
         )
-        output_groups = self.output_groups_from_declared_relations(
+        relation_source_scopes = self.relation_source_scopes_by_ref(
             declarations,
             artifact_inputs,
             group_scope=group_scope,
             source_bindings=source_bindings,
             group_by=group_by,
+        )
+        output_groups = self.output_groups_from_declared_relations(
+            declarations,
+            group_scope=group_scope,
+            relation_source_scopes=relation_source_scopes,
+            consumer_variable_components=consumer_variable_components,
             step_index=step_index,
             step_name=step_name,
         )
-        effective_group_scope = self.execution_scope_from_declared_output_relations(
-            declarations,
-            group_scope,
-            output_groups,
-        )
-        if effective_group_scope != group_scope:
-            group_scope = effective_group_scope
-            artifact_inputs = self.process_artifact_inputs(
-                declarations.inputs,
-                declarations.outputs,
-                step_index,
-                consumer_scope=group_scope,
-                step_name=step_name,
-            )
-            output_groups = self.output_groups_from_declared_relations(
-                declarations,
-                artifact_inputs,
-                group_scope=group_scope,
-                source_bindings=source_bindings,
-                group_by=group_by,
-                step_index=step_index,
-                step_name=step_name,
-            )
         artifact_outputs = self.process_artifact_outputs(
-            declarations.outputs,
+            declarations,
             step_index,
             output_groups,
+            execution_scope=execution_scope,
+            artifact_inputs=artifact_inputs,
+            relation_source_scopes=relation_source_scopes,
+            source_bindings=source_bindings,
+            variable_components=consumer_variable_components,
             step_name=step_name,
         )
-
+        artifact_inputs = {
+            input_ref: (
+                self._producer_artifact_input_plan(
+                    input_plan.ref().for_plan_type(ArtifactOutputPlan),
+                    declarations.inputs[input_ref],
+                    step_index,
+                    step_name,
+                )
+                if input_plan.source_step_id == step_index
+                else input_plan
+            )
+            for input_ref, input_plan in artifact_inputs.items()
+        }
+        relation_source_scopes = self.relation_source_scopes_by_ref(
+            declarations,
+            artifact_inputs,
+            group_scope=group_scope,
+            source_bindings=source_bindings,
+            group_by=group_by,
+        )
         return ArtifactPlanMaps(
             declarations=declarations,
             group_scope=group_scope,
             inputs=artifact_inputs,
             outputs=artifact_outputs,
-            inputs_by_group=self.planner.paths.artifact_inputs_by_group(
-                artifact_inputs,
-                group_scope,
-            ),
-            outputs_by_group=self.planner.paths.artifact_outputs_by_group(
-                artifact_outputs
-            ),
+            relation_source_scopes=relation_source_scopes,
+            source_binding_plan=source_binding_plan,
+            source_universe_plan=source_universe_plan,
         )
-
-    def execution_scope_from_declared_output_relations(
-        self,
-        declarations: ArtifactGraph,
-        group_scope: PathPlannerGroupScope,
-        output_groups: Mapping[str, PathPlannerGroupScope],
-    ) -> PathPlannerGroupScope:
-        """Narrow scalar step execution when output lineage proves a smaller scope."""
-        if group_scope.is_ungrouped or not declarations.producers:
-            return group_scope
-        if not self.outputs_are_namespaced_by_group_scope(declarations, group_scope):
-            return group_scope
-
-        relation_scopes: list[PathPlannerGroupScope] = []
-        for name, groups in declarations.output_groups.items():
-            default_scope = PathPlannerGroupScope.from_raw(
-                groups,
-                component=group_scope.component,
-            )
-            resolved_scope = output_groups.get(name, default_scope)
-            if resolved_scope != default_scope:
-                relation_scopes.append(resolved_scope)
-
-        if not relation_scopes:
-            return group_scope
-        narrowed = self.union_group_scopes(relation_scopes)
-        if narrowed is None:
-            return group_scope
-        if (
-            group_scope.component is not None
-            and narrowed.component != group_scope.component
-        ):
-            return group_scope
-        return narrowed
-
-    @staticmethod
-    def outputs_are_namespaced_by_group_scope(
-        declarations: ArtifactGraph,
-        group_scope: PathPlannerGroupScope,
-    ) -> bool:
-        """Return whether outputs were broadened to the scalar step scope."""
-        expected = set(group_scope.keys)
-        return all(groups == expected for groups in declarations.output_groups.values())
-
-    @staticmethod
-    def union_group_scopes(
-        scopes: Sequence[PathPlannerGroupScope],
-    ) -> PathPlannerGroupScope | None:
-        """Return a single scope containing all keys when components agree."""
-        if not scopes:
-            return None
-        component = scopes[0].component
-        keys: list[PlannerGroupKey] = []
-        for scope in scopes:
-            if scope.component != component:
-                return None
-            for key in scope.keys:
-                if key not in keys:
-                    keys.append(key)
-        return PathPlannerGroupScope.from_raw(keys, component=component)
 
     def output_groups_from_declared_relations(
         self,
         declarations: ArtifactGraph,
-        artifact_inputs: Mapping[str, ArtifactInputPlan],
         *,
         group_scope: PathPlannerGroupScope,
-        source_bindings: StepSourceBindingsConfig,
-        group_by: GroupBy | None,
+        relation_source_scopes: Mapping[ArtifactSpecRef, PathPlannerGroupScope],
+        consumer_variable_components: ComponentSet,
         step_index: int,
         step_name: str | None,
-    ) -> Mapping[str, PathPlannerGroupScope]:
+    ) -> Mapping[ArtifactSpecRef, PathPlannerGroupScope]:
         """Return output groups after applying declared artifact relations."""
-        output_groups: dict[str, PathPlannerGroupScope] = {
-            name: PathPlannerGroupScope.from_raw(
-                groups,
-                component=group_scope.component,
-            )
-            for name, groups in declarations.output_groups.items()
-        }
-        plans_by_ref = self.relation_source_plans_by_ref(
-            declarations,
-            artifact_inputs,
-            group_scope=group_scope,
-            source_bindings=source_bindings,
-            group_by=group_by,
-        )
+        output_groups: dict[ArtifactSpecRef, PathPlannerGroupScope] = {}
         for producer in declarations.producers:
-            for relation in producer.spec.relations:
-                effect = PathPlannerArtifactRelationEffect.for_nominal_value(
-                    relation
+            output_ref = producer.spec.ref()
+            if producer.has_explicit_invocation_group_ownership():
+                output_groups[output_ref] = PathPlannerGroupScope.from_raw(
+                    producer.groups,
+                    component=group_scope.component,
                 )
-                if effect is not None:
-                    effect.apply_output_groups(
-                        relation=relation,
-                        producer=producer,
-                        plans_by_ref=plans_by_ref,
-                        output_groups=output_groups,
-                        step_index=step_index,
-                        step_name=step_name,
-                    )
+                continue
+            lineage_refs = producer.spec.group_scope_sources()
+            if not lineage_refs:
+                output_groups[output_ref] = group_scope
+                continue
+            try:
+                lineage_scopes = tuple(
+                    relation_source_scopes[source] for source in lineage_refs
+                )
+            except KeyError as exc:
+                source = exc.args[0]
+                if not isinstance(source, ArtifactSpecRef):
+                    raise
+                raise MissingArtifactInputError(
+                    step_id=step_index,
+                    artifact_key=source.name,
+                    step_name=step_name,
+                ) from exc
+            projected_scopes = tuple(
+                lineage_scope.output_lineage_scope(
+                    group_scope,
+                    consumer_variable_components,
+                )
+                for lineage_scope in lineage_scopes
+            )
+            first_scope = projected_scopes[0]
+            output_groups[output_ref] = (
+                first_scope
+                if all(scope == first_scope for scope in projected_scopes[1:])
+                else group_scope
+            )
         return output_groups
 
-    def relation_source_plans_by_ref(
+    def relation_source_scopes_by_ref(
         self,
         declarations: ArtifactGraph,
-        artifact_inputs: Mapping[str, ArtifactInputPlan],
+        artifact_inputs: Mapping[ArtifactSpecRef, ArtifactInputPlan],
         *,
         group_scope: PathPlannerGroupScope,
         source_bindings: StepSourceBindingsConfig,
         group_by: GroupBy | None,
-    ) -> dict[ArtifactSpecRef, ArtifactPlan]:
-        """Return compiler plans addressable by full artifact spec reference."""
-        plans_by_ref: dict[ArtifactSpecRef, ArtifactPlan] = {}
-        for name, spec in declarations.inputs.items():
-            input_plan = artifact_inputs.get(name)
-            if input_plan is not None:
-                plans_by_ref[spec.ref()] = input_plan
-        plans_by_ref.update(
-            self.source_binding_relation_plans_by_ref(
-                source_bindings,
-                group_scope=group_scope,
-                group_by=group_by,
-            )
+    ) -> dict[ArtifactSpecRef, PathPlannerGroupScope]:
+        """Return exact group scopes for every declared relation source."""
+
+        source_scopes_by_ref: dict[ArtifactSpecRef, PathPlannerGroupScope] = {}
+        ArtifactInputPlan.require_exact_map(
+            artifact_inputs,
+            boundary="Path planner artifact input",
         )
-        for output_plan in self.planner.declared.values():
-            plans_by_ref[
-                ArtifactSpecRef.output(
-                    output_plan.name,
-                    output_plan.artifact_type,
-                )
-            ] = output_plan
-        return plans_by_ref
-
-    @staticmethod
-    def source_binding_relation_plans_by_ref(
-        source_bindings: StepSourceBindingsConfig,
-        *,
-        group_scope: PathPlannerGroupScope,
-        group_by: GroupBy | None,
-    ) -> dict[ArtifactSpecRef, ArtifactInputPlan]:
-        """Return source-bound aliases addressable as relation source plans."""
-        plans_by_ref: dict[ArtifactSpecRef, ArtifactInputPlan] = {}
-        for binding in source_bindings.binding_declarations:
-            binding_scope = PathPlannerArtifactStage.source_binding_group_scope(
-                binding,
-                group_scope,
-                group_by,
-            )
-            plan = ArtifactInputPlan(
-                name=binding.alias,
-                path=f"source-binding:{binding.alias}",
-                artifact_type=binding.artifact_kind,
-                group_keys=binding_scope.keys,
-                group_component=binding_scope.component,
-            )
-            plans_by_ref[
-                ArtifactSpecRef.input(
-                    plan.name,
-                    plan.artifact_type,
-                )
-            ] = plan
-        return plans_by_ref
-
-    @staticmethod
-    def source_binding_group_scope(
-        binding: NamedSourceBinding,
-        group_scope: PathPlannerGroupScope,
-        group_by: GroupBy | None,
-    ) -> PathPlannerGroupScope:
-        """Return relation scope declared by a source binding identity."""
-
         component = group_scope.component
         if component is None:
-            group_by_component = PathPlannerComponentScopes.component_from_group_by(
+            grouped_component = PathPlannerComponentScopes.component_from_group_by(
                 group_by
             )
-            if group_by_component is not None:
-                component = ComponentSet.coerce_component(group_by_component)
-        if component is None:
-            return group_scope
-        identity_values = tuple(
-            selector.value
-            for selector in binding.component_identity
-            if selector.component is component
+            if grouped_component is not None:
+                component = ComponentSet.coerce_component(grouped_component)
+        for input_ref, spec in declarations.inputs.items():
+            input_plan = artifact_inputs.get(input_ref)
+            if input_plan is None:
+                context_producer = (
+                    self.planner.artifact_context.available_artifact_producer_for(
+                        spec
+                    )
+                )
+                if context_producer is not None:
+                    source_scopes_by_ref[spec.ref()] = (
+                        PathPlannerGroupScope.from_raw(
+                            context_producer.groups,
+                            component=component,
+                        )
+                    )
+                continue
+            source_scopes_by_ref[spec.ref()] = (
+                PathPlannerGroupScope.relation_scope_from_plan(
+                    input_plan,
+                    component,
+                )
+            )
+        for binding in source_bindings.binding_declarations:
+            identity_values = (
+                binding.component_values(
+                    component,
+                    realized_source_metadata=(
+                        self.planner.session.realized_source_metadata
+                    ),
+                )
+                if component is not None
+                else ()
+            )
+            binding_scope = (
+                PathPlannerGroupScope.from_raw(
+                    identity_values,
+                    component=component,
+                )
+                if identity_values
+                else group_scope
+            )
+            source_scopes_by_ref.setdefault(
+                binding.input_spec().ref(),
+                binding_scope,
+            )
+        for consumer in declarations.non_plan_consumers:
+            producer_ref = consumer.spec.ref().for_plan_type(ArtifactOutputPlan)
+            producer_plan = self.planner.declared.get(producer_ref)
+            source_scopes_by_ref.setdefault(
+                consumer.spec.ref(),
+                (
+                    PathPlannerGroupScope.relation_scope_from_plan(
+                        producer_plan,
+                        component,
+                    )
+                    if producer_plan is not None
+                    else group_scope
+                ),
+            )
+        relation_sources = tuple(
+            dict.fromkeys(
+                source_ref
+                for spec in (*declarations.inputs.values(), *declarations.outputs.values())
+                for source_ref in spec.dependency_refs()
+            )
         )
-        if not identity_values:
-            return group_scope
-        return PathPlannerGroupScope.from_raw(
-            identity_values,
-            component=component,
-        )
+        for source_ref in relation_sources:
+            if source_ref in source_scopes_by_ref:
+                continue
+            producer_plan = self.planner.declared.get(
+                source_ref.for_plan_type(ArtifactOutputPlan)
+            )
+            if producer_plan is None:
+                continue
+            source_scopes_by_ref[source_ref] = (
+                PathPlannerGroupScope.relation_scope_from_plan(
+                    producer_plan,
+                    component,
+                )
+            )
+        for spec in dict.fromkeys(
+            consumer.spec
+            for consumer in (
+                *declarations.consumers,
+                *declarations.non_plan_consumers,
+            )
+        ):
+            active_spec = self.planner.artifact_context.available_artifacts.by_name_and_artifact_type(
+                spec.name, spec.artifact_type
+            )
+            lineage_spec = spec if active_spec is None else active_spec
+            source_stack_scopes = tuple(
+                source_scopes_by_ref[source_ref]
+                for source_ref in lineage_spec.source_stack_scope_sources()
+                if source_ref in source_scopes_by_ref
+                and source_scopes_by_ref[source_ref].component is group_scope.component
+            )
+            inherited_scope = PathPlannerGroupScope.union_compatible(
+                source_stack_scopes
+            )
+            if inherited_scope is not None:
+                source_scopes_by_ref[spec.ref()] = inherited_scope
+        return source_scopes_by_ref
 
     def build_step_compiled_function_pattern(
         self,
         snapshot: StepSnapshot,
         is_function_step: bool,
         func_pattern: FunctionPatternSyntax | None,
-        artifact_inputs: Mapping[str, ArtifactInputPlan],
-        artifact_outputs: Mapping[str, ArtifactOutputPlan],
+        artifact_inputs: Mapping[ArtifactSpecRef, ArtifactInputPlan],
+        artifact_outputs: Mapping[ArtifactSpecRef, ArtifactOutputPlan],
+        relation_source_scopes: Mapping[
+            ArtifactSpecRef,
+            PathPlannerGroupScope,
+        ],
+        execution_group_scope: PathPlannerGroupScope,
     ) -> CompiledFunctionPattern | None:
         """Build the executable function-pattern graph for a FunctionStep."""
         if not is_function_step or not func_pattern:
             return None
 
-        return compile_function_pattern(
+        step_context = self.artifact_declaration_context(snapshot)
+        contracts = resolve_function_pattern_contracts(
+            func_pattern,
+            self.planner.invocation_contract_provider,
+            step_context,
+        )
+        config_parameters: dict[str, inspect.Parameter] = {}
+        for contract in contracts:
+            for parameter in contract.config_bound_parameters:
+                prior = config_parameters.setdefault(parameter.name, parameter)
+                if prior.annotation is not parameter.annotation:
+                    raise TypeError(
+                        f"FunctionStep {snapshot.step.name!r} callable pattern "
+                        f"declares incompatible config parameter {parameter.name!r}: "
+                        f"{prior.annotation!r} and {parameter.annotation!r}."
+                    )
+        step_values = vars(snapshot.step)
+        pipeline_values = vars(self.planner.session.global_config)
+        runtime_parameter_bindings: list[RuntimeParameterBinding] = []
+        for parameter_name, parameter in config_parameters.items():
+            provider = (
+                step_values[parameter_name]
+                if parameter_name in step_values
+                else pipeline_values[parameter_name]
+            )
+            parameter_type = (
+                get_base_type_for_lazy(parameter.annotation) or parameter.annotation
+            )
+            if not isinstance(provider, parameter_type):
+                raise TypeError(
+                    f"FunctionStep {snapshot.step.name!r} config parameter "
+                    f"{parameter_name!r} requires {parameter_type.__name__}, got "
+                    f"{type(provider).__name__}."
+                )
+            runtime_parameter_bindings.append(
+                RuntimeParameterBinding(
+                    parameter_name=parameter_name,
+                    value=provider,
+                )
+            )
+
+        compiled_pattern = compile_function_pattern(
             func_pattern,
             artifact_inputs,
             artifact_outputs,
             declaration_provider=self.planner.declaration_provider,
             invocation_contract_provider=self.planner.invocation_contract_provider,
-            step_context=self.artifact_declaration_context(snapshot),
-            runtime_parameter_bindings=snapshot.callable_runtime_config_bindings,
+            step_context=step_context,
+            runtime_parameter_bindings=tuple(runtime_parameter_bindings),
+            path_resolver=self.planner.session.path_resolver,
         )
+        available_artifacts = step_context.available_artifacts.rebind(
+            compiled_pattern.coalesced_artifact_output_specs()
+        )
+        return self.compile_invocation_input_edges(
+            compiled_pattern,
+            artifact_inputs=artifact_inputs,
+            relation_source_scopes=relation_source_scopes,
+            execution_group_scope=execution_group_scope,
+            consumer_variable_components=ComponentSet.from_enum_values(
+                snapshot.step.processing_config.variable_components or ()
+            ),
+            source_bindings=step_context.source_bindings,
+            available_artifacts=available_artifacts,
+            main_flow_artifacts=step_context.main_flow_artifacts,
+        )
+
+    def compile_invocation_input_edges(
+        self,
+        compiled_pattern: CompiledFunctionPattern,
+        *,
+        artifact_inputs: Mapping[ArtifactSpecRef, ArtifactInputPlan],
+        relation_source_scopes: Mapping[
+            ArtifactSpecRef,
+            PathPlannerGroupScope,
+        ],
+        execution_group_scope: PathPlannerGroupScope,
+        consumer_variable_components: ComponentSet,
+        source_bindings: StepSourceBindingsConfig = EMPTY_SOURCE_BINDINGS,
+        available_artifacts: ArtifactSpecCollection = ArtifactSpecCollection(()),
+        main_flow_artifacts: ArtifactSpecCollection = ArtifactSpecCollection(()),
+    ) -> CompiledFunctionPattern:
+        """Compile exact invocation-to-input projections from nominal contracts."""
+
+        main_flow_refs = main_flow_artifacts.ref_set()
+        groups: list[CompiledFunctionGroup] = []
+        for group in compiled_pattern.groups:
+            invocations: list[CompiledFunctionInvocation] = []
+            for invocation in group.invocations:
+                invocation_main_flow_refs = (
+                    invocation.contract.group_scope_inputs.ref_set()
+                )
+                if compiled_pattern.is_grouped:
+                    if execution_group_scope.is_ungrouped:
+                        raise ValueError(
+                            f"Grouped invocation {invocation.key!r} has no grouped "
+                            "execution component."
+                        )
+                    invocation_scope = PathPlannerGroupScope.from_raw(
+                        (
+                            execution_group_scope.resolve_runtime_key(
+                                invocation.key.group_key
+                            ),
+                        ),
+                        component=execution_group_scope.component,
+                    )
+                elif execution_group_scope.is_ungrouped:
+                    invocation_scope = execution_group_scope
+                elif (
+                    not execution_group_scope.is_dynamic
+                    and len(execution_group_scope.keys) == 1
+                ):
+                    invocation_scope = execution_group_scope
+                else:
+                    invocation_scope = PathPlannerGroupScope.dynamic(
+                        execution_group_scope.component
+                    )
+                selected_plans = invocation.contract.select_plans(
+                    ArtifactInputPlan,
+                    artifact_inputs,
+                )
+                invocation.contract.validate_artifact_input_parameter_bindings()
+                input_edge_keys = InvocationArtifactInputProjectionKey.for_input_count(
+                    invocation.key,
+                    len(invocation.contract.artifact_inputs),
+                )
+                selected_plans_by_ref = {plan.ref(): plan for plan in selected_plans}
+                edges: list[InvocationArtifactInputEdgePlan] = []
+                for input_edge_key, input_spec in zip(
+                    input_edge_keys,
+                    invocation.contract.artifact_inputs,
+                    strict=True,
+                ):
+                    storage_plan = selected_plans_by_ref.get(input_spec.ref())
+                    consumes_main_flow = (
+                        storage_plan is None
+                        and input_spec.ref() in main_flow_refs
+                        and input_spec.ref() in invocation_main_flow_refs
+                    )
+                    if storage_plan is None:
+                        edges.append(
+                            InvocationArtifactInputEdgePlan(
+                                key=input_edge_key,
+                                spec=input_spec,
+                                storage_plan=None,
+                                projection=None,
+                                consumes_main_flow=consumes_main_flow,
+                            )
+                        )
+                        continue
+                    edges.append(
+                        self.invocation_input_edge(
+                            invocation,
+                            input_edge_key,
+                            input_spec=input_spec,
+                            storage_plan=storage_plan,
+                            invocation_scope=invocation_scope,
+                            relation_source_scopes=relation_source_scopes,
+                            consumer_variable_components=consumer_variable_components,
+                            source_bindings=source_bindings,
+                            available_artifacts=available_artifacts,
+                            consumes_main_flow=consumes_main_flow,
+                        )
+                    )
+                invocations.append(invocation.with_artifact_input_edges(tuple(edges)))
+            groups.append(replace(group, invocations=tuple(invocations)))
+        return replace(compiled_pattern, groups=tuple(groups))
+
+    def invocation_input_edge(
+        self,
+        invocation: CompiledFunctionInvocation,
+        input_edge_key: InvocationArtifactInputProjectionKey,
+        *,
+        input_spec: ArtifactSpec,
+        storage_plan: ArtifactInputPlan,
+        invocation_scope: PathPlannerGroupScope,
+        relation_source_scopes: Mapping[
+            ArtifactSpecRef,
+            PathPlannerGroupScope,
+        ],
+        consumer_variable_components: ComponentSet,
+        source_bindings: StepSourceBindingsConfig,
+        available_artifacts: ArtifactSpecCollection,
+        consumes_main_flow: bool,
+    ) -> InvocationArtifactInputEdgePlan:
+        """Compile one exact relation-owned invocation input edge."""
+
+        if input_edge_key.invocation_key != invocation.key:
+            raise ValueError(
+                f"Invocation {invocation.key!r} cannot compile input edge for "
+                f"{input_edge_key.invocation_key!r}."
+            )
+        artifact_ref = storage_plan.ref()
+        if input_spec.ref() != artifact_ref:
+            raise ValueError(
+                f"Invocation {invocation.key!r} input declaration "
+                f"{input_spec.ref()!r} does not match compiled plan {artifact_ref!r}."
+            )
+        if invocation.contract.execution_scope is FunctionStepExecutionScope.PLATE:
+            projection = ArtifactInputProjectionPlan(
+                invocation_scope=invocation_scope,
+                producer_selection_scope=PathPlannerGroupScope.from_plan(storage_plan),
+            )
+            return InvocationArtifactInputEdgePlan(
+                key=input_edge_key,
+                spec=input_spec,
+                storage_plan=storage_plan,
+                projection=projection,
+                consumes_main_flow=consumes_main_flow,
+            )
+
+        relation_scopes = tuple(
+            self.require_relation_source_scope(
+                source_ref,
+                relation_source_scopes,
+                invocation,
+            )
+            for source_ref in input_spec.group_scope_sources()
+        )
+        source_binding_domains = (
+            ()
+            if storage_plan.source_step_id is not None
+            else self.source_binding_component_domains(
+                (input_spec,),
+                source_bindings,
+                available_artifacts,
+            )
+        )
+        storage_domains = tuple(
+            PathPlannerGroupScope.from_raw(
+                domain.keys,
+                component=domain.component,
+            )
+            for domain in storage_plan.component_domains
+        )
+        component_scopes = self.exact_component_scopes(
+            storage_domains,
+            relation_scopes,
+            component_domains=(
+                *storage_domains,
+                *source_binding_domains,
+            ),
+            invocation_scope=invocation_scope,
+            invocation=invocation,
+            artifact_ref=artifact_ref,
+        )
+        producer_scope = storage_plan.producer_group_scope()
+        if producer_scope.is_ungrouped:
+            producer_selection_scope = PathPlannerGroupScope.ungrouped()
+        elif not producer_scope.is_dynamic and len(producer_scope.keys) == 1:
+            producer_selection_scope = PathPlannerGroupScope.from_plan(storage_plan)
+        elif invocation.contract.execution_scope is FunctionStepExecutionScope.PLATE:
+            producer_selection_scope = PathPlannerGroupScope.from_plan(storage_plan)
+        elif producer_scope.component in consumer_variable_components:
+            producer_selection_scope = PathPlannerGroupScope.from_plan(storage_plan)
+        else:
+            producer_selection_scope = next(
+                (
+                    scope
+                    for scope in component_scopes
+                    if scope.component is producer_scope.component
+                ),
+                None,
+            )
+            if producer_selection_scope is None:
+                raise ValueError(
+                    f"Invocation {invocation.key!r} input {artifact_ref!r} has "
+                    f"producer scope {producer_scope!r} but no exact relation-owned "
+                    "selection coordinate."
+                )
+
+        projection = ArtifactInputProjectionPlan(
+            invocation_scope=invocation_scope,
+            producer_selection_scope=producer_selection_scope,
+            component_scopes=component_scopes,
+            consumer_variable_components=consumer_variable_components.as_tuple(),
+        )
+        return InvocationArtifactInputEdgePlan(
+            key=input_edge_key,
+            spec=input_spec,
+            storage_plan=storage_plan,
+            projection=projection,
+            consumes_main_flow=consumes_main_flow,
+        )
+
+    @staticmethod
+    def require_relation_source_scope(
+        source_ref: ArtifactSpecRef,
+        relation_source_scopes: Mapping[
+            ArtifactSpecRef,
+            PathPlannerGroupScope,
+        ],
+        invocation: CompiledFunctionInvocation,
+    ) -> PathPlannerGroupScope:
+        """Return one exact compiler-resolved relation source scope."""
+
+        try:
+            return relation_source_scopes[source_ref]
+        except KeyError as exc:
+            raise ValueError(
+                f"Invocation {invocation.key!r} relation source {source_ref!r} "
+                "has no compiled scope."
+            ) from exc
+
+    @staticmethod
+    def exact_component_scopes(
+        storage_domains: Sequence[ComponentGroupScope],
+        relation_scopes: Sequence[ComponentGroupScope],
+        *,
+        component_domains: Sequence[ComponentGroupScope],
+        invocation_scope: ComponentGroupScope,
+        invocation: CompiledFunctionInvocation,
+        artifact_ref: ArtifactSpecRef,
+    ) -> tuple[ComponentGroupScope, ...]:
+        """Resolve exact producer coordinates without conflating consumer scope."""
+
+        by_component: dict[AllComponents, ComponentGroupScope] = {}
+        storage_components: set[AllComponents] = set()
+        for domain in storage_domains:
+            if domain.is_ungrouped or domain.is_dynamic or len(domain.keys) != 1:
+                continue
+            component = domain.component
+            if component is None:
+                raise RuntimeError("Grouped storage domain lost its component.")
+            by_component[component] = domain
+            storage_components.add(component)
+
+        for scope in relation_scopes:
+            if scope.is_ungrouped:
+                continue
+            component = scope.component
+            if component is None:
+                raise RuntimeError("Grouped projection scope lost its component.")
+            existing = by_component.get(component)
+            if component in storage_components:
+                continue
+            if existing is not None and existing != scope:
+                raise ValueError(
+                    f"Invocation {invocation.key!r} input {artifact_ref!r} declares "
+                    f"conflicting {component.value!r} coordinates {existing!r} and "
+                    f"{scope!r}."
+                )
+            by_component[component] = scope
+
+        for domain in component_domains:
+            if domain.is_ungrouped:
+                continue
+            component = domain.component
+            if component is None:
+                raise RuntimeError("Grouped component domain lost its component.")
+            exact_scope = by_component.get(component)
+            if (
+                exact_scope is not None
+                and not exact_scope.is_dynamic
+                and not domain.contains_scope(exact_scope)
+            ):
+                raise ValueError(
+                    f"Invocation {invocation.key!r} input {artifact_ref!r} "
+                    f"has exact {component.value!r} coordinate {exact_scope!r} "
+                    f"outside component domain {domain!r}."
+                )
+
+        if not invocation_scope.is_ungrouped:
+            component = invocation_scope.component
+            if component is None:
+                raise RuntimeError("Grouped invocation scope lost its component.")
+            by_component.setdefault(component, invocation_scope)
+        return tuple(by_component.values())
 
     def artifact_declaration_context(
         self,
@@ -816,36 +1379,78 @@ class PathPlannerArtifactStage:
         """Return compile-time context for invocation artifact providers."""
         if source_bindings is None:
             source_bindings = self.planner.source_bindings_for_snapshot(snapshot)
-        return ArtifactDeclarationStepContext(
-            step_name=snapshot.name,
+        return replace(
+            self.planner.artifact_context,
+            step_name=snapshot.step.name,
             step_index=snapshot.index,
+        ).with_source_binding_scope(
             source_bindings=source_bindings,
-            processing_config=snapshot.processing_config,
+            group_by=PathPlannerExecutionGroups.normalized_group_by(snapshot),
+            input_source=snapshot.step.processing_config.input_source,
         )
 
     def process_artifact_outputs(
         self,
-        outputs: Mapping[str, ArtifactSpec],
+        declarations: ArtifactGraph,
         sid: int,
-        output_groups: Mapping[str, PathPlannerGroupScope] | None = None,
+        output_groups: Mapping[ArtifactSpecRef, PathPlannerGroupScope] | None = None,
+        *,
+        execution_scope: FunctionStepExecutionScope,
+        artifact_inputs: Mapping[ArtifactSpecRef, ArtifactInputPlan],
+        relation_source_scopes: Mapping[
+            ArtifactSpecRef,
+            PathPlannerGroupScope,
+        ]
+        | None = None,
+        source_bindings: StepSourceBindingsConfig,
+        variable_components: ComponentSet,
         step_name: Optional[str] = None,
-    ) -> dict[str, ArtifactOutputPlan]:
+    ) -> dict[ArtifactSpecRef, ArtifactOutputPlan]:
         """Compile storage plans for artifacts produced by this step."""
-        result: dict[str, ArtifactOutputPlan] = {}
+        result: dict[ArtifactSpecRef, ArtifactOutputPlan] = {}
+        outputs = declarations.outputs
+        ArtifactInputPlan.require_exact_map(
+            artifact_inputs,
+            boundary="Path planner artifact input",
+        )
+        if output_groups is not None:
+            for output_ref, output_scope in output_groups.items():
+                if not isinstance(output_ref, ArtifactSpecRef):
+                    raise TypeError(
+                        "Path planner output-group maps require ArtifactSpecRef "
+                        f"keys, got {type(output_ref).__name__}."
+                    )
+                if not isinstance(output_scope, PathPlannerGroupScope):
+                    raise TypeError(
+                        "Path planner output-group maps require "
+                        "PathPlannerGroupScope values, got "
+                        f"{type(output_scope).__name__} for {output_ref!r}."
+                    )
+                if output_ref not in outputs:
+                    raise ValueError(
+                        f"Path planner output-group key {output_ref!r} is not an "
+                        "exact declared output."
+                    )
         if not outputs:
             return result
 
-        results_path = self.planner.paths.results_path()
-        for key, spec in sorted(outputs.items()):
-            filename = PipelinePathPlanner._build_axis_filename(
-                self.planner.ctx.axis_id,
-                key,
-                step_index=sid,
+        relation_source_scopes = relation_source_scopes or {}
+        available_artifacts = self.planner.artifact_context.available_artifacts
+        main_flow_artifacts = self.planner.artifact_context.main_flow_artifacts
+
+        for output_ref, spec in sorted(
+            outputs.items(),
+            key=lambda item: item[1].name,
+        ):
+            key = spec.name
+            path = self.planner.paths.artifact_path(
+                declarations.require_output_storage_key(output_ref),
+                sid,
+                execution_scope=execution_scope,
             )
-            path = results_path / filename
             group_scope = (
-                output_groups[key]
-                if output_groups is not None and key in output_groups
+                output_groups[output_ref]
+                if output_groups is not None and output_ref in output_groups
                 else PathPlannerGroupScope.ungrouped()
             )
             normalized_groups = list(group_scope.keys)
@@ -853,67 +1458,217 @@ class PathPlannerArtifactStage:
                 str(path),
                 normalized_groups,
             )
-            result[key] = ArtifactOutputPlan(
+            source_stack_axes: list[ComponentSet] = []
+            source_stack_domains: list[PathPlannerGroupScope] = []
+            source_binding_domains: list[PathPlannerGroupScope] = []
+            for source_ref in spec.source_stack_scope_sources():
+                source_plan = artifact_inputs.get(source_ref)
+                relation_scope = relation_source_scopes.get(source_ref)
+                if relation_scope is not None and not relation_scope.is_ungrouped:
+                    source_stack_domains.append(relation_scope)
+                if source_plan is not None:
+                    source_stack_domains.extend(
+                        PathPlannerGroupScope.from_raw(
+                            domain.keys,
+                            component=domain.component,
+                        )
+                        for domain in source_plan.component_domains
+                    )
+                    source_stack_axes.append(
+                        source_plan.runtime_variable_components(variable_components)
+                    )
+                    continue
+
+                source_binding = source_bindings.binding_for_artifact_ref(source_ref)
+                main_flow_spec = main_flow_artifacts.by_ref(source_ref)
+                source_spec = (
+                    source_binding.input_spec()
+                    if source_binding is not None
+                    else main_flow_spec
+                )
+                if source_spec is not None:
+                    source_binding_domains.extend(
+                        self.source_binding_component_domains(
+                            (source_spec,),
+                            source_bindings,
+                            available_artifacts,
+                        )
+                    )
+
+                if source_spec is None:
+                    raise ValueError(
+                        f"Artifact output {spec.ref()!r} preserves the stack of "
+                        f"undeclared input {source_ref!r}."
+                    )
+                source_binding_axes = (
+                    source_bindings.runtime_variable_components_for_artifact_specs(
+                        (source_spec,),
+                        available_artifacts,
+                        variable_components,
+                    )
+                )
+                if source_binding_axes is not None:
+                    source_stack_axes.append(source_binding_axes)
+                    continue
+                if main_flow_spec is not None:
+                    source_stack_axes.append(variable_components)
+                    continue
+                raise ValueError(
+                    f"Artifact output {spec.ref()!r} preserves the stack of "
+                    f"undeclared input {source_ref!r}."
+                )
+            lineage_domains_by_component: dict[
+                AllComponents,
+                list[PathPlannerGroupScope],
+            ] = defaultdict(list)
+            for domain in source_stack_domains:
+                if domain.component is None:
+                    raise RuntimeError(
+                        "Artifact output source-stack domain lost its component."
+                    )
+                if domain not in lineage_domains_by_component[domain.component]:
+                    lineage_domains_by_component[domain.component].append(domain)
+            binding_domains_by_component: dict[
+                AllComponents,
+                list[PathPlannerGroupScope],
+            ] = defaultdict(list)
+            for domain in source_binding_domains:
+                if domain.component is None:
+                    raise RuntimeError(
+                        "Artifact output source-binding domain lost its component."
+                    )
+                if domain not in binding_domains_by_component[domain.component]:
+                    binding_domains_by_component[domain.component].append(domain)
+            component_domains_list: list[PathPlannerGroupScope] = []
+            components = ComponentSet.collect(
+                lineage_domains_by_component,
+                binding_domains_by_component,
+            )
+            for component in components:
+                lineage_domain = PathPlannerGroupScope.union_compatible(
+                    lineage_domains_by_component[component]
+                )
+                binding_domain = PathPlannerGroupScope.union_compatible(
+                    binding_domains_by_component[component]
+                )
+                if (
+                    lineage_domain is not None
+                    and binding_domain is not None
+                    and not lineage_domain.is_dynamic
+                    and not binding_domain.contains_scope(lineage_domain)
+                ):
+                    raise ValueError(
+                        f"Artifact output {spec.ref()!r} inherits "
+                        f"{component.value!r} lineage {lineage_domain!r} outside "
+                        f"source-binding domain {binding_domain!r}."
+                    )
+                component_domain = lineage_domain or binding_domain
+                if component_domain is None:
+                    raise RuntimeError(
+                        "Artifact output component-domain compilation lost its scope."
+                    )
+                component_domains_list.append(component_domain)
+            component_domains = tuple(component_domains_list)
+            if source_stack_axes and any(
+                axes != source_stack_axes[0] for axes in source_stack_axes[1:]
+            ):
+                raise ValueError(
+                    f"Artifact output {spec.ref()!r} declares incompatible "
+                    "source-stack axes: "
+                    f"{tuple(axes.as_tuple() for axes in source_stack_axes)!r}."
+                )
+            result[output_ref] = ArtifactOutputPlan(
                 name=key,
                 path=str(path),
                 artifact_type=spec.artifact_type,
-                materialization=spec.materialization,
+                materialization=(
+                    ArtifactOutputMaterializationPlanner.materialization_for(
+                        spec,
+                        self.planner.future_artifact_inputs[sid],
+                    )
+                ),
                 sidecar_role=spec.sidecar_role,
+                relations=spec.relations,
                 group_keys=tuple(normalized_groups),
                 group_component=group_scope.component,
+                variable_components=(
+                    source_stack_axes[0].as_tuple() if source_stack_axes else ()
+                ),
+                component_domains=component_domains,
                 paths_by_group=paths_by_group,
                 producer_step_index=sid,
                 producer_step_scope_id=self.planner.plans[sid].step_scope_id,
                 producer_step_name=step_name,
             )
-            self.planner.declared[key] = result[key]
+            self.planner.declared[output_ref] = result[output_ref]
 
         return result
 
     def process_artifact_inputs(
         self,
-        inputs: Mapping[str, ArtifactSpec],
-        step_outputs: Mapping[str, ArtifactSpec],
+        declarations: ArtifactGraph,
         sid: int,
         consumer_scope: PathPlannerGroupScope,
+        source_bindings: StepSourceBindingsConfig,
+        variable_components: ComponentSet,
         step_name: Optional[str] = None,
-    ) -> dict[str, ArtifactInputPlan]:
+        *,
+        execution_scope: FunctionStepExecutionScope,
+    ) -> dict[ArtifactSpecRef, ArtifactInputPlan]:
         """Compile storage plans for artifacts consumed by this step."""
-        result: dict[str, ArtifactInputPlan] = {}
-        if not inputs:
+        result: dict[ArtifactSpecRef, ArtifactInputPlan] = {}
+        if not declarations.consumers:
             return result
 
-        for key, input_spec in sorted(inputs.items()):
-            if key in self.planner.declared:
-                result[key] = self._producer_artifact_input_plan(
-                    key,
+        step_outputs = declarations.outputs
+        consumers = sorted(
+            declarations.consumers,
+            key=lambda consumer: consumer.spec.name,
+        )
+        for consumer in consumers:
+            input_spec = consumer.spec
+            input_ref = input_spec.ref()
+            key = input_spec.name
+            producer_ref = input_ref.for_plan_type(ArtifactOutputPlan)
+            if producer_ref in self.planner.declared:
+                result[input_ref] = self._producer_artifact_input_plan(
+                    producer_ref,
                     input_spec,
-                    consumer_scope,
                     sid,
                     step_name,
                 )
-            elif key in step_outputs:
-                output_spec = step_outputs[key]
-                if output_spec.artifact_type != input_spec.artifact_type:
-                    raise ValueError(
-                        f"Artifact '{key}' is produced as {output_spec.artifact_type.value} "
-                        f"but consumed as {input_spec.artifact_type.value} in step '{step_name or sid}'."
-                    )
+            elif producer_ref in step_outputs:
+                output_spec = step_outputs[producer_ref]
                 if output_spec.sidecar_role is not input_spec.sidecar_role:
                     raise ValueError(
                         f"Artifact '{key}' is produced with sidecar role "
                         f"{output_spec.sidecar_role!r} but consumed with "
                         f"{input_spec.sidecar_role!r} in step '{step_name or sid}'."
                     )
-                result[key] = ArtifactInputPlan(
+                result[input_ref] = ArtifactInputPlan(
                     name=key,
-                    path="self",
+                    path=str(
+                        self.planner.paths.artifact_path(
+                            declarations.require_output_storage_key(producer_ref),
+                            sid,
+                            execution_scope=execution_scope,
+                        )
+                    ),
                     artifact_type=input_spec.artifact_type,
                     sidecar_role=input_spec.sidecar_role,
+                    group_keys=consumer_scope.keys,
                     group_component=consumer_scope.component,
+                    variable_components=variable_components.as_tuple(),
                     source_step_id=sid,
                     source_step_scope_id=self.planner.plans[sid].step_scope_id,
                 )
+            elif source_bindings.binding_for_artifact_ref(input_spec.ref()) is not None:
+                continue
+            elif (
+                self.planner.artifact_context.main_flow_artifacts.by_ref(input_ref)
+                is not None
+            ):
+                continue
             elif not self.planner.ctx.microscope_handler.can_resolve_metadata_artifact(
                 key
             ):
@@ -925,15 +1680,84 @@ class PathPlannerArtifactStage:
 
         return result
 
+    def advance_artifact_context_after_compiled_pattern(
+        self,
+        declarations: ArtifactGraph,
+        compiled_pattern: CompiledFunctionPattern | None,
+        group_scope: PathPlannerGroupScope,
+    ) -> ArtifactDeclarationStepContext:
+        """Advance named and unnamed main-flow provenance after one step."""
+
+        main_flow_artifacts = self.planner.artifact_context.main_flow_artifacts
+        context_graph = declarations
+        if compiled_pattern is not None and not compiled_pattern.preserves_input_main_flow():
+            main_flow_specs: list[ArtifactSpec] = []
+            implicit_producers: list[ArtifactProducer] = []
+            for group in compiled_pattern.groups:
+                named_plans = group.resulting_main_flow_output_plans()
+                if named_plans:
+                    named_refs = frozenset(plan.ref() for plan in named_plans)
+                    main_flow_specs.extend(
+                        spec.for_plan_type(ArtifactInputPlan)
+                        for spec in declarations.outputs.values()
+                        if spec.ref() in named_refs
+                    )
+                    continue
+
+                implicit_owner = group.resulting_implicit_main_flow_invocation()
+                if implicit_owner is None:
+                    continue
+                output_spec = ArtifactSpec.output(
+                    unnamed_main_flow_artifact_name(
+                        self.planner.artifact_context.step_index,
+                        implicit_owner.key,
+                    ),
+                    ImageArtifactType,
+                )
+                producer_groups = (
+                    (
+                        group_scope.resolve_runtime_key(group.group_key),
+                    )
+                    if compiled_pattern.is_grouped
+                    else group_scope.keys
+                )
+                implicit_producers.append(
+                    ArtifactProducer(
+                        spec=output_spec,
+                        groups=producer_groups,
+                        invocation_keys=(implicit_owner.key,),
+                        producer_step_index=(
+                            self.planner.artifact_context.step_index
+                        ),
+                    )
+                )
+                main_flow_specs.append(output_spec.for_plan_type(ArtifactInputPlan))
+
+            main_flow_artifacts = ArtifactSpecCollection(
+                ArtifactSpecCollection(main_flow_specs).unique(
+                    conflict_context="compiled main flow"
+                )
+            )
+            if implicit_producers:
+                context_graph = replace(
+                    declarations,
+                    producers=(*declarations.producers, *implicit_producers),
+                )
+
+        return self.planner.artifact_context.advance_artifact_graph(
+            context_graph,
+            main_flow_artifacts=main_flow_artifacts,
+        )
+
     def _producer_artifact_input_plan(
         self,
-        key: str,
+        producer_ref: ArtifactSpecRef,
         input_spec: ArtifactSpec,
-        consumer_scope: PathPlannerGroupScope,
         sid: int,
         step_name: Optional[str],
     ) -> ArtifactInputPlan:
-        producer = self.planner.declared[key]
+        producer = self.planner.declared[producer_ref]
+        key = input_spec.name
         if producer.artifact_type != input_spec.artifact_type:
             producer_name = self._producer_artifact_display_name(producer)
             consumer_name = self._consumer_step_display_name(step_name, sid)
@@ -953,99 +1777,22 @@ class PathPlannerArtifactStage:
         producer_scope = PathPlannerGroupScope.from_output_plan(producer)
         producer_paths_by_group = self._producer_artifact_paths_by_group(producer)
 
-        if self._preserve_producer_scope(producer_scope, consumer_scope):
-            paths_by_group = producer_paths_by_group.copy()
-            return ArtifactInputPlan(
-                name=key,
-                path=self._producer_artifact_input_path(
-                    producer,
-                    producer_scope,
-                    paths_by_group,
-                ),
-                artifact_type=producer.artifact_type,
-                sidecar_role=input_spec.sidecar_role,
-                paths_by_group=paths_by_group,
-                group_keys=producer_scope.keys,
-                group_component=producer_scope.component,
-                source_step_id=producer.producer_step_index,
-                source_step_scope_id=producer.producer_step_scope_id,
-            )
-        if not producer_scope.is_ungrouped and consumer_scope.is_ungrouped:
-            paths_by_group = producer_paths_by_group.copy()
-        elif not producer_scope.is_ungrouped:
-            missing = consumer_scope.missing_from(producer_scope)
-            if missing:
-                if not producer_paths_by_group:
-                    producer_name = self._producer_artifact_display_name(producer)
-                    consumer_name = self._consumer_step_display_name(step_name, sid)
-                    raise ValueError(
-                        f"Artifact input '{key}' in step '{consumer_name}' cannot be resolved: "
-                        f"producer step '{producer_name}' provides groups {producer_scope.keys}, "
-                        f"but consumer needs {missing}."
-                    )
-                logger.debug(
-                    "Artifact input %r in step %r preserves producer groups %s "
-                    "for wider consumer groups %s.",
-                    key,
-                    step_name or sid,
-                    producer_scope.keys,
-                    consumer_scope.keys,
-                )
-                paths_by_group = producer_paths_by_group.copy()
-                return ArtifactInputPlan(
-                    name=key,
-                    path=self._producer_artifact_input_path(
-                        producer,
-                        producer_scope,
-                        paths_by_group,
-                    ),
-                    artifact_type=producer.artifact_type,
-                    sidecar_role=input_spec.sidecar_role,
-                    paths_by_group=paths_by_group,
-                    group_keys=producer_scope.keys,
-                    group_component=producer_scope.component,
-                    source_step_id=producer.producer_step_index,
-                    source_step_scope_id=producer.producer_step_scope_id,
-                )
-            paths_by_group = {
-                group: producer_paths_by_group[group]
-                for group in consumer_scope.keys
-                if group in producer_paths_by_group
-            }
-        else:
-            paths_by_group = {
-                group: producer.path for group in consumer_scope.keys
-            }
-            producer_scope = consumer_scope
-
         return ArtifactInputPlan(
             name=key,
             path=self._producer_artifact_input_path(
                 producer,
                 producer_scope,
-                paths_by_group,
+                producer_paths_by_group,
             ),
             artifact_type=producer.artifact_type,
             sidecar_role=input_spec.sidecar_role,
-            paths_by_group=paths_by_group,
-            group_keys=tuple(paths_by_group.keys()),
+            paths_by_group=producer_paths_by_group,
+            group_keys=producer_scope.keys,
             group_component=producer_scope.component,
+            variable_components=producer.variable_components,
+            component_domains=producer.component_domains,
             source_step_id=producer.producer_step_index,
             source_step_scope_id=producer.producer_step_scope_id,
-        )
-
-    @staticmethod
-    def _preserve_producer_scope(
-        producer_scope: PathPlannerGroupScope,
-        consumer_scope: PathPlannerGroupScope,
-    ) -> bool:
-        """Return whether producer groups are typed by a different component."""
-        return (
-            not producer_scope.is_ungrouped
-            and not consumer_scope.is_ungrouped
-            and producer_scope.component is not None
-            and consumer_scope.component is not None
-            and producer_scope.component != consumer_scope.component
         )
 
     @staticmethod
@@ -1089,12 +1836,14 @@ class PathPlannerArtifactStage:
     def inject_metadata(
         self,
         pattern: FunctionPatternSyntax,
-        inputs: Mapping[str, ArtifactSpec],
+        inputs: Mapping[ArtifactSpecRef, ArtifactSpec],
     ) -> FunctionPatternSyntax:
         """Inject metadata for artifact inputs."""
-        for key in inputs:
+        for input_ref, spec in inputs.items():
+            key = spec.name
             if (
-                key not in self.planner.declared
+                input_ref.for_plan_type(ArtifactOutputPlan)
+                not in self.planner.declared
                 and self.planner.ctx.microscope_handler.can_resolve_metadata_artifact(
                     key
                 )
@@ -1105,6 +1854,7 @@ class PathPlannerArtifactStage:
                 )
                 pattern = inject_artifact_input_values(pattern, {key: value})
         return pattern
+
 
 @dataclass(frozen=True)
 class PathPlannerMaterializationStage:
@@ -1117,7 +1867,7 @@ class PathPlannerMaterializationStage:
         snapshot: StepSnapshot,
     ) -> Optional[Path]:
         """Resolve optional per-step materialization output directory."""
-        materialization_config = snapshot.materialization_config
+        materialization_config = snapshot.step.step_materialization_config
         if not materialization_config or not materialization_config.enabled:
             return None
 
@@ -1125,10 +1875,12 @@ class PathPlannerMaterializationStage:
             snapshot.index,
             StepAxisFilterSet.empty(),
         )
-        if not step_axis_filters.allows(materialization_config, self.planner.ctx.axis_id):
+        if not step_axis_filters.allows(
+            materialization_config, self.planner.ctx.axis_id
+        ):
             logger.debug(
                 "Skipping materialization for step %s, axis %s (filtered out)",
-                snapshot.name,
+                snapshot.step.name,
                 self.planner.ctx.axis_id,
             )
             return None
@@ -1166,7 +1918,7 @@ class PathPlannerMaterializationStage:
         if not materialized_output_dir:
             return
 
-        materialization_config = snapshot.materialization_config
+        materialization_config = snapshot.step.step_materialization_config
         materialized_plate_root = self.planner.paths.build_output_plate_root(
             self.planner.plate_path,
             materialization_config,
@@ -1206,16 +1958,19 @@ class PathPlannerValidationStage:
         for i in range(1, self.planner.session.step_count):
             curr = self.planner.session.snapshot(i)
             dependency = self.planner.plans[i].main_input_dependency
-            if dependency.kind is StepInputDependencyKind.PIPELINE_START:
+            if dependency.kind in (
+                StepInputDependencyKind.NO_MAIN_FLOW,
+                StepInputDependencyKind.PIPELINE_START,
+            ):
                 continue
             if dependency.kind is not StepInputDependencyKind.STEP_OUTPUT:
                 raise ValueError(
-                    f"Step {curr.name} has unresolved main input dependency."
+                    f"Step {curr.step.name} has unresolved main input dependency."
                 )
             source_step_index = dependency.source_step_index
             if source_step_index is None:
                 raise ValueError(
-                    f"Step {curr.name} main input dependency is missing source_step_index."
+                    f"Step {curr.step.name} main input dependency is missing source_step_index."
                 )
             curr_in = self.planner.plans[i].input_dir
             source_out = self.planner.plans[source_step_index].output_dir
@@ -1226,8 +1981,10 @@ class PathPlannerValidationStage:
                     for inp in self.planner.plans[i].artifact_inputs.values()
                 )
                 if not has_artifact_bridge:
-                    producer_name = self.planner.session.snapshot(source_step_index).name
-                    raise ValueError(f"Disconnect: {producer_name} -> {curr.name}")
+                    producer_name = self.planner.session.snapshot(
+                        source_step_index
+                    ).step.name
+                    raise ValueError(f"Disconnect: {producer_name} -> {curr.step.name}")
 
         self.validate_materialization_paths()
 
@@ -1239,11 +1996,13 @@ class PathPlannerValidationStage:
             (
                 snapshot,
                 self.planner.plans[i].pipeline_position or i,
-                self.planner.paths.build_output_path(snapshot.materialization_config),
+                self.planner.paths.build_output_path(
+                    snapshot.step.step_materialization_config
+                ),
             )
             for i, snapshot in self.planner.session.indexed_snapshots()
-            if snapshot.materialization_config
-            and snapshot.materialization_config.enabled
+            if snapshot.step.step_materialization_config
+            and snapshot.step.step_materialization_config.enabled
         ]
 
         path_groups = defaultdict(list)
@@ -1267,12 +2026,13 @@ class PathPlannerValidationStage:
     ) -> None:
         """Resolve path conflict by updating the compiled plan only."""
         del original_path, conflict_type
-        materialization_config = snapshot.materialization_config
+        materialization_config = snapshot.step.step_materialization_config
 
         original_sub_dir = materialization_config.sub_dir
         new_sub_dir = f"{original_sub_dir}_step{position}"
 
         from dataclasses import replace
+
         updated_config = replace(materialization_config, sub_dir=new_sub_dir)
 
         resolved_path = self.planner.paths.build_output_path(updated_config)
@@ -1339,66 +2099,6 @@ class PathPlannerPathAuthority:
         return dict(_cached_paths_by_group(base_path, tuple(group_keys)))
 
     @staticmethod
-    def artifact_outputs_by_group(
-        artifact_outputs: Dict[str, ArtifactOutputPlan],
-    ) -> Dict[Optional[str], OrderedDict]:
-        """Expand artifact outputs into per-group plans with finalized paths."""
-        if not artifact_outputs:
-            return {}
-
-        grouped: Dict[Optional[str], OrderedDict] = defaultdict(OrderedDict)
-        for output_key, output_plan in artifact_outputs.items():
-            paths_by_group = output_plan.paths_by_group or {None: output_plan.path}
-            for group_key in paths_by_group:
-                grouped[group_key][output_key] = output_plan.for_group(group_key)
-        return dict(grouped)
-
-    @staticmethod
-    def artifact_inputs_by_group(
-        artifact_inputs: Dict[str, ArtifactInputPlan],
-        consumer_scope: PathPlannerGroupScope,
-    ) -> Dict[Optional[str], OrderedDict]:
-        """Expand artifact inputs into per-group plans with finalized paths."""
-        if not artifact_inputs:
-            return {}
-
-        grouped: Dict[Optional[str], OrderedDict] = {}
-        for group_key in consumer_scope.keys:
-            per_group = OrderedDict()
-            for input_key, input_plan in artifact_inputs.items():
-                group_plan = PathPlannerPathAuthority.artifact_input_for_consumer_group(
-                    input_plan,
-                    group_key,
-                    consumer_scope.component,
-                )
-                if group_plan is not None:
-                    per_group[input_key] = group_plan
-            if per_group:
-                grouped[group_key] = per_group
-        return grouped
-
-    @staticmethod
-    def artifact_input_for_consumer_group(
-        input_plan: ArtifactInputPlan,
-        consumer_group_key: str | None,
-        consumer_group_component: AllComponents | None,
-    ) -> ArtifactInputPlan | None:
-        """Return an input plan for one grouped stack without crossing components."""
-        if (
-            input_plan.group_component is None
-            or consumer_group_component is None
-            or input_plan.group_component == consumer_group_component
-        ):
-            group_plan = input_plan.for_group(consumer_group_key)
-            if group_plan is not None:
-                return group_plan
-
-        input_group_key = input_plan.single_group_key
-        if input_group_key is not None:
-            return input_plan.for_group(input_group_key)
-        return None
-
-    @staticmethod
     def analysis_results_dir_for(image_dir: Path) -> Path:
         """Return the analysis-results sibling directory for an image directory."""
         return Path(_cached_analysis_results_dir_for(str(image_dir)))
@@ -1454,6 +2154,26 @@ class PathPlannerPathAuthority:
             )
         )
 
+    def artifact_path(
+        self,
+        name: str,
+        step_index: int,
+        *,
+        execution_scope: FunctionStepExecutionScope,
+    ) -> Path:
+        """Return the canonical storage path for one compiled artifact output."""
+
+        filename = (
+            f"{name}_step{step_index}.pkl"
+            if execution_scope is FunctionStepExecutionScope.PLATE
+            else PipelinePathPlanner._build_axis_filename(
+                self.planner.ctx.axis_id,
+                name,
+                step_index=step_index,
+            )
+        )
+        return self.results_path() / filename
+
 
 @dataclass(frozen=True)
 class PathPlannerStepAssemblyStage:
@@ -1463,7 +2183,7 @@ class PathPlannerStepAssemblyStage:
 
     def prime_future_artifact_inputs(self) -> None:
         """Precompute artifact input keys used by later steps for each step index."""
-        future_inputs: Set[str] = set()
+        future_inputs: Set[ArtifactSpecRef] = set()
         self.planner.future_artifact_inputs = [
             set() for _ in range(self.planner.session.step_count)
         ]
@@ -1472,9 +2192,9 @@ class PathPlannerStepAssemblyStage:
             self.planner.future_artifact_inputs[i] = set(future_inputs)
 
             snapshot = self.planner.session.snapshot(i)
-            if snapshot.is_function_step:
+            if isinstance(snapshot.step, FunctionStep):
                 pattern = self.planner.artifacts.stripped_declaration_pattern(
-                    snapshot.func
+                    snapshot.step.func
                 )
                 declarations = extract_artifact_declarations(
                     pattern,
@@ -1486,7 +2206,13 @@ class PathPlannerStepAssemblyStage:
                         snapshot
                     ),
                 )
-                step_inputs = set(declarations.inputs.keys())
+                step_inputs = {
+                    consumer.spec.ref()
+                    for consumer in (
+                        *declarations.consumers,
+                        *declarations.non_plan_consumers,
+                    )
+                }
             else:
                 step_inputs = set()
 
@@ -1495,14 +2221,50 @@ class PathPlannerStepAssemblyStage:
     def plan_step(self, snapshot: StepSnapshot, step_index: int) -> None:
         """Plan one step's directories, artifacts, and executable pattern."""
         self.planner.plans[step_index].step_scope_id = snapshot.scope_id
-        main_input_dependency = self.main_input_dependency(snapshot, step_index)
-        input_component_scopes = self.input_component_scopes(main_input_dependency)
-        input_dir, output_dir = self.step_io_dirs(main_input_dependency, step_index)
-
-        declarations, group_scope, func_pattern = (
+        self.planner.artifact_context = (
+            self.planner.artifacts.artifact_declaration_context(snapshot)
+        )
+        declarations, func_pattern, execution_scope, contracts = (
             self.planner.artifacts.prepare_step_declarations(
                 snapshot,
+            )
+        )
+        contract_source_bindings = self.planner.artifacts.source_bindings_for_contracts(
+            snapshot,
+            contracts,
+        )
+        source_anchor_specs = tuple(
+            binding.input_spec()
+            for binding in contract_source_bindings.primary_plane_bindings
+        )
+        execution_source_bindings = contract_source_bindings.for_artifact_specs(
+            source_anchor_specs,
+            self.planner.artifact_context.available_artifacts,
+        )
+        main_input_dependency = self.main_input_dependency(
+            snapshot,
+            step_index,
+            declarations=declarations,
+            execution_scope=execution_scope,
+            source_bindings=contract_source_bindings,
+        )
+        input_component_scopes = self.input_component_scopes(main_input_dependency)
+        input_dir, output_dir = self.step_io_dirs(main_input_dependency, step_index)
+        group_scope = (
+            PathPlannerGroupScope.ungrouped()
+            if execution_scope is FunctionStepExecutionScope.PLATE
+            else self.planner.execution_groups.get_execution_groups(
+                snapshot,
                 input_component_scopes,
+                source_bindings=execution_source_bindings,
+                contracts=contracts,
+            )
+        )
+        declarations = (
+            self.planner.artifacts.namespace_grouped_outputs_for_runtime_consumers(
+                func_pattern,
+                declarations,
+                group_scope,
             )
         )
         artifact_maps = self.planner.artifacts.compile_plan_maps(
@@ -1510,11 +2272,15 @@ class PathPlannerStepAssemblyStage:
             step_index,
             declarations,
             group_scope,
+            execution_scope,
+            contract_source_bindings,
         )
 
-        if snapshot.is_function_step and any(
-            self.planner.ctx.microscope_handler.can_resolve_metadata_artifact(k)
-            for k in declarations.inputs
+        if isinstance(snapshot.step, FunctionStep) and any(
+            self.planner.ctx.microscope_handler.can_resolve_metadata_artifact(
+                input_ref.name
+            )
+            for input_ref in declarations.inputs
         ):
             func_pattern = self.planner.artifacts.inject_metadata(
                 func_pattern,
@@ -1522,6 +2288,22 @@ class PathPlannerStepAssemblyStage:
             )
 
         self.planner.plans[step_index].func = func_pattern
+        compiled_pattern = self.planner.artifacts.build_step_compiled_function_pattern(
+            snapshot,
+            isinstance(snapshot.step, FunctionStep),
+            func_pattern,
+            artifact_maps.inputs,
+            artifact_maps.outputs,
+            artifact_maps.relation_source_scopes,
+            artifact_maps.group_scope,
+        )
+        self.planner.artifact_context = (
+            self.planner.artifacts.advance_artifact_context_after_compiled_pattern(
+                declarations,
+                compiled_pattern,
+                artifact_maps.group_scope,
+            )
+        )
         self.update_core_step_plan(
             snapshot,
             step_index,
@@ -1529,13 +2311,7 @@ class PathPlannerStepAssemblyStage:
             input_dir,
             output_dir,
             artifact_maps,
-            self.planner.artifacts.build_step_compiled_function_pattern(
-                snapshot,
-                snapshot.is_function_step,
-                func_pattern,
-                artifact_maps.inputs,
-                artifact_maps.outputs,
-            ),
+            compiled_pattern,
         )
         self.planner.materialization.apply_materialization_plan(
             snapshot,
@@ -1550,7 +2326,11 @@ class PathPlannerStepAssemblyStage:
             ),
         )
         self.planner.main_flow_component_scopes[step_index] = (
-            input_component_scopes.output_after(snapshot, artifact_maps.group_scope)
+            input_component_scopes.output_after(
+                snapshot,
+                artifact_maps.group_scope,
+                compiled_pattern,
+            )
         )
 
     def input_component_scopes(
@@ -1599,16 +2379,19 @@ class PathPlannerStepAssemblyStage:
         step_plan.main_input_dependency = main_input_dependency
         step_plan.artifact_inputs = artifact_maps.inputs
         step_plan.artifact_outputs = artifact_maps.outputs
-        step_plan.artifact_inputs_by_group = artifact_maps.inputs_by_group
-        step_plan.artifact_outputs_by_group = artifact_maps.outputs_by_group
-        step_plan.execution_groups = list(artifact_maps.group_scope.keys)
-        step_plan.execution_group_component = artifact_maps.group_scope.component
+        step_plan.execution_group_scope = artifact_maps.group_scope
         step_plan.compiled_function_pattern = compiled_function_pattern
+        step_plan.source_binding_plan = artifact_maps.source_binding_plan
+        step_plan.source_universe_plan = artifact_maps.source_universe_plan
 
     def main_input_dependency(
         self,
         snapshot: StepSnapshot,
         step_index: int,
+        *,
+        declarations: ArtifactGraph = ArtifactGraph(),
+        execution_scope: FunctionStepExecutionScope = FunctionStepExecutionScope.AXIS,
+        source_bindings: StepSourceBindingsConfig = EMPTY_SOURCE_BINDINGS,
     ) -> StepInputDependency:
         """Resolve the explicit main-input edge for one step."""
         existing_plan = self.planner.plans.get(step_index)
@@ -1618,10 +2401,109 @@ class PathPlannerStepAssemblyStage:
         ):
             return existing_plan.main_input_dependency
 
-        if step_index == 0 or snapshot.input_source == InputSource.PIPELINE_START:
+        if (
+            isinstance(snapshot.step, FunctionStep)
+            and execution_scope is FunctionStepExecutionScope.PLATE
+        ):
+            return StepInputDependency.no_main_flow()
+
+        if (
+            step_index == 0
+            or snapshot.step.processing_config.input_source
+            == InputSource.PIPELINE_START
+        ):
             return StepInputDependency.pipeline_start()
 
+        local_output_refs = frozenset(
+            producer.spec.ref() for producer in declarations.producers
+        )
+        main_input_specs = tuple(
+            dict.fromkeys(
+                consumer.spec
+                for consumer in declarations.non_plan_consumers
+                if not source_bindings.declares_artifact_ref(consumer.spec.ref())
+                and consumer.spec.ref().for_plan_type(ArtifactOutputPlan)
+                not in local_output_refs
+            )
+        )
+        producer_step_indices: list[int | str] = []
+        for main_input_spec in main_input_specs:
+            producer_ref = main_input_spec.ref().for_plan_type(ArtifactOutputPlan)
+            producer_plan = self.planner.declared.get(producer_ref)
+            context_producer = (
+                self.planner.artifact_context.available_artifact_producer_for(
+                    main_input_spec
+                )
+            )
+            candidate_indices = tuple(
+                dict.fromkeys(
+                    candidate
+                    for candidate in (
+                        (
+                            None
+                            if producer_plan is None
+                            else producer_plan.producer_step_index
+                        ),
+                        (
+                            None
+                            if context_producer is None
+                            else context_producer.producer_step_index
+                        ),
+                    )
+                    if candidate is not None
+                )
+            )
+            if not candidate_indices:
+                raise MissingArtifactInputError(
+                    step_id=step_index,
+                    artifact_key=producer_ref.name,
+                    step_name=snapshot.step.name,
+                )
+            if len(candidate_indices) > 1:
+                raise ValueError(
+                    f"Main-flow artifact {producer_ref!r} has conflicting producer "
+                    f"steps {candidate_indices!r}."
+                )
+            producer_step_indices.append(candidate_indices[0])
+
+        producer_step_indices = tuple(dict.fromkeys(producer_step_indices))
+        if len(producer_step_indices) > 1:
+            raise ValueError(
+                f"Step {snapshot.step.name!r} declares main-flow inputs from multiple "
+                f"producer steps {producer_step_indices!r}: {main_input_specs!r}."
+            )
+        if producer_step_indices:
+            producer_index = producer_step_indices[0]
+            if not isinstance(producer_index, int):
+                raise TypeError(
+                    f"Main-flow artifact producer for step {snapshot.step.name!r} has "
+                    f"non-integer step identity {producer_index!r}."
+                )
+            producer_scope_id = self.planner.plans[producer_index].step_scope_id
+            if not producer_scope_id:
+                raise ValueError(
+                    f"Main-flow artifact producer step {producer_index} has no "
+                    "compiled scope identity."
+                )
+            return StepInputDependency.step_output(
+                source_step_index=producer_index,
+                source_step_scope_id=producer_scope_id,
+            )
+
         producer_index = step_index - 1
+        producer_plan = self.planner.plans[producer_index]
+        compiled_pattern = producer_plan.compiled_function_pattern
+        if (
+            compiled_pattern is not None
+            and compiled_pattern.preserves_input_main_flow()
+        ):
+            if not producer_plan.main_input_dependency.is_resolved:
+                raise RuntimeError(
+                    f"Main-flow-preserving step {producer_index} has no resolved "
+                    "main-input dependency."
+                )
+            return producer_plan.main_input_dependency
+
         producer_scope_id = self.planner.session.snapshot(producer_index).scope_id
         return StepInputDependency.step_output(
             source_step_index=producer_index,
@@ -1638,11 +2520,16 @@ class PathPlannerStepAssemblyStage:
         reads_from_pipeline_start = (
             main_input_dependency.kind is StepInputDependencyKind.PIPELINE_START
         )
+        has_no_main_flow = (
+            main_input_dependency.kind is StepInputDependencyKind.NO_MAIN_FLOW
+        )
 
         if plan is not None and plan.input_dir is not None:
             input_dir = Path(plan.input_dir)
         elif reads_from_pipeline_start:
             input_dir = self.planner.initial_input
+        elif has_no_main_flow:
+            input_dir = self.planner.paths.build_output_path()
         else:
             source_step_index = main_input_dependency.source_step_index
             if source_step_index is None:
@@ -1653,7 +2540,7 @@ class PathPlannerStepAssemblyStage:
 
         if plan is not None and plan.output_dir is not None:
             output_dir = Path(plan.output_dir)
-        elif reads_from_pipeline_start:
+        elif reads_from_pipeline_start or has_no_main_flow:
             output_dir = self.planner.paths.build_output_path()
         else:
             output_dir = input_dir
@@ -1663,12 +2550,13 @@ class PathPlannerStepAssemblyStage:
     @staticmethod
     def input_source(snapshot: StepSnapshot) -> str:
         """Get input source string."""
-        if snapshot.input_source == InputSource.PIPELINE_START:
+        if snapshot.step.processing_config.input_source == InputSource.PIPELINE_START:
             return "PIPELINE_START"
         return "PREVIOUS_STEP"
 
 
 # ===== PATH PLANNING (NO duplication) =====
+
 
 class PathPlanner:
     """Minimal path planner with zero duplication."""
@@ -1679,8 +2567,8 @@ class PathPlanner:
         declaration_provider: InvocationArtifactDeclarationProviderLike = (
             callable_contract_artifact_declarations
         ),
-        invocation_contract_provider: InvocationContractProviderLike = (
-            public_callable_invocation_contract
+        invocation_contract_provider: InvocationContractProvider = (
+            CompositeInvocationContractProvider(())
         ),
     ):
         self.session = session
@@ -1688,19 +2576,14 @@ class PathPlanner:
         self.cfg = session.global_config.path_planning_config
         self.vfs = session.global_config.vfs_config
         self.plans: dict[int, CompiledStepPlan] = session.plans
-        self.declared = {}  # Tracks artifact outputs
+        self.declared: dict[ArtifactSpecRef, ArtifactOutputPlan] = {}
         self.orchestrator = session.orchestrator
-        self.source_bindings_defaults = (
-            session.orchestrator.pipeline_config.source_bindings_config
-        )
-        self.step_source_bindings_defaults = (
-            session.orchestrator.pipeline_config.step_source_bindings_config
-        )
         self.declaration_provider = declaration_provider
         self.invocation_contract_provider = invocation_contract_provider
-        self.future_artifact_inputs: List[Set[str]] = [
+        self.future_artifact_inputs: List[Set[ArtifactSpecRef]] = [
             set() for _ in range(session.step_count)
         ]
+        self.artifact_context = ArtifactDeclarationStepContext.empty()
         self.main_flow_component_scopes: dict[int, PathPlannerComponentScopes] = {}
         self.execution_groups = PathPlannerExecutionGroups(self)
         self.paths = PathPlannerPathAuthority(self)
@@ -1718,15 +2601,8 @@ class PathPlanner:
         self,
         snapshot: StepSnapshot,
     ) -> StepSourceBindingsConfig:
-        """Return step source bindings resolved through pipeline defaults."""
-        return resolve_effective_step_source_bindings(
-            snapshot.source_bindings,
-            source_bindings_defaults=self.source_bindings_defaults,
-            step_source_bindings_defaults=self.step_source_bindings_defaults,
-            activate_source_bindings=(
-                snapshot.input_source == InputSource.PIPELINE_START
-            ),
-        )
+        """Return the ObjectState-resolved source bindings from the snapshot."""
+        return snapshot.step.source_bindings
 
     def plan(self) -> dict[int, CompiledStepPlan]:
         """Plan all paths with zero duplication."""
@@ -1747,7 +2623,9 @@ class PathPlanner:
 
         return self.plans
 
+
 # ===== PUBLIC API =====
+
 
 class PipelinePathPlanner:
     """Public API matching original interface."""
@@ -1758,8 +2636,8 @@ class PipelinePathPlanner:
         declaration_provider: InvocationArtifactDeclarationProviderLike = (
             callable_contract_artifact_declarations
         ),
-        invocation_contract_provider: InvocationContractProviderLike = (
-            public_callable_invocation_contract
+        invocation_contract_provider: InvocationContractProvider = (
+            CompositeInvocationContractProvider(())
         ),
     ) -> Dict:
         """Prepare path plans for an already resolved compilation session."""
@@ -1783,7 +2661,9 @@ class PipelinePathPlanner:
         )
 
     @staticmethod
-    def _build_axis_filename(axis_id: str, key: str, extension: str = "pkl", step_index: Optional[int] = None) -> str:
+    def _build_axis_filename(
+        axis_id: str, key: str, extension: str = "pkl", step_index: Optional[int] = None
+    ) -> str:
         """Build standardized axis-based filename with optional step index.
 
         Args:
@@ -1827,6 +2707,11 @@ def _cached_output_plate_root(
         base = path.parent
     elif global_output_folder:
         base = Path(global_output_folder)
+        if not base.is_absolute():
+            raise ValueError(
+                "PathPlanner requires compiled global_output_folder to be "
+                f"absolute, got {global_output_folder!r}."
+            )
     else:
         base = path.parent
     return str(base / f"{path.name}{output_dir_suffix}")

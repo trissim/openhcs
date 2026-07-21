@@ -49,6 +49,12 @@ class OperaPhenixHandler(MicroscopeHandler):
     _metadata_handler_class = None
     # metadata handler class assigned post-definition
 
+    @classmethod
+    def supports_explicit_incomplete_export(cls) -> bool:
+        """Require Index.xml before Opera Phenix owns native plate semantics."""
+
+        return False
+
     def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
         self.parser = OperaPhenixFilenameParser(filemanager, pattern_format=pattern_format)
         self.metadata_handler = OperaPhenixMetadataHandler(filemanager)

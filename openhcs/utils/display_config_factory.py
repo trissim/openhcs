@@ -5,7 +5,7 @@ Provides generic infrastructure for creating display configuration dataclasses
 with component-specific dimension modes, supporting both Napari and Fiji viewers.
 """
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional, Sequence, TypeAlias
 
@@ -14,7 +14,10 @@ from polystore.streaming.viewer_transport import ViewerDisplayConfigABC
 
 DisplayComponentName: TypeAlias = str | Enum
 DisplayFieldDefault: TypeAlias = str | int | float | bool | Enum | None
-DisplayBaseFields: TypeAlias = dict[str, tuple[type, DisplayFieldDefault]]
+DisplayBaseFields: TypeAlias = dict[
+    str,
+    tuple[type, DisplayFieldDefault, str],
+]
 DisplayModeDefaults: TypeAlias = dict[str, Enum]
 DisplayMethods: TypeAlias = dict[str, Callable]
 
@@ -98,17 +101,28 @@ def create_display_config(
     annotations: dict[str, type] = {}
     defaults: dict[str, DisplayFieldDefault] = {}
 
-    for field_name, (field_type, default_value) in base_fields.items():
+    for field_name, (field_type, default_value, description) in base_fields.items():
         annotations[field_name] = field_type
-        defaults[field_name] = default_value
+        defaults[field_name] = field(
+            default=default_value,
+            metadata={"description": description},
+        )
 
     for component in (*AllComponents, *virtual_components):
         component_name = component_value(component)
         annotations[f"{component_name}_mode"] = component_mode_enum
-        defaults[f"{component_name}_mode"] = display_component_default(
-            component_name,
-            component_defaults,
-            default_mode,
+        defaults[f"{component_name}_mode"] = field(
+            default=display_component_default(
+                component_name,
+                component_defaults,
+                default_mode,
+            ),
+            metadata={
+                "description": (
+                    f"Viewer layout mode for the {component_name} axis; choose "
+                    f"one of {', '.join(member.name for member in component_mode_enum)}."
+                )
+            },
         )
 
     def component_modes(self) -> dict[str, str]:
@@ -200,9 +214,21 @@ def create_napari_display_config(
     return create_display_config(
         name='NapariDisplayConfig',
         base_fields={
-            'colormap': (colormap_enum, colormap_enum.GRAY),
-            'variable_size_handling': (variable_size_handling_enum, variable_size_handling_enum.PAD_TO_MAX),
-            'visualization_dtype': (visualization_dtype_enum, default_visualization_dtype),
+            'colormap': (
+                colormap_enum,
+                colormap_enum.GRAY,
+                "Colormap applied to grayscale image layers in napari.",
+            ),
+            'variable_size_handling': (
+                variable_size_handling_enum,
+                variable_size_handling_enum.PAD_TO_MAX,
+                "How napari combines images with different spatial dimensions into layers.",
+            ),
+            'visualization_dtype': (
+                visualization_dtype_enum,
+                default_visualization_dtype,
+                "Target dtype used for contrast-preserving visualization scaling.",
+            ),
         },
         component_mode_enum=dimension_mode_enum,
         component_defaults=component_defaults,
@@ -299,8 +325,16 @@ def create_fiji_display_config(
     return create_display_config(
         name='FijiDisplayConfig',
         base_fields={
-            'lut': (lut_enum, lut_enum.GRAYS),
-            'auto_contrast': (bool, True),
+            'lut': (
+                lut_enum,
+                lut_enum.GRAYS,
+                "Fiji lookup table applied when image data is displayed.",
+            ),
+            'auto_contrast': (
+                bool,
+                True,
+                "Automatically set Fiji display limits from the streamed image data.",
+            ),
         },
         component_mode_enum=dimension_mode_enum,
         component_defaults=component_defaults,

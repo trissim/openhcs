@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class AuthoringContextRequest:
-    kind: str = "pipeline"
+    kind: str = "first_use"
     max_chars: int = 16_000
 
 

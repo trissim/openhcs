@@ -34,7 +34,6 @@ from openhcs.core.debug_views import (
     DebugViewTable,
     DebugViewTableProjectionDeclarationBase,
 )
-from openhcs.interop.cellprofiler.debug_views import CellProfilerDebugView
 from pyqt_reactive.widgets.shared import ActionTabSpec, ActionTabbedWindowBody
 
 
@@ -90,7 +89,9 @@ class DebugInspectorWindow(QDialog):
     ) -> None:
         super().__init__(parent)
         self.snapshot_renderer = (
-            snapshot_renderer or self._cellprofiler_snapshot_renderer
+            DebugViewModel.from_debug_snapshot
+            if snapshot_renderer is None
+            else snapshot_renderer
         )
         self.current_snapshot: DebugSnapshot | None = None
         self.setWindowTitle("Debug Inspector")
@@ -156,11 +157,6 @@ class DebugInspectorWindow(QDialog):
                     actions=self._section_actions_widget(section),
                 )
             )
-
-    @staticmethod
-    def _cellprofiler_snapshot_renderer(snapshot: DebugSnapshot) -> DebugViewModel:
-        renderer = CellProfilerDebugView.for_module(snapshot.callable_name)
-        return renderer.build_view_model(snapshot)
 
     def _replace_tab_body(self) -> None:
         self._layout.removeWidget(self.tab_body)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -10,35 +9,51 @@ from benchmark.contracts.dataset import AcquiredDataset
 from benchmark.contracts.tool_adapter import BenchmarkResult, ToolAdapter
 from benchmark.datasets.registry import BBBC021_SINGLE_PLATE
 from benchmark.pipelines.registry import NUCLEI_SEGMENTATION
-from benchmark.adapters.openhcs import (
-    _candidate_image_snapshots_for_equivalence,
-    _runtime_execution_cache_key_matches,
-)
 from benchmark.adapters.cellprofiler import (
     CELLPROFILER_FIRST_IMAGE_SET_PARAM,
     CELLPROFILER_LAST_IMAGE_SET_PARAM,
-    NATIVE_CELLPROFILER_SUCCESS_MARKER,
-    native_cellprofiler_sample_scope_slug,
+    NativeCellProfilerInputDomainStrategyKey,
+    NativeCellProfilerProvenanceField,
+    _write_native_reference_success_marker,
+    native_cellprofiler_well_filter_scope_slug,
 )
 from benchmark.cellprofiler_comparison import (
     CellProfilerComparisonCase,
+    NativeCellProfilerReferenceScope,
     _native_reference_location,
-    _benchmark_path_slug,
 )
 from benchmark.datasets.visible_source import resolve_visible_source_path
 from benchmark.runner import (
-    _source_file_cache_domains,
-    _source_file_has_excluded_cache_domain,
-    _source_file_is_path_excluded,
     run_cellprofiler_compatibility_benchmark,
     run_cellprofiler_cppipe_parity,
 )
-from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
-from openhcs.core.runtime_exports import (
-    RuntimeExportExpectation,
-    RuntimeExportObservation,
-    RuntimeImageExportSpec,
-)
+from openhcs.core.config import GlobalPipelineConfig, WellFilterConfig
+
+
+SOURCE_ONLY_CPIPE = "\n".join(
+    (
+        "CellProfiler Pipeline: http://www.cellprofiler.org",
+        "Images:[module_num:1|enabled:True]",
+        "    Filter images?:Images only",
+        "    Select the rule criteria:and (extension does isimage)",
+        "NamesAndTypes:[module_num:2|enabled:True]",
+        "    Assign a name to:Images matching rules",
+        "    Select the image type:Grayscale image",
+        "    Name to assign these images:DNA",
+        "    Match metadata:[]",
+        "    Image set matching method:Order",
+        "    Assignments count:1",
+        "    Single images count:0",
+        "    Maximum intensity:255.0",
+        "    Process as 3D?:No",
+        "    Relative pixel spacing in X:1.0",
+        "    Relative pixel spacing in Y:1.0",
+        "    Relative pixel spacing in Z:1.0",
+        "    Select the rule criteria:and (file does contain \"\")",
+        "    Name to assign these images:DNA",
+        "    Select the image type:Grayscale image",
+    )
+) + "\n"
 
 
 def test_cellprofiler_compatibility_runner_feeds_native_output_to_openhcs(
@@ -83,7 +98,7 @@ def test_cellprofiler_cppipe_parity_runner_accepts_local_cppipe(
     dataset_path = tmp_path / "Example Fly Images"
     dataset_path.mkdir()
     cppipe_path = tmp_path / "Example Fly.cppipe"
-    cppipe_path.write_text("CellProfiler Pipeline: http://www.cellprofiler.org\n")
+    cppipe_path.write_text(SOURCE_ONLY_CPIPE, encoding="utf-8")
     native_adapter = _NativeReferenceAdapter()
     openhcs_adapter = _OpenHCSParityAdapter()
 
@@ -119,7 +134,7 @@ def test_native_reference_lookup_uses_visible_source_identity(
     dataset_path = tmp_path / ".cache" / "datasets" / "images"
     dataset_path.mkdir(parents=True)
     cppipe_path = tmp_path / "pipeline.cppipe"
-    cppipe_path.write_text("CellProfiler Pipeline: http://www.cellprofiler.org\n")
+    cppipe_path.write_text(SOURCE_ONLY_CPIPE, encoding="utf-8")
     case = CellProfilerComparisonCase(
         name="Example",
         dataset_path=dataset_path,
@@ -128,26 +143,33 @@ def test_native_reference_lookup_uses_visible_source_identity(
     )
     visible_dataset_path = resolve_visible_source_path(dataset_path)
     native_reference_root = tmp_path / "native_refs"
-    reference_dir = (
-        native_reference_root
-        / _benchmark_path_slug(f"{case.resolved_dataset_id}_{case.name}")
-        / f"{visible_dataset_path.name}_{case.name}_native_cellprofiler"
-    )
+    reference_dir = NativeCellProfilerReferenceScope(
+        case=case,
+        native_reference_root=native_reference_root,
+        pipeline_params=case.pipeline_params,
+    ).expected_reference
     reference_dir.mkdir(parents=True)
-    (reference_dir / NATIVE_CELLPROFILER_SUCCESS_MARKER).write_text("{}")
+    _write_native_reference_success_marker(
+        reference_dir,
+        {
+            NativeCellProfilerProvenanceField.INPUT_DOMAIN_STRATEGY: (
+                NativeCellProfilerInputDomainStrategyKey.DATASET_FOLDER
+            )
+        },
+    )
 
     location = _native_reference_location(case, native_reference_root)
 
     assert location.reference_output_dir == reference_dir
 
 
-def test_native_reference_lookup_reuses_semantic_snapshot_without_marker(
+def test_native_reference_lookup_rejects_unproven_semantic_snapshot(
     tmp_path: Path,
 ) -> None:
     dataset_path = tmp_path / "ExampleIlluminationCorrection" / "images"
     dataset_path.mkdir(parents=True)
     cppipe_path = tmp_path / "ExampleIlluminationCorrection" / "pipeline.cppipe"
-    cppipe_path.write_text("CellProfiler Pipeline: http://www.cellprofiler.org\n")
+    cppipe_path.write_text(SOURCE_ONLY_CPIPE, encoding="utf-8")
     case = CellProfilerComparisonCase(
         name="Example1_AllMethod",
         dataset_path=dataset_path,
@@ -155,27 +177,24 @@ def test_native_reference_lookup_reuses_semantic_snapshot_without_marker(
         dataset_id="ExampleIlluminationCorrection",
     )
     native_reference_root = tmp_path / "native_refs"
-    reference_dir = (
-        native_reference_root
-        / _benchmark_path_slug(f"{case.resolved_dataset_id}_{case.name}")
-        / f"{dataset_path.name}_{case.name}_native_cellprofiler"
-    )
+    reference_dir = NativeCellProfilerReferenceScope(
+        case=case,
+        native_reference_root=native_reference_root,
+        pipeline_params=case.pipeline_params,
+    ).expected_reference
     reference_dir.mkdir(parents=True)
     np.save(reference_dir / "Illum.npy", np.ones((2, 2), dtype=np.float32))
 
     location = _native_reference_location(case, native_reference_root)
 
-    assert location.reference_output_dir == reference_dir
+    assert location.reference_output_dir is None
 
 
 def test_native_reference_lookup_separates_bounded_image_set_scope(
     tmp_path: Path,
 ) -> None:
     cppipe_path = tmp_path / "pipeline.cppipe"
-    cppipe_path.write_text(
-        "CellProfiler Pipeline: http://www.cellprofiler.org\n",
-        encoding="utf-8",
-    )
+    cppipe_path.write_text(SOURCE_ONLY_CPIPE, encoding="utf-8")
     case = CellProfilerComparisonCase(
         name="ExampleBounded",
         dataset_path=tmp_path / "images",
@@ -196,7 +215,9 @@ def test_native_reference_lookup_separates_bounded_image_set_scope(
     )
 
 
-def test_native_reference_lookup_separates_openhcs_sample_scope(tmp_path: Path) -> None:
+def test_native_reference_lookup_separates_public_well_filter_scope(
+    tmp_path: Path,
+) -> None:
     cppipe_path = tmp_path / "pipeline.cppipe"
     cppipe_path.write_text(
         "\n".join(
@@ -224,6 +245,7 @@ def test_native_reference_lookup_separates_openhcs_sample_scope(tmp_path: Path) 
                 "    Relative pixel spacing in Z:1.0",
                 "    Select the rule criteria:and (file does contain \"\")",
                 "    Name to assign these images:DNA",
+                "    Select the image type:Grayscale image",
             ]
         ),
         encoding="utf-8",
@@ -235,22 +257,27 @@ def test_native_reference_lookup_separates_openhcs_sample_scope(tmp_path: Path) 
         dataset_id="example",
     )
     native_reference_root = tmp_path / "native_refs"
-    selection = SourceSchemaImageSetSelection(max_image_set_count=1)
+    global_config = GlobalPipelineConfig(
+        well_filter_config=WellFilterConfig(well_filter=1),
+    )
 
     location = _native_reference_location(
         case,
         native_reference_root,
-        source_schema_image_set_selection=selection,
+        global_config=global_config,
     )
 
-    assert native_cellprofiler_sample_scope_slug(selection) == "samples_first1imagesets"
+    assert (
+        native_cellprofiler_well_filter_scope_slug(global_config.well_filter_config)
+        == "wells_include_first1"
+    )
     assert location.output_dir == (
         native_reference_root
-        / "example_ExampleOneWell_samples_first1imagesets"
+        / "example_ExampleOneWell_wells_include_first1"
     )
 
 
-def test_cellprofiler_cppipe_parity_runner_reuses_cached_openhcs_output(
+def test_cellprofiler_cppipe_parity_runner_always_executes_current_openhcs(
     tmp_path: Path,
 ) -> None:
     dataset_path = tmp_path / "Example Fly Images"
@@ -286,242 +313,8 @@ def test_cellprofiler_cppipe_parity_runner_reuses_cached_openhcs_output(
     assert first_result.is_equivalent
     assert second_result.is_equivalent
     assert first_openhcs_adapter.run_count == 1
-    assert second_openhcs_adapter.run_count == 0
-    assert second_openhcs_adapter.validated is False
-    assert (
-        second_result.openhcs_converted.provenance or {}
-    )["reused_cached_output"] is True
-
-
-def test_cellprofiler_cppipe_parity_runner_invalidates_openhcs_cache_on_cppipe_change(
-    tmp_path: Path,
-) -> None:
-    dataset_path = tmp_path / "Example Fly Images"
-    dataset_path.mkdir()
-    cppipe_path = tmp_path / "Example Fly.cppipe"
-    cppipe_path.write_text("CellProfiler Pipeline: http://www.cellprofiler.org\n")
-    reference_output = tmp_path / "native_reference"
-    reference_output.mkdir()
-    (reference_output / "Image.csv").write_text("ImageNumber\n1\n")
-    output_root = tmp_path / "outputs"
-
-    first_openhcs_adapter = _OpenHCSParityAdapter()
-    run_cellprofiler_cppipe_parity(
-        dataset_path,
-        cppipe_path,
-        metrics=[],
-        dataset_id="examplefly_official",
-        output_root=output_root,
-        equivalence_reference_output_dir=reference_output,
-        openhcs_adapter=first_openhcs_adapter,
-    )
-    cppipe_path.write_text(
-        "CellProfiler Pipeline: http://www.cellprofiler.org\n"
-        "ModuleCount: 1\n"
-    )
-
-    second_openhcs_adapter = _OpenHCSParityAdapter()
-    second_result = run_cellprofiler_cppipe_parity(
-        dataset_path,
-        cppipe_path,
-        metrics=[],
-        dataset_id="examplefly_official",
-        output_root=output_root,
-        equivalence_reference_output_dir=reference_output,
-        openhcs_adapter=second_openhcs_adapter,
-    )
-
-    assert second_result.is_equivalent
-    assert first_openhcs_adapter.run_count == 1
     assert second_openhcs_adapter.run_count == 1
-    assert not (second_result.openhcs_converted.provenance or {}).get(
-        "reused_cached_output"
-    )
-
-
-def test_cellprofiler_cppipe_parity_runner_changes_execution_cache_key_for_reference_change(
-    tmp_path: Path,
-) -> None:
-    dataset_path = tmp_path / "Example Fly Images"
-    dataset_path.mkdir()
-    cppipe_path = tmp_path / "Example Fly.cppipe"
-    cppipe_path.write_text("CellProfiler Pipeline: http://www.cellprofiler.org\n")
-    first_reference_output = tmp_path / "native_reference_1"
-    second_reference_output = tmp_path / "native_reference_2"
-    first_reference_output.mkdir()
-    second_reference_output.mkdir()
-    (first_reference_output / "Image.csv").write_text("ImageNumber\n1\n")
-    (second_reference_output / "Image.csv").write_text("ImageNumber\n2\n")
-    output_root = tmp_path / "outputs"
-
-    first_openhcs_adapter = _OpenHCSParityAdapter()
-    run_cellprofiler_cppipe_parity(
-        dataset_path,
-        cppipe_path,
-        metrics=[],
-        dataset_id="examplefly_official",
-        output_root=output_root,
-        equivalence_reference_output_dir=first_reference_output,
-        openhcs_adapter=first_openhcs_adapter,
-    )
-
-    second_openhcs_adapter = _OpenHCSParityAdapter()
-    run_cellprofiler_cppipe_parity(
-        dataset_path,
-        cppipe_path,
-        metrics=[],
-        dataset_id="examplefly_official",
-        output_root=output_root,
-        equivalence_reference_output_dir=second_reference_output,
-        openhcs_adapter=second_openhcs_adapter,
-    )
-
-    assert first_openhcs_adapter.run_count == 1
-    assert second_openhcs_adapter.run_count == 1
-    assert (
-        first_openhcs_adapter.pipeline_params["runtime_execution_cache_key"]
-        != second_openhcs_adapter.pipeline_params["runtime_execution_cache_key"]
-    )
-
-
-def test_openhcs_execution_cache_requires_exact_current_key() -> None:
-    cached_key = _execution_cache_key(
-        source_field="execution_source_tree",
-        digest="execution",
-    )
-    expected_key = _execution_cache_key(
-        source_field="execution_source_tree",
-        digest="different",
-    )
-
-    assert not _runtime_execution_cache_key_matches(cached_key, expected_key)
-
-
-def test_openhcs_execution_cache_accepts_exact_current_key() -> None:
-    cache_key = _execution_cache_key(
-        source_field="execution_source_tree",
-        digest="execution",
-    )
-
-    assert _runtime_execution_cache_key_matches(cache_key, cache_key)
-
-
-def test_saveimages_export_specs_use_runtime_artifacts_not_incidental_files(
-    tmp_path: Path,
-) -> None:
-    validation = SimpleNamespace(
-        expectation=SimpleNamespace(
-            exports=RuntimeExportExpectation.from_flags(
-                table_exports=False,
-                image_exports=True,
-                image_export_specs=(RuntimeImageExportSpec("SelectedImage"),),
-            )
-        ),
-        observation=SimpleNamespace(
-            exports=RuntimeExportObservation(
-                table_outputs=(),
-                image_outputs=(tmp_path / "incidental_final_step.npy",),
-                table_headers_by_path={},
-                table_row_counts_by_path={},
-            )
-        ),
-    )
-
-    assert _candidate_image_snapshots_for_equivalence(validation) is None
-
-
-def test_exported_image_files_are_used_without_declared_image_artifacts(
-    tmp_path: Path,
-) -> None:
-    image_path = tmp_path / "candidate.npy"
-    np.save(image_path, np.ones((2, 3), dtype=np.float32))
-    validation = SimpleNamespace(
-        expectation=SimpleNamespace(
-            exports=RuntimeExportExpectation.from_flags(
-                table_exports=False,
-                image_exports=True,
-            )
-        ),
-        observation=SimpleNamespace(
-            exports=RuntimeExportObservation(
-                table_outputs=(),
-                image_outputs=(image_path,),
-                table_headers_by_path={},
-                table_row_counts_by_path={},
-            )
-        ),
-    )
-
-    snapshots = _candidate_image_snapshots_for_equivalence(validation)
-
-    assert snapshots is not None
-    assert len(snapshots) == 1
-    assert snapshots[0].shape == (2, 3)
-
-
-def test_source_cache_domain_parser_handles_bom_python(tmp_path: Path) -> None:
-    marked_file = tmp_path / "marked.py"
-    marked_file.write_bytes(
-        b"\xef\xbb\xbf"
-        b"BENCHMARK_CACHE_DOMAINS = frozenset({'parity', 'harness'})\n"
-    )
-    stat = marked_file.stat()
-
-    assert _source_file_cache_domains(
-        str(marked_file),
-        stat.st_size,
-        stat.st_mtime_ns,
-    ) == frozenset({"parity", "harness"})
-    assert _source_file_has_excluded_cache_domain(
-        marked_file,
-        excluded_cache_domains=frozenset({"parity"}),
-    )
-
-
-def test_source_cache_domain_parser_includes_unparseable_files(tmp_path: Path) -> None:
-    broken_file = tmp_path / "broken.py"
-    broken_file.write_text("BENCHMARK_CACHE_DOMAINS = frozenset({'parity'})\nif")
-    stat = broken_file.stat()
-
-    assert _source_file_cache_domains(
-        str(broken_file),
-        stat.st_size,
-        stat.st_mtime_ns,
-    ) == frozenset()
-    assert not _source_file_has_excluded_cache_domain(
-        broken_file,
-        excluded_cache_domains=frozenset({"parity"}),
-    )
-
-
-def test_source_cache_excludes_local_cellprofiler_source_tree() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-
-    assert _source_file_is_path_excluded(
-        repo_root / "benchmark/cellprofiler_source/modules/identifyprimaryobjects.py",
-        repo_root=repo_root,
-    )
-    assert not _source_file_is_path_excluded(
-        repo_root / "benchmark/cellprofiler_library/functions/identifyprimaryobjects.py",
-        repo_root=repo_root,
-    )
-
-
-def _execution_cache_key(
-    *,
-    source_field: str,
-    digest: str,
-) -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "tool_name": "OpenHCS",
-        "tool_version": "test",
-        "pipeline_name": "pipeline",
-        "pipeline_params": {"dataset_id": "dataset"},
-        "dataset_tree": {"digest": "dataset"},
-        "cppipe_file": {"digest": "cppipe"},
-        source_field: {"digest": digest},
-    }
+    assert second_openhcs_adapter.validated is True
 
 
 class _NativeReferenceAdapter(ToolAdapter):

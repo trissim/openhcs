@@ -1,127 +1,91 @@
 from __future__ import annotations
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
 
 import ast
+import json
 from pathlib import Path
 
+import pytest
+
 from benchmark.adapters.openhcs import (
-    OpenHCSAdapter,
-    OpenHCSRunRequest,
-    RuntimeExecutionCacheWritePolicy,
+    ZMQ_RESULTS_SUMMARY_FILENAME,
     _ZMQProgressTimingObserver,
     _execute_pipeline_via_zmq_server,
     _strict_cellprofiler_runtime_equivalence_policy,
 )
 from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
-import openhcs.processing.backends.cellprofiler as cellprofiler_backend
-from openhcs.core.artifacts import (
-    ArtifactSpec,
-    ImageArtifactType,
-    ObjectLabelsArtifactType,
+from openhcs.core.config import GlobalPipelineConfig, PipelineConfig, WellFilterConfig
+from openhcs.core.function_step_transport import FunctionStepTransportAuthority
+from openhcs.core.pipeline_document_fields import PipelineDocumentField
+from openhcs.core.runtime_execution_validation import (
+    RuntimeArtifactExecutionExpectation,
 )
-from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
-from openhcs.core.function_step_invocation_contracts import (
-    FunctionStepInvocationContractBinding,
-    FunctionStepInvocationContracts,
+from openhcs.core.runtime_exports import (
+    RuntimeExportExpectation,
+    RuntimeExportObservation,
 )
-from openhcs.core.function_patterns import FunctionInvocationKey
-from openhcs.core.module_artifact_contract import (
-    DeclaredArtifactOutputPartition,
-    ModuleArtifactContract,
-    RecordedArtifactOutputPartition,
-    SourceArtifactInputPartition,
-)
-from openhcs.core.pipeline import Pipeline
-from openhcs.core.runtime_exports import RuntimeExportObservation
-from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
+from openhcs.processing.backends import cellprofiler as cellprofiler_backend
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    CellProfilerThresholdMethod,
+)
+from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder import (
     PlatePipelineRequest,
 )
 from openhcs.runtime.zmq_execution_client import (
     OpenHCSExecutionSubmission,
-    PycodifiedPipelineCode,
+    ZMQExecutionRequestBuilder,
 )
 from openhcs.runtime.zmq_execution_observation import (
+    ZMQ_RUNTIME_OBSERVATION_EXPORT_SCHEMA_VERSION,
     ZMQRuntimeExecutionObservationExport,
 )
 
 
-def test_openhcs_adapter_stores_injected_product_config_and_source_selection() -> None:
-    global_config = GlobalPipelineConfig(num_workers=2, use_threading=True)
-    selection = SourceSchemaImageSetSelection(
-        well_filter=("A01",),
-        max_image_set_count=1,
-    )
-    adapter = OpenHCSAdapter(
-        global_config=global_config,
-        source_schema_image_set_selection=selection,
-    )
-
-    assert adapter.global_config is global_config
-    assert adapter.source_schema_image_set_selection is selection
+def _public_steps() -> list[FunctionStep]:
+    return [
+        FunctionStep(
+            func=(
+                cellprofiler_backend.identify_primary_objects,
+                {"threshold_method": CellProfilerThresholdMethod.OTSU},
+            ),
+            name="IdentifyPrimaryObjects",
+        )
+    ]
 
 
-def test_openhcs_run_request_carries_source_schema_selection() -> None:
-    selection = SourceSchemaImageSetSelection(
-        well_filter=("A01",),
-        max_image_set_count=1,
-    )
-    request = OpenHCSRunRequest(
-        dataset_path=Path("/tmp/dataset"),
-        pipeline_name="pipeline",
-        pipeline_params={},
-        metrics=(),
-        output_dir=Path("/tmp/out"),
-        source_schema_image_set_selection=selection,
-    )
-
-    assert request.source_schema_image_set_selection is selection
-
-
-def test_strict_cellprofiler_policy_keeps_threshold_entropy_tolerance() -> None:
+def test_strict_cellprofiler_policy_has_no_tolerance_coarser_than_one_e_minus_six() -> (
+    None
+):
     policy = _strict_cellprofiler_runtime_equivalence_policy()
 
-    assert policy.numeric_abs_tolerance == 1e-6
-    assert policy.threshold_entropy_abs_tolerance == 0.04
-
-
-def test_runtime_execution_cache_policy_disables_without_manifest() -> None:
-    request = OpenHCSRunRequest(
-        dataset_path=Path("/tmp/dataset"),
-        pipeline_name="pipeline",
-        pipeline_params={"runtime_execution_cache_key": {"case": "x"}},
-        metrics=(),
-        output_dir=Path("/tmp/out"),
+    assert (
+        max(
+            policy.numeric_abs_tolerance,
+            policy.numeric_rel_tolerance,
+            policy.threshold_entropy_abs_tolerance,
+            policy.threshold_sensitive_pair_abs_tolerance,
+            policy.threshold_sensitive_pair_rel_tolerance,
+            policy.image_abs_tolerance,
+            policy.image_rel_tolerance,
+        )
+        == 1e-6
     )
-
-    policy = RuntimeExecutionCacheWritePolicy.for_request(request)
-
-    assert not policy.write_manifest
-
-
-def test_runtime_execution_cache_policy_writes_single_validation_payload() -> None:
-    request = OpenHCSRunRequest(
-        dataset_path=Path("/tmp/dataset"),
-        pipeline_name="pipeline",
-        pipeline_params={
-            "runtime_execution_cache_manifest": "/tmp/out/cache.json",
-            "runtime_execution_cache_key": {"case": "x"},
-            "compare_image_outputs": False,
-        },
-        metrics=(),
-        output_dir=Path("/tmp/out"),
-    )
-
-    policy = RuntimeExecutionCacheWritePolicy.for_request(request)
-
-    assert policy.write_manifest
+    assert policy.feature_numeric_tolerances == ()
+    assert not policy.allow_tie_sensitive_location_mismatches
+    assert not policy.allow_sparse_object_boundary_jitter
+    assert not policy.allow_unstable_shape_descriptors
+    assert not policy.allow_unstable_zernike_descriptors
 
 
-def test_benchmark_executes_pipeline_via_zmq_client(monkeypatch, tmp_path) -> None:
+def test_benchmark_executes_pipeline_via_zmq_client(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     class FakeZMQExecutionClient:
-        submitted = []
-        waits = []
+        submitted: list[OpenHCSExecutionSubmission] = []
+        waits: list[str] = []
 
         def __init__(self, *, persistent, progress_callback):
             self.progress_callback = progress_callback
@@ -170,7 +134,11 @@ def test_benchmark_executes_pipeline_via_zmq_client(monkeypatch, tmp_path) -> No
                 self.submitted[-1].config_params["runtime_observation_export_path"]
             )
             ZMQRuntimeExecutionObservationExport(
-                schema_version=1,
+                schema_version=ZMQ_RUNTIME_OBSERVATION_EXPORT_SCHEMA_VERSION,
+                expectation=RuntimeArtifactExecutionExpectation(
+                    artifact_kinds=frozenset(),
+                    exports=RuntimeExportExpectation(),
+                ),
                 records_by_axis={},
                 exports=RuntimeExportObservation.from_output_roots((tmp_path,)),
                 output_roots=(tmp_path,),
@@ -186,23 +154,17 @@ def test_benchmark_executes_pipeline_via_zmq_client(monkeypatch, tmp_path) -> No
         "benchmark.adapters.openhcs.ZMQExecutionClient",
         FakeZMQExecutionClient,
     )
-    pipeline = Pipeline(
-        steps=[
-            FunctionStep(
-                func=cellprofiler_backend.identify_primary_objects,
-                name="IdentifyPrimaryObjects",
-            )
-        ],
-        name="server",
-    )
     timing = PhaseTimingTrace(run_id="run", pipeline_name="pipe", tool="OpenHCS")
+    global_config = GlobalPipelineConfig(
+        well_filter_config=WellFilterConfig(well_filter=1),
+    )
 
     execution, source = _execute_pipeline_via_zmq_server(
         plate_id="/tmp/plate",
         execution_plate_id="/tmp/execution_plate",
         selected_pipeline_path="/tmp/pipeline.cppipe",
-        pipeline_steps=pipeline.steps,
-        global_config=GlobalPipelineConfig(),
+        pipeline_steps=_public_steps(),
+        global_config=global_config,
         pipeline_config=PipelineConfig(),
         observation_export_path=tmp_path / "observation.pkl",
         phase_timing=timing,
@@ -210,8 +172,21 @@ def test_benchmark_executes_pipeline_via_zmq_client(monkeypatch, tmp_path) -> No
 
     assert execution.execution_id == "exec-1"
     assert execution.output_roots == (tmp_path,)
-    assert "pipeline_steps" in source
-    assert [submission.compile_only for submission in FakeZMQExecutionClient.submitted] == [
+    assert execution.results_summary == {"output_plate_root": str(tmp_path)}
+    assert (
+        json.loads(
+            (tmp_path / ZMQ_RESULTS_SUMMARY_FILENAME).read_text(encoding="utf-8")
+        )
+        == execution.results_summary
+    )
+    assert source == FakeZMQExecutionClient.submitted[0].pipeline_code()
+    assert all(
+        submission.global_pipeline_config is global_config
+        for submission in FakeZMQExecutionClient.submitted
+    )
+    assert [
+        submission.compile_only for submission in FakeZMQExecutionClient.submitted
+    ] == [
         True,
         False,
     ]
@@ -220,9 +195,7 @@ def test_benchmark_executes_pipeline_via_zmq_client(monkeypatch, tmp_path) -> No
         for submission in FakeZMQExecutionClient.submitted
     ] == [None, "compile-1"]
     assert FakeZMQExecutionClient.waits == ["compile-1", "exec-1"]
-    assert {
-        record["phase"] for record in timing.payloads()
-    } >= {
+    assert {record["phase"] for record in timing.payloads()} >= {
         BenchmarkPhase.SUBMIT_OPENHCS.name,
         BenchmarkPhase.WAIT_OPENHCS.name,
         BenchmarkPhase.COMPILE_OPENHCS.name,
@@ -239,75 +212,58 @@ def test_openhcs_progress_timing_uses_completion_bound_without_axis_events() -> 
 
     observer.record_phase_timings(timing, completion_observed_at=106.5)
 
-    phase_seconds = {
-        record["phase"]: record["seconds"] for record in timing.payloads()
-    }
+    phase_seconds = {record["phase"]: record["seconds"] for record in timing.payloads()}
     assert phase_seconds[BenchmarkPhase.COMPILE_OPENHCS.name] == 2.0
     assert phase_seconds[BenchmarkPhase.EXECUTE_OPENHCS.name] == 4.5
 
 
-def test_benchmark_transport_matches_pyqt_submission_source() -> None:
-    contract = ModuleArtifactContract(
-        module_name="IdentifyPrimaryObjects",
-        items=(
-            *ModuleArtifactContract.items_for_partition(
-                SourceArtifactInputPartition,
-                (ArtifactSpec.input("OrigBlue", ImageArtifactType),),
-            ),
-            *ModuleArtifactContract.items_for_partition(
-                RecordedArtifactOutputPartition,
-                (ArtifactSpec.output("Nuclei", ObjectLabelsArtifactType),),
-            ),
-            *ModuleArtifactContract.items_for_partition(
-                DeclaredArtifactOutputPartition,
-                (ArtifactSpec.output("Nuclei", ObjectLabelsArtifactType),),
-            ),
-        ),
+def test_benchmark_submission_matches_pyqt_submission_payload() -> None:
+    steps = _public_steps()
+    global_config = GlobalPipelineConfig(
+        well_filter_config=WellFilterConfig(well_filter=1),
     )
-    key = FunctionInvocationKey.from_callable(
-        cellprofiler_backend.identify_primary_objects,
-        "default",
-        0,
-    )
-    step = FunctionStep(
-        func=cellprofiler_backend.identify_primary_objects,
-        name="IdentifyPrimaryObjects",
-        invocation_contracts=FunctionStepInvocationContracts(
-            (FunctionStepInvocationContractBinding(key, contract),)
-        ),
-    )
-    pipeline = Pipeline(steps=[step], name="ui-equivalent")
-    global_config = GlobalPipelineConfig()
     pipeline_config = PipelineConfig()
     plate_id = "/tmp/plate#openhcs-cppipe=pipeline.cppipe"
-    execution_plate_id = "/tmp/plate/.openhcs/source_schema/pipeline"
+    execution_plate_id = "/tmp/plate/.openhcs/source_bindings/pipeline"
     selected_pipeline_path = "/tmp/plate/pipeline.cppipe"
 
     benchmark_submission = OpenHCSExecutionSubmission(
         plate_id=plate_id,
-        pipeline_steps=list(pipeline.steps),
+        pipeline_document=PipelineDocumentAuthority.from_values(
+            pipeline_config=pipeline_config, pipeline_steps=steps
+        ),
         global_config=global_config,
         execution_plate_id=execution_plate_id,
         selected_pipeline_path=selected_pipeline_path,
-        pipeline_config=pipeline_config,
         config_params={
             "runtime_observation_export_path": "/tmp/runtime_observation.pkl",
         },
     )
-    benchmark_source = PycodifiedPipelineCode.from_task(benchmark_submission).source
     ui_request = PlatePipelineRequest(
         plate_scope=PlateScopeIdentity.from_scope_id(plate_id),
         execution_plate_path=execution_plate_id,
         selected_pipeline_path=selected_pipeline_path,
-        definition_pipeline=list(pipeline.steps),
+        definition_pipeline=steps,
         pipeline_config=pipeline_config,
     )
-    ui_source = PycodifiedPipelineCode.from_task(
-        ui_request.submission(global_config=global_config)
-    ).source
+    ui_submission = ui_request.submission(global_config=global_config)
 
-    assert benchmark_source == ui_source
-    module = ast.parse(benchmark_source)
+    assert benchmark_submission.pipeline_steps == ui_submission.pipeline_steps
+    assert (
+        benchmark_submission.global_pipeline_config
+        == ui_submission.global_pipeline_config
+    )
+    assert benchmark_submission.pipeline_config == ui_submission.pipeline_config
+    assert benchmark_submission.pipeline_code() == ui_submission.pipeline_code()
+    benchmark_request = ZMQExecutionRequestBuilder.from_task(benchmark_submission)
+    ui_request_builder = ZMQExecutionRequestBuilder.from_task(ui_submission)
+    assert (
+        benchmark_request.config_projection.source_fields
+        == ui_request_builder.config_projection.source_fields
+    )
+
+    source = benchmark_submission.pipeline_code()
+    module = ast.parse(source)
     assigned_names = {
         target.id
         for node in module.body
@@ -315,13 +271,5 @@ def test_benchmark_transport_matches_pyqt_submission_source() -> None:
         for target in node.targets
         if isinstance(target, ast.Name)
     }
-    imported_names = {
-        alias.name
-        for node in module.body
-        if isinstance(node, ast.ImportFrom)
-        for alias in node.names
-    }
-    assert "pipeline_steps" in assigned_names
+    assert PipelineDocumentField.PIPELINE_STEPS.value in assigned_names
     assert "__openhcs_step_invocation_contracts" not in assigned_names
-    assert "ModuleArtifactContract" not in imported_names
-    assert "FunctionStepInvocationContracts" not in imported_names

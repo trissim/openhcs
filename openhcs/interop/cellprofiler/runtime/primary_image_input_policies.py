@@ -2,137 +2,85 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from dataclasses import replace
 
-from metaclass_registry import RegistryFamily, RegistryKeyAttribute
-
-from openhcs.core.artifacts import ArtifactSpec, ArtifactSpecCollection, ImageArtifactType
-from openhcs.interop.cellprofiler.runtime.adapter import CellProfilerRuntimeAdapter
+from openhcs.core.artifacts import (
+    ArtifactSpec,
+)
+from openhcs.core.runtime_object_labels import ObjectLabelValue
+from openhcs.core.steps.function_runtime import (
+    RuntimeCallableKwargs,
+    RuntimeFunctionOutput,
+)
 from openhcs.interop.cellprofiler.runtime.invocation import CellProfilerImageRequest
-from openhcs.interop.cellprofiler.runtime.payload_types import (
-    CellProfilerFunction,
-    CellProfilerKwargs,
-    CellProfilerRuntimeValue,
-)
-from openhcs.interop.cellprofiler.runtime.policy_registry import (
-    CellProfilerModulePolicyAutoRegisterMeta,
-    CellProfilerModulePolicyLookupMixin,
-    CellProfilerModulePolicyRegistryKey,
-)
-
-if TYPE_CHECKING:
-    from openhcs.interop.cellprofiler.runtime.module_execution import (
-        CellProfilerModuleRuntimePlan,
-        CellProfilerSpecialInputPolicy,
-    )
 
 
-class CellProfilerPrimaryImageInputPolicyMixin(ABC):
-    """Declaration-owned image-domain behavior for CellProfiler modules."""
-
-    @abstractmethod
-    def primary_image_inputs(
-        self,
-        module_name: str,
-        func: CellProfilerFunction,
-        declared_inputs: tuple[ArtifactSpec, ...],
-        *,
-        special_input_policy: "CellProfilerSpecialInputPolicy",
-    ) -> tuple[ArtifactSpec, ...]:
-        """Return image inputs that should drive function invocation slices."""
-
-    def runtime_image_current_image(
-        self,
-        module_name: str,
-        spec: ArtifactSpec,
-        current_image: CellProfilerRuntimeValue,
-    ) -> CellProfilerRuntimeValue | None:
-        """Return source context used when resolving a primary runtime image."""
-        del module_name, spec
-        return current_image
-
-    def invocation_runtime_kwargs(
-        self,
-        *,
-        module_name: str,
-        plan: "CellProfilerModuleRuntimePlan",
-        image_request: CellProfilerImageRequest,
-        adapter: CellProfilerRuntimeAdapter,
-        current_image: CellProfilerRuntimeValue,
-        runtime_kwargs: CellProfilerKwargs,
-        object_input_source_image_name: Callable[[], str | None],
-    ) -> CellProfilerKwargs:
-        """Return module-owned runtime kwargs after generic input binding."""
-        del (
-            module_name,
-            plan,
-            image_request,
-            adapter,
-            current_image,
-            object_input_source_image_name,
-        )
-        return runtime_kwargs
-
-
-class DefaultPrimaryImageInputPolicyMixin(CellProfilerPrimaryImageInputPolicyMixin):
-    """Use non-special image inputs as the algorithmic image domain."""
-
-    def primary_image_inputs(
-        self,
-        module_name: str,
-        func: CellProfilerFunction,
-        declared_inputs: tuple[ArtifactSpec, ...],
-        *,
-        special_input_policy: "CellProfilerSpecialInputPolicy",
-    ) -> tuple[ArtifactSpec, ...]:
-        image_inputs = ArtifactSpecCollection(declared_inputs).of_artifact_type(
-            ImageArtifactType
-        )
-        special_image_count = len(
-            special_input_policy.special_image_inputs(
-                module_name,
-                func,
-                declared_inputs,
-            )
-        )
-        if special_image_count == 0:
-            return image_inputs
-        return image_inputs[: len(image_inputs) - special_image_count]
-
-
-class CellProfilerPrimaryImageInputPolicy(
-    CellProfilerPrimaryImageInputPolicyMixin,
-    CellProfilerModulePolicyLookupMixin,
-    ABC,
-    metaclass=CellProfilerModulePolicyAutoRegisterMeta,
-):
-    """Registered fallback policy root for CellProfiler primary-image inputs."""
-
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
-    declaration_policy_bases = (CellProfilerPrimaryImageInputPolicyMixin,)
-
-
-class DefaultPrimaryImageInputPolicy(
-    DefaultPrimaryImageInputPolicyMixin,
-    CellProfilerPrimaryImageInputPolicy,
-):
-    """Use non-special image inputs as the algorithmic image domain."""
-
-    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
-
-
-class ObjectLabelDrivenPrimaryImageInputPolicy(CellProfilerPrimaryImageInputPolicyMixin):
+class ObjectLabelDrivenPrimaryImageInputPolicy:
     """Treat declared images as carriers; object labels define the domain."""
 
+    @classmethod
     def primary_image_inputs(
-        self,
-        module_name: str,
-        func: CellProfilerFunction,
+        cls,
+        func: Callable[..., RuntimeFunctionOutput],
         declared_inputs: tuple[ArtifactSpec, ...],
-        *,
-        special_input_policy: "CellProfilerSpecialInputPolicy",
     ) -> tuple[ArtifactSpec, ...]:
-        del module_name, func, declared_inputs, special_input_policy
+        del cls, func, declared_inputs
         return ()
+
+    @classmethod
+    def invocation_domain_inputs(
+        cls,
+        func: Callable[..., RuntimeFunctionOutput],
+        declared_inputs: tuple[ArtifactSpec, ...],
+    ) -> tuple[ArtifactSpec, ...]:
+        """Return the exact object-label input that owns one invocation."""
+
+        del func
+        binding = cls.primary_image_domain_input_binding()
+        parameter_name = binding.require_runtime_parameter_name()
+        artifact_type = binding.require_artifact_type()
+        domain_inputs = tuple(
+            artifact_input
+            for artifact_input in declared_inputs
+            if artifact_input.parameter_name == parameter_name
+            and artifact_input.artifact_type is artifact_type
+        )
+        if len(domain_inputs) != 1:
+            raise ValueError(
+                f"{cls.__name__} requires exactly one invocation-domain input "
+                f"bound to {parameter_name!r}, got "
+                f"{tuple(spec.ref() for spec in domain_inputs)!r}."
+            )
+        return domain_inputs
+
+    @classmethod
+    def project_invocation_image_request(
+        cls,
+        *,
+        image_request: CellProfilerImageRequest,
+        runtime_kwargs: RuntimeCallableKwargs,
+    ) -> CellProfilerImageRequest:
+        """Use the nominally declared label binding as the invocation image domain."""
+
+        domain_binding = cls.primary_image_domain_input_binding()
+        parameter_name = domain_binding.require_runtime_parameter_name()
+        if parameter_name not in runtime_kwargs:
+            raise ValueError(
+                f"{cls.__name__} requires bound object-label parameter "
+                f"{parameter_name!r} before invocation image projection."
+            )
+        labels = runtime_kwargs[parameter_name]
+        if not isinstance(labels, ObjectLabelValue):
+            raise TypeError(
+                f"{cls.__name__} object-label image domain requires "
+                f"ObjectLabelValue, got {type(labels).__name__}."
+            )
+        return replace(
+            image_request,
+            payload=labels.measurement_reference_image(),
+            source_image_name=None,
+            source_aliases=(),
+            image_count=1,
+            plane_projection=labels.declared_plane_projection(),
+        )

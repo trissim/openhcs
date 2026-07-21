@@ -12,7 +12,7 @@ from pyqt_reactive.services.scope_window_factory import (
     ScopeWindowCreationRequest,
     ScopeWindowRegistry,
 )
-from openhcs.pyqt_gui.services.plate_scope_identity import PipelineScopeIdentity
+from openhcs.ui.shared.plate_scope_identity import PipelineScopeIdentity
 from openhcs.pyqt_gui.services.step_scope_identity import StepEditorScope
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
 
@@ -48,32 +48,68 @@ class OpenHCSWindowCreationAuthority:
         request: ScopeWindowCreationRequest,
     ) -> Optional[QWidget]:
         """Create GlobalPipelineConfig editor window."""
-        from openhcs.pyqt_gui.windows.config_window import ConfigWindow
+        from openhcs.pyqt_gui.windows.config_window import (
+            ConfigWindow,
+            ConfigWindowTabSpec,
+        )
+        from openhcs.pyqt_gui.config import UIConfig
         from openhcs.core.config import GlobalPipelineConfig
         from openhcs.core.config_cache import save_global_config_sync
         from openhcs.config_framework.global_config import (
-            get_current_global_config,
             set_global_config_for_editing,
         )
+        from objectstate import ObjectStateRegistry
 
-        current_config = (
-            get_current_global_config(GlobalPipelineConfig) or GlobalPipelineConfig()
-        )
+        global_state = ObjectStateRegistry.get_by_scope("")
+        if global_state is None:
+            raise RuntimeError(
+                "Application GlobalPipelineConfig ObjectState is not registered."
+            )
+        if type(global_state.saved_object) is not GlobalPipelineConfig:
+            raise TypeError(
+                "Application global ObjectState must contain GlobalPipelineConfig; "
+                f"got {type(global_state.saved_object).__name__}."
+            )
 
-        def handle_save(new_config):
+        ui_scope_id = UIConfig.object_state_scope_id()
+        ui_state = ObjectStateRegistry.get_by_scope(ui_scope_id)
+        if ui_state is None:
+            raise RuntimeError("Application UIConfig ObjectState is not registered.")
+        if type(ui_state.saved_object) is not UIConfig:
+            raise TypeError(
+                "Application UI ObjectState must contain UIConfig; "
+                f"got {type(ui_state.saved_object).__name__}."
+            )
+
+        def handle_save(new_config: GlobalPipelineConfig) -> None:
             if not self._emit_main_window_global_config_changed(new_config):
                 set_global_config_for_editing(GlobalPipelineConfig, new_config)
             if not save_global_config_sync(new_config):
                 logger.error("Failed to save global config to cache via window")
             logger.info("Global config saved via window")
 
+        def handle_ui_save(new_config: UIConfig) -> None:
+            main_window = self._main_window()
+            if main_window is None:
+                raise RuntimeError("UIConfig save requires the running main window.")
+            main_window.set_ui_config(new_config)
+            logger.info("UI config saved via window")
+
         window = ConfigWindow(
-            config_class=GlobalPipelineConfig,
-            current_config=current_config,
-            on_save_callback=handle_save,
+            tabs=(
+                ConfigWindowTabSpec(
+                    state=global_state,
+                    on_save=handle_save,
+                ),
+                ConfigWindowTabSpec(
+                    state=ui_state,
+                    on_save=handle_ui_save,
+                ),
+            ),
             scope_id=OpenHCSUiWindowId.canonical_manager_scope_for_agent_window_id(
                 request.scope_id
             ),
+            title_text="Configure OpenHCS",
         )
         self._show_window(window)
         return window
@@ -92,7 +128,10 @@ class OpenHCSWindowCreationAuthority:
         request: ScopeWindowCreationRequest,
     ) -> Optional[QWidget]:
         """Create PipelineConfig editor window for a plate."""
-        from openhcs.pyqt_gui.windows.config_window import ConfigWindow
+        from openhcs.pyqt_gui.windows.config_window import (
+            ConfigWindow,
+            ConfigWindowTabSpec,
+        )
         from openhcs.core.config import PipelineConfig
         from objectstate import ObjectStateRegistry
 
@@ -110,7 +149,7 @@ class OpenHCSWindowCreationAuthority:
             return None
 
         pipeline_config = state.saved_object
-        if not isinstance(pipeline_config, PipelineConfig):
+        if type(pipeline_config) is not PipelineConfig:
             logger.warning(
                 "Scope %s delegate is not PipelineConfig; got %s",
                 scope_id,
@@ -119,9 +158,11 @@ class OpenHCSWindowCreationAuthority:
             return None
 
         window = ConfigWindow(
-            config_class=PipelineConfig,
-            current_config=pipeline_config,
-            on_save_callback=None,  # ObjectState handles save
+            tabs=(
+                ConfigWindowTabSpec(
+                    state=state,
+                ),
+            ),
             scope_id=scope_id,
         )
         self._show_window(window)
@@ -162,8 +203,19 @@ class OpenHCSWindowCreationAuthority:
             on_save_callback=None,  # ObjectState handles save
             orchestrator=orchestrator,
             service_adapter=plate_manager.service_adapter,
+            step_index=editor_scope.step_token.index,
             plate_scope=editor_scope.plate_scope,
+            compiled_artifact_inspection_provider=(
+                plate_manager.compiled_artifact_inspection_for_plate
+            ),
             parent=None,
+        )
+        window.connect_artifact_signals(
+            compiled_artifact_signal=(
+                plate_manager.compiled_artifact_inspection_changed
+            ),
+            runtime_artifact_signal=plate_manager.runtime_artifact_available,
+            debug_snapshot_signal=plate_manager.debug_snapshot_available,
         )
         self._select_step_editor_tab(window, editor_scope)
         self._show_window(window)
@@ -259,6 +311,12 @@ class OpenHCSWindowCreationAuthority:
         from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 
         return ServiceRegistry.get(PlateManagerWidget)
+
+    def _main_window(self):
+        plate_manager = self._plate_manager()
+        if plate_manager is None:
+            return None
+        return plate_manager.service_adapter.main_window
 
     def _emit_main_window_global_config_changed(self, new_config) -> bool:
         plate_manager = self._plate_manager()

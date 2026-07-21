@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, List, Tuple, Union
 
 from openhcs.core.memory import numpy as numpy_func
 from openhcs.core.pipeline.function_contracts import artifact_inputs
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 # For type checking only
 if TYPE_CHECKING:
@@ -157,7 +158,7 @@ def _create_dynamic_blend_mask(
 
 
 @artifact_inputs("positions")
-@numpy_func
+@numpy_func(contract=ProcessingContract.VOLUMETRIC_TO_SLICE)
 def assemble_stack_cpu(
     image_tiles: "np.ndarray",
     positions: Union[List[Tuple[float, float]], "np.ndarray"],
@@ -346,7 +347,7 @@ def assemble_stack_cpu(
         # For float dtypes, just convert directly
         stitched_output = stitched.astype(input_dtype)
 
-    return stitched_output.reshape(1, canvas_height, canvas_width)
+    return stitched_output
 
 
 def to_numpy(tensor):

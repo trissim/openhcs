@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
 import hashlib
 import json
-
-from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from zmqruntime.messages import ExecuteRequest, MessageFields
@@ -29,31 +26,10 @@ SELECTED_PIPELINE_PATH_FIELD = "selected_pipeline_path"
 
 @dataclass(frozen=True, slots=True)
 class OpenHCSExecutionConfigBundle:
-    """OpenHCS config pair shared by client submissions and server execution."""
+    """Global execution context plus the config projected from a pipeline document."""
 
     global_pipeline: GlobalPipelineConfig
-    plate_pipeline: PipelineConfig | None = None
-
-
-class OpenHCSExecutionConfigCarrier(ABC, metaclass=AutoRegisterMeta):
-    """Mixin for records carrying OpenHCS execution config bundles."""
-
-    __registry_key__ = "registry_key"
-    __skip_if_no_key__ = True
-    registry_key = None
-
-    @property
-    @abstractmethod
-    def execution_config_bundle(self) -> OpenHCSExecutionConfigBundle:
-        raise NotImplementedError
-
-    @property
-    def global_pipeline_config(self) -> GlobalPipelineConfig:
-        return self.execution_config_bundle.global_pipeline
-
-    @property
-    def pipeline_config(self) -> PipelineConfig | None:
-        return self.execution_config_bundle.plate_pipeline
+    plate_pipeline: PipelineConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,9 +47,7 @@ class ZMQExecutionIdentity:
         if self.execution_plate_id is not None:
             items.append((EXECUTION_PLATE_ID_FIELD, self.execution_plate_id))
         if self.selected_pipeline_path is not None:
-            items.append(
-                (SELECTED_PIPELINE_PATH_FIELD, self.selected_pipeline_path)
-            )
+            items.append((SELECTED_PIPELINE_PATH_FIELD, self.selected_pipeline_path))
         return tuple(items)
 
     def signature_items(self) -> TransportRequestItems:
@@ -122,11 +96,10 @@ class ZMQExecutionCompileControl:
 
 @dataclass(frozen=True, slots=True)
 class ZMQExecutionConfigTransport:
-    """Config source fields plus auxiliary transport params for request signatures."""
+    """Global-config source plus auxiliary transport params for request signatures."""
 
     config_params: dict | None = None
     config_code: str | None = None
-    pipeline_config_code: str | None = None
 
     @classmethod
     def from_execute_request(
@@ -136,14 +109,12 @@ class ZMQExecutionConfigTransport:
         return cls(
             config_params=request.config_params,
             config_code=request.config_code,
-            pipeline_config_code=request.pipeline_config_code,
         )
 
     def signature_items(self, config_params: dict | None) -> TransportRequestItems:
         return (
             (MessageFields.CONFIG_PARAMS, config_params),
             (MessageFields.CONFIG_CODE, self.config_code),
-            (MessageFields.PIPELINE_CONFIG_CODE, self.pipeline_config_code),
         )
 
 
@@ -193,10 +164,6 @@ class ZMQExecutionRequestPayload:
     @property
     def config_code(self) -> str | None:
         return self.config_transport.config_code
-
-    @property
-    def pipeline_config_code(self) -> str | None:
-        return self.config_transport.pipeline_config_code
 
     @property
     def compile_only(self) -> bool:

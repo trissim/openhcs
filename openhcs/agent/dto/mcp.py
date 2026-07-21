@@ -12,6 +12,10 @@ class McpServerHealthResult(AgentTimedStatusEnvelope):
     """Health payload returned by the OpenHCS MCP transport boundary."""
 
     service: str
+    openhcs_version: str
+    packaged_resources_ready: bool
+    packaged_resource_count: int
+    missing_packaged_resource_paths: tuple[str, ...]
     server_process_id: int
     server_source_path: str
     server_import_mtime_ns: int

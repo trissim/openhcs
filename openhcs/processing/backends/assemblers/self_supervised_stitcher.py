@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple
 from openhcs.utils.import_utils import optional_import, create_placeholder_class
 from openhcs.core.memory import torch as torch_backend_func
 from openhcs.core.lazy_gpu_imports import torch
+from openhcs.core.vfs_protocol import PlateInputFile
 
 # Import torch modules as optional dependencies
 nn = optional_import("torch.nn") if torch else None
@@ -246,8 +247,8 @@ def self_supervised_stitcher_func(
     overlap_percent: float = 0.1, # For global transform normalization
     return_homographies: bool = False,
     # For pre-trained model paths
-    encoder_path: Optional[str] = None,
-    homography_net_path: Optional[str] = None
+    encoder_path: Optional[PlateInputFile] = None,
+    homography_net_path: Optional[PlateInputFile] = None
 ) -> torch.Tensor | Tuple[torch.Tensor, Tuple[int, int]] | Tuple[torch.Tensor, torch.Tensor, Tuple[int, int]]:
     """
     Self-supervised image stitching module.

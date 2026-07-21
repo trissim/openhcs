@@ -371,6 +371,23 @@ class SamplePlateImageCommandSpec(SingleToolCommandSpec):
         add_request_field_option(
             parser,
             PlateImageSampleRequest,
+            "resolution_index",
+            "--resolution-index",
+            help=(
+                "Exact native resolution index (0 is full resolution). Omit for "
+                "bounded automatic native-level selection."
+            ),
+        )
+        add_request_field_option(
+            parser,
+            PlateImageSampleRequest,
+            "max_auto_resolution_size",
+            "--max-auto-resolution-size",
+            help="Largest spatial edge preferred during automatic level selection.",
+        )
+        add_request_field_option(
+            parser,
+            PlateImageSampleRequest,
             "max_array_elements",
             "--max-array-elements",
             help="Largest sampled element count returned with pixel values.",
@@ -414,6 +431,8 @@ class SamplePlateImageCommandSpec(SingleToolCommandSpec):
             x=args.x,
             height=args.height,
             width=args.width,
+            resolution_index=args.resolution_index,
+            max_auto_resolution_size=args.max_auto_resolution_size,
             include_array_values=not args.no_array_values,
             max_array_elements=args.max_array_elements,
         )
@@ -822,6 +841,23 @@ class SelectedPlateSampleCommandSpec(SingleToolCommandSpec):
         add_request_field_option(
             parser,
             SelectedPlateImageSampleRequest,
+            "resolution_index",
+            "--resolution-index",
+            help=(
+                "Exact native resolution index (0 is full resolution). Omit for "
+                "bounded automatic native-level selection."
+            ),
+        )
+        add_request_field_option(
+            parser,
+            SelectedPlateImageSampleRequest,
+            "max_auto_resolution_size",
+            "--max-auto-resolution-size",
+            help="Largest spatial edge preferred during automatic level selection.",
+        )
+        add_request_field_option(
+            parser,
+            SelectedPlateImageSampleRequest,
             "max_array_elements",
             "--max-array-elements",
             help="Largest sampled element count returned with pixel values.",
@@ -866,6 +902,8 @@ class SelectedPlateSampleCommandSpec(SingleToolCommandSpec):
             x=args.x,
             height=args.height,
             width=args.width,
+            resolution_index=args.resolution_index,
+            max_auto_resolution_size=args.max_auto_resolution_size,
             include_array_values=not args.no_array_values,
             max_array_elements=args.max_array_elements,
         )

@@ -395,6 +395,19 @@ def runtime_measurement_cell_signature_if_present(
     value = canonical_scalar(value)
     if value is None:
         return None
+    if isinstance(value, (str, bool, int, float)):
+        text = str(value).strip()
+        if not text:
+            return None
+        numeric = runtime_numeric_text_value(text)
+        if numeric is None:
+            return RuntimeCellSignature(RuntimeCellValueKind.TEXT, text)
+        if math.isnan(numeric):
+            return None
+        return _runtime_numeric_cell_signature(
+            numeric,
+            policy.numeric_decimal_places,
+        )
     array_payload = semantic_array_payload(value)
     if array_payload is not None:
         dtype, shape, digest = array_payload[1:]
@@ -435,6 +448,14 @@ def runtime_measurement_cell_is_present(value: object) -> bool:
     value = canonical_scalar(value)
     if value is None:
         return False
+    if isinstance(value, (str, bool, int, float)):
+        text = str(value).strip()
+        if not text:
+            return False
+        numeric = runtime_numeric_text_value(text)
+        if numeric is None:
+            return True
+        return not math.isnan(numeric)
     array_shape = semantic_array_shape(value)
     if array_shape is not None:
         return any(axis > 0 for axis in array_shape)

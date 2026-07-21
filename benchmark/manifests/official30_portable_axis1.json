@@ -1,4 +1,5 @@
 {
+  "default_well_filter": 1,
   "cases": [
     {
       "cellprofiler_timeout_seconds": 900.0,
@@ -231,10 +232,7 @@
       "microscope_type": "cellprofiler_tutorials",
       "module_category": "3D segmentation + measurement",
       "name": "cp_tutorial_3d_monolayer",
-      "value_only": true,
-      "source_schema_image_set_selection": {
-        "max_image_set_count": 2
-      }
+      "value_only": true
     },
     {
       "assay_category": "Cell Painting morphology",
@@ -383,8 +381,5 @@
       "default_kind": "benchmark_dataset_cache",
       "env": "OPENHCS_BENCHMARK_DATASET_CACHE_ROOT"
     }
-  },
-  "default_source_schema_image_set_selection": {
-    "max_image_set_count": 1
   }
 }

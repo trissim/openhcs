@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QPushButton,
     QSizePolicy,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -71,9 +72,9 @@ from pyqt_reactive.widgets.no_scroll_spinbox import NoScrollComboBox, NoneAwareC
 from python_introspect import Enableable, is_enableable
 
 from openhcs.constants.constants import AllComponents
-from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.source_bindings import (
     ComponentSelector,
+    EMPTY_SOURCE_BINDINGS,
     MetadataExtractionRule,
     MetadataSource,
     MetadataSelector,
@@ -86,8 +87,10 @@ from openhcs.core.source_bindings import (
     SourceFilterClause,
     SourceFilterMatchType,
     SourceFilterSubject,
+    SourceProjectionRole,
     SourceSelector,
     SourceBindingsConfig,
+    SourceSetRole,
     StepSourceBindingsConfig,
 )
 from openhcs.core.artifacts import ArtifactType, ImageArtifactType
@@ -102,14 +105,17 @@ from objectstate import (
     ObjectStateSubfieldSemanticIndex,
     StructuralValuePath,
 )
-from objectstate.lazy_factory import LazyDataclass, get_base_type_for_lazy, replace_raw
+from objectstate.lazy_factory import (
+    LazyDataclass,
+    get_base_type_for_lazy,
+    replace_raw,
+    resolve_lazy_configurations_for_serialization,
+)
 
 if TYPE_CHECKING:
-    from objectstate import ObjectState
     from pyqt_reactive.forms.parameter_form_manager import ParameterFormManager
     from pyqt_reactive.forms.parameter_info_types import InlineDataclassWidgetInfo
 
-EMPTY_PIPELINE_IMAGE_SCHEMA = PipelineImageSchema.empty()
 EditableRowT = TypeVar("EditableRowT")
 SourceBindingsEditorRawValue = SourceBindingsConfig | LazyDataclass
 EditableChoiceValue = Enum | type[ArtifactType]
@@ -177,8 +183,8 @@ class SourceBindingColumn(EditableTableColumn):
         "Select Metadata",
         (
             "Metadata constraints used to choose sources for this alias, for "
-            "example Well=A01. This filters candidates; image-set pairing uses "
-            "the separate Image Set Pairing table."
+            "example Well=A01. This filters candidates; source-set pairing uses "
+            "the separate Source Set Pairing table."
         ),
     )
     FILTERS = (
@@ -203,16 +209,17 @@ class SourceBindingColumn(EditableTableColumn):
             "a concrete input path."
         ),
     )
-    STACK = (
+    SET_ROLE = (
         9,
-        None,
-        "Primary Stack",
-        (
-            "Whether this image binding forms the step's primary source-image "
-            "stack and creates execution anchors. Set False for auxiliary "
-            "sources that should be loaded with the anchored stack but should "
-            "not create additional image sets."
-        ),
+        SourceSetRole,
+        "Set Role",
+        "Whether this binding is matched into source sets or broadcast to each set.",
+    )
+    PROJECTION_ROLE = (
+        10,
+        SourceProjectionRole,
+        "Projection Role",
+        "Whether this binding projects a primary plane or a typed source artifact.",
     )
 
 
@@ -230,6 +237,7 @@ class SourceFilterColumn(EditableTableColumn):
     SUBJECT = (0, SourceFilterSubject)
     MATCH_TYPE = (1, SourceFilterMatchType)
     VALUE = (2, None)
+    ANY_GROUP = (3, None, "Any Group")
 
 
 class MatchPlanColumn(EditableTableColumn):
@@ -240,7 +248,7 @@ class MatchPlanColumn(EditableTableColumn):
         SourceBindingMatchMethod,
         "Pairing Method",
         (
-            "How selected aliases are grouped into one image set: by source "
+            "How selected aliases are grouped into one source set: by source "
             "order, or by declared metadata keys."
         ),
     )
@@ -250,7 +258,7 @@ class MatchPlanColumn(EditableTableColumn):
         "Pairing Keys",
         (
             "Alias-to-metadata-field pairs used when the method is metadata, "
-            "for example DNA=Well;GFP=Well. Each row is one shared image-set key."
+            "for example DNA=Well;GFP=Well. Each row is one shared source-set key."
         ),
     )
 
@@ -421,6 +429,8 @@ class StructuredSelectorCellWidget(QWidget):
         self.values = values
         self.editor_kind = editor_kind
         self._apply_changes = apply_changes
+        self.semantic_marker_label = QLabel("", self)
+        self.semantic_marker_label.setVisible(False)
         self.line_edit = QLineEdit(value, self)
         self.line_edit.editingFinished.connect(self._apply_changes)
         picker_button = QPushButton("...", self)
@@ -430,6 +440,7 @@ class StructuredSelectorCellWidget(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
+        layout.addWidget(self.semantic_marker_label)
         layout.addWidget(self.line_edit, 1)
         layout.addWidget(picker_button)
 
@@ -439,6 +450,12 @@ class StructuredSelectorCellWidget(QWidget):
     def set_text(self, value: str) -> None:
         self.line_edit.setText(value)
         self._apply_changes()
+
+    def set_semantic_markers(self, markers: tuple[str, ...]) -> None:
+        """Render ObjectState-owned markers without changing the edit value."""
+
+        self.semantic_marker_label.setText("".join(markers))
+        self.semantic_marker_label.setVisible(bool(markers))
 
     def _open_picker(self) -> None:
         dialog = StructuredSelectorDialog(
@@ -573,7 +590,7 @@ class StructuredSelectorDialog(QDialog):
 
 @dataclass(frozen=True, slots=True)
 class SourceBindingSuggestionSet:
-    """Nominal source-binding editor suggestions derived from schema/inventory."""
+    """Nominal source-binding editor suggestions derived from config/inventory."""
 
     component_selectors: tuple[str, ...] = ()
     metadata_selectors: tuple[str, ...] = ()
@@ -584,11 +601,14 @@ class SourceBindingSuggestionSet:
     def from_context(
         cls,
         *,
-        schema: PipelineImageSchema,
+        source_bindings: SourceBindingsConfig,
         inventory: SourceInventory | None,
     ) -> "SourceBindingSuggestionSet":
-        metadata_fields = cls.metadata_fields(schema=schema, inventory=inventory)
-        aliases = tuple(sorted(schema.assignments_by_alias))
+        metadata_fields = cls.metadata_fields(
+            source_bindings=source_bindings,
+            inventory=inventory,
+        )
+        aliases = tuple(sorted(binding.alias for binding in source_bindings.binding_declarations))
         return cls(
             component_selectors=tuple(
                 f"{component.value}="
@@ -611,13 +631,12 @@ class SourceBindingSuggestionSet:
     @staticmethod
     def metadata_fields(
         *,
-        schema: PipelineImageSchema,
+        source_bindings: SourceBindingsConfig,
         inventory: SourceInventory | None,
     ) -> tuple[str, ...]:
         fields: set[str] = set()
-        if schema.grouping is not None:
-            fields.update(schema.grouping.metadata_fields)
-        for rule in schema.metadata_rules:
+        fields.update(source_bindings.grouping_metadata_fields)
+        for rule in source_bindings.metadata_rule_declarations:
             fields.update(re.compile(rule.pattern).groupindex)
         if inventory is not None:
             for candidate in inventory.candidates:
@@ -632,8 +651,10 @@ class SourceBindingSuggestionSet:
             return ()
         selectors: set[str] = set()
         for candidate in inventory.candidates:
-            for field, value in candidate.metadata.items():
-                selectors.add(f"{field}{SelectorListCodec.KEY_VALUE_SEPARATOR}{value}")
+            for field_name, value in candidate.metadata.items():
+                selectors.add(
+                    f"{field_name}{SelectorListCodec.KEY_VALUE_SEPARATOR}{value}"
+                )
         return tuple(sorted(selectors))
 
 
@@ -755,6 +776,7 @@ class EditableTableController(Generic[EditableRowT]):
 
     LOGICAL_VALUE_ROLE = EditableTableItem.LOGICAL_VALUE_ROLE
     RENDERED_TEXT_ROLE = EditableTableItem.RENDERED_TEXT_ROLE
+    COMBO_LOGICAL_TEXT_ROLE = Qt.ItemDataRole.UserRole + 1
 
     table: QTableWidget
     columns: tuple[EditableTableColumn, ...]
@@ -929,7 +951,13 @@ class EditableTableController(Generic[EditableRowT]):
             return
         combo = NoScrollComboBox(self.table)
         for enum_value in spec.values:
-            combo.addItem(spec.text_for_value(enum_value), enum_value)
+            logical_text = spec.text_for_value(enum_value)
+            combo.addItem(logical_text, enum_value)
+            combo.setItemData(
+                combo.count() - 1,
+                logical_text,
+                self.COMBO_LOGICAL_TEXT_ROLE,
+            )
         index = combo.findText(value)
         if index >= 0:
             combo.setCurrentIndex(index)
@@ -1015,8 +1043,12 @@ class EditableTableController(Generic[EditableRowT]):
         if item is not None:
             self._apply_item_placeholder_text_style(item, active)
 
-    @staticmethod
-    def _combo_index_for_cell_value(combo: QComboBox, value: str) -> int:
+    @classmethod
+    def _combo_index_for_cell_value(
+        cls,
+        combo: QComboBox,
+        value: str,
+    ) -> int:
         """Return the row whose logical enum/text value matches ``value``."""
 
         for index in range(combo.count()):
@@ -1025,7 +1057,7 @@ class EditableTableController(Generic[EditableRowT]):
                 if str(payload.value) == value:
                     return index
                 continue
-            if combo.itemText(index) == value:
+            if combo.itemData(index, cls.COMBO_LOGICAL_TEXT_ROLE) == value:
                 return index
         return -1
 
@@ -1142,7 +1174,7 @@ class EditableTableController(Generic[EditableRowT]):
             edit_value = item.data(Qt.ItemDataRole.EditRole)
             logical_value = edit_value if isinstance(edit_value, str) else item.text()
             item.setData(cls.LOGICAL_VALUE_ROLE, logical_value)
-        target_text = f"*{logical_value}" if semantic.dirty else logical_value
+        target_text = f"{''.join(semantic.semantic_markers)}{logical_value}"
         target_tooltip = cls._semantic_tooltip(semantic)
         font = item.font()
         if (
@@ -1162,21 +1194,32 @@ class EditableTableController(Generic[EditableRowT]):
     def _apply_widget_semantic(cls, widget: QWidget, semantic) -> None:
         target_tooltip = cls._semantic_tooltip(semantic)
         font = widget.font()
-        combo_dirty_matches = (
-            not isinstance(widget, QComboBox)
-            or cls._combo_current_dirty_marker_matches(widget, semantic.dirty)
-        )
+        if isinstance(widget, QComboBox):
+            widget_marker_matches = cls._combo_current_marker_matches(
+                widget,
+                semantic.semantic_markers,
+            )
+        elif isinstance(widget, StructuredSelectorCellWidget):
+            marker_text = "".join(semantic.semantic_markers)
+            widget_marker_matches = (
+                widget.semantic_marker_label.text() == marker_text
+                and widget.semantic_marker_label.isVisible() == bool(marker_text)
+            )
+        else:
+            widget_marker_matches = True
         if (
             widget.property("objectstate_dirty") == semantic.dirty
             and widget.property("objectstate_signature_diff") == semantic.signature_diff
             and widget.property("objectstate_inherited") == semantic.inherited_value
             and widget.toolTip() == target_tooltip
             and font.underline() == semantic.signature_diff
-            and combo_dirty_matches
+            and widget_marker_matches
         ):
             return
         if isinstance(widget, QComboBox):
-            cls._apply_combo_dirty_marker(widget, semantic.dirty)
+            cls._apply_combo_semantic_markers(widget, semantic.semantic_markers)
+        elif isinstance(widget, StructuredSelectorCellWidget):
+            widget.set_semantic_markers(semantic.semantic_markers)
         widget.setProperty("objectstate_dirty", semantic.dirty)
         widget.setProperty("objectstate_signature_diff", semantic.signature_diff)
         widget.setProperty("objectstate_inherited", semantic.inherited_value)
@@ -1188,28 +1231,35 @@ class EditableTableController(Generic[EditableRowT]):
         widget.update()
 
     @staticmethod
-    def _combo_current_dirty_marker_matches(combo: QComboBox, dirty: bool) -> bool:
-        rendered_index = combo.currentIndex() if dirty else -1
+    def _combo_current_marker_matches(
+        combo: QComboBox,
+        markers: tuple[str, ...],
+    ) -> bool:
+        rendered_index = combo.currentIndex() if markers else -1
         return (
-            combo.property("objectstate_rendered_dirty") == dirty
-            and combo.property("objectstate_rendered_dirty_index") == rendered_index
+            combo.property("objectstate_rendered_markers") == markers
+            and combo.property("objectstate_rendered_marker_index") == rendered_index
         )
 
     @classmethod
-    def _apply_combo_dirty_marker(cls, combo: QComboBox, dirty: bool) -> None:
+    def _apply_combo_semantic_markers(
+        cls,
+        combo: QComboBox,
+        markers: tuple[str, ...],
+    ) -> None:
         was_blocked = combo.blockSignals(True)
         try:
             cls._restore_combo_item_texts(combo)
-            if dirty and combo.currentIndex() >= 0:
+            if markers and combo.currentIndex() >= 0:
                 current_index = combo.currentIndex()
                 combo.setItemText(
                     current_index,
-                    f"*{cls._combo_logical_text(combo, current_index)}",
+                    f"{''.join(markers)}{cls._combo_logical_text(combo, current_index)}",
                 )
-                combo.setProperty("objectstate_rendered_dirty_index", current_index)
+                combo.setProperty("objectstate_rendered_marker_index", current_index)
             else:
-                combo.setProperty("objectstate_rendered_dirty_index", -1)
-            combo.setProperty("objectstate_rendered_dirty", dirty)
+                combo.setProperty("objectstate_rendered_marker_index", -1)
+            combo.setProperty("objectstate_rendered_markers", markers)
         finally:
             combo.blockSignals(was_blocked)
 
@@ -1218,12 +1268,12 @@ class EditableTableController(Generic[EditableRowT]):
         for index in range(combo.count()):
             combo.setItemText(index, cls._combo_logical_text(combo, index))
 
-    @staticmethod
-    def _combo_logical_text(combo: QComboBox, index: int) -> str:
-        value = combo.itemData(index)
-        if isinstance(value, Enum):
-            return str(value.value)
-        return combo.itemText(index)
+    @classmethod
+    def _combo_logical_text(cls, combo: QComboBox, index: int) -> str:
+        logical_text = combo.itemData(index, cls.COMBO_LOGICAL_TEXT_ROLE)
+        if not isinstance(logical_text, str):
+            raise TypeError("Editable table choice cells require logical text data.")
+        return logical_text
 
     @classmethod
     def _apply_item_placeholder_text_style(
@@ -1294,14 +1344,28 @@ class EditableTableLayout:
 
     @staticmethod
     def fit_to_rows(table: QTableWidget) -> None:
+        table.ensurePolished()
         table.resizeRowsToContents()
-        header_height = table.horizontalHeader().height()
+        header = table.horizontalHeader()
+        header_height = max(header.height(), header.sizeHint().height())
         row_height = sum(table.rowHeight(row) for row in range(table.rowCount()))
         if table.rowCount() == 0:
             row_height = table.verticalHeader().defaultSectionSize()
         scrollbar_height = table.horizontalScrollBar().sizeHint().height()
         frame = table.frameWidth() * 2
-        table.setFixedHeight(header_height + row_height + scrollbar_height + frame + 4)
+        viewport_vertical_margin = 2 * table.style().pixelMetric(
+            QStyle.PixelMetric.PM_FocusFrameVMargin,
+            None,
+            table,
+        )
+        table.viewport().setMinimumHeight(row_height)
+        table.setFixedHeight(
+            header_height
+            + row_height
+            + scrollbar_height
+            + frame
+            + viewport_vertical_margin
+        )
 
 
 class StepBindingsTableEditor(QWidget):
@@ -1494,17 +1558,7 @@ class StepBindingsTableEditor(QWidget):
         )
 
     def _fit_table(self) -> None:
-        self.table.resizeRowsToContents()
-        header_height = self.table.horizontalHeader().height()
-        row_height = sum(
-            self.table.rowHeight(row)
-            for row in range(self.table.rowCount())
-        )
-        scrollbar_height = self.table.horizontalScrollBar().sizeHint().height()
-        frame = self.table.frameWidth() * 2
-        self.table.setFixedHeight(
-            header_height + row_height + scrollbar_height + frame + 4
-        )
+        EditableTableLayout.fit_to_rows(self.table)
 
 
 class StepBindingsDialog(QDialog):
@@ -1573,6 +1627,10 @@ class SelectorListCodec:
 
     @classmethod
     def filter_cells(cls, selector: SourceSelector) -> str:
+        if any(clause.any_group is not None for clause in selector.filters):
+            raise ValueError(
+                "Grouped source filters must be edited in the source-filter table."
+            )
         return cls.ITEM_SEPARATOR.join(
             cls.FILTER_SEPARATOR.join(
                 (
@@ -1683,7 +1741,8 @@ class EditableSourceBindingRow:
             filters,
             inherit_current_scope,
             identity,
-            stack,
+            source_set_role,
+            projection_role,
         ) = (
             value.strip() for value in values
         )
@@ -1704,8 +1763,12 @@ class EditableSourceBindingRow:
                 origin=SourceBindingOrigin(origin or SourceBindingOrigin.STEP_INPUT.value),
                 component_identity=SelectorListCodec.parse_components(identity),
                 required=required.lower() not in {"false", "0", "no", "n"},
-                participates_in_image_stack=stack.lower()
-                not in {"false", "0", "no", "n"},
+                source_set_role=SourceSetRole(
+                    source_set_role or SourceSetRole.MATCHED.value
+                ),
+                projection_role=SourceProjectionRole(
+                    projection_role or SourceProjectionRole.PRIMARY_PLANE.value
+                ),
             ),
         )
 
@@ -1727,7 +1790,8 @@ class EditableSourceBindingRow:
             SelectorListCodec.filter_cells(self.binding.selector),
             str(self.binding.selector.inherit_current_scope),
             SelectorListCodec.component_selector_cells(self.binding.component_identity),
-            str(self.binding.participates_in_image_stack),
+            self.binding.source_set_role.value,
+            self.binding.projection_role.value,
         )
 
 
@@ -1770,8 +1834,8 @@ class EditableSourceFilterRow:
 
     @classmethod
     def from_cells(cls, values: tuple[str, ...]) -> "EditableSourceFilterRow | None":
-        subject, match_type, value = (cell.strip() for cell in values)
-        if not subject and not match_type and not value:
+        subject, match_type, value, any_group = (cell.strip() for cell in values)
+        if not subject and not match_type and not value and not any_group:
             return None
         match_type_value = SourceFilterMatchType(
             match_type or SourceFilterMatchType.IS_IMAGE.value
@@ -1784,6 +1848,7 @@ class EditableSourceFilterRow:
                 subject=SourceFilterSubject(subject or SourceFilterSubject.FILE.value),
                 match_type=match_type_value,
                 value=value_or_none,
+                any_group=int(any_group) if any_group else None,
             )
         )
 
@@ -1796,6 +1861,7 @@ class EditableSourceFilterRow:
             self.clause.subject.value,
             self.clause.match_type.value,
             self.clause.value or "",
+            "" if self.clause.any_group is None else str(self.clause.any_group),
         )
 
 
@@ -1905,9 +1971,23 @@ class SourceBindingsEditorValue:
         if isinstance(self.raw, SourceBindingsConfig):
             return self.raw
         config_type = self.base_type()
-        return config_type(
-            **DataclassFieldAccess.raw_init_values(self.raw, config_type)
-        )
+        concrete = resolve_lazy_configurations_for_serialization(self.raw)
+        if not isinstance(concrete, config_type):
+            raise TypeError(
+                "Lazy source-binding resolution returned "
+                f"{type(concrete).__name__}, expected {config_type.__name__}."
+            )
+        return concrete
+
+    def view_inputs(
+        self,
+        pipeline_source_bindings: SourceBindingsConfig,
+    ) -> tuple[SourceBindingsConfig, StepSourceBindingsConfig]:
+        """Return nominal pipeline and step values for the shared view model."""
+        concrete = self.concrete_view()
+        if isinstance(concrete, StepSourceBindingsConfig):
+            return pipeline_source_bindings, concrete
+        return concrete, EMPTY_SOURCE_BINDINGS
 
 
 class SourceBindingsEditorWidget(
@@ -1935,7 +2015,7 @@ class SourceBindingsEditorWidget(
         self,
         view_model: SourceBindingsViewModel | None = None,
         *,
-        schema: PipelineImageSchema = EMPTY_PIPELINE_IMAGE_SCHEMA,
+        source_bindings: SourceBindingsConfig = SourceBindingsConfig(),
         bindings: SourceBindingsEditorRawValue | None = None,
         display_bindings: SourceBindingsEditorRawValue | None = None,
         inventory: SourceInventory | None = None,
@@ -1943,8 +2023,8 @@ class SourceBindingsEditorWidget(
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self._schema = schema
-        self._bindings = bindings if bindings is not None else StepSourceBindingsConfig()
+        self._source_bindings = source_bindings
+        self._bindings = bindings if bindings is not None else EMPTY_SOURCE_BINDINGS
         self._display_bindings = (
             display_bindings if display_bindings is not None else self._bindings
         )
@@ -1999,20 +2079,23 @@ class SourceBindingsEditorWidget(
         bindings: SourceBindingsEditorRawValue,
         *,
         display_bindings: SourceBindingsEditorRawValue | None = None,
-        schema: PipelineImageSchema = EMPTY_PIPELINE_IMAGE_SCHEMA,
+        source_bindings: SourceBindingsConfig = SourceBindingsConfig(),
         inventory: SourceInventory | None = None,
         form_context: InlineDataclassFormContext | None = None,
         parent: QWidget | None = None,
     ) -> "SourceBindingsEditorWidget":
-        """Create an editor from typed source bindings and an optional schema."""
+        """Create an editor from typed source bindings and pipeline defaults."""
 
         table_bindings = display_bindings if display_bindings is not None else bindings
+        view_source_bindings, view_step_bindings = SourceBindingsEditorValue(
+            table_bindings
+        ).view_inputs(source_bindings)
         return cls(
-            SourceBindingsViewModel.from_schema_and_bindings(
-                schema=schema,
-                bindings=SourceBindingsEditorValue(table_bindings).concrete_view(),
+            SourceBindingsViewModel.from_config_and_step_bindings(
+                source_bindings=view_source_bindings,
+                step_bindings=view_step_bindings,
             ),
-            schema=schema,
+            source_bindings=source_bindings,
             bindings=bindings,
             display_bindings=table_bindings,
             inventory=inventory,
@@ -2030,6 +2113,15 @@ class SourceBindingsEditorWidget(
         """Return the current typed source-bindings config."""
 
         return self._bindings
+
+    def resolved_view_inputs(
+        self,
+        source_bindings: SourceBindingsConfig | None = None,
+    ) -> tuple[SourceBindingsConfig, StepSourceBindingsConfig]:
+        """Return the concrete values currently rendered by this editor."""
+        return SourceBindingsEditorValue(self._display_bindings).view_inputs(
+            self._source_bindings if source_bindings is None else source_bindings
+        )
 
     def set_value(self, value: SourceBindingsEditorRawValue | None) -> None:
         """Update the widget from a typed source-bindings config."""
@@ -2360,22 +2452,23 @@ class SourceBindingsEditorWidget(
     def set_preview_context(
         self,
         *,
-        schema: PipelineImageSchema,
+        source_bindings: SourceBindingsConfig,
         inventory: SourceInventory | None = None,
     ) -> None:
-        """Set pipeline-level schema and optional inventory for source preview."""
+        """Set pipeline source config and optional inventory for preview."""
 
-        self._schema = schema
+        self._source_bindings = source_bindings
         self._inventory = inventory
         self.refresh()
 
     def refresh(self) -> None:
         """Rebuild the rendered view from current bindings and preview context."""
 
+        source_bindings, step_bindings = self.resolved_view_inputs()
         self.set_view_model(
-            SourceBindingsViewModel.from_schema_and_bindings(
-                schema=self._schema,
-                bindings=SourceBindingsEditorValue(self._display_bindings).concrete_view(),
+            SourceBindingsViewModel.from_config_and_step_bindings(
+                source_bindings=source_bindings,
+                step_bindings=step_bindings,
             )
         )
 
@@ -2400,14 +2493,13 @@ class SourceBindingsEditorWidget(
         )
         self.layout.addWidget(
             self._table_group(
-                "Pipeline Image Schema Bindings",
-                ("Alias", "Kind", "Origin", "Payload"),
+                "Pipeline Bindings",
+                ("Alias", "Kind", "Origin"),
                 tuple(
                     (
                         row.alias,
                         row.artifact_kind,
                         row.origin,
-                        row.payload_type or "",
                     )
                     for row in view_model.pipeline_bindings
                 ),
@@ -2419,7 +2511,7 @@ class SourceBindingsEditorWidget(
         self.layout.addWidget(self._match_plan_group())
         self.layout.addWidget(
             self._table_group(
-                "Resolved Image Set Pairing",
+                "Resolved Source Set Pairing",
                 ("Scope", "Method", "Dimensions"),
                 tuple(
                     (
@@ -2432,9 +2524,10 @@ class SourceBindingsEditorWidget(
             )
         )
         if self._inventory is not None:
-            preview = SourceBindingsPreview.from_schema_and_bindings(
-                schema=self._schema,
-                bindings=self._display_bindings,
+            source_bindings, step_bindings = self.resolved_view_inputs()
+            preview = SourceBindingsPreview.from_config_and_step_bindings(
+                source_bindings=source_bindings,
+                step_bindings=step_bindings,
                 inventory=self._inventory,
             )
             if preview.diagnostics:
@@ -2470,7 +2563,7 @@ class SourceBindingsEditorWidget(
             )
             self.layout.addWidget(
                 self._table_group(
-                    "Image Sets",
+                    "Source Sets",
                     ("Index", "Aliases", "Metadata"),
                     tuple(
                         (
@@ -2484,7 +2577,7 @@ class SourceBindingsEditorWidget(
                                 for field, value in row.metadata
                             ),
                         )
-                        for row in preview.image_set_rows
+                        for row in preview.source_set_rows
                     ),
                 )
             )
@@ -2520,6 +2613,7 @@ class SourceBindingsEditorWidget(
         self._scope_color_scheme = scheme
         for table in self.findChildren(ScopedTableWidget):
             table.set_scope_color_scheme(scheme)
+            self._fit_table_to_rows(table)
 
     def configure_inline_dataclass_groupbox(
         self,
@@ -2774,6 +2868,7 @@ class SourceBindingsEditorWidget(
             item = self.layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.setParent(None)
                 widget.deleteLater()
         self.step_bindings_summary_table = None
         self.step_bindings_table = None
@@ -2843,7 +2938,7 @@ class SourceBindingsEditorWidget(
         self,
     ) -> FreeFormCellSpecMap:
         suggestions = SourceBindingSuggestionSet.from_context(
-            schema=self._schema,
+            source_bindings=self._source_bindings,
             inventory=self._inventory,
         )
         return {
@@ -2999,7 +3094,7 @@ class SourceBindingsEditorWidget(
             tuple(column.name.title() for column in MetadataRuleColumn)
         )
         self.metadata_rules_table = table
-        self.metadata_rules_controller = self._register_editable_table_controller(
+        self.metadata_rules_controller = self._register_structural_table_controller(
             EditableTableController(
                 table=table,
                 columns=tuple(MetadataRuleColumn),
@@ -3007,6 +3102,13 @@ class SourceBindingsEditorWidget(
                 row_cells=EditableMetadataRuleRow.cells,
                 row_from_cells=EditableMetadataRuleRow.from_cells,
                 apply_changes=self._apply_metadata_rules_table,
+                semantic_binding=EditableTableSemanticBinding(
+                    owner_field_name="metadata_rules",
+                    row_path_policy=IsomorphicDataclassRowPathPolicy(
+                        row_value_type=MetadataExtractionRule,
+                        column_count=len(MetadataRuleColumn),
+                    ),
+                ),
             )
         )
         for rule in SourceBindingsEditorValue(
@@ -3035,7 +3137,7 @@ class SourceBindingsEditorWidget(
         return group
 
     def _match_plan_group(self) -> QGroupBox:
-        group, layout = self._section_group("Image Set Pairing", "match_plan")
+        group, layout = self._section_group("Source Set Pairing", "match_plan")
         table = self._create_table(0, len(MatchPlanColumn))
         table.setHorizontalHeaderLabels(
             tuple(column.table_header_label for column in MatchPlanColumn)

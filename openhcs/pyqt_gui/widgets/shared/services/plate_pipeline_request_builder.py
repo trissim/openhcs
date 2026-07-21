@@ -9,7 +9,7 @@ from openhcs.core.config import GlobalPipelineConfig
 from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.pyqt_gui.services.plate_manager_row import PlateManagerRow
-from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
+from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileJob,
     CompileWorkflowService,
@@ -139,9 +139,8 @@ class PlatePipelineRequestBuilder:
         input_workspace = orchestrator.input_workspace_preparation_result
         if input_workspace is not None and input_workspace.pipeline_path is not None:
             return str(input_workspace.pipeline_path)
-        request = orchestrator.input_workspace_preparation
-        if request is not None and request.selected_pipeline_path is not None:
-            return str(request.selected_pipeline_path)
+        if orchestrator.selected_pipeline_path is not None:
+            return str(orchestrator.selected_pipeline_path)
         return None
 
     def _definition_pipeline_for_plate(

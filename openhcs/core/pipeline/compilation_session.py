@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, fields, is_dataclass, replace
 from pathlib import Path
 from collections.abc import Iterator
-from types import MappingProxyType
-from typing import TYPE_CHECKING, Mapping, MutableMapping, Protocol, Sequence, runtime_checkable
+from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, Sequence, get_type_hints
+
+from objectstate import DataclassFieldAccess
 
 from openhcs.core.compiled_step_plan import CompiledStepPlan
 from openhcs.core.context.processing_context import ProcessingContext
@@ -15,6 +16,12 @@ from openhcs.core.pipeline.step_snapshot import (
     build_step_snapshots,
 )
 from openhcs.core.steps.abstract import AbstractStep
+from openhcs.core.source_metadata import SourceMetadataMapping
+from openhcs.core.source_workspace_projection import VirtualWorkspaceSourceProjection
+from openhcs.core.vfs_protocol import (
+    FileManagerLike,
+    PlatePathDeclaration,
+)
 
 if TYPE_CHECKING:
     from objectstate import ObjectState
@@ -22,28 +29,17 @@ if TYPE_CHECKING:
     from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 
 
-PIPELINE_SOURCE_SCHEMA_METADATA_KEY = "source_schema"
-
-
-@runtime_checkable
-class PipelineMetadataCarrier(Protocol):
-    """Structural protocol for pipeline declarations carrying metadata."""
-
-    metadata: Mapping[str, object]
-
-
-@runtime_checkable
-class PipelineIdentityCarrier(Protocol):
-    """Structural protocol for pipeline declarations carrying a stable name."""
-
-    name: str
-
-
 @dataclass(frozen=True, slots=True)
 class CompilationPlateScope:
     """Plate-root identity used for compiler ObjectState scopes and paths."""
 
     path: Path
+
+    def __post_init__(self) -> None:
+        if not self.path.is_absolute():
+            raise ValueError(
+                f"Compilation plate scope must be absolute, got {self.path}."
+            )
 
     @classmethod
     def from_context(cls, context: ProcessingContext) -> "CompilationPlateScope":
@@ -60,6 +56,103 @@ class CompilationPlateScope:
     @property
     def object_state_scope_id(self) -> str:
         return str(self.path)
+
+    def resolve_address(
+        self,
+        value: str | Path,
+        *,
+        filemanager: FileManagerLike,
+        backend: str,
+    ) -> Path:
+        """Resolve one address through VFS with this exact plate base."""
+
+        resolved = Path(
+            filemanager.resolve_address(
+                value,
+                backend,
+                base_path=self.path,
+            )
+        )
+        if not resolved.is_absolute():
+            raise ValueError(
+                "VFS path resolution must return an absolute address: "
+                f"{value!r} -> {resolved}."
+            )
+        return resolved
+
+
+@dataclass(frozen=True, slots=True)
+class CompilationPathResolver:
+    """Resolve declaration-owned paths for one compilation plate."""
+
+    plate_scope: CompilationPlateScope
+    filemanager: FileManagerLike
+    backend: str
+
+    def resolve(
+        self,
+        value: str | Path,
+        declaration: PlatePathDeclaration,
+        *,
+        owner: str,
+    ) -> Path:
+        try:
+            target = self.plate_scope.resolve_address(
+                value,
+                filemanager=self.filemanager,
+                backend=self.backend,
+            )
+            declaration.validate_target(
+                target,
+                filemanager=self.filemanager,
+                backend=self.backend,
+            )
+            return target
+        except Exception as error:
+            error.add_note(
+                f"While resolving {owner}: authored={value!r}, "
+                f"plate_root={self.plate_scope.path}, backend={self.backend!r}."
+            )
+            raise
+
+
+def resolve_declared_dataclass_paths(
+    value: Any,
+    resolver: CompilationPathResolver,
+    *,
+    owner: str,
+) -> Any:
+    """Return an immutable dataclass copy with declared paths resolved."""
+
+    if not is_dataclass(value) or isinstance(value, type):
+        return value
+    annotations = get_type_hints(type(value), include_extras=True)
+    replacements: dict[str, object] = {}
+    for dataclass_field in fields(value):
+        field_value = DataclassFieldAccess.raw_value(value, dataclass_field.name)
+        declaration = PlatePathDeclaration.from_annotation(
+            annotations.get(dataclass_field.name)
+        )
+        if declaration is not None and field_value is not None:
+            if not isinstance(field_value, (str, Path)):
+                raise TypeError(
+                    f"{owner}.{dataclass_field.name} declares a plate path but "
+                    f"contains {type(field_value).__name__}."
+                )
+            resolved_value = resolver.resolve(
+                field_value,
+                declaration,
+                owner=f"{owner}.{dataclass_field.name}",
+            )
+        else:
+            resolved_value = resolve_declared_dataclass_paths(
+                field_value,
+                resolver,
+                owner=f"{owner}.{dataclass_field.name}",
+            )
+        if resolved_value is not field_value:
+            replacements[dataclass_field.name] = resolved_value
+    return replace(value, **replacements) if replacements else value
 
 
 @dataclass(slots=True)
@@ -78,9 +171,8 @@ class CompilationSession:
     step_state_map: Mapping[int, "ObjectState"]
     snapshots: tuple[StepSnapshot, ...]
     plans: MutableMapping[int, CompiledStepPlan]
-    pipeline_metadata: Mapping[str, object] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
+    source_workspace_projection: VirtualWorkspaceSourceProjection
+    path_resolver: CompilationPathResolver | None = None
     metadata_writer: bool = False
     plate_scope: CompilationPlateScope | None = None
     is_zmq_execution: bool = False
@@ -95,7 +187,8 @@ class CompilationSession:
         global_config: "GlobalPipelineConfig",
         step_state_map: Mapping[int, "ObjectState"],
         snapshots: tuple[StepSnapshot, ...] | None = None,
-        pipeline_metadata: Mapping[str, object] | None = None,
+        source_workspace_projection: VirtualWorkspaceSourceProjection | None = None,
+        path_resolver: CompilationPathResolver | None = None,
         metadata_writer: bool = False,
         plate_path: Path | None = None,
         is_zmq_execution: bool = False,
@@ -112,7 +205,12 @@ class CompilationSession:
             step_state_map=step_state_map,
             snapshots=snapshots,
             plans=context.step_plans,
-            pipeline_metadata=MappingProxyType(dict(pipeline_metadata or {})),
+            source_workspace_projection=(
+                VirtualWorkspaceSourceProjection.empty(context.plate_path)
+                if source_workspace_projection is None
+                else source_workspace_projection
+            ),
+            path_resolver=path_resolver,
             metadata_writer=metadata_writer,
             plate_scope=(
                 CompilationPlateScope.from_path(plate_path)
@@ -131,18 +229,26 @@ class CompilationSession:
                 f"{len(self.snapshots)} snapshots for {len(self.steps)} steps."
             )
         missing_states = [
-            index for index in range(len(self.steps)) if index not in self.step_state_map
+            index
+            for index in range(len(self.steps))
+            if index not in self.step_state_map
         ]
         if missing_states:
             raise ValueError(
                 f"CompilationSession missing ObjectState entries for steps "
                 f"{missing_states}."
             )
-        for expected_index, snapshot in enumerate(self.snapshots):
+        for expected_index, (snapshot, step) in enumerate(
+            zip(self.snapshots, self.steps, strict=True)
+        ):
             if snapshot.index != expected_index:
                 raise ValueError(
                     f"StepSnapshot index mismatch: expected {expected_index}, "
                     f"got {snapshot.index}."
+                )
+            if snapshot.step is not step:
+                raise ValueError(
+                    f"StepSnapshot {expected_index} does not reference its resolved step."
                 )
 
     @property
@@ -154,6 +260,17 @@ class CompilationSession:
         if self.plate_scope is None:
             return None
         return self.plate_scope.path
+
+    @property
+    def realized_source_metadata(
+        self,
+    ) -> tuple[SourceMetadataMapping, ...] | None:
+        """Return the axis-scoped source metadata realized for this compilation."""
+
+        metadata = tuple(
+            self.source_workspace_projection.source_metadata_by_path.values()
+        )
+        return metadata or None
 
     def step(self, index: int) -> AbstractStep:
         return self.steps[index]
@@ -183,7 +300,7 @@ class CompilationSession:
         except KeyError as exc:
             snapshot = self.snapshot(index)
             raise ValueError(
-                f"Missing compiled plan for step {index} ({snapshot.name})."
+                f"Missing compiled plan for step {index} ({snapshot.step.name})."
             ) from exc
 
 
@@ -194,15 +311,3 @@ class ResolvedPipelineDefinition:
     steps: Sequence[AbstractStep]
     step_state_map: Mapping[int, "ObjectState"]
     snapshots: tuple[StepSnapshot, ...]
-    metadata: Mapping[str, object] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-
-    @classmethod
-    def metadata_from_steps(
-        cls,
-        steps: Sequence[AbstractStep],
-    ) -> Mapping[str, object]:
-        if not isinstance(steps, PipelineMetadataCarrier):
-            return MappingProxyType({})
-        return MappingProxyType(dict(steps.metadata))

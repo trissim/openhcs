@@ -4,7 +4,16 @@ import pytest
 from openhcs.constants.constants import MemoryType
 from openhcs.core.config import DtypeConfig
 from openhcs.core.memory import numpy
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.core.runtime_object_labels import (
+    ObjectLabelVariantData,
+    ObjectLabelSet,
+    ObjectLabelValue,
+    object_label_dense_array,
+)
+from openhcs.core.source_spatial_domain import SourceSpatialDomain
+from openhcs.processing.backends.cellprofiler._backend import (
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.backends.cellprofiler import morphology as morphology_module
 
 from openhcs.processing.backends.cellprofiler.morphology import (
@@ -14,11 +23,48 @@ from openhcs.processing.backends.cellprofiler.morphology import (
     MorphologyBackendStrategy,
     NumbaNumpyMorphologyBackendStrategy,
     NumpyMorphologyBackendStrategy,
+    MaskObjectsPlaneOperation,
+    MaskObjectsNumberingChoice,
+    MaskObjectsOverlapHandling,
     SparseBooleanCubicMapCoordinatesThreshold,
 )
-
+from openhcs.processing.backends.cellprofiler.relationships import (
+    ObjectRelationshipBackendStrategy,
+)
 
 MORPHOLOGY = MorphologyBackendStrategy.for_memory_type(MemoryType.NUMPY)
+
+
+def test_mask_objects_aligns_nominal_label_domains_before_array_conversion() -> None:
+    labels = ObjectLabelSet(
+        name="Objects1",
+        variant_data=ObjectLabelVariantData(labels=np.ones((2, 2), dtype=np.int32)),
+        source_spatial_domain=SourceSpatialDomain(
+            origin_yx=(1, 2),
+            source_shape_yx=(4, 5),
+        ),
+    )
+    mask = ObjectLabelSet(
+        name="Objects2",
+        variant_data=ObjectLabelVariantData(labels=np.ones((4, 5), dtype=np.int32)),
+        source_spatial_domain=SourceSpatialDomain(
+            origin_yx=(0, 0),
+            source_shape_yx=(4, 5),
+        ),
+    )
+
+    result = MaskObjectsPlaneOperation(
+        overlap_handling=MaskObjectsOverlapHandling.MASK,
+        overlap_fraction=0.5,
+        numbering=MaskObjectsNumberingChoice.RENUMBER,
+        invert_mask=False,
+        relationship_backend=ObjectRelationshipBackendStrategy.for_memory_type(
+            backend_provider=None
+        ),
+    ).apply(labels, mask)
+
+    assert result.labels.shape == (2, 2)
+    np.testing.assert_array_equal(result.labels, labels.labels)
 
 
 def test_combine_objects_strategies_are_registered_by_enum_value() -> None:
@@ -30,8 +76,7 @@ def test_combine_objects_strategies_are_registered_by_enum_value() -> None:
     }
 
     assert {
-        key: type(CombineObjectsStrategy.for_method(key)).__name__
-        for key in expected
+        key: type(CombineObjectsStrategy.for_method(key)).__name__ for key in expected
     } == expected
 
 
@@ -606,7 +651,10 @@ def test_specialized_morphology_backends_are_explicit_opt_in() -> None:
 
 
 def test_morph_convex_hull_routes_through_morphology_backend() -> None:
-    from benchmark.cellprofiler_library.functions.morph import MorphOperation, morph
+    from openhcs.processing.backends.cellprofiler.morphology import (
+        MorphOperation,
+        morph,
+    )
 
     image = np.zeros((7, 7), dtype=np.float32)
     image[1, 1] = 1
@@ -625,7 +673,10 @@ def test_morph_convex_hull_routes_through_morphology_backend() -> None:
 
 
 def test_fill_objects_convex_hull_routes_through_morphology_backend() -> None:
-    from benchmark.cellprofiler_library.functions.fillobjects import FillMode, fill_objects
+    from openhcs.processing.backends.cellprofiler.morphology import (
+        FillMode,
+        fill_objects,
+    )
 
     image = np.zeros((7, 7), dtype=np.float32)
     labels = np.zeros((7, 7), dtype=np.int32)
@@ -633,7 +684,7 @@ def test_fill_objects_convex_hull_routes_through_morphology_backend() -> None:
     labels[1, 5] = 4
     labels[5, 1] = 4
 
-    _, result = fill_objects(
+    result = fill_objects(
         image,
         labels,
         mode=FillMode.CONVEX_HULL,
@@ -642,15 +693,123 @@ def test_fill_objects_convex_hull_routes_through_morphology_backend() -> None:
     )
     expected_mask = MORPHOLOGY.convex_hull_image(labels == 4)
 
-    np.testing.assert_array_equal(result == 4, expected_mask)
+    assert isinstance(result, ObjectLabelValue)
+    np.testing.assert_array_equal(
+        object_label_dense_array(result) == 4,
+        expected_mask,
+    )
+
+
+@pytest.mark.parametrize(
+    "mode",
+    (
+        morphology_module.FillMode.HOLES,
+        morphology_module.FillMode.CONVEX_HULL,
+    ),
+)
+def test_fill_objects_modes_preserve_nominal_object_label_output(mode) -> None:
+    image = np.zeros((5, 5), dtype=np.float32)
+    labels = np.zeros((5, 5), dtype=np.int32)
+    labels[1:4, 1:4] = 7
+    labels[2, 2] = 0
+
+    result = morphology_module.fill_objects(
+        image,
+        labels,
+        mode=mode,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert isinstance(result, ObjectLabelValue)
+    assert object_label_dense_array(result).dtype == labels.dtype
+
+
+def test_fill_objects_empty_input_preserves_nominal_object_label_output() -> None:
+    image = np.zeros((5, 5), dtype=np.float32)
+    labels = np.zeros((5, 5), dtype=np.int32)
+
+    result = morphology_module.fill_objects(
+        image,
+        labels,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert isinstance(result, ObjectLabelValue)
+    np.testing.assert_array_equal(object_label_dense_array(result), labels)
+
+
+def test_morphological_skeleton_preserves_declared_stack_shape() -> None:
+    image = np.zeros((2, 7, 7), dtype=np.float32)
+    image[:, 2:5, 3] = 1.0
+
+    result = morphology_module.morphologicalskeleton(
+        image,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert result.shape == image.shape
+    np.testing.assert_array_equal(result > 0, image > 0)
+
+
+def test_shrink_to_object_centers_emits_typed_rows_and_labels() -> None:
+    image = np.zeros((9, 9), dtype=np.float32)
+    labels = np.zeros((9, 9), dtype=np.int32)
+    labels[1:4, 1:4] = 1
+    labels[5:8, 5:8] = 2
+
+    _, rows, result = morphology_module.shrink_to_object_centers(
+        image,
+        labels,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert rows.row_count() == 1
+    assert isinstance(result, ObjectLabelValue)
+    result_array = object_label_dense_array(result)
+    assert np.count_nonzero(result_array == 1) == 1
+    assert np.count_nonzero(result_array == 2) == 1
+
+
+def test_split_or_merge_guide_image_uses_exact_public_callable() -> None:
+    image = np.ones((7, 7), dtype=np.float32)
+    labels = np.zeros((7, 7), dtype=np.int32)
+    labels[2:4, 1:3] = 1
+    labels[2:4, 4:6] = 2
+
+    _, rows, result = morphology_module.split_or_merge_objects_with_guide_image(
+        image,
+        labels,
+        distance_threshold=2,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert rows.row_count() == 1
+    assert isinstance(result, ObjectLabelValue)
+
+
+def test_split_or_merge_labels_only_uses_exact_public_callable() -> None:
+    image = np.zeros((7, 7), dtype=np.float32)
+    labels = np.zeros((7, 7), dtype=np.int32)
+    labels[2:4, 1:3] = 1
+    labels[2:4, 4:6] = 2
+
+    _, rows, result = morphology_module.split_or_merge_objects(
+        image,
+        labels,
+        distance_threshold=2,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert rows.row_count() == 1
+    assert isinstance(result, ObjectLabelValue)
 
 
 def test_split_or_merge_convex_hull_routes_through_morphology_backend() -> None:
-    from benchmark.cellprofiler_library.functions.splitormergeobjects import (
-        MergeMethod,
-        Operation,
-        OutputObjectType,
-        split_or_merge_objects,
+    from openhcs.processing.backends.cellprofiler.morphology import (
+        SplitOrMergeMergeMethod as MergeMethod,
+        SplitOrMergeOperation as Operation,
+        SplitOrMergeOutputObjectType as OutputObjectType,
+        split_or_merge_objects_per_parent,
     )
 
     image = np.zeros((7, 7), dtype=np.float32)
@@ -661,7 +820,7 @@ def test_split_or_merge_convex_hull_routes_through_morphology_backend() -> None:
     parent_labels = np.zeros_like(labels)
     parent_labels[labels > 0] = 9
 
-    _, _, result = split_or_merge_objects(
+    _, rows, result = split_or_merge_objects_per_parent(
         image,
         labels,
         operation=Operation.MERGE,
@@ -671,16 +830,18 @@ def test_split_or_merge_convex_hull_routes_through_morphology_backend() -> None:
         morphology_backend_provider=CellProfilerBackendProvider.NUMBA,
         dtype_config=DtypeConfig(),
     )
+    assert rows.row_count() == 1
     expected_mask = MORPHOLOGY.convex_hull_image(labels > 0)
 
-    assert result.max() == 1
-    np.testing.assert_array_equal(result > 0, expected_mask)
+    result_array = object_label_dense_array(result)
+    assert result_array.max() == 1
+    np.testing.assert_array_equal(result_array > 0, expected_mask)
 
 
 def test_split_or_merge_per_parent_requires_parent_labels() -> None:
-    from benchmark.cellprofiler_library.functions.splitormergeobjects import (
-        MergeMethod,
-        Operation,
+    from openhcs.processing.backends.cellprofiler.morphology import (
+        SplitOrMergeMergeMethod as MergeMethod,
+        SplitOrMergeOperation as Operation,
         split_or_merge_objects,
     )
 
@@ -695,7 +856,10 @@ def test_split_or_merge_per_parent_requires_parent_labels() -> None:
 
 
 def test_morphology_backend_unregistered_provider_is_explicit_error() -> None:
-    from benchmark.cellprofiler_library.functions.morph import MorphOperation, morph
+    from openhcs.processing.backends.cellprofiler.morphology import (
+        MorphOperation,
+        morph,
+    )
 
     with pytest.raises(NotImplementedError, match="cucim"):
         morph(
@@ -728,10 +892,13 @@ class LegacyDeclumpingSeedPointsAuthority:
             1,
             np.ceil(np.asarray(self.image.shape) * self.image_resize_factor),
         ).astype(int)
-        low_res_coordinates = np.mgrid[
-            0 : low_res_shape[0],
-            0 : low_res_shape[1],
-        ].astype(float) / self.image_resize_factor
+        low_res_coordinates = (
+            np.mgrid[
+                0 : low_res_shape[0],
+                0 : low_res_shape[1],
+            ].astype(float)
+            / self.image_resize_factor
+        )
         low_res_image = ndi.map_coordinates(self.image, low_res_coordinates)
         low_res_labels = ndi.map_coordinates(
             self.labels,
@@ -749,5 +916,7 @@ class LegacyDeclumpingSeedPointsAuthority:
             np.mgrid[0 : self.image.shape[0], 0 : self.image.shape[1]].astype(float)
             / inverse_resize_factor
         )
-        expected = ndi.map_coordinates(expected.astype(float), high_res_coordinates) > 0.5
+        expected = (
+            ndi.map_coordinates(expected.astype(float), high_res_coordinates) > 0.5
+        )
         return MORPHOLOGY.shrink_components_to_seed_points(expected)

@@ -1,21 +1,33 @@
+from contextlib import nullcontext
 import pytest
 from types import SimpleNamespace
 
 from openhcs.core.config import MultiprocessingStartMethod
+from openhcs.core.callable_contract import FunctionStepExecutionScope
 from openhcs.core.debug import NoOpDebugExecutionPolicy
-from openhcs.core.progress import ProgressExecutionContext
+from openhcs.core.progress import ProgressEvent, ProgressExecutionContext, ProgressPhase
 from openhcs.core.orchestrator import orchestrator as orchestrator_module
+from openhcs.core.orchestrator import (
+    compiled_plate_execution as compiled_plate_execution_module,
+)
 from openhcs.core.orchestrator import worker_execution as worker_execution_module
-from openhcs.core.orchestrator.analysis_consolidation import AnalysisConsolidationPlan
+from openhcs.core.orchestrator.analysis_consolidation import (
+    consolidate_analysis_outputs,
+)
 from openhcs.core.orchestrator.execution_result import (
     ExecutionResult,
     RuntimeObservationMode,
 )
 from openhcs.core.orchestrator.compiled_plate_execution import (
+    CompiledPlateExecutionResults,
     CompiledPlateExecutionRequest,
+    clear_viewer_state,
+    execute_compiled_plate_request,
     project_execution_state,
+    settle_viewer_state,
     stop_execution_visualizers,
     validate_compiled_plate_execution,
+    wait_until_visualizers_ready,
 )
 from openhcs.core.orchestrator.worker_execution import (
     ForkInheritedWorkerLaneRunner,
@@ -37,6 +49,7 @@ from openhcs.core.compiled_execution import (
     CompiledRuntimeEnvironmentPlan,
     CompiledWorkerStartPlan,
 )
+from openhcs.runtime.viewer_protocol import ViewerControlResponse
 
 
 PROGRESS_CONTEXT = ProgressExecutionContext(
@@ -64,6 +77,90 @@ def _runtime_environment(
             configured_num_workers=configured_num_workers
         ),
     )
+
+
+def _execute_with_visualizer(monkeypatch, visualizer, *, progress_queue=None):
+    context = SimpleNamespace(step_plans={})
+    runtime_environment = _runtime_environment(
+        use_threading=True,
+        start_method=MultiprocessingStartMethod.SPAWN,
+        configured_num_workers=1,
+    )
+    bundle = CompiledExecutionBundle(
+        pipeline_definition=("step",),
+        runtime_contexts={"A01": context},
+        transport_contexts={"A01": context},
+        worker_assignments=None,
+        runtime_environment=runtime_environment,
+    )
+    request = CompiledPlateExecutionRequest(
+        execution_id="exec",
+        plate_id="plate",
+        execution_bundle=bundle,
+        max_workers=1,
+        visualizer=None,
+        log_file_base=None,
+        progress_queue=progress_queue or SimpleNamespace(put=lambda _event: None),
+        runtime_observation_mode=RuntimeObservationMode.MERGE_INTO_PARENT,
+        debug_execution_policy=NoOpDebugExecutionPolicy(),
+    )
+
+    class FakeExecutorResources:
+        executor = None
+
+        def install_execution_bundle(self, _bundle):
+            return None
+
+        def execution_context(self):
+            return nullcontext()
+
+        def plan_worker_lanes(self, **_kwargs):
+            return WorkerAssignmentPlan(
+                worker_assignments={"worker_0": ["A01"]},
+                lane_axis_contexts={"worker_0": [("A01", [("A01", context)])]},
+            )
+
+        def run_worker_lanes(self, **_kwargs):
+            return {"A01": ExecutionResult.success("A01")}
+
+        def shutdown_executor(self):
+            return None
+
+        def clear_execution_bundle(self):
+            return None
+
+        def cleanup_parent_gpu(self):
+            return None
+
+    resources = FakeExecutorResources()
+    monkeypatch.setattr(
+        compiled_plate_execution_module,
+        "WorkerExecutorFactory",
+        lambda **_kwargs: SimpleNamespace(create=lambda **_create_kwargs: resources),
+    )
+    monkeypatch.setattr(
+        compiled_plate_execution_module,
+        "bootstrap_execution_visualizers",
+        lambda **_kwargs: [visualizer],
+    )
+    monkeypatch.setattr(
+        compiled_plate_execution_module,
+        "execute_plate_scoped_steps",
+        lambda _contexts, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        compiled_plate_execution_module,
+        "consolidate_analysis_outputs",
+        lambda _contexts, _handler: None,
+    )
+    orchestrator = SimpleNamespace(
+        _cancelled=False,
+        _executor=None,
+        _state=None,
+        is_initialized=lambda: True,
+        microscope_handler=object(),
+    )
+    return execute_compiled_plate_request(orchestrator, request)
 
 
 def test_lane_planner_generates_stable_default_assignments_and_groups_combos():
@@ -101,13 +198,29 @@ def test_lane_planner_generates_stable_default_assignments_and_groups_combos():
     }
 
 
+def test_worker_axis_completion_stops_before_terminal_plate_steps() -> None:
+    context = SimpleNamespace(
+        step_plans={
+            **{
+                index: SimpleNamespace(
+                    execution_scope=FunctionStepExecutionScope.AXIS
+                )
+                for index in range(32)
+            },
+            32: SimpleNamespace(execution_scope=FunctionStepExecutionScope.PLATE),
+        }
+    )
+
+    assert worker_execution_module._completed_axis_step_count(context, 33) == 32
+
+
 def test_compiled_plate_execution_request_uses_bundle_as_runtime_authority():
     runtime_environment = _runtime_environment(
         use_threading=True,
         start_method=MultiprocessingStartMethod.SPAWN,
         configured_num_workers=7,
     )
-    context = SimpleNamespace()
+    context = SimpleNamespace(step_plans={})
     bundle = CompiledExecutionBundle(
         pipeline_definition=("step",),
         runtime_contexts={"A01": context},
@@ -137,6 +250,43 @@ def test_compiled_plate_execution_request_uses_bundle_as_runtime_authority():
     assert validated.compiled_contexts == {"A01": context}
     assert validated.runtime_environment is runtime_environment
     assert validated.actual_max_workers == 7
+
+
+def test_plate_scope_rejects_omitted_runtime_observations(monkeypatch):
+    runtime_environment = _runtime_environment(
+        use_threading=True,
+        start_method=MultiprocessingStartMethod.SPAWN,
+    )
+    context = SimpleNamespace(step_plans={})
+    bundle = CompiledExecutionBundle(
+        pipeline_definition=("plate-step",),
+        runtime_contexts={"A01": context},
+        transport_contexts={"A01": context},
+        worker_assignments=None,
+        runtime_environment=runtime_environment,
+    )
+    request = CompiledPlateExecutionRequest(
+        execution_id="exec",
+        plate_id="plate",
+        execution_bundle=bundle,
+        max_workers=None,
+        visualizer=None,
+        log_file_base=None,
+        progress_queue="queue",
+        runtime_observation_mode=RuntimeObservationMode.OMIT,
+        debug_execution_policy=NoOpDebugExecutionPolicy(),
+    )
+    monkeypatch.setattr(
+        compiled_plate_execution_module,
+        "validate_plate_scoped_contexts",
+        lambda _contexts: (1,),
+    )
+
+    with pytest.raises(ValueError, match="MERGE_INTO_PARENT"):
+        validate_compiled_plate_execution(
+            SimpleNamespace(is_initialized=lambda: True),
+            request,
+        )
 
 
 def test_lane_planner_preserves_fork_lane_payload_as_context_keys():
@@ -584,14 +734,15 @@ def test_executor_shutdown_plan_swallows_broken_pool_errors(caplog):
     assert "broken process pool" in caplog.text
 
 
-def test_analysis_consolidation_plan_skips_disabled_config():
+def test_analysis_consolidation_skips_disabled_config():
     context = SimpleNamespace(
         analysis_consolidation_config=SimpleNamespace(enabled=False),
         step_plans={},
     )
 
-    AnalysisConsolidationPlan(microscope_handler=SimpleNamespace(parser=object())).run(
-        {"A01": context}
+    consolidate_analysis_outputs(
+        {"A01": context},
+        SimpleNamespace(parser=object()),
     )
 
 
@@ -607,12 +758,186 @@ def test_execution_state_projector_maps_success_and_failure():
 
 def test_execution_visualizer_cleanup_stops_only_non_persistent_visualizers():
     stopped = []
-    persistent = SimpleNamespace(persistent=True, stop_viewer=lambda: stopped.append("p"))
+    persistent = SimpleNamespace(persistent=True, force_stop=lambda: stopped.append("p"))
     transient = SimpleNamespace(
         persistent=False,
-        stop_viewer=lambda: stopped.append("t"),
+        port=5563,
+        is_running=False,
+        force_stop=lambda: stopped.append("t"),
     )
 
     stop_execution_visualizers([persistent, transient])
 
     assert stopped == ["t"]
+
+
+def test_execution_visualizer_cleanup_rejects_active_non_persistent_viewer():
+    transient = SimpleNamespace(
+        persistent=False,
+        port=5563,
+        is_running=True,
+        force_stop=lambda: None,
+    )
+
+    with pytest.raises(RuntimeError, match="remained active"):
+        stop_execution_visualizers([transient])
+
+
+def test_execution_visualizer_state_clear_failure_is_fatal():
+    visualizer = SimpleNamespace(port=5563, clear_viewer_state=lambda: False)
+
+    with pytest.raises(RuntimeError, match="Failed to clear state"):
+        clear_viewer_state([visualizer])
+
+
+def test_execution_visualizer_settle_failure_is_fatal():
+    visualizer = SimpleNamespace(
+        port=5563,
+        persistent=False,
+        settle_viewer_state=lambda: False,
+    )
+
+    with pytest.raises(RuntimeError, match="Failed to settle streamed updates"):
+        settle_viewer_state([visualizer])
+
+
+def test_compiled_execution_returns_settled_nonpersistent_viewer_state_before_cleanup(
+    monkeypatch,
+):
+    events = []
+    response = ViewerControlResponse(
+        payload={
+            "status": "success",
+            "layers": (
+                {
+                    "route_key": "step-2:objects",
+                    "data_types": ("roi",),
+                    "item_count": 2,
+                    "payload_summary_count": 2,
+                    "component_values": (
+                        {"channel": "DAPI", "site": 0, "z_index": 0},
+                    ),
+                },
+            ),
+        }
+    )
+
+    class TransientViewer:
+        port = 5563
+        persistent = False
+
+        def __init__(self):
+            self.running = True
+
+        @property
+        def is_running(self):
+            return self.running
+
+        def settle_viewer_state(self):
+            events.append("settle")
+            return True
+
+        def read_viewer_state(self):
+            events.append("capture")
+            return response
+
+        def force_stop(self):
+            events.append("stop")
+            self.running = False
+
+    progress_queue = SimpleNamespace(
+        put=lambda raw_event: events.append(
+            ProgressEvent.from_dict(raw_event).phase.value
+        )
+    )
+    results = _execute_with_visualizer(
+        monkeypatch,
+        TransientViewer(),
+        progress_queue=progress_queue,
+    )
+
+    assert isinstance(results, CompiledPlateExecutionResults)
+    assert results == {"A01": ExecutionResult.success("A01")}
+    assert results.extras.viewer_states_by_port == {5563: response}
+    layer = results.extras.viewer_states_by_port[5563].payload["layers"][0]
+    assert layer["route_key"] == "step-2:objects"
+    assert layer["data_types"] == ("roi",)
+    assert layer["item_count"] == layer["payload_summary_count"] == 2
+    assert layer["component_values"] == (
+        {"channel": "DAPI", "site": 0, "z_index": 0},
+    )
+    assert events == [
+        "settle",
+        "capture",
+        ProgressPhase.SUCCESS.value,
+        "stop",
+    ]
+
+
+def test_compiled_execution_cleans_up_after_viewer_state_capture_failure(monkeypatch):
+    events = []
+
+    class FailingTransientViewer:
+        port = 5563
+        persistent = False
+
+        def __init__(self):
+            self.running = True
+
+        @property
+        def is_running(self):
+            return self.running
+
+        def settle_viewer_state(self):
+            events.append("settle")
+            return True
+
+        def read_viewer_state(self):
+            events.append("capture")
+            raise RuntimeError("state unavailable")
+
+        def force_stop(self):
+            events.append("stop")
+            self.running = False
+
+    with pytest.raises(RuntimeError, match="state unavailable"):
+        _execute_with_visualizer(monkeypatch, FailingTransientViewer())
+
+    assert events == ["settle", "capture", "stop"]
+
+
+def test_persistent_execution_viewer_is_settled_without_capture_or_cleanup():
+    events = []
+    persistent = SimpleNamespace(
+        port=5564,
+        persistent=True,
+        settle_viewer_state=lambda: events.append("settle") or True,
+        read_viewer_state=lambda: events.append("capture"),
+        force_stop=lambda: events.append("stop"),
+    )
+
+    viewer_states = settle_viewer_state([persistent])
+    stop_execution_visualizers([persistent])
+
+    assert viewer_states == {}
+    assert events == ["settle"]
+
+
+def test_execution_visualizer_readiness_timeout_is_fatal(monkeypatch):
+    timestamps = iter((0.0, 31.0))
+    monkeypatch.setattr(
+        compiled_plate_execution_module.time,
+        "time",
+        lambda: next(timestamps, 31.0),
+    )
+    events = []
+
+    with pytest.raises(TimeoutError, match=r"Not ready: \[5563\]"):
+        wait_until_visualizers_ready(
+            orchestrator=SimpleNamespace(_cancelled=False),
+            visualizers=[SimpleNamespace(port=5563, is_running=False)],
+            progress_queue=SimpleNamespace(put=events.append),
+            progress_context=PROGRESS_CONTEXT,
+        )
+
+    assert events[-1]["status"] == "failed"

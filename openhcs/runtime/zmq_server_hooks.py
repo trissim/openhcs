@@ -8,6 +8,11 @@ from typing import Any, Callable
 
 from zmqruntime.messages import ExecutionStatus, MessageFields, ResponseType
 
+from openhcs.core.orchestrator.compiled_plate_execution import (
+    CompiledPlateExecutionExtras,
+)
+from openhcs.serialization.json import to_jsonable
+
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +71,17 @@ class ZMQResultsSummaryEnricher:
         output_plate_root = record.get_extra("output_plate_root")
         auto_add_output_plate = record.get_extra("auto_add_output_plate")
         observation_export_path = record.get_extra("runtime_observation_export_path")
+        compiled_execution_extras = record.get_extra(
+            CompiledPlateExecutionExtras.EXECUTION_RECORD_KEY
+        )
+        if compiled_execution_extras is not None and not isinstance(
+            compiled_execution_extras,
+            CompiledPlateExecutionExtras,
+        ):
+            raise TypeError(
+                "Compiled execution metadata must use "
+                f"{CompiledPlateExecutionExtras.__name__}."
+            )
         if output_plate_root:
             summary["output_plate_root"] = str(output_plate_root)
         if auto_add_output_plate is not None:
@@ -74,6 +90,13 @@ class ZMQResultsSummaryEnricher:
             )
         if observation_export_path:
             summary["runtime_observation_export_path"] = str(observation_export_path)
+        if (
+            compiled_execution_extras is not None
+            and compiled_execution_extras.viewer_states_by_port
+        ):
+            summary[CompiledPlateExecutionExtras.RESULTS_SUMMARY_KEY] = to_jsonable(
+                compiled_execution_extras.viewer_states_by_port
+            )
         if isinstance(execution_payload, dict):
             execution_payload[MessageFields.RESULTS_SUMMARY] = summary
 

@@ -2,6 +2,7 @@ import subprocess
 import sys
 
 import pytest
+from zmqruntime.messages import ControlMessageType
 
 from openhcs.core.config import TransportMode
 from openhcs.core.streaming_config_factory import (
@@ -16,6 +17,9 @@ from openhcs.runtime.viewer_protocol import (
     DetachedViewerServerEntrypointSpec,
     ManagedViewerLifecycleMixin,
     ViewerProcessPlatform,
+    ViewerControlMessageRequest,
+    ViewerControlMessageType,
+    ViewerControlResponse,
     ViewerControlPingMode,
     ViewerControlPingRequest,
     ViewerQtEnvironmentPolicy,
@@ -23,6 +27,7 @@ from openhcs.runtime.viewer_protocol import (
     ViewerRuntimeEndpoint,
     ViewerType,
 )
+from openhcs.runtime.viewer_controls import ViewerStateControlOptions
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 
@@ -123,9 +128,137 @@ def test_viewer_control_ping_request_owns_quick_and_ready_projection(monkeypatch
     ]
 
 
+def test_managed_viewer_readiness_uses_endpoint_binding_authority(monkeypatch):
+    calls = []
+
+    class ProbeViewer(ManagedViewerLifecycleMixin):
+        viewer_process_label = "Probe"
+        detached_server_entrypoint = DetachedViewerServerEntrypointSpec(
+            viewer_type=ViewerType.NAPARI,
+            module_name="tests.fake_viewer",
+            function_name="run",
+        )
+
+        def __init__(self):
+            super().__init__(
+                runtime_config=StreamingViewerRuntimeConfig(
+                    transport_endpoint=ViewerTransportEndpoint(
+                        port=42,
+                        host="localhost",
+                        transport_mode=TransportMode.IPC,
+                    ),
+                    persistent=False,
+                    presentation=StreamingViewerPresentation("Probe"),
+                )
+            )
+
+        def start_viewer(self, async_mode: bool = False) -> None:
+            raise AssertionError("test does not launch a process")
+
+        def detached_server_arguments(
+            self,
+            *,
+            log_file,
+        ) -> DetachedViewerPythonArguments:
+            return DetachedViewerPythonArguments.from_literals(str(log_file))
+
+    def wait_ready(_endpoint, *, timeout, require_ready):
+        calls.append((timeout, require_ready))
+        return True
+
+    monkeypatch.setattr(ViewerRuntimeEndpoint, "wait_ready", wait_ready)
+
+    assert ProbeViewer().wait_for_ready(timeout=0.5)
+    assert calls == [(0.5, True)]
+
+
+def test_managed_viewer_lifecycle_reads_state_through_typed_control_request(
+    monkeypatch,
+):
+    requests = []
+    response = ViewerControlResponse(
+        payload={
+            "status": "success",
+            "layers": ({"route_key": "step-1:image", "item_count": 1},),
+        }
+    )
+
+    class StateViewer(ManagedViewerLifecycleMixin):
+        viewer_process_label = "State"
+        detached_server_entrypoint = DetachedViewerServerEntrypointSpec(
+            viewer_type=ViewerType.NAPARI,
+            module_name="tests.fake_viewer",
+            function_name="run",
+        )
+
+        def __init__(self):
+            super().__init__(
+                runtime_config=StreamingViewerRuntimeConfig(
+                    transport_endpoint=ViewerTransportEndpoint(
+                        port=42,
+                        host="localhost",
+                        transport_mode=TransportMode.IPC,
+                    ),
+                    persistent=False,
+                    presentation=StreamingViewerPresentation("State"),
+                )
+            )
+
+        def check_connected_viewer(self) -> bool:
+            return True
+
+        def start_viewer(self, async_mode: bool = False) -> None:
+            raise AssertionError("test does not launch a process")
+
+        def detached_server_arguments(
+            self,
+            *,
+            log_file,
+        ) -> DetachedViewerPythonArguments:
+            return DetachedViewerPythonArguments.from_literals(str(log_file))
+
+    def send(request):
+        requests.append(request)
+        return response
+
+    monkeypatch.setattr(ViewerControlMessageRequest, "send", send)
+    viewer = StateViewer()
+    viewer.lifecycle_state.mark_connected_external()
+
+    observed = viewer.read_viewer_state(timeout=7.5)
+
+    assert observed is response
+    assert len(requests) == 1
+    assert requests[0].message_type == "state"
+    assert requests[0].timeout == 7.5
+    assert isinstance(requests[0].payload, ViewerStateControlOptions)
+    assert requests[0].payload.include_component_values
+    assert requests[0].payload.include_payload_summaries
+
+    assert viewer.request_bound_viewer_shutdown()
+    assert requests[-1].message_type == ControlMessageType.FORCE_SHUTDOWN.value
+    assert viewer.clear_viewer_state()
+    assert requests[-1].message_type == ViewerControlMessageType.CLEAR_STATE.value
+
+    failed_response = ViewerControlResponse(
+        payload={"status": "error", "message": "state unavailable"}
+    )
+    monkeypatch.setattr(
+        ViewerControlMessageRequest,
+        "send",
+        lambda _request: failed_response,
+    )
+    with pytest.raises(RuntimeError, match="state request failed"):
+        viewer.read_viewer_state()
+
+
 def test_viewer_qt_environment_policy_applies_platform_rows():
     linux_env = ViewerQtEnvironmentPolicy(ViewerProcessPlatform.LINUX).apply_to({})
-    assert linux_env == {"QT_QPA_PLATFORM": "xcb", "QT_X11_NO_MITSHM": "1"}
+    assert linux_env == {
+        "QT_QPA_PLATFORM": "xcb",
+        "QT_X11_NO_MITSHM": "1",
+        "vblank_mode": "0",
+    }
 
     linux_existing = ViewerQtEnvironmentPolicy(ViewerProcessPlatform.LINUX).apply_to(
         {"QT_QPA_PLATFORM": "offscreen"}
@@ -133,6 +266,7 @@ def test_viewer_qt_environment_policy_applies_platform_rows():
     assert linux_existing == {
         "QT_QPA_PLATFORM": "offscreen",
         "QT_X11_NO_MITSHM": "1",
+        "vblank_mode": "0",
     }
 
     darwin_env = ViewerQtEnvironmentPolicy(ViewerProcessPlatform.DARWIN).apply_to({})
@@ -217,7 +351,6 @@ def test_managed_viewer_lifecycle_uses_nominal_state_for_external_viewer():
                     persistent=True,
                     presentation=StreamingViewerPresentation("External"),
                 ),
-                transport_config=OPENHCS_ZMQ_CONFIG,
             )
             self.connected = True
 
@@ -282,7 +415,6 @@ def test_prepare_fresh_viewer_start_releases_endpoint_after_shutdown_ack():
                     persistent=True,
                     presentation=StreamingViewerPresentation("Fresh"),
                 ),
-                transport_config=OPENHCS_ZMQ_CONFIG,
             )
             self.runtime_endpoint = endpoint
             self.shutdown_requests = 0
@@ -348,7 +480,6 @@ def test_prepare_fresh_viewer_start_reports_still_bound_after_forced_release():
                     persistent=True,
                     presentation=StreamingViewerPresentation("Stuck"),
                 ),
-                transport_config=OPENHCS_ZMQ_CONFIG,
             )
             self.runtime_endpoint = endpoint
 

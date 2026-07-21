@@ -53,9 +53,8 @@ def test_openhcs_adapter_runs_converted_cppipe_pipeline(tmp_path: Path) -> None:
     )
 
     assert parity_result.success is True
-    assert (
-        parity_result.provenance["equivalence_reference_output_dir"]
-        == str(result.output_path)
+    assert parity_result.provenance["equivalence_reference_output_dir"] == str(
+        result.output_path
     )
     assert parity_result.provenance["equivalence_difference_count"] == 0
 
@@ -148,7 +147,10 @@ def test_default_benchmark_pipeline_uses_dataset_cppipe_reference(
 
     assert adapter.pipeline_params["cppipe_reference_index"] == 0
     assert adapter.pipeline_params["dataset_id"] == BBBC021_SINGLE_PLATE.id
-    assert adapter.pipeline_params["microscope_type"] == BBBC021_SINGLE_PLATE.microscope_type
+    assert (
+        adapter.pipeline_params["microscope_type"]
+        == BBBC021_SINGLE_PLATE.microscope_type
+    )
     assert "threshold_method" not in adapter.pipeline_params
 
 
@@ -174,7 +176,9 @@ def test_openhcs_adapter_requires_converted_cppipe_source(
         )
 
 
-def test_openhcs_adapter_runs_real_examplefly_cppipe(tmp_path: Path) -> None:
+def test_openhcs_adapter_rejects_legacy_examplefly_load_data_cppipe(
+    tmp_path: Path,
+) -> None:
     plate_path = _generate_two_channel_plate(tmp_path / "examplefly_plate")
     cppipe_path = (
         Path(__file__).resolve().parents[2]
@@ -183,24 +187,19 @@ def test_openhcs_adapter_runs_real_examplefly_cppipe(tmp_path: Path) -> None:
         / "ExampleFly.cppipe"
     )
 
-    result = _run_openhcs_adapter(
-        OpenHCSAdapterRunCase.local_cppipe(
-            plate_path,
-            "examplefly",
-            "examplefly_cppipe",
-            cppipe_path,
-            tmp_path / "benchmark_outputs",
+    with pytest.raises(
+        KeyError,
+        match="No CellProfiler module declaration.*LoadData",
+    ):
+        _run_openhcs_adapter(
+            OpenHCSAdapterRunCase.local_cppipe(
+                plate_path,
+                "examplefly",
+                "examplefly_cppipe",
+                cppipe_path,
+                tmp_path / "benchmark_outputs",
+            )
         )
-    )
-
-    csv_outputs = sorted(result.output_path.rglob("*.csv"))
-
-    assert result.success is True
-    assert result.provenance["pipeline_source"] == "converted_cppipe"
-    assert result.provenance["cppipe_path"] == str(cppipe_path)
-    assert csv_outputs
-    assert len(csv_outputs) >= 6
-    assert all(path.stat().st_size > 0 for path in csv_outputs)
 
 
 def test_openhcs_adapter_reports_missing_source_schema_images(

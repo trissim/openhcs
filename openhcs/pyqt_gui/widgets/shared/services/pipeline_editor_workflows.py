@@ -20,10 +20,8 @@ from openhcs.core.debug import (
 )
 from openhcs.core.debug_views import DebugViewModel
 from openhcs.core.function_patterns import normalize_function_pattern
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.core.steps.abstract import AbstractStep
-from openhcs.pyqt_gui.widgets.shared.services.cellprofiler_pipeline_rebinding import (
-    CellProfilerPipelineRuntimeBindingService,
-)
 from openhcs.pyqt_gui.services.ui_thread_dispatch import UiThreadDispatcher
 from openhcs.pyqt_gui.windows.debug_inspector_window import DebugInspectorWindow
 from openhcs.utils.pipeline_migration import patch_step_constructors_for_migration
@@ -254,6 +252,7 @@ class PipelineEditorFunctionPresentation:
             return CallableContract.from_callable(func_entry).function_name
         return str(func_entry)
 
+
 @dataclass(frozen=True, slots=True, weakref_slot=True)
 class PipelineEditorDebugWorkflow:
     """Owns debug-toolbar command dispatch and snapshot inspector routing."""
@@ -274,7 +273,9 @@ class PipelineEditorDebugWorkflow:
             self.editor.status_message.emit("Select a plate before running debug mode.")
             return
         if self.editor.plate_manager is None:
-            self.editor.status_message.emit("Debug run requires a connected Plate Manager.")
+            self.editor.status_message.emit(
+                "Debug run requires a connected Plate Manager."
+            )
             return
         command_label = command_type.value.replace("_", " ")
         self.editor.status_message.emit(
@@ -345,7 +346,9 @@ class PipelineEditorDebugWorkflow:
 
     def stop_command(self) -> None:
         if self.editor.plate_manager is None:
-            self.editor.status_message.emit("Debug stop requires a connected Plate Manager.")
+            self.editor.status_message.emit(
+                "Debug stop requires a connected Plate Manager."
+            )
             return
         self.editor.plate_manager.action_stop_execution(force=True)
         self.editor.status_message.emit("Requested debug execution stop.")
@@ -370,9 +373,7 @@ class PipelineEditorDebugWorkflow:
         view_model = await self.editor.plate_manager.action_inspect_debug_runtime(
             debug_session_id=session.debug_session_id,
         )
-        UiThreadDispatcher().post(
-            lambda: self._render_runtime_inspection(view_model)
-        )
+        UiThreadDispatcher().post(lambda: self._render_runtime_inspection(view_model))
 
     def _render_runtime_inspection(self, view_model: DebugViewModel) -> None:
         if self.editor.debug_inspector_window is None:
@@ -420,13 +421,11 @@ class PipelineEditorDebugWorkflow:
             snapshot_store_backend=snapshot_store_backend,
         )
         if active_session is not None:
-            self.editor.debug_session_state = (
-                active_session.with_snapshot_store(
-                    snapshot_store_ref=snapshot_store_ref,
-                    snapshot_store_backend=snapshot_store_backend,
-                    axis_id=notification.progress_event.axis_id,
-                ).with_cursor(debug_context.cursor)
-            )
+            self.editor.debug_session_state = active_session.with_snapshot_store(
+                snapshot_store_ref=snapshot_store_ref,
+                snapshot_store_backend=snapshot_store_backend,
+                axis_id=notification.progress_event.axis_id,
+            ).with_cursor(debug_context.cursor)
             self.editor.debug_terminal_summary = None
         elif (
             terminal_summary is not None
@@ -552,19 +551,22 @@ class PipelineEditorCodeWorkflow(ManagerCodeExecutionWorkflow):
         if not self.validate_namespace(namespace):
             return False
 
-        pipeline_steps = namespace["pipeline_steps"]
-        if self.editor.current_plate:
-            pipeline_steps = (
-                CellProfilerPipelineRuntimeBindingService.runtime_bound_pipeline_for_plate(
-                    import_result_provider=self.editor,
-                    plate_path=self.editor.current_plate,
-                    pipeline_steps=pipeline_steps,
-                )
-            )
+        document = PipelineDocumentAuthority.from_namespace(namespace)
+        pipeline_steps = document.pipeline_steps
         self.editor.pipeline_steps = pipeline_steps
         self.editor._normalize_step_scope_tokens(register=False)
 
         if self.editor.current_plate:
+            if self.editor.plate_manager is not None:
+                from openhcs.pyqt_gui.widgets.shared.services.plate_manager_workflows import (
+                    PlateManagerCodeWorkflow,
+                )
+
+                PlateManagerCodeWorkflow(
+                    self.editor.plate_manager
+                ).apply_per_plate_configs(
+                    {self.editor.current_plate: document.pipeline_config}
+                )
             self.editor.update_pipeline_for_plate(
                 self.editor.current_plate,
                 self.editor.pipeline_steps,
@@ -589,7 +591,11 @@ class PipelineEditorCodeWorkflow(ManagerCodeExecutionWorkflow):
         return True
 
     def validate_namespace(self, namespace: dict) -> bool:
-        return "pipeline_steps" in namespace
+        try:
+            PipelineDocumentAuthority.from_namespace(namespace)
+        except (TypeError, ValueError):
+            return False
+        return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -672,11 +678,15 @@ class PipelineEditorListWorkflow:
 
         del triggering_scope
 
-        with TimeTravelProfiler.phase("openhcs.pipeline_editor.restore_after_time_travel"):
+        with TimeTravelProfiler.phase(
+            "openhcs.pipeline_editor.restore_after_time_travel"
+        ):
             with TimeTravelProfiler.phase("openhcs.pipeline_editor.load_steps"):
                 if self.editor.current_plate:
-                    self.editor.pipeline_steps = self.editor._get_steps_from_pipeline_state(
-                        self.editor.current_plate
+                    self.editor.pipeline_steps = (
+                        self.editor._get_steps_from_pipeline_state(
+                            self.editor.current_plate
+                        )
                     )
                 else:
                     self.editor.pipeline_steps = []
@@ -685,12 +695,16 @@ class PipelineEditorListWorkflow:
                 self.editor._normalize_step_scope_tokens(register=False)
             with TimeTravelProfiler.phase("openhcs.pipeline_editor.update_item_list"):
                 self.editor.update_item_list()
-            with TimeTravelProfiler.phase("openhcs.pipeline_editor.update_button_states"):
+            with TimeTravelProfiler.phase(
+                "openhcs.pipeline_editor.update_button_states"
+            ):
                 self.editor.update_button_states()
             if not self._changed_pipeline_structure(dirty_states):
                 return
 
-            with TimeTravelProfiler.phase("openhcs.pipeline_editor.broadcast_pipeline_changed"):
+            with TimeTravelProfiler.phase(
+                "openhcs.pipeline_editor.broadcast_pipeline_changed"
+            ):
                 self.editor._suppress_pipeline_state_sync = True
                 try:
                     self.editor.pipeline_changed.emit(self.editor.pipeline_steps)
@@ -704,7 +718,7 @@ class PipelineEditorListWorkflow:
         self,
         dirty_states: TimeTravelDirtyStates | None,
     ) -> bool:
-        from openhcs.pyqt_gui.services.plate_scope_identity import PipelineScopeIdentity
+        from openhcs.ui.shared.plate_scope_identity import PipelineScopeIdentity
 
         if not self.editor.current_plate:
             return False

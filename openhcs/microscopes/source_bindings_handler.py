@@ -44,9 +44,11 @@ class SourceBindingsHandler(MicroscopeHandler):
 
         return (
             "Use for arbitrary ordinary image files whose selection, semantic aliases, "
-            "and filename metadata are declared by SourceBindingsConfig. Do not replace "
-            "a recognized vendor layout or supported structured container with this "
-            "fallback."
+            "and filename metadata are declared by SourceBindingsConfig. Parser-like "
+            "vendor filenames may still use this fallback when the format-specific "
+            "owner declares its complete metadata contract mandatory and that contract "
+            "is unsatisfied. Do not replace a valid native layout or supported "
+            "structured container with this fallback."
         )
 
     @classmethod

@@ -1,24 +1,24 @@
 """Compile workflow transport and request models for the PyQt batch UI."""
 
 from __future__ import annotations
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from typing import Callable, List
 
+from openhcs.core.artifact_inspection import CompiledArtifactInspection
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
-from openhcs.pyqt_gui.services.plate_scope_identity import PlateScopeIdentity
+from openhcs.ui.shared.plate_scope_identity import PlateScopeIdentity
 from openhcs.pyqt_gui.widgets.shared.services.batch_context import (
     BatchWorkflowContext,
 )
 from openhcs.runtime.zmq_execution_client import (
     OpenHCSExecutionSubmission,
-    PycodifiedPipelineStepSource,
-    PycodifiedSource,
 )
 from openhcs.runtime.zmq_execution_signature import TransportValue
-from openhcs.runtime.zmq_pipeline_transport import PipelineStepsBoundary
 from zmqruntime.execution import (
     CallbackBatchSubmitWaitPolicy,
     ExecutionSubmissionResponse,
@@ -74,9 +74,10 @@ class PlatePipelineRequest(PlateExecutionIdentity):
             plate_id=self.scope_id,
             execution_plate_id=self.execution_plate_path,
             selected_pipeline_path=self.selected_pipeline_path,
-            pipeline_steps=transport_pipeline,
+            pipeline_document=PipelineDocumentAuthority.from_values(
+                pipeline_config=self.pipeline_config, pipeline_steps=transport_pipeline
+            ),
             global_config=global_config,
-            pipeline_config=self.pipeline_config,
             compile_artifact_id=compile_artifact_id,
             config_params=config_params,
         )
@@ -95,6 +96,22 @@ class CompileRequestResult:
     """Accepted compile submission returned by the execution server."""
 
     execution_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class PlateCompiledState:
+    """Typed GUI state retained after one plate compilation."""
+
+    compile_artifact_id: str
+    definition_pipeline: tuple
+    inspection: CompiledArtifactInspection
+
+    def __post_init__(self) -> None:
+        if self.compile_artifact_id != self.inspection.compile_artifact_id:
+            raise ValueError(
+                "PlateCompiledState compile artifact identity does not match its "
+                "inspection projection."
+            )
 
 
 CompileJobCallback = Callable[[CompileJob, int, int], None] | None
@@ -165,8 +182,8 @@ class CompileWorkflowService:
         job: CompileJob,
         zmq_client,
         loop,
-    ) -> None:
-        await self.wait_for_compile_completion(
+    ) -> CompiledArtifactInspection:
+        return await self.wait_for_compile_completion(
             zmq_client=zmq_client,
             loop=loop,
             execution_id=submission_id,
@@ -225,7 +242,7 @@ class CompileWorkflowService:
         loop,
         execution_id: str,
         plate_path: str,
-    ) -> None:
+    ) -> CompiledArtifactInspection:
         if zmq_client is None:
             raise RuntimeError("ZMQ client is not connected")
         wait_result = ExecutionWaitResult.from_wire(
@@ -235,16 +252,35 @@ class CompileWorkflowService:
             )
         )
         wait_result.require_complete(f"Compilation failed for {plate_path}")
+        return await self.inspect_compile_artifact(
+            zmq_client=zmq_client,
+            loop=loop,
+            compile_artifact_id=execution_id,
+        )
+
+    async def inspect_compile_artifact(
+        self,
+        *,
+        zmq_client,
+        loop,
+        compile_artifact_id: str,
+    ) -> CompiledArtifactInspection:
+        """Fetch one compiler-owned artifact projection after compilation."""
+
+        return await self._context.run_blocking(
+            loop,
+            lambda: zmq_client.get_compiled_artifact_inspection(compile_artifact_id),
+        )
 
     @staticmethod
     def pipeline_fingerprint(definition_pipeline: List) -> str:
         definition_pipeline = CompileWorkflowService.normalize_pipeline_for_transport(
             definition_pipeline
         )
-        pipeline_source = PycodifiedPipelineStepSource(
-            PipelineStepsBoundary(definition_pipeline)
-        ).source()
-        return PycodifiedSource(pipeline_source).sha_label()
+        pipeline_source = FunctionStepTransportAuthority.source_from_pipeline(
+            definition_pipeline
+        )
+        return hashlib.sha256(pipeline_source.encode("utf-8")).hexdigest()[:12]
 
     @staticmethod
     def normalize_pipeline_for_transport(definition_pipeline: List) -> List:
@@ -274,7 +310,5 @@ def is_compile_workflow_export(name: str, value) -> bool:
 
 
 __all__ = tuple(
-    name
-    for name, value in globals().items()
-    if is_compile_workflow_export(name, value)
+    name for name, value in globals().items() if is_compile_workflow_export(name, value)
 )

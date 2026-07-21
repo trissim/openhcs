@@ -3,30 +3,55 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.constants.constants import GroupBy
 from openhcs.core.artifact_key_selection import ArtifactPlanKeySelector
+from openhcs.constants.input_source import InputSource
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
-    ArtifactOutputPlan,
     ArtifactSpec,
     ArtifactSpecCollection,
 )
-from openhcs.core.module_artifact_contract import ModuleArtifactContract
-from openhcs.core.source_bindings import (
-    EMPTY_SOURCE_BINDINGS,
-    StepSourceBindingsConfig,
-)
+from openhcs.core.config import StepSourceBindingsConfig
+from openhcs.core.source_bindings import EMPTY_SOURCE_BINDINGS
 
 if TYPE_CHECKING:
     from openhcs.core.callable_contract import CallableContract
+    from openhcs.core.function_patterns import (
+        FunctionInvocationKey,
+        NormalizedFunctionItem,
+    )
+    from openhcs.core.pipeline.artifact_planning import ArtifactGraph, ArtifactProducer
+    from openhcs.core.pipeline.compilation_session import CompilationSession
 
 
-InvocationArtifactSpecItems = tuple[tuple[str, ArtifactSpec], ...]
+def unnamed_main_flow_artifact_name(
+    step_index: int,
+    invocation_key: "FunctionInvocationKey",
+) -> str:
+    """Return the deterministic compiler-only identity for unnamed main flow."""
+
+    from openhcs.core.function_patterns import FunctionInvocationKey
+
+    if not isinstance(step_index, int) or step_index < 0:
+        raise TypeError(
+            "Unnamed main-flow identity requires a non-negative step index."
+        )
+    if not isinstance(invocation_key, FunctionInvocationKey):
+        raise TypeError(
+            "Unnamed main-flow identity requires FunctionInvocationKey, got "
+            f"{type(invocation_key).__name__}."
+        )
+    return (
+        f"__openhcs_main_flow_step_{step_index + 1}_"
+        f"{invocation_key.group_key}_{invocation_key.position + 1}_"
+        f"{invocation_key.function_name}"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,8 +61,15 @@ class ArtifactDeclarationStepContext:
     step_name: str | None = None
     step_index: int | None = None
     source_bindings: StepSourceBindingsConfig = EMPTY_SOURCE_BINDINGS
-    processing_config: Any | None = None
-    source_provenance: Any | None = None
+    group_by: GroupBy = GroupBy.NONE
+    input_source: InputSource = InputSource.PREVIOUS_STEP
+    available_artifacts: ArtifactSpecCollection = field(
+        default_factory=lambda: ArtifactSpecCollection(())
+    )
+    main_flow_artifacts: ArtifactSpecCollection = field(
+        default_factory=lambda: ArtifactSpecCollection(())
+    )
+    available_artifact_producers: tuple["ArtifactProducer", ...] = ()
 
     @classmethod
     def empty(cls) -> "ArtifactDeclarationStepContext":
@@ -60,110 +92,176 @@ class ArtifactDeclarationStepContext:
                 "ArtifactDeclarationStepContext.source_bindings must be "
                 f"StepSourceBindingsConfig, got {type(self.source_bindings).__name__}."
             )
-
-
-@dataclass(frozen=True, slots=True)
-class InvocationArtifactDeclarations(ArtifactPlanKeySelector):
-    """Artifact declarations owned by one normalized function invocation."""
-
-    artifacts: tuple[ArtifactSpec, ...] = ()
-    plan_key_artifacts: tuple[ArtifactSpec, ...] | None = None
-
-    def __post_init__(self) -> None:
-        collection = ArtifactSpecCollection(self.artifacts)
-        object.__setattr__(self, "artifacts", collection.specs)
-        if self.plan_key_artifacts is not None:
-            key_collection = ArtifactSpecCollection(self.plan_key_artifacts)
-            object.__setattr__(self, "plan_key_artifacts", key_collection.specs)
-        self.validate_artifact_relation_refs(
-            owner_name="InvocationArtifactDeclarations",
-        )
-
-    @classmethod
-    def from_contract(cls, contract: Any) -> "InvocationArtifactDeclarations":
-        """Build declarations from the callable contract metadata fallback."""
-        if contract.module_artifact_contract is not None:
-            return cls.from_module_contract(contract.module_artifact_contract)
-        return cls(
-            artifacts=tuple(
-                spec
-                for _name, spec in (
-                    *contract.artifact_inputs,
-                    *contract.artifact_outputs,
+        if not isinstance(self.group_by, GroupBy):
+            raise TypeError(
+                "ArtifactDeclarationStepContext.group_by must be GroupBy, got "
+                f"{type(self.group_by).__name__}."
+            )
+        if not isinstance(self.input_source, InputSource):
+            raise TypeError(
+                "ArtifactDeclarationStepContext.input_source must be InputSource, got "
+                f"{type(self.input_source).__name__}."
+            )
+        for field_name, collection in (
+            ("available_artifacts", self.available_artifacts),
+            ("main_flow_artifacts", self.main_flow_artifacts),
+        ):
+            if not isinstance(collection, ArtifactSpecCollection):
+                raise TypeError(
+                    f"ArtifactDeclarationStepContext.{field_name} must be "
+                    "ArtifactSpecCollection, got "
+                    f"{type(collection).__name__}."
                 )
-            ),
-        )
+            object.__setattr__(
+                self,
+                field_name,
+                ArtifactSpecCollection(collection.specs),
+            )
+        producers = tuple(self.available_artifact_producers)
+        if producers:
+            from openhcs.core.pipeline.artifact_planning import ArtifactProducer
 
-    @classmethod
-    def from_module_contract(
-        cls,
-        contract: ModuleArtifactContract,
-    ) -> "InvocationArtifactDeclarations":
-        """Build declarations from a typed executable-module contract."""
-        return cls(
-            artifacts=(
-                *contract.declared_input_specs(),
-                *contract.outputs,
-            ),
-            plan_key_artifacts=(
-                *contract.runtime_artifact_inputs,
-                *contract.outputs,
-            ),
-        )
+            invalid = tuple(
+                producer
+                for producer in producers
+                if not isinstance(producer, ArtifactProducer)
+            )
+            if invalid:
+                raise TypeError(
+                    "ArtifactDeclarationStepContext.available_artifact_producers "
+                    "must contain ArtifactProducer values."
+                )
+        object.__setattr__(self, "available_artifact_producers", producers)
 
-    @property
-    def artifact_specs(self) -> ArtifactSpecCollection:
-        """All artifact specs declared by this invocation."""
-        return ArtifactSpecCollection(self.artifacts)
-
-    @property
-    def artifact_key_specs(self) -> ArtifactSpecCollection:
-        """Artifact specs that participate in runtime plan-key selection."""
-        if self.plan_key_artifacts is None:
-            return self.artifact_specs
-        return ArtifactSpecCollection(self.plan_key_artifacts)
-
-    @property
-    def inputs(self) -> InvocationArtifactSpecItems:
-        """Input declarations projected from the canonical artifact collection."""
-        return tuple(
-            (spec.name, spec)
-            for spec in self.artifact_specs.for_plan_type(ArtifactInputPlan).specs
-        )
-
-    @property
-    def outputs(self) -> InvocationArtifactSpecItems:
-        """Output declarations projected from the canonical artifact collection."""
-        return tuple(
-            (spec.name, spec)
-            for spec in self.artifact_specs.for_plan_type(ArtifactOutputPlan).specs
-        )
-
-
-class InvocationArtifactDeclarationProvider(ABC):
-    """Callable extension point for invocation-specific artifact declarations."""
-
-    @abstractmethod
-    def __call__(
+    def with_source_declarations(
         self,
-        invocation: Any,
-        step_context: ArtifactDeclarationStepContext,
-    ) -> InvocationArtifactDeclarations:
-        """Return artifact declarations for one normalized invocation."""
+        source_specs: Iterable[ArtifactSpec],
+    ) -> "ArtifactDeclarationStepContext":
+        """Return this context after adding source declarations for the step."""
+
+        declared_sources = ArtifactSpecCollection(source_specs)
+        source_refs = frozenset(
+            spec.ref().for_plan_type(ArtifactInputPlan)
+            for spec in declared_sources.specs
+        )
+        main_flow_artifacts = self.main_flow_artifacts
+        primary_source_refs = frozenset(
+            binding.input_spec().ref()
+            for binding in self.source_bindings.primary_plane_bindings
+        )
+        if self.input_source is InputSource.PIPELINE_START:
+            main_flow_artifacts = ArtifactSpecCollection(
+                spec for spec in declared_sources if spec.ref() in primary_source_refs
+            )
+        return replace(
+            self,
+            available_artifacts=self.available_artifacts.rebind(declared_sources.specs),
+            main_flow_artifacts=main_flow_artifacts,
+            available_artifact_producers=tuple(
+                producer
+                for producer in self.available_artifact_producers
+                if producer.spec.ref().for_plan_type(ArtifactInputPlan)
+                not in source_refs
+            ),
+        )
+
+    def available_artifact_producer_for(
+        self,
+        spec: ArtifactSpec,
+    ) -> "ArtifactProducer | None":
+        """Return the exact active producer for an artifact declaration."""
+
+        if not isinstance(spec, ArtifactSpec):
+            raise TypeError(
+                "Artifact producer lookup requires ArtifactSpec, got "
+                f"{type(spec).__name__}."
+            )
+        input_ref = spec.ref().for_plan_type(ArtifactInputPlan)
+        matches = tuple(
+            producer
+            for producer in self.available_artifact_producers
+            if producer.spec.ref().for_plan_type(ArtifactInputPlan) == input_ref
+        )
+        if len(matches) > 1:
+            raise ValueError(
+                "Artifact declaration context has multiple active producers for "
+                f"{input_ref!r}."
+            )
+        return matches[0] if matches else None
+
+    def with_source_binding_scope(
+        self,
+        *,
+        source_bindings: StepSourceBindingsConfig,
+        group_by: GroupBy,
+        input_source: InputSource,
+    ) -> "ArtifactDeclarationStepContext":
+        """Apply one resolved step's source scope and declared source artifacts."""
+
+        scoped = replace(
+            self,
+            source_bindings=source_bindings,
+            group_by=group_by,
+            input_source=input_source,
+        )
+        return scoped.with_source_declarations(
+            binding.input_spec() for binding in source_bindings.binding_declarations
+        )
+
+    def advance_artifact_graph(
+        self,
+        graph: "ArtifactGraph",
+        *,
+        main_flow_artifacts: ArtifactSpecCollection,
+    ) -> "ArtifactDeclarationStepContext":
+        """Return the forward declaration context after one artifact graph."""
+
+        from openhcs.core.pipeline.artifact_planning import ArtifactGraph
+
+        if not isinstance(graph, ArtifactGraph):
+            raise TypeError(
+                "Artifact declaration advancement requires ArtifactGraph, got "
+                f"{type(graph).__name__}."
+            )
+        if not isinstance(main_flow_artifacts, ArtifactSpecCollection):
+            raise TypeError(
+                "Artifact graph advancement requires an ArtifactSpecCollection "
+                "for main flow."
+            )
+        produced_refs = frozenset(
+            producer.spec.ref().for_plan_type(ArtifactInputPlan)
+            for producer in graph.producers
+        )
+        return replace(
+            self,
+            available_artifacts=self.available_artifacts.rebind(
+                producer.spec for producer in graph.producers
+            ),
+            main_flow_artifacts=main_flow_artifacts,
+            available_artifact_producers=(
+                *(
+                    producer
+                    for producer in self.available_artifact_producers
+                    if producer.spec.ref().for_plan_type(ArtifactInputPlan)
+                    not in produced_refs
+                ),
+                *graph.producers,
+            ),
+        )
 
 
 def callable_contract_artifact_declarations(
-    invocation: Any,
+    invocation: "NormalizedFunctionItem",
     step_context: ArtifactDeclarationStepContext,
-) -> InvocationArtifactDeclarations:
-    """Default provider that preserves existing callable-contract behavior."""
+) -> ArtifactPlanKeySelector:
+    """Return the nominal artifact-plan selector for one invocation contract."""
     del step_context
-    return InvocationArtifactDeclarations.from_contract(invocation.contract)
+    return invocation.contract
 
 
 InvocationArtifactDeclarationProviderLike = Callable[
-    [Any, ArtifactDeclarationStepContext],
-    InvocationArtifactDeclarations,
+    ["NormalizedFunctionItem", ArtifactDeclarationStepContext],
+    ArtifactPlanKeySelector,
 ]
 
 
@@ -173,7 +271,7 @@ class InvocationContractProvider(ABC):
     @abstractmethod
     def __call__(
         self,
-        invocation: Any,
+        invocation: "NormalizedFunctionItem",
         step_context: ArtifactDeclarationStepContext,
     ) -> "InvocationContractPlan | None":
         """Return a compile-only callable contract plan for this invocation."""
@@ -187,26 +285,41 @@ class InvocationContractPlan:
     consumed_kwarg_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "consumed_kwarg_names",
-            tuple(dict.fromkeys(str(name) for name in self.consumed_kwarg_names)),
+        consumed_names = tuple(self.consumed_kwarg_names)
+        if any(not isinstance(name, str) or not name for name in consumed_names):
+            raise TypeError(
+                "InvocationContractPlan.consumed_kwarg_names must contain "
+                "non-empty strings."
+            )
+        if len(frozenset(consumed_names)) != len(consumed_names):
+            raise ValueError(
+                "InvocationContractPlan.consumed_kwarg_names cannot contain duplicates."
+            )
+        object.__setattr__(self, "consumed_kwarg_names", consumed_names)
+
+    def consume_authored_kwargs(
+        self,
+        invocation: "NormalizedFunctionItem",
+        step_context: ArtifactDeclarationStepContext,
+    ) -> tuple[tuple[object, object], ...]:
+        """Remove compile-only kwargs after proving the user authored them."""
+
+        authored_names = frozenset(name for name, _value in invocation.kwargs)
+        missing = tuple(
+            name for name in self.consumed_kwarg_names if name not in authored_names
         )
-
-
-def public_callable_invocation_contract(
-    invocation: Any,
-    step_context: ArtifactDeclarationStepContext,
-) -> InvocationContractPlan | None:
-    """Default provider: public callable metadata is already the contract."""
-    del invocation, step_context
-    return None
-
-
-InvocationContractProviderLike = Callable[
-    [Any, ArtifactDeclarationStepContext],
-    InvocationContractPlan | None,
-]
+        if missing:
+            raise ValueError(
+                "Invocation contract consumed kwargs that were not authored for "
+                f"step {step_context.step_index!r} ({step_context.step_name!r}), "
+                f"invocation {invocation.key!r}: {missing!r}."
+            )
+        consumed_names = frozenset(self.consumed_kwarg_names)
+        return tuple(
+            (name, value)
+            for name, value in invocation.kwargs
+            if name not in consumed_names
+        )
 
 
 class InvocationContractProviderFactory(ABC, metaclass=AutoRegisterMeta):
@@ -218,27 +331,45 @@ class InvocationContractProviderFactory(ABC, metaclass=AutoRegisterMeta):
     @abstractmethod
     def provider_for_session(
         cls,
-        session: Any,
-    ) -> InvocationContractProviderLike | None:
+        session: "CompilationSession",
+    ) -> InvocationContractProvider | None:
         """Return an invocation-contract provider for one compilation session."""
 
 
 @dataclass(frozen=True, slots=True)
 class CompositeInvocationContractProvider:
-    """Try compile-time invocation-contract providers in declaration order."""
+    """Require at most one compile-time invocation-contract provider claim."""
 
-    providers: tuple[InvocationContractProviderLike, ...]
+    providers: tuple[InvocationContractProvider, ...]
+
+    def __post_init__(self) -> None:
+        providers = tuple(self.providers)
+        for provider in providers:
+            if not isinstance(provider, InvocationContractProvider):
+                raise TypeError(
+                    "CompositeInvocationContractProvider requires nominal "
+                    "InvocationContractProvider instances, got "
+                    f"{type(provider).__name__}."
+                )
+        object.__setattr__(self, "providers", providers)
 
     def __call__(
         self,
-        invocation: Any,
+        invocation: "NormalizedFunctionItem",
         step_context: ArtifactDeclarationStepContext,
     ) -> InvocationContractPlan | None:
-        for provider in self.providers:
-            plan = provider(invocation, step_context)
-            if plan is not None:
-                return plan
-        return None
+        claims = tuple(
+            (provider, plan)
+            for provider in self.providers
+            for plan in (provider(invocation, step_context),)
+            if plan is not None
+        )
+        if len(claims) > 1:
+            raise ValueError(
+                "Multiple invocation contract providers claimed one callable: "
+                f"{tuple(type(provider).__name__ for provider, _plan in claims)!r}."
+            )
+        return claims[0][1] if claims else None
 
 
 class PipelineInvocationContractProviderAuthority:
@@ -247,14 +378,12 @@ class PipelineInvocationContractProviderAuthority:
     @classmethod
     def provider_for_session(
         cls,
-        session: Any,
-    ) -> InvocationContractProviderLike:
-        providers: list[InvocationContractProviderLike] = []
+        session: "CompilationSession",
+    ) -> InvocationContractProvider:
+        providers: list[InvocationContractProvider] = []
 
         for provider_factory in InvocationContractProviderFactory.__registry__.values():
             provider = provider_factory.provider_for_session(session)
             if provider is not None:
                 providers.append(provider)
-        if not providers:
-            return public_callable_invocation_contract
         return CompositeInvocationContractProvider(tuple(providers))

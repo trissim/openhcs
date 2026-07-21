@@ -1,7 +1,6 @@
 """CellProfiler-compatible skeleton measurement backends."""
 
 from __future__ import annotations
-from openhcs.core.artifacts import ArtifactOutputPlan
 from collections.abc import Callable
 from typing import Annotated, TYPE_CHECKING
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -9,9 +8,11 @@ from openhcs.interop.cellprofiler.module_declarations import (
     CellProfilerModule,
 )
 from openhcs.interop.cellprofiler.module_artifact_declarations import (
+    ImageMeasurementInputModule,
     MeasurementArtifactOutputModule,
     ObjectArtifactInputModule,
     PlaneRuntimeArtifactModule,
+    SourceQualifiedWideMeasurementRowsModule,
 )
 from dataclasses import dataclass
 import numpy as np
@@ -25,6 +26,10 @@ from openhcs.core.artifacts import ObjectLabelsArtifactType, ImageArtifactType
 from openhcs.core.memory.decorators import numpy as numpy_backend
 from openhcs.core.measurement_row_materialization import (
     DataclassMeasurementColumnarRows,
+)
+from openhcs.core.runtime_measurements import (
+    MeasurementRowAxisField,
+    RuntimeMeasurementFeature,
 )
 from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.public_api import public_names_from_objects
@@ -47,6 +52,9 @@ from openhcs.interop.cellprofiler.settings_binder import (
     parse_cellprofiler_bool,
     parse_cellprofiler_int,
 )
+from openhcs.interop.cellprofiler.runtime.measurement_recording import (
+    MeasurementFeatureRecord,
+)
 
 SeedObjectLabelsInput = Annotated[
     ObjectLabelValue,
@@ -63,10 +71,10 @@ EIGHT_NEIGHBOR_KERNEL = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=np.uin
 
 
 @dataclass(frozen=True, slots=True)
-class SkeletonMeasurement:
+class SkeletonMeasurement(MeasurementFeatureRecord):
     """Measurements from skeleton analysis."""
 
-    slice_index: int
+    slice_index: Annotated[int, MeasurementRowAxisField.SLICE_INDEX]
     branches: int
     endpoints: int
 
@@ -287,17 +295,31 @@ class SkeletonLengthByLabel:
 
 
 @numpy_backend(contract=ProcessingContract.PURE_2D)
-def measure_image_skeleton(image: np.ndarray) -> tuple[np.ndarray, SkeletonMeasurement]:
+def measure_image_skeleton(
+    image: np.ndarray,
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows]:
     """Measure branches and endpoints in a 2-D skeletonized image."""
-    return (image, SkeletonNeighborhood(image).measurement())
+    return (
+        image,
+        DataclassMeasurementColumnarRows(
+            (SkeletonNeighborhood(image).measurement(),),
+            row_type=SkeletonMeasurement,
+        ),
+    )
 
 
 @numpy_backend(contract=ProcessingContract.PURE_3D)
 def measure_image_skeleton_3d(
     image: np.ndarray,
-) -> tuple[np.ndarray, SkeletonMeasurement]:
+) -> tuple[np.ndarray, DataclassMeasurementColumnarRows]:
     """Measure branches and endpoints in a 3-D skeletonized image."""
-    return (image, SkeletonNeighborhood(image).measurement())
+    return (
+        image,
+        DataclassMeasurementColumnarRows(
+            (SkeletonNeighborhood(image).measurement(),),
+            row_type=SkeletonMeasurement,
+        ),
+    )
 
 
 @numpy_backend(contract=ProcessingContract.PURE_2D)
@@ -395,11 +417,22 @@ def _object_skeleton_slice_analysis(
     ).analyze()
 
 
-class MeasureImageSkeletonModule(CellProfilerModule):
+class MeasureImageSkeletonModule(
+    SourceQualifiedWideMeasurementRowsModule,
+    ImageMeasurementInputModule,
+):
     module_name = "MeasureImageSkeleton"
     function_name = "measure_image_skeleton"
+    function_variants = ("measure_image_skeleton_3d",)
     validated = True
     confidence = 1.0
+    measurement_category_prefixes = (("skeleton",),)
+
+    class MeasurementFeature(RuntimeMeasurementFeature):
+        """Image-skeleton feature families emitted by CellProfiler."""
+
+        BRANCHES = "Branches"
+        ENDPOINTS = "Endpoints"
 
 
 class MeasureObjectSkeletonModule(

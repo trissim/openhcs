@@ -8,6 +8,8 @@ Refactored using Systematic Code Refactoring Framework:
 - Reduced verbosity and defensive programming patterns
 """
 
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
+
 import json
 import os
 import pytest
@@ -15,7 +17,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Union
 
-from openhcs.constants.constants import VariableComponents, SequentialComponents
+from openhcs.constants.constants import (
+    GroupBy,
+    VariableComponents,
+    SequentialComponents,
+)
 from openhcs.constants.input_source import InputSource
 from openhcs.core.config import (
     GlobalPipelineConfig,
@@ -34,12 +40,13 @@ from openhcs.core.config import (
     LazyFijiStreamingConfig,
     LazyStepWellFilterConfig,
     LazyPathPlanningConfig,
+    LazyDtypeConfig,
     LazyProcessingConfig,
     LazySequentialProcessingConfig,
 )
 from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-from openhcs.core.pipeline import Pipeline
+from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.core.steps import FunctionStep as Step
 
 # Processing functions
@@ -57,7 +64,6 @@ from openhcs.processing.backends.analysis.cell_counting_cpu import (
     DetectionMethod,
 )
 from openhcs.core.memory import DtypeConversion
-from openhcs.core.config import DtypeConfig
 
 # Test utilities and fixtures
 from tests.integration.helpers.fixture_utils import (
@@ -219,7 +225,7 @@ def create_test_pipeline(
     enable_napari: bool = False,
     enable_fiji: bool = False,
     sequential_config: dict = None,
-) -> Pipeline:
+) -> list[Step]:
     """Create test pipeline with materialization configuration.
 
     Args:
@@ -248,112 +254,106 @@ def create_test_pipeline(
             os.environ["OPENHCS_CPU_ONLY"] = "true"
             position_func = ashlar_compute_tile_positions_cpu
 
-    return Pipeline(
-        steps=[
-            Step(
-                name="Image Enhancement Processing",
-                func=[
-                    (
-                        stack_percentile_normalize,
-                        {"low_percentile": 0.5, "high_percentile": 99.5},
-                    )
-                ],
-                step_well_filter_config=LazyStepWellFilterConfig(
-                    well_filter=CONSTANTS.STEP_WELL_FILTER_TEST
-                ),
-                step_materialization_config=LazyStepMaterializationConfig(),
-                napari_streaming_config=LazyNapariStreamingConfig(
-                    port=5555, enabled=enable_napari
-                ),
-                fiji_streaming_config=LazyFijiStreamingConfig(enabled=enable_fiji),
+    return [
+        Step(
+            name="Image Enhancement Processing",
+            func=[
+                (
+                    stack_percentile_normalize,
+                    {"low_percentile": 0.5, "high_percentile": 99.5},
+                )
+            ],
+            step_well_filter_config=LazyStepWellFilterConfig(
+                well_filter=CONSTANTS.STEP_WELL_FILTER_TEST
             ),
-            Step(
-                func=create_composite,
-                processing_config=LazyProcessingConfig(
-                    variable_components=[VariableComponents.CHANNEL]
-                ),
-                napari_streaming_config=LazyNapariStreamingConfig(
-                    port=5557, enabled=enable_napari
-                ),
-                fiji_streaming_config=LazyFijiStreamingConfig(
-                    port=5556, enabled=enable_fiji
-                ),
+            step_materialization_config=LazyStepMaterializationConfig(),
+            napari_streaming_config=LazyNapariStreamingConfig(
+                port=5555, enabled=enable_napari
             ),
-            Step(
-                name="Z-Stack Flattening",
-                func=(create_projection, {"method": "max_projection"}),
-                processing_config=LazyProcessingConfig(
-                    variable_components=[VariableComponents.Z_INDEX]
-                ),
-                step_materialization_config=LazyStepMaterializationConfig(),
+            fiji_streaming_config=LazyFijiStreamingConfig(enabled=enable_fiji),
+        ),
+        Step(
+            func=create_composite,
+            processing_config=LazyProcessingConfig(
+                variable_components=[VariableComponents.CHANNEL],
+                group_by=GroupBy.NONE,
             ),
-            Step(name="Position Computation", func=position_func),
-            Step(
-                name="Secondary Enhancement",
-                func=[
-                    (
-                        stack_percentile_normalize,
-                        {"low_percentile": 0.5, "high_percentile": 99.5},
-                    )
-                ],
-                processing_config=LazyProcessingConfig(
-                    input_source=InputSource.PIPELINE_START
-                ),
+            napari_streaming_config=LazyNapariStreamingConfig(
+                port=5557, enabled=enable_napari
             ),
-            Step(name="CPU Assembly", func=assemble_stack_cpu),
-            Step(
-                name="Z-Stack Flattening",
-                func=(create_projection, {"method": "max_projection"}),
-                processing_config=LazyProcessingConfig(
-                    variable_components=[VariableComponents.Z_INDEX]
-                ),
+            fiji_streaming_config=LazyFijiStreamingConfig(
+                port=5556, enabled=enable_fiji
             ),
-            Step(
-                name="Cell Counting",
-                func=(
-                    {
-                        "1": (
-                            count_cells_single_channel,
-                            {
-                                "min_cell_area": 40,
-                                "max_cell_area": 200,
-                                "enable_preprocessing": False,
-                                "detection_method": DetectionMethod.WATERSHED,
-                                (
-                                    DtypeConfig.runtime_parameter_declaration().require_parameter_name()
-                                ): DtypeConfig(
-                                    default_dtype_conversion=DtypeConversion.UINT8
-                                ),
-                                "return_segmentation_mask": True,
-                            },
-                        ),
-                        "2": (
-                            count_cells_single_channel,
-                            {
-                                "min_cell_area": 40,
-                                "max_cell_area": 200,
-                                "enable_preprocessing": False,
-                                "detection_method": DetectionMethod.WATERSHED,
-                                (
-                                    DtypeConfig.runtime_parameter_declaration().require_parameter_name()
-                                ): DtypeConfig(
-                                    default_dtype_conversion=DtypeConversion.UINT8
-                                ),
-                                "return_segmentation_mask": True,
-                            },
-                        ),
-                    }
-                ),
-                napari_streaming_config=LazyNapariStreamingConfig(
-                    port=5559,
-                    variable_size_handling=NapariVariableSizeHandling.PAD_TO_MAX,
-                    enabled=enable_napari,
-                ),
-                fiji_streaming_config=LazyFijiStreamingConfig(enabled=enable_fiji),
+        ),
+        Step(
+            name="Z-Stack Flattening",
+            func=(create_projection, {"method": "max_projection"}),
+            processing_config=LazyProcessingConfig(
+                variable_components=[VariableComponents.Z_INDEX]
             ),
-        ],
-        name=f"Multi-Subdirectory Test Pipeline{' (CPU-Only)' if cpu_only_mode else ''}",
-    )
+            step_materialization_config=LazyStepMaterializationConfig(),
+        ),
+        Step(name="Position Computation", func=position_func),
+        Step(
+            name="Secondary Enhancement",
+            func=[
+                (
+                    stack_percentile_normalize,
+                    {"low_percentile": 0.5, "high_percentile": 99.5},
+                )
+            ],
+            processing_config=LazyProcessingConfig(
+                input_source=InputSource.PIPELINE_START
+            ),
+        ),
+        Step(name="CPU Assembly", func=assemble_stack_cpu),
+        Step(
+            name="Z-Stack Flattening",
+            func=(create_projection, {"method": "max_projection"}),
+            processing_config=LazyProcessingConfig(
+                variable_components=[VariableComponents.Z_INDEX]
+            ),
+        ),
+        Step(
+            name="Cell Counting",
+            func=(
+                {
+                    "1": (
+                        count_cells_single_channel,
+                        {
+                            "min_cell_area": 40,
+                            "max_cell_area": 200,
+                            "enable_preprocessing": False,
+                            "detection_method": DetectionMethod.WATERSHED,
+                            "dtype_config": LazyDtypeConfig(
+                                default_dtype_conversion=DtypeConversion.UINT8
+                            ),
+                            "return_segmentation_mask": True,
+                        },
+                    ),
+                    "2": (
+                        count_cells_single_channel,
+                        {
+                            "min_cell_area": 40,
+                            "max_cell_area": 200,
+                            "enable_preprocessing": False,
+                            "detection_method": DetectionMethod.WATERSHED,
+                            "dtype_config": LazyDtypeConfig(
+                                default_dtype_conversion=DtypeConversion.UINT8
+                            ),
+                            "return_segmentation_mask": True,
+                        },
+                    ),
+                }
+            ),
+            napari_streaming_config=LazyNapariStreamingConfig(
+                port=5559,
+                variable_size_handling=NapariVariableSizeHandling.PAD_TO_MAX,
+                enabled=enable_napari,
+            ),
+            fiji_streaming_config=LazyFijiStreamingConfig(enabled=enable_fiji),
+        ),
+    ]
 
 
 def _load_metadata(output_dir: Path) -> Dict:
@@ -540,10 +540,8 @@ def _initialize_orchestrator(
     return orchestrator
 
 
-def _export_pipeline_to_file(pipeline: Pipeline, plate_dir: Path) -> None:
+def _export_pipeline_to_file(pipeline: list[Step], plate_dir: Path) -> None:
     """Export pipeline to Python file in the plate directory using the same code as the Code button."""
-    import openhcs.serialization.pycodify_formatters  # noqa: F401
-    from pycodify import Assignment, generate_python_source
     from datetime import datetime
 
     # Create output path in the plate directory
@@ -551,17 +549,13 @@ def _export_pipeline_to_file(pipeline: Pipeline, plate_dir: Path) -> None:
 
     # Generate code using the same function as the pipeline editor Code button
     # This ensures consistency between UI and test exports
-    python_code = generate_python_source(
-        Assignment("pipeline_steps", pipeline.steps),
-        header="# Edit this pipeline and save to apply changes",
-        clean_mode=True,
-    )
+    python_code = FunctionStepTransportAuthority.source_from_pipeline(pipeline)
 
     # Wrap in a complete script with header and main block
     lines = []
     lines.append("#!/usr/bin/env python3")
     lines.append('"""')
-    lines.append(f"OpenHCS Pipeline Script - {pipeline.name}")
+    lines.append("OpenHCS Pipeline Script")
     lines.append(f"Generated: {datetime.now()}")
     lines.append('"""')
     lines.append("")
@@ -605,7 +599,7 @@ def _drain_progress_queue(q):
 
 
 def _execute_pipeline_phases(
-    orchestrator: PipelineOrchestrator, pipeline: Pipeline
+    orchestrator: PipelineOrchestrator, pipeline: list[Step]
 ) -> Dict:
     """Execute compilation and execution phases of the pipeline (direct mode)."""
     import multiprocessing
@@ -633,7 +627,7 @@ def _execute_pipeline_phases(
     try:
         set_progress_queue(progress_queue)
         compilation_result = orchestrator.compile_pipelines(
-            pipeline_definition=pipeline.steps, well_filter=wells
+            pipeline_definition=pipeline, well_filter=wells
         )
 
         execution_bundle = compilation_result["execution_bundle"]
@@ -659,6 +653,7 @@ def _execute_pipeline_phases(
 
         # Execution phase - pass the progress queue
         import time
+
         progress_context = {
             "execution_id": f"direct::{int(time.time() * 1_000_000)}",
             "plate_id": str(orchestrator.plate_path),
@@ -695,7 +690,7 @@ def _execute_pipeline_phases(
 
 def _execute_pipeline_zmq(
     test_config: TestConfig,
-    pipeline: Pipeline,
+    pipeline: list[Step],
     global_config: GlobalPipelineConfig,
     pipeline_config: PipelineConfig,
 ) -> Dict:
@@ -720,16 +715,16 @@ def _execute_pipeline_zmq(
         response = client.execute_pipeline(
             OpenHCSExecutionSubmission(
                 plate_id=str(test_config.plate_dir),
-                pipeline_steps=pipeline.steps,
+                pipeline_document=PipelineDocumentAuthority.from_values(
+                    pipeline_config=pipeline_config, pipeline_steps=pipeline
+                ),
                 global_config=global_config,
-                pipeline_config=pipeline_config,
             )
         )
 
         # Check response
-        if response.get("status") == "error":
-            error_msg = response.get("message", "Unknown error")
-            raise RuntimeError(f"ZMQ execution failed: {error_msg}")
+        if response.get("status") != "complete":
+            raise RuntimeError(f"ZMQ execution failed: {response!r}")
 
         logger.info(f"✅ ZMQ execution completed: {response.get('status')}")
 
@@ -745,14 +740,14 @@ def _execute_pipeline_zmq(
 
 
 def _execute_pipeline_with_mode(
-    test_config: TestConfig, pipeline: Pipeline, zmq_mode: str, sequential_config=None
+    test_config: TestConfig, pipeline: list[Step], zmq_mode: str, sequential_config=None
 ) -> Dict:
     """
     Execute pipeline using either direct orchestrator or ZMQ client based on mode.
 
     Args:
         test_config: Test configuration
-        pipeline: Pipeline to execute
+        pipeline: Mutable FunctionStep list to execute
         zmq_mode: 'direct' for orchestrator, 'zmq' for ZMQ client
 
     Returns:
@@ -978,7 +973,7 @@ def _test_main_with_code_serialization(
     print("📦 Step 1: Created original objects")
     print(f"   - GlobalPipelineConfig: {type(global_config).__name__}")
     print(f"   - PipelineConfig: {type(pipeline_config).__name__}")
-    print(f"   - Pipeline: {len(pipeline.steps)} steps")
+    print(f"   - Pipeline: {len(pipeline)} steps")
 
     # Step 2: Convert to Python code using the serializer
     import openhcs.serialization.pycodify_formatters  # noqa: F401
@@ -1000,12 +995,8 @@ def _test_main_with_code_serialization(
         clean_mode=True,
     )
 
-    # Generate code for Pipeline steps
-    pipeline_steps_code = generate_python_source(
-        Assignment("pipeline_steps", pipeline.steps),
-        header="# Edit this pipeline and save to apply changes",
-        clean_mode=True,
-    )
+    # Generate code for Pipeline steps through the canonical transport authority.
+    pipeline_steps_code = FunctionStepTransportAuthority.source_from_pipeline(pipeline)
 
     print(f"   - GlobalPipelineConfig code: {len(global_config_code)} chars")
     print(f"   - PipelineConfig code: {len(pipeline_config_code)} chars")
@@ -1037,7 +1028,11 @@ def _test_main_with_code_serialization(
     # Recreate Pipeline steps
     pipeline_steps_namespace = {}
     exec(pipeline_steps_code, pipeline_steps_namespace)
-    recreated_pipeline_steps = pipeline_steps_namespace["pipeline_steps"]
+    recreated_pipeline_steps = (
+        FunctionStepTransportAuthority.pipeline_steps_from_namespace(
+            pipeline_steps_namespace
+        )
+    )
 
     print(
         f"   - Recreated GlobalPipelineConfig: {type(recreated_global_config).__name__}"
@@ -1058,9 +1053,9 @@ def _test_main_with_code_serialization(
     print(f"   ✅ PipelineConfig type matches")
 
     # Check Pipeline steps
-    assert len(recreated_pipeline_steps) == len(pipeline.steps)
+    assert len(recreated_pipeline_steps) == len(pipeline)
     for i, (orig_step, recreated_step) in enumerate(
-        zip(pipeline.steps, recreated_pipeline_steps)
+        zip(pipeline, recreated_pipeline_steps)
     ):
         assert type(orig_step) == type(recreated_step)
         assert orig_step.name == recreated_step.name
@@ -1069,8 +1064,8 @@ def _test_main_with_code_serialization(
     # Step 5: Use recreated objects for execution
     print("\n🚀 Step 5: Executing pipeline with recreated objects...")
 
-    # Create Pipeline object from recreated steps
-    recreated_pipeline = Pipeline(steps=recreated_pipeline_steps, name=pipeline.name)
+    # Copy reconstructed steps into the mutable execution list.
+    recreated_pipeline = list(recreated_pipeline_steps)
 
     # Execute using the specified mode (direct or zmq)
     if zmq_execution_mode == "zmq":

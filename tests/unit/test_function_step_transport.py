@@ -7,6 +7,7 @@ import ast
 import importlib
 import inspect
 import pickle
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -276,6 +277,46 @@ def test_cellprofiler_callable_uses_registered_function_reference() -> None:
     assert reference.original_module == func.__module__
     assert reference.resolve() is registered
     assert reference.metadata == CallableContract.from_callable(registered).metadata
+
+
+@pytest.mark.parametrize(
+    ("module_name", "function_name"),
+    (
+        ("Crop", "crop"),
+        ("CorrectIlluminationCalculate", "correct_illumination_calculate"),
+    ),
+)
+def test_registered_reference_preserves_raw_cellprofiler_declaration_owner(
+    module_name: str,
+    function_name: str,
+) -> None:
+    from openhcs.interop.cellprofiler.module_declarations import CellProfilerModule
+    from openhcs.interop.cellprofiler.runtime.module_execution import (
+        CellProfilerModuleExecutor,
+    )
+    from openhcs.interop.cellprofiler.runtime.adapter import (
+        CellProfilerRuntimeAdapter,
+    )
+
+    module_type = CellProfilerModule.require_module(module_name)
+    raw = module_type.require_callable(function_name)
+    reference = FunctionReferenceTransportAuthority.function_reference(raw)
+
+    normalized = FunctionStepTransportAuthority.normalize_function_reference(reference)
+    contract = CallableContract.from_callable(normalized)
+    contract = replace(
+        contract,
+        metadata=replace(
+            contract.metadata,
+            runtime_adapter=CellProfilerRuntimeAdapter.runtime_adapter_spec(),
+        ),
+    )
+    contract = FunctionStepTransportAuthority.normalize_callable_contract(contract)
+
+    assert normalized.resolve() is RegistryService.registered_callable(raw)
+    assert contract.resolve_canonical_raw_callable() is raw
+    executor = CellProfilerModuleExecutor(raw, contract)
+    assert executor.module_type() is module_type
 
 
 def test_module_objects_are_rejected_as_function_specs() -> None:

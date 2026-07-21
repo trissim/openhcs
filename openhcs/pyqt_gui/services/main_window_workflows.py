@@ -221,6 +221,8 @@ class MainWindowSpecDefinition:
 def build_main_window_specs() -> dict[str, WindowSpec]:
     """Build all WindowManager-managed window specifications."""
 
+    from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
+    from openhcs.pyqt_gui.windows.help_window import HelpWindow
     from openhcs.pyqt_gui.windows.managed_windows import (
         ImageBrowserWindow,
         LogViewerWindowWrapper,
@@ -235,6 +237,12 @@ def build_main_window_specs() -> dict[str, WindowSpec]:
         ("image_browser", "Image Browser", ImageBrowserWindow, False),
         ("log_viewer", "Log Viewer", LogViewerWindowWrapper, True),
         ("zmq_server_manager", "ZMQ Server Manager", ZMQServerManagerWindow, False),
+        (
+            OpenHCSUiWindowId.knowledge_base,
+            "OpenHCS Knowledge Base",
+            HelpWindow,
+            False,
+        ),
     )
     definitions = tuple(MainWindowSpecDefinition.from_row(row) for row in rows)
     return {definition.window_id: definition.build() for definition in definitions}

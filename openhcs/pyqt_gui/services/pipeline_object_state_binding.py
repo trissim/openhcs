@@ -1,4 +1,4 @@
-"""Typed ObjectState binding for the Pipeline declaration."""
+"""GUI-local ObjectState binding for pipeline editor state and step children."""
 
 from __future__ import annotations
 
@@ -7,12 +7,11 @@ from dataclasses import dataclass
 from typing import Self
 
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
-from openhcs.core.pipeline import Pipeline
 from openhcs.core.steps.function_step import FunctionSpec, FunctionStep
 from openhcs.pyqt_gui.services.plate_manager_root_state import (
     root_orchestrator_scope_ids,
 )
-from openhcs.pyqt_gui.services.plate_scope_identity import (
+from openhcs.ui.shared.plate_scope_identity import (
     PipelineScopeIdentity,
     PlateScopeIdentity,
 )
@@ -36,55 +35,54 @@ FunctionPatternTokenTree = list[str] | dict[str, "FunctionPatternTokenTree"] | N
 
 
 @dataclass(frozen=True, slots=True)
+class PipelineEditorStateRoot:
+    """GUI-only text and child-scope state for one pipeline editor."""
+
+    name: str
+    description: str | None
+    step_scope_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class PipelineObjectStateBinding:
-    """ObjectState interface for a Pipeline's declared step_scope_ids field."""
+    """ObjectState interface for editor text and child FunctionStep states."""
 
     state: ObjectState
 
     def __post_init__(self) -> None:
-        if not isinstance(self.state.object_instance, Pipeline):
+        if not isinstance(self.state.object_instance, PipelineEditorStateRoot):
             raise TypeError(
-                "PipelineObjectStateBinding requires an ObjectState backed by Pipeline."
+                "PipelineObjectStateBinding requires an ObjectState backed by "
+                "PipelineEditorStateRoot."
             )
 
     @property
-    def pipeline(self) -> Pipeline:
-        """Return the backing Pipeline declaration."""
-
-        return self.state.object_instance
-
-    @property
-    def plate_scope(self) -> str:
-        """Return the logical plate scope owning this Pipeline ObjectState."""
+    def _plate_scope(self) -> str:
+        """Return the logical plate scope owning this editor ObjectState."""
 
         return PipelineScopeIdentity.from_scope_id(self.state.scope_id).plate_scope
 
-    @property
-    def step_scope_ids(self) -> tuple[str, ...]:
-        """Return the pipeline's declared step ObjectState scopes."""
-
-        return tuple(self.state.parameters.get("step_scope_ids", []))
-
     @classmethod
-    def for_plate(
+    def _for_plate(
         cls,
         plate_path: str,
         *,
         register: bool = True,
-    ) -> Self | None:
-        """Return the Pipeline ObjectState binding for one plate scope."""
+    ) -> Self:
+        """Return the editor-state binding for one plate scope."""
 
         if not plate_path:
-            return None
+            raise ValueError("Pipeline editor state requires a non-empty plate path.")
 
         pipeline_scope = PipelineScopeIdentity.from_plate_scope(plate_path).scope_id
         state = ObjectStateRegistry.get_by_scope(pipeline_scope)
         if state is None:
             identity = PlateScopeIdentity.from_scope_id(plate_path)
             state = ObjectState(
-                object_instance=Pipeline(
+                object_instance=PipelineEditorStateRoot(
                     name=identity.display_name,
-                    step_scope_ids=[],
+                    description=None,
+                    step_scope_ids=(),
                 ),
                 scope_id=pipeline_scope,
                 parent_state=ObjectStateRegistry.get_by_scope(plate_path),
@@ -95,21 +93,9 @@ class PipelineObjectStateBinding:
 
     @classmethod
     def steps_for_plate(cls, plate_path: str) -> list[FunctionStep]:
-        """Return FunctionStep declarations derived from a Pipeline ObjectState."""
+        """Return FunctionSteps reconstructed from one editor's child states."""
 
-        binding = cls.for_plate(plate_path)
-        if binding is None:
-            return []
-        return binding.steps()
-
-    @classmethod
-    def pipeline_for_plate(cls, plate_path: str) -> Pipeline:
-        """Return the full Pipeline declaration for one plate, including metadata."""
-
-        binding = cls.for_plate(plate_path)
-        if binding is None:
-            return Pipeline()
-        return binding.pipeline_declaration()
+        return cls._for_plate(plate_path)._steps()
 
     @classmethod
     def update_plate_steps(
@@ -117,109 +103,76 @@ class PipelineObjectStateBinding:
         plate_path: str,
         steps: list[FunctionStep],
     ) -> None:
-        """Replace one plate's Pipeline ObjectState step list."""
+        """Replace one plate's editor child states from a mutable step list."""
 
-        if isinstance(steps, Pipeline):
-            cls.update_plate_pipeline(plate_path, steps)
-            return
+        cls._for_plate(plate_path, register=False).replace_steps(steps)
 
-        existing = cls.pipeline_for_plate(plate_path)
-        cls.update_plate_pipeline(
-            plate_path,
-            Pipeline(
-                steps=steps,
-                name=existing.name,
-                metadata=dict(existing.metadata),
-                description=existing.description,
-                step_scope_ids=existing.step_scope_ids,
-            ),
+    @classmethod
+    def editor_state_for_plate(
+        cls,
+        plate_path: str,
+    ) -> PipelineEditorStateRoot:
+        """Return GUI-only text and child-scope state for one plate."""
+
+        return cls._for_plate(plate_path)._editor_state()
+
+    @classmethod
+    def update_editor_text(
+        cls,
+        plate_path: str,
+        *,
+        name: str,
+        description: str | None,
+    ) -> None:
+        """Replace editor display text without touching executable step state."""
+
+        binding = cls._for_plate(plate_path)
+        editor_state = binding._editor_state()
+        binding.state.update_object_instance(
+            PipelineEditorStateRoot(
+                name=name,
+                description=description,
+                step_scope_ids=editor_state.step_scope_ids,
+            )
         )
 
     @classmethod
-    def update_plate_pipeline(
-        cls,
-        plate_path: str,
-        pipeline: Pipeline,
-    ) -> None:
-        """Replace one plate's Pipeline ObjectState while preserving metadata."""
-
-        binding = cls.for_plate(plate_path, register=False)
-        if binding is None:
-            return
-        binding.replace_pipeline(pipeline)
-
-    @classmethod
-    def registered_plate_pipelines(cls) -> dict[str, Pipeline]:
-        """Return all visible plate Pipeline declarations from ObjectState."""
+    def registered_plate_steps(cls) -> dict[str, list[FunctionStep]]:
+        """Return visible plate step lists from the shared ObjectState registry."""
 
         root_state = ObjectStateRegistry.get_by_scope("__plates__")
         if root_state is None:
             return {}
 
-        result: dict[str, Pipeline] = {}
+        result: dict[str, list[FunctionStep]] = {}
         for plate_path in root_orchestrator_scope_ids(root_state):
-            result[plate_path] = cls.pipeline_for_plate(plate_path)
+            result[plate_path] = cls.steps_for_plate(plate_path)
         return result
 
-    def pipeline_declaration(self) -> Pipeline:
-        """Return Pipeline metadata plus step declarations from ObjectState."""
-
-        stored = self.state.to_object()
-        return Pipeline(
-            steps=self.steps(),
-            name=stored.name,
-            metadata=dict(stored.metadata),
-            description=stored.description,
-            step_scope_ids=tuple(self.step_scope_ids),
-        )
-
-    def steps(self) -> list[FunctionStep]:
-        """Return FunctionStep declarations derived from this Pipeline ObjectState."""
-
-        steps: list[FunctionStep] = []
-        for scope_id in self.step_scope_ids:
-            step_state = ObjectStateRegistry.get_by_scope(scope_id)
-            if step_state is not None:
-                steps.append(self.step_from_state(step_state))
-        return steps
-
-    @staticmethod
-    def step_from_state(step_state: ObjectState) -> FunctionStep:
-        """Return a FunctionStep with function child ObjectState values applied."""
-
-        step = step_state.to_object()
-        return step.with_function_spec(
-            PipelineObjectStateBinding.function_pattern_from_child_states(
-                step_state.scope_id,
-                step.func,
-                step_state.metadata.get(FUNC_EDITOR_PATTERN_TOKENS_META_KEY),
-            )
-        )
-
     def replace_steps(self, steps: list[FunctionStep]) -> None:
-        """Replace this Pipeline's declared step ObjectState scopes."""
+        """Replace this editor's declared FunctionStep child scopes."""
 
-        self.replace_pipeline(Pipeline(steps=steps))
+        if not isinstance(steps, list):
+            raise TypeError("Pipeline editor steps must be a mutable list.")
+        if not all(isinstance(step, FunctionStep) for step in steps):
+            raise TypeError("Pipeline editor steps must contain FunctionStep values.")
 
-    def replace_pipeline(self, pipeline: Pipeline) -> None:
-        """Replace this Pipeline ObjectState with a new pipeline declaration."""
-
-        existing_step_scope_ids = self.step_scope_ids
-        steps = list(pipeline.steps)
-        self.transfer_existing_step_scope_tokens(
-            self.plate_scope,
+        editor_state = self._editor_state()
+        existing_step_scope_ids = editor_state.step_scope_ids
+        self._transfer_existing_step_scope_tokens(
+            self._plate_scope,
             existing_step_scope_ids,
             steps,
         )
-        ScopeTokenService.seed_from_objects(self.plate_scope, steps)
+        ScopeTokenService.seed_from_objects(self._plate_scope, steps)
 
         step_scope_ids: list[str] = []
         to_register: list[ObjectState] = []
-        parent_state = ObjectStateRegistry.get_by_scope(self.plate_scope)
+        parent_state = ObjectStateRegistry.get_by_scope(self._plate_scope)
         for step in steps:
-            scope_id = ScopeTokenService.build_scope_id(self.plate_scope, step)
+            scope_id = ScopeTokenService.build_scope_id(self._plate_scope, step)
             step_scope_ids.append(scope_id)
-            _step_state, states = self.collect_step_registration_states(
+            _step_state, states = self._collect_step_registration_states(
                 step=step,
                 scope_id=scope_id,
                 parent_state=parent_state,
@@ -240,33 +193,48 @@ class PipelineObjectStateBinding:
                 _skip_snapshot=True,
             )
         self.state.update_object_instance(
-            Pipeline(
-                steps=[],
-                name=pipeline.name,
-                metadata=dict(pipeline.metadata),
-                description=pipeline.description,
-                step_scope_ids=step_scope_ids,
+            PipelineEditorStateRoot(
+                name=editor_state.name,
+                description=editor_state.description,
+                step_scope_ids=tuple(step_scope_ids),
             )
         )
-        self.state.update_parameter("step_scope_ids", step_scope_ids)
 
-    @classmethod
-    def register_step_state(cls, plate_path: str, step: FunctionStep) -> None:
-        """Register ObjectState for one step and its function-pattern children."""
+    def _editor_state(self) -> PipelineEditorStateRoot:
+        """Return the reconstructed GUI-only editor root."""
 
-        binding = cls.for_plate(plate_path)
-        if binding is None:
-            return
-        scope_id = ScopeTokenService.build_scope_id(plate_path, step)
-        _step_state, to_register = binding.collect_step_registration_states(
-            step=step,
-            scope_id=scope_id,
-            parent_state=ObjectStateRegistry.get_by_scope(plate_path),
+        editor_state = self.state.to_object()
+        if not isinstance(editor_state, PipelineEditorStateRoot):
+            raise TypeError(
+                "Pipeline editor ObjectState reconstructed an unexpected object: "
+                f"{type(editor_state).__name__}."
+            )
+        return editor_state
+
+    def _steps(self) -> list[FunctionStep]:
+        """Reconstruct FunctionSteps from the editor root's child scopes."""
+
+        steps: list[FunctionStep] = []
+        for scope_id in self._editor_state().step_scope_ids:
+            step_state = ObjectStateRegistry.get_by_scope(scope_id)
+            if step_state is not None:
+                steps.append(self._step_from_state(step_state))
+        return steps
+
+    @staticmethod
+    def _step_from_state(step_state: ObjectState) -> FunctionStep:
+        """Return a FunctionStep with function child ObjectState values applied."""
+
+        step = step_state.to_object()
+        return step.with_function_spec(
+            PipelineObjectStateBinding._function_pattern_from_child_states(
+                step_state.scope_id,
+                step.func,
+                step_state.metadata.get(FUNC_EDITOR_PATTERN_TOKENS_META_KEY),
+            )
         )
-        for state in to_register:
-            ObjectStateRegistry.register(state)
 
-    def transfer_existing_step_scope_tokens(
+    def _transfer_existing_step_scope_tokens(
         self,
         plate_path: str,
         existing_step_scope_ids: tuple[str, ...],
@@ -288,7 +256,7 @@ class PipelineObjectStateBinding:
                 token.raw,
             )
 
-    def collect_step_registration_states(
+    def _collect_step_registration_states(
         self,
         *,
         step: FunctionStep,
@@ -310,10 +278,10 @@ class PipelineObjectStateBinding:
             step_state.update_object_instance(step)
 
         step_state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY] = (
-            self.scope_tokens_for_function_pattern(scope_id, step.func)
+            self._scope_tokens_for_function_pattern(scope_id, step.func)
         )
 
-        for func_obj, kwargs in self.normalize_func_items(step.func):
+        for func_obj, kwargs in self._normalize_func_items(step.func):
             func_scope_id = ScopeTokenService.build_scope_id(scope_id, func_obj)
             if ObjectStateRegistry.get_by_scope(func_scope_id) is not None:
                 continue
@@ -337,7 +305,7 @@ class PipelineObjectStateBinding:
         return step_state, to_register
 
     @classmethod
-    def normalize_func_items(
+    def _normalize_func_items(
         cls,
         func_value: PipelineFunctionPattern,
     ) -> list[tuple[Callable, dict]]:
@@ -348,7 +316,7 @@ class PipelineObjectStateBinding:
         if isinstance(func_value, dict):
             items: list[tuple[Callable, dict]] = []
             for channel_funcs in func_value.values():
-                items.extend(cls.normalize_func_items(channel_funcs))
+                items.extend(cls._normalize_func_items(channel_funcs))
             return items
         if isinstance(func_value, list):
             items: list[tuple[Callable, dict]] = []
@@ -363,7 +331,7 @@ class PipelineObjectStateBinding:
         return [(func_obj, kwargs)]
 
     @classmethod
-    def scope_tokens_for_function_pattern(
+    def _scope_tokens_for_function_pattern(
         cls,
         scope_id: str,
         func_value: PipelineFunctionPattern,
@@ -374,7 +342,7 @@ class PipelineObjectStateBinding:
             return []
         if isinstance(func_value, dict):
             return {
-                str(channel_key): cls.scope_tokens_for_function_pattern(
+                str(channel_key): cls._scope_tokens_for_function_pattern(
                     scope_id,
                     channel_funcs,
                 )
@@ -393,7 +361,7 @@ class PipelineObjectStateBinding:
         return [ScopeTokenService.ensure_token(scope_id, func_obj)]
 
     @classmethod
-    def function_pattern_from_child_states(
+    def _function_pattern_from_child_states(
         cls,
         parent_scope_id: str,
         func_value: PipelineFunctionPattern,
@@ -404,7 +372,7 @@ class PipelineObjectStateBinding:
         if isinstance(func_value, dict):
             token_map = tokens if isinstance(tokens, dict) else {}
             return {
-                channel_key: cls.function_pattern_from_child_states(
+                channel_key: cls._function_pattern_from_child_states(
                     parent_scope_id,
                     channel_funcs,
                     token_map.get(str(channel_key)),
@@ -414,7 +382,7 @@ class PipelineObjectStateBinding:
         if isinstance(func_value, list):
             token_list = tokens if isinstance(tokens, list) else []
             return [
-                cls.function_entry_from_child_state(
+                cls._function_entry_from_child_state(
                     parent_scope_id,
                     item,
                     token_list[index] if index < len(token_list) else None,
@@ -422,14 +390,14 @@ class PipelineObjectStateBinding:
                 for index, item in enumerate(func_value)
             ]
         token = tokens[0] if isinstance(tokens, list) and tokens else None
-        return cls.function_entry_from_child_state(
+        return cls._function_entry_from_child_state(
             parent_scope_id,
             func_value,
             token,
         )
 
     @classmethod
-    def function_entry_from_child_state(
+    def _function_entry_from_child_state(
         cls,
         parent_scope_id: str,
         func_item: PipelineFunctionPattern,
@@ -443,10 +411,10 @@ class PipelineObjectStateBinding:
         if ObjectStateRegistry.get_by_scope(child_scope_id) is None:
             return func_item
         entry = FunctionPatternCodeDocumentService().child_scope_entry(child_scope_id)
-        return cls.replace_function_entry(func_item, entry.func, entry.kwargs)
+        return cls._replace_function_entry(func_item, entry.func, entry.kwargs)
 
     @classmethod
-    def replace_function_entry(
+    def _replace_function_entry(
         cls,
         func_item: PipelineFunctionPattern,
         func_obj: Callable,
@@ -454,13 +422,6 @@ class PipelineObjectStateBinding:
     ) -> PipelineFunctionPattern:
         """Return one function-pattern entry with updated callable and kwargs."""
 
-        if (
-            isinstance(func_item, tuple)
-            and len(func_item) == 3
-            and callable(func_item[0])
-            and isinstance(func_item[1], Mapping)
-        ):
-            return (func_obj, kwargs, func_item[2])
         if (
             isinstance(func_item, tuple)
             and len(func_item) == 2

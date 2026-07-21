@@ -140,12 +140,12 @@ class DualEditorFunctionPatternController:
 
     session: DualEditorSession
     detect_changes: Callable[[], None]
-    refresh_artifact_contract_preview: Callable[[FunctionSpec], None]
+    invalidate_artifact_plan: Callable[[], None]
 
     def handle_change(self) -> None:
         changed, current_pattern = self.session.apply_current_function_pattern()
         if not changed:
             return
         self.detect_changes()
-        self.refresh_artifact_contract_preview(current_pattern)
+        self.invalidate_artifact_plan()
         logger.debug("Function pattern changed: %r", current_pattern)

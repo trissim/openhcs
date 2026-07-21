@@ -72,6 +72,9 @@ class FunctionParameterSpec:
     required: bool
     supplied_by: str = "agent"
     description: str | None = None
+    enum_import_path: str | None = None
+    enum_members: tuple[str, ...] = ()
+    enum_values: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,16 +87,26 @@ class FunctionArtifactSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class CellProfilerArtifactBindingSummary:
+    """One module-owned setting that declares a compile-time artifact term."""
+
+    direction: str
+    kind: str
+    setting_names: tuple[str, ...]
+    parameter_name: str | None = None
+    runtime_parameter_name: str | None = None
+    repeated: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class CellProfilerModuleDeclarationSummary:
     module_name: str
     declaration_class: str
     validated: bool
     function_names: tuple[str, ...]
     aliases: tuple[str, ...] = ()
-    declared_artifact_input_settings: tuple[str, ...] = ()
-    declared_artifact_output_settings: tuple[str, ...] = ()
-    default_variable_components: tuple[str, ...] = ()
-    required_variable_components: tuple[str, ...] = ()
+    artifact_bindings: tuple[CellProfilerArtifactBindingSummary, ...] = ()
+    exact_artifact_contract_requires_compilation: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,9 +117,7 @@ class FunctionRuntimeContractSummary:
     runtime_bound_parameters: tuple[str, ...] = ()
     required_variable_components: tuple[str, ...] = ()
     artifact_inputs: tuple[FunctionArtifactSpec, ...] = ()
-    runtime_artifact_inputs: tuple[FunctionArtifactSpec, ...] = ()
     artifact_outputs: tuple[FunctionArtifactSpec, ...] = ()
-    declared_artifact_outputs: tuple[FunctionArtifactSpec, ...] = ()
     cellprofiler_module: CellProfilerModuleDeclarationSummary | None = None
     source_binding_rule: str | None = None
     materialization_rule: str | None = None

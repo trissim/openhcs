@@ -2,19 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from openhcs.core.source_bindings import StepSourceBindingsConfig
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
-from openhcs.pyqt_gui.windows.dual_editor_session import DualEditorSession
 from pyqt_reactive.services.scope_token_service import ScopeTokenService
 from pyqt_reactive.widgets.shared.base_form_dialog import BaseFormDialog
 from pyqt_reactive.widgets.shared.dirty_window_presenter import DirtyWindowStateTracker
-
-
-@dataclass
-class StepClone:
-    func: object
-    source_bindings: StepSourceBindingsConfig
 
 
 @dataclass
@@ -69,49 +61,21 @@ class FunctionEditor:
         self.scope_indices.append(index)
 
 
-class ArtifactPreview:
+class ArtifactPlanView:
     def __init__(self) -> None:
-        self.calls = []
+        self.inspections = []
 
-    def set_function_spec(self, func_spec, *, source_bindings):
-        self.calls.append((func_spec, source_bindings))
-
-
-def stale_func():
-    return None
+    def set_inspection(self, inspection):
+        self.inspections.append(inspection)
 
 
-def restored_func():
-    return None
-
-
-def test_artifact_refresh_uses_restored_objectstate_function_spec() -> None:
-    restored_bindings = StepSourceBindingsConfig()
-    stale_bindings = StepSourceBindingsConfig()
+def test_artifact_plan_is_invalidated_when_authored_step_changes() -> None:
     window = DualEditorWindow.__new__(DualEditorWindow)
-    window.editing_step = StepClone(
-        func=stale_func,
-        source_bindings=stale_bindings,
-    )
-    window.step_editor = StepEditor(
-        StepState(
-            {
-                "func": restored_func,
-                "source_bindings": restored_bindings,
-            }
-        )
-    )
-    window.artifact_contract_preview = ArtifactPreview()
-    window._session = DualEditorSession(
-        editing_step=window.editing_step,
-        step_editor=window.step_editor,
-    )
+    window.artifact_plan_view = ArtifactPlanView()
 
-    window._refresh_artifact_contract_preview(window._current_function_spec())
+    window._invalidate_artifact_plan()
 
-    assert window.artifact_contract_preview.calls == [
-        (restored_func, restored_bindings)
-    ]
+    assert window.artifact_plan_view.inspections == [None]
 
 
 def test_dual_editor_title_prefixes_current_step_number() -> None:
@@ -145,7 +109,7 @@ def test_dual_editor_pipeline_reorder_refreshes_title_number_with_scope_colors()
     window.step_editor = StepEditor(StepState({"name": "Tracked"}))
     window.func_editor = FunctionEditor()
     window.original_step_reference = tracked_step
-    window.artifact_contract_preview = None
+    window.artifact_plan_view = None
     title_refreshes = []
     border_refreshes = []
     window._update_window_title = lambda: title_refreshes.append(window._step_index)

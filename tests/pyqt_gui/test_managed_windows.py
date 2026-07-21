@@ -4,8 +4,12 @@ from collections.abc import Callable
 
 from PyQt6.QtWidgets import QWidget
 
+from openhcs.pyqt_gui.config import PyQtGuiRuntimeContext, get_default_ui_config
 from openhcs.pyqt_gui.services.main_window_workflows import MainWindowEmbeddedWidgets
-from openhcs.pyqt_gui.windows.managed_windows import ImageBrowserWindow
+from openhcs.pyqt_gui.windows.managed_windows import (
+    ImageBrowserWindow,
+    PlateManagerWindow,
+)
 
 
 class _Signal:
@@ -46,14 +50,19 @@ class _ImageBrowserStub(QWidget):
         *,
         orchestrator: _OrchestratorStub | None,
         color_scheme: None,
+        zmq_config,
     ) -> None:
         super().__init__()
         del color_scheme
         self.orchestrators = [orchestrator]
+        self.zmq_configs = [zmq_config]
         _ImageBrowserStub.instances.append(self)
 
     def set_orchestrator(self, orchestrator: _OrchestratorStub) -> None:
         self.orchestrators.append(orchestrator)
+
+    def set_zmq_config(self, config) -> None:
+        self.zmq_configs.append(config)
 
 
 class _ServiceAdapterStub:
@@ -64,6 +73,8 @@ class _ServiceAdapterStub:
 class _MainWindowStub(QWidget):
     def __init__(self, plate_manager: _PlateManagerStub) -> None:
         super().__init__()
+        self.runtime_context = PyQtGuiRuntimeContext(get_default_ui_config())
+        self.ui_config_changed = _Signal()
         self.embedded_widgets = MainWindowEmbeddedWidgets(
             plate_manager=plate_manager,
         )
@@ -92,6 +103,7 @@ def test_managed_image_browser_uses_embedded_plate_manager(
 
     browser = _ImageBrowserStub.instances[-1]
     assert browser.orchestrators == [None, first_orchestrator]
+    assert browser.zmq_configs == [main_window.runtime_context.ui_config.zmq]
 
     plate_manager.select(second_orchestrator)
 
@@ -100,3 +112,46 @@ def test_managed_image_browser_uses_embedded_plate_manager(
         first_orchestrator,
         second_orchestrator,
     ]
+
+
+def test_managed_plate_window_passes_resolved_ui_config(
+    qtbot,
+    monkeypatch,
+) -> None:
+    resolved_ui_config = get_default_ui_config()
+    captured = {}
+
+    class ServiceAdapterStub:
+        widget_gui_config = resolved_ui_config
+
+        @staticmethod
+        def get_current_color_scheme() -> None:
+            return None
+
+    class PlateManagerStub(QWidget):
+        def __init__(
+            self,
+            service_adapter,
+            color_scheme,
+            *,
+            gui_config,
+        ) -> None:
+            super().__init__()
+            del service_adapter, color_scheme
+            captured["gui_config"] = gui_config
+
+    import openhcs.pyqt_gui.widgets.plate_manager as plate_manager_module
+
+    monkeypatch.setattr(
+        plate_manager_module,
+        "PlateManagerWidget",
+        PlateManagerStub,
+    )
+    monkeypatch.setattr(PlateManagerWindow, "_setup_connections", lambda self: None)
+
+    main_window = QWidget()
+    window = PlateManagerWindow(main_window, ServiceAdapterStub())
+    qtbot.addWidget(main_window)
+    qtbot.addWidget(window)
+
+    assert captured["gui_config"] is resolved_ui_config

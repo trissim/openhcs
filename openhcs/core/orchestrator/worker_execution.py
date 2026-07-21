@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextlib
-import gc
 import logging
 import multiprocessing
 from abc import ABC, abstractmethod
@@ -17,8 +16,10 @@ from openhcs.core.compiled_execution import (
     CompiledRuntimeEnvironmentPlan,
 )
 from openhcs.core.config import MultiprocessingStartMethod
+from openhcs.core.callable_contract import FunctionStepExecutionScope
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
+from openhcs.core.native_threading import configure_native_thread_count
 from openhcs.core.orchestrator.execution_result import (
     ExecutionResult,
     RuntimeContextObservation,
@@ -40,11 +41,26 @@ from openhcs.core.progress import ProgressExecutionContext, ProgressQueue
 from openhcs.core.progress.live_measurements import (
     live_measurement_context_for_records,
 )
+from openhcs.core.progress.runtime_artifacts import (
+    runtime_artifact_context_for_records,
+)
 from openhcs.core.steps.abstract import AbstractStep
 
 
 logger = logging.getLogger(__name__)
 PIPELINE_PROGRESS_STEP_NAME = "pipeline"
+
+
+def _runtime_observation_progress_context(records) -> dict | None:
+    """Project one RuntimeValueStore observation delta through owned payloads."""
+
+    runtime_artifacts = runtime_artifact_context_for_records(records)
+    live_measurements = live_measurement_context_for_records(records)
+    if runtime_artifacts is None:
+        return live_measurements
+    if live_measurements is None:
+        return runtime_artifacts
+    return {**runtime_artifacts, **live_measurements}
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,7 +277,7 @@ class WorkerExecutorFactory:
             runtime_environment.multiprocessing_start_method.value
         )
         if actual_max_workers == 1:
-            _configure_worker_native_threads()
+            configure_native_thread_count(1)
             return InlineWorkerExecutorResources(
                 multiprocessing_context=multiprocessing_context,
                 use_multiprocessing=not runtime_environment.use_threading,
@@ -365,7 +381,7 @@ def _configure_worker_with_gpu(
     logging.getLogger().setLevel(worker_log_level)
     logging.getLogger("openhcs").setLevel(worker_log_level)
 
-    _configure_worker_native_threads()
+    configure_native_thread_count(1)
 
     if os.environ.get("OPENHCS_CPU_ONLY", "").lower() != "true":
         gpu_registry_plan.setup_global_registry()
@@ -374,28 +390,6 @@ def _configure_worker_with_gpu(
         from openhcs.core.progress import set_progress_queue
 
         set_progress_queue(progress_queue)
-
-
-def _configure_worker_native_threads() -> None:
-    """Clamp native library thread pools inside one OpenHCS worker lane."""
-
-    import os
-
-    for variable in (
-        "OMP_NUM_THREADS",
-        "OPENBLAS_NUM_THREADS",
-        "MKL_NUM_THREADS",
-        "NUMEXPR_NUM_THREADS",
-        "VECLIB_MAXIMUM_THREADS",
-        "BLIS_NUM_THREADS",
-        "OPENCV_FOR_THREADS_NUM",
-        "NUMBA_NUM_THREADS",
-    ):
-        os.environ.setdefault(variable, "1")
-
-    import cv2
-
-    cv2.setNumThreads(1)
 
 
 def _execute_fork_inherited_worker_lane_process(
@@ -711,6 +705,7 @@ def _execute_axis_with_sequential_combinations(
     _, first_context = axis_contexts[0]
     axis_id = first_context.axis_id
     total_steps = len(pipeline_definition)
+    completed_axis_steps = _completed_axis_step_count(first_context, total_steps)
 
     emit(
         execution_id=lane_context.execution_id,
@@ -781,9 +776,9 @@ def _execute_axis_with_sequential_combinations(
         step_name=PIPELINE_PROGRESS_STEP_NAME,
         phase=ProgressPhase.AXIS_COMPLETED,
         status=ProgressStatus.SUCCESS,
-        completed=total_steps,
+        completed=completed_axis_steps,
         total=total_steps,
-        percent=100.0,
+        percent=(completed_axis_steps / total_steps) * 100.0,
         worker_slot=lane_context.worker_slot,
         owned_wells=list(lane_context.owned_wells),
     )
@@ -792,6 +787,22 @@ def _execute_axis_with_sequential_combinations(
         runtime_observation=RuntimeExecutionObservation(
             contexts=tuple(runtime_observations),
         ),
+    )
+
+
+def _completed_axis_step_count(
+    context: ProcessingContext,
+    total_steps: int,
+) -> int:
+    """Return the pipeline position where terminal plate processing begins."""
+
+    return min(
+        (
+            step_index
+            for step_index, step_plan in context.step_plans.items()
+            if step_plan.execution_scope is FunctionStepExecutionScope.PLATE
+        ),
+        default=total_steps,
     )
 
 
@@ -826,6 +837,13 @@ def _execute_single_axis_static(
 
     for step_index, step in enumerate(pipeline_definition):
         step_plan = frozen_context.step_plans[step_index]
+        compiled_pattern = step_plan.compiled_function_pattern
+        if (
+            compiled_pattern is not None
+            and compiled_pattern.execution_scope
+            is FunctionStepExecutionScope.PLATE
+        ):
+            continue
         step_name = step_plan.step_name
         if not lane_context.debug_execution_policy.should_execute_step(step_index):
             if lane_context.debug_execution_policy.should_reuse_step_outputs(step_index):
@@ -837,7 +855,7 @@ def _execute_single_axis_static(
                     context=frozen_context,
                     artifact_outputs=step_plan.artifact_outputs,
                 )
-                live_measurement_context = live_measurement_context_for_records(
+                runtime_progress_context = _runtime_observation_progress_context(
                     runtime_value_store.observed_values_after(observation_cursor)
                 )
                 emit(
@@ -853,7 +871,7 @@ def _execute_single_axis_static(
                     worker_slot=lane_context.worker_slot,
                     owned_wells=list(lane_context.owned_wells),
                     message="Reused warm debug artifacts",
-                    context=live_measurement_context,
+                    context=runtime_progress_context,
                 )
             continue
 
@@ -873,7 +891,7 @@ def _execute_single_axis_static(
 
         observation_cursor = runtime_value_store.observation_cursor()
         step.process(frozen_context, step_index)
-        live_measurement_context = live_measurement_context_for_records(
+        runtime_progress_context = _runtime_observation_progress_context(
             runtime_value_store.observed_values_after(observation_cursor)
         )
 
@@ -889,7 +907,7 @@ def _execute_single_axis_static(
             percent=((step_index + 1) / total_steps) * 100.0,
             worker_slot=lane_context.worker_slot,
             owned_wells=list(lane_context.owned_wells),
-            context=live_measurement_context,
+            context=runtime_progress_context,
         )
         if lane_context.debug_execution_policy.step_stop_strategy().should_stop_after_step(
             step_index=step_index,
@@ -909,16 +927,13 @@ def execute_worker_lane(
     """Execute a deterministic worker lane: wells sequentially within one slot."""
 
     lane_results: Dict[str, ExecutionResult] = {}
-    try:
-        for axis_id, axis_contexts in lane_axis_contexts:
-            lane_results[axis_id] = _execute_axis_with_sequential_combinations(
-                pipeline_definition=pipeline_definition,
-                axis_contexts=axis_contexts,
-                lane_context=lane_context,
-                runtime_observation_mode=runtime_observation_mode,
-            )
-    finally:
-        gc.collect()
+    for axis_id, axis_contexts in lane_axis_contexts:
+        lane_results[axis_id] = _execute_axis_with_sequential_combinations(
+            pipeline_definition=pipeline_definition,
+            axis_contexts=axis_contexts,
+            lane_context=lane_context,
+            runtime_observation_mode=runtime_observation_mode,
+        )
     return lane_results
 
 

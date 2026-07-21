@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Run CellProfiler reference versus converted OpenHCS parity for one .cppipe."""
+"""Run converted OpenHCS against a CellProfiler reference for one .cppipe."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from benchmark.runner import run_cellprofiler_cppipe_parity
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Run or reuse native CellProfiler output, then run or reuse the "
-            "same local .cppipe via OpenHCS and require semantic output parity."
+            "Run or reuse native CellProfiler output, then execute the same "
+            "local .cppipe via OpenHCS and require semantic output parity."
         )
     )
     parser.add_argument("--dataset-path", type=Path, required=True)
@@ -32,11 +32,6 @@ def main() -> int:
             "Reuse an existing native CellProfiler output directory instead of "
             "running CellProfiler."
         ),
-    )
-    parser.add_argument(
-        "--force-openhcs-run",
-        action="store_true",
-        help="Ignore any valid cached OpenHCS output and execute OpenHCS again.",
     )
     parser.add_argument(
         "--value-only",
@@ -108,7 +103,6 @@ def main() -> int:
         pipeline_params=pipeline_params,
         output_root=args.output_root,
         equivalence_reference_output_dir=args.equivalence_reference_output_dir,
-        reuse_openhcs_cache=not args.force_openhcs_run,
     )
 
     print(f"equivalent={result.is_equivalent}")
@@ -117,10 +111,6 @@ def main() -> int:
     print(
         "native_cached="
         f"{bool((result.native_cellprofiler.provenance or {}).get('reused_reference_output'))}"
-    )
-    print(
-        "openhcs_cached="
-        f"{bool((result.openhcs_converted.provenance or {}).get('reused_cached_output'))}"
     )
     return 0 if result.is_equivalent else 1
 

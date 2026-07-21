@@ -19,10 +19,78 @@ from openhcs.processing.backends.analysis.region_properties import (
     label_region_properties_backend,
 )
 
+# Import DXF mask pipeline
+try:
+    from openhcs.processing.backends.analysis.dxf_mask_pipeline import \
+        dxf_mask_pipeline
+except ImportError:
+    pass
+
+# Import focus analyzer
+try:
+    from openhcs.processing.backends.analysis.focus_analyzer import \
+        FocusAnalyzer
+except ImportError:
+    pass
+
+# Import simple cell counting
+try:
+    from openhcs.processing.backends.analysis.count_cells_simple import \
+        count_cells_simple, count_cells_simple_dual_channel, \
+        ThresholdMethod, Foreground, SimpleCellSegmentationConfig, \
+        MetaXpressWavelengthSettings, MetaXpressW2Settings, StainedArea
+except ImportError:
+    pass
+
+# Import skeleton analysis
+try:
+    from openhcs.processing.backends.analysis.skeletonize_and_save import \
+        SkeletonizationResult, skeletonize_and_save
+except ImportError:
+    pass
+
+# Import MetaXpress-style neurite outgrowth analysis
+try:
+    from openhcs.processing.backends.analysis.neurite_outgrowth import (
+        MetaXpressCellBodySettings,
+        MetaXpressNuclearSettings,
+        MetaXpressOutgrowthSettings,
+        NeuriteIllumination,
+        NeuriteOutgrowthCellResult,
+        NeuriteOutgrowthSummary,
+        neurite_outgrowth_metaxpress,
+    )
+except ImportError:
+    pass
+
 __all__ = [
     "AnalysisBackendProvider",
     "DenseLabelRegionProperties",
     "LabelRegionPropertiesBackendStrategy",
     "NumbaNumpyLabelRegionPropertiesBackendStrategy",
     "label_region_properties_backend",
+    # DXF mask pipeline
+    "dxf_mask_pipeline",
+    # Focus analyzer
+    "FocusAnalyzer",
+    # Simple cell counting
+    "count_cells_simple",
+    "count_cells_simple_dual_channel",
+    "ThresholdMethod",
+    "Foreground",
+    "SimpleCellSegmentationConfig",
+    "MetaXpressWavelengthSettings",
+    "MetaXpressW2Settings",
+    "StainedArea",
+    # Skeleton analysis
+    "SkeletonizationResult",
+    "skeletonize_and_save",
+    # MetaXpress-style neurite outgrowth
+    "neurite_outgrowth_metaxpress",
+    "NeuriteIllumination",
+    "MetaXpressCellBodySettings",
+    "MetaXpressOutgrowthSettings",
+    "MetaXpressNuclearSettings",
+    "NeuriteOutgrowthSummary",
+    "NeuriteOutgrowthCellResult",
 ]

@@ -104,33 +104,47 @@ def my_custom_function(image, scale: float = 1.0, offset: float = 0.0):
 # =============================================================================
 # ANALYSIS OUTPUTS - To produce structured data (CSVs, measurements, etc.):
 #
-# 1. Import the decorators and materializers:
+# 1. Import the typed artifact declaration and row container:
 #
+#    from dataclasses import dataclass
+#    from openhcs.core.artifacts import (
+#        ArtifactMeasurementSubjectRelation,
+#        ArtifactSpec,
+#        MeasurementsArtifactType,
+#    )
+#    from openhcs.core.measurement_row_materialization import DataclassMeasurementColumnarRows
 #    from openhcs.core.pipeline.function_contracts import artifact_outputs
-#    from openhcs.processing.materialization import MaterializationSpec, CsvOptions, JsonOptions
+#    from openhcs.processing.materialization import csv_only
 #
-# 2. Declare outputs with @artifact_outputs:
+# 2. Declare the semantic output and derive its columns from the row dataclass:
+#
+#    @dataclass(frozen=True)
+#    class IntensityMeasurement:
+#        slice_index: int
+#        mean: float
+#        std: float
 #
 #    @numpy
-#    @artifact_outputs(("measurements", MaterializationSpec(CsvOptions(
-#        fields=["slice_index", "mean", "std"],
-#        analysis_type="intensity_stats"
-#    ))))
+#    @artifact_outputs(
+#        ArtifactSpec(
+#            "measurements",
+#            MeasurementsArtifactType,
+#            materialization=csv_only(),
+#            relations=(ArtifactMeasurementSubjectRelation(),),
+#        )
+#    )
 #    def analyze_intensity(image, threshold: float = 0.5):
 #        results = []
 #        for i, slice_data in enumerate(image):
-#            results.append({
-#                "slice_index": i,
-#                "mean": float(np.mean(slice_data)),
-#                "std": float(np.std(slice_data))
-#            })
-#        return image, results  # Tuple: (processed_image, analysis_data)
-#
-# 3. Available materializers:
-#
-#    MaterializationSpec(CsvOptions(...))  - CSV file
-#    MaterializationSpec(JsonOptions(...))  - JSON file
-#    MaterializationSpec(JsonOptions(...), CsvOptions(...), primary=0) - Both JSON + CSV
+#            results.append(IntensityMeasurement(
+#                slice_index=i,
+#                mean=float(np.mean(slice_data)),
+#                std=float(np.std(slice_data)),
+#            ))
+#        return image, DataclassMeasurementColumnarRows(
+#            results,
+#            row_type=IntensityMeasurement,
+#        )
 #
 # =============================================================================
 """

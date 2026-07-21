@@ -8,8 +8,8 @@ from typing import Any, Callable
 from PyQt6.QtCore import Qt
 
 from openhcs.config_framework.context_manager import config_context
-from openhcs.pyqt_gui.widgets.artifact_contract_preview import (
-    ArtifactContractPreviewWidget,
+from openhcs.pyqt_gui.widgets.artifact_plan_view import (
+    ArtifactPlanViewWidget,
 )
 from openhcs.pyqt_gui.widgets.step_parameter_editor import StepParameterEditorWidget
 from openhcs.pyqt_gui.windows.dual_editor_session import (
@@ -30,7 +30,7 @@ class _DualEditorTabBuildContext:
     scope_id: str
     step_index: int | None
     scope_accent_color: Any
-    source_schema: Any
+    source_bindings: Any
     source_binding_context: Any
     invocation_badge_provider: Callable[[str, int, Callable], str | None] | None
     main_window: Any
@@ -39,7 +39,8 @@ class _DualEditorTabBuildContext:
     update_window_title: Callable[[], None]
     detect_changes: Callable[[], None]
     sync_function_editor_from_step: Callable[[], None]
-    refresh_artifact_contract_preview: Callable[[Any], None]
+    invalidate_artifact_plan: Callable[[], None]
+    compiled_artifact_inspection: Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +49,7 @@ class _DualEditorTabs:
 
     step_editor: Any
     func_editor: Any
-    artifact_contract_preview: Any
+    artifact_plan_view: ArtifactPlanViewWidget
     function_pattern_controller: DualEditorFunctionPatternController
 
 
@@ -81,21 +82,21 @@ class _DualEditorTabBuilder:
             )
         )
 
-        artifact_contract_preview = ArtifactContractPreviewWidget(
-            self.context.session.current_function_spec(),
-            source_bindings=self.context.session.current_source_bindings(),
+        artifact_plan_view = ArtifactPlanViewWidget(
+            inspection=self.context.compiled_artifact_inspection,
+            step_index=self.context.step_index,
         )
         tab_body.add_tab(
             ActionTabSpec(
                 label="Artifacts",
-                content=artifact_contract_preview,
+                content=artifact_plan_view,
             )
         )
 
         return _DualEditorTabs(
             step_editor=step_editor,
             func_editor=func_editor,
-            artifact_contract_preview=artifact_contract_preview,
+            artifact_plan_view=artifact_plan_view,
             function_pattern_controller=function_pattern_controller,
         )
 
@@ -112,9 +113,8 @@ class _DualEditorTabBuilder:
                     scope_accent_color=self.context.scope_accent_color,
                     render_header=False,
                     button_style="compact",
-                    source_schema=self.context.source_schema,
+                    source_bindings=self.context.source_bindings,
                     source_binding_context=self.context.source_binding_context,
-                    source_root=self.context.orchestrator.input_dir,
                 )
 
     def _wire_step_editor(self, step_editor: StepParameterEditorWidget) -> None:
@@ -160,9 +160,7 @@ class _DualEditorTabBuilder:
         controller = DualEditorFunctionPatternController(
             session=self.context.session,
             detect_changes=self.context.detect_changes,
-            refresh_artifact_contract_preview=(
-                self.context.refresh_artifact_contract_preview
-            ),
+            invalidate_artifact_plan=self.context.invalidate_artifact_plan,
         )
         func_editor.function_pattern_changed.connect(
             controller.handle_change,

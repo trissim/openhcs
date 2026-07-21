@@ -36,6 +36,8 @@ from skimage import draw, filters
 
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
 from openhcs.microscopes.opera_phenix import OperaPhenixFilenameParser
+from polystore.constants import Backend
+from polystore.virtual_workspace import SourcePixelRef
 
 
 class SyntheticMicroscopyGenerator:
@@ -1024,6 +1026,7 @@ class SyntheticMicroscopyGenerator:
 
         # Collect all image files
         image_files = []
+        workspace_mapping: Dict[str, SourcePixelRef] = {}
         if self.format == 'ImageXpress':
             # ImageXpress stores images in TimePoint_1/ZStep_X/ or TimePoint_1/ for flat plates
             timepoint_dir = self.output_dir / "TimePoint_1"
@@ -1033,9 +1036,14 @@ class SyntheticMicroscopyGenerator:
                     zstep_dir = timepoint_dir / f"ZStep_{z}"
                     if zstep_dir.exists():
                         for img_file in sorted(zstep_dir.glob("*.tif")):
-                            # Store relative path from plate root
-                            rel_path = f"{sub_dir}/{img_file.name}"
-                            image_files.append(rel_path)
+                            virtual_path = f"{sub_dir}/{img_file.name}"
+                            image_files.append(virtual_path)
+                            workspace_mapping[virtual_path] = SourcePixelRef(
+                                backend=Backend.DISK.value,
+                                backend_address=img_file.relative_to(
+                                    self.output_dir
+                                ).as_posix(),
+                            )
             else:
                 # Flat: images directly in TimePoint_1
                 if timepoint_dir.exists():
@@ -1082,7 +1090,20 @@ class SyntheticMicroscopyGenerator:
                     "sites": sites,
                     "z_indexes": z_indexes,
                     "timepoints": timepoints,
-                    "available_backends": {"disk": True},
+                    "available_backends": {
+                        "disk": True,
+                        **({"virtual_workspace": True} if workspace_mapping else {}),
+                    },
+                    **(
+                        {
+                            "workspace_mapping": {
+                                virtual_path: source_ref.to_workspace_mapping()
+                                for virtual_path, source_ref in workspace_mapping.items()
+                            }
+                        }
+                        if workspace_mapping
+                        else {}
+                    ),
                     "main": True
                 }
             }

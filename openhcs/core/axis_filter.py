@@ -66,3 +66,17 @@ class StepAxisFilterSet:
 
 
 StepAxisFilterMap: TypeAlias = dict[int, StepAxisFilterSet]
+
+
+def step_axis_allows_config(
+    step_axis_filters: StepAxisFilterMap,
+    *,
+    step_index: int,
+    config: "WellFilterConfig",
+    axis_id: str | None,
+) -> bool:
+    """Return whether one resolved step config applies to the runtime axis."""
+    return step_axis_filters.get(step_index, StepAxisFilterSet.empty()).allows(
+        config,
+        axis_id,
+    )

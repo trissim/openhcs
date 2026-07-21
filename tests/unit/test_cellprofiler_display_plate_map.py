@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from openhcs.interop.cellprofiler.display_plate_map import (
+from openhcs.processing.backends.cellprofiler.display_modules import (
     AggregationMethod,
     PlateDimensionStrategy,
     PlateType,

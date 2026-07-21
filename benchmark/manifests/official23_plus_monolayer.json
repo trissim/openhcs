@@ -185,10 +185,7 @@
       "value_only": true,
       "assay_category": "3D monolayer morphology",
       "module_category": "3D segmentation + measurement",
-      "cellprofiler_timeout_seconds": 900.0,
-      "source_schema_image_set_selection": {
-        "max_image_set_count": 2
-      }
+      "cellprofiler_timeout_seconds": 900.0
     }
   ]
 }

@@ -25,6 +25,7 @@ from pyqt_reactive.forms.object_form_document_renderer import (
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.theming import StyleSheetGenerator
 from pyqt_reactive.widgets.shared import BaseFormDialog
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG, OpenHCSZMQConfig
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,12 @@ class PlateViewerWindow(BaseFormDialog):
     Only ONE PlateViewerWindow per plate can be open at a time.
     """
 
-    def __init__(self, orchestrator, parent=None):
+    def __init__(
+        self,
+        orchestrator,
+        zmq_config: OpenHCSZMQConfig = OPENHCS_ZMQ_CONFIG,
+        parent=None,
+    ):
         """
         Initialize plate viewer window.
 
@@ -51,6 +57,7 @@ class PlateViewerWindow(BaseFormDialog):
         """
         super().__init__(parent)
         self.orchestrator = orchestrator
+        self.zmq_config = zmq_config
 
         # scope_id for singleton behavior - one viewer per plate
         # Use ::plate_viewer suffix to avoid conflicts with ConfigWindow (which uses just plate_path)
@@ -234,7 +241,10 @@ class PlateViewerWindow(BaseFormDialog):
 
         # Create image browser widget
         browser = ImageBrowserWidget(
-            orchestrator=self.orchestrator, color_scheme=self.color_scheme, parent=self
+            orchestrator=self.orchestrator,
+            color_scheme=self.color_scheme,
+            zmq_config=self.zmq_config,
+            parent=self,
         )
 
         # Store reference
