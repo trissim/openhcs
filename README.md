@@ -123,7 +123,7 @@ Callable and module artifact contracts declare semantic outputs independently of
 <td width="50%" valign="top">
 
 ### 🔬 Process-Isolated Napari & Fiji
-Stream images to **Napari** and **Fiji/ImageJ** in real-time during pipeline execution. Viewers run in separate processes via ZeroMQ — no Qt threading conflicts. Persistent viewers survive pipeline completion. PolyStore treats viewers as streaming backends.
+Stream images to **Napari** and **Fiji/ImageJ** in real time during pipeline execution. OpenHCS `StreamingConfig` declarations and viewer adapters own identity, display, and persistence policy. PolyStore builds generic storage and streaming payloads; ZMQRuntime supplies process-isolated transport, readiness, acknowledgments, and lifecycle.
 
 </td>
 <td width="50%" valign="top">
@@ -174,8 +174,8 @@ graph TD
 |:--------|:----------------|:-------------|
 | [**ObjectState**](https://github.com/OpenHCSDev/ObjectState) | Configuration framework | Lazy dataclasses with dual-axis inheritance (context hierarchy × class MRO) and `contextvars`-based resolution |
 | [**ArrayBridge**](https://github.com/OpenHCSDev/ArrayBridge) | Memory type conversion | Unified API across NumPy, CuPy, PyTorch, JAX, TensorFlow, pyclesperanto with DLPack zero-copy transfers |
-| [**PolyStore**](https://github.com/OpenHCSDev/PolyStore) | Unified I/O & streaming | Pluggable backends for storage (disk, memory, ZARR) *and* streaming (Napari, Fiji) — viewers are just backends. Virtual workspace, atomic writes, format detection, ROI extraction |
-| [**ZMQRuntime**](https://github.com/OpenHCSDev/ZMQRuntime) | Distributed execution | ZMQ client-server for remote pipeline execution, progress streaming, and OMERO server-side processing |
+| [**PolyStore**](https://github.com/OpenHCSDev/PolyStore) | Unified I/O & stream payloads | Generic storage and streaming payload primitives, backend lifecycle, virtual workspaces, atomic writes, format detection, and ROI extraction |
+| [**ZMQRuntime**](https://github.com/OpenHCSDev/ZMQRuntime) | Process & transport runtime | Generic request, status, progress, cancellation, process-lifecycle, and viewer-control transport protocols |
 | [**PyQT-reactive**](https://github.com/OpenHCSDev/PyQT-reactive) | UI form generation | React-style reactive forms from dataclasses with cross-window sync and flash animations |
 | [**pycodify**](https://github.com/OpenHCSDev/pycodify) | Code ↔ object conversion | Python source as serialization format — type-preserving, diffable, editable, with collision handling |
 | [**python-introspect**](https://github.com/OpenHCSDev/python-introspect) | Signature analysis | Pure-Python function/dataclass introspection for automatic UI generation and contract analysis |
@@ -330,7 +330,6 @@ Supported on Python 3.11 and 3.12. See [Glencoe Software](https://www.glencoesof
 | | |
 |:---|:---|
 | 📘 **[Read the Docs](https://openhcs.readthedocs.io/)** | Full API docs, tutorials, guides |
-| 📊 **[Coverage Reports](https://trissim.github.io/openhcs/coverage/)** | Test coverage analysis |
 | 🏗️ **[Architecture](https://openhcs.readthedocs.io/en/latest/architecture/)** | Typed compiler · sources · artifacts · runtime values · package boundaries |
 | 🎓 **[Getting Started](https://openhcs.readthedocs.io/en/latest/getting_started/)** | Installation · First pipeline |
 
@@ -386,9 +385,9 @@ A class-level registry tracks all active form managers. When a value changes in 
 </details>
 
 <details>
-<summary><b>More patterns</b> — PolyStore streaming, function discovery, memory types</summary>
+<summary><b>More patterns</b> — storage, viewer integration, function discovery, memory types</summary>
 
-- **PolyStore Unified I/O**: Storage backends (disk, memory, ZARR) and streaming backends (Napari, Fiji) behind one API — viewers are just backends. Virtual workspace path translation, atomic writes, ROI extraction.
+- **Storage and viewer streaming**: PolyStore owns generic storage and streaming payload primitives; ZMQRuntime owns process, transport, readiness, acknowledgment, and lifecycle protocols; OpenHCS `StreamingConfig` declarations plus the Napari/Fiji adapters own viewer identity, display, and application policy.
 - **Automatic Function Discovery**: registry-discovered functions with contract analysis and type-safe integration via `python-introspect` + `metaclass-registry`
 - **Memory Type Management**: Compile-time validation of array type compatibility with zero-copy conversion via `ArrayBridge`
 - **Custom Function Registration**: Any Python function decorated with `@numpy`, `@cupy`, `@pyclesperanto`, etc. is auto-integrated with contracts, UI forms, and the function registry

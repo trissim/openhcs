@@ -4,13 +4,19 @@ from pathlib import Path
 
 import pytest
 
-from scripts.build_website import build_site, validate_site
-
+from scripts.build_website import (
+    RELEASE_VERSION_TOKEN,
+    build_site,
+    read_package_version,
+    validate_site,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_build_site_stages_authoritative_screenshot_and_valid_references(tmp_path: Path):
+def test_build_site_stages_authoritative_screenshot_and_valid_references(
+    tmp_path: Path,
+):
     site_dir = tmp_path / "site"
 
     local_targets = build_site(REPO_ROOT, site_dir)
@@ -50,22 +56,29 @@ def test_build_site_stages_authoritative_screenshot_and_valid_references(tmp_pat
     assert validate_site(site_dir) == local_targets
 
 
-def test_shipping_copy_uses_external_docs_and_keeps_release_status_explicit(tmp_path: Path):
+def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
+    tmp_path: Path,
+):
     site_dir = tmp_path / "site"
     build_site(REPO_ROOT, site_dir)
 
     html = (site_dir / "index.html").read_text(encoding="utf-8")
 
-    assert "OpenHCS 0.5.21 on PyPI" in html
-    assert "0.5.22 development surface" in html
-    assert "not included in the stable 0.5.21 wheel" in html
-    assert "The 0.5.22 development line adds supported CellProfiler" in html
+    package_version = read_package_version(REPO_ROOT)
+    assert RELEASE_VERSION_TOKEN not in html
+    assert f"OpenHCS {package_version} on PyPI" in html
+    assert f"Local MCP in OpenHCS {package_version}" in html
+    assert f"OpenHCS {package_version} MCP extra" in html
+    assert 'python -m pip install "openhcs[gui,mcp]"' in html
+    assert "This release adds supported CellProfiler" in html
+    assert "Production MCPB signing" in html
+    assert "hosted connector remain separate deployment work" in html
     assert "https://openhcs.readthedocs.io/en/latest/" in html
     assert "https://openhcs.readthedocs.io/en/latest/api/" in html
-    assert ">Follow MCP development</a>" in html
+    assert ">Install local MCP</a>" in html
     assert "https://github.com/OpenHCSDev/OpenHCS/releases" in html
     assert 'src="assets/ui.png"' in html
-    assert "CellProfiler" in html and "0.5.22 dev" in html
+    assert "CellProfiler" in html and package_version in html
     assert "GPU libraries + custom functions" in html
     assert "Compute with" in html
     assert "Your functions" in html
@@ -110,6 +123,24 @@ def test_shipping_copy_uses_external_docs_and_keeps_release_status_explicit(tmp_
     assert 'src="assets/logos/bioformats.svg"' in bioformats_row
     assert "./docs/" not in html
     assert "./coverage/" not in html
+
+
+def test_website_source_and_workflow_follow_package_version_authority():
+    source_html = (REPO_ROOT / "website/index.html").read_text(encoding="utf-8")
+    workflow = (REPO_ROOT / ".github/workflows/website-pages.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert RELEASE_VERSION_TOKEN in source_html
+    assert "0.5.21" not in source_html
+    assert "0.5.22" not in source_html
+    assert workflow.count('      - "openhcs/__init__.py"') == 2
+
+
+def test_readme_does_not_link_unpublished_coverage_site():
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "trissim.github.io/openhcs/coverage" not in readme
 
 
 def test_build_site_refuses_to_replace_source_or_repository_root():

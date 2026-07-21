@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import shutil
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
-
 
 SOURCE_FILES = (
     "index.html",
@@ -44,6 +44,46 @@ REQUIRED_COPY = (
     "openhcs[bioformats]",
 )
 ALLOWED_REMOTE_SCHEMES = {"data", "https", "mailto"}
+RELEASE_VERSION_TOKEN = "{{ OPENHCS_VERSION }}"
+
+
+def read_package_version(repo_root: Path) -> str:
+    """Read the literal package version without importing OpenHCS."""
+
+    init_path = repo_root / "openhcs" / "__init__.py"
+    module = ast.parse(
+        init_path.read_text(encoding="utf-8"),
+        filename=str(init_path),
+    )
+    for statement in module.body:
+        if not isinstance(statement, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "__version__"
+            for target in statement.targets
+        ):
+            continue
+        if isinstance(statement.value, ast.Constant) and isinstance(
+            statement.value.value,
+            str,
+        ):
+            return statement.value.value
+    raise ValueError(f"No literal __version__ assignment found in {init_path}")
+
+
+def project_release_version(index_path: Path, package_version: str) -> None:
+    """Project the package-owned version into the staged landing page."""
+
+    html = index_path.read_text(encoding="utf-8")
+    token_count = html.count(RELEASE_VERSION_TOKEN)
+    if token_count == 0:
+        raise ValueError(
+            f"Landing page contains no {RELEASE_VERSION_TOKEN!r} release token"
+        )
+    index_path.write_text(
+        html.replace(RELEASE_VERSION_TOKEN, package_version),
+        encoding="utf-8",
+    )
 
 
 class _ReferenceCollector(HTMLParser):
@@ -89,6 +129,8 @@ def validate_site(site_dir: Path) -> tuple[str, ...]:
     site_dir = site_dir.resolve()
     index_path = site_dir / "index.html"
     html = index_path.read_text(encoding="utf-8")
+    if RELEASE_VERSION_TOKEN in html:
+        raise ValueError("Landing-page release version was not projected")
     missing_copy = [value for value in REQUIRED_COPY if value not in html]
     if missing_copy:
         raise ValueError(f"Landing page is missing required copy: {missing_copy}")
@@ -136,7 +178,9 @@ def build_site(repo_root: Path, output_dir: Path) -> tuple[str, ...]:
     output_dir = _safe_output(repo_root, output_dir)
     if output_dir.exists():
         if not output_dir.is_dir():
-            raise ValueError(f"Website output exists and is not a directory: {output_dir}")
+            raise ValueError(
+                f"Website output exists and is not a directory: {output_dir}"
+            )
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True)
 
@@ -156,6 +200,10 @@ def build_site(repo_root: Path, output_dir: Path) -> tuple[str, ...]:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
 
+    project_release_version(
+        output_dir / "index.html",
+        read_package_version(repo_root),
+    )
     (output_dir / ".nojekyll").write_text("", encoding="utf-8")
     return validate_site(output_dir)
 
