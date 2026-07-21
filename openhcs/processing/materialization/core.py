@@ -2723,7 +2723,11 @@ def _write_roi_zip(
                 )
             )
 
-    summary = f"Segmentation ROIs: {total_roi_count} cells\nZ-planes: {len(materialization_input.items)}\n"
+    summary = (
+        f"Segmentation ROIs: {total_roi_count} cells\n"
+        "Spatial dimensions: 2D\n"
+        f"Projected source planes: {len(materialization_input.items)}\n"
+    )
     if roi_paths:
         summary += "ROI files:\n"
         for roi_path in roi_paths:

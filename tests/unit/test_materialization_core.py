@@ -1087,6 +1087,13 @@ def test_roi_materialization_extracts_each_plane_from_object_label_stack() -> No
     assert all(roi.metadata["plane_shape"] == (2,) for roi in rois)
     assert all(roi.metadata["spatial_origin_yx"] == (0, 0) for roi in rois)
     assert all(roi.metadata["source_spatial_shape_yx"] == (8, 8) for roi in rois)
+    summary = fm.load(
+        "/tmp/A01_Nuclei_step3_segmentation_summary.txt",
+        "memory",
+    )
+    assert "Spatial dimensions: 2D" in summary
+    assert "Projected source planes: 2" in summary
+    assert "Z-planes" not in summary
 
 
 @pytest.mark.unit
