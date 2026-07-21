@@ -15,6 +15,7 @@ from openhcs.core.function_patterns import (
     RuntimeInvocationDomain,
     compile_function_pattern,
 )
+from openhcs.core.memory.decorators import numpy as numpy_memory
 from openhcs.core.pipeline.function_contracts import (
     artifact_inputs,
     artifact_outputs,
@@ -106,6 +107,27 @@ from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
 @composed_image_payload
 def _compose_image_domain(image: object) -> object:
+    return image
+
+
+_MAIN_FLOW_MASK_OUTPUT = ArtifactSpec.output("Mask", ImageArtifactType)
+_MAIN_FLOW_MASK_INPUT = ArtifactSpec.input(
+    "Mask",
+    ImageArtifactType,
+    parameter_name="mask",
+)
+
+
+@artifact_outputs(_MAIN_FLOW_MASK_OUTPUT)
+@numpy_memory
+def _produce_mask_for_main_flow_regression(image):
+    return image
+
+
+@artifact_inputs(_MAIN_FLOW_MASK_INPUT)
+@numpy_memory
+def _consume_source_with_prior_mask(image, mask):
+    del mask
     return image
 
 
@@ -2316,43 +2338,41 @@ def test_main_flow_source_scope_intersects_cross_component_invocation_inputs() -
     ) == ("GFP", "mCherry")
 
 
-def test_auxiliary_cross_group_source_does_not_anchor_main_flow() -> None:
+def test_special_input_preserves_ordered_declared_main_flow_sources() -> None:
     from openhcs.core.steps.function_runtime import PatternGroupExecutionScope
 
     source_binding_plan = CompiledSourceBindingPlan(
-        bindings=(
+        bindings=tuple(
             NamedSourceBinding(
-                alias="ColorFluor",
-                component_identity=(ComponentSelector(AllComponents.CHANNEL, "1"),),
-            ),
+                alias=alias,
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, channel),
+                ),
+            )
+            for alias, channel in (("SMI312", "4"), ("Hoechst", "1"))
         )
     )
-    auxiliary_source = source_binding_plan.binding_declarations[0].input_spec()
-    producer_image = ArtifactSpec.input("TumorOutline", ImageArtifactType)
 
-    @artifact_inputs(auxiliary_source, producer_image)
-    def save_cross_group_image(image):
+    @artifact_inputs("pixel_size")
+    def measure_neurites(image, pixel_size=1.0):
+        del pixel_size
         return image
 
-    compiled_pattern = compile_function_pattern(save_cross_group_image, {}, {})
+    compiled_pattern = compile_function_pattern(measure_neurites, {}, {})
     invocation = compiled_pattern.default_group.invocations[0]
+    pixel_size_spec = invocation.contract.artifact_inputs[0]
     invocation = invocation.with_artifact_input_edges(
-        tuple(
+        (
             InvocationArtifactInputEdgePlan(
-                key=edge_key,
-                spec=spec,
+                key=InvocationArtifactInputProjectionKey.for_input_count(
+                    invocation.key,
+                    1,
+                )[0],
+                spec=pixel_size_spec,
                 storage_plan=None,
                 projection=None,
                 consumes_main_flow=False,
-            )
-            for edge_key, spec in zip(
-                InvocationArtifactInputProjectionKey.for_input_count(
-                    invocation.key,
-                    2,
-                ),
-                (auxiliary_source, producer_image),
-                strict=True,
-            )
+            ),
         )
     )
     compiled_pattern = replace(
@@ -2367,19 +2387,130 @@ def test_auxiliary_cross_group_source_does_not_anchor_main_flow() -> None:
     scope = PatternGroupExecutionScope(
         context=SimpleNamespace(),
         execution_plan=SimpleNamespace(
-            axis_id="A01",
-            execution_group_scope=ComponentGroupScope.dynamic(AllComponents.CHANNEL),
+            axis_id="R04C09",
+            execution_group_scope=ComponentGroupScope.dynamic(AllComponents.SITE),
             source_binding_plan=source_binding_plan,
             compiled_function_pattern=compiled_pattern,
         ),
         compiled_group=compiled_pattern.default_group,
-        component_value="2",
+        component_value="11",
     )
 
-    assert not scope.main_flow_source_binding_plan.binding_declarations
     assert tuple(
-        binding.alias for binding in scope.source_binding_plan.binding_declarations
-    ) == ("ColorFluor",)
+        binding.alias
+        for binding in scope.main_flow_source_binding_plan.binding_declarations
+    ) == ("SMI312", "Hoechst")
+
+
+def test_pipeline_start_main_flow_survives_prior_producer_image_input(
+    tmp_path: Path,
+) -> None:
+    from multiprocessing import SimpleQueue
+
+    from objectstate import ObjectStateRegistry
+    import tifffile
+
+    from openhcs.config_framework.lazy_factory import ensure_global_config_context
+    from openhcs.constants import Microscope
+    from openhcs.constants.input_source import InputSource
+    from openhcs.core.config import (
+        GlobalPipelineConfig,
+        LazyProcessingConfig,
+        PipelineConfig,
+    )
+    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+    from openhcs.core.progress import set_progress_queue
+    from openhcs.core.source_bindings import (
+        LazySourceBindingsConfig,
+        LazyStepSourceBindingsConfig,
+    )
+    from openhcs.core.steps.function_runtime import PatternGroupExecutionScope
+    from openhcs.core.steps.function_step import FunctionStep
+
+    image_dir = tmp_path / "TimePoint_1"
+    image_dir.mkdir()
+    (tmp_path / "plate.HTD").write_text(
+        "\n".join(('"XSites", 1', '"YSites", 1', '"PixelSizeUM", 1.0')),
+        encoding="utf-8",
+    )
+    tifffile.imwrite(
+        image_dir / "A01_s001_w1_z001_t001.tif",
+        np.ones((8, 8), dtype=np.uint16),
+    )
+    primary_source = NamedSourceBinding(
+        alias="Primary",
+        component_identity=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+    )
+    pipeline_start = LazyProcessingConfig(
+        variable_components=[VariableComponents.SITE],
+        group_by=GroupBy.CHANNEL,
+        input_source=InputSource.PIPELINE_START,
+    )
+    steps = [
+        FunctionStep(
+            func=_produce_mask_for_main_flow_regression,
+            name="produce_mask",
+            processing_config=pipeline_start,
+        ),
+        FunctionStep(
+            func=_consume_source_with_prior_mask,
+            name="consume_source_with_prior_mask",
+            processing_config=pipeline_start,
+            source_bindings=LazyStepSourceBindingsConfig(enabled=True),
+        ),
+    ]
+    pipeline_config = PipelineConfig(
+        source_bindings_config=LazySourceBindingsConfig(
+            bindings=(primary_source,),
+        )
+    )
+    global_config = GlobalPipelineConfig(
+        microscope=Microscope.IMAGEXPRESS,
+        num_workers=1,
+    )
+
+    ObjectStateRegistry.clear()
+    set_progress_queue(SimpleQueue())
+    try:
+        ensure_global_config_context(GlobalPipelineConfig, global_config)
+        compilation = PipelineOrchestrator(
+            tmp_path,
+            pipeline_config=pipeline_config,
+        ).initialize().compile_pipelines(
+            pipeline_definition=steps,
+            well_filter=["A01"],
+            is_zmq_execution=True,
+        )
+    finally:
+        set_progress_queue(None)
+
+    context = compilation["execution_bundle"].runtime_contexts["A01"]
+    consumer_plan = context.step_plans[1]
+    compiled_pattern = consumer_plan.compiled_function_pattern
+    assert compiled_pattern is not None
+    invocation = next(compiled_pattern.iter_invocations())
+    (mask_edge,) = invocation.artifact_input_edges
+    scope = PatternGroupExecutionScope(
+        context=context,
+        execution_plan=consumer_plan,
+        compiled_group=compiled_pattern.default_group,
+        component_value="1",
+    )
+
+    assert consumer_plan.main_input_dependency == StepInputDependency.pipeline_start()
+    assert tuple(
+        binding.alias
+        for binding in consumer_plan.source_binding_plan.binding_declarations
+    ) == ("Primary",)
+    assert mask_edge.spec == _MAIN_FLOW_MASK_INPUT
+    assert mask_edge.storage_plan is not None
+    assert mask_edge.consumes_main_flow is False
+    assert invocation.contract.accepts_implicit_main_flow_input is True
+    assert compiled_pattern.default_group.main_flow_input_refs is None
+    assert tuple(
+        binding.alias
+        for binding in scope.main_flow_source_binding_plan.binding_declarations
+    ) == ("Primary",)
 
 
 def test_runtime_plane_count_comes_from_loaded_slices_not_dispatch_groups() -> None:

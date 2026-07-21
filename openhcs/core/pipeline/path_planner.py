@@ -604,22 +604,39 @@ class PathPlannerArtifactStage:
         snapshot: StepSnapshot,
         contracts: Iterable[CallableContract],
     ) -> StepSourceBindingsConfig:
-        """Project bindings to every exact public source input in the contracts."""
+        """Project bindings to implicit main flow and exact public source inputs."""
 
+        contracts = tuple(contracts)
         source_bindings = self.planner.source_bindings_for_snapshot(snapshot)
         available_artifacts = self.planner.artifact_context.available_artifacts
+        implicit_main_flow_specs = (
+            tuple(
+                binding.input_spec()
+                for binding in source_bindings.primary_plane_bindings
+            )
+            if any(
+                contract.accepts_implicit_main_flow_input for contract in contracts
+            )
+            else ()
+        )
         source_specs = tuple(
             dict.fromkeys(
-                spec
-                for contract in contracts
-                for spec in contract.artifact_inputs
-                if (
-                    source_bindings.binding_for_artifact_ref(spec.ref()) is not None
-                    or available_artifacts.by_name_and_artifact_type(
-                        spec.name,
-                        spec.artifact_type,
-                    )
-                    is not None
+                (
+                    *implicit_main_flow_specs,
+                    *(
+                        spec
+                        for contract in contracts
+                        for spec in contract.artifact_inputs
+                        if (
+                            source_bindings.binding_for_artifact_ref(spec.ref())
+                            is not None
+                            or available_artifacts.by_name_and_artifact_type(
+                                spec.name,
+                                spec.artifact_type,
+                            )
+                            is not None
+                        )
+                    ),
                 )
             )
         )

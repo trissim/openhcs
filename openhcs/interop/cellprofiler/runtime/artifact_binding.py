@@ -615,7 +615,11 @@ class RuntimeInputBindingRequest:
         source_plan = self.adapter.request.source_binding_plan
         source_binding = source_plan.binding_for_artifact_ref(spec.ref())
         consumes_main_flow = edge.consumes_main_flow
-        source_artifact_binding = source_binding if not consumes_main_flow else None
+        source_artifact_binding = (
+            source_binding
+            if edge.storage_plan is None and not consumes_main_flow
+            else None
+        )
         runtime_edge = (
             edge
             if edge.storage_plan is not None and not consumes_main_flow

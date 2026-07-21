@@ -20,7 +20,7 @@ from openhcs.core.artifacts import (
     MeasurementsArtifactType,
     SpecialArtifactType,
 )
-from openhcs.core.callable_contract import CallableContract
+from openhcs.core.callable_contract import CallableContract, FunctionStepExecutionScope
 from openhcs.core.component_group_scope import ComponentGroupScope
 from openhcs.core.config import DtypeConfig
 from openhcs.core.context.processing_context import ProcessingContext
@@ -41,6 +41,7 @@ from openhcs.core.function_patterns import (
 from openhcs.core.pipeline.function_contracts import (
     artifact_inputs,
     artifact_outputs,
+    execution_scope,
     runtime_bound_parameters,
     special_inputs,
     validate_artifact_input_parameter_bindings,
@@ -636,6 +637,34 @@ def test_source_bound_input_edge_keeps_source_anchored_runtime_domain():
 
     assert invocation.runtime_domain is RuntimeInvocationDomain.SOURCE_ANCHORED
     assert group.runtime_domain is RuntimeInvocationDomain.SOURCE_ANCHORED
+
+
+def test_special_input_without_main_flow_edge_preserves_implicit_image_flow() -> None:
+    @artifact_inputs("pixel_size")
+    def measure(image, pixel_size=1.0):
+        del pixel_size
+        return image
+
+    compiled = compile_function_pattern(measure, {}, {})
+
+    assert compiled.default_group.main_flow_input_refs is None
+
+
+def test_artifact_only_group_preserves_empty_explicit_main_flow_refs() -> None:
+    payload = ArtifactSpec.input(
+        "payload",
+        SpecialArtifactType,
+        parameter_name="payload",
+    )
+
+    @execution_scope(FunctionStepExecutionScope.PLATE)
+    @artifact_inputs(payload)
+    def consume(*, payload):
+        return payload
+
+    compiled = compile_function_pattern(consume, {}, {})
+
+    assert compiled.default_group.main_flow_input_refs == ()
 
 
 def test_special_input_edges_use_nominal_artifact_payload_types() -> None:

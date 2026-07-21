@@ -739,6 +739,16 @@ class CallableContract(ArtifactPlanKeySelector):
                 return parameter.name
         return None
 
+    @property
+    def accepts_implicit_main_flow_input(self) -> bool:
+        """Whether the callable accepts its primary input from unnamed main flow."""
+
+        primary_input = self.primary_input_parameter_name
+        return (
+            primary_input is not None
+            and primary_input not in self.runtime_owned_parameter_names
+        )
+
     def runtime_batch_executor(
         self,
         domain: RuntimeBatchExecutionDomain,

@@ -511,11 +511,7 @@ class CompiledFunctionGroup:
     def main_flow_input_refs(self) -> tuple[ArtifactSpecRef, ...] | None:
         """Return exact main-flow refs, or None for an implicit image argument."""
 
-        if not any(
-            invocation.contract.artifact_inputs for invocation in self.invocations
-        ):
-            return None
-        return tuple(
+        main_flow_refs = tuple(
             dict.fromkeys(
                 edge.spec.ref()
                 for invocation in self.invocations
@@ -523,6 +519,13 @@ class CompiledFunctionGroup:
                 if edge.consumes_main_flow
             )
         )
+        if main_flow_refs:
+            return main_flow_refs
+        has_implicit_image_argument = any(
+            invocation.contract.accepts_implicit_main_flow_input
+            for invocation in self.invocations
+        )
+        return None if has_implicit_image_argument else ()
 
     def resulting_main_flow_output_plans(self) -> tuple[ArtifactOutputPlan, ...]:
         """Return exact named output plans carried after this callable chain."""

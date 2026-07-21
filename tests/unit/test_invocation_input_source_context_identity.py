@@ -303,3 +303,57 @@ def test_storage_backed_input_keeps_exact_runtime_authority() -> None:
     assert image_payload_metadata(runtime_request.value).source_image_names == (
         combined_image.name,
     )
+
+
+def test_compiled_producer_edge_overrides_matching_source_binding() -> None:
+    contract, _, combined_image, compiled = _compile_source_context_edges(
+        store_combined_image=True,
+    )
+    edges = next(compiled.iter_invocations()).artifact_input_edges
+    edge = next(edge for edge in edges if edge.spec == combined_image)
+    stored_payload = ImagePayloadMetadata(
+        source_image_names=(combined_image.name,),
+    ).payload_with(np.full((2, 3), 19.0, dtype=np.float32), None)
+    output_plan = ArtifactOutputPlan(
+        combined_image.name,
+        edge.storage_plan.path,
+        artifact_type=ImageArtifactType,
+    )
+    store = RuntimeValueStore()
+    store.replace(
+        RuntimeValue.normalize(output_plan, stored_payload, axis_id="A01"),
+        path=edge.storage_plan.path,
+        backend=Backend.MEMORY.value,
+    )
+    adapter = cellprofiler_runtime_adapter_for_test(
+        runtime_value_store=store,
+        callable_contract=contract,
+        artifact_inputs={item.key: item for item in edges},
+        source_binding_plan=CompiledSourceBindingPlan(
+            bindings=(
+                NamedSourceBinding(
+                    alias=combined_image.name,
+                    projection_role=SourceProjectionRole.SOURCE_ARTIFACT,
+                ),
+            ),
+        ),
+        axis_scope=RuntimeExecutionAxisScope.from_raw(
+            "A01",
+            component=None,
+            value=None,
+        ),
+    )
+    request = RuntimeInputBindingRequest(
+        adapter=adapter,
+        kwargs={},
+        current_image=ImagePayloadMetadata(
+            source_image_names=("UnrelatedCurrentImage",),
+        ).payload_with(np.full((2, 3), 23.0, dtype=np.float32), None),
+    )
+
+    runtime_request = request.artifact_request(edge)
+
+    np.testing.assert_array_equal(image_payload_data(runtime_request.value), 19.0)
+    assert image_payload_metadata(runtime_request.value).source_image_names == (
+        combined_image.name,
+    )

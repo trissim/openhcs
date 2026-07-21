@@ -47,6 +47,9 @@ from openhcs.core.source_bindings import (
 )
 from openhcs.core.step_dependencies import StepInputDependency
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.processing.backends.analysis.neurite_outgrowth import (
+    neurite_outgrowth_metaxpress,
+)
 
 
 def _identity(image):
@@ -466,7 +469,7 @@ def test_plate_export_contract_construction_projects_inputs_to_runtime_batch():
     assert plan.contract.artifact_inputs.names() == ("DNA",)
 
 
-def test_path_planner_omits_pipeline_start_bindings_without_source_contract():
+def test_path_planner_preserves_pipeline_start_bindings_for_implicit_main_flow():
     binding = NamedSourceBinding(alias="DNA")
     step = FunctionStep(func=_identity, name="source-bound measurement")
     snapshot = _snapshot(
@@ -483,12 +486,69 @@ def test_path_planner_omits_pipeline_start_bindings_without_source_contract():
         step_state_map={0: object()},
         snapshots=(snapshot,),
     )
-    _execution_bindings, (source_binding_plan, source_universe_plan) = (
+    execution_bindings, (source_binding_plan, source_universe_plan) = (
         _compile_source_plans_for_contract(session, snapshot, _identity)
     )
 
-    assert source_binding_plan.is_empty
+    assert execution_bindings.bindings == (binding,)
+    assert source_binding_plan.bindings == (binding,)
     assert source_universe_plan == source_universe_plan.empty()
+
+
+def test_path_planner_preserves_metaxpress_primary_source_order() -> None:
+    pipeline_bindings = (
+        NamedSourceBinding(alias="Hoechst"),
+        NamedSourceBinding(alias="MAP2"),
+        NamedSourceBinding(alias="SMI312"),
+    )
+    selected_bindings = (
+        NamedSourceBinding(alias="SMI312"),
+        NamedSourceBinding(alias="Hoechst"),
+    )
+    step = FunctionStep(func=neurite_outgrowth_metaxpress, name="neurite")
+    snapshot = _snapshot(
+        step,
+        0,
+        variable_components=(VariableComponents.CHANNEL,),
+        source_bindings=StepSourceBindingsConfig(
+            enabled=True,
+            bindings=selected_bindings,
+        ),
+        input_source=InputSource.PIPELINE_START,
+    )
+    pipeline_config = PipelineConfig(
+        source_bindings_config=SourceBindingsConfig(bindings=pipeline_bindings)
+    )
+    session = CompilationSession.from_context(
+        context=_context(),
+        steps=[step],
+        orchestrator=_orchestrator(pipeline_config),
+        global_config=GlobalPipelineConfig(),
+        step_state_map={0: object()},
+        snapshots=(snapshot,),
+    )
+    contract = CallableContract.from_callable(neurite_outgrowth_metaxpress)
+
+    execution_bindings, (source_binding_plan, _source_universe_plan) = (
+        _compile_source_plans_for_contract(
+            session,
+            snapshot,
+            neurite_outgrowth_metaxpress,
+        )
+    )
+
+    assert contract.accepts_implicit_main_flow_input is True
+    assert contract.artifact_inputs.names() == ("pixel_size",)
+    assert tuple(binding.alias for binding in pipeline_bindings) == (
+        "Hoechst",
+        "MAP2",
+        "SMI312",
+    )
+    assert tuple(binding.alias for binding in execution_bindings.bindings) == (
+        "SMI312",
+        "Hoechst",
+    )
+    assert source_binding_plan.bindings == execution_bindings.bindings
 
 
 def test_path_planner_execution_groups_use_resolved_source_bindings():
