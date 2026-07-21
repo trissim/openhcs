@@ -1,13 +1,16 @@
-# CellProfiler Backend Optimization Tracker
+# Historical CellProfiler Backend Optimization Snapshot
 
-This file tracks CellProfiler-compatible modules that still contain slow
-Python, skimage/scipy, or centrosome-heavy execution paths. Entries are removed
-only after a typed OpenHCS backend is implemented, selected explicitly or by a
-proven default, and covered by parity/performance evidence.
+> **Frozen historical record — 2026-05-03.** This file preserves the optimization
+> inventory used during the May CellProfiler parity campaign. It is not an active
+> performance backlog or current benchmark report. Timings, hot-path rankings,
+> and every `/tmp` path below describe that historical host/run only and must not
+> be cited as current acceptance or performance evidence. New optimization work
+> must profile the current tree, preserve nominal backend ownership, and record a
+> fresh durable parity/performance receipt.
 
-## Active Hot Paths
+## Historical Hot-Path Snapshot
 
-| Module / backend | Current issue | Target |
+| Module / backend | 2026-05-03 snapshot | Historical follow-up |
 | --- | --- | --- |
 | `MeasureObjectSizeShape` / shape geometry | Area/bbox/centroid/equivalent diameter/extent/moments/inertia/perimeter/euler now use shared `openhcs.processing.backends.analysis.region_properties` Numba default. Convex area/solidity use a direct exact convex-hull helper instead of `regionprops_table` wrapper overhead. Orientation is now computed in the shared Numba backend with skimage-0.18-compatible two-stage crop-moment reduction order instead of a current-skimage leaf. Direct Yeast label oracle against native CP showed the aggregate orientation mean exactly matches native (`21.537426810670524`) with only 2/2450 residual per-object diagonal tie signs, which runtime equivalence treats as stable orientation sign ambiguity. Explicit centrosome leaves remain under `LEGACY_FAST`/`CENTROSOME` for Feret/min enclosing circle/Zernike center-radius. | Rerun focused Yeast parity with the shared Numba orientation path, then move Feret/min enclosing circle/Zernike center-radius into pure typed providers. |
 | `CorrectIlluminationCalculate` median smoothing | Fixed: median-filter illumination smoothing now uses typed `RankMedianSmoothingBackendStrategy` with Numba sliding-histogram default as of 2026-05-03 18:55 EDT and an explicit `NATIVE` skimage reference provider. Bit-equivalent to `skimage.filters.rank.median` on masked/bordered test data and to the prior exact Numba implementation on a 160x180 radius85 crop; that crop improved from 57.78s to 0.023s (~2550x). `ExampleCometAssay` stayed green against a fresh native reference. | Keep under parity regression and reuse the sliding histogram for other rank-filter-compatible CellProfiler paths. |
@@ -27,9 +30,9 @@ proven default, and covered by parity/performance evidence.
 | Value-only dead image work | Fixed: table-only parity runs now request converter liveness pruning for unmaterialized image artifacts with no downstream consumer, while preserving image artifacts required by skipped `SaveImages`. `ExamplePercentPositive` pruned `OverlayOutlines` and `DisplayDataOnImage`, stayed green, and removed the ~25s `DisplayDataOnImage` hotspot seen in `/tmp/openhcs_cppipe_parity_full_refresh_20260503_185928`. | Keep pruning scoped to explicit value-only runs; do not apply it to normal generated OpenHCS pipelines that need runtime image artifacts. |
 | Generic step timing | Fixed: `FunctionStepExecutor` now logs per-step execute/finalize/total elapsed time directly. Current `ExampleYeastPatches` rerun showed `IdentifyObjectsInGrid` at `0.025-0.032s`, `DefineGrid` at `0.210s`, and `MeasureObjectIntensity` at `0.203s`, making later full-run profiling actionable without timestamp reconstruction. | Use these timings during every parity wait to pick measured bottlenecks before adding module-specific optimizations. |
 
-## Backlog
+## Historical Backlog Snapshot
 
-| Module / backend | Current issue | Target |
+| Module / backend | 2026-05-03 snapshot | Historical follow-up |
 | --- | --- | --- |
 | `EnhanceEdges` | Multiple explicit centrosome filter providers remain. | Replace Sobel/Prewitt/LoG/Roberts/Kirsch/Canny primitives with typed Numba providers where parity permits. |
 | `MeasureImageAreaOccupied` | Dense label area/perimeter now routes through shared `LabelRegionPropertiesBackendStrategy`; binary 2-D area/perimeter uses shared Numba Crookes perimeter semantics. 3-D surface area still uses marching cubes. | Keep 2-D perimeter under regression coverage and move 3-D surface-area semantics only after exact parity evidence. |

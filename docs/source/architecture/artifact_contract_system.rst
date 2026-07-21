@@ -9,8 +9,11 @@ Declarations
 ------------
 
 ``ArtifactType``
-  A nominal semantic family such as image, object labels, measurements,
-  relationships, spatial grids, tables, or files.
+  A nominal semantic family. The registered core families are special
+  side-channel values, images, object labels, measurements, object lineage and
+  relationships, tables, spatial grids, and metadata. An external resource path
+  is a typed setting/source binding, not an artifact family. A file bundle is a
+  materialization format over a declared special artifact.
 
 ``ArtifactSpec`` and ``ArtifactSpecRef``
   A named input or output declaration and its stable semantic reference.
@@ -56,6 +59,12 @@ Artifact extraction advances an ``ArtifactGraph``. The graph is the source of
 truth for producer identity, artifact kind, invocation ownership, grouping
 scope, and materialization relationships across the pipeline.
 
+When a native callable produces ordinary main flow without a named image
+artifact, ``unnamed_main_flow_artifact_name`` gives that producer a
+deterministic compiler-only identity. The identity lets a later artifact-owned
+consumer inherit the exact producer and group scope without generated-name
+prefix matching or a CellProfiler-specific branch.
+
 Satisfaction and exact selection
 --------------------------------
 
@@ -76,13 +85,55 @@ compiler decisions represented by source plans and invocation input edges.
 They are not declaration partitions. Compiled invocation plans, rather than a
 second declaration object, also own which declared outputs are active.
 
+Invocation occurrence identity
+------------------------------
+
+``ArtifactSpecRef`` identifies a semantic artifact type and name. It does not
+identify repeated occurrences of that artifact in one function pattern.
+``InvocationArtifactInputProjectionKey`` adds the exact
+``FunctionInvocationKey`` and zero-based input index. One
+``InvocationArtifactInputEdgePlan`` is stored for each such occurrence and
+records:
+
+- the exact declared ``ArtifactSpec``
+- an optional prior-producer ``ArtifactInputPlan`` and runtime projection
+- whether the occurrence consumes ordinary main flow
+- which ``MainFlowInputProjection`` applies
+
+This is why two callable parameters can consume the same semantic artifact
+without collapsing into one edge. ``CompiledStepPlan.artifact_inputs`` remains
+a semantic-reference-keyed plan map; exact duplicate occurrence identity lives
+on the compiled invocation edges.
+
+Implicit main-flow projection
+-----------------------------
+
+An invocation edge with ``consumes_main_flow=True`` cannot also carry a storage
+plan. Its projection is one of two explicit modes:
+
+``MainFlowInputProjection.COMPLETE_PAYLOAD``
+  The invocation has one main-flow reference and consumes the current payload
+  as a whole.
+
+``MainFlowInputProjection.DECLARED_SOURCE_IMAGE``
+  The current payload represents multiple declared images and the invocation
+  selects the image named by its artifact declaration.
+
+The end-to-end regression in
+``tests/unit/test_implicit_main_flow_compilation.py`` compiles grouped native
+``percentile_normalize`` output into a CellProfiler ``Threshold`` consumer. It
+asserts the step dependency, channels ``1``/``2``/``4`` group scope,
+``consumes_main_flow=True``, absence of a storage plan, and axis execution
+scope.
+
 Compiled plans
 --------------
 
 ``CompiledStepPlan.artifact_inputs`` and ``artifact_outputs`` contain typed
 ``ArtifactInputPlan`` and ``ArtifactOutputPlan`` objects. Plans add runtime
 addresses, producer edges, group scopes, and materialization targets while
-preserving semantic references.
+preserving semantic references. ``InvocationArtifactInputEdgePlan`` supplies
+the occurrence-level authority described above.
 
 Runtime
 -------

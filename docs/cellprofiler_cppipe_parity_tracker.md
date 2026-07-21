@@ -1,10 +1,19 @@
-# CellProfiler `.cppipe` Parity Tracker
+# Historical CellProfiler `.cppipe` Parity Snapshot
 
-This file tracks focused parity evidence for CellProfiler example pipelines. A
-pipeline is marked green only when the semantic equivalence run reports
-`differences=0` against a native CellProfiler reference.
+> **Frozen historical record — 2026-05-03.** This file preserves the focused
+> parity investigation that preceded the portable Official30 acceptance route.
+> It is not the current parity authority. Every `/tmp` path below was transient
+> local evidence and may no longer exist; none is a durable run receipt. Current
+> acceptance is defined by `benchmark/manifests/official30_portable_axis1.json`,
+> `tests/integration/test_cellprofiler_official30_zmq.py`, and the receipt
+> requirements in
+> `docs/source/architecture/measurement_equivalence_system.rst`.
 
-## Status Snapshot
+A pipeline was marked green in this snapshot only when the then-current semantic
+equivalence run reported `differences=0` against its native CellProfiler
+reference.
+
+## Historical Status Snapshot
 
 Last updated: 2026-05-03 23:51:11 EDT
 
@@ -33,11 +42,11 @@ Last updated: 2026-05-03 23:51:11 EDT
 | ExampleYeastPatches | ExampleYeastPatches | Green | 2026-05-03 19:25:28 EDT | 0 | `/tmp/openhcs_cppipe_parity_focus_yeast_patches_current_20260503_192503` |
 | ExampleVitra | ExampleVitraImages | Green | 2026-05-03 16:52:36 EDT | 0 | `/tmp/openhcs_cppipe_parity_focus_vitra_seed_remap_20260503` |
 
-## Active Failures
+## Historical Full-Refresh Notes
 
-- Latest full refresh evidence:
+- Then-latest full refresh evidence:
   `/tmp/openhcs_cppipe_parity_full_refresh_20260503_185928`
-- Pass in latest full refresh: `ExampleColocalization`,
+- Pass in that full refresh: `ExampleColocalization`,
   `ExampleCometAssay`, `ExampleFly`, `ExampleFlyURL`,
   `ExampleIlluminationCorrection_Example1_AllMethod`,
   `ExampleIlluminationCorrection_Example1_EachMethod`,
@@ -45,7 +54,7 @@ Last updated: 2026-05-03 23:51:11 EDT
   `ExampleUntangleAndStraightenWorms`, `ExampleUntangleWorms`,
   `ExampleUntangleWormsBrightField`, `ExampleVitra`,
   `ExampleWoundHealing`.
-- Quota-contaminated latest full refresh failures rerun after `/tmp`
+- Quota-contaminated failures from that refresh were rerun after `/tmp`
   cleanup:
   `ExampleIlluminationCorrection_Example2` green at
   `/tmp/openhcs_cppipe_parity_quota_rerun_20260503_1912/ExampleIlluminationCorrection_Example2`;
@@ -53,11 +62,11 @@ Last updated: 2026-05-03 23:51:11 EDT
   `/tmp/openhcs_cppipe_parity_quota_rerun_20260503_1912/ExampleIlluminationCorrection_Example3`;
   `ExampleNeighbors` green after SaveImages-aware value-only pruning at
   `/tmp/openhcs_cppipe_parity_neighbors_prune_fix_20260503_1918`.
-- Remaining non-green in latest focused/current reruns: none.
+- Remaining non-green cases in the final focused reruns of this snapshot: none.
 
-## Current Focus Notes
+## Historical Focus Notes
 
-- `ExampleYeastPatches` was current-confirmed green at
+- `ExampleYeastPatches` was confirmed green in this snapshot at
   `/tmp/openhcs_cppipe_parity_focus_yeast_patches_current_20260503_192503`
   with `differences=0`.
 - `ExampleYeastColonies` previously failed in the focused rerun
@@ -75,7 +84,7 @@ Last updated: 2026-05-03 23:51:11 EDT
   and still failed with `differences=96`, proving the mismatch was not stale
   reference drift. It was resolved by the automatic illumination smoothing-size
   fix documented below.
-- `ExampleImagingFlowCytometryObjectsInGrid` is current-confirmed green at
+- `ExampleImagingFlowCytometryObjectsInGrid` was confirmed green in this snapshot at
   `/tmp/openhcs_cppipe_parity_focus_objects_in_grid_smooth_constant_20260503_204822`
   with `differences=0`. The last semantic blocker was upstream of
   `IdentifyPrimaryObjects`: CellProfiler `Smooth` Gaussian mode uses
@@ -86,7 +95,7 @@ Last updated: 2026-05-03 23:51:11 EDT
   `SmoothedBF`/`EdgedImage`/`MorphBf` comparisons were within float roundoff
   (`~1.9e-09` max) and the full semantic comparison completed with
   `differences=0`.
-- `ExampleSpeckles` is current-confirmed green at
+- `ExampleSpeckles` was confirmed green in this snapshot at
   `/tmp/openhcs_cppipe_parity_focus_speckles_declump_strel_20260503_210524`
   with `differences=0`. The final mismatch was in
   `IdentifyPrimaryObjects` declumping maxima geometry: native CellProfiler
@@ -97,7 +106,7 @@ Last updated: 2026-05-03 23:51:11 EDT
   `shrunk_maxima`, and separated labels byte-identical to native CP for the
   Speckles `h2ax` IPO module, and the focused semantic comparison completed
   with `differences=0`.
-- `ExampleHuman` is current-confirmed green at
+- `ExampleHuman` was confirmed green in this snapshot at
   `/tmp/openhcs_cppipe_parity_focus_human_threshold_constant_20260503_211934`
   with `differences=0` and uncached OpenHCS runtime `7.142s`. The final
   mismatch was a 13-pixel `IdentifyPrimaryObjects` binary-mask divergence in
@@ -110,7 +119,7 @@ Last updated: 2026-05-03 23:51:11 EDT
   direct module-5 `binary_before`, initial labels, separated labels,
   border-filtered labels, and relabeled output byte-identical to native CP,
   removing the object/measurement cascade.
-- `ExampleYeastColonies` is current-confirmed green at
+- `ExampleYeastColonies` was confirmed green in this snapshot at
   `/tmp/openhcs_cppipe_parity_yeast_numba_orientation_dot_20260503_235046`
   with `differences=0`. The cached-native parity run proved the shared
   Numba region-property backend matches native CP aggregate orientation after

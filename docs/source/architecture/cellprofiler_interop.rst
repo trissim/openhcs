@@ -14,16 +14,19 @@ objects, measurements, relationships, groups, and export modules remain useful:
 the importer lowers them to OpenHCS source bindings, ``FunctionStep`` objects,
 artifact contracts, runtime values, and plate-scoped exporters.
 
-The ``CellProfilerModule`` registry is the installed-version authority for
-module support. The compatibility report derives module and setting coverage
-from that registry and the selected ``.cppipe`` corpus; it distinguishes setup
-modules absorbed into sources, executable modules, unsupported processing
-modules, and settings that are bound, validated, or intentionally rejected.
-Official30 recipes provide broad end-to-end import and parity evidence, but an
-agent must not turn that corpus into the stronger claim that every historical
-CellProfiler version, plugin module, and setting combination has been tested.
-For an unfamiliar pipeline, import and compile the actual ``.cppipe`` and treat
-an explicit module/setting error as the compatibility boundary.
+The ``CellProfilerModule`` registry is the authority for the module declarations
+absorbed into this OpenHCS tree. It does not inspect whichever CellProfiler
+package version happens to be installed. The compatibility report projects
+module, setting, source-module, corpus, and processing-contract coverage from
+that registry and selected ``.cppipe`` files. It contains no execution
+observations or result-equivalence records.
+
+Official30 recipes provide broad end-to-end import, execution, and parity
+evidence through separate benchmark observations. An agent must not turn that
+corpus into the stronger claim that every historical CellProfiler version,
+plugin module, and setting combination has been tested. For an unfamiliar
+pipeline, import and compile the actual ``.cppipe`` and treat an explicit
+module/setting error as the compatibility boundary.
 
 Import flow
 -----------
@@ -42,6 +45,10 @@ Import flow
 pipeline directory by default or an explicit ``source_root``. Disabled modules
 are ignored. Setup-only declarations do not emit a step; executable module
 declarations emit one or more ordinary steps.
+
+External model, classifier, rules, and similar resource paths are public
+callable keyword values resolved by ``SettingsBinder``. They are not members of
+the artifact-type registry merely because a callable consumes a file.
 
 What the importer decides
 -------------------------
@@ -71,6 +78,8 @@ Nominal module authority
 module subclass owns:
 
 - the exact CellProfiler module name
+- parsed revision metadata and module-specific revision interpretation where
+  implemented
 - settings binding and repeated-row interpretation
 - whether the module emits a step
 - its public processing callable or callable batch
@@ -93,6 +102,33 @@ transport and signature analysis. During compilation an invocation-contract
 provider may derive a runtime adapter or module executor, but that compile-only
 object does not replace the public declaration format.
 
+Exact compile-time reconstruction
+---------------------------------
+
+``CellProfilerInvocationContractProviderFactory`` walks the resolved
+``StepSnapshot`` sequence and one forward ``ArtifactDeclarationStepContext``:
+
+.. code-block:: text
+
+   public FunctionStep invocation + forward artifact context
+       -> CellProfilerModule.for_function_name(...)
+       -> module_blocks_for_invocation(...)
+       -> exact numbered ModuleBlock occurrence(s)
+       -> invocation_callable_contract(...)
+       -> compile-only runtime adapter + invocation artifact edges
+       -> advance_artifact_context(...)
+
+The public callable's keyword arguments and declaration-owned setting bindings
+reconstruct the exact module block. The compiler validates that reconstruction,
+numbers repeated module occurrences, derives one ``CallableContract``, and
+advances the same artifact context used for native callables. A native callable
+with unnamed image main flow receives deterministic compiler-only provenance so
+a later CellProfiler consumer can resolve its producer and group scope.
+
+The resulting contract is indexed by step and ``FunctionInvocationKey``. It is
+not stored back into the public ``FunctionStep`` and does not create a hidden
+pipeline wrapper, module sidecar, or second artifact declaration graph.
+
 Sources
 -------
 
@@ -107,9 +143,10 @@ Artifacts and exports
 Each executable module inherits ``CellProfilerModuleArtifactContracts``. For one
 parsed invocation, that mixin resolves active ``SettingToKeywordBinding``
 declarations and module leaf hooks into an ordinary ``CallableContract``. There
-is no parallel module-contract object. Exact inputs and outputs include images,
-object labels, measurements, relationships, grids, tables, and external
-resources.
+is no parallel module-contract object. Exact semantic inputs and outputs use the
+registered artifact families: special side-channel values, images, object
+labels, measurements, object lineage and relationships, tables, spatial grids,
+and metadata. External resource paths remain bound callable arguments.
 
 Export modules are explicit steps. Plate-wide exporters declare
 ``FunctionStepExecutionScope.PLATE`` rather than relying on an implicit
@@ -135,8 +172,10 @@ At runtime:
 The projection preserves declared table/column identities, image paths and file
 names, object locations, image/object keys, group fields, relationships,
 classifier metadata, channel display metadata, and optional thumbnails. The
-module declares one typed file-bundle artifact; its materialized members are the
-SQLite database and one or more ``.properties`` files.
+module declares one ``SpecialArtifactType`` output with
+``FileBundleOptions`` materialization; its members are the SQLite database and
+one or more ``.properties`` files. The bundle is a materialization contract,
+not an additional artifact type.
 
 OpenHCS currently implements the SQLite database and CPA ``.properties`` route.
 It rejects non-SQLite databases and custom filter rows explicitly. The current
@@ -169,6 +208,8 @@ There are three distinct levels of evidence:
 Only the third level supports a parity claim for the tested case. Use the
 Official30 corpus as examples and regression evidence, then validate the user's
 actual pipeline and representative data before describing it as equivalent.
+The registry-derived compatibility report supports declarative coverage; it
+does not by itself prove levels two or three.
 
 Adding a module
 ---------------

@@ -14,8 +14,8 @@ Input
 
 Output
   A compatibility compilation result whose ``execution_bundle`` entry is a
-  ``CompiledExecutionBundle``. The bundle owns runtime contexts, worker step
-  declarations, and the compiled runtime environment.
+  ``CompiledExecutionBundle``. The bundle owns runtime and transport contexts,
+  worker assignments, and the compiled runtime environment.
 
 Resolve once
 ------------
@@ -36,6 +36,11 @@ or module declarations. Later stages must not call ObjectState again to recover
 
 Compilation sessions
 --------------------
+
+``AxisCompilationRequest`` carries the resolved ``PipelineConfig`` into axis
+fanout. It projects the pipeline's source-image-set identity policy onto each
+new ``ProcessingContext`` before constructing the narrower session boundary.
+``CompilationSession`` does not retain a second pipeline-configuration owner.
 
 Each axis receives a ``CompilationSession`` joining:
 
@@ -64,11 +69,13 @@ single plan authority for a step. Important fields include:
 - compiled function pattern and callable contracts
 - variable components, grouping, and sequential filters
 - memory conversions and GPU assignment
-- materialization and streaming plans
-- execution scope and runtime readiness facts
+- materialization plans and enabled streaming declarations
 
 Stages mutate these fields directly. Code should not recreate
 ``context.step_plans[index]["special_outputs"]``-style semantic dictionaries.
+Callable execution scope remains on the compiled invocation contract. Worker
+assignments and runtime-environment decisions remain on
+``CompiledExecutionBundle``.
 
 Planning order and invariants
 -----------------------------
@@ -85,13 +92,20 @@ remain stable:
 5. memory, runtime projection, materialization, worker start, and GPU facts are
    validated before the execution bundle is emitted.
 
-Runtime readiness
------------------
+Compile completeness and runtime ownership
+------------------------------------------
 
 Before a function step can execute, its plan requires an axis identity, input
 and output paths, variable components, read/write backends, pipeline position,
 compiled function pattern, and other execution-owned fields. Failure is reported
 as a compilation error rather than repaired with runtime fallback logic.
+
+Values that only a producer can create are different from compile-time facts.
+They become ``RuntimeValue`` instances during execution and fail as typed
+``RuntimeValueStore`` resolution errors if a required producer did not publish
+them. Viewer process readiness, render progress, settlement, evidence capture,
+and cleanup are runtime service/protocol responsibilities. They are not fields
+on ``CompiledStepPlan``.
 
 Execution bundle
 ----------------
@@ -99,7 +113,8 @@ Execution bundle
 ``CompiledExecutionBundle`` includes ``CompiledRuntimeEnvironmentPlan``. That
 plan records the selected multiprocessing start method and its reason, threading
 mode, server mode, GPU enablement facts, and worker GPU-registry initialization.
-Workers consume these scalar decisions instead of resolving global configuration
+The bundle also owns the axis-to-worker assignments. Workers consume these
+scalar decisions and assignments instead of resolving global configuration
 again.
 
 Execution scopes
@@ -138,3 +153,4 @@ Related pages
 - :doc:`source_model`
 - :doc:`artifact_contract_system`
 - :doc:`runtime_value_system`
+- :doc:`streaming_boundary_and_wrappers`
