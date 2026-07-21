@@ -4,10 +4,12 @@ Original: medialaxis
 """
 
 import numpy as np
+from openhcs.core.artifacts import ImageArtifactType
 from openhcs.core.memory.decorators import numpy as numpy_backend
 from openhcs.interop.cellprofiler.module_declarations import (
     CellProfilerModule,
 )
+from openhcs.interop.cellprofiler.settings_binder import SettingToKeywordBinding
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
@@ -39,3 +41,13 @@ class MedialaxisModule(CellProfilerModule):
     function_name = "medialaxis"
     validated = True
     confidence = 1.0
+    setting_bindings = (
+        SettingToKeywordBinding.input(
+            "Select the input image",
+            ImageArtifactType,
+        ),
+        SettingToKeywordBinding.output(
+            "Name the output image",
+            ImageArtifactType,
+        ),
+    )
