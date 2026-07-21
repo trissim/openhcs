@@ -120,8 +120,12 @@ The current behavior is owner-specific:
   ``shortcuts`` changes;
 - progress coalescing currently constructs its default interval instead of
   consuming ``UIConfig.progress``;
-- style/theme, window policy, logging, performance-monitor behavior, and agent
-  bridge lifecycle are not generally rebuilt by ``set_ui_config()``.
+- the system monitor receives the exact saved ``performance_monitor``
+  declaration through pyqt-reactive's ``update_config()`` owner boundary; it
+  rebuilds sampling only when derived sampling behavior changes and applies
+  plot presentation idempotently; and
+- style/theme, window policy, logging, and agent bridge lifecycle are not
+  generally rebuilt by ``set_ui_config()``.
 
 UIConfig edits also have no process-round-trip persistence path at present. The
 GlobalPipelineConfig tab writes through the config cache, while the UIConfig tab
