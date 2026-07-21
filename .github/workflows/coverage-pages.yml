@@ -128,7 +128,6 @@ jobs:
 
                 console.log(`Extracted ${artifact.name} to ${artifactDir}`);
               }
-            }
 
       - name: Combine coverage reports
         run: |
@@ -185,12 +184,17 @@ jobs:
 
       - name: Generate coverage badge
         run: |
+          if [ ! -f coverage.xml ]; then
+            echo "coverage.xml not found; skipping coverage badge."
+            exit 0
+          fi
           mkdir -p .github/badges
           genbadge coverage -i coverage.xml -o .github/badges/coverage.svg -n "coverage report"
 
       - name: Create index.html and README
         run: |
           # Create index.html for redirection
+          if [ -d site/coverage ]; then
           cat > site/index.html << 'EOF'
           <!DOCTYPE html>
           <html>
@@ -203,6 +207,9 @@ jobs:
             </body>
           </html>
           EOF
+          else
+            echo "No HTML coverage directory found; preserving no-data index."
+          fi
 
           # Create README.md in the site directory
           cat > site/README.md << 'EOF'

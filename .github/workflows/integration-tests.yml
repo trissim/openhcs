@@ -114,6 +114,7 @@ jobs:
         with:
           name: coverage-python-${{ matrix.python-version }}-${{ matrix.os }}
           path: .coverage
+          include-hidden-files: true
           retention-days: 1
 
       - name: Show ZMQ logs on failure
@@ -224,6 +225,7 @@ jobs:
         with:
           name: coverage-${{ matrix.os }}-${{ matrix.backend }}-${{ matrix.microscope }}
           path: .coverage
+          include-hidden-files: true
           retention-days: 1
 
       - name: Show ZMQ logs on failure
@@ -342,6 +344,7 @@ jobs:
         with:
           name: coverage-omero-python-${{ matrix.python-version }}
           path: .coverage
+          include-hidden-files: true
           retention-days: 1
 
       - name: Show OMERO logs on failure
@@ -548,4 +551,5 @@ jobs:
         with:
           name: coverage-wheel-integration
           path: .coverage.wheel
+          include-hidden-files: true
           retention-days: 1
