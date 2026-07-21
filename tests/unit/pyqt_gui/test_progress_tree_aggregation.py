@@ -367,25 +367,28 @@ def test_progress_client_connection_tracks_execution_server_presence(monkeypatch
         def disconnect(self) -> None:
             self.disconnected = True
 
-    calls = {"setup": 0}
+    setup_ports = []
     manager._zmq_client = None
+    manager._progress_client_port = None
+    manager._current_execution_server_port = lambda: None
 
-    def _setup() -> None:
-        calls["setup"] += 1
+    def _setup(port: int) -> None:
+        setup_ports.append(port)
         manager._zmq_client = _DummyClient()
+        manager._progress_client_port = port
 
     manager._setup_progress_client = _setup
 
     manager.sync_progress_client_connection(
         [_execution_server_info(running=[], queued=[])]
     )
-    assert calls["setup"] == 1
+    assert setup_ports == [7777]
     assert manager._zmq_client is not None
 
     manager.sync_progress_client_connection(
         [_execution_server_info(running=[], queued=[])]
     )
-    assert calls["setup"] == 1
+    assert setup_ports == [7777]
 
     client = manager._zmq_client
     manager.sync_progress_client_connection([])
