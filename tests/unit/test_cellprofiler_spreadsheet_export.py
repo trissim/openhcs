@@ -769,6 +769,97 @@ def test_export_to_spreadsheet_resolves_slice_indices_per_producer_table() -> No
     )
 
 
+def test_export_to_spreadsheet_anchors_axisless_artifact_summary_to_stack() -> None:
+    name = "neurite_outgrowth_summary"
+    record = _measurement_record(
+        name,
+        axis_id="A01",
+        subject=MeasurementSubject(MeasurementScope.ARTIFACT),
+        rows=({"number_of_cells": 3, "total_outgrowth": 42.0},),
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            component_metadata=(
+                {"well": "A01", "site": "1", "channel": "4"},
+                {"well": "A01", "site": "1", "channel": "1"},
+            )
+        ),
+    )
+    batch = RuntimeArtifactBatch(
+        input_specs=(ArtifactSpec.input(name, MeasurementsArtifactType),),
+        records_by_axis={"A01": (record,)},
+        source_image_set_identity_policy=SourceImageSetIdentityPolicy(),
+    )
+
+    bundle = export_to_spreadsheet(
+        add_filename_prefix=False,
+        artifact_batch=batch,
+    )
+
+    assert tuple(csv.DictReader(io.StringIO(bundle[f"{name}.csv"]))) == (
+        {
+            "image_number": "1",
+            "number_of_cells": "3",
+            "total_outgrowth": "42.0",
+        },
+    )
+
+
+def test_export_to_spreadsheet_rejects_axisless_artifact_without_source_identity() -> (
+    None
+):
+    name = "unbound_artifact_summary"
+    record = _measurement_record(
+        name,
+        axis_id="A01",
+        subject=MeasurementSubject(MeasurementScope.ARTIFACT),
+        rows=({"Count": 3},),
+        source_image_provenance_planes=SourceImageProvenancePlanes(),
+    )
+    batch = RuntimeArtifactBatch(
+        input_specs=(ArtifactSpec.input(name, MeasurementsArtifactType),),
+        records_by_axis={"A01": (record,)},
+        source_image_set_identity_policy=SourceImageSetIdentityPolicy(),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="requires .*producer-declared source identity",
+    ):
+        export_to_spreadsheet(
+            add_filename_prefix=False,
+            artifact_batch=batch,
+        )
+
+
+def test_export_to_spreadsheet_rejects_axisless_image_rows_across_image_sets() -> None:
+    name = "ambiguous_image_summary"
+    record = _measurement_record(
+        name,
+        axis_id="A01",
+        subject=MeasurementSubject(MeasurementScope.IMAGE, "Image"),
+        rows=({"Count": 3},),
+        source_image_provenance_planes=SourceImageProvenancePlanes.from_components(
+            component_metadata=(
+                {"well": "A01", "site": "1", "channel": "4"},
+                {"well": "A01", "site": "1", "channel": "1"},
+            )
+        ),
+    )
+    batch = RuntimeArtifactBatch(
+        input_specs=(ArtifactSpec.input(name, MeasurementsArtifactType),),
+        records_by_axis={"A01": (record,)},
+        source_image_set_identity_policy=SourceImageSetIdentityPolicy(),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="cannot bind axisless rows.*image numbers \\(1, 2\\)",
+    ):
+        export_to_spreadsheet(
+            add_filename_prefix=False,
+            artifact_batch=batch,
+        )
+
+
 def test_export_to_spreadsheet_binds_payload_rows_to_exact_source_image_set() -> None:
     batch = RuntimeArtifactBatch(
         input_specs=(

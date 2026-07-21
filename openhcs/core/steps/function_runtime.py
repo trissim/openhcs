@@ -2525,7 +2525,6 @@ class PatternGroupRuntime:
             )
 
         matching_files = self._filter_matching_files_for_group(matching_files)
-        matching_files = self._filter_matching_files_for_source_bindings(matching_files)
 
         logger.debug(
             "Pattern %s matched %d files: %s",
@@ -2538,6 +2537,7 @@ class PatternGroupRuntime:
         logger.debug(
             f"Pattern {self.pattern_repr} sorted files: {[Path(f).name for f in matching_files]}"
         )
+        matching_files = self._filter_matching_files_for_source_bindings(matching_files)
 
         full_file_paths = [
             self._input_memory_path(plan.input_dir, file_path)
@@ -2691,14 +2691,19 @@ class PatternGroupRuntime:
             for binding in source_binding_plan.bindings
             if binding.projection_role is SourceProjectionRole.PRIMARY_PLANE
         )
-        selector_bindings = SourceBindingCandidateMatcher.selector_bindings(bindings)
-        if not selector_bindings:
+        if not bindings:
             return matching_files
+        selector_bindings = SourceBindingCandidateMatcher.selector_bindings(bindings)
 
         source_context = self._source_binding_candidate_context()
+        if (
+            not selector_bindings
+            and not source_context.source_projections_by_virtual_path
+        ):
+            return matching_files
         compatible = list(
             SourceBindingMatchedImageSet.from_plan(
-                bindings=selector_bindings,
+                bindings=bindings,
                 match_plan=source_binding_plan.match_plan,
                 source_context=source_context,
                 identity_policy=(self.request.context.source_image_set_identity_policy),
@@ -2712,8 +2717,7 @@ class PatternGroupRuntime:
 
         raise ValueError(
             f"Source-bound step {self.request.execution_plan.step_name!r} resolved no files for "
-            f"selector-bearing image bindings "
-            f"{[binding.alias for binding in selector_bindings]!r} in pattern "
+            f"image bindings {[binding.alias for binding in bindings]!r} in pattern "
             f"{self.pattern_repr}. Matched files before source filtering: "
             f"{matching_files!r}."
         )

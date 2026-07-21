@@ -49,6 +49,7 @@ from openhcs.core.source_bindings import (
     SourceBindingMatchPlan,
     SourceBindingOrigin,
     SourceProjectionRole,
+    SourceSetRole,
     SourceFilterClause,
     SourceFilterMatchType,
     SourceFilterSubject,
@@ -809,6 +810,86 @@ def test_matched_image_set_without_match_plan_uses_selector_compatible_sources()
             "A01_s001_w3_z001_t001.tif",
         ),
     ) == ("A01_s001_w1_z001_t001.tif",)
+
+
+def test_alias_only_step_bindings_filter_and_order_workspace_projections() -> None:
+    declarations = (
+        NamedSourceBinding(alias="Hoechst"),
+        NamedSourceBinding(alias="MAP2"),
+        NamedSourceBinding(alias="SMI312"),
+    )
+    virtual_paths = tuple(
+        f"R04C09_s011_w{channel}_z001_t001.tif" for channel in ("1", "2", "4")
+    )
+    source_projections = {
+        virtual_path: SourcePlaneProjection(
+            address=OpenHCSPlaneAddress(
+                well="R04C09",
+                site="11",
+                channel=channel,
+                z_index="1",
+                timepoint="1",
+            ),
+            ref=SourcePixelRef("disk", f"/source/ch{channel}.tiff"),
+            source_alias=binding.alias,
+        )
+        for virtual_path, channel, binding in zip(
+            virtual_paths,
+            ("1", "2", "4"),
+            declarations,
+            strict=True,
+        )
+    }
+    projection = VirtualWorkspaceSourceProjection(
+        source_refs_by_virtual_path={
+            path: source_projection.ref
+            for path, source_projection in source_projections.items()
+        },
+        source_metadata_by_path={},
+        source_projections_by_virtual_path=source_projections,
+    )
+    context = SourcePatternResolutionContext.from_projection(
+        parser=SourceSchemaFilenameParser(),
+        projection=projection,
+    )
+    matched_set = SourceBindingMatchedImageSet.from_plan(
+        bindings=(
+            NamedSourceBinding(alias="SMI312"),
+            NamedSourceBinding(alias="Hoechst"),
+        ),
+        match_plan=None,
+        source_context=context,
+        identity_policy=SourceImageSetIdentityPolicy(),
+    )
+
+    assert matched_set.expand(
+        virtual_paths,
+        source_universe=virtual_paths,
+    ) == (virtual_paths[2], virtual_paths[0])
+
+
+def test_source_set_without_matched_bindings_preserves_anchor_candidates() -> None:
+    context = SourcePatternResolutionContext.from_sources(
+        parser=SourceSchemaFilenameParser(),
+        source_paths_by_virtual_path={},
+    )
+    matched_set = SourceBindingMatchedImageSet.from_plan(
+        bindings=(
+            NamedSourceBinding(
+                alias="PlateTemplate",
+                source_set_role=SourceSetRole.BROADCAST,
+            ),
+        ),
+        match_plan=None,
+        source_context=context,
+        identity_policy=SourceImageSetIdentityPolicy(),
+    )
+    anchors = (
+        "A01_s001_w1_z001_t001.tif",
+        "A01_s002_w1_z001_t001.tif",
+    )
+
+    assert matched_set.expand(anchors, source_universe=anchors) == anchors
 
 
 def test_narrow_step_binding_uses_exact_workspace_provenance_identity():

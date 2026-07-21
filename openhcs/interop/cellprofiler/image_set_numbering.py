@@ -10,6 +10,7 @@ from openhcs.core.component_group_scope import RuntimeExecutionAxisScope
 from openhcs.core.measurement_row_materialization import (
     MeasurementRowsAxisProjection,
 )
+from openhcs.core.runtime_measurements import MeasurementScope
 from openhcs.core.runtime_measurements import MeasurementTable
 from openhcs.core.runtime_measurements import MeasurementRowAxisField
 from openhcs.core.runtime_tabular_values import ColumnarRows
@@ -103,12 +104,21 @@ class CellProfilerImageSetNumbering:
                     ).values()
                 )
             )
-            if len(source_image_numbers) != 1:
+            if (
+                len(source_image_numbers) != 1
+                and table.subject.scope is not MeasurementScope.ARTIFACT
+            ):
                 raise ValueError(
                     f"CellProfiler export cannot bind axisless rows in "
                     f"{table.name!r} to one source image set; producer provenance "
                     f"resolves to image numbers {source_image_numbers!r}."
                 )
+            # Artifact-scoped rows summarize the complete produced stack rather
+            # than any individual source plane. CellProfiler nevertheless
+            # requires every exported row to carry one ImageNumber, so anchor
+            # the artifact summary to the stack's first stable image-set number.
+            # Image- and object-scoped axisless rows remain ambiguous and fail
+            # above when their provenance spans multiple image sets.
             axisless_image_number = source_image_numbers[0]
         return projection.remap_runtime_slice_indices(
             image_numbers_by_slice,

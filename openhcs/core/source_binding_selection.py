@@ -1060,10 +1060,15 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
         selector_bindings = SourceBindingCandidateMatcher.selector_bindings(
             self.matched_bindings
         )
-        if len(selector_bindings) == 1:
+        resolution_bindings = (
+            self.matched_bindings
+            if self.source_projections_by_virtual_path
+            else selector_bindings
+        )
+        if len(resolution_bindings) == 1:
             return self._expand_single_alias(
                 anchors,
-                binding=selector_bindings[0],
+                binding=resolution_bindings[0],
                 source_universe=source_universe,
             )
         if (
@@ -1071,14 +1076,17 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
             or self.match_plan.method is not SourceBindingMatchMethod.METADATA
             or not self.match_plan.dimensions
         ):
+            selected = self._complete_alias_set(anchors, resolution_bindings)
+            if selected is not None:
+                return selected
             return SourceBindingCandidateMatcher.compatible_candidates(
                 anchors,
-                bindings=selector_bindings,
+                bindings=resolution_bindings,
                 source_context=self,
             )
 
         selected_anchor_candidates = self._complete_alias_set(
-            anchors, selector_bindings
+            anchors, resolution_bindings
         )
         if selected_anchor_candidates is not None:
             return selected_anchor_candidates
@@ -1087,7 +1095,7 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
         for anchor in anchors:
             anchor_binding = self._matching_binding(
                 anchor,
-                selector_bindings=selector_bindings,
+                selector_bindings=resolution_bindings,
             )
             if anchor_binding is None:
                 continue
@@ -1095,14 +1103,14 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
                 self._expand_anchor(
                     anchor,
                     anchor_binding=anchor_binding,
-                    selector_bindings=selector_bindings,
+                    selector_bindings=resolution_bindings,
                     source_universe=source_universe,
                 )
             )
         if not expanded:
             return SourceBindingCandidateMatcher.compatible_candidates(
                 anchors,
-                bindings=selector_bindings,
+                bindings=resolution_bindings,
                 source_context=self,
             )
         return tuple(dict.fromkeys(expanded))
@@ -1303,6 +1311,8 @@ class SourceBindingMatchedImageSet(SourcePatternResolutionContext):
         candidates: Sequence[SourceCandidatePath],
         selector_bindings: tuple[NamedSourceBinding, ...],
     ) -> tuple[SourceCandidatePath, ...] | None:
+        if not selector_bindings:
+            return None
         selected: list[SourceCandidatePath] = []
         for binding in selector_bindings:
             matches = tuple(

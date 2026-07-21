@@ -2932,6 +2932,83 @@ def test_grouped_runtime_source_expansion_uses_scoped_bindings(
     assert captured_aliases == ("OrigStain1",)
 
 
+def test_alias_only_workspace_filter_excludes_unselected_source_and_orders_stack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openhcs.core.steps import function_runtime
+
+    declarations = (
+        NamedSourceBinding(alias="Hoechst"),
+        NamedSourceBinding(alias="MAP2"),
+        NamedSourceBinding(alias="SMI312"),
+    )
+    virtual_paths = tuple(
+        f"R04C09_s011_w{channel}_z001_t001.tif" for channel in ("1", "2", "4")
+    )
+    source_planes = tuple(
+        SourcePlaneProjection(
+            address=OpenHCSPlaneAddress(
+                well="R04C09",
+                site="11",
+                channel=channel,
+                z_index="1",
+                timepoint="1",
+            ),
+            ref=SourcePixelRef("disk", f"/source/ch{channel}.tiff"),
+            source_alias=binding.alias,
+        )
+        for channel, binding in zip(("1", "2", "4"), declarations, strict=True)
+    )
+    projection = VirtualWorkspaceSourceProjection(
+        source_refs_by_virtual_path={
+            path: plane.ref
+            for path, plane in zip(virtual_paths, source_planes, strict=True)
+        },
+        source_metadata_by_path={},
+        source_projections_by_virtual_path={
+            path: plane
+            for path, plane in zip(virtual_paths, source_planes, strict=True)
+        },
+    )
+    source_context = SourcePatternResolutionContext.from_projection(
+        parser=SourceSchemaFilenameParser(),
+        projection=projection,
+    )
+    selected_plan = CompiledSourceBindingPlan(
+        bindings=(
+            NamedSourceBinding(alias="SMI312"),
+            NamedSourceBinding(alias="Hoechst"),
+        )
+    )
+    runtime = function_runtime.PatternGroupRuntime.__new__(
+        function_runtime.PatternGroupRuntime
+    )
+    runtime.request = SimpleNamespace(
+        context=SimpleNamespace(
+            source_image_set_identity_policy=SourceImageSetIdentityPolicy()
+        ),
+        execution_plan=SimpleNamespace(
+            main_input_dependency=StepInputDependency.pipeline_start(),
+            step_name="MetaXpress",
+        ),
+        main_flow_source_binding_plan=selected_plan,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_source_binding_candidate_context",
+        lambda: source_context,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_source_binding_load_universe",
+        lambda: virtual_paths,
+    )
+
+    assert runtime._filter_matching_files_for_source_bindings(
+        list(virtual_paths)
+    ) == [virtual_paths[2], virtual_paths[0]]
+
+
 def test_step_output_load_filter_skips_source_binding_filter() -> None:
     from openhcs.core.steps.function_runtime import PatternGroupRuntime
 
@@ -3118,7 +3195,10 @@ def test_producer_anchored_pipeline_start_paths_use_exact_source_projection_bund
     monkeypatch.setattr(
         function_runtime.PatternGroupRuntime,
         "source_workspace_projection_authority",
-        lambda _self: SimpleNamespace(projection_if_available=lambda: projection),
+        lambda _self: SimpleNamespace(
+            projection_if_available=lambda: projection,
+            projection_or_empty=lambda: projection,
+        ),
     )
 
     compiled_pattern = compile_function_pattern(lambda image: image, {}, {})
@@ -3142,6 +3222,10 @@ def test_producer_anchored_pipeline_start_paths_use_exact_source_projection_bund
         ),
         filemanager=SourceFileManager(),
         runtime_image_stack_cache=RuntimeImageStackCache(),
+        runtime_source_workspace_projection_cache=(
+            VirtualWorkspaceSourceProjectionCache()
+        ),
+        source_image_set_identity_policy=SourceImageSetIdentityPolicy(),
     )
     runtime = function_runtime.PatternGroupRuntime(
         function_runtime.PatternGroupExecutionRequest(
@@ -3152,6 +3236,11 @@ def test_producer_anchored_pipeline_start_paths_use_exact_source_projection_bund
             component_index=0,
             component_count=1,
         )
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_source_binding_load_universe",
+        lambda: virtual_paths,
     )
 
     loaded = runtime._load_input_stack()
