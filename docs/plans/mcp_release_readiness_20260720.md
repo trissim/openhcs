@@ -29,24 +29,25 @@ preparation.
 
 ## Required extracted-package release train
 
-The current OpenHCS wheel cannot install purely from PyPI until seven candidate
+The current OpenHCS wheel cannot install purely from PyPI until eight candidate
 packages are published. The safe dependency order is:
 
 1. `metaclass-registry 0.1.5`
 2. `arraybridge 0.2.11`, then `PolyStore 0.1.10`
 3. `python-introspect 0.1.5`, then `ObjectState 1.0.18`, then
    `pyqt-reactive 0.1.22`
-4. `zmqruntime 0.1.9` at any point before OpenHCS
+4. `zmqruntime 0.1.9` and `pycodify 0.1.3` at any point before OpenHCS
 5. OpenHCS last
 
-`pycodify 0.1.2` is already published; the OpenHCS floor now names that current
-candidate. `scripts/validate_local_release_floors.py` discovers package names,
+`pycodify 0.1.3` is required because OpenHCS consumes the post-0.1.2 immutable
+render-context extension API; the OpenHCS floor now names that candidate.
+`scripts/validate_local_release_floors.py` discovers package names,
 versions, and dependencies from PEP 621 metadata and rejects stale OpenHCS
 floors or unsatisfied local dependency edges. It contains no API or feature
 mirror.
 
 The first clean PyPI-only failure was `python-introspect 0.1.4`, which lacks the
-current `signature_analysis_target` export. A one-shot install using the seven
+current `signature_analysis_target` export. A one-shot install using the eight
 local candidate wheels passed with 117 compatible packages, MCP health `ok`,
 all 43 knowledge documents, PyQt/QScintilla offscreen import, and all six
 console entrypoints.
@@ -61,7 +62,7 @@ For each extracted package:
 4. Verify its wheel metadata and import surface from a clean environment.
 5. Advance only after downstream candidate installation resolves from PyPI.
 
-After all seven are available, run the existing OpenHCS cross-platform matrix
+After all eight are available, run the existing OpenHCS cross-platform matrix
 without local wheel overlays. A pure-PyPI `wheel[gui,mcp]` smoke on every
 supported Python/OS cell is the dependency-release acceptance test.
 
@@ -85,7 +86,7 @@ unbounded dependency update in this release train.
 
 ## External blockers
 
-- PyPI publication authority for the seven extracted packages and OpenHCS.
+- PyPI publication authority for the eight extracted packages and OpenHCS.
 - A production MCPB signing certificate and signed Claude artifact.
 - Codex/plugin marketplace and Claude directory submission/approval.
 - Official MCP Registry authentication and publication after the PyPI wheel is
