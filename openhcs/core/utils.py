@@ -408,6 +408,11 @@ class WellFilterProcessor:
     # === NEW COMPILATION-TIME METHODS ===
 
     @staticmethod
+    def _well_identity_key(well: object) -> str:
+        """Normalize a well identifier for matching without replacing its source identity."""
+        return str(well).casefold()
+
+    @staticmethod
     def resolve_filter_with_mode(
         well_filter: Union[List[str], str, int],
         well_filter_mode: 'WellFilterMode',
@@ -446,14 +451,26 @@ class WellFilterProcessor:
                     f"available_wells={available_wells}, resolved_wells={resolved_wells}")
 
         # Apply mode: INCLUDE = use resolved wells, EXCLUDE = use all except resolved wells
+        resolved_identity_keys = {
+            WellFilterProcessor._well_identity_key(well) for well in resolved_wells
+        }
         if well_filter_mode == WellFilterMode.EXCLUDE:
             # Return all wells that are NOT in the resolved set, preserving order
-            result = [w for w in available_wells if w not in resolved_wells]
+            result = [
+                w
+                for w in available_wells
+                if WellFilterProcessor._well_identity_key(w)
+                not in resolved_identity_keys
+            ]
             logger.debug(f"EXCLUDE mode: returning {result}")
             return result
         else:
             # Return resolved wells in the order they appear in available_wells
-            result = [w for w in available_wells if w in resolved_wells]
+            result = [
+                w
+                for w in available_wells
+                if WellFilterProcessor._well_identity_key(w) in resolved_identity_keys
+            ]
             logger.debug(f"INCLUDE mode: returning {result}")
             return result
 
@@ -487,7 +504,15 @@ class WellFilterProcessor:
         if isinstance(well_filter, list):
             # Inline validation for specific wells
             available_set = set(available_wells)
-            invalid_wells = [w for w in well_filter if w not in available_set]
+            available_identity_keys = {
+                WellFilterProcessor._well_identity_key(well) for well in available_wells
+            }
+            invalid_wells = [
+                well
+                for well in well_filter
+                if WellFilterProcessor._well_identity_key(well)
+                not in available_identity_keys
+            ]
 
             if invalid_wells:
                 if strict:
@@ -502,7 +527,18 @@ class WellFilterProcessor:
                     logger.warning(f"Ignoring non-existent wells in filter: {invalid_wells}")
 
             # Return only valid wells
-            return set(w for w in well_filter if w in available_set)
+            requested_identity_keys = {
+                WellFilterProcessor._well_identity_key(well)
+                for well in well_filter
+                if WellFilterProcessor._well_identity_key(well)
+                in available_identity_keys
+            }
+            return {
+                well
+                for well in available_set
+                if WellFilterProcessor._well_identity_key(well)
+                in requested_identity_keys
+            }
 
         elif isinstance(well_filter, int):
             # Inline validation for max count. Zero is the explicit empty
