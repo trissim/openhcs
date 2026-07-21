@@ -8,77 +8,35 @@ FunctionRegistryService and business logic.
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
-from typing import Callable, Optional, Dict, Iterable, Mapping
+from typing import Callable, Dict, Mapping, Optional
 
-from PyQt6.QtWidgets import (
-    QDialog,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QLabel,
-    QTreeWidget,
-    QTreeWidgetItem,
-    QSplitter,
-    QWidget,
-    QSizePolicy,
-)
+from metaclass_registry import AutoRegisterMeta
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
-from metaclass_registry import AutoRegisterMeta
+from PyQt6.QtWidgets import (
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QSplitter,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+from pyqt_reactive.theming import ColorScheme, StyleSheetGenerator
+from pyqt_reactive.widgets.shared.function_table_browser import FunctionTableBrowser
 
 # Use the registry service from correct location
 from openhcs.processing.backends.lib_registry.registry_service import RegistryService
 from openhcs.processing.backends.lib_registry.unified_registry import FunctionMetadata
 from openhcs.processing.custom_functions.signals import custom_function_signals
-from pyqt_reactive.theming import ColorScheme
-from pyqt_reactive.theming import StyleSheetGenerator
-from pyqt_reactive.widgets.shared.function_table_browser import FunctionTableBrowser
-from pyqt_reactive.widgets.shared.column_filter_widget import MultiColumnFilterPanel
 
 logger = logging.getLogger(__name__)
 
 
 FunctionMetadataMap = Mapping[str, FunctionMetadata]
-
-
-def _contract_display_value(contract: object) -> str:
-    if contract is None:
-        return "unknown"
-    if isinstance(contract, Enum):
-        return contract.name
-    return str(contract)
-
-
-@dataclass(frozen=True)
-class FunctionFilterColumn:
-    """Column-specific extraction and match semantics for the filter panel."""
-
-    label: str
-    values_for: Callable[[FunctionMetadata], Iterable[str]]
-
-    def display_values(self, metadata: FunctionMetadata) -> tuple[str, ...]:
-        return tuple(value for value in self.values_for(metadata) if value)
-
-    def matches(self, metadata: FunctionMetadata, allowed_values: set[str]) -> bool:
-        return any(value in allowed_values for value in self.display_values(metadata))
-
-
-FUNCTION_FILTER_COLUMNS = (
-    FunctionFilterColumn(
-        "Registry", lambda metadata: (metadata.get_registry_name().title(),)
-    ),
-    FunctionFilterColumn(
-        "Backend", lambda metadata: (metadata.get_memory_type().title(),)
-    ),
-    FunctionFilterColumn(
-        "Contract", lambda metadata: (_contract_display_value(metadata.contract),)
-    ),
-    FunctionFilterColumn("Tags", lambda metadata: tuple(metadata.tags)),
-)
-FUNCTION_FILTER_COLUMNS_BY_LABEL = {
-    column.label: column for column in FUNCTION_FILTER_COLUMNS
-}
 
 
 class FunctionTreeNode(ABC, metaclass=AutoRegisterMeta):
@@ -195,7 +153,6 @@ class FunctionSelectorDialog(QDialog):
         self.setup_ui()
         self.setup_connections()
         self.populate_module_tree()
-        self._build_column_filters()
         self.populate_function_table()
 
         # Connect to custom function signals for auto-refresh
@@ -266,11 +223,11 @@ class FunctionSelectorDialog(QDialog):
     ):
         """Update filtered view using table browser."""
         self.filtered_functions = filtered_functions
-        self.populate_function_table(self.filtered_functions)
+        self.function_table_browser.set_filtered_items(self.filtered_functions)
 
         # Create unified count display in the browser's status label
         total_count = len(self.all_functions_metadata)
-        filtered_count = len(self.filtered_functions)
+        filtered_count = len(self.function_table_browser.filtered_items)
         count_text = f"Functions: {filtered_count}/{total_count}"
         if filter_description:
             count_text += f" ({filter_description})"
@@ -456,13 +413,6 @@ class FunctionSelectorDialog(QDialog):
             self._create_pane_widget("Module Structure", self.module_tree), 1
         )
 
-        # Column filter panel (Library, Backend, Contract, Tags)
-        self.column_filter_panel = MultiColumnFilterPanel(
-            color_scheme=self.color_scheme
-        )
-        self.column_filter_panel.setVisible(False)  # Hidden until populated
-        left_layout.addWidget(self.column_filter_panel)
-
         main_splitter.addWidget(left_panel)
 
         # === RIGHT PANEL: Function Table Browser ===
@@ -523,75 +473,16 @@ class FunctionSelectorDialog(QDialog):
             self._on_function_double_clicked
         )
 
-        # Column filter panel
-        self.column_filter_panel.filters_changed.connect(
-            self._on_column_filters_changed
-        )
-
-    def populate_function_table(
-        self, functions_metadata: Optional[Dict[str, FunctionMetadata]] = None
-    ):
+    def populate_function_table(self):
         """Populate function table using FunctionTableBrowser."""
-        if functions_metadata is None:
-            functions_metadata = self.filtered_functions
-
-        self.function_table_browser.set_items(functions_metadata)
+        self.function_table_browser.set_items(self.all_functions_metadata)
 
         # Update count label
         total = len(self.all_functions_metadata)
-        filtered = len(functions_metadata)
+        filtered = len(self.function_table_browser.filtered_items)
         self.function_table_browser.status_label.setText(
             f"Functions: {filtered}/{total}"
         )
-
-    def _build_column_filters(self):
-        """Build column filter widgets from function metadata."""
-        if not self.all_functions_metadata:
-            return
-
-        self.column_filter_panel.clear_all_filters()
-
-        for column in FUNCTION_FILTER_COLUMNS:
-            unique_values = set()
-
-            for metadata in self.all_functions_metadata.values():
-                unique_values.update(column.display_values(metadata))
-
-            if unique_values:
-                self.column_filter_panel.add_column_filter(
-                    column.label, sorted(list(unique_values))
-                )
-
-        if self.column_filter_panel.column_filters:
-            self.column_filter_panel.setVisible(True)
-
-    def _on_column_filters_changed(self):
-        """Handle column filter checkbox changes."""
-        active_filters = self.column_filter_panel.get_active_filters()
-
-        if not active_filters:
-            # No filters active - show all
-            self._update_filtered_view(self.all_functions_metadata)
-            return
-
-        # Apply filters with AND logic across columns
-        filtered = {}
-        for key, metadata in self.all_functions_metadata.items():
-            matches = True
-
-            for column_name, allowed_values in active_filters.items():
-                column = FUNCTION_FILTER_COLUMNS_BY_LABEL.get(column_name)
-                if column is None:
-                    continue
-
-                if not column.matches(metadata, set(allowed_values)):
-                    matches = False
-                    break
-
-            if matches:
-                filtered[key] = metadata
-
-        self._update_filtered_view(filtered, "filtered by column")
 
     def on_tree_selection_changed(self):
         """Handle tree selection using mathematical simplification (RST principle)."""
