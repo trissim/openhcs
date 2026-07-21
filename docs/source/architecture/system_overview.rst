@@ -22,10 +22,12 @@ End-to-end flow
              | one CompilationSession per execution axis
              v
    typed CompiledStepPlan objects
-     + source/artifact/runtime-environment plans
+     + per-step source/artifact/execution facts
              |
              v
    CompiledExecutionBundle
+     + worker assignments
+     + compiled runtime environment
              |
              v
    workers -> RuntimeValueStore -> materialization/export
@@ -63,15 +65,17 @@ mixing steps, scopes, or contexts.
 Each ``CompiledStepPlan`` is the source of truth for the compiled step. It has
 typed fields for source bindings, source universe, artifact inputs and outputs,
 execution group scope, function pattern, memory conversions, materialization,
-backends, streaming, and worker assignment. Compiler stages mutate these fields
+backends, and streaming. Compiler stages mutate these fields
 instead of maintaining parallel string-keyed dictionaries.
 
 Execution boundary
 ------------------
 
-``CompiledExecutionBundle`` carries runtime contexts, stripped worker steps, and
-the compiled runtime environment. The environment includes multiprocessing start
-method, threading choice, and GPU-registry initialization facts. Workers execute
+``CompiledExecutionBundle`` carries the in-process runtime contexts, their
+transport-safe projection, worker assignments, and the compiled runtime
+environment. The environment includes multiprocessing start method, threading
+choice, and GPU-registry initialization facts. These execution-wide facts belong
+to the bundle rather than any individual ``CompiledStepPlan``. Workers execute
 the bundle without resolving declaration configuration again.
 
 Runtime data is represented by nominal value families and stored under typed
