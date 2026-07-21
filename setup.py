@@ -1,22 +1,28 @@
-"""
-Dynamic setup.py for openhcs.
+"""Setuptools compatibility entry point for OpenHCS.
 
-This setup.py allows for different dependency sources:
-- PyPI releases: Use pip versions from PyPI
-- Development mode: Use local external modules from external/ directory
-
-Usage:
-    # Production/PyPI build (uses pip versions)
-    pip install .
-    python -m build
-
-    # Development install (uses local external modules)
-    pip install -e .
+Dependencies come from ``pyproject.toml``. The legacy dependency-selection
+helpers below are retained for inspection but are not passed to ``setup()``;
+integrated development environments install the packages under ``external/``
+explicitly before installing OpenHCS.
 """
 
 import os
+import runpy
 from pathlib import Path
 from setuptools import setup
+from setuptools.command.build_py import build_py as _build_py
+from setuptools.command.sdist import sdist as _sdist
+
+_KNOWLEDGE_BUILD_HELPERS = runpy.run_path(
+    str(Path(__file__).resolve().parent / "scripts/build_mcp_knowledge_assets.py")
+)
+KNOWLEDGE_MANIFEST_RELATIVE_PATH = _KNOWLEDGE_BUILD_HELPERS[
+    "KNOWLEDGE_MANIFEST_RELATIVE_PATH"
+]
+PACKAGED_KNOWLEDGE_ROOT_RELATIVE_PATH = _KNOWLEDGE_BUILD_HELPERS[
+    "PACKAGED_KNOWLEDGE_ROOT_RELATIVE_PATH"
+]
+project_knowledge_assets = _KNOWLEDGE_BUILD_HELPERS["project_knowledge_assets"]
 
 # External module versions for PyPI releases
 PYPI_DEPENDENCIES = [
@@ -33,7 +39,7 @@ PYPI_DEPENDENCIES = [
 # Local external modules for development
 # These are dynamically generated with absolute paths at runtime
 def get_local_external_dependencies():
-    """Generate local external dependencies with absolute paths."""
+    """Return legacy local dependency specs; the active setup call does not use them."""
     project_root = Path(__file__).parent.resolve()
     return [
         f"ObjectState @ file://{project_root}/external/ObjectState",
@@ -49,11 +55,10 @@ def get_local_external_dependencies():
 
 def is_development_mode():
     """
-    Determine if we're in development mode.
+    Return the legacy development-mode heuristic.
 
-    Development mode is detected when:
-    1. The external/ directory exists with git submodules
-    2. OPENHCS_DEV_MODE environment variable is set to "1", "true", or "yes"
+    This helper does not affect ``setup()``. It remains only until the obsolete
+    dependency-selection implementation is removed.
     """
     # Check for external directory
     project_root = Path(__file__).parent
@@ -73,10 +78,9 @@ def is_development_mode():
 
 def get_external_dependencies():
     """
-    Get external dependencies based on install mode.
+    Return legacy dependency specs based on the inactive mode heuristic.
 
-    Returns:
-        list: List of dependency specifications
+    The active ``setup()`` call does not consume this result.
     """
     if is_development_mode():
         return get_local_external_dependencies()
@@ -84,7 +88,35 @@ def get_external_dependencies():
         return PYPI_DEPENDENCIES
 
 
-# Call setup without install_requires (dependencies are in pyproject.toml)
-# External modules are in pyproject.toml for production builds
-# Local external modules are used only in development mode via pyproject.toml overrides
-setup()
+class BuildPyWithMcpKnowledge(_build_py):
+    """Project canonical MCP knowledge sources directly into wheel build output."""
+
+    def run(self):
+        super().run()
+        project_root = Path(__file__).resolve().parent
+        if (project_root / KNOWLEDGE_MANIFEST_RELATIVE_PATH).is_file():
+            project_knowledge_assets(
+                project_root,
+                Path(self.build_lib) / PACKAGED_KNOWLEDGE_ROOT_RELATIVE_PATH,
+            )
+
+
+class SdistWithMcpKnowledge(_sdist):
+    """Include projected MCP knowledge resources in source distributions."""
+
+    def make_release_tree(self, base_dir, files):
+        super().make_release_tree(base_dir, files)
+        project_knowledge_assets(
+            Path(__file__).resolve().parent,
+            Path(base_dir) / PACKAGED_KNOWLEDGE_ROOT_RELATIVE_PATH,
+        )
+
+
+# Dependencies are declared in pyproject.toml. Local packages must be installed
+# explicitly for integrated development; no dependency override occurs here.
+setup(
+    cmdclass={
+        "build_py": BuildPyWithMcpKnowledge,
+        "sdist": SdistWithMcpKnowledge,
+    }
+)

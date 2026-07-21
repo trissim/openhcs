@@ -1,0 +1,38 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.openhcsdev/openhcs",
+  "title": "OpenHCS",
+  "description": "Inspect, author, validate, and run high-content microscopy workflows.",
+  "websiteUrl": "https://openhcs.readthedocs.io/",
+  "repository": {
+    "url": "https://github.com/OpenHCSDev/OpenHCS",
+    "source": "github"
+  },
+  "version": "0.5.22.dev0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "openhcs",
+      "version": "0.5.22.dev0",
+      "runtimeHint": "uvx",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--with",
+          "value": "openhcs[gui,mcp]==0.5.22.dev0",
+          "description": "Install the matching OpenHCS GUI and MCP dependencies."
+        }
+      ],
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

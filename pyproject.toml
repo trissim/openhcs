@@ -1,14 +1,11 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-# NOTE: For OMERO extras, zeroc-ice is installed via direct URL references
-# with environment markers. This allows pip to automatically download and install
-# the appropriate zeroc-ice wheel from Glencoe Software's repository.
-#
-# When installing with OMERO support, use:
-#   pip install -e ".[omero]"  # For editable installs
-#   pip install ".[omero]"      # For regular installs
+# NOTE: The OMERO extra declares omero-py, but ZeroC Ice is not installed
+# automatically from project metadata. Install it first with
+# scripts/install_omero_deps.py or requirements-omero.txt, then install the
+# OpenHCS extra with `pip install -e ".[omero]"`.
 #
 # For more information, see:
 # https://www.glencoesoftware.com/blog/2023/12/08/ice-binaries-for-omero.html
@@ -19,7 +16,8 @@ dynamic = ["version"]
 description = "High-Content Screening image processing engine with native GPU support"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT License"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     {name = "Tristan Simas", email = "tristan.simas@mail.mcgill.ca"}
 ]
@@ -35,7 +33,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Image Processing",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -52,6 +49,8 @@ dependencies = [
     "PyWavelets>=1.6.0",
     "pandas>=2.3.1",
     "numba>=0.61.0",
+    "skan>=0.13.1",
+    "threadpoolctl>=3.6.0",
 
     # Image I/O and formats
     "imageio>=2.37.0",
@@ -79,14 +78,14 @@ dependencies = [
     "psutil>=5.9.0",
 
     # External dependencies (PyPI versions for production builds)
-    "zmqruntime>=0.1.0",
-    "pycodify>=0.1.0",
-    "objectstate>=0.1.0",
-    "python-introspect>=0.1.1",
-    "metaclass-registry>=0.1.0",
-    "arraybridge>=0.1.0",
-    "polystore>=0.1.0",
-    "pyqt-reactive>=0.1.0",
+    "zmqruntime>=0.1.9",
+    "pycodify>=0.1.2",
+    "objectstate>=1.0.18",
+    "python-introspect>=0.1.5",
+    "metaclass-registry>=0.1.5",
+    "arraybridge>=0.2.11",
+    "polystore>=0.1.10",
+    "pyqt-reactive>=0.1.22",
 ]
 
 [project.optional-dependencies]
@@ -97,7 +96,8 @@ dev = [
     "coverage>=7.3.2",
     "genbadge[coverage]",
     "pytest-asyncio>=0.21.0",
-    "mcp>=1.0",
+    # MCP Python SDK v2 is still a breaking-development line; migrate explicitly after GA.
+    "mcp>=1.28,<2",
     "pyzmq>=26.0.0",  # Required for ZMQ execution and OMERO integration tests
 ]
 
@@ -144,7 +144,14 @@ fiji = [
 
 # Model Context Protocol server
 mcp = [
-    "mcp>=1.0",
+    # Keep release wheels on the tested stable major; do not float into MCP SDK v2.
+    "mcp>=1.28,<2",
+]
+
+# Authenticated hosted Streamable HTTP MCP resource server
+mcp-http = [
+    "mcp>=1.28,<2",
+    "httpx>=0.28,<1",
 ]
 
 # Bio-Formats HCS reader integration
@@ -252,7 +259,9 @@ all = [
     "scyjava>=1.9.1",
 
     # MCP
-    "mcp>=1.0",
+    # Keep this aligned with the dedicated mcp extra above.
+    "mcp>=1.28,<2",
+    "httpx>=0.28,<1",
 
     # GPU
     "torch>=2.6.0,<2.8.0",
@@ -276,14 +285,16 @@ Source = "https://github.com/OpenHCSDev/OpenHCS"
 Documentation = "https://github.com/OpenHCSDev/OpenHCS/blob/main/README.md"
 
 [project.scripts]
-# Main interfaces - GUI is now the default
-openhcs = "openhcs.pyqt_gui.__main__:main"
+# Main interfaces - the top-level dispatcher defaults to the GUI and exposes
+# stable named commands such as `openhcs mcp` for package registries.
+openhcs = "openhcs.cli:main"
 openhcs-gui = "openhcs.pyqt_gui.__main__:main"
 # openhcs-tui = "openhcs.textual_tui.__main__:main"  # TUI deprecated, not in PyPI
 
 # Utility scripts
 openhcs-recache = "openhcs.utils.recache_function_registry:main"
 openhcs-mcp = "openhcs.mcp.bootstrap:main"
+openhcs-mcp-http = "openhcs.mcp.http:main"
 openhcs-mcp-dev = "openhcs.mcp.dev_client:main"
 
 [tool.setuptools]
@@ -298,7 +309,14 @@ exclude = ["openhcs.textual_tui*"]
 version = {attr = "openhcs.__version__"}
 
 [tool.setuptools.package-data]
-openhcs = ["**/*.css", "**/*.yaml", "**/*.yml", "**/*.json"]
+openhcs = [
+    "**/*.css",
+    "**/*.yaml",
+    "**/*.yml",
+    "**/*.json",
+    "agent/resources/knowledge/**/*.md",
+    "agent/resources/knowledge/**/*.rst",
+]
 
 # GPU Dependencies Version Notes:
 # - JAX 0.4.38: Last version compatible with CuDNN 9.5.x (JAX 0.5.0+ requires CuDNN 9.8+)
@@ -315,14 +333,10 @@ openhcs = ["**/*.css", "**/*.yaml", "**/*.yml", "**/*.json"]
 # - With GPU support: pip install "openhcs[gpu]"
 # - Full installation: pip install "openhcs[all]"
 #
-# Development Installation:
-#   pip install -e ".[dev,gui]"
-#   (The custom build backend automatically uses local external modules)
-#
-# Force production mode in development:
-#   OPENHCS_DEV_MODE=0 pip install -e ".[dev,gui]"
-#
-# See docs/development_setup.md for more details
+# Integrated development installation requires explicitly installing the eight
+# editable packages under external/ before `pip install -e ".[dev,gui]"`.
+# setup.py does not replace the published dependency requirements automatically.
+# See docs/development_setup.md for the exact commands.
 
 [tool.coverage.run]
 omit = [

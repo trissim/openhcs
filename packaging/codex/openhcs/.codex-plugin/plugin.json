@@ -1,0 +1,39 @@
+{
+  "name": "openhcs",
+  "version": "0.5.22-dev.0",
+  "description": "Inspect, author, validate, and run OpenHCS microscopy workflows through the local OpenHCS MCP server.",
+  "author": {
+    "name": "OpenHCSDev",
+    "email": "tristan.simas@mail.mcgill.ca",
+    "url": "https://github.com/OpenHCSDev"
+  },
+  "homepage": "https://openhcs.readthedocs.io/",
+  "repository": "https://github.com/OpenHCSDev/OpenHCS",
+  "license": "MIT",
+  "keywords": [
+    "microscopy",
+    "image-processing",
+    "mcp",
+    "pipelines"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "OpenHCS",
+    "shortDescription": "Operate local microscopy workflows with OpenHCS.",
+    "longDescription": "Connect Codex to a local, isolated OpenHCS installation for plate inspection, pipeline authoring and validation, execution, viewer control, and authenticated GUI interaction.",
+    "developerName": "OpenHCSDev",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Interactive"
+    ],
+    "websiteURL": "https://openhcs.readthedocs.io/",
+    "defaultPrompt": [
+      "Inspect this microscopy plate and explain its dimensions.",
+      "Author and validate an OpenHCS pipeline for this experiment.",
+      "Connect to my running OpenHCS UI and inspect its current plate."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

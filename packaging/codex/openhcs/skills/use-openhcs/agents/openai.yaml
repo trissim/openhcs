@@ -1,0 +1,4 @@
+interface:
+  display_name: "Use OpenHCS"
+  short_description: "Operate local OpenHCS pipelines safely"
+  default_prompt: "Use $use-openhcs. Check health, read the first-use mental model, inspect the current capability surface, and examine schemas, examples, and live data before choosing a UI-visible or exposed headless route. Ask before mutation or execution."

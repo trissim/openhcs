@@ -379,7 +379,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff black mypy
+          pip install ruff black mypy packaging
+
+      - name: Validate local dependency release floors
+        if: env.OPENHCS_CI_DEP_SOURCE == 'submodules'
+        run: python scripts/validate_local_release_floors.py
 
       - name: Run ruff (linting)
         continue-on-error: true  # Don't fail CI on linting errors initially
@@ -420,6 +424,7 @@ jobs:
       - name: Build wheel
         run: |
           python -m pip install --upgrade pip build
+          python scripts/sync_mcp_release_metadata.py --check
           python -m build
 
       - name: Test headless installation (base - no extras)
@@ -465,6 +470,21 @@ jobs:
           fi
           pip install "${WHEEL}[dev]"
           python -c "import pytest; import openhcs; print('[OK] Dev dependencies OK')"
+
+      - name: Test combined GUI and MCP client installation outside checkout
+        shell: bash
+        env:
+          OPENHCS_CPU_ONLY: true
+          XDG_CACHE_HOME: ${{ runner.temp }}/openhcs-mcp-cache
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            source test_gui/Scripts/activate
+          else
+            source test_gui/bin/activate
+          fi
+          WHEEL=$(python -c "from pathlib import Path; print(next(Path('dist').glob('*.whl')).resolve())")
+          pip install "${WHEEL}[gui,mcp]"
+          python "$GITHUB_WORKSPACE/scripts/smoke_installed_mcp.py" --forbid-import-root "$GITHUB_WORKSPACE"
 
   # Run integration tests against wheel installation
   wheel-integration-test:
