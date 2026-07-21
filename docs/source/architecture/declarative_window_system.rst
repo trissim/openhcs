@@ -1,9 +1,14 @@
 Declarative windows
 ===================
 
-This page moved when its generic implementation was extracted. `pyqt-reactive <https://github.com/OpenHCSDev/PyQT-reactive>`_ owns the reusable mechanism.
-OpenHCS documents only the domain declarations, adapters, and cross-package
-invariants that compose it.
+Generic window registration, scope-based reuse, navigation, parentage, and close
+cleanup moved to `pyqt-reactive <https://github.com/OpenHCSDev/PyQT-reactive>`_.
+See :external+pyqt-reactive:doc:`window manager usage
+<development/window_manager_usage>` and
+:external+pyqt-reactive:doc:`the scope-window factory
+<architecture/scope_window_factory>`.
 
-See :doc:`external_foundations` for the current OpenHCS integration boundary and
-:doc:`external_foundations` for the package ownership policy.
+OpenHCS retains stable product window identities, domain factories, ObjectState
+scope selection, and pipeline/execution actions. Their cross-package composition
+is documented in :doc:`ui_services_architecture`; package ownership and
+migration policy are in :doc:`external_foundations`.

@@ -30,5 +30,13 @@ The compiler determines component order and attaches typed metadata to each
 viewer batch. If a viewer does not start, check the execution log for dependency,
 port/readiness, or Java/ImageJ errors before changing the pipeline.
 
+After the last batch is accepted, OpenHCS waits for the viewer to settle before
+capturing state or closing a non-persistent viewer. Napari reports incremental
+completed/total layer-update progress while yielding between routes on the Qt
+event loop. The settlement deadline measures time without forward progress, not
+the total time required for a large transfer. A route exception or a genuinely
+stalled update fails execution instead of being hidden behind a successful ZMQ
+acknowledgment.
+
 See :doc:`../guides/viewer_management` and
 :doc:`../guides/fiji_viewer_management` for lifecycle and ownership details.

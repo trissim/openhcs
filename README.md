@@ -133,6 +133,20 @@ Edit a value in `GlobalPipelineConfig` — watch it propagate in real-time to `P
 
 </td>
 </tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🧬 CellProfiler Pipeline Import
+Open `.cppipe` files in the desktop application or lower them from Python into ordinary `PipelineConfig` and `FunctionStep` declarations. Named images, objects, measurements, relationships, and exports use the same typed compiler and runtime as native OpenHCS pipelines; compatibility reports and the Official30 corpus keep tested coverage explicit.
+
+</td>
+<td width="50%" valign="top">
+
+### 🤖 MCP Agent Automation
+Use the local stdio MCP server with Codex, Claude Desktop, and other clients, or deploy the separately secured hosted HTTP surface. Capability profiles, schemas, knowledge, UI attachment, authoring, execution, runtime inspection, and viewer review are projected from one typed capability registry rather than duplicated tool lists.
+
+</td>
+</tr>
 </table>
 
 ---
@@ -230,8 +244,14 @@ pip install openhcs[gui,gpu]
 # Full installation (GUI + viewers + GPU)
 pip install openhcs[gui,viz,gpu]
 
+# Add the local MCP server for agent clients
+pip install openhcs[mcp,gui]
+
 # Launch the application
 openhcs
+
+# Launch the local MCP server over stdio
+openhcs-mcp
 ```
 
 ```python

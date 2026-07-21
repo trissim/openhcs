@@ -61,6 +61,14 @@ The GUI stores a pipeline as a ``list[FunctionStep]`` plus a ``PipelineConfig``.
 Code export and re-import use those same public declarations; there is no
 separate GUI-only pipeline model.
 
+To import an existing CellProfiler pipeline in the desktop application, select
+the target plate, choose **File > Open Pipeline**, and select the ``.cppipe``.
+The importer applies setup-module source bindings to that plate's
+``PipelineConfig`` and replaces the editor contents with ordinary
+``FunctionStep`` declarations. Review the source bindings and compiled artifact
+plan before running; the imported pipeline does not retain a hidden
+CellProfiler runtime or a second GUI-only representation.
+
 Import a CellProfiler pipeline
 ------------------------------
 

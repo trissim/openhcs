@@ -128,10 +128,21 @@ Settlement and transient viewer evidence
 
 Transport acceptance is not proof that a deferred Qt layer update succeeded.
 Napari records an exception from a scheduled route update against that exact
-route while keeping the event loop alive. The ``settle`` control action drains
-remaining debounced updates and requires all recorded updates to have
-succeeded. The error therefore crosses the asynchronous Qt boundary instead of
-becoming a silent log message or an unrelated timeout.
+route while keeping the event loop alive. The ``settle`` control action starts
+or observes an incremental drain of the remaining debounced updates. Each
+control reply carries a typed ``ViewerSettleProgress`` record with a phase,
+completed and total update counts, and the currently active route. Napari
+schedules only one route per Qt callback so the event loop remains available to
+answer control traffic while a large viewer state is settling.
+
+The caller polls that progress until it reaches ``complete`` or ``failed``. Its
+timeout is a **no-progress deadline**, not a cap on total settlement time:
+advancing the completed count renews the deadline. A large legitimate transfer
+can therefore take longer than the configured interval while still failing a
+viewer that is genuinely stalled. Fiji uses the same wire contract and reports
+terminal progress for its synchronous update path. Every recorded route must
+succeed before settlement completes, so an exception crosses the asynchronous
+Qt boundary instead of becoming a silent log message or an unrelated timeout.
 
 Compiled plate execution follows this order on success:
 
@@ -155,6 +166,9 @@ Failure boundaries
 - Readiness fails unless the control endpoint returns the typed PONG required by
   policy within one deadline.
 - Stream settlement fails on any deferred layer-route exception.
+- Stream settlement also fails when the typed completed-update count makes no
+  forward progress for the configured deadline; total elapsed settlement time
+  is not itself a failure.
 - Non-persistent execution fails cleanup if its viewer remains active; runtime
   acceptance also verifies that its owned endpoint was released.
 

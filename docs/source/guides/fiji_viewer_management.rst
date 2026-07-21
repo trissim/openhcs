@@ -25,5 +25,26 @@ process management. OpenHCS owns the Fiji entry point, ImageJ conversion, macro
 integration, and viewer-specific presentation. Persistent viewers may be reused
 only after the control protocol confirms that the bound process is compatible.
 
+Settlement and inspection boundary
+----------------------------------
+
+Fiji participates in the same typed settlement control contract as Napari, but
+its current display path is synchronous. A ``SETTLE`` request therefore returns
+terminal ``ViewerSettleProgress`` immediately; Fiji does not expose Napari's
+queue of deferred Qt layer-route updates. This still provides one common
+execution/lifecycle protocol without pretending the two viewer implementations
+have the same internal update model.
+
+Fiji does **not** currently provide Napari-style live viewer-state or payload
+projection. ``STATE`` and ``PAYLOADS`` control requests return explicit errors
+until a Fiji state projector exists. Inspection clients therefore cannot query
+Fiji layers, axes, labels, payload arrays, or payload summaries through those
+controls. This is a declared capability boundary, not a port/readiness failure;
+do not retry it as transport recovery or infer viewer state from window titles.
+
+Fiji macro execution, display construction, readiness, clear-state control, and
+process lifecycle remain separate supported surfaces. Use Napari when automated
+post-render layer/payload evidence is required.
+
 For shared behavior, see :doc:`viewer_management` and
 :doc:`../architecture/streaming_boundary_and_wrappers`.

@@ -28,6 +28,14 @@ Persistence and reuse are configuration policies, not guarantees that an
 arbitrary process on the same port is compatible. Readiness uses the typed
 control protocol before image data is sent.
 
+Execution completion also has a typed viewer boundary. Napari drains queued
+layer routes incrementally on the Qt thread and reports completed/total update
+counts plus the active route. The caller renews its deadline whenever that
+count advances, so the configured interval means "no progress for this long"
+rather than "the whole viewer must finish this quickly." A route failure or a
+stalled count is an execution failure; a successful transport acknowledgment
+alone is not evidence that the corresponding layer was rendered.
+
 Choosing one step to inspect
 ----------------------------
 
