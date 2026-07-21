@@ -133,6 +133,12 @@ def test_knowledge_base_retrieves_canonical_image_source_guide():
         "combine mixed image stores TIFF PNG",
         "assign named channels with source bindings",
         "interpret well site channel Z timepoint component metadata",
+        "two callable channel indices but three physical channels streamed",
+        "physical microscope channel number versus assembled stack position",
+        "three source universe channels but two ordered step bindings",
+        "MetaXpress inherit Hoechst MAP2 SMI312 nuclear index neurite index",
+        "variable components versus group by channel stack assembly",
+        "source binding subset versus previous step artifact provenance",
     )
 
     for query in queries:
@@ -144,7 +150,7 @@ def test_knowledge_base_retrieves_canonical_image_source_guide():
     document = service.get_document(
         KnowledgeBaseDocumentRequest.from_fields(
             document_id="openhcs_image_sources",
-            max_chars=12_000,
+            max_chars=20_000,
         )
     )
 
@@ -158,6 +164,41 @@ def test_knowledge_base_retrieves_canonical_image_source_guide():
     assert "CHANNEL" in document.content
     assert "Z_INDEX" in document.content
     assert "TIMEPOINT" in document.content
+    assert "Binding positions are not microscope channel values" in document.content
+    assert "full named physical" in document.content
+    assert "inputs consumed by the nominal handler projection" in document.content
+    assert "Seeing all three in the source workspace inventory is valid" in (
+        document.content
+    )
+    assert "resolved ``FunctionStep.source_bindings``" in document.content
+    assert "CompiledSourceBindingPlan.bindings" in document.content
+    assert "zero-based position on that" in document.content
+    assert "When viewer routes carry physical component identities" in document.content
+    assert "they retain the declared values" in document.content
+    assert "SMI312[channel=4]" in document.content
+    assert "MAP2[channel=2]" in document.content
+    assert "channel_index=0" in document.content
+    assert "channel_index=1" in document.content
+    assert "empty or broader plan means the per-step selection" in document.content
+    assert "MAP2 channel 2 in the full source workspace" in document.content
+    assert "not itself a leak" in document.content
+    assert "step that selects MAP2" in document.content
+    assert "payload_route_key" in document.content
+    assert "simplest inherited full stack" in document.content
+    assert "omit ``FunctionStep.source_bindings``" in document.content
+    assert "``nuclear_stain.channel_index=0``" in document.content
+    assert "``neurite_channel_index=2``" in document.content
+    assert "efficient selected stack" in document.content
+    assert "``neurite_channel_index=0``" in document.content
+    assert "``nuclear_stain.channel_index=1``" in document.content
+    assert "``variable_components=[CHANNEL]`` assembles the channel stack" in (
+        document.content
+    )
+    assert "compiler normalizes it to" in document.content
+    assert "``GroupBy.NONE``" in document.content
+    assert "intentionally generic rather than a" in document.content
+    assert "They do not reinterpret a previous step's output" in document.content
+    assert "current artifact provenance" in document.content
 
 
 def test_knowledge_base_search_covers_example_corpus_terms():

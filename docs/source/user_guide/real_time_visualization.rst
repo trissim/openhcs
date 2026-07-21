@@ -14,6 +14,27 @@ not artifact materialization, a special pipeline class, or a direct viewer call.
    requirements independently of artifact materialization.
 5. Run the compiled plate and inspect the detached viewer.
 
+Plan at least one final result layer around the scientific question the viewer
+must answer. Intermediate source images, masks, object labels, and skeletons
+are valuable for debugging, but they are not automatically a user-facing final
+result. If the analysis assigns one object to another, the final image or label
+artifact should encode that assignment directly--for example, by giving each
+cell body and its assigned neurites the same stable object or label identity.
+The viewer may derive matching display colors from that identity; separate body
+and global-skeleton layers do not reveal the relationship.
+
+The final interpretation should be a callable-owned typed artifact streamed or
+materialized through its compiled plan, not a relationship invented only in the
+viewer. Keep intermediate layers when they help explain the analysis, and add
+the final relationship/result layer needed to judge the outcome.
+
+Visibility, selection, zoom, and screenshots belong to the interactive viewer
+and may change while another person or agent inspects the run. Use raw viewer
+payloads, label identities, ROI summaries, and bounded image samples to verify
+what the pipeline actually produced. Screenshots are evidence about rendering,
+not the authority for whether a hidden artifact exists or which object identity
+its pixels carry.
+
 To display only one step, leave viewer streaming disabled at global and
 pipeline scope and enable ``napari_streaming_config`` or
 ``fiji_streaming_config`` only on that ``FunctionStep``. Use its ``well_filter``
@@ -37,6 +58,10 @@ event loop. The settlement deadline measures time without forward progress, not
 the total time required for a large transfer. A route exception or a genuinely
 stalled update fails execution instead of being hidden behind a successful ZMQ
 acknowledgment.
+
+A layer count or nonzero-pixel check verifies delivery, not scientific
+adequacy. Viewer validation should also confirm that the final layer visibly
+answers the user's question.
 
 See :doc:`../guides/viewer_management` and
 :doc:`../guides/fiji_viewer_management` for lifecycle and ownership details.

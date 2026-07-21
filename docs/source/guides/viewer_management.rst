@@ -60,6 +60,36 @@ available for streaming. Explicit step checkpoints and typed named-artifact
 materializations remain independent and must be disabled separately when they
 are not wanted.
 
+Designing the final view for the user
+-------------------------------------
+
+Choose streamed layers from the question the user must answer, not only from
+the steps that are convenient to debug. Source images, threshold masks,
+segmentations, and skeletons are useful intermediate evidence. They do not
+replace a final result layer that makes the analysis conclusion visible.
+
+When the result is a relationship, the final artifact must encode that
+relationship directly. For example, a neurite-assignment result should give a
+cell body and its assigned neurites the same stable object or label identity;
+the viewer may derive matching display colors from that identity. A cell-body
+layer beside a global skeleton layer proves that both stages ran, but it does
+not show which neurites belong to which cell. Similar requirements apply to
+parent/child objects, tracks, neighborhoods, and class assignments.
+
+Produce the interpretation as a callable-owned typed image or label artifact,
+then stream or materialize it through the compiled artifact plan. Viewer-only
+annotations must not become the semantic authority for a scientific result.
+Keep useful intermediate layers for diagnosis, but consider viewer review
+incomplete until the final layer lets the user verify the requested conclusion.
+
+An interactive viewer has two evidence boundaries. Layer visibility, selection,
+navigation, zoom, and screenshots are presentation state that the user may
+change while an agent is working. Use raw route payloads, object-label IDs, ROI
+summaries, and bounded image samples to establish what the pipeline produced.
+Use screenshots to assess rendering and ergonomics only; a hidden layer is not
+an absent artifact, and screenshot colors must not override typed object
+identity in the payload.
+
 For example, a reviewed pipeline document can place the override directly on
 the step being inspected:
 
@@ -108,6 +138,8 @@ Inspect the compiled artifact plan before execution to see which outputs are
 runtime-only and which have persistent targets. After execution, use viewer
 state, payload, image-sample, and ROI-summary tools for concrete visual
 evidence; a successfully launched viewer alone is not result validation.
+Likewise, layer existence and nonzero pixels prove transport and content, not
+that the chosen layers communicate the requested scientific result.
 
 See :doc:`../architecture/streaming_boundary_and_wrappers` for ownership and
 :doc:`fiji_viewer_management` for Fiji-specific requirements.

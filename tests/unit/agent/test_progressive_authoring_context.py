@@ -143,6 +143,7 @@ def test_task_contexts_expose_only_the_next_relevant_boundary() -> None:
     ui = service.get_authoring_context("ui_visible_workflow").content
     folder = service.get_authoring_context("folder_onboarding").content
     pipeline = service.get_authoring_context("pipeline").content
+    custom = service.get_authoring_context("custom_function").content
     debugging = service.get_authoring_context("debugging").content
     viewer = service.get_authoring_context("viewer_review").content
     cellprofiler = service.get_authoring_context("cellprofiler_translation").content
@@ -167,6 +168,26 @@ def test_task_contexts_expose_only_the_next_relevant_boundary() -> None:
     assert "complete detection contract" in folder
     assert "separate ordinary 2-D files" in folder
     assert "processing_config.variable_components" in folder
+    assert "full named physical source universe and the inputs consumed" in folder
+    assert "nominal handler projection" in folder
+    assert "resolved step-local subset and order" in folder
+    assert "Keep three layers separate" in folder
+    assert "zero-based positions in that per-step assembled stack" in folder
+    assert "Source provenance remains channel 4 and channel 1" in folder
+    assert "route provenance retains those declared values when" in folder
+    assert "openhcs_get_viewer_window_payloads" in folder
+    assert "unexpectedly empty compiled step plan" in folder
+    assert "MAP2 channel 2 is valid in the source workspace" in folder
+    assert "leaked source only on a current route" in folder
+    assert "route from another submission or a step that selects MAP2" in folder
+    assert "simplest canonical MetaXpress neurite step" in folder
+    assert "nuclear index 0 plus neurite index 2" in folder
+    assert "efficient alternative explicitly selects/reorders" in folder
+    assert "generic compiler regression protects any explicit ordered" in folder
+    assert "variable_components=[CHANNEL] assembles that stack" in folder
+    assert "normalizes group_by to GroupBy.NONE" in folder
+    assert "do not reinterpret a previous-step output" in folder
+    assert "Follow current artifact provenance" in folder
     assert "Use SourceBindingsHandler only when an arbitrary image folder" not in folder
     assert "openhcs_ui_sample_selected_plate_image" not in folder
     assert "CONFIG SCHEMA HINTS" not in folder
@@ -179,12 +200,40 @@ def test_task_contexts_expose_only_the_next_relevant_boundary() -> None:
     assert "not a third InputSource value" in pipeline
     assert "runtime values are only available during execution" in pipeline
     assert "incremental add-step request does not express a list chain" in pipeline
+    assert "Pipeline composition is registry- and contract-driven" in pipeline
+    assert "Any registered callable" in pipeline
+    assert "reflected CallableContract is compatible" in pipeline
+    assert "CLAHE, median denoising, background subtraction" in pipeline
+    assert "openhcs_search_functions" in pipeline
+    assert "openhcs_describe_function" in pipeline
+    assert "request the custom_function context" in pipeline
+    assert "do not infer that BaSiCPy is usable" in pipeline
+    assert "MetaXpress neurite outgrowth can still follow" in pipeline
+    assert "more explicit module-by-module reference" in pipeline
+
+    assert "A reviewed custom function becomes an ordinary registry-described" in custom
+    assert "openhcs_search_functions" in custom
+    assert "example preprocessing intents, not a promised built-in catalog" in custom
+    assert "memory decorator, ProcessingContract, and artifact declarations" in custom
 
     assert "DEBUGGING WORKFLOW" in debugging
     assert "pipeline_debug_toolbar.session" in debugging
     assert "compiled intent, not proof" in debugging
     assert "paused worker directly" in debugging
     assert "openhcs_inspect_debug_runtime_values" in debugging
+    assert "Pin one current evidence scope" in debugging
+    assert "execution_id, debug_session_id" in debugging
+    assert "resolved/compiled source-binding order" in debugging
+    assert "never merge persistent layers or artifacts" in debugging
+    assert "Before changing biological thresholds" in debugging
+    assert "openhcs_sample_plate_image" in debugging
+    assert "openhcs_sample_viewer_window_image" in debugging
+    assert "openhcs_get_viewer_window_payloads" in debugging
+    assert "openhcs_summarize_viewer_window_rois" in debugging
+    assert "schema-bearing per-object measurement rows" in debugging
+    assert "row/object cardinality" in debugging
+    assert "visual interpretation with the biologist" in debugging
+    assert "Screenshots are secondary presentation evidence" in debugging
 
     assert "VIEWER REVIEW WORKFLOW" in viewer
     assert "PIPELINE AUTHORING WORKFLOW" not in viewer
@@ -193,6 +242,19 @@ def test_task_contexts_expose_only_the_next_relevant_boundary() -> None:
     assert "step_materialization_config persists" in viewer
     assert "pipeline_config.well_filter_config" in viewer
     assert "path_planning_config.well_filter=0" in viewer
+    assert "Start from the user's scientific question" in viewer
+    assert "same stable object or label identity" in viewer
+    assert "derive matching display colors from that identity" in viewer
+    assert "Layer existence and nonzero pixels prove transport" in viewer
+    assert "user-controlled presentation state" in viewer
+    assert "raw route payloads, label identities" in viewer
+    assert "Review one current execution in raw-evidence order" in viewer
+    assert "reconcile schema-bearing per-object measurement rows" in viewer
+    assert "interpret the visualization with the biologist" in viewer
+    assert "compact opinionated analysis" in viewer
+    assert "modular CellProfiler-derived pipeline" in viewer
+    assert "do not establish output equivalence or result validation" in viewer
+    assert "accepted same-field executions" in viewer
 
     assert "derives stack axes, post-stack grouping" in cellprofiler
     assert "does not choose native OpenHCS viewer" in cellprofiler

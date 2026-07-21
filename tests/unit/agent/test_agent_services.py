@@ -1312,6 +1312,28 @@ def test_function_catalog_search_ranks_name_matches_before_doc_matches(monkeypat
     assert phrase_page.items[0].function_id == "test:sample_gaussian_filter"
 
 
+def test_function_catalog_search_splits_cellprofiler_module_camel_case(monkeypatch):
+    monkeypatch.setattr(
+        FunctionCatalogService,
+        "_all_metadata",
+        lambda self: {
+            "test:cellprofiler_export_to_spreadsheet": _Metadata(
+                func=sample_processing_function,
+                original_name="ExportToSpreadsheet",
+                name="ExportToSpreadsheet",
+                doc="Render a spreadsheet file bundle.",
+                tags=["cellprofiler"],
+            )
+        },
+    )
+
+    page = FunctionCatalogService().search(query="export to spreadsheet")
+
+    assert tuple(item.function_id for item in page.items) == (
+        "test:cellprofiler_export_to_spreadsheet",
+    )
+
+
 def test_function_catalog_search_handles_broad_biology_workflow_query(monkeypatch):
     monkeypatch.setattr(
         FunctionCatalogService,

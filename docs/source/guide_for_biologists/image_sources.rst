@@ -85,6 +85,96 @@ projection. Saving a changed source-binding config invalidates that projection;
 the next normal initialization rebuilds it and updates the available aliases and
 coordinates without a separate UI metadata copy.
 
+Binding positions are not microscope channel values
+---------------------------------------------------
+
+Keep three layers separate:
+
+pipeline source universe
+  ``PipelineConfig.source_bindings_config`` declares the full named physical
+  source universe and the inputs consumed by the nominal handler projection. It
+  may correctly contain Hoechst channel 1, MAP2 channel 2, and SMI312 channel 4
+  even when one step needs only two of them.
+  Seeing all three in the source workspace inventory is valid.
+
+per-step binding plan
+  Resolved ``FunctionStep.source_bindings`` selects and orders the subset for one
+  invocation after config inheritance. Compilation must preserve that subset and
+  order in ``CompiledSourceBindingPlan.bindings``.
+
+callable stack positions
+  ``processing_config.variable_components`` owns the meaning of the assembled
+  array axis. A callable ``channel_index`` is a zero-based position on that
+  invocation's assembled axis, not a physical microscope ``CHANNEL`` value.
+
+When viewer routes carry physical component identities from the first layer,
+they retain the declared values; they do not renumber them to the third layer's
+zero-based positions.
+
+For example, the pipeline universe may be ``(Hoechst[channel=1],
+MAP2[channel=2], SMI312[channel=4])``. A MetaXpress neurite step has two useful
+declaration choices:
+
+simplest inherited full stack
+  Set ``input_source=PIPELINE_START`` and
+  ``variable_components=[CHANNEL]``, but omit ``FunctionStep.source_bindings``.
+  The step inherits the complete pipeline order, so use
+  ``nuclear_stain.channel_index=0`` and ``neurite_channel_index=2``; MAP2
+  remains at position 1. Source provenance retains physical channels 1, 2, and
+  4; viewer routes expose those values when the output carries them.
+
+efficient selected stack
+  Explicitly enable step source bindings and order them as ``(SMI312,
+  Hoechst)``. The callable then uses ``neurite_channel_index=0`` and
+  ``nuclear_stain.channel_index=1``, while source provenance remains physical
+  channels 4 and 1. Viewer routes retain those values when the output carries
+  them. This avoids assembling MAP2 for a callable that does not use it.
+
+In either option, ``variable_components=[CHANNEL]`` assembles the channel stack.
+Do not use ``group_by=CHANNEL`` for assembly. ``group_by`` partitions an already
+assembled value and selects branches only for a dictionary function pattern.
+For this non-dictionary MetaXpress callable, an overlapping
+``group_by=CHANNEL`` is redundant and the compiler normalizes it to
+``GroupBy.NONE``.
+
+The explicit-subset regression is intentionally generic rather than a
+MetaXpress channel map: an implicit-main-flow callable must retain its ordered
+primary-plane bindings even when it also declares special artifact inputs. That
+same rule protects any explicit source subset or reorder.
+
+If a step that selects two bindings appears as three physical channels in the
+viewer, do not compensate by guessing a third callable index. Diagnose the three
+layers in order:
+
+1. Inspect the pipeline source universe and its workspace inventory. The MAP2
+   channel 2 entry is valid here.
+2. Read the resolved ``FunctionStep.source_bindings`` after inheritance and
+   confirm the intended subset and exact order.
+3. Inspect ``CompiledSourceBindingPlan.bindings`` for that step. An unexpectedly
+   empty or broader plan means the per-step selection was not preserved; the
+   callable may then receive all three universe planes.
+4. Check the runtime-matched files for that step and their exact component
+   metadata.
+5. Query the current execution's raw viewer payloads and compare each
+   ``layer_route_key`` and ``payload_route_key`` with its physical component
+   values. A persistent viewer can also contain routes from an earlier
+   submission.
+
+MAP2 channel 2 in the full source workspace is therefore not itself a leak. It
+is a leak on a current route for the explicit selected-stack option because that
+step's resolved and compiled plan should select only SMI312 and Hoechst. MAP2 on
+a route from the inherited-full-stack option, an older submission, or another
+step that selects MAP2 is valid evidence for that route. None of these cases
+changes the zero-based positions of the selected callable stack.
+
+Step source subsets and reordering select or re-enter original declared sources,
+especially at ``PIPELINE_START`` or on a branch that deliberately returns to the
+source universe. They do not reinterpret a previous step's output. Stitching,
+Z projection, channel projection, or filtering may change that output's slice
+count and axes; downstream code must use the current artifact provenance plus
+its own ``variable_components`` declaration. ``group_by`` then partitions that
+already assembled downstream value.
+
 Executable code-mode declarations
 ---------------------------------
 

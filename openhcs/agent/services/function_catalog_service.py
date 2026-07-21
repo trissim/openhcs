@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import inspect
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, EnumType
@@ -796,7 +797,8 @@ def _import_path_candidates(
 
 
 def _normalized_search_text(value: str) -> str:
-    text = value.casefold().strip()
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", value.strip())
+    text = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", text).casefold()
     for separator in ("_", "-", ".", ":"):
         text = text.replace(separator, " ")
     return " ".join(text.split())
