@@ -448,6 +448,14 @@ class NumpyMeanStackProjectionStrategy(NumpyStackProjectionStrategy):
         return mean_projection(stack)
 
 
+class NumpyMinStackProjectionStrategy(NumpyStackProjectionStrategy):
+    method = "min_projection"
+
+    def apply(self, stack: np.ndarray) -> np.ndarray:
+        projection_2d = np.min(stack, axis=0)
+        return projection_2d.reshape(1, *projection_2d.shape)
+
+
 @numpy_func
 def create_orthogonal_projections(
     stack: np.ndarray, projections: Tuple[str, ...] = ("xy", "xz", "yz")
@@ -662,7 +670,7 @@ def create_projection(stack: np.ndarray, method: str = "max_projection") -> np.n
     Create a projection from a stack using the specified method.
 
     Args:
-        method: Projection method (max_projection, mean_projection)
+        method: Projection method owned by ``NumpyStackProjectionStrategy``.
 
     Returns:
         2D NumPy array of shape (Y, X)
