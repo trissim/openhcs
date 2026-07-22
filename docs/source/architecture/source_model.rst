@@ -98,6 +98,19 @@ PolyStore-owned backend reference. OpenHCS projects workspace metadata into
 The projection is part of ``CompilationSession`` so every axis compiles against
 the same explicit view it will use at runtime.
 
+A backend address and a physical source path are different projections.
+PolyStore's ``BackendBase.resolve_listed_address()`` owns normalization of
+addresses returned by backend listings, while
+``BackendBase.physical_source_path()`` optionally projects an address onto a
+host file. The latter is absent by default and composes the strict
+``DataSource.source_path()`` contract only for physical data sources. Virtual
+backends such as OMERO therefore retain their backend address as source and
+provenance identity without pretending that it is a local file. Runtime image
+metadata asks the backend owner for the optional physical path and, when none
+exists, derives available dtype and intensity facts from the loaded pixels.
+Generic OpenHCS code must not recover this distinction from backend names or
+path-string syntax.
+
 Agents should validate the projection rather than merely validate Python
 syntax: inspect required and optional alias counts, unmatched sources, metadata
 capture values, source-set keys, component identities, virtual paths, backing
