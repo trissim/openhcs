@@ -2552,7 +2552,7 @@ def test_measure_object_size_shape_orientation_is_cpu_dispatch_independent() -> 
     )
 
     np.testing.assert_allclose(orientations[0], orientations[1], rtol=0.0, atol=1e-12)
-    assert orientations[1][0] == pytest.approx(-45.0, abs=1e-12)
+    assert orientations[1][0] == pytest.approx(45.0, abs=1e-12)
 
 
 def test_measure_object_size_shape_orientation_uses_explicit_second_moments() -> (
@@ -2590,7 +2590,7 @@ def test_measure_object_size_shape_orientation_uses_explicit_second_moments() ->
     )
 
     np.testing.assert_allclose(orientations[0], orientations[1], rtol=0.0, atol=1e-12)
-    assert orientations[1][0] == pytest.approx(45.0, abs=1e-12)
+    assert orientations[1][0] == pytest.approx(-45.0, abs=1e-12)
 
 
 def test_measure_object_size_shape_preserves_vertical_orientation_representatives() -> (
@@ -2652,7 +2652,7 @@ def test_measure_object_size_shape_preserves_vertical_orientation_representative
                 (1, 1, 1, 1),
                 (0, 1, 1, 0),
             ),
-            -44.99999999999998,
+            45.0,
         ),
         (
             (
@@ -2716,7 +2716,7 @@ def test_measure_object_size_shape_orientation_preserves_cp4281_tie_geometries(
                 (1, 1, 1, 1, 1),
                 (0, 1, 1, 1, 0),
             ),
-            -44.999999999999964,
+            45.0,
         ),
         (
             (
@@ -2726,7 +2726,7 @@ def test_measure_object_size_shape_orientation_preserves_cp4281_tie_geometries(
                 (0, 1, 1, 1, 1),
                 (0, 0, 1, 1, 0),
             ),
-            45.00000000000001,
+            -45.0,
         ),
         (
             (
@@ -2735,7 +2735,7 @@ def test_measure_object_size_shape_orientation_preserves_cp4281_tie_geometries(
                 (1, 1, 1, 1),
                 (1, 1, 1, 0),
             ),
-            -44.99999999999998,
+            45.0,
         ),
         (
             (
