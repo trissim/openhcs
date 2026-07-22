@@ -1,13 +1,11 @@
 from openhcs.core.progress import ProgressPhase, ProgressStatus
-from openhcs.runtime.zmq_progress import ImmediateZMQProgressQueue, ZMQProgressEmitter
+from openhcs.runtime.zmq_progress import ZMQCompilerProgressQueue, ZMQProgressEmitter
 
 
-def test_immediate_progress_queue_uses_request_plate_identity():
+def test_compiler_progress_queue_uses_request_plate_identity():
     emitted: list[dict] = []
-    flushes: list[None] = []
-    queue = ImmediateZMQProgressQueue(
+    queue = ZMQCompilerProgressQueue(
         enqueue=emitted.append,
-        flush=lambda: flushes.append(None),
         plate_id="/tmp/plate#openhcs-cppipe=Analysis.cppipe",
     )
 
@@ -27,7 +25,6 @@ def test_immediate_progress_queue_uses_request_plate_identity():
 
     assert emitted[0]["plate_id"] == "/tmp/plate#openhcs-cppipe=Analysis.cppipe"
     assert compiler_update["plate_id"] == "/tmp/plate"
-    assert flushes == [None]
 
 
 def test_compile_failed_emits_failed_compile_events_for_axes():

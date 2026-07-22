@@ -6,7 +6,7 @@ from collections.abc import MutableMapping, Sequence
 from dataclasses import dataclass, field
 import logging
 import time
-from typing import Any, Callable, Mapping, TYPE_CHECKING
+from typing import Any, Mapping, TYPE_CHECKING
 
 from openhcs.core.compiled_execution import CompiledExecutionBundle
 from openhcs.core.context.processing_context import ProcessingContext
@@ -100,8 +100,7 @@ class ZMQCompilationRequest:
     retain_compile_artifact: bool
     compiled_artifacts: MutableMapping[str, "ZMQCompileArtifactRecord"]
     progress_emitter: ZMQProgressEmitter
-    flush_progress: Callable[[], None]
-    immediate_progress_queue: Any
+    compiler_progress_queue: Any
     debug_execution_policy: Any
     compile_heartbeat_interval_seconds: float = 2.0
 
@@ -176,12 +175,11 @@ class ZMQCompilationRequest:
     def compile_fresh(self) -> ZMQCompilationResult:
         from openhcs.core.progress import set_progress_queue
 
-        set_progress_queue(self.immediate_progress_queue)
+        set_progress_queue(self.compiler_progress_queue)
         try:
             with ZMQCompileProgressHeartbeat(
                 progress_emitter=self.progress_emitter,
                 step_count=len(self.pipeline_steps),
-                flush_progress=self.flush_progress,
                 interval_seconds=self.compile_heartbeat_interval_seconds,
             ):
                 compilation = self.orchestrator.compile_pipelines(
@@ -215,10 +213,8 @@ class ZMQCompilationRequest:
             compiled_axis_ids=compiled_axis_ids,
             worker_assignments=worker_assignments,
         )
-        self.flush_progress()
         for axis_id in compiled_axis_ids:
             self.progress_emitter.axis_compile_succeeded(axis_id)
-        self.flush_progress()
 
         first_context = next(iter(compiled_contexts.values()))
         output_plate_root = first_context.output_plate_root

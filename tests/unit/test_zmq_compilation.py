@@ -183,8 +183,7 @@ def test_reused_compile_artifact_reads_step_names_from_compiled_plans() -> None:
         retain_compile_artifact=False,
         compiled_artifacts=artifacts,
         progress_emitter=progress_emitter,
-        flush_progress=lambda: None,
-        immediate_progress_queue=None,
+        compiler_progress_queue=None,
         debug_execution_policy=None,
     )
 
@@ -210,7 +209,6 @@ def test_compile_fresh_emits_heartbeat_during_long_compilation() -> None:
         runtime_environment=_runtime_environment(),
     )
     orchestrator = _FreshCompileOrchestrator(bundle)
-    flushes: list[None] = []
 
     request = ZMQCompilationRequest(
         execution_id="exec-1",
@@ -224,8 +222,7 @@ def test_compile_fresh_emits_heartbeat_during_long_compilation() -> None:
         retain_compile_artifact=False,
         compiled_artifacts={},
         progress_emitter=progress_emitter,
-        flush_progress=lambda: flushes.append(None),
-        immediate_progress_queue=_ProgressQueue(),
+        compiler_progress_queue=_ProgressQueue(),
         debug_execution_policy="debug-policy",
         compile_heartbeat_interval_seconds=0.001,
     )
@@ -235,7 +232,6 @@ def test_compile_fresh_emits_heartbeat_during_long_compilation() -> None:
     assert result.execution_bundle is bundle
     assert progress_emitter.compile_heartbeat_events
     assert set(progress_emitter.compile_heartbeat_events) == {2}
-    assert flushes
     assert orchestrator.calls == [
         {
             "pipeline_definition": request.pipeline_steps,

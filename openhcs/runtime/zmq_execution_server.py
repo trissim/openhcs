@@ -9,7 +9,6 @@ import logging
 from pathlib import Path
 import sys
 import time
-import json
 from types import ModuleType
 from typing import Any, TYPE_CHECKING
 
@@ -38,7 +37,7 @@ from openhcs.runtime.zmq_execution_signature import (
 from openhcs.runtime.zmq_orchestrator_environment import (
     ZMQOrchestratorEnvironmentRequest,
 )
-from openhcs.runtime.zmq_progress import ImmediateZMQProgressQueue, ZMQProgressEmitter
+from openhcs.runtime.zmq_progress import ZMQCompilerProgressQueue, ZMQProgressEmitter
 from openhcs.runtime.zmq_server_hooks import (
     ZMQPongResponseEnricher,
     ZMQResultsSummaryEnricher,
@@ -252,42 +251,6 @@ class ZMQExecutionServer(ExecutionServer):
             raise ValueError(
                 f"Invalid worker claim for {worker_slot}: expected={expected}, got={owned_wells}"
             )
-
-    def _flush_progress_only(self) -> None:
-        """Flush only progress messages to ZMQ, without processing control messages.
-
-        This is called during synchronous execution when we can't receive from
-        the control socket (would block or fail with NOBLOCK).
-        """
-        if not self.data_socket:
-            return
-        import queue
-
-        logger = logging.getLogger(__name__)
-        count = 0
-        while True:
-            try:
-                progress_update = self.progress_queue.get_nowait()
-            except queue.Empty:
-                if count > 0:
-                    logger.info(f"Flushed {count} progress update(s) to ZMQ")
-                break
-            event = ProgressEvent.from_dict(progress_update)
-            progress_payload = event.to_dict()
-            logger.info(
-                "Flushing to ZMQ: step_name=%r, axis=%r, plate_id=%r, "
-                "percent=%r, total_wells=%r",
-                event.step_name,
-                event.axis_id,
-                event.plate_id,
-                event.percent,
-                event.total_wells,
-            )
-            json_str = json.dumps(progress_payload)
-            logger.info(f"Full JSON being sent: {json_str[:300]}")
-            with self._progress_publish_lock:
-                self.data_socket.send_string(json_str)
-            count += 1
 
     def _set_compile_status(
         self, status: str, message: str | None = None, ttl_seconds: float = 4.0
@@ -749,10 +712,8 @@ class ZMQExecutionServer(ExecutionServer):
             ),
             compiled_artifacts=self._compiled_artifacts,
             progress_emitter=progress_emitter,
-            flush_progress=self._flush_progress_only,
-            immediate_progress_queue=ImmediateZMQProgressQueue(
+            compiler_progress_queue=ZMQCompilerProgressQueue(
                 enqueue=self._enqueue_progress,
-                flush=self._flush_progress_only,
                 plate_id=request_context.plate_id,
             ),
             debug_execution_policy=debug_execution_policy,
@@ -888,7 +849,6 @@ class ZMQExecutionServer(ExecutionServer):
             axis_ids=self._compile_failure_axis_ids(wells),
             error=str(error),
         )
-        self._flush_progress_only()
 
     @staticmethod
     def _ensure_request_global_config_context(

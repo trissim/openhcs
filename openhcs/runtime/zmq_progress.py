@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import logging
 import os
 import threading
 import time
@@ -18,9 +17,6 @@ from openhcs.core.progress import (
     ProgressStatus,
 )
 
-logger = logging.getLogger(__name__)
-
-
 @dataclass(frozen=True, slots=True)
 class ZMQProgressTarget:
     """Canonical ZMQ progress stream identity."""
@@ -30,16 +26,13 @@ class ZMQProgressTarget:
 
 
 @dataclass(frozen=True, slots=True)
-class ImmediateZMQProgressQueue(ZMQProgressTarget):
-    """Queue adapter that forwards compiler progress updates immediately."""
-
-    flush: Callable[[], None]
+class ZMQCompilerProgressQueue(ZMQProgressTarget):
+    """Queue adapter that preserves request identity for compiler progress."""
 
     def put(self, progress_update: dict) -> None:
         canonical_update = dict(progress_update)
         canonical_update[MessageFields.PLATE_ID] = self.plate_id
         self.enqueue(canonical_update)
-        self.flush()
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,7 +209,6 @@ class ZMQCompileProgressHeartbeat:
 
     progress_emitter: ZMQProgressEmitter
     step_count: int
-    flush_progress: Callable[[], None]
     interval_seconds: float = 2.0
     _stop_event: threading.Event = field(init=False, repr=False)
     _thread: threading.Thread | None = field(init=False, default=None, repr=False)
@@ -237,7 +229,3 @@ class ZMQCompileProgressHeartbeat:
     def _run(self) -> None:
         while not self._stop_event.wait(self.interval_seconds):
             self.progress_emitter.compile_heartbeat(self.step_count)
-            try:
-                self.flush_progress()
-            except Exception:
-                logger.exception("Compile progress heartbeat flush failed")
