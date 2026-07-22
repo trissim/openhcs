@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Sequence
+from typing import ClassVar, Sequence
 from weakref import WeakKeyDictionary
 
 from polystore.streaming.identity import StreamProducerIdentity
@@ -65,6 +65,8 @@ class NoStepOutputManifestMatch(RuntimeError):
 class FunctionStepOutputProducerIdentityRequest:
     """Declared producer identity facts for a FunctionStep output surface."""
 
+    ARTIFACT_OUTPUT_KIND: ClassVar[str] = "artifact"
+
     plan: CompiledStepPlan
     output_kind: str
     output_key: str
@@ -93,7 +95,7 @@ class FunctionStepOutputProducerIdentityRequest:
     ) -> "FunctionStepOutputProducerIdentityRequest":
         return cls(
             plan=plan,
-            output_kind="artifact",
+            output_kind=cls.ARTIFACT_OUTPUT_KIND,
             output_key=output_plan.name,
             projection_key=output_plan.name,
             artifact_kind=output_plan.artifact_type.value,

@@ -22,10 +22,22 @@ from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_o
 from openhcs.core.step_dependencies import StepInputDependency
 from openhcs.core.steps.function_output_identity import FunctionOutputIdentity
 from openhcs.core.steps.function_output_manifest import (
+    FunctionStepOutputProducerIdentityRequest,
     ProducedOutputSemantics,
     StepOutputManifestStore,
 )
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
+
+
+def test_artifact_output_kind_is_declared_by_producer_identity_request() -> None:
+    request = FunctionStepOutputProducerIdentityRequest.from_artifact(
+        SimpleNamespace(),
+        SimpleNamespace(name="cells", artifact_type=ObjectLabelsArtifactType),
+    )
+
+    assert request.output_kind == (
+        FunctionStepOutputProducerIdentityRequest.ARTIFACT_OUTPUT_KIND
+    )
 
 
 def _compiled_pattern_with_input_edges(
