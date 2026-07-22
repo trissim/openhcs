@@ -47,6 +47,22 @@ def test_installer_contract_queries_published_project_authorities() -> None:
     }
 
 
+def test_napari_install_surface_includes_roi_and_crop_plugins() -> None:
+    project = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["project"]
+    extras = project["optional-dependencies"]
+    napari_requirements = {
+        Requirement(requirement).name for requirement in extras["napari"]
+    }
+
+    assert {"napari", "napari-crop", "napari-roi-manager"} <= napari_requirements
+    for combined_extra in ("viz", "all"):
+        combined_requirements = {
+            Requirement(requirement).name
+            for requirement in extras[combined_extra]
+        }
+        assert napari_requirements <= combined_requirements
+
+
 def test_release_requirement_preserves_extras_and_pins_version() -> None:
     assert release_requirement("openhcs[gui]", "0.5.22") == ("openhcs[gui]==0.5.22")
     with pytest.raises(ValueError, match="unversioned PyPI requirement"):
