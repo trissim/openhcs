@@ -690,6 +690,7 @@ class UiPlateManagerRowState:
     source_plate_root: str | None = None
     debug_phase: str | None = None
     debug_session_id: str | None = None
+    scope_accent_color: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

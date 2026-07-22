@@ -28,6 +28,7 @@ from openhcs.pyqt_gui.widgets.shared.services.plate_status_presenter import (
 from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
     DebugToolbarActionProjector,
 )
+from pyqt_reactive.services.scope_color_service import ScopeColorService
 
 if TYPE_CHECKING:
     from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
@@ -148,6 +149,17 @@ class PlateManagerStateProjectionService:
             tuple(manager.plates),
             manager.global_config.path_planning_config,
         ).relation_for(row)
+
+    @staticmethod
+    def scope_accent_color(plate_scope_id: str) -> str:
+        """Project the current UI-owned scope accent as an exact Qt color name."""
+
+        return (
+            ScopeColorService.instance()
+            .get_accent_color(plate_scope_id)
+            .name()
+            .lower()
+        )
 
     def project(
         self,
@@ -278,6 +290,7 @@ class PlateManagerStateProjectionService:
             source_plate_root=output_relation.source_plate_root,
             debug_phase=debug_phase,
             debug_session_id=debug_session_id,
+            scope_accent_color=self.scope_accent_color(plate_key),
         )
 
     @staticmethod
