@@ -111,7 +111,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev,cellprofiler-compat]"
 
       - name: Run boundary version tests
         env:
@@ -227,7 +227,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev,cellprofiler-compat]"
 
       - name: Run backend/microscope combination tests
         env:
@@ -345,7 +345,7 @@ jobs:
           # Install pre-built zeroc-ice wheel from Glencoe Software (OMERO maintainers)
           # Building from source fails on Python 3.11+ due to setuptools compatibility issues
           pip install ${{ matrix.ice-wheel }}
-          pip install -e ".[dev,omero]"
+          pip install -e ".[dev,omero,cellprofiler-compat]"
 
       - name: Run OMERO integration tests (auto-starts Docker + OMERO)
         env:
@@ -609,7 +609,7 @@ jobs:
           python -m venv test_wheel
           source test_wheel/bin/activate
           WHEEL=$(ls dist/*.whl)
-          pip install "${WHEEL}[dev]"
+          pip install "${WHEEL}[dev,cellprofiler-compat]"
           python -m pytest tests/integration/ --cov=openhcs --cov-report=term --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
           cp .coverage ../.coverage.wheel
           deactivate
