@@ -5,16 +5,22 @@ import pandas as pd
 import pytest
 
 from openhcs.core.artifacts import (
+    ArtifactSpec,
+    ArtifactSpecCollection,
     ImageArtifactType,
     MeasurementsArtifactType,
     ObjectLabelsArtifactType,
 )
+from openhcs.core.function_patterns import normalize_function_pattern
+from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
 from openhcs.processing.backends.analysis.skan_axon_analysis import (
     AnalysisDimension,
+    SkanAxonInvocationContractProviderFactory,
     ThresholdMethod,
     _compute_summary_metrics,
     skan_axon_skeletonize_and_analyze,
 )
+from openhcs.processing.materialization import TiffStackOptions
 
 
 def test_skan_axon_declares_split_typed_outputs_and_object_subject() -> None:
@@ -27,6 +33,36 @@ def test_skan_axon_declares_split_typed_outputs_and_object_subject() -> None:
     assert branches.relations[0].measurement_subject().name == labels.name
     assert visualization.artifact_type is ImageArtifactType
     assert labels.artifact_type is ObjectLabelsArtifactType
+
+    visualization_options = visualization.materialization.outputs[0]
+    assert isinstance(visualization_options, TiffStackOptions)
+    assert visualization_options.normalize_uint8 is False
+
+
+def test_skan_visualization_contract_preserves_exact_main_flow_stack() -> None:
+    source = ArtifactSpec.input("preprocessed_axon", ImageArtifactType)
+    context = ArtifactDeclarationStepContext(
+        step_name="Full-field axon network",
+        step_index=3,
+        main_flow_artifacts=ArtifactSpecCollection((source,)),
+    )
+    invocation = next(
+        normalize_function_pattern(skan_axon_skeletonize_and_analyze).iter_items()
+    )
+    provider = SkanAxonInvocationContractProviderFactory.provider_for_session(None)
+
+    assert provider is not None
+    plan = provider(invocation, context)
+
+    assert plan is not None
+    assert plan.contract.artifact_inputs == ArtifactSpecCollection((source,))
+    visualization = next(
+        output
+        for output in plan.contract.artifact_outputs
+        if output.name == "skeleton_visualizations"
+    )
+    assert visualization.source_context_sources() == (source.ref(),)
+    assert visualization.source_stack_scope_sources() == (source.ref(),)
 
 
 def test_skan_axon_returns_columnar_rows_and_exact_label_plane_stack() -> None:
