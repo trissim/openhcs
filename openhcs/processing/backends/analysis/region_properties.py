@@ -13,7 +13,7 @@ import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit, types
 from numba.extending import intrinsic
-from numpy._core import _multiarray_umath
+from numpy.core import _multiarray_umath
 import skimage.measure
 
 from openhcs.constants.constants import MemoryType
