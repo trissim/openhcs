@@ -122,6 +122,31 @@ def test_file_bundle_preserves_bytes_and_utf8_encodes_text() -> None:
     )
 
 
+def test_file_bundle_persists_bytes_and_utf8_text_to_disk(tmp_path) -> None:
+    _image_options, bundle_options = _option_types()
+    filemanager = FileManager({"disk": DiskStorageBackend()})
+    spec = MaterializationSpec(bundle_options())
+
+    primary_path = materialize(
+        spec,
+        data={
+            "tables/Image.csv": "ImageNumber,Count\n1,2\n",
+            "analysis.sqlite": b"SQLite format 3\x00\x01",
+        },
+        path=str(tmp_path / "ExportBundle.pkl"),
+        filemanager=filemanager,
+        backends=("disk",),
+    )
+
+    assert primary_path == str(tmp_path / "tables" / "Image.csv")
+    assert (tmp_path / "tables" / "Image.csv").read_text(encoding="utf-8") == (
+        "ImageNumber,Count\n1,2\n"
+    )
+    assert (tmp_path / "analysis.sqlite").read_bytes() == (
+        b"SQLite format 3\x00\x01"
+    )
+
+
 def test_materialization_spec_error_write_mode_refuses_existing_path(tmp_path) -> None:
     _image_options, bundle_options = _option_types()
     output_path = tmp_path / "report.txt"
