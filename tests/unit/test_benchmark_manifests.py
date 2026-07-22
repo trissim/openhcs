@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from benchmark.cellprofiler_comparison import load_comparison_cases
+from benchmark.datasets.registry import DATASET_REGISTRY
 
 
 def test_official30_portable_manifest_declares_roots_without_absolute_cases(
@@ -63,3 +64,17 @@ def test_official30_portable_manifest_declares_roots_without_absolute_cases(
     assert len(cases) == 30
     assert cases[0].name == "ExampleColocalization"
     assert cases[-1].name == "cp_tutorial_translocation_start"
+
+
+def test_official30_dataset_registry_pins_all_git_sources() -> None:
+    expected_revisions = {
+        "CellProfiler_tutorials": "264a8155da21a2d468051f78211bed2e580a8934",
+        "CellProfiler4_benchmark_supplement": (
+            "40abc2e600fd46b74c213999dd25c5245048dc92"
+        ),
+    }
+
+    for dataset_id, expected_revision in expected_revisions.items():
+        source = DATASET_REGISTRY[dataset_id].source
+        assert source is not None
+        assert source.git_ref == expected_revision

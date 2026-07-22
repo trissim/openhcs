@@ -21,9 +21,11 @@ from benchmark.contracts.dataset import (
 
 PUBLISHED_PIPELINE = "published_pipeline"
 CELLPROFILER_TUTORIALS_REPO = "https://github.com/CellProfiler/tutorials.git"
+CELLPROFILER_TUTORIALS_REVISION = "264a8155da21a2d468051f78211bed2e580a8934"
 CP4_BENCHMARK_SUPPLEMENT_REPO = (
     "https://github.com/carpenterlab/2021_Stirling_BMCBioInformatics.git"
 )
+CP4_BENCHMARK_SUPPLEMENT_REVISION = "40abc2e600fd46b74c213999dd25c5245048dc92"
 CELL_ORIENTATION_REPO = "https://github.com/rgomez-AI/CellOrientation.git"
 CHROMTRANS_REPO = "https://github.com/rgomez-AI/3DChromTrans.git"
 
@@ -352,6 +354,7 @@ class CellProfilerTutorialsDataset(BenchmarkDatasetDeclaration):
         "PixelBasedClassification",
         "QualityControl",
         "Translocation",
+        git_ref=CELLPROFILER_TUTORIALS_REVISION,
     )
     benchmark_cases = (
         _case(
@@ -414,7 +417,11 @@ class CellProfiler4BenchmarkSupplementDataset(BenchmarkDatasetDeclaration):
     public_alias = "CELLPROFILER4_BENCHMARK_SUPPLEMENT"
     size_bytes = 5000000
     microscope_type = "cellprofiler4_benchmark"
-    source = _git_sparse(CP4_BENCHMARK_SUPPLEMENT_REPO, "CombineObjects")
+    source = _git_sparse(
+        CP4_BENCHMARK_SUPPLEMENT_REPO,
+        "CombineObjects",
+        git_ref=CP4_BENCHMARK_SUPPLEMENT_REVISION,
+    )
     benchmark_cases = (
         _case(
             "cp4_supplement_combine_objects",
