@@ -133,9 +133,9 @@ gui = [
 
 # Napari viewer
 napari = [
-    "napari>=0.4.18",
+    "napari>=0.7.1",
     "napari-crop>=0.1.12",
-    "napari-roi-manager>=0.0.6",
+    "napari-roi-manager>=0.0.7",
 ]
 
 # Fiji/ImageJ integration
@@ -164,9 +164,9 @@ bioformats = [
 
 # All visualization tools (napari + fiji)
 viz = [
-    "napari>=0.4.18",
+    "napari>=0.7.1",
     "napari-crop>=0.1.12",
-    "napari-roi-manager>=0.0.6",
+    "napari-roi-manager>=0.0.7",
     "pyimagej>=1.4.1",
     "scyjava>=1.9.1",
 ]
@@ -256,9 +256,9 @@ all = [
     # psutil moved to core dependencies (required by ui/shared/system_monitor_core.py)
 
     # Viz
-    "napari>=0.4.18",
+    "napari>=0.7.1",
     "napari-crop>=0.1.12",
-    "napari-roi-manager>=0.0.6",
+    "napari-roi-manager>=0.0.7",
     "pyimagej>=1.4.1",
     "scyjava>=1.9.1",
 
@@ -300,6 +300,7 @@ openhcs-recache = "openhcs.utils.recache_function_registry:main"
 openhcs-mcp = "openhcs.mcp.bootstrap:main"
 openhcs-mcp-http = "openhcs.mcp.http:main"
 openhcs-mcp-dev = "openhcs.mcp.dev_client:main"
+openhcs-mcp-demo = "openhcs.mcp.installed_demo:main"
 
 [project.entry-points."napari.manifest"]
 openhcs = "openhcs:napari.yaml"
