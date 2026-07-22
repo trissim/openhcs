@@ -67,6 +67,7 @@ from openhcs.core.function_patterns import (
     CompiledFunctionInvocation,
     InvocationArtifactInputEdgePlan,
     InvocationArtifactInputProjectionKey,
+    MainFlowInputProjection,
     RuntimeComponentValue,
     RuntimeInvocationDomain,
 )
@@ -1892,10 +1893,15 @@ class FunctionCoreExecutor:
         source_binding = self.runtime_scope.source_binding_plan.binding_for_artifact_ref(
             source_ref
         )
+        main_flow_edges = tuple(
+            edge
+            for edge in self.selected_artifact_input_edges
+            if edge.spec.ref() == source_ref and edge.consumes_main_flow
+        )
         uses_main_flow = bool(
             stored_payload is None
             and source_binding is None
-            and input_spec.participates_in_main_flow
+            and main_flow_edges
         )
         resolved_origins = sum(
             (
@@ -1918,6 +1924,20 @@ class FunctionCoreExecutor:
                 self.runtime_adapter_request(
                     primary_source_payload
                 ).source_artifact_payload(source_ref),
+            )
+        if len(main_flow_edges) != 1:
+            raise ValueError(
+                f"Invocation {self.invocation.key!r} source artifact {source_ref!r} "
+                "must resolve through exactly one selected main-flow input edge; "
+                f"resolved {len(main_flow_edges)}."
+            )
+        main_flow_projection = main_flow_edges[0].main_flow_projection
+        if main_flow_projection is MainFlowInputProjection.COMPLETE_PAYLOAD:
+            return primary_source_payload
+        if main_flow_projection is not MainFlowInputProjection.DECLARED_SOURCE_IMAGE:
+            raise ValueError(
+                f"Invocation {self.invocation.key!r} source artifact {source_ref!r} "
+                "consumes main flow without a compiled projection."
             )
         return project_declared_source_identity(primary_source_payload, source_ref)
 

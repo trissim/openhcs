@@ -27,6 +27,9 @@ from openhcs.core.component_group_scope import (
 from openhcs.core.component_set import ComponentSet
 from openhcs.core.function_patterns import (
     CompiledFunctionGroup,
+    InvocationArtifactInputEdgePlan,
+    InvocationArtifactInputProjectionKey,
+    MainFlowInputProjection,
     compile_function_pattern,
 )
 from openhcs.core.measurement_row_materialization import (
@@ -2464,6 +2467,9 @@ def _declared_source_executor(
     spec: ArtifactSpec,
     *,
     source_binding_plan: CompiledSourceBindingPlan = CompiledSourceBindingPlan.empty(),
+    main_flow_projection: MainFlowInputProjection = (
+        MainFlowInputProjection.DECLARED_SOURCE_IMAGE
+    ),
 ) -> FunctionCoreExecutor:
     @artifact_inputs(spec)
     def declared_source_origin(image):
@@ -2476,6 +2482,18 @@ def _declared_source_executor(
             {},
         ).iter_invocations()
     )
+    edge = InvocationArtifactInputEdgePlan(
+        key=InvocationArtifactInputProjectionKey(
+            invocation_key=invocation.key,
+            input_index=0,
+        ),
+        spec=spec,
+        storage_plan=None,
+        projection=None,
+        consumes_main_flow=True,
+        main_flow_projection=main_flow_projection,
+    )
+    invocation = invocation.with_artifact_input_edges((edge,))
     return FunctionCoreExecutor(
         runtime_scope=SimpleNamespace(
             context=ContextStub(),
@@ -2492,7 +2510,7 @@ def _declared_source_executor(
             ),
         ),
         invocation=invocation,
-        artifacts=ComponentArtifactPlans(inputs={}, outputs={}),
+        artifacts=ComponentArtifactPlans(inputs={edge.key: edge}, outputs={}),
         group_key=None,
         plane_projection=RuntimePlaneProjection.stack(),
         main_data_arg=object(),
@@ -2560,6 +2578,29 @@ def test_declared_source_payload_projects_only_exact_main_flow_ref() -> None:
     )
 
     assert image_payload_metadata(result).source_image_names == ("OrigGreen",)
+
+
+def test_declared_source_payload_preserves_compiled_complete_main_flow() -> None:
+    spec = ArtifactSpec.input(
+        "__openhcs_main_flow_step_3_default_1_tophat",
+        ImageArtifactType,
+    )
+    executor = _declared_source_executor(
+        spec,
+        main_flow_projection=MainFlowInputProjection.COMPLETE_PAYLOAD,
+    )
+    primary = ImagePayloadMetadata(
+        source_path="/input/axon.tif",
+        source_image_names=("Axon",),
+    ).payload_with(np.zeros((3, 4), dtype=np.float32))
+
+    result = executor.declared_source_payload(
+        spec.ref(),
+        primary,
+        loaded_artifact_payloads={},
+    )
+
+    assert result is primary
 
 
 def test_declared_source_payload_prefers_exact_loaded_ref_over_main_flow() -> None:
