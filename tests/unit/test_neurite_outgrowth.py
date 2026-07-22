@@ -153,12 +153,16 @@ def test_signature_exposes_documented_metaxpress_controls_only():
     ) = contract.artifact_outputs
     assert summary_spec.artifact_type is MeasurementsArtifactType
     assert cell_spec.artifact_type is MeasurementsArtifactType
-    assert cell_spec.relations[0].measurement_subject().name == body_spec.name
+    assert cell_spec.relations[0].measurement_subject().name == neurons_spec.name
+    assert cell_spec.relations[0].measurement_subject().id_field == "cell"
     assert all(
         spec.artifact_type is ObjectLabelsArtifactType
         for spec in (body_spec, neurite_spec, neurons_spec, nuclei_spec)
     )
     assert morphology_spec.artifact_type is SpatialGraphArtifactType
+    morphology_subject = morphology_spec.relations[0].object_subject_binding()
+    assert morphology_subject.source == neurons_spec.ref()
+    assert morphology_subject.id_field == "label"
     assert tuple(
         type(output) for output in morphology_spec.materialization.outputs
     ) == (

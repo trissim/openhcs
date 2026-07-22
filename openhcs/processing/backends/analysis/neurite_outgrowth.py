@@ -22,6 +22,7 @@ from openhcs.core.artifacts import (
     ArtifactMeasurementSubjectRelation,
     ArtifactSpec,
     MeasurementsArtifactType,
+    ObjectArtifactMemberSubjectRelation,
     ObjectLabelsArtifactType,
     ObjectMeasurementSubjectRelation,
     SpatialGraphArtifactType,
@@ -311,10 +312,22 @@ NEURITE_SUMMARY_OUTPUT = ArtifactSpec.output(
     materialization=MaterializationSpec(CsvOptions()),
     relations=(ArtifactMeasurementSubjectRelation(),),
 )
+UNIFIED_NEURONS_OUTPUT = ArtifactSpec.output(
+    "neurons",
+    ObjectLabelsArtifactType,
+    materialization=MaterializationSpec(ROIOptions()),
+    relations=(ObjectArtifactMemberSubjectRelation(),),
+)
 CELL_BODIES_OUTPUT = ArtifactSpec.output(
     "cell_bodies",
     ObjectLabelsArtifactType,
     materialization=MaterializationSpec(ROIOptions()),
+    relations=(
+        ObjectArtifactMemberSubjectRelation(
+            source=UNIFIED_NEURONS_OUTPUT.ref(),
+            member_id_field="label",
+        ),
+    ),
 )
 NEURITE_CELLS_OUTPUT = ArtifactSpec.output(
     "neurite_outgrowth_cells",
@@ -322,7 +335,7 @@ NEURITE_CELLS_OUTPUT = ArtifactSpec.output(
     materialization=MaterializationSpec(CsvOptions()),
     relations=(
         ObjectMeasurementSubjectRelation(
-            source=CELL_BODIES_OUTPUT.ref(),
+            source=UNIFIED_NEURONS_OUTPUT.ref(),
             id_field="cell",
         ),
     ),
@@ -331,11 +344,12 @@ NEURITE_LABELS_OUTPUT = ArtifactSpec.output(
     "neurite_outgrowth",
     ObjectLabelsArtifactType,
     materialization=MaterializationSpec(ROIOptions()),
-)
-UNIFIED_NEURONS_OUTPUT = ArtifactSpec.output(
-    "neurons",
-    ObjectLabelsArtifactType,
-    materialization=MaterializationSpec(ROIOptions()),
+    relations=(
+        ObjectArtifactMemberSubjectRelation(
+            source=UNIFIED_NEURONS_OUTPUT.ref(),
+            member_id_field="label",
+        ),
+    ),
 )
 NUCLEI_OUTPUT = ArtifactSpec.output(
     "nuclei",
@@ -348,6 +362,12 @@ NEURITE_MORPHOLOGY_OUTPUT = ArtifactSpec.output(
     materialization=MaterializationSpec(
         SWCOptions(),
         SpatialGraphROIOptions(),
+    ),
+    relations=(
+        ObjectArtifactMemberSubjectRelation(
+            source=UNIFIED_NEURONS_OUTPUT.ref(),
+            member_id_field="label",
+        ),
     ),
 )
 
