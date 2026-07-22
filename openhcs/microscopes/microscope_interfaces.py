@@ -88,19 +88,7 @@ class MetadataArtifactProvider(ABC, metaclass=AutoRegisterMeta):
 
     @classmethod
     def registered_provider_types(cls) -> tuple[type["MetadataArtifactProvider"], ...]:
-        registered = set(cls.__registry__.values())
-        ordered: list[type[MetadataArtifactProvider]] = []
-        seen: set[type[MetadataArtifactProvider]] = set()
-
-        def visit(owner: type[MetadataArtifactProvider]) -> None:
-            for child in owner.__subclasses__():
-                visit(child)
-            if owner in registered and owner not in seen:
-                ordered.append(owner)
-                seen.add(owner)
-
-        visit(cls)
-        return tuple(ordered)
+        return tuple(cls.__registry__.values())
 
     @classmethod
     def provider_type_for_handler(

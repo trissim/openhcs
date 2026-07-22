@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
@@ -201,19 +200,13 @@ class ManagedViewerTypeResolver:
         viewer_base_type: type,
         spec: StreamingViewerConfigSpec,
     ) -> type:
-        for visualizer_type in cls.viewer_types(viewer_base_type):
-            if visualizer_type.viewer_type == spec.viewer_name:
-                return visualizer_type
-        raise KeyError(
-            f"Imported {spec.visualizer_module!r}, but no managed viewer type "
-            f"declares viewer_type={spec.viewer_name!r}."
-        )
-
-    @classmethod
-    def viewer_types(cls, viewer_base_type: type) -> Iterator[type]:
-        for visualizer_type in viewer_base_type.__subclasses__():
-            yield visualizer_type
-            yield from cls.viewer_types(visualizer_type)
+        try:
+            return viewer_base_type.__registry__[spec.viewer_name]
+        except KeyError as error:
+            raise KeyError(
+                f"Imported {spec.visualizer_module!r}, but no managed viewer type "
+                f"declares viewer_type={spec.viewer_name!r}."
+            ) from error
 
 
 def get_all_streaming_ports(

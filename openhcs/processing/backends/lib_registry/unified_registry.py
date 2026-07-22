@@ -1229,19 +1229,7 @@ class ContractRuntimeParameter(
     def registered_parameter_types(
         cls,
     ) -> tuple[type["ContractRuntimeParameter"], ...]:
-        registered = set(cls.__registry__.values())
-        ordered: list[type[ContractRuntimeParameter]] = []
-        seen: set[type[ContractRuntimeParameter]] = set()
-
-        def visit(owner: type[ContractRuntimeParameter]) -> None:
-            for child in owner.__subclasses__():
-                visit(child)
-            if owner in registered and owner not in seen:
-                ordered.append(owner)
-                seen.add(owner)
-
-        visit(cls)
-        return tuple(ordered)
+        return tuple(cls.__registry__.values())
 
 
 class SliceBySliceRuntimeParameter(ContractRuntimeParameter):

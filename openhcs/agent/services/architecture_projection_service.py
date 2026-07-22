@@ -63,19 +63,7 @@ class ArchitectureTopicProjection(ABC, metaclass=AutoRegisterMeta):
 
     @classmethod
     def projection_types(cls) -> tuple[type["ArchitectureTopicProjection"], ...]:
-        registered = set(cls.__registry__.values())
-        ordered: list[type[ArchitectureTopicProjection]] = []
-        seen: set[type[ArchitectureTopicProjection]] = set()
-
-        def visit(owner: type[ArchitectureTopicProjection]) -> None:
-            for child in owner.__subclasses__():
-                visit(child)
-            if owner in registered and owner not in seen:
-                ordered.append(owner)
-                seen.add(owner)
-
-        visit(cls)
-        return tuple(ordered)
+        return tuple(cls.__registry__.values())
 
     @classmethod
     def projection_instances(cls) -> tuple["ArchitectureTopicProjection", ...]:

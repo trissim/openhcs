@@ -98,6 +98,23 @@ PolyStore-owned backend reference. OpenHCS projects workspace metadata into
 The projection is part of ``CompilationSession`` so every axis compiles against
 the same explicit view it will use at runtime.
 
+Serialized workspace schema
+---------------------------
+
+Workspace metadata is a JSON/YAML compatibility boundary, so its records
+necessarily use stable string keys such as ``source_metadata``. Those keys are
+serialized schema, not a second runtime type system. ``OpenHCSMetadataFields``
+declares the top-level workspace field identities, while
+``SourceProjectionMetadataSerializer`` owns the nested projection record it
+writes. The corresponding workspace reader reconstructs
+``SourcePlaneProjection`` or ``SourceArtifactProjection`` from the declared
+``SourceProjectionRole`` and typed address/reference payloads.
+
+Once deserialized, source selection, grouping, provenance, and artifact
+satisfaction operate on those nominal values. Generic consumers must not use
+field-name matching, ``getattr`` probes, or fallback dictionaries to recover a
+projection's semantic type from the serialized mapping.
+
 A backend address and a physical source path are different projections.
 PolyStore's ``BackendBase.resolve_listed_address()`` owns normalization of
 addresses returned by backend listings, while
