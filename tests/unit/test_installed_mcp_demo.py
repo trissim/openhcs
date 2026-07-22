@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import socket
+import subprocess
+import sys
 
 from openhcs.agent.capabilities import agent_capabilities
 from openhcs.constants.constants import AllComponents
@@ -12,6 +14,9 @@ from openhcs.core.plate_file_inventory import PlateFileKind
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.mcp import installed_demo
 from openhcs.mcp.dev_client import McpDevCommandExecution
+from openhcs.processing.presets.pipelines import (
+    loose_operaphenix_neurite_outgrowth as neurite_preset,
+)
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 
 
@@ -41,7 +46,7 @@ def test_portable_source_projects_authoritative_neurite_preset(
     tmp_path: Path,
 ) -> None:
     records = _records(tmp_path)
-    original_builder = installed_demo.build_loose_operaphenix_neurite_pipeline
+    original_builder = neurite_preset.build_loose_operaphenix_neurite_pipeline
     observed: dict[str, object] = {}
 
     def tracked_builder(inputs):
@@ -54,7 +59,7 @@ def test_portable_source_projects_authoritative_neurite_preset(
         return pipeline_config, pipeline_steps
 
     monkeypatch.setattr(
-        installed_demo,
+        neurite_preset,
         "build_loose_operaphenix_neurite_pipeline",
         tracked_builder,
     )
@@ -83,6 +88,41 @@ def test_portable_source_projects_authoritative_neurite_preset(
         and step.napari_streaming_config.transport_mode is TransportMode.TCP
         for step in document.pipeline_steps
     )
+
+
+def test_installed_demo_import_defers_optional_neurite_preset(tmp_path: Path) -> None:
+    blocked_module = (
+        "openhcs.processing.presets.pipelines.loose_operaphenix_neurite_outgrowth"
+    )
+    source = f"""
+import builtins
+from importlib.metadata import distribution
+
+real_import = builtins.__import__
+
+def guarded_import(name, *args, **kwargs):
+    if name == {blocked_module!r}:
+        raise AssertionError(f"optional preset imported eagerly: {{name}}")
+    return real_import(name, *args, **kwargs)
+
+builtins.__import__ = guarded_import
+entry_point = next(
+    item
+    for item in distribution("openhcs").entry_points
+    if item.group == "console_scripts" and item.name == "openhcs-mcp-demo"
+)
+assert callable(entry_point.load())
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", source],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_headless_portable_source_disables_every_viewer_config(

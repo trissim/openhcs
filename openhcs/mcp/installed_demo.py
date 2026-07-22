@@ -19,7 +19,7 @@ from pathlib import Path
 import socket
 import sys
 import tempfile
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from zmqruntime.config import TransportMode as ZMQTransportMode
 from zmqruntime.messages import ControlMessageType
@@ -41,11 +41,6 @@ from openhcs.mcp.dev_client_commands.plate import (
 )
 from openhcs.mcp.dev_client_commands.viewer import ValidateViewerCommandSpec
 from openhcs.mcp.dev_client_rendering import McpDevPayloadProjection
-from openhcs.processing.presets.pipelines.loose_operaphenix_neurite_outgrowth import (
-    LooseOperaPhenixNeuriteInputs,
-    SemanticImageSource,
-    build_loose_operaphenix_neurite_pipeline,
-)
 from openhcs.runtime.viewer_protocol import (
     ViewerControlMessageRequest,
     ViewerRuntimeEndpoint,
@@ -53,6 +48,11 @@ from openhcs.runtime.viewer_protocol import (
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
+
+if TYPE_CHECKING:
+    from openhcs.processing.presets.pipelines.loose_operaphenix_neurite_outgrowth import (
+        LooseOperaPhenixNeuriteInputs,
+    )
 
 
 class InstalledDemoFailure(RuntimeError):
@@ -187,6 +187,11 @@ def _neurite_inputs(
     viewer_port: int,
     records: Sequence[Mapping[str, Any]],
 ) -> LooseOperaPhenixNeuriteInputs:
+    from openhcs.processing.presets.pipelines.loose_operaphenix_neurite_outgrowth import (
+        LooseOperaPhenixNeuriteInputs,
+        SemanticImageSource,
+    )
+
     ordered = sorted(
         records,
         key=lambda record: int(_record_component(record, AllComponents.CHANNEL)),
@@ -260,6 +265,10 @@ def build_portable_neurite_source(
     viewer: bool,
 ) -> tuple[str, ViewerRuntimeEndpoint]:
     """Render the authoritative neurite preset for exact generated inputs."""
+
+    from openhcs.processing.presets.pipelines.loose_operaphenix_neurite_outgrowth import (
+        build_loose_operaphenix_neurite_pipeline,
+    )
 
     inputs = _neurite_inputs(
         plate_path=plate_path,
