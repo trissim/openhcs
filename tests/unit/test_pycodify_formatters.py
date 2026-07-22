@@ -3,6 +3,7 @@
 import ast
 import inspect
 
+import pytest
 from pycodify import Assignment, generate_python_source
 
 import openhcs.serialization.pycodify_formatters  # noqa: F401
@@ -11,16 +12,20 @@ from openhcs.constants import InputSource
 from openhcs.constants.constants import GroupBy
 from openhcs.core.config import (
     DtypeConfig,
+    LazyDtypeConfig,
     LazyNapariStreamingConfig,
     LazyProcessingConfig,
     LazyWellFilterConfig,
     PipelineConfig,
 )
+from openhcs.core.callable_contract import CallableContract
+from openhcs.core.function_step_document import FunctionStepDocumentAuthority
 from openhcs.core.memory import DtypeConversion
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.cellprofiler.colocalization import (
     measure_colocalization_objects,
 )
+from openhcs.processing.backends.cellprofiler.shape import measure_object_size_shape
 from openhcs.processing.backends.analysis.count_cells_simple import count_cells_simple
 
 
@@ -207,9 +212,60 @@ def test_function_pattern_source_does_not_emit_declared_hidden_parameters():
     )
 
     ast.parse(source)
-    assert "'labels': None" in source
+    assert "labels" not in source
     assert "rank_provider" not in source
     assert "DirectObjectColocalizationRankProvider" not in source
+
+
+@pytest.mark.parametrize(
+    ("clean_mode", "expected_kwargs"),
+    (
+        (True, {"calculate_zernikes": False}),
+        (
+            False,
+            {
+                "calculate_advanced": True,
+                "calculate_zernikes": False,
+            },
+        ),
+    ),
+)
+def test_function_step_round_trip_omits_runtime_owned_callable_kwargs(
+    clean_mode,
+    expected_kwargs,
+):
+    step = FunctionStep(
+        func=(
+            measure_object_size_shape,
+            {
+                "labels": None,
+                "dtype_config": LazyDtypeConfig(),
+                "slice_by_slice": False,
+                "calculate_advanced": True,
+                "calculate_zernikes": False,
+            },
+        ),
+        name="MeasureObjectSizeShape",
+    )
+
+    source = FunctionStepDocumentAuthority.render(
+        FunctionStepDocumentAuthority.from_value(step),
+        clean_mode=clean_mode,
+    )
+    reconstructed = FunctionStepDocumentAuthority.from_source(source).step
+    reconstructed_kwargs = reconstructed.func[1]
+    reconstructed_contract = CallableContract.from_callable(reconstructed.func[0])
+
+    assert reconstructed_contract.runtime_owned_parameter_names.isdisjoint(
+        reconstructed_kwargs
+    )
+    assert reconstructed_kwargs == expected_kwargs
+    reconstructed_contract.validate_public_kwargs(
+        reconstructed_kwargs,
+        runtime_loaded_artifact_parameter_names=(
+            reconstructed_contract.artifact_input_parameter_names
+        ),
+    )
 
 
 def test_cellprofiler_public_callable_source_keeps_hidden_parameters_hidden():

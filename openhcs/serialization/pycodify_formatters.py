@@ -275,7 +275,7 @@ def _exported_callable_parameter_exclusions(func) -> set[str]:
         raise TypeError("Function-pattern leaves must resolve to public callables.")
     contract = CallableContract.from_callable(func)
     excluded = set(parameter_exclusions(func))
-    excluded.update(contract.runtime_bound_parameters)
+    excluded.update(contract.runtime_owned_parameter_names)
     raw_func = contract.raw_processing_function
     if callable(raw_func):
         excluded.update(parameter_exclusions(raw_func))
