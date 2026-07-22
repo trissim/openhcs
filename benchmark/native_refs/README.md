@@ -13,6 +13,8 @@ Current cache:
 - Source copied from: `/tmp/openhcs_cp_native_refs_official30_scoped_rows`
 - Manifest: `benchmark/manifests/official30_portable_axis1.json`
 - Scope: first sampled well per case, official30 benchmark reference outputs
+- Scope identity: the selected-well owner derives `wells_include_first1`; each
+  case directory carries the matching schema-1 completion/provenance marker.
 - File count at copy time: 248
 - Size at copy time: about 67 MB
 - Platform at copy time: `Linux-7.0.3-arch1-2-x86_64-with-glibc2.43`

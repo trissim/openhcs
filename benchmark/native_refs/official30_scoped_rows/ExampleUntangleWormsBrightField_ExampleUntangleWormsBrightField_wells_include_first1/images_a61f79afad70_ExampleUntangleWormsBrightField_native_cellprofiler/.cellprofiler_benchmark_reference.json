@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "provenance": {
+    "native_input_domain_strategy": "selected_wells"
+  }
+}

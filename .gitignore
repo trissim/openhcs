@@ -133,6 +133,7 @@ output/
 !benchmark/manifests/official23_plus_monolayer.json
 !benchmark/manifests/extra_provided_not_in_23_axis1.json
 !benchmark/manifests/official23_plus_extra6_axis1.json
+!benchmark/native_refs/**/.cellprofiler_benchmark_reference.json
 tests/integration/tests_data/
 
 # Embedded repositories

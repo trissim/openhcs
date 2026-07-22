@@ -97,17 +97,17 @@ OFFICIAL30_NATIVE_REFS = Path(__file__).parents[2] / "benchmark" / "native_refs"
 OFFICIAL30_DATABASE_PIPELINES = (
     OFFICIAL30_NATIVE_REFS
     / "official30_scoped_rows"
-    / "CellProfiler_tutorials_cp_tutorial_advanced_segmentation_final_samples_first1wells"
+    / "CellProfiler_tutorials_cp_tutorial_advanced_segmentation_final_wells_include_first1"
     / "native_cellprofiler_headless"
     / "BBBC022_Analysis_Final.cppipe",
     OFFICIAL30_NATIVE_REFS
     / "official30_scoped_rows"
-    / "CellProfiler_tutorials_cp_tutorial_quality_control_samples_first1wells"
+    / "CellProfiler_tutorials_cp_tutorial_quality_control_wells_include_first1"
     / "native_cellprofiler_headless"
     / "BBBC022_QC.cppipe",
     OFFICIAL30_NATIVE_REFS
     / "official30_scoped_rows"
-    / "CellProfiler_tutorials_cp_tutorial_translocation_final_samples_first1wells"
+    / "CellProfiler_tutorials_cp_tutorial_translocation_final_wells_include_first1"
     / "native_cellprofiler_headless"
     / "Translocation_final.cppipe",
 )

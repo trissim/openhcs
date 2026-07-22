@@ -64,7 +64,7 @@ def test_single_channel_image_math_retains_inherited_channel_grouping() -> None:
         / "benchmark"
         / "native_refs"
         / "official30_scoped_rows"
-        / "ExampleIlluminationCorrection_ExampleIlluminationCorrection_Example3_samples_first1wells"
+        / "ExampleIlluminationCorrection_ExampleIlluminationCorrection_Example3_wells_include_first1"
         / "native_cellprofiler_headless"
         / "ExampleIlluminationCorrection_Example3.cppipe"
     )

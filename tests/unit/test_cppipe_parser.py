@@ -118,7 +118,7 @@ def test_cppipe_parser_keeps_example_fly_image_plane_rows_out_of_last_module() -
     cppipe = (
         Path(__file__).resolve().parents[2]
         / "benchmark/native_refs/official30_scoped_rows"
-        / "ExampleFly_ExampleFlyURL_samples_first1wells"
+        / "ExampleFly_ExampleFlyURL_wells_include_first1"
         / "native_cellprofiler_headless/ExampleFlyURL.cppipe"
     )
     parser = CPPipeParser(cppipe)
