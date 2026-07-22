@@ -76,6 +76,14 @@ def test_windows_installer_uses_uv_as_the_environment_owner() -> None:
     # Contract values remain individual native arguments even when paths contain spaces.
     assert "[string[]]$ArgumentList" in source
     assert "& $FilePath @ArgumentList" in source
+    assert '$ErrorActionPreference = "Continue"' in source
+    assert "$exitCode = $LASTEXITCODE" in source
+    assert source.index('$ErrorActionPreference = "Continue"') < source.index(
+        "$exitCode = $LASTEXITCODE"
+    )
+    assert source.index("$exitCode = $LASTEXITCODE") < source.index(
+        "$ErrorActionPreference = $previousErrorActionPreference"
+    )
     assert "cmd.exe" not in source
     assert "/c " not in source.lower()
 

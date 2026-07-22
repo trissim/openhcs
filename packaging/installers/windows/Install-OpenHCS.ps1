@@ -168,10 +168,21 @@ function Invoke-LoggedCommand {
     )
 
     Write-InstallLog "START: $Description"
-    & $FilePath @ArgumentList 2>&1 | ForEach-Object {
-        Write-InstallLog ([string]$_)
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell represents native stderr lines as ErrorRecord
+        # objects. Commands such as `uv python install` legitimately report
+        # progress there, so the process exit code—not its output stream—is the
+        # authority for success.
+        $ErrorActionPreference = "Continue"
+        & $FilePath @ArgumentList 2>&1 | ForEach-Object {
+            Write-InstallLog ([string]$_)
+        }
+        $exitCode = $LASTEXITCODE
     }
-    $exitCode = $LASTEXITCODE
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     if ($exitCode -ne 0) {
         throw "$Description failed with exit code $exitCode."
     }
