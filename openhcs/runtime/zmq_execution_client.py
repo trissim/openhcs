@@ -685,6 +685,8 @@ class ZMQExecutionClient(ExecutionClient[OpenHCSExecutionSubmission, None]):
         )
         cmd = [
             sys.executable,
+            "-X",
+            "faulthandler",
             "-m",
             "openhcs.runtime.zmq_execution_server_launcher",
         ]
