@@ -353,7 +353,9 @@ jobs:
         env:
           OPENHCS_CPU_ONLY: true
         run: python -m pytest tests/integration/ --cov=openhcs --cov-report=term --it-backends disk --it-microscopes OMERO --it-dims 3d --it-exec-mode multiprocessing --it-visualizers none -v --tb=short -s --log-cli-level=INFO
-        timeout-minutes: 15
+        # A cold runner may spend nearly 15 minutes pulling the 1.5 GB OMERO
+        # image before the integration suite starts.
+        timeout-minutes: 30
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
