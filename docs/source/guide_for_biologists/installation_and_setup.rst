@@ -61,10 +61,12 @@ requires MCP to observe nonzero payloads in the live Napari window, and shuts
 down only the runtime and viewer endpoints it allocated. Its output directory is
 reported in the JSON result.
 
-Optional viewers
-----------------
+Smaller manual viewer installs
+------------------------------
 
-Napari and Fiji/ImageJ are optional and can be installed separately:
+The desktop installers already include both Napari and Fiji/ImageJ. For a
+smaller manual Python environment, select either viewer separately or use
+``viz`` for both:
 
 .. code-block:: bash
 
