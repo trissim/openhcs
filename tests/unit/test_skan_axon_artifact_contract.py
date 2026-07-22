@@ -1,6 +1,8 @@
 from inspect import unwrap
 
 import numpy as np
+import pandas as pd
+import pytest
 
 from openhcs.core.artifacts import (
     ImageArtifactType,
@@ -10,6 +12,7 @@ from openhcs.core.artifacts import (
 from openhcs.processing.backends.analysis.skan_axon_analysis import (
     AnalysisDimension,
     ThresholdMethod,
+    _compute_summary_metrics,
     skan_axon_skeletonize_and_analyze,
 )
 
@@ -50,3 +53,23 @@ def test_skan_axon_returns_columnar_rows_and_exact_label_plane_stack() -> None:
     assert {row["object_label"] for row in branches.row_mappings()} == set(
         range(1, branches.row_count() + 1)
     )
+
+
+def test_skan_summary_tortuosity_uses_finite_positive_euclidean_branches() -> None:
+    branches = pd.DataFrame(
+        {
+            "branch_distance": [5.0, 100.0, np.nan, np.inf],
+            "euclidean_distance": [4.0, 0.0, 3.0, 2.0],
+            "branch_type": [0, 3, 1, 2],
+            "node_id_src": [1, 2, 3, 4],
+        }
+    )
+
+    summary = _compute_summary_metrics(
+        branches,
+        skeleton_shape=(1, 16, 16),
+        voxel_spacing=(1.0, 0.5, 0.5),
+    )
+
+    assert summary["num_branches"] == 4
+    assert summary["mean_tortuosity"] == pytest.approx(1.25)

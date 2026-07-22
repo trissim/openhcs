@@ -769,9 +769,24 @@ def _compute_summary_metrics(branch_data, skeleton_shape, voxel_spacing):
     mean_length = branch_data['branch_distance'].mean()
     max_length = branch_data['branch_distance'].max()
 
-    # Tortuosity (branch_distance / euclidean_distance)
-    tortuosity = branch_data['branch_distance'] / (branch_data['euclidean_distance'] + 1e-8)
-    mean_tortuosity = tortuosity.mean()
+    # Tortuosity is undefined for zero-displacement cycles and non-finite rows.
+    branch_distance = branch_data['branch_distance'].to_numpy(dtype=float)
+    euclidean_distance = branch_data['euclidean_distance'].to_numpy(dtype=float)
+    valid_tortuosity = (
+        np.isfinite(branch_distance)
+        & np.isfinite(euclidean_distance)
+        & (euclidean_distance > 0)
+    )
+    mean_tortuosity = (
+        float(
+            np.mean(
+                branch_distance[valid_tortuosity]
+                / euclidean_distance[valid_tortuosity]
+            )
+        )
+        if np.any(valid_tortuosity)
+        else 0.0
+    )
 
     # Count junction points and endpoints based on branch types
     # Branch types: 0=endpoint-endpoint, 1=junction-endpoint, 2=junction-junction, 3=cycle
