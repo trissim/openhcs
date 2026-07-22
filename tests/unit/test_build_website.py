@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -70,6 +71,24 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert f"Local MCP in OpenHCS {package_version}" in html
     assert f"OpenHCS {package_version} MCP extra" in html
     assert 'python -m pip install "openhcs[gui,mcp]"' in html
+    installer_assets = re.findall(
+        r"https://github\.com/OpenHCSDev/OpenHCS/releases/latest/download/"
+        r"([^\"]+)",
+        html,
+    )
+    publish_workflow = (
+        REPO_ROOT / ".github/workflows/publish.yml"
+    ).read_text(encoding="utf-8")
+    assert len(installer_assets) == 2
+    assert all(asset_name in publish_workflow for asset_name in installer_assets)
+    assert "Download for Windows" in html
+    assert "Download for macOS" in html
+    assert "User-scoped, CPU-only installation" in html
+    assert "not code-signed" in html and "not notarized" in html
+    assert 'class="install-routes"' in html
+    assert html.index("Download for Windows") < html.index(
+        'python -m pip install "openhcs[gui,viz]"'
+    )
     assert "This release adds supported CellProfiler" in html
     assert "Production MCPB signing" in html
     assert "hosted connector remain separate deployment work" in html

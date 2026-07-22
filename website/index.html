@@ -296,29 +296,69 @@
       </section>
 
       <section class="install section" id="install">
-        <div>
-          <span class="kicker">OpenHCS {{ OPENHCS_VERSION }} release</span>
-          <h2>Install from PyPI.<br>Add only what you use.</h2>
-          <p class="install-copy">
-            Start with the desktop, then add viewers or CUDA support explicitly.
-            CPU-only systems should not install the optional GPU extra.
-          </p>
-          <a class="text-link" href="https://pypi.org/project/openhcs/">View OpenHCS on PyPI <span aria-hidden="true">↗</span></a>
-        </div>
-        <div class="install-card">
-          <div class="install-card-header">
-            <strong>Desktop with Napari and Fiji</strong>
-            <span>PyPI</span>
+        <div class="section-heading install-heading">
+          <div>
+            <span class="kicker">OpenHCS {{ OPENHCS_VERSION }} release</span>
+            <h2>Install your way.</h2>
           </div>
-          <pre><code><span class="prompt">$</span> python -m pip install "openhcs[gui,viz]"
-<span class="prompt">$</span> openhcs</code></pre>
-          <ul class="install-options" aria-label="Other OpenHCS installation options">
-            <li><b>Desktop only</b><code>openhcs[gui]</code></li>
-            <li><b>Headless</b><code>openhcs</code></li>
-            <li><b>CUDA opt-in</b><code>openhcs[gui,gpu]</code></li>
-          </ul>
-          <div class="requirements"><span>{{ OPENHCS_VERSION }} current release</span><span>Python 3.11+</span><span>Windows · macOS · Linux</span><span>MIT licensed</span></div>
+          <p class="install-copy">
+            Use a desktop installer with no Python setup, or install from PyPI for
+            headless systems and custom environments.
+          </p>
         </div>
+
+        <div class="install-routes">
+          <div class="desktop-installers" aria-labelledby="desktop-installers-title">
+            <div class="install-card-header">
+              <div>
+                <strong id="desktop-installers-title">Desktop installers</strong>
+                <small>No Python setup required</small>
+              </div>
+              <span>GitHub release</span>
+            </div>
+            <div class="installer-downloads">
+              <a
+                class="installer-download"
+                href="https://github.com/OpenHCSDev/OpenHCS/releases/latest/download/OpenHCS-Windows-Installer.zip"
+              >
+                <span class="installer-platform" aria-hidden="true">Win</span>
+                <span><strong>Download for Windows</strong><small>Extract, then run Install-OpenHCS.cmd</small></span>
+                <span class="download-arrow" aria-hidden="true">↓</span>
+              </a>
+              <a
+                class="installer-download"
+                href="https://github.com/OpenHCSDev/OpenHCS/releases/latest/download/OpenHCS-macOS-Installer.zip"
+              >
+                <span class="installer-platform" aria-hidden="true">mac</span>
+                <span><strong>Download for macOS</strong><small>Extract, then open OpenHCS Installer.app</small></span>
+                <span class="download-arrow" aria-hidden="true">↓</span>
+              </a>
+            </div>
+            <p class="installer-boundary">
+              User-scoped, CPU-only installation. Initial assets are not code-signed,
+              and the macOS app is not notarized, so your OS may ask you to confirm trust.
+            </p>
+          </div>
+
+          <div class="install-card">
+            <div class="install-card-header">
+              <div>
+                <strong>Manual, headless, and GPU installs</strong>
+                <small>For existing Python environments</small>
+              </div>
+              <span>PyPI</span>
+            </div>
+            <pre><code><span class="prompt">$</span> python -m pip install "openhcs[gui,viz]"
+<span class="prompt">$</span> openhcs</code></pre>
+            <ul class="install-options" aria-label="Other OpenHCS installation options">
+              <li><b>Desktop only</b><code>openhcs[gui]</code></li>
+              <li><b>Headless</b><code>openhcs</code></li>
+              <li><b>CUDA opt-in</b><code>openhcs[gui,gpu]</code></li>
+            </ul>
+            <a class="install-pypi-link" href="https://pypi.org/project/openhcs/">View OpenHCS on PyPI <span aria-hidden="true">↗</span></a>
+          </div>
+        </div>
+        <div class="requirements"><span>{{ OPENHCS_VERSION }} current release</span><span>Python 3.11+</span><span>Windows · macOS · Linux</span><span>MIT licensed</span></div>
       </section>
     </main>
 

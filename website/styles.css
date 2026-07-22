@@ -440,9 +440,11 @@ a.compute-mark:hover { color: var(--text); }
 .install-preview span { color: var(--muted); font-size: 0.66rem; }
 .install-preview code { color: var(--cyan); font-family: var(--mono); font-size: 0.75rem; }
 
-.install { display: grid; grid-template-columns: 0.8fr 1.2fr; align-items: center; gap: 6rem; border-top: 1px solid var(--line); background: var(--bg-soft); }
-.install-copy { max-width: 33rem; margin: 1.5rem 0; color: var(--muted); }
-.install-card { overflow: hidden; border: 1px solid var(--line-bright); border-radius: 1rem; background: #0a0d16; }
+.install { border-top: 1px solid var(--line); background: var(--bg-soft); }
+.install-heading { align-items: end; margin-bottom: 2.5rem; }
+.install-copy { max-width: 34rem; color: var(--muted); }
+.install-routes { display: grid; grid-template-columns: minmax(17rem, 0.85fr) minmax(0, 1.4fr); gap: 1rem; }
+.desktop-installers, .install-card { overflow: hidden; border: 1px solid var(--line-bright); border-radius: 1rem; background: #0a0d16; }
 .install-card-header {
   display: flex;
   align-items: center;
@@ -451,8 +453,37 @@ a.compute-mark:hover { color: var(--text); }
   padding: 1rem 1.5rem;
   border-bottom: 1px solid var(--line);
 }
+.install-card-header > div { display: grid; gap: 0.12rem; }
 .install-card-header strong { font-size: 0.78rem; }
+.install-card-header small { color: var(--muted); font-size: 0.66rem; }
 .install-card-header span { color: var(--green); font-family: var(--mono); font-size: 0.62rem; text-transform: uppercase; }
+.installer-downloads { display: grid; }
+.installer-download {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.9rem;
+  align-items: center;
+  padding: 1rem 1.2rem;
+  border-bottom: 1px solid var(--line);
+  transition: background 150ms ease;
+}
+.installer-download:hover { background: rgba(137, 151, 255, 0.08); }
+.installer-download > span:nth-child(2) { display: grid; min-width: 0; }
+.installer-download strong { font-size: 0.78rem; }
+.installer-download small { color: var(--muted); font-size: 0.63rem; line-height: 1.45; }
+.installer-platform {
+  display: grid;
+  width: 2.3rem;
+  height: 2.3rem;
+  place-items: center;
+  border: 1px solid rgba(137, 151, 255, 0.38);
+  border-radius: 0.6rem;
+  color: var(--accent-bright);
+  font-family: var(--mono);
+  font-size: 0.62rem;
+}
+.download-arrow { color: var(--accent-bright); font-size: 1rem; }
+.installer-boundary { padding: 0.9rem 1.2rem; color: var(--muted); font-size: 0.65rem; line-height: 1.55; }
 .install-card pre { padding: 2rem; overflow-x: auto; color: #d8dceb; font-family: var(--mono); font-size: 0.85rem; line-height: 2; }
 .prompt { color: var(--accent); }
 .install-options {
@@ -464,7 +495,9 @@ a.compute-mark:hover { color: var(--text); }
 .install-options > li:last-child { border-right: 0; }
 .install-options b { color: var(--muted); font-size: 0.62rem; font-weight: 500; }
 .install-options code { overflow-wrap: anywhere; color: var(--cyan); font-family: var(--mono); font-size: 0.62rem; }
-.requirements { display: flex; flex-wrap: wrap; gap: 0.6rem; padding: 1rem 1.5rem; border-top: 1px solid var(--line); }
+.install-pypi-link { display: block; padding: 0.9rem 1.2rem; border-top: 1px solid var(--line); color: var(--accent-bright); font-size: 0.7rem; font-weight: 600; text-align: right; }
+.install-pypi-link:hover { color: var(--text); }
+.requirements { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 1rem; }
 .requirements span { padding: 0.25rem 0.6rem; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); font-family: var(--mono); font-size: 0.68rem; }
 
 section[id] { scroll-margin-top: 6rem; }
@@ -496,7 +529,8 @@ footer {
   .release-strip { grid-template-columns: 1fr; }
   .pipeline-flow { display: grid; grid-template-columns: 1fr; }
   .flow-arrow { min-height: 2rem; transform: rotate(90deg); }
-  .section-heading, .mcp-section, .install { grid-template-columns: 1fr; gap: 3.5rem; }
+  .section-heading, .mcp-section { grid-template-columns: 1fr; gap: 3.5rem; }
+  .install-routes { grid-template-columns: 1fr; }
   .capability-row { grid-template-columns: 2.5rem minmax(0, 1fr); gap: 0.75rem 1rem; align-items: start; }
   .capability-row p, .capability-row .capability-link, .capability-row .capability-command { grid-column: 2; }
   .capability-actions { grid-column: 2; justify-content: flex-start; }
@@ -539,6 +573,8 @@ footer {
   .agent-header { align-items: flex-start; }
   .connected { display: none; }
   .install-preview code { font-size: 0.65rem; }
+  .install-heading { gap: 1.5rem; margin-bottom: 2rem; }
+  .install-card pre { padding: 1.5rem 1.2rem; font-size: 0.76rem; }
   .install-options { grid-template-columns: 1fr; }
   .install-options > li { border-right: 0; border-bottom: 1px solid var(--line); }
   .install-options > li:last-child { border-bottom: 0; }
