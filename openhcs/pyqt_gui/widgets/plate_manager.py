@@ -23,6 +23,11 @@ from typing_extensions import override
 
 from openhcs.agent.dto.knowledge import KnowledgeBaseDocumentTarget
 from openhcs.agent.ui_bridge_actions import PlateManagerAction, PlateOperation
+from openhcs.agent.ui_bridge_identities import (
+    PlateManagerLiveMeasurementsStateSurfaceIdentityDeclaration,
+    PlateManagerStateSurfaceIdentityDeclaration,
+    PlateManagerWidgetIdentity,
+)
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.core.input_workspace import (
     InputWorkspacePreparationRequest,
@@ -71,6 +76,9 @@ from pyqt_reactive.widgets.shared.manager_selection_controller import (
 from pyqt_reactive.services.zmq_server_info_parser import ExecutionServerInfo
 from openhcs.pyqt_gui.services.plate_manager_batch_workflow import (
     PlateManagerBatchWorkflow,
+)
+from openhcs.pyqt_gui.services.ui_bridge_contracts import (
+    UiOwnedStateSurfaceDeclaration,
 )
 from openhcs.pyqt_gui.widgets.shared.services.live_measurement_progress_service import (
     LiveMeasurementAvailableNotification,
@@ -584,6 +592,21 @@ class PlateManagerWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWidg
     """
 
     TITLE = "Plate Manager"
+    UI_STATE_SURFACE_DECLARATIONS = (
+        UiOwnedStateSurfaceDeclaration(
+            identity=PlateManagerStateSurfaceIdentityDeclaration,
+            title="Plate manager state",
+            payload_schema="openhcs.ui.plate_manager_state.v1",
+            related_action_ids=tuple(action.value for action in PlateManagerAction),
+        ),
+        UiOwnedStateSurfaceDeclaration(
+            identity=PlateManagerLiveMeasurementsStateSurfaceIdentityDeclaration,
+            title="Live measurement results",
+            payload_schema="openhcs.ui.live_measurements_state.v1",
+            related_action_ids=(PlateManagerAction.VIEW_RESULTS.value,),
+        ),
+    )
+    UI_BRIDGE_WIDGET_IDENTITY = PlateManagerWidgetIdentity
     HELP_KNOWLEDGE_TARGET = KnowledgeBaseDocumentTarget(
         document_id="openhcs_basic_interface",
         section_id="plate-manager",

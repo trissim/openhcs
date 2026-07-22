@@ -21,6 +21,8 @@ from openhcs.agent.dto.ui_bridge import (
     UiCodeDocumentSummary,
     UiCodeDocumentValidationRequest,
     UiCodeDocumentValidationResult,
+    UiLiveMeasurementEntryState,
+    UiLiveMeasurementsState,
     UiPlateManagerRowState,
     UiPlateManagerState,
     UiLiveOverviewItem,
@@ -34,6 +36,7 @@ from openhcs.agent.dto.ui_bridge import (
 )
 from openhcs.agent.ui_bridge_actions import PlateManagerAction
 from openhcs.agent.ui_bridge_identities import (
+    PlateManagerLiveMeasurementsStateSurfaceIdentityDeclaration,
     PlateManagerOrchestratorCodeDocumentIdentity,
     PlateManagerStateSurfaceIdentityDeclaration,
     PlateManagerWidgetIdentity,
@@ -56,9 +59,12 @@ from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiActionProviderIdentity,
     UiBridgeSnapshotProviderABC,
     UiCodeDocumentProviderIdentity,
+    UiOwnedStateSurfaceDeclaration,
     UiStateSurfaceProviderABC,
     UiStateSurfaceProviderIdentity,
     SnapshotBackedUiCodeDocumentProviderABC,
+    state_surface_declaration_for_identity,
+    state_surface_ids_for_action,
 )
 from openhcs.pyqt_gui.services.ui_bridge_registry import (
     UiBridgeProviderSetABC,
@@ -66,6 +72,7 @@ from openhcs.pyqt_gui.services.ui_bridge_registry import (
 )
 from openhcs.pyqt_gui.widgets.plate_manager import (
     EmptyPlateSelectionPolicy,
+    PlateManagerWidget,
     PlateOperationValidator,
 )
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
@@ -79,18 +86,32 @@ from openhcs.pyqt_gui.widgets.shared.services.qt_widget_edit_commit import (
 )
 
 ORCHESTRATOR_DOCUMENT_TITLE = "Plate manager orchestrator config"
-PLATE_MANAGER_STATE_TITLE = "Plate manager state"
 PLATE_MANAGER_ACTIONS_TITLE = "Plate manager actions"
 PYTHON_MIME_TYPE = "text/x-python"
-PLATE_MANAGER_STATE_PAYLOAD_SCHEMA = "openhcs.ui.plate_manager_state.v1"
 
 PLATE_MANAGER_ORCHESTRATOR_IDENTITY = UiCodeDocumentProviderIdentity.from_declaration(
     PlateManagerOrchestratorCodeDocumentIdentity,
     title=ORCHESTRATOR_DOCUMENT_TITLE,
 )
-PLATE_MANAGER_STATE_IDENTITY = UiStateSurfaceProviderIdentity.from_declaration(
-    PlateManagerStateSurfaceIdentityDeclaration,
-    title=PLATE_MANAGER_STATE_TITLE,
+PLATE_MANAGER_STATE_DECLARATION: UiOwnedStateSurfaceDeclaration = (
+    state_surface_declaration_for_identity(
+        PlateManagerWidget.UI_STATE_SURFACE_DECLARATIONS,
+        PlateManagerStateSurfaceIdentityDeclaration,
+    )
+)
+PLATE_MANAGER_STATE_IDENTITY = UiStateSurfaceProviderIdentity.from_owner(
+    PLATE_MANAGER_STATE_DECLARATION,
+    widget_declaration=PlateManagerWidget.UI_BRIDGE_WIDGET_IDENTITY,
+)
+LIVE_MEASUREMENTS_STATE_DECLARATION: UiOwnedStateSurfaceDeclaration = (
+    state_surface_declaration_for_identity(
+        PlateManagerWidget.UI_STATE_SURFACE_DECLARATIONS,
+        PlateManagerLiveMeasurementsStateSurfaceIdentityDeclaration,
+    )
+)
+LIVE_MEASUREMENTS_STATE_IDENTITY = UiStateSurfaceProviderIdentity.from_owner(
+    LIVE_MEASUREMENTS_STATE_DECLARATION,
+    widget_declaration=PlateManagerWidget.UI_BRIDGE_WIDGET_IDENTITY,
 )
 PLATE_MANAGER_ACTION_PROVIDER_IDENTITY = (
     UiActionProviderIdentity.from_widget_declaration(
@@ -99,7 +120,7 @@ PLATE_MANAGER_ACTION_PROVIDER_IDENTITY = (
     )
 )
 PLATE_MANAGER_STATE_SURFACE_ID = (
-    PlateManagerStateSurfaceIdentityDeclaration.require_value()
+    PLATE_MANAGER_STATE_DECLARATION.surface_id
 )
 PLATE_MANAGER_ACTION_STATE_SURFACES = (PLATE_MANAGER_STATE_SURFACE_ID,)
 PLATE_MANAGER_CODE_DOCUMENT_ID = (
@@ -145,6 +166,12 @@ class PlateManagerBridgeProviderSet(UiBridgeProviderSetABC):
         )
         context.registry.register_state_surface_provider(
             PlateManagerStateSurfaceProvider(
+                self._manager,
+                snapshot_provider=context.snapshot_provider,
+            )
+        )
+        context.registry.register_state_surface_provider(
+            LiveMeasurementsStateSurfaceProvider(
                 self._manager,
                 snapshot_provider=context.snapshot_provider,
             )
@@ -566,7 +593,7 @@ class PlateManagerStateSurfaceProvider(
         return UiStateSurfaceDocument(
             schema_version=state.schema_version,
             summary=state.summary,
-            payload_schema=PLATE_MANAGER_STATE_PAYLOAD_SCHEMA,
+            payload_schema=PLATE_MANAGER_STATE_DECLARATION.payload_schema,
             payload=payload,
             current_revision_token=state.current_revision_token,
             current_snapshot=state.current_snapshot,
@@ -608,6 +635,223 @@ class PlateManagerStateSurfaceProvider(
             row.runtime_state,
             row.runtime_percent,
             row.queue_position,
+        )
+
+
+class LiveMeasurementsStateSurfaceProvider(UiStateSurfaceProviderABC):
+    """Pollable quantitative results backed by Plate Manager's retained model."""
+
+    identity = LIVE_MEASUREMENTS_STATE_IDENTITY
+
+    def __init__(
+        self,
+        manager,
+        *,
+        snapshot_provider: UiBridgeSnapshotProviderABC,
+    ) -> None:
+        self._manager = manager
+        self._snapshot_provider = snapshot_provider
+
+    def summary(self) -> UiStateSurfaceSummary:
+        all_entries = self._manager.live_measurement_model.semantic_entries()
+        selected_plate_ids = self._selected_plate_ids()
+        return UiStateSurfaceSummary(
+            schema_version=SCHEMA_VERSION,
+            identity=self.identity.as_surface_identity(),
+            title=self.identity.title,
+            widget_id=self.identity.widget_id,
+            readable=True,
+            supported_selection_modes=(
+                UiCodeDocumentSelectionMode.SELECTED.value,
+                UiCodeDocumentSelectionMode.ALL.value,
+            ),
+            current_selection_count=sum(
+                entry.plate_id in selected_plate_ids for entry in all_entries
+            ),
+            total_scope_count=len(all_entries),
+        )
+
+    def read(self, request: UiStateSurfaceRequest) -> UiStateSurfaceDocument:
+        selection_mode = request.resolved_selection_mode(
+            UiCodeDocumentSelectionMode.ALL
+        )
+        try:
+            state = self._project_state(selection_mode)
+        except Exception as exc:
+            return self._state_error(
+                request,
+                (AgentError.from_exception("ui_state_surface_read_failed", exc),),
+            )
+
+        revision_token = self._revision_token(state)
+        state = replace(
+            state,
+            current_revision_token=revision_token,
+            current_snapshot=self._snapshot_provider.current_snapshot(),
+            unchanged=request.base_revision_token == revision_token,
+        )
+        return self._document_from_state(state)
+
+    def overview_sections(self) -> tuple[UiLiveOverviewSection, ...]:
+        entries = self._manager.live_measurement_model.semantic_entries()
+        return (
+            UiLiveOverviewSection(
+                section_id=self.identity.surface_id,
+                title=self.identity.title,
+                summary=(
+                    f"{len(entries)} retained table preview(s)"
+                    if entries
+                    else "No live measurement results yet"
+                ),
+                metrics=(
+                    UiLiveOverviewMetric(
+                        key="tables",
+                        label="tables",
+                        value=str(len(entries)),
+                    ),
+                    UiLiveOverviewMetric(
+                        key="rows",
+                        label="rows",
+                        value=str(sum(entry.preview.row_count for entry in entries)),
+                    ),
+                    UiLiveOverviewMetric(
+                        key="executions",
+                        label="executions",
+                        value=str(len({entry.execution_id for entry in entries})),
+                    ),
+                ),
+                items=tuple(
+                    self._overview_item(entry)
+                    for entry in sorted(
+                        entries,
+                        key=lambda candidate: candidate.sequence_id,
+                        reverse=True,
+                    )[:5]
+                ),
+            ),
+        )
+
+    def _project_state(self, selection_mode: str) -> UiLiveMeasurementsState:
+        all_entries = self._manager.live_measurement_model.semantic_entries()
+        selected_plate_ids = self._selected_plate_ids()
+        mode = UiCodeDocumentSelectionMode(selection_mode)
+        entries = (
+            all_entries
+            if mode is UiCodeDocumentSelectionMode.ALL
+            else tuple(
+                entry for entry in all_entries if entry.plate_id in selected_plate_ids
+            )
+        )
+        entry_states = tuple(self._entry_state(entry) for entry in entries)
+        return UiLiveMeasurementsState(
+            schema_version=SCHEMA_VERSION,
+            summary=self.summary(),
+            selection_mode=mode.value,
+            selected_scope_ids=tuple(
+                row.scope_id for row in self._manager.get_selected_items()
+            ),
+            object_state_token=ObjectStateRegistry.get_token(),
+            retained_entry_count=len(all_entries),
+            visible_entry_count=len(entry_states),
+            total_row_count=sum(entry.preview.row_count for entry in entries),
+            latest_sequence_id=max(
+                (entry.sequence_id for entry in entries),
+                default=None,
+            ),
+            entries=entry_states,
+        )
+
+    @staticmethod
+    def _entry_state(entry) -> UiLiveMeasurementEntryState:
+        return UiLiveMeasurementEntryState(
+            sequence_id=entry.sequence_id,
+            execution_id=entry.execution_id,
+            plate_id=entry.plate_id,
+            axis_id=entry.axis_id,
+            step_name=entry.step_name,
+            preview=entry.preview,
+            truncated_preview_group=entry.truncated_preview_group,
+        )
+
+    def _selected_plate_ids(self) -> frozenset[str]:
+        return frozenset(row.scope_id for row in self._manager.get_selected_items())
+
+    def _revision_token(self, state: UiLiveMeasurementsState) -> str:
+        parts = (
+            self.identity.revision_key,
+            str(state.object_state_token),
+            self._snapshot_provider.current_branch_head_snapshot_id(),
+            str(ObjectStateRegistry.get_current_snapshot_index()),
+            state.selection_mode,
+            state.selected_scope_ids,
+            state.retained_entry_count,
+            state.entries,
+        )
+        return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()
+
+    def _state_error(
+        self,
+        request: UiStateSurfaceRequest,
+        errors: tuple[AgentError, ...],
+    ) -> UiStateSurfaceDocument:
+        selection_mode = request.resolved_selection_mode(
+            UiCodeDocumentSelectionMode.ALL
+        )
+        state = UiLiveMeasurementsState(
+            schema_version=SCHEMA_VERSION,
+            summary=self.summary(),
+            selection_mode=selection_mode,
+            selected_scope_ids=(),
+            object_state_token=ObjectStateRegistry.get_token(),
+            retained_entry_count=0,
+            visible_entry_count=0,
+            total_row_count=0,
+            latest_sequence_id=None,
+            entries=(),
+            current_revision_token=self._snapshot_provider.revision_token(
+                self.identity.revision_key
+            ),
+            current_snapshot=self._snapshot_provider.current_snapshot(),
+            errors=errors,
+        )
+        return self._document_from_state(state)
+
+    @staticmethod
+    def _document_from_state(
+        state: UiLiveMeasurementsState,
+    ) -> UiStateSurfaceDocument:
+        payload = to_jsonable(state)
+        if not isinstance(payload, dict):
+            raise TypeError(
+                "Live measurements state payload did not serialize to an object."
+            )
+        return UiStateSurfaceDocument(
+            schema_version=state.schema_version,
+            summary=state.summary,
+            payload_schema=LIVE_MEASUREMENTS_STATE_DECLARATION.payload_schema,
+            payload=payload,
+            current_revision_token=state.current_revision_token,
+            current_snapshot=state.current_snapshot,
+            selection_mode=state.selection_mode,
+            selected_scope_ids=state.selected_scope_ids,
+            unchanged=state.unchanged,
+            warnings=state.warnings,
+            errors=state.errors,
+        )
+
+    @classmethod
+    def _overview_item(cls, entry) -> UiLiveOverviewItem:
+        preview = entry.preview
+        subject = preview.object_name or preview.source_image_name or "measurements"
+        return UiLiveOverviewItem(
+            label=f"{entry.step_name}: {preview.address.key.name}",
+            status=f"{preview.row_count} row(s)",
+            detail=(
+                f"{subject}; execution={entry.execution_id}; axis={entry.axis_id}; "
+                f"columns={len(preview.columns)}"
+            ),
+            source_surface_id=cls.identity.surface_id,
+            source_widget_id=cls.identity.widget_id,
         )
 
 
@@ -655,7 +899,14 @@ class PlateManagerActionProvider(
             current_selection_count=len(selected_scope_ids),
             target_scope_ids=selected_scope_ids,
             selection_revision_token=self._selection_revision_token(),
-            related_state_surface_ids=PLATE_MANAGER_ACTION_STATE_SURFACES,
+            related_state_surface_ids=self._related_state_surface_ids(action),
+        )
+
+    @staticmethod
+    def _related_state_surface_ids(action: PlateManagerAction) -> tuple[str, ...]:
+        return state_surface_ids_for_action(
+            PlateManagerWidget.UI_STATE_SURFACE_DECLARATIONS,
+            action.value,
         )
 
     def invoke(self, request: UiActionInvokeRequest) -> UiActionInvokeResult:

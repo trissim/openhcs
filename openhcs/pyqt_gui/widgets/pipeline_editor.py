@@ -69,7 +69,15 @@ from openhcs.pyqt_gui.services.pipeline_object_state_binding import (
 from openhcs.pyqt_gui.services.embedded_code_documents import (
     EmbeddedCodeDocumentRegistrationABC,
 )
-from openhcs.agent.ui_bridge_identities import PipelineEditorWidgetIdentity
+from openhcs.agent.ui_bridge_identities import (
+    PipelineDebugSessionStateSurfaceIdentityDeclaration,
+    PipelineEditorStateSurfaceIdentityDeclaration,
+    PipelineEditorWidgetIdentity,
+)
+from openhcs.pyqt_gui.services.ui_bridge_contracts import (
+    UiOwnedStateSurfaceDeclaration,
+    state_surface_declaration_for_identity,
+)
 from openhcs.core.debug import DebugCursor, DebugSession, DebugTerminalSummary
 from pyqt_reactive.widgets.shared.manager_item_hooks import (
     AttributeItemIdProjection,
@@ -306,6 +314,21 @@ class PipelineEditorWidget(OpenHCSSingleRowActionManagerMixin, AbstractManagerWi
 
     # Declarative UI configuration
     TITLE = "Pipeline Editor"
+    UI_STATE_SURFACE_DECLARATIONS = (
+        UiOwnedStateSurfaceDeclaration(
+            identity=PipelineEditorStateSurfaceIdentityDeclaration,
+            title="Pipeline editor state",
+            payload_schema="openhcs.ui.pipeline_editor_state.v1",
+            related_action_ids=(
+                *(action.value for action in PipelineEditorAction),
+                *state_surface_declaration_for_identity(
+                    DebugToolbarWidget.UI_STATE_SURFACE_DECLARATIONS,
+                    PipelineDebugSessionStateSurfaceIdentityDeclaration,
+                ).related_action_ids,
+            ),
+        ),
+    )
+    UI_BRIDGE_WIDGET_IDENTITY = PipelineEditorWidgetIdentity
     HELP_KNOWLEDGE_TARGET = KnowledgeBaseDocumentTarget(
         document_id="openhcs_basic_interface",
         section_id="pipeline-editor",

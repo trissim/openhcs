@@ -6,8 +6,15 @@ from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
+from openhcs.agent.ui_bridge_identities import (
+    PipelineDebugSessionStateSurfaceIdentityDeclaration,
+    PipelineDebugToolbarWidgetIdentity,
+)
 from openhcs.core.debug import DebugCommand, DebugCommandType
 from openhcs.core.execution_state import ManagerExecutionState
+from openhcs.pyqt_gui.services.ui_bridge_contracts import (
+    UiOwnedStateSurfaceDeclaration,
+)
 from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
     DebugActionRenderModel,
     DebugSessionPanelText,
@@ -24,6 +31,19 @@ from pyqt_reactive.widgets.shared.button_panel import ButtonPanel
 
 class DebugToolbarWidget(QWidget):
     """Compact command surface for bounded debug/test-mode runs."""
+
+    UI_STATE_SURFACE_DECLARATIONS = (
+        UiOwnedStateSurfaceDeclaration(
+            identity=PipelineDebugSessionStateSurfaceIdentityDeclaration,
+            title="Pipeline debug session state",
+            payload_schema="openhcs.ui.pipeline_debug_session_state.v1",
+            related_action_ids=tuple(
+                declaration.action_id()
+                for declaration in DebugToolbarActionProjector.declarations()
+            ),
+        ),
+    )
+    UI_BRIDGE_WIDGET_IDENTITY = PipelineDebugToolbarWidgetIdentity
 
     command_requested = pyqtSignal(object)
     runtime_inspection_requested = pyqtSignal()

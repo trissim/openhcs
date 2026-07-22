@@ -22,6 +22,10 @@ from PyQt6.QtCore import Qt, QSettings, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence, QShowEvent
 
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs.agent.ui_bridge_identities import (
+    MainWindowWidgetIdentity,
+    UiLiveOverviewStateSurfaceIdentityDeclaration,
+)
 from polystore.filemanager import FileManager
 from polystore.base import storage_registry
 
@@ -56,6 +60,9 @@ from openhcs.pyqt_gui.services.time_travel_navigation import (
     resolve_fallback_field_path,
     should_include_time_travel_scope,
     should_replace_navigation_target,
+)
+from openhcs.pyqt_gui.services.ui_bridge_contracts import (
+    UiOwnedStateSurfaceDeclaration,
 )
 
 logger = logging.getLogger(__name__)
@@ -114,6 +121,15 @@ class OpenHCSMainWindow(QMainWindow):
     """
 
     # Signals for application events
+    UI_STATE_SURFACE_DECLARATIONS = (
+        UiOwnedStateSurfaceDeclaration(
+            identity=UiLiveOverviewStateSurfaceIdentityDeclaration,
+            title="UI live overview",
+            payload_schema="openhcs.ui.live_overview_state.v1",
+        ),
+    )
+    UI_BRIDGE_WIDGET_IDENTITY = MainWindowWidgetIdentity
+
     config_changed = pyqtSignal(object)  # GlobalPipelineConfig
     ui_config_changed = pyqtSignal(object)  # UIConfig
     status_message = pyqtSignal(str)  # Status message

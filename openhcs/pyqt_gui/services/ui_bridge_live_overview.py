@@ -23,9 +23,11 @@ from openhcs.agent.ui_bridge_identities import (
 from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiBridgeSnapshotProviderABC,
+    UiOwnedStateSurfaceDeclaration,
     UiStateSurfaceProviderABC,
     UiStateSurfaceProviderIdentity,
     UiLiveOverviewContributorIdentity,
+    state_surface_declaration_for_identity,
 )
 from openhcs.pyqt_gui.services.ui_bridge_registry import (
     UiBridgeProviderSetABC,
@@ -33,18 +35,30 @@ from openhcs.pyqt_gui.services.ui_bridge_registry import (
     UiBridgeSurfaceRegistry,
 )
 
-LIVE_OVERVIEW_STATE_TITLE = "UI live overview"
-LIVE_OVERVIEW_STATE_PAYLOAD_SCHEMA = "openhcs.ui.live_overview_state.v1"
-LIVE_OVERVIEW_STATE_IDENTITY = UiStateSurfaceProviderIdentity.from_declaration(
-    UiLiveOverviewStateSurfaceIdentityDeclaration,
-    title=LIVE_OVERVIEW_STATE_TITLE,
-)
-
-
 class LiveOverviewBridgeProviderSet(UiBridgeProviderSetABC):
     """Register the live overview surface after its source providers exist."""
 
     registry_key = UiLiveOverviewStateSurfaceIdentityDeclaration.require_value()
+
+    def __init__(
+        self,
+        declaration: UiOwnedStateSurfaceDeclaration | None = None,
+        *,
+        widget_declaration=None,
+    ) -> None:
+        if declaration is None or widget_declaration is None:
+            from openhcs.pyqt_gui.main import OpenHCSMainWindow
+
+            declaration = state_surface_declaration_for_identity(
+                OpenHCSMainWindow.UI_STATE_SURFACE_DECLARATIONS,
+                UiLiveOverviewStateSurfaceIdentityDeclaration,
+            )
+            widget_declaration = OpenHCSMainWindow.UI_BRIDGE_WIDGET_IDENTITY
+        self._declaration = declaration
+        self._identity = UiStateSurfaceProviderIdentity.from_owner(
+            declaration,
+            widget_declaration=widget_declaration,
+        )
 
     @classmethod
     def for_main_window(cls, main_window) -> "LiveOverviewBridgeProviderSet":
@@ -56,6 +70,8 @@ class LiveOverviewBridgeProviderSet(UiBridgeProviderSetABC):
             UiLiveOverviewStateSurfaceProvider(
                 registry=context.registry,
                 snapshot_provider=context.snapshot_provider,
+                declaration=self._declaration,
+                identity=self._identity,
             )
         )
 
@@ -63,16 +79,18 @@ class LiveOverviewBridgeProviderSet(UiBridgeProviderSetABC):
 class UiLiveOverviewStateSurfaceProvider(UiStateSurfaceProviderABC):
     """Pollable UI overview assembled from registered provider contributions."""
 
-    identity = LIVE_OVERVIEW_STATE_IDENTITY
-
     def __init__(
         self,
         *,
         registry: UiBridgeSurfaceRegistry,
         snapshot_provider: UiBridgeSnapshotProviderABC,
+        declaration: UiOwnedStateSurfaceDeclaration,
+        identity: UiStateSurfaceProviderIdentity,
     ) -> None:
         self._registry = registry
         self._snapshot_provider = snapshot_provider
+        self._declaration = declaration
+        self.identity = identity
 
     def summary(self) -> UiStateSurfaceSummary:
         return UiStateSurfaceSummary(
@@ -185,8 +203,8 @@ class UiLiveOverviewStateSurfaceProvider(UiStateSurfaceProviderABC):
         )
         return self._document_from_state(state, selection_mode=selection_mode)
 
-    @staticmethod
     def _document_from_state(
+        self,
         state: UiLiveOverviewState,
         *,
         selection_mode: str,
@@ -197,7 +215,7 @@ class UiLiveOverviewStateSurfaceProvider(UiStateSurfaceProviderABC):
         return UiStateSurfaceDocument(
             schema_version=state.schema_version,
             summary=state.summary,
-            payload_schema=LIVE_OVERVIEW_STATE_PAYLOAD_SCHEMA,
+            payload_schema=self._declaration.payload_schema,
             payload=payload,
             current_revision_token=state.current_revision_token,
             current_snapshot=state.current_snapshot,

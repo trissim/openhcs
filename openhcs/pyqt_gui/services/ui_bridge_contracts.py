@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import ClassVar, Self
 
@@ -144,6 +144,59 @@ class UiStateSurfaceProviderABC(UiLiveOverviewContributorABC):
     @abstractmethod
     def read(self, request: UiStateSurfaceRequest) -> UiStateSurfaceDocument:
         raise NotImplementedError
+
+
+@dataclass(frozen=True, slots=True)
+class UiOwnedStateSurfaceDeclaration:
+    """State-surface semantics declared by the widget that owns the state."""
+
+    identity: type[UiStateSurfaceIdentityDeclarationBase]
+    title: str
+    payload_schema: str
+    related_action_ids: tuple[str, ...] = ()
+
+    @property
+    def surface_id(self) -> str:
+        """Project the stable protocol identity without repeating its value."""
+        return self.identity.require_value()
+
+    def __post_init__(self) -> None:
+        if not self.title:
+            raise ValueError("UI state-surface title cannot be empty.")
+        if not self.payload_schema:
+            raise ValueError("UI state-surface payload schema cannot be empty.")
+        if any(not action_id for action_id in self.related_action_ids):
+            raise ValueError("Related UI action ids cannot be empty.")
+        if len(self.related_action_ids) != len(set(self.related_action_ids)):
+            raise ValueError("Related UI action ids cannot contain duplicates.")
+
+
+def state_surface_ids_for_action(
+    declarations: Iterable[UiOwnedStateSurfaceDeclaration],
+    action_id: str,
+) -> tuple[str, ...]:
+    """Project the surfaces an owner declares relevant to one action."""
+    return tuple(
+        declaration.surface_id
+        for declaration in declarations
+        if action_id in declaration.related_action_ids
+    )
+
+
+def state_surface_declaration_for_identity(
+    declarations: Iterable[UiOwnedStateSurfaceDeclaration],
+    identity: type[UiStateSurfaceIdentityDeclarationBase],
+) -> UiOwnedStateSurfaceDeclaration:
+    """Resolve exactly one owner declaration by its neutral protocol identity."""
+    matches = tuple(
+        declaration for declaration in declarations if declaration.identity is identity
+    )
+    if len(matches) != 1:
+        raise ValueError(
+            f"Expected exactly one UI state-surface declaration for "
+            f"{identity.__name__}, found {len(matches)}."
+        )
+    return matches[0]
 
 
 class UiActionProviderABC(ABC):
@@ -345,16 +398,17 @@ class UiStateSurfaceProviderIdentity(UiStateSurfaceIdentity, UiWidgetIdentity):
     title: str
 
     @classmethod
-    def from_declaration(
+    def from_owner(
         cls,
-        declaration: type[UiStateSurfaceIdentityDeclarationBase],
+        declaration: UiOwnedStateSurfaceDeclaration,
         *,
-        title: str,
+        widget_declaration: type[UiWidgetIdentityDeclaration],
     ) -> Self:
+        """Project provider identity from the widget-owned declaration."""
         return cls(
-            surface_id=declaration.require_value(),
-            widget_id=declaration.widget_id(),
-            title=title,
+            surface_id=declaration.surface_id,
+            widget_id=widget_declaration.require_value(),
+            title=declaration.title,
         )
 
     @property

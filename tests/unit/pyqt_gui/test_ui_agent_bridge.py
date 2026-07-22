@@ -115,6 +115,7 @@ from openhcs.pyqt_gui.services.ui_bridge_windows import (
     UiWidgetTreeResultFactory,
 )
 from openhcs.pyqt_gui.services.ui_window_ids import OpenHCSUiWindowId
+from openhcs.pyqt_gui.windows.live_measurements_window import LiveMeasurementTableModel
 from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
 from openhcs.core.progress.projection import (
     ExecutionRuntimeProjection,
@@ -656,6 +657,7 @@ class FakePlateManager:
         self.execution_state = ManagerExecutionState.IDLE
         self.plate_execution_ids = {}
         self.runtime_progress_projection = ExecutionRuntimeProjection()
+        self.live_measurement_model = LiveMeasurementTableModel()
         self.plate_terminal_activity_status = ExecutionBatchRuntime()
         self.plate_init_pending = set()
         self.plate_compile_pending = set()
@@ -2633,6 +2635,29 @@ def test_plate_manager_state_surface_projects_runtime_row_status() -> None:
     assert row["compile_pending"] is True
     assert row["selected"] is True
     assert poll_state.unchanged is True
+
+
+def test_view_results_action_relates_widget_owned_live_measurement_surface() -> None:
+    manager = FakePlateManager(selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),))
+    manager.ACTION_ROUTES = {
+        PlateManagerAction.VIEW_RESULTS: WidgetActionRoute(
+            PlateManagerAction.VIEW_RESULTS,
+            lambda _widget: None,
+        ),
+    }
+    manager.buttons[PlateManagerAction.VIEW_RESULTS.value] = FakeButton(enabled=True)
+    bridge = UiAgentBridgeService(
+        provider_set=PlateManagerBridgeProviderSet(manager),
+        dispatcher=InlineDispatcher(),
+    )
+
+    action = bridge.list_actions().actions[0]
+
+    assert action.identity.action_id == PlateManagerAction.VIEW_RESULTS.value
+    assert action.related_state_surface_ids == (
+        "plate_manager.state",
+        "plate_manager.live_measurements",
+    )
 
 
 def test_plate_manager_state_surface_links_source_and_output_plate_rows() -> None:

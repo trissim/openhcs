@@ -49,8 +49,11 @@ class UiCodeDocumentIdentityDeclaration(UiOwnedByWidgetIdentityDeclaration):
     """Registered code document identity declaration."""
 
 
-class UiStateSurfaceIdentityDeclarationBase(UiOwnedByWidgetIdentityDeclaration):
-    """Registered state surface identity declaration."""
+class UiStateSurfaceIdentityDeclarationBase(UiBridgeIdentityDeclaration):
+    """Registered protocol identity for one UI state surface.
+
+    Widget ownership and presentation metadata live on the owning widget class.
+    """
 
 
 class PlateManagerWidgetIdentity(UiWidgetIdentityDeclaration):
@@ -87,7 +90,13 @@ class PlateManagerOrchestratorCodeDocumentIdentity(UiCodeDocumentIdentityDeclara
 class PlateManagerStateSurfaceIdentityDeclaration(UiStateSurfaceIdentityDeclarationBase):
     value = "plate_manager.state"
     enum_member_name = "PLATE_MANAGER"
-    widget_identity = PlateManagerWidgetIdentity
+
+
+class PlateManagerLiveMeasurementsStateSurfaceIdentityDeclaration(
+    UiStateSurfaceIdentityDeclarationBase
+):
+    value = "plate_manager.live_measurements"
+    enum_member_name = "PLATE_MANAGER_LIVE_MEASUREMENTS"
 
 
 class PipelineEditorStateSurfaceIdentityDeclaration(
@@ -95,7 +104,6 @@ class PipelineEditorStateSurfaceIdentityDeclaration(
 ):
     value = "pipeline_editor.state"
     enum_member_name = "PIPELINE_EDITOR"
-    widget_identity = PipelineEditorWidgetIdentity
 
 
 class PipelineDebugSessionStateSurfaceIdentityDeclaration(
@@ -103,7 +111,6 @@ class PipelineDebugSessionStateSurfaceIdentityDeclaration(
 ):
     value = "pipeline_debug_toolbar.session"
     enum_member_name = "PIPELINE_DEBUG_SESSION"
-    widget_identity = PipelineDebugToolbarWidgetIdentity
 
 
 class UiLiveOverviewStateSurfaceIdentityDeclaration(
@@ -111,4 +118,3 @@ class UiLiveOverviewStateSurfaceIdentityDeclaration(
 ):
     value = "ui_live_overview.state"
     enum_member_name = "UI_LIVE_OVERVIEW"
-    widget_identity = MainWindowWidgetIdentity

@@ -20,6 +20,7 @@ from openhcs.core.selection import (
     SelectedScopeIdsCarrier,
     SelectionModeCarrier,
 )
+from openhcs.core.progress.live_measurements import LiveMeasurementTablePreview
 from openhcs.agent.ui_bridge_actions import PlateManagerAction
 from openhcs.agent.ui_bridge_identities import (
     MainWindowWidgetIdentity as MainWindowWidgetIdentity,
@@ -724,6 +725,36 @@ class UiPlateManagerState(
     object_state_token: int
     manager_execution_state: str
     rows: tuple[UiPlateManagerRowState, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class UiLiveMeasurementEntryState:
+    """One retained progress event paired with its authoritative table preview."""
+
+    sequence_id: int
+    execution_id: str
+    plate_id: str
+    axis_id: str
+    step_name: str
+    preview: LiveMeasurementTablePreview
+    truncated_preview_group: bool
+
+
+@dataclass(frozen=True, slots=True)
+class UiLiveMeasurementsState(
+    UiStateSurfaceEnvelope,
+    UiCodeDocumentCurrentRevision,
+    UiCurrentSnapshotState,
+    SelectedScopeIdsCarrier,
+):
+    """Bounded live measurement tables retained by the running Plate Manager."""
+
+    object_state_token: int
+    retained_entry_count: int
+    visible_entry_count: int
+    total_row_count: int
+    latest_sequence_id: int | None
+    entries: tuple[UiLiveMeasurementEntryState, ...]
 
 
 @dataclass(frozen=True, slots=True)

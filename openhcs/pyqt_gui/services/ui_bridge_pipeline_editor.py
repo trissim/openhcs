@@ -51,6 +51,8 @@ from openhcs.pyqt_gui.services.ui_bridge_contracts import (
     UiBridgeSnapshotProviderABC,
     UiStateSurfaceProviderABC,
     UiStateSurfaceProviderIdentity,
+    state_surface_declaration_for_identity,
+    state_surface_ids_for_action,
 )
 from openhcs.pyqt_gui.services.ui_bridge_registry import (
     UiBridgeProviderSetABC,
@@ -59,7 +61,9 @@ from openhcs.pyqt_gui.services.ui_bridge_registry import (
 from openhcs.pyqt_gui.widgets.pipeline_editor import (
     PipelineEditorAction,
     PipelineEditorActionTargetMode,
+    PipelineEditorWidget,
 )
+from openhcs.pyqt_gui.widgets.debug_toolbar import DebugToolbarWidget
 from openhcs.pyqt_gui.widgets.shared.services.debug_session_projection import (
     DebugActionRenderModel,
     DebugToolbarActionProjector,
@@ -74,26 +78,28 @@ from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
     dispatch_widget_action,
 )
 
-PIPELINE_EDITOR_STATE_TITLE = "Pipeline editor state"
 PIPELINE_EDITOR_ACTIONS_TITLE = "Pipeline editor actions"
 PIPELINE_DEBUG_TOOLBAR_ACTIONS_TITLE = "Pipeline debug toolbar actions"
-PIPELINE_DEBUG_SESSION_STATE_TITLE = "Pipeline debug session state"
-PIPELINE_EDITOR_STATE_PAYLOAD_SCHEMA = "openhcs.ui.pipeline_editor_state.v1"
-PIPELINE_DEBUG_SESSION_STATE_PAYLOAD_SCHEMA = (
-    "openhcs.ui.pipeline_debug_session_state.v1"
-)
 PLATE_MANAGER_STATE_SURFACE_ID = (
     PlateManagerStateSurfaceIdentityDeclaration.require_value()
 )
 PIPELINE_EDITOR_WIDGET_ID = PipelineEditorWidgetIdentity.require_value()
 PIPELINE_DEBUG_TOOLBAR_WIDGET_ID = PipelineDebugToolbarWidgetIdentity.require_value()
-PIPELINE_EDITOR_STATE_IDENTITY = UiStateSurfaceProviderIdentity.from_declaration(
+PIPELINE_EDITOR_STATE_DECLARATION = state_surface_declaration_for_identity(
+    PipelineEditorWidget.UI_STATE_SURFACE_DECLARATIONS,
     PipelineEditorStateSurfaceIdentityDeclaration,
-    title=PIPELINE_EDITOR_STATE_TITLE,
 )
-PIPELINE_DEBUG_SESSION_STATE_IDENTITY = UiStateSurfaceProviderIdentity.from_declaration(
+PIPELINE_EDITOR_STATE_IDENTITY = UiStateSurfaceProviderIdentity.from_owner(
+    PIPELINE_EDITOR_STATE_DECLARATION,
+    widget_declaration=PipelineEditorWidget.UI_BRIDGE_WIDGET_IDENTITY,
+)
+PIPELINE_DEBUG_SESSION_STATE_DECLARATION = state_surface_declaration_for_identity(
+    DebugToolbarWidget.UI_STATE_SURFACE_DECLARATIONS,
     PipelineDebugSessionStateSurfaceIdentityDeclaration,
-    title=PIPELINE_DEBUG_SESSION_STATE_TITLE,
+)
+PIPELINE_DEBUG_SESSION_STATE_IDENTITY = UiStateSurfaceProviderIdentity.from_owner(
+    PIPELINE_DEBUG_SESSION_STATE_DECLARATION,
+    widget_declaration=DebugToolbarWidget.UI_BRIDGE_WIDGET_IDENTITY,
 )
 
 
@@ -129,7 +135,10 @@ class ManagerWidgetActionProviderABC(UiActionProviderABC, ABC):
             current_selection_count=len(target_scope_ids),
             target_scope_ids=target_scope_ids,
             selection_revision_token=self._selection_revision_token(),
-            related_state_surface_ids=(PIPELINE_EDITOR_STATE_IDENTITY.surface_id,),
+            related_state_surface_ids=state_surface_ids_for_action(
+                PipelineEditorWidget.UI_STATE_SURFACE_DECLARATIONS,
+                action.value,
+            ),
         )
 
     def invoke(self, request: UiActionInvokeRequest) -> UiActionInvokeResult:
@@ -373,12 +382,6 @@ class PipelineDebugToolbarActionProvider(UiActionProviderABC):
         PipelineDebugToolbarWidgetIdentity,
         title=PIPELINE_DEBUG_TOOLBAR_ACTIONS_TITLE,
     )
-    _related_state_surface_ids = (
-        PLATE_MANAGER_STATE_SURFACE_ID,
-        PipelineEditorStateSurfaceIdentityDeclaration.require_value(),
-        PipelineDebugSessionStateSurfaceIdentityDeclaration.require_value(),
-    )
-
     def __init__(self, manager) -> None:
         self._manager = manager
 
@@ -407,7 +410,7 @@ class PipelineDebugToolbarActionProvider(UiActionProviderABC):
             current_selection_count=len(model.target_scope_ids),
             target_scope_ids=model.target_scope_ids,
             selection_revision_token=self._selection_revision_token(),
-            related_state_surface_ids=self._related_state_surface_ids,
+            related_state_surface_ids=self._related_state_surface_ids(action_id),
         )
 
     def invoke(self, request: UiActionInvokeRequest) -> UiActionInvokeResult:
@@ -434,7 +437,7 @@ class PipelineDebugToolbarActionProvider(UiActionProviderABC):
             receipt=UiMutationReceipt.accepted_for(request.request_token),
             target_scope_ids=self._target_scope_ids(),
             selection_revision_token=self._selection_revision_token(),
-            workflow_status_surface_ids=self._related_state_surface_ids,
+            workflow_status_surface_ids=self._workflow_status_surface_ids(),
             recommended_poll_interval_ms=500,
         )
 
@@ -443,6 +446,32 @@ class PipelineDebugToolbarActionProvider(UiActionProviderABC):
         return tuple(
             declaration.action_id()
             for declaration in DebugToolbarActionProjector.declarations()
+        )
+
+    @staticmethod
+    def _owner_surface_declarations():
+        return (
+            *PipelineEditorWidget.UI_STATE_SURFACE_DECLARATIONS,
+            *DebugToolbarWidget.UI_STATE_SURFACE_DECLARATIONS,
+        )
+
+    @classmethod
+    def _related_state_surface_ids(cls, action_id: str) -> tuple[str, ...]:
+        owner_surface_ids = state_surface_ids_for_action(
+            cls._owner_surface_declarations(),
+            action_id,
+        )
+        return tuple(dict.fromkeys((PLATE_MANAGER_STATE_SURFACE_ID, *owner_surface_ids)))
+
+    @classmethod
+    def _workflow_status_surface_ids(cls) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                (
+                    PLATE_MANAGER_STATE_SURFACE_ID,
+                    *(declaration.surface_id for declaration in cls._owner_surface_declarations()),
+                )
+            )
         )
 
     def _models(self) -> tuple[DebugActionRenderModel, ...]:
@@ -968,7 +997,7 @@ class PipelineDebugSessionStateSurfaceProvider(UiStateSurfaceProviderABC):
         return UiStateSurfaceDocument(
             schema_version=state.schema_version,
             summary=state.summary,
-            payload_schema=PIPELINE_DEBUG_SESSION_STATE_PAYLOAD_SCHEMA,
+            payload_schema=PIPELINE_DEBUG_SESSION_STATE_DECLARATION.payload_schema,
             payload=payload,
             current_revision_token=state.current_revision_token,
             current_snapshot=state.current_snapshot,
@@ -1234,7 +1263,7 @@ class PipelineEditorStateSurfaceProvider(UiStateSurfaceProviderABC):
         return UiStateSurfaceDocument(
             schema_version=state.schema_version,
             summary=state.summary,
-            payload_schema=PIPELINE_EDITOR_STATE_PAYLOAD_SCHEMA,
+            payload_schema=PIPELINE_EDITOR_STATE_DECLARATION.payload_schema,
             payload=payload,
             current_revision_token=state.current_revision_token,
             current_snapshot=state.current_snapshot,
