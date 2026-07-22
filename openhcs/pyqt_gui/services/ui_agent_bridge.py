@@ -190,6 +190,7 @@ class UiCodeDocumentSourcePolicy:
     """Validate that MCP-submitted source is declarative code-mode data."""
 
     allowed_import_roots = frozenset(("openhcs",))
+    allowed_builtin_references = frozenset(("bool", "bytes", "float", "int", "str"))
 
     def validate(self, source: str) -> tuple[AgentError, ...]:
         try:
@@ -199,6 +200,7 @@ class UiCodeDocumentSourcePolicy:
 
         visitor = DeclarativeCodeDocumentAstValidator(
             allowed_import_roots=self.allowed_import_roots,
+            allowed_builtin_references=self.allowed_builtin_references,
         )
         visitor.visit(tree)
         return tuple(visitor.errors)
@@ -211,8 +213,10 @@ class DeclarativeCodeDocumentAstValidator(ast.NodeVisitor):
         self,
         *,
         allowed_import_roots: frozenset[str],
+        allowed_builtin_references: frozenset[str],
     ) -> None:
         self._allowed_import_roots = allowed_import_roots
+        self._allowed_builtin_references = allowed_builtin_references
         self._imported_names: set[str] = set()
         self._path_constructor_names: set[str] = set()
         self._path_bindings: set[str] = set()
@@ -293,7 +297,11 @@ class DeclarativeCodeDocumentAstValidator(ast.NodeVisitor):
     def visit_Name(self, node: ast.Name) -> None:
         if not isinstance(node.ctx, ast.Load):
             return
-        if node.id in self._imported_names or node.id in self._path_bindings:
+        if (
+            node.id in self._imported_names
+            or node.id in self._path_bindings
+            or node.id in self._allowed_builtin_references
+        ):
             return
         self._error("unknown_name", f"Name is not imported by the document: {node.id}")
 

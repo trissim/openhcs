@@ -894,7 +894,9 @@ def test_atomic_success_does_not_record_snapshot_on_failure() -> None:
 
 
 def test_selected_read_fails_loudly_when_no_plate_is_selected() -> None:
-    bridge = UiAgentBridgeService(provider_set=PlateManagerBridgeProviderSet(FakePlateManager()))
+    bridge = UiAgentBridgeService(
+        provider_set=PlateManagerBridgeProviderSet(FakePlateManager())
+    )
 
     document = bridge.get_document(
         UiCodeDocumentRequest(
@@ -2590,7 +2592,9 @@ def test_managed_window_save_action_returns_before_deferred_save_runs() -> None:
 
 
 def test_all_read_returns_source_hash_and_revision() -> None:
-    bridge = UiAgentBridgeService(provider_set=PlateManagerBridgeProviderSet(FakePlateManager()))
+    bridge = UiAgentBridgeService(
+        provider_set=PlateManagerBridgeProviderSet(FakePlateManager())
+    )
 
     document = bridge.get_document(
         UiCodeDocumentRequest(
@@ -3489,7 +3493,9 @@ def test_selected_workflow_confirmation_rejection_avoids_ui_preflight() -> None:
     ]
     manager.buttons[PlateManagerAction.COMPILE_PLATE.value] = FakeButton(enabled=True)
     dispatcher = CountingDispatcher()
-    bridge = UiAgentBridgeService(provider_set=PlateManagerBridgeProviderSet(manager), dispatcher=dispatcher)
+    bridge = UiAgentBridgeService(
+        provider_set=PlateManagerBridgeProviderSet(manager), dispatcher=dispatcher
+    )
 
     result = bridge.selected_plate_workflow(
         UiSelectedPlateWorkflowRequest(
@@ -3507,7 +3513,9 @@ def test_selected_workflow_confirmation_rejection_avoids_ui_preflight() -> None:
 
 
 def test_validation_rejects_side_effecting_source_before_execution() -> None:
-    bridge = UiAgentBridgeService(provider_set=PlateManagerBridgeProviderSet(FakePlateManager()))
+    bridge = UiAgentBridgeService(
+        provider_set=PlateManagerBridgeProviderSet(FakePlateManager())
+    )
 
     result = bridge.validate_document(
         UiCodeDocumentValidationRequest(
@@ -3522,7 +3530,9 @@ def test_validation_rejects_side_effecting_source_before_execution() -> None:
 
 
 def test_validation_rejects_legacy_pipeline_config_assignment() -> None:
-    bridge = UiAgentBridgeService(provider_set=PlateManagerBridgeProviderSet(FakePlateManager()))
+    bridge = UiAgentBridgeService(
+        provider_set=PlateManagerBridgeProviderSet(FakePlateManager())
+    )
 
     result = bridge.validate_document(
         UiCodeDocumentValidationRequest(
@@ -3541,7 +3551,9 @@ def test_validation_rejects_legacy_pipeline_config_assignment() -> None:
 
 
 def test_validation_reports_orchestrator_payload_hint() -> None:
-    bridge = UiAgentBridgeService(provider_set=PlateManagerBridgeProviderSet(FakePlateManager()))
+    bridge = UiAgentBridgeService(
+        provider_set=PlateManagerBridgeProviderSet(FakePlateManager())
+    )
 
     result = bridge.validate_document(
         UiCodeDocumentValidationRequest(
@@ -3569,10 +3581,12 @@ def test_apply_rejection_reports_current_revision_and_snapshot() -> None:
     ObjectStateRegistry.register(state, _skip_snapshot=True)
     ObjectStateRegistry.record_snapshot("before edit", scope_id=PLATE_SCOPE_ID)
     bridge = UiAgentBridgeService(
-        provider_set=PlateManagerBridgeProviderSet(FakePlateManager(
-            selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),),
-            operations=FakeOperations(state),
-        )),
+        provider_set=PlateManagerBridgeProviderSet(
+            FakePlateManager(
+                selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),),
+                operations=FakeOperations(state),
+            )
+        ),
         dispatcher=InlineDispatcher(),
     )
     document = bridge.get_document(
@@ -3602,10 +3616,12 @@ def test_confirmation_required_apply_rejection_reports_current_context() -> None
     ObjectStateRegistry.register(state, _skip_snapshot=True)
     ObjectStateRegistry.record_snapshot("before edit", scope_id=PLATE_SCOPE_ID)
     bridge = UiAgentBridgeService(
-        provider_set=PlateManagerBridgeProviderSet(FakePlateManager(
-            selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),),
-            operations=FakeOperations(state),
-        )),
+        provider_set=PlateManagerBridgeProviderSet(
+            FakePlateManager(
+                selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),),
+                operations=FakeOperations(state),
+            )
+        ),
         dispatcher=InlineDispatcher(),
     )
     document = bridge.get_document(
@@ -3679,6 +3695,23 @@ def test_source_policy_allows_public_function_steps_not_runtime_factories() -> N
     assert any(error.code == "unsafe_call" for error in errors)
 
 
+def test_source_policy_allows_safe_builtin_type_references_only() -> None:
+    source = (
+        "from openhcs.core.runtime_tabular_values import FieldSpec\n"
+        f"plate_paths = ['{PLATE_SCOPE_ID}']\n"
+        "global_config = None\n"
+        f"per_plate_configs = {{'{PLATE_SCOPE_ID}': "
+        "FieldSpec(name='FileLocation', dtype=str)}\n"
+        f"pipeline_data = {{'{PLATE_SCOPE_ID}': []}}\n"
+    )
+
+    assert UiCodeDocumentSourcePolicy().validate(source) == ()
+
+    unsafe_source = source.replace("dtype=str", "dtype=eval")
+    errors = UiCodeDocumentSourcePolicy().validate(unsafe_source)
+    assert any(error.code == "unknown_name" for error in errors)
+
+
 def test_source_policy_allows_topological_path_bindings() -> None:
     source = (
         "from pathlib import Path\n"
@@ -3719,7 +3752,9 @@ def test_apply_creates_baseline_and_edit_snapshot() -> None:
     ObjectStateRegistry.register(state, _skip_snapshot=True)
     operations = FakeOperations(state)
     bridge = UiAgentBridgeService(
-        provider_set=PlateManagerBridgeProviderSet(FakePlateManager(operations=operations)),
+        provider_set=PlateManagerBridgeProviderSet(
+            FakePlateManager(operations=operations)
+        ),
         dispatcher=InlineDispatcher(),
     )
     document = bridge.get_document(
@@ -3770,7 +3805,9 @@ def test_apply_document_returns_running_operation_before_queued_ui_apply_runs() 
     dispatcher = QueuedPostDispatcher()
     operation_tracker = UiBridgeOperationTracker()
     bridge = UiAgentBridgeService(
-        provider_set=PlateManagerBridgeProviderSet(FakePlateManager(operations=operations)),
+        provider_set=PlateManagerBridgeProviderSet(
+            FakePlateManager(operations=operations)
+        ),
         dispatcher=dispatcher,
         operation_tracker=operation_tracker,
     )
@@ -3813,7 +3850,9 @@ def test_queued_apply_document_error_updates_operation_status() -> None:
     dispatcher = QueuedPostDispatcher()
     operation_tracker = UiBridgeOperationTracker()
     bridge = UiAgentBridgeService(
-        provider_set=PlateManagerBridgeProviderSet(FakePlateManager(operations=operations)),
+        provider_set=PlateManagerBridgeProviderSet(
+            FakePlateManager(operations=operations)
+        ),
         dispatcher=dispatcher,
         operation_tracker=operation_tracker,
     )
@@ -3950,7 +3989,9 @@ def test_ui_bridge_control_server_round_trips_documents_through_descriptor(
 ) -> None:
     monkeypatch.setenv("OPENHCS_UI_BRIDGE_DESCRIPTOR_DIR", str(tmp_path))
     bridge = UiAgentBridgeService(
-        provider_set=PlateManagerBridgeProviderSet(FakePlateManager(selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),))),
+        provider_set=PlateManagerBridgeProviderSet(
+            FakePlateManager(selected=(FakeRow(PLATE_SCOPE_ID, PLATE_NAME),))
+        ),
         dispatcher=InlineDispatcher(),
     )
     server = UiBridgeControlServer(
