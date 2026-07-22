@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-import ctypes
 from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar, TypeVar
@@ -13,22 +12,14 @@ import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit, types
 from numba.extending import intrinsic
-from numpy.core import _multiarray_umath
 import skimage.measure
 
 from openhcs.constants.constants import MemoryType
-
-
-_NUMPY_UMATH_GLOBAL = ctypes.CDLL(
-    _multiarray_umath.__file__,
-    mode=ctypes.RTLD_GLOBAL,
+from openhcs.processing.backends.numpy_runtime import (
+    numpy_avx512_svml_symbol_available,
 )
-try:
-    _NUMPY_UMATH_GLOBAL.__svml_pow8
-except AttributeError:
-    _NUMPY_124_SVML_POW_AVAILABLE = False
-else:
-    _NUMPY_124_SVML_POW_AVAILABLE = True
+
+_NUMPY_124_SVML_POW_AVAILABLE = numpy_avx512_svml_symbol_available("__svml_pow8")
 
 
 @intrinsic

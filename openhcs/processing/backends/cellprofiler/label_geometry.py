@@ -2,27 +2,18 @@
 
 from __future__ import annotations
 
-import ctypes
-
 import centrosome.cpmorphology
 from llvmlite import ir
 import numpy as np
 from numba import njit, types
 from numba.extending import intrinsic
-from numpy._core import _multiarray_umath
 import scipy.ndimage
 
-
-_NUMPY_UMATH_GLOBAL = ctypes.CDLL(
-    _multiarray_umath.__file__,
-    mode=ctypes.RTLD_GLOBAL,
+from openhcs.processing.backends.numpy_runtime import (
+    numpy_avx512_svml_symbol_available,
 )
-try:
-    _NUMPY_UMATH_GLOBAL.__svml_acos8
-except AttributeError:
-    _NUMPY_124_SVML_ACOS_AVAILABLE = False
-else:
-    _NUMPY_124_SVML_ACOS_AVAILABLE = True
+
+_NUMPY_124_SVML_ACOS_AVAILABLE = numpy_avx512_svml_symbol_available("__svml_acos8")
 
 
 @intrinsic
