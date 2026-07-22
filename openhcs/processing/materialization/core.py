@@ -94,6 +94,7 @@ from openhcs.core.steps.stream_component_semantics import (
 )
 if TYPE_CHECKING:
     from polystore.filemanager import FileManager
+    from openhcs.core.artifacts import ArtifactOutputPlan
     from openhcs.core.context.processing_context import ProcessingContext
     from openhcs.microscopes.microscope_interfaces import FilenameParser
 
@@ -1547,6 +1548,7 @@ class MaterializationContext:
     source_paths: tuple[str, ...] = ()
     output_key: str | None = None
     step_index: int | None = None
+    output_plan: "ArtifactOutputPlan | None" = None
 
     def paths(self, options: FileOutputOptions) -> PathHelper:
         return PathHelper(self.base_path, options)
@@ -2700,6 +2702,27 @@ def _write_roi_zip(
                 spatial_origin_yx=source_domain.origin_yx,
                 source_spatial_shape_yx=source_domain.source_shape_yx,
             )
+            if ctx.output_plan is not None:
+                object_subject_binding = ctx.output_plan.object_subject_binding()
+                if object_subject_binding is not None:
+                    rois = [
+                        replace(
+                            roi,
+                            metadata={
+                                **roi.metadata,
+                                **object_subject_binding.feature_metadata(
+                                    roi.metadata,
+                                    producer_step_scope_id=(
+                                        ctx.output_plan.producer_step_scope_id
+                                    ),
+                                    producer_step_index=(
+                                        ctx.output_plan.producer_step_index
+                                    ),
+                                ),
+                            },
+                        )
+                        for roi in rois
+                    ]
             target_rois.extend(rois)
 
         total_roi_count += len(target_rois)
@@ -2884,6 +2907,16 @@ def _write_spatial_graph_roi_zip(
                 "ImageJ polyline ROI archives are 2D. Use SWCOptions for 3D graphs."
             )
         segment_lengths = np.linalg.norm(np.diff(coordinates, axis=0), axis=1)
+        edge_features = edge.feature_mapping()
+        object_subject_metadata: Mapping[str, object] = {}
+        if ctx.output_plan is not None:
+            object_subject_binding = ctx.output_plan.object_subject_binding()
+            if object_subject_binding is not None:
+                object_subject_metadata = object_subject_binding.feature_metadata(
+                    edge_features,
+                    producer_step_scope_id=ctx.output_plan.producer_step_scope_id,
+                    producer_step_index=ctx.output_plan.producer_step_index,
+                )
         metadata = {
             "label": edge.edge_id,
             "area": 0.0,
@@ -2893,7 +2926,8 @@ def _write_spatial_graph_roi_zip(
             "edge_id": edge.edge_id,
             "source_node_id": edge.source_node_id,
             "target_node_id": edge.target_node_id,
-            **edge.feature_mapping(),
+            **edge_features,
+            **object_subject_metadata,
         }
         rois.append(
             ROI(
@@ -3714,6 +3748,7 @@ def materialization_outputs(
     source_paths: Sequence[str] = (),
     output_key: str | None = None,
     step_index: int | None = None,
+    output_plan: "ArtifactOutputPlan | None" = None,
 ) -> tuple[Output, ...]:
     """Derive every concrete output from a materialization contract without saving."""
 
@@ -3730,6 +3765,7 @@ def materialization_outputs(
         source_paths=tuple(str(p) for p in source_paths),
         output_key=output_key,
         step_index=step_index,
+        output_plan=output_plan,
     )
     return tuple(
         output
@@ -3757,6 +3793,7 @@ def materialize(
     source_paths: Sequence[str] = (),
     output_key: str | None = None,
     step_index: int | None = None,
+    output_plan: "ArtifactOutputPlan | None" = None,
 ) -> str:
     """Materialize data to one or more backends."""
 
@@ -3781,6 +3818,7 @@ def materialize(
         source_paths=tuple(str(p) for p in source_paths),
         output_key=output_key,
         step_index=step_index,
+        output_plan=output_plan,
     )
 
     primary_path = ""

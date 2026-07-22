@@ -7,6 +7,7 @@ objects, measurements, relationships, and other richer runtime state.
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Hashable, Iterable, Mapping, Sequence
@@ -944,6 +945,71 @@ class ArtifactSpecRef:
 
 
 @dataclass(frozen=True)
+class ObjectArtifactSubjectBinding:
+    """Bind one artifact-local identity field to an exact object subject."""
+
+    SUBJECT_FEATURE: ClassVar[str] = "__openhcs_object_subject__"
+    SUBJECT_ID_FEATURE: ClassVar[str] = "__openhcs_object_subject_id__"
+
+    source: ArtifactSpecRef
+    id_field: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, ArtifactSpecRef):
+            raise TypeError(
+                "ObjectArtifactSubjectBinding.source must be an ArtifactSpecRef."
+            )
+        if self.source.artifact_type is not ObjectLabelsArtifactType:
+            raise ValueError(
+                "ObjectArtifactSubjectBinding requires an ObjectLabels source, got "
+                f"{self.source.artifact_type.value}:{self.source.name}."
+            )
+        if not self.id_field:
+            raise ValueError("ObjectArtifactSubjectBinding.id_field cannot be empty.")
+
+    def subject_token(
+        self,
+        *,
+        producer_step_scope_id: str | None,
+        producer_step_index: int | str | None,
+    ) -> str:
+        """Return one scalar token shared by sibling outputs from this producer."""
+
+        return json.dumps(
+            (
+                self.source.plan_type.plan_role,
+                self.source.artifact_type.value,
+                self.source.name,
+                producer_step_scope_id,
+                producer_step_index,
+            ),
+            separators=(",", ":"),
+        )
+
+    def feature_metadata(
+        self,
+        features: Mapping[str, object],
+        *,
+        producer_step_scope_id: str | None,
+        producer_step_index: int | str | None,
+    ) -> dict[str, object]:
+        """Project the declared local member identity to framework metadata."""
+
+        if self.id_field not in features:
+            raise ValueError(
+                f"Declared object-subject field {self.id_field!r} is absent from "
+                f"artifact member features {tuple(features)!r}."
+            )
+        return {
+            self.SUBJECT_FEATURE: self.subject_token(
+                producer_step_scope_id=producer_step_scope_id,
+                producer_step_index=producer_step_index,
+            ),
+            self.SUBJECT_ID_FEATURE: features[self.id_field],
+        }
+
+
+@dataclass(frozen=True)
 class ArtifactSpecRelation(ABC, metaclass=AutoRegisterMeta):
     """Declare a semantic dependency on one source artifact.
 
@@ -1023,6 +1089,11 @@ class ArtifactSpecRelation(ABC, metaclass=AutoRegisterMeta):
 
     def measurement_subject(self) -> "MeasurementSubject | None":
         """Return the exact measurement subject declared by this relation."""
+
+        return None
+
+    def object_subject_binding(self) -> ObjectArtifactSubjectBinding | None:
+        """Return the target-local identity bound to one object subject."""
 
         return None
 
@@ -1161,6 +1232,64 @@ class ObjectMeasurementSubjectRelation(ArtifactSpecRelation):
             self.source.name,
             self.id_field,
         )
+
+    def object_subject_binding(self) -> ObjectArtifactSubjectBinding | None:
+        """Expose an explicit measurement-row identity for generic UI linkage."""
+
+        if self.id_field is None:
+            return None
+        return ObjectArtifactSubjectBinding(self.source, self.id_field)
+
+
+@dataclass(frozen=True)
+class ObjectArtifactMemberSubjectRelation(ArtifactSpecRelation):
+    """Artifact members are owned by objects through one declared local field."""
+
+    relation_key: ClassVar[str] = "object_artifact_member_subject"
+    source: ArtifactSpecRef | None = None
+    member_id_field: str = "label"
+    self_owned: bool = field(default=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.member_id_field:
+            raise ValueError(
+                "ObjectArtifactMemberSubjectRelation.member_id_field cannot be empty."
+            )
+        if self.source is not None:
+            super().__post_init__()
+            if self.source.artifact_type is not ObjectLabelsArtifactType:
+                raise ValueError(
+                    f"{type(self).__name__} requires an object-labels source, got "
+                    f"{self.source.artifact_type.value}:{self.source.name}."
+                )
+
+    def bind_target_spec(self, spec: "ArtifactSpec") -> "ArtifactSpecRelation":
+        """Bind a source-less declaration to its owning ObjectLabels output."""
+
+        if self.source is not None:
+            return self
+        if spec.artifact_type is not ObjectLabelsArtifactType:
+            raise ValueError(
+                f"{type(self).__name__} without an explicit source requires an "
+                f"ObjectLabels target, got {spec.artifact_type.value}:{spec.name}."
+            )
+        return replace(self, source=spec.ref(), self_owned=True)
+
+    def object_subject_binding(self) -> ObjectArtifactSubjectBinding:
+        """Return the exact object subject and target-local member identity."""
+
+        if self.source is None:
+            raise RuntimeError(
+                "ObjectArtifactMemberSubjectRelation must be bound to a target spec."
+            )
+        return ObjectArtifactSubjectBinding(self.source, self.member_id_field)
+
+    def dependency_refs(self) -> tuple[ArtifactSpecRef, ...]:
+        """A self-owned ObjectLabels member relation adds no dependency edge."""
+
+        if self.source is None or self.self_owned:
+            return ()
+        return super().dependency_refs()
 
 
 class ImageMeasurementSubjectRelation(ArtifactSpecRelation):
@@ -2287,6 +2416,24 @@ class ArtifactOutputPlan(ArtifactPlan):
                 f"subjects: {subjects!r}."
             )
         return subjects[0] if subjects else None
+
+    def object_subject_binding(self) -> ObjectArtifactSubjectBinding | None:
+        """Return the sole object-subject binding declared by this output."""
+
+        bindings = tuple(
+            dict.fromkeys(
+                binding
+                for relation in self.relations
+                for binding in (relation.object_subject_binding(),)
+                if binding is not None
+            )
+        )
+        if len(bindings) > 1:
+            raise ValueError(
+                f"Artifact output {self.ref()!r} declares multiple object-subject "
+                f"bindings: {bindings!r}."
+            )
+        return bindings[0] if bindings else None
 
     def for_group(self, group_key: str | None) -> "ArtifactOutputPlan":
         """Return a group-specific output plan with the finalized path."""

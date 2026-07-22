@@ -893,6 +893,7 @@ class RuntimeArtifactMaterialization:
             variable_components=self.output_plan.variable_components,
             output_key=self.output_key,
             step_index=plan.step_index,
+            output_plan=self.output_plan,
         )
 
     def viewer_outputs(
@@ -1100,4 +1101,5 @@ def materialize_artifact_outputs(
             variable_components=materialization.output_plan.variable_components,
             output_key=materialization.output_key,
             step_index=plan.step_index,
+            output_plan=materialization.output_plan,
         )

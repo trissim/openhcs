@@ -10,7 +10,11 @@ from polystore.roi_converters import NapariROIConverter
 
 from openhcs.core.artifacts import (
     ArtifactOutputPlan,
+    ArtifactSpec,
     ArtifactType,
+    ObjectArtifactMemberSubjectRelation,
+    ObjectArtifactSubjectBinding,
+    ObjectLabelsArtifactType,
     SpatialGraphArtifactType,
 )
 from openhcs.core.runtime_image_values import ImagePayloadMetadata
@@ -325,6 +329,60 @@ def test_graph_roi_projection_preserves_paths_and_graph_features() -> None:
     napari_shapes = NapariROIConverter.rois_to_shapes(roi_output.content)
     assert napari_shapes[0]["type"] == "path"
     assert napari_shapes[0]["metadata"]["branch_distance_um"] == 2.0
+
+
+@pytest.mark.unit
+def test_graph_roi_projects_declared_object_subject_without_losing_edge_identity() -> None:
+    neurons = ArtifactSpec.output("neurons", ObjectLabelsArtifactType)
+    base_graph = _branched_graph()
+    graph = SpatialGraph(
+        name=base_graph.name,
+        nodes=base_graph.nodes,
+        edges=tuple(
+            SpatialGraphEdge.from_features(
+                edge_id=edge.edge_id,
+                source=edge.source,
+                target=edge.target,
+                coordinates=edge.coordinates,
+                features={**edge.feature_mapping(), "neuron_label": 7},
+            )
+            for edge in base_graph.edges
+        ),
+        coordinate_spacing=base_graph.coordinate_spacing,
+    )
+    output_plan = ArtifactOutputPlan(
+        name="neurite_graph",
+        path="/memory/neurite_graph.pkl",
+        artifact_type=SpatialGraphArtifactType,
+        relations=(
+            ObjectArtifactMemberSubjectRelation(
+                source=neurons.ref(),
+                member_id_field="neuron_label",
+            ),
+        ),
+        producer_step_index=4,
+        producer_step_scope_id="neurite-step",
+    )
+    outputs = materialization_outputs(
+        MaterializationSpec(SpatialGraphROIOptions()),
+        data=graph,
+        path="/tmp/A01_neurite_graph_step4.roi.zip",
+        filemanager=FileManager({"memory": MemoryStorageBackend()}),
+        output_plan=output_plan,
+    )
+
+    rois = outputs[0].content
+    assert [roi.metadata["edge_id"] for roi in rois] == [1, 2, 3]
+    assert [
+        roi.metadata[ObjectArtifactSubjectBinding.SUBJECT_ID_FEATURE]
+        for roi in rois
+    ] == [7, 7, 7]
+    subject_tokens = {
+        roi.metadata[ObjectArtifactSubjectBinding.SUBJECT_FEATURE]
+        for roi in rois
+    }
+    assert len(subject_tokens) == 1
+    assert '"object_labels","neurons","neurite-step",4' in subject_tokens.pop()
 
 
 @pytest.mark.unit
