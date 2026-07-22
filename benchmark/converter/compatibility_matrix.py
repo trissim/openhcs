@@ -54,14 +54,6 @@ class CPPipeModuleAbsorptionCoverage(str, Enum):
     MISSING_PROCESSING = "missing_processing"
 
 
-class SourceModuleCoverage(str, Enum):
-    """How one checked-in CellProfiler source module resolves."""
-
-    ABSORBED = "absorbed"
-    INFRASTRUCTURE = INFRASTRUCTURE_COVERAGE_VALUE
-    MISSING = "missing"
-
-
 @dataclass(frozen=True, slots=True)
 class _CorpusModuleObservations:
     """Observed module coverage from the registered benchmark corpus."""
@@ -155,26 +147,6 @@ class CPPipeModuleCompatibilityCoverage:
 
 
 @dataclass(frozen=True, slots=True)
-class SourceModuleCompatibilityCoverage:
-    """Compatibility coverage for one checked-in CellProfiler source module."""
-
-    module_name: str
-    module_type: type[CellProfilerModule] | None
-
-    @property
-    def coverage(self) -> SourceModuleCoverage:
-        if self.module_type is None:
-            return SourceModuleCoverage.MISSING
-        if self.module_type.emits_function_step():
-            return SourceModuleCoverage.ABSORBED
-        return SourceModuleCoverage.INFRASTRUCTURE
-
-    @property
-    def is_missing(self) -> bool:
-        return self.coverage is SourceModuleCoverage.MISSING
-
-
-@dataclass(frozen=True, slots=True)
 class CPPipeSettingCompatibilityCoverage(ModuleSettingRowRecord):
     """Declaration-owned setting coverage for one corpus module row."""
 
@@ -226,7 +198,6 @@ class CellProfilerCompatibilityReport:
     modules: tuple[ModuleCompatibilityCoverage, ...]
     cppipe_modules: tuple[CPPipeModuleCompatibilityCoverage, ...]
     cppipe_settings: tuple[CPPipeSettingCompatibilityCoverage, ...]
-    source_modules: tuple[SourceModuleCompatibilityCoverage, ...]
     benchmark_coverage: CellProfilerBenchmarkCoverageSummary
 
     @property
@@ -260,16 +231,10 @@ class CellProfilerCompatibilityReport:
             if module.is_missing_processing_module
         )
 
-    @property
-    def missing_source_modules(self) -> tuple[SourceModuleCompatibilityCoverage, ...]:
-        return tuple(module for module in self.source_modules if module.is_missing)
-
-
 def build_cellprofiler_compatibility_report(
     *,
     parser: CPPipeParser | None = None,
     corpus_cases: Sequence[CPPipeCorpusCase] | None = None,
-    source_modules_root: Path | None = None,
 ) -> CellProfilerCompatibilityReport:
     """Build compatibility coverage from the nominal module registry."""
 
@@ -303,10 +268,6 @@ def build_cellprofiler_compatibility_report(
         modules=modules,
         cppipe_modules=cppipe_modules,
         cppipe_settings=corpus_observations.setting_coverage,
-        source_modules=tuple(
-            _source_module_compatibility_coverage(module_name)
-            for module_name in _cellprofiler_source_module_names(source_modules_root)
-        ),
         benchmark_coverage=_benchmark_coverage_summary(
             corpus_observations,
             modules,
@@ -319,14 +280,12 @@ def build_cellprofiler_compatibility_report_for_manifest(
     manifest_path: Path,
     *,
     parser: CPPipeParser | None = None,
-    source_modules_root: Path | None = None,
 ) -> CellProfilerCompatibilityReport:
     """Build compatibility coverage over one comparison manifest."""
 
     return build_cellprofiler_compatibility_report(
         parser=parser,
         corpus_cases=comparison_manifest_cppipe_corpus(manifest_path),
-        source_modules_root=source_modules_root,
     )
 
 
@@ -334,14 +293,12 @@ def build_cellprofiler_compatibility_report_for_manifests(
     manifest_paths: Sequence[Path],
     *,
     parser: CPPipeParser | None = None,
-    source_modules_root: Path | None = None,
 ) -> CellProfilerCompatibilityReport:
     """Build compatibility coverage over multiple comparison manifests."""
 
     return build_cellprofiler_compatibility_report(
         parser=parser,
         corpus_cases=comparison_manifests_cppipe_corpus(manifest_paths),
-        source_modules_root=source_modules_root,
     )
 
 
@@ -376,33 +333,6 @@ def _cppipe_module_compatibility_coverage(
         module_type=module_type,
         corpus_coverage=corpus_coverage,
         cppipe_case_names=cppipe_case_names,
-    )
-
-
-def _source_module_compatibility_coverage(
-    module_name: str,
-) -> SourceModuleCompatibilityCoverage:
-    module_type = CellProfilerModule.for_module(module_name)
-    return SourceModuleCompatibilityCoverage(
-        module_name=module_name,
-        module_type=module_type,
-    )
-
-
-def _cellprofiler_source_module_names(
-    source_modules_root: Path | None,
-) -> tuple[str, ...]:
-    root = (
-        source_modules_root
-        if source_modules_root is not None
-        else Path(__file__).resolve().parents[1] / "cellprofiler_source" / "modules"
-    )
-    if not root.exists():
-        return ()
-    return tuple(
-        path.stem
-        for path in sorted(root.glob("*.py"))
-        if path.stem != "__init__" and not path.stem.startswith("_")
     )
 
 

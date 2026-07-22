@@ -50,13 +50,13 @@ and registry-derived compatibility artifacts:
 - `module_coverage_cppipe_modules.csv`
 - `module_coverage_cppipe_settings.csv`
 - `module_coverage_absorbed_modules.csv`
-- `module_coverage_source_modules.csv`
 
-These compatibility artifacts describe absorbed declarations, source modules,
+These compatibility artifacts describe registry-owned declarations, observed
 corpus use, settings, execution scope, and processing-contract coverage. They do
-not contain execution observations or semantic-parity results, and the current
-writer does not emit semantic-family coverage. Semantic-family CSVs under older
-presentation/result directories are historical figure inputs.
+not derive support claims from a copied upstream source tree, contain execution
+observations or semantic-parity results, or emit semantic-family coverage.
+Semantic-family CSVs under older presentation/result directories are historical
+figure inputs.
 
 The run also writes `observations.jsonl`, `observations.csv`,
 `phase_timing.csv`, `summary.csv`, and `suite_metadata.json`. A temporary output

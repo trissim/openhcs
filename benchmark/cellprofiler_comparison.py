@@ -91,14 +91,12 @@ FUNCTION_NAMES_FIELD = "function_names"
 EXECUTION_SCOPE_FIELD = "execution_scope"
 PROCESSING_CONTRACT_FIELD = "processing_contract"
 EMITS_FUNCTION_STEP_FIELD = "emits_function_step"
-SOURCE_COVERAGE_FIELD = "source_coverage"
 RESPECTS_MASKS_FIELD = "respects_masks"
 DEFAULT_SPEEDUP_TARGET = 5.0
 MODULE_COVERAGE_SUMMARY_JSON = "module_coverage_summary.json"
 MODULE_COVERAGE_CPPIPE_MODULES_CSV = "module_coverage_cppipe_modules.csv"
 MODULE_COVERAGE_CPPIPE_SETTINGS_CSV = "module_coverage_cppipe_settings.csv"
 MODULE_COVERAGE_ABSORBED_MODULES_CSV = "module_coverage_absorbed_modules.csv"
-MODULE_COVERAGE_SOURCE_MODULES_CSV = "module_coverage_source_modules.csv"
 CsvRow = Mapping[str, object]
 CsvRowBuilder = Callable[
     [Sequence["CellProfilerComparisonObservation"]],
@@ -162,14 +160,6 @@ class AbsorbedModuleCoverageRow:
 
 
 @dataclass(frozen=True, slots=True)
-class SourceModuleCoverageRow:
-    """CSV row for one checked-in CellProfiler source module."""
-
-    module_name: str
-    source_coverage: str
-
-
-@dataclass(frozen=True, slots=True)
 class CPPipeSettingCoverageRow:
     """CSV row for one concrete setting observed in benchmark .cppipe files."""
 
@@ -224,7 +214,6 @@ class ModuleCoverageArtifacts:
     cppipe_modules: tuple[CPPipeModuleCoverageRow, ...]
     cppipe_settings: tuple[CPPipeSettingCoverageRow, ...]
     absorbed_modules: tuple[AbsorbedModuleCoverageRow, ...]
-    source_modules: tuple[SourceModuleCoverageRow, ...]
 
     @classmethod
     def from_report(
@@ -327,13 +316,6 @@ class ModuleCoverageArtifacts:
                 )
                 for module in report.modules
             ),
-            source_modules=tuple(
-                SourceModuleCoverageRow(
-                    module_name=module.module_name,
-                    source_coverage=module.coverage.value,
-                )
-                for module in report.source_modules
-            ),
         )
 
     def write_to(self, output_root: Path) -> None:
@@ -384,11 +366,6 @@ class ModuleCoverageArtifacts:
                     "value",
                 ),
                 rows=self.cppipe_settings,
-            ),
-            CsvRowsArtifact(
-                filename=MODULE_COVERAGE_SOURCE_MODULES_CSV,
-                fieldnames=(MODULE_NAME_FIELD, SOURCE_COVERAGE_FIELD),
-                rows=self.source_modules,
             ),
         )
 

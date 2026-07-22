@@ -8,7 +8,6 @@ from benchmark.converter.cppipe_corpus import CPPipeCorpusCase, CPPipeCorpusStat
 from benchmark.converter.compatibility_matrix import (
     CPPipeModuleAbsorptionCoverage,
     ModuleCorpusCoverage,
-    SourceModuleCoverage,
     build_cellprofiler_compatibility_report,
     build_cellprofiler_compatibility_report_for_manifest,
     build_cellprofiler_compatibility_report_for_manifests,
@@ -353,32 +352,6 @@ def test_export_modules_are_processing_declarations_not_infrastructure(
         cppipe_modules["ExportToDatabase"].absorption_coverage
         is CPPipeModuleAbsorptionCoverage.ABSORBED_PROCESSING
     )
-
-
-def test_compatibility_matrix_tracks_checked_in_source_module_coverage(
-    tmp_path: Path,
-) -> None:
-    source_modules_root = tmp_path / "modules"
-    source_modules_root.mkdir()
-    (source_modules_root / "identifyprimaryobjects.py").write_text("")
-    (source_modules_root / "exporttospreadsheet.py").write_text("")
-    (source_modules_root / "notabsorbed.py").write_text("")
-    (source_modules_root / "__init__.py").write_text("")
-
-    report = build_cellprofiler_compatibility_report(
-        corpus_cases=(),
-        source_modules_root=source_modules_root,
-    )
-    source_modules = {module.module_name: module for module in report.source_modules}
-
-    assert (
-        source_modules["identifyprimaryobjects"].coverage
-        is SourceModuleCoverage.ABSORBED
-    )
-    assert (
-        source_modules["exporttospreadsheet"].coverage is SourceModuleCoverage.ABSORBED
-    )
-    assert report.missing_source_modules == (source_modules["notabsorbed"],)
 
 
 def test_supported_corpus_rejects_an_enabled_unregistered_module(

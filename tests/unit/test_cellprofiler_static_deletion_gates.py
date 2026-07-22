@@ -39,6 +39,7 @@ REQUIRED_DELETED_PATHS = (
     "benchmark/converter/system_prompt.py",
     "benchmark/cellprofiler_compat",
     "benchmark/cellprofiler_library",
+    "benchmark/cellprofiler_source",
     "openhcs/core/function_reference_rehydration.py",
     "openhcs/core/function_step_invocation_contracts.py",
     "openhcs/core/pipeline_image_schema.py",
