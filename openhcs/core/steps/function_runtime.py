@@ -2764,7 +2764,11 @@ class PatternGroupRuntime:
                         lookup=lookup,
                     )
                     if lookup in source_lookups
-                    else payload
+                    else self._apply_workspace_source_payload(
+                        payload,
+                        source_projection=source_projection,
+                        lookup=lookup,
+                    )
                 )
                 for payload, lookup in zip(
                     raw_slices,
@@ -2797,6 +2801,26 @@ class PatternGroupRuntime:
                 strict=True,
             )
         ]
+
+    def _apply_workspace_source_payload(
+        self,
+        payload: RuntimeArrayData,
+        *,
+        source_projection: VirtualWorkspaceSourceProjection,
+        lookup: VirtualWorkspacePathLookup,
+    ) -> RuntimeArrayData:
+        """Attach workspace-owned source identity without requiring a binding."""
+
+        source_ref = source_projection.source_ref_for(lookup)
+        if source_ref is None:
+            return payload
+        return self._apply_source_binding_payload(
+            payload,
+            source_metadata=source_projection.source_metadata_for(lookup),
+            source_path=lookup.full_virtual_path,
+            source_address=source_ref.backend_address,
+            read_backend=source_ref.backend,
+        )
 
     def _apply_workspace_source_binding_payload(
         self,

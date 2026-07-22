@@ -28,7 +28,6 @@ from openhcs.core.config import (
     PipelineConfig,
     VFSConfig,
 )
-from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.core.steps import FunctionStep
 from openhcs.processing.backends.analysis.count_cells_simple import (
     MetaXpressW2Settings,
@@ -149,8 +148,8 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             "runtime_observation_export_path": str(observation_path),
         },
     )
-    assert submission.pipeline_code() == (
-        FunctionStepTransportAuthority.source_from_pipeline([step])
+    assert submission.pipeline_code() == PipelineDocumentAuthority.render(
+        submission.pipeline_document
     )
     client = ZMQExecutionClient(
         port=18000 + os.getpid() % 20000,
@@ -204,10 +203,17 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             ("w2_stain", ObjectLabelsArtifactType),
         } <= runtime_identities
 
-        csv_paths = list(tmp_path.rglob("*dual_channel_counts*.csv"))
-        assert len(csv_paths) == 1
-        with csv_paths[0].open(newline="") as csv_file:
-            rows = list(csv.DictReader(csv_file))
+        csv_paths = sorted(tmp_path.rglob("*dual_channel_counts*.csv"))
+        assert len(csv_paths) == 2
+        assert {"s001", "s002"} == {
+            "s001" if "_s001_" in path.name else "s002" for path in csv_paths
+        }
+        rows = []
+        for csv_path in csv_paths:
+            with csv_path.open(newline="") as csv_file:
+                site_rows = list(csv.DictReader(csv_file))
+            assert len(site_rows) == 1
+            rows.extend(site_rows)
 
         assert len(rows) == 2
         for row in rows:
@@ -216,10 +222,15 @@ def test_dual_channel_count_runs_on_synthetic_plate_with_channel_stack(
             assert int(row["w2_negative_cell_count"]) == 1
             assert row["w2_stained_area"] == "nucleus"
 
-        cell_paths = list(tmp_path.rglob("*dual_channel_cells*.csv"))
-        assert len(cell_paths) == 1
-        with cell_paths[0].open(newline="") as csv_file:
-            cell_rows = list(csv.DictReader(csv_file))
+        cell_paths = sorted(tmp_path.rglob("*dual_channel_cells*.csv"))
+        assert len(cell_paths) == 2
+        cell_rows = []
+        for cell_path in cell_paths:
+            with cell_path.open(newline="") as csv_file:
+                site_cell_rows = list(csv.DictReader(csv_file))
+            assert len(site_cell_rows) == 2
+            assert {int(row["object_label"]) for row in site_cell_rows} == {1, 2}
+            cell_rows.extend(site_cell_rows)
         assert len(cell_rows) == 4
         assert {int(row["object_label"]) for row in cell_rows} == {1, 2}
 

@@ -3009,6 +3009,60 @@ def test_alias_only_workspace_filter_excludes_unselected_source_and_orders_stack
     ) == [virtual_paths[2], virtual_paths[0]]
 
 
+def test_unbound_workspace_source_keeps_filename_component_provenance(
+    tmp_path: Path,
+) -> None:
+    """Ordinary workspace sources retain fixed coordinates without bindings."""
+
+    from openhcs.core.steps import function_runtime
+
+    virtual_path = "A01_s002_w1_z003_t004.tif"
+    full_virtual_path = str(tmp_path / virtual_path)
+    source_ref = SourcePixelRef("disk", str(tmp_path / "raw-image.tif"))
+    projection = VirtualWorkspaceSourceProjection(
+        source_refs_by_virtual_path={virtual_path: source_ref},
+        source_metadata_by_path={},
+        workspace_root=str(tmp_path),
+    )
+
+    class SourceFileManager:
+        @staticmethod
+        def resolve_address(backend_address, backend, *, base_path):
+            del base_path
+            assert backend == source_ref.backend
+            assert backend_address == source_ref.backend_address
+            return backend_address
+
+    runtime = function_runtime.PatternGroupRuntime.__new__(
+        function_runtime.PatternGroupRuntime
+    )
+    runtime.request = SimpleNamespace(
+        context=SimpleNamespace(filemanager=SourceFileManager()),
+        source_binding_plan=CompiledSourceBindingPlan(),
+    )
+    payload = ImagePayloadMetadata(source_path=full_virtual_path).payload_with(
+        np.zeros((4, 5), dtype=np.uint16),
+        None,
+    )
+
+    (projected,) = runtime._apply_source_image_loading_semantics(
+        (payload,),
+        (VirtualWorkspacePathLookup.from_paths(virtual_path, full_virtual_path),),
+        (),
+        SourceBindingRuntimeContext.empty(),
+        projection,
+    )
+
+    assert image_payload_metadata(projected).source_component_metadata == {
+        AllComponents.SITE.value: 2,
+        AllComponents.CHANNEL.value: 1,
+        AllComponents.Z_INDEX.value: 3,
+        AllComponents.TIMEPOINT.value: 4,
+        AllComponents.WELL.value: "A01",
+        SourceFilterSubject.EXTENSION.value: ".tif",
+    }
+
+
 def test_step_output_load_filter_skips_source_binding_filter() -> None:
     from openhcs.core.steps.function_runtime import PatternGroupRuntime
 
