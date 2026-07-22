@@ -190,6 +190,26 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def assert_not_source_checkout_import(
+    *,
+    package_path: Path,
+    knowledge_root: Path,
+    forbidden_root: Path,
+) -> None:
+    """Reject source-owned resources without rejecting an in-tree venv."""
+
+    source_package_root = forbidden_root / "openhcs"
+    if package_path.is_relative_to(source_package_root):
+        raise AssertionError(
+            "Smoke test imported the source checkout instead of the wheel: "
+            f"{package_path}"
+        )
+    if knowledge_root == forbidden_root:
+        raise AssertionError(
+            f"Knowledge root resolved into the source checkout: {knowledge_root}"
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     forbidden_root = args.forbid_import_root.resolve()
@@ -205,16 +225,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
 
             package_path = Path(openhcs.__file__).resolve()
-            if package_path.is_relative_to(forbidden_root):
-                raise AssertionError(
-                    "Smoke test imported the source checkout instead of the wheel: "
-                    f"{package_path}"
-                )
             knowledge_root = default_repo_root().resolve()
-            if knowledge_root.is_relative_to(forbidden_root):
-                raise AssertionError(
-                    f"Knowledge root resolved into the source checkout: {knowledge_root}"
-                )
+            assert_not_source_checkout_import(
+                package_path=package_path,
+                knowledge_root=knowledge_root,
+                forbidden_root=forbidden_root,
+            )
             manifest_path = default_knowledge_base_manifest_path()
             if not manifest_path.is_file():
                 raise AssertionError(
