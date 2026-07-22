@@ -28,6 +28,20 @@ point. Its development documentation lists the compatibility gate required
 before deployment. Do not copy credentials into pipeline source or assume that
 a remote OMERO plate is a local directory.
 
+Durable artifact materialization
+--------------------------------
+
+OpenHCS asks the selected PolyStore ``DataSink`` for contextual save arguments;
+generic materialization code does not branch on OMERO or name its metadata
+fields. ``OMEROLocalBackend`` resolves the base plate represented by the virtual
+``images_dir`` and projects the parser and microscope declarations from its
+cached ``PlateStructure``. Its own ``save_batch()`` then uses that context when
+creating or updating a derived output plate.
+
+The ``/omero/plate_<id>/...`` namespace is a virtual POSIX namespace, not a host
+filesystem path. PolyStore normalizes it with ``PurePosixPath`` before parsing,
+which preserves the same plate/output identity on Linux, macOS, and Windows.
+
 Compiler contract
 -----------------
 
