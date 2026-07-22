@@ -32,7 +32,7 @@ def medialaxis(image: np.ndarray) -> np.ndarray:
     from skimage.morphology import medial_axis as skimage_medial_axis
 
     binary = image > 0
-    skeleton = skimage_medial_axis(binary)
+    skeleton = skimage_medial_axis(binary, rng=0)
     return skeleton.astype(np.float32)
 
 

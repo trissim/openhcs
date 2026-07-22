@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy import ndimage as ndi
 
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
@@ -65,3 +66,12 @@ def test_medial_axis_callable_returns_thin_binary_skeleton() -> None:
     assert skeleton.dtype == np.float32
     assert set(np.unique(skeleton)) <= {0.0, 1.0}
     assert 0 < np.count_nonzero(skeleton) < np.count_nonzero(image)
+
+
+def test_medial_axis_callable_is_repeatable_for_tied_pixel_ordering() -> None:
+    random_mask = np.random.default_rng(123).random((96, 96)) > 0.89
+    image = ndi.binary_dilation(random_mask, iterations=4).astype(np.float32)
+
+    skeletons = [medialaxis(image) for _ in range(5)]
+
+    assert all(np.array_equal(skeletons[0], skeleton) for skeleton in skeletons[1:])
