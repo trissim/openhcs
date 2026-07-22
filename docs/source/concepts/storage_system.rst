@@ -20,8 +20,11 @@ Three storage intents
   Where explicitly materialized outputs persist, such as disk, Zarr, or an
   application-specific backend.
 
-These settings live in ``VFSConfig`` and its lazy projections. Zarr compression
-and chunking live in ``ZarrConfig``.
+These settings live in ``VFSConfig`` and its lazy projections. PolyStore owns
+the generic ``ZarrConfig``, compressor factory registry, and chunk-strategy
+enum. OpenHCS contributes a fieldless registered subtype so those exact storage
+identities participate in global, pipeline, and step configuration without a
+second enum or field declaration.
 
 Artifacts first, paths second
 -----------------------------
@@ -46,8 +49,8 @@ PolyStore boundary
 ------------------
 
 PolyStore owns generic ``FileManager`` behavior, backend registration and
-lifecycle, formats, ROI, virtual workspaces, ``SourcePixelRef``, and address
-resolution. OpenHCS owns:
+lifecycle, formats, ROI, virtual workspaces, ``SourcePixelRef``, address
+resolution, and Zarr backend configuration mechanics. OpenHCS owns:
 
 - backend intent in pipeline configuration;
 - source-binding and virtual-workspace semantic projection;

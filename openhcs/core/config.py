@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Optional, Union, List, Annotated, ClassVar
 from enum import Enum
 from abc import ABC, abstractmethod
-from numcodecs.abc import Codec
 from arraybridge.decorators import DtypeConversionConfig
+from polystore import config as _polystore_config
 from openhcs.constants import (
     AllComponents,
     Microscope,
@@ -56,112 +56,14 @@ import platform
 logger = logging.getLogger(__name__)
 
 
-class ZarrCompressor(Enum):
-    """Available compression algorithms for zarr storage."""
-
-    BLOSC = "blosc"
-    ZLIB = "zlib"
-    LZ4 = "lz4"
-    ZSTD = "zstd"
-    NONE = "none"
-
-
-class ZarrCompressorFactory(ABC, metaclass=AutoRegisterMeta):
-    """Nominal strategy family for zarr compressor construction."""
-
-    __registry_key__ = "compressor"
-    __skip_if_no_key__ = True
-    __registry__: ClassVar[dict[ZarrCompressor, type["ZarrCompressorFactory"]]] = {}
-
-    compressor: ClassVar[ZarrCompressor | None] = None
-
-    @abstractmethod
-    def create(
-        self,
-        compression_level: int,
-        shuffle: bool = True,
-    ) -> Optional[Codec]:
-        """Create the concrete codec for this compressor variant."""
-
-
-class NoZarrCompressorFactory(ZarrCompressorFactory):
-    """Factory for disabling zarr compression."""
-
-    compressor = ZarrCompressor.NONE
-
-    def create(
-        self,
-        compression_level: int,
-        shuffle: bool = True,
-    ) -> None:
-        return None
-
-
-class BloscZarrCompressorFactory(ZarrCompressorFactory):
-    """Factory for Blosc-backed zarr compression."""
-
-    compressor = ZarrCompressor.BLOSC
-
-    def create(
-        self,
-        compression_level: int,
-        shuffle: bool = True,
-    ) -> Codec:
-        import zarr
-
-        return zarr.Blosc(cname="lz4", clevel=compression_level, shuffle=shuffle)
-
-
-class ZlibZarrCompressorFactory(ZarrCompressorFactory):
-    """Factory for zlib-backed zarr compression."""
-
-    compressor = ZarrCompressor.ZLIB
-
-    def create(
-        self,
-        compression_level: int,
-        shuffle: bool = True,
-    ) -> Codec:
-        import zarr
-
-        return zarr.Zlib(level=compression_level)
-
-
-class Lz4ZarrCompressorFactory(ZarrCompressorFactory):
-    """Factory for LZ4-backed zarr compression."""
-
-    compressor = ZarrCompressor.LZ4
-
-    def create(
-        self,
-        compression_level: int,
-        shuffle: bool = True,
-    ) -> Codec:
-        import zarr
-
-        return zarr.LZ4(acceleration=compression_level)
-
-
-class ZstdZarrCompressorFactory(ZarrCompressorFactory):
-    """Factory for Zstd-backed zarr compression."""
-
-    compressor = ZarrCompressor.ZSTD
-
-    def create(
-        self,
-        compression_level: int,
-        shuffle: bool = True,
-    ) -> Codec:
-        import zarr
-
-        return zarr.Zstd(level=compression_level)
-
-
-class ZarrChunkStrategy(Enum):
-    """Chunking strategies for zarr arrays."""
-
-    WELL = "well"  # Single chunk per well (optimal for batch I/O)
-    FILE = "file"  # One chunk per file (better for random access)
+ZarrCompressor = _polystore_config.ZarrCompressor
+ZarrCompressorFactory = _polystore_config.ZarrCompressorFactory
+NoZarrCompressorFactory = _polystore_config.NoZarrCompressorFactory
+BloscZarrCompressorFactory = _polystore_config.BloscZarrCompressorFactory
+ZlibZarrCompressorFactory = _polystore_config.ZlibZarrCompressorFactory
+Lz4ZarrCompressorFactory = _polystore_config.Lz4ZarrCompressorFactory
+ZstdZarrCompressorFactory = _polystore_config.ZstdZarrCompressorFactory
+ZarrChunkStrategy = _polystore_config.ZarrChunkStrategy
 
 
 class MaterializationBackend(Enum):
@@ -438,31 +340,21 @@ class WellFilterConfig:
 
 
 @abbreviation("zarr")
-@global_pipeline_config
+@global_pipeline_config(
+    inherit_as_none=False,
+    field_abbreviations={
+        "compressor": "compressor",
+        "compression_level": "level",
+        "chunk_strategy": "chunks",
+    },
+)
 @dataclass(frozen=True)
-class ZarrConfig:
-    """Configuration for Zarr storage backend.
+class ZarrConfig(_polystore_config.ZarrConfig):
+    """OpenHCS registration of PolyStore's Zarr configuration owner.
 
     OME-ZARR metadata and plate metadata are always enabled for HCS compliance.
     Shuffle filter is always enabled for Blosc compressor (ignored for others).
     """
-
-    compressor: Annotated[ZarrCompressor, abbreviation("compressor")] = (
-        ZarrCompressor.ZLIB
-    )
-    """Compression algorithm to use."""
-
-    compression_level: Annotated[int, abbreviation("level")] = 3
-    """Compression level (1-9 for LZ4, higher = more compression)."""
-
-    chunk_strategy: Annotated[ZarrChunkStrategy, abbreviation("chunks")] = (
-        ZarrChunkStrategy.WELL
-    )
-    """Chunking strategy: WELL (single chunk per well) or FILE (one chunk per file)."""
-
-    @property
-    def compressor_factory(self) -> ZarrCompressorFactory:
-        return ZarrCompressorFactory.__registry__[self.compressor]()
 
 
 @abbreviation("vfs")
