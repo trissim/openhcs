@@ -52,7 +52,7 @@ from openhcs.runtime.viewer_component_system import (
     ViewerComponentNameMetadata,
     ViewerDimensionValueAuthority,
     ViewerDisplayBatchContext,
-    ViewerObjectDisplayConfigInput,
+    ViewerMappingDisplayConfigInput,
     ViewerStreamingDataTypeHandler,
     ViewerStreamingDataTypeHandlerMeta,
 )
@@ -523,7 +523,6 @@ class FijiImageStackBuilder:
         self,
         work_unit_completed: Callable[[], None] | None = None,
     ):
-        import jpype
         import scyjava as sj
 
         ImageStack = sj.jimport("ij.ImageStack")
@@ -536,7 +535,7 @@ class FijiImageStackBuilder:
                 for c_key in self.coordinates.channel.values:
                     key = (c_key, z_key, t_key)
                     if self.image_lookup.contains(key):
-                        processor = self._processor_for_key(key, jpype, sj)
+                        processor = self._processor_for_key(key)
                         stack.addSlice(label_builder.label_for(key), processor)
                     else:
                         stack.addSlice("BLANK", self._blank_processor(sj))
@@ -549,9 +548,21 @@ class FijiImageStackBuilder:
             work_unit_completed()
         return stack
 
-    def _processor_for_key(self, key: FijiCoordinateKey, jpype, sj):
+    def _processor_for_key(self, key: FijiCoordinateKey):
         plane = FijiPlaneGeometry.extract_2d_plane(self.image_lookup.data_for(key))
         plane = FijiPlaneGeometry.pad_to_shape(plane, self.height, self.width)
+        return self.processor_for_padded_plane(plane)
+
+    def processor_for_padded_plane(self, plane: np.ndarray):
+        """Convert one exact-size NumPy plane through ImageJ's pixel owner."""
+        if plane.shape != (self.height, self.width):
+            raise ValueError(
+                f"Fiji padded plane has shape {plane.shape!r}, expected "
+                f"{(self.height, self.width)!r}."
+            )
+        import jpype
+        import scyjava as sj
+
         flattened = np.ascontiguousarray(plane).flatten()
         return self._processor_for_flattened_plane(flattened, jpype, sj)
 
@@ -1329,7 +1340,6 @@ class FijiDisplayConfigWireAdapter:
 
     def to_config(self) -> FijiDisplayConfig:
         component_modes = self._required_mapping("component_modes")
-        self._validate_component_order(self._required_sequence("component_order"))
         return FijiDisplayConfig(
             lut=self._lut(self._required_value("lut")),
             auto_contrast=self._auto_contrast(self._required_value("auto_contrast")),
@@ -1346,14 +1356,6 @@ class FijiDisplayConfigWireAdapter:
     def _required_mapping(self, field_name: str) -> Mapping[str, FijiWireValue]:
         return self._required_typed_value(field_name, Mapping, "mapping")
 
-    def _required_sequence(self, field_name: str) -> Sequence[FijiWireValue]:
-        value = self._required_typed_value(field_name, Sequence, "sequence")
-        if isinstance(value, str):
-            raise TypeError(
-                f"Fiji batch message display_config[{field_name!r}] must be a sequence."
-            )
-        return value
-
     def _required_typed_value(
         self,
         field_name: str,
@@ -1367,19 +1369,6 @@ class FijiDisplayConfigWireAdapter:
                 f"a {expected_name}."
             )
         return value
-
-    @staticmethod
-    def _validate_component_order(component_order: Sequence[FijiWireValue]) -> None:
-        received_order = tuple(str(component) for component in component_order)
-        expected_order = tuple(
-            str(component) for component in FijiDisplayConfig.COMPONENT_ORDER
-        )
-        if received_order != expected_order:
-            raise ValueError(
-                "Fiji display config component_order does not match the receiver "
-                f"FijiDisplayConfig order: got {received_order!r}, expected "
-                f"{expected_order!r}."
-            )
 
     @staticmethod
     def _lut(value: FijiWireValue) -> FijiLUT:
@@ -1456,11 +1445,14 @@ class FijiBatchWireParser:
         fields.require_batch_message()
         fields.require_fields(FIJI_BATCH_REQUIRED_FIELDS)
         raw_items = fields.required_sequence(ViewerBatchWireField.IMAGES)
+        display_config_payload = fields.required_mapping(
+            ViewerBatchWireField.DISPLAY_CONFIG
+        )
         display_config = FijiDisplayConfigWireAdapter.from_payload(
-            fields.required_value(ViewerBatchWireField.DISPLAY_CONFIG)
+            display_config_payload
         ).to_config()
         component_axis_semantics = fields.component_axis_semantics(
-            ViewerObjectDisplayConfigInput(display_config),
+            ViewerMappingDisplayConfigInput(display_config_payload),
             context="Fiji component value domain",
         )
         component_names_metadata = fields.required_component_names_metadata(
@@ -1906,6 +1898,8 @@ class FijiViewerServer(StreamingVisualizerServer):
         """
         import zmq
 
+        self.launch_config = launch_config
+
         # Initialize with REP socket for receiving images (synchronous request/reply)
         # REP socket forces workers to wait for acknowledgment before closing shared memory
         super().__init__(
@@ -2134,6 +2128,15 @@ class FijiViewerServer(StreamingVisualizerServer):
 
             # Map of new pixel data to replace
             new_pixel_data = {}
+            stack_builder = FijiImageStackBuilder(
+                image_lookup=FijiImagePlaneLookup.from_images(
+                    tuple(existing_lookup.values()),
+                    coordinates,
+                ),
+                coordinates=coordinates,
+                width=stack_width,
+                height=stack_height,
+            )
             for item in new_collection.items:
                 np_data = FijiPlaneGeometry.extract_2d_plane(item.data)
                 np_data = FijiPlaneGeometry.pad_to_shape(
@@ -2151,7 +2154,8 @@ class FijiViewerServer(StreamingVisualizerServer):
             # This is the key to avoiding fibonacci performance
             pending_plane_count = 0
             for slice_idx, np_data in new_pixel_data.items():
-                stack.setPixels(slice_idx, np_data)
+                processor = stack_builder.processor_for_padded_plane(np_data)
+                stack.setPixels(processor.getPixels(), slice_idx)
                 pending_plane_count += 1
                 if pending_plane_count == FijiImageStackBuilder.PLANES_PER_WORK_UNIT:
                     if work_unit_completed is not None:

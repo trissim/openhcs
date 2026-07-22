@@ -24,6 +24,7 @@ from openhcs.runtime.fiji_viewer_server import (
     FijiSettleControlPlan,
     FijiSharedMemoryItemCopier,
     FijiStackSliceLabelBuilder,
+    FijiViewerServer,
     FijiWindowItemProjection,
     FijiWindowRegistry,
     FijiWireItem,
@@ -330,6 +331,58 @@ def test_fiji_batch_message_normalizes_wire_items() -> None:
     assert batch.to_wire_mapping() == {"channel": [1]}
 
 
+def test_fiji_batch_message_preserves_scoped_wire_component_layout() -> None:
+    default_config = FijiDisplayConfig()
+    component_order = tuple(
+        component
+        for component in default_config.COMPONENT_ORDER
+        if component != "site"
+    )
+    component_modes = default_config.component_modes()
+    batch = FijiBatchWireParser(
+        {
+            "type": "batch",
+            "images": [
+                {
+                    "data_type": "image",
+                    "image_id": "img-1",
+                    "metadata": {
+                        "channel": 1,
+                        "z_index": 0,
+                        "timepoint": 0,
+                        "well": "A01",
+                    },
+                    "data": np.zeros((2, 2), dtype=np.uint8),
+                }
+            ],
+            "display_config": {
+                "component_modes": {
+                    component: component_modes[component]
+                    for component in component_order
+                },
+                "component_order": list(component_order),
+                "lut": "Grays",
+                "auto_contrast": True,
+            },
+            "images_dir": None,
+            "component_names_metadata": {},
+            "component_value_domain": {
+                "channel": [1],
+                "z_index": [0],
+                "timepoint": [0],
+                "well": ["A01"],
+            },
+        }
+    ).batch_message()
+
+    assert isinstance(batch.viewer_display_config, FijiDisplayConfig)
+    assert batch.layout.component_order == component_order
+    assert batch.layout.component_modes == {
+        component: component_modes[component]
+        for component in component_order
+    }
+
+
 def test_fiji_shared_memory_copy_leaves_sender_allocation_owned(monkeypatch) -> None:
     from multiprocessing import resource_tracker, shared_memory
 
@@ -502,6 +555,99 @@ def test_fiji_image_stack_builder_reports_bounded_native_work_units(
 
     assert len(stack.slices) == 65
     assert completed_units == [32, 64, 65]
+
+
+def test_fiji_incremental_replacement_uses_imagej_set_pixels_signature(
+    monkeypatch,
+) -> None:
+    import jpype
+    import scyjava
+
+    converted_processors = []
+
+    class FakeByteProcessor:
+        def __init__(self, width, height, pixels, color_model) -> None:
+            self.width = width
+            self.height = height
+            self.pixels = pixels
+            self.color_model = color_model
+            converted_processors.append(self)
+
+        def getPixels(self):
+            return self.pixels
+
+    imported_types = {
+        "ij.process.ByteProcessor": FakeByteProcessor,
+        "ij.process.ShortProcessor": object,
+        "ij.process.FloatProcessor": object,
+    }
+    monkeypatch.setattr(scyjava, "jimport", imported_types.__getitem__)
+    monkeypatch.setattr(jpype, "JByte", object())
+    monkeypatch.setattr(jpype, "JArray", lambda _type: lambda values: values)
+
+    class FakeImageStack:
+        def __init__(self) -> None:
+            self.replacements = []
+
+        def getWidth(self) -> int:
+            return 3
+
+        def getHeight(self) -> int:
+            return 2
+
+        def setPixels(self, pixels, one_based_slice_index: int) -> None:
+            self.replacements.append((pixels, one_based_slice_index))
+
+    class FakeImagePlus:
+        def __init__(self, stack: FakeImageStack) -> None:
+            self.stack = stack
+            self.repaint_count = 0
+
+        def getStack(self) -> FakeImageStack:
+            return self.stack
+
+        def getNChannels(self) -> int:
+            return 1
+
+        def updateAndRepaintWindow(self) -> None:
+            self.repaint_count += 1
+
+    coordinates = FijiHyperstackCoordinates(
+        channel=FijiDimensionAxis("channel", ["channel"], [(1,)]),
+        z_axis_coordinates=FijiDimensionAxis("z_axis", ["z_index"], [(0,)]),
+        frame=FijiDimensionAxis("frame", ["timepoint"], [(0,)]),
+    )
+    existing_image = FijiImagePayload(
+        data=np.zeros((2, 3), dtype=np.uint8),
+        metadata={"channel": 1, "z_index": 0, "timepoint": 0},
+    )
+    replacement_data = np.full((2, 3), 7, dtype=np.uint8)
+    replacement_image = FijiImagePayload(
+        data=replacement_data,
+        metadata={"channel": 1, "z_index": 0, "timepoint": 0},
+    )
+    stack = FakeImageStack()
+    image_plus = FakeImagePlus(stack)
+    server = object.__new__(FijiViewerServer)
+    server.windows = FijiWindowRegistry()
+    server.windows.store_hyperstack("cells", image_plus, [existing_image])
+
+    server._add_slices_to_existing_hyperstack(
+        image_plus,
+        [replacement_image],
+        "cells",
+        coordinates,
+        FijiDisplayConfig(),
+        ViewerComponentNameMetadata.empty(),
+    )
+
+    assert len(stack.replacements) == 1
+    pixels, one_based_slice_index = stack.replacements[0]
+    assert pixels is converted_processors[0].pixels
+    assert np.array_equal(pixels, replacement_data.astype(np.int8).flatten())
+    assert one_based_slice_index == 1
+    assert image_plus.repaint_count == 1
+    assert server.windows.images("cells") == [replacement_image]
 
 
 def test_fiji_image_intensity_range_uses_extracted_planes() -> None:
