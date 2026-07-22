@@ -11,10 +11,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union, Type, TYPE_CHECKING
+from typing import List, Optional, Tuple, Union, Type, TYPE_CHECKING
 
 # Import constants
 from openhcs.constants.constants import Backend, Microscope
+from openhcs.core.source_metadata import source_metadata_dict
 # Import generic metaclass infrastructure from external package
 from metaclass_registry import (
     AutoRegisterMeta,
@@ -36,6 +37,7 @@ from openhcs.microscopes.microscope_interfaces import (
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from openhcs.core.config import MaterializationBackend
     from openhcs.core.source_bindings import SourceBindingsConfig
 
 # Dictionary to store registered metadata handlers for auto-detection
@@ -338,6 +340,7 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
         """
         from openhcs.core.virtual_workspace_metadata import (
             AtomicMetadataWriter,
+            FIELDS,
             get_metadata_path,
         )
 
@@ -346,17 +349,34 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
 
         # Build metadata dict with all available fields
         metadata_dict = {
-            "workspace_mapping": {
+            FIELDS.WORKSPACE_MAPPING: {
                 virtual_path: source_ref.to_workspace_mapping()
                 for virtual_path, source_ref in workspace_mapping.items()
             },
-            "available_backends": {"disk": True, "virtual_workspace": True},
-            "microscope_handler_name": self.microscope_type,
-            "source_filename_parser_name": self.parser.__class__.__name__
+            FIELDS.SOURCE_METADATA: {
+                virtual_path: source_metadata_dict(parsed)
+                for virtual_path in workspace_mapping
+                if (
+                    parsed := self.parser.parse_filename(
+                        Path(virtual_path).name
+                    )
+                )
+                is not None
+            },
+            FIELDS.AVAILABLE_BACKENDS: {
+                Backend.DISK.value: True,
+                Backend.VIRTUAL_WORKSPACE.value: True,
+            },
+            FIELDS.MICROSCOPE_HANDLER_NAME: self.microscope_type,
+            FIELDS.SOURCE_FILENAME_PARSER_NAME: self.parser.__class__.__name__,
         }
 
-        metadata_dict["grid_dimensions"] = self.metadata_handler.get_grid_dimensions(plate_path)
-        metadata_dict["pixel_size"] = self.metadata_handler.get_pixel_size(plate_path)
+        metadata_dict[FIELDS.GRID_DIMENSIONS] = (
+            self.metadata_handler.get_grid_dimensions(plate_path)
+        )
+        metadata_dict[FIELDS.PIXEL_SIZE] = self.metadata_handler.get_pixel_size(
+            plate_path
+        )
 
         writer.merge_subdirectory_metadata(metadata_path, {self.root_dir: metadata_dict})
         logger.info(f"✅ Saved virtual workspace metadata to {metadata_path}")
@@ -464,17 +484,18 @@ class MicroscopeHandler(ViewerMicroscopeHandlerABC, ABC, metaclass=AutoRegisterM
                 )
             subdirs = metadata[FIELDS.SUBDIRECTORIES]
 
-            # Find the subdirectory with workspace_mapping (should be "." or "Images")
+            # Find the subdirectory with the virtual workspace mapping.
             subdir_with_mapping = None
             for name, data in subdirs.items():
-                if "workspace_mapping" in data:
+                if FIELDS.WORKSPACE_MAPPING in data:
                     subdir_with_mapping = name
                     break
 
-            # Fail if no workspace_mapping found
+            # Fail if no virtual workspace mapping was found.
             if subdir_with_mapping is None:
                 raise MetadataNotFoundError(
-                    f"skip_preparation=True but no workspace_mapping found in metadata for {plate_path}. "
+                    "skip_preparation=True but no "
+                    f"{FIELDS.WORKSPACE_MAPPING} found in metadata for {plate_path}. "
                     "Virtual workspace must be prepared before skipping."
                 )
 
