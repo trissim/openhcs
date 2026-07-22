@@ -131,7 +131,7 @@ def _run_mcp(
     argv: Sequence[str],
     *,
     tool_name: str,
-    timeout_seconds: float,
+    timeout_seconds: float | None,
 ) -> dict[str, Any]:
     return _command_payload(
         client.execute(argv, timeout_seconds=timeout_seconds),
@@ -383,7 +383,7 @@ def _execute_pipeline(
             "--json",
         ),
         tool_name=agent_capabilities.submit_pipeline_execution.name,
-        timeout_seconds=100.0,
+        timeout_seconds=None,
     )
     status = payload.get("status")
     if status != TerminalExecutionStatus.COMPLETE.value:

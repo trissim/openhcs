@@ -176,3 +176,36 @@ def test_command_payload_selects_declaration_owned_tool_result() -> None:
     payload = installed_demo._command_payload(execution, tool_name=tool_name)
 
     assert payload == {"observed": True, "valid": True, "errors": []}
+
+
+def test_execute_pipeline_relies_on_declared_phase_timeouts(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_run_mcp(client, argv, *, tool_name, timeout_seconds):
+        observed.update(
+            client=client,
+            argv=tuple(argv),
+            tool_name=tool_name,
+            timeout_seconds=timeout_seconds,
+        )
+        return {"status": "complete"}
+
+    monkeypatch.setattr(installed_demo, "_run_mcp", fake_run_mcp)
+    client = object()
+
+    payload = installed_demo._execute_pipeline(
+        client,
+        plate_path=tmp_path / "plate",
+        source_path=tmp_path / "pipeline.py",
+        runtime_port=43125,
+    )
+
+    assert payload == {"status": "complete"}
+    assert observed["client"] is client
+    assert observed["tool_name"] == agent_capabilities.submit_pipeline_execution.name
+    assert observed["timeout_seconds"] is None
+    assert "--submit-timeout-ms" in observed["argv"]
+    assert "--wait-timeout-ms" in observed["argv"]
