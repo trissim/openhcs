@@ -67,6 +67,34 @@ materialized by ``build_mfd_preset`` in
 :doc:`example_corpus_map` for their source index and portability caveats; do not
 infer current API shape from every older file in the preset directory.
 
+Loose Opera Phenix neurite outgrowth
+------------------------------------
+
+``openhcs/processing/presets/pipelines/loose_operaphenix_neurite_outgrowth.py``
+is a complete, parameterized CellProfiler-backed example for selected Opera
+Phenix TIFFs copied without ``Index.xml``. Edit its ``example_inputs`` boundary
+for the plate path, exact Hoechst/MAP2/SMI312 filenames, well/site/Z/time
+identities, output root, and viewer port.
+
+The example uses MAP2 objects as neuronal seeds, enhances and skeletonizes
+SMI312 neurites, measures topology per seed, and propagates seed identities into
+one final ``UnifiedNeurons`` label result. It deliberately streams both useful
+diagnostic layers and that final body-plus-neurite association; a skeleton by
+itself is not the analysis result. Its top-level one-well filter bounds memory,
+viewer/checkpoint filters inherit that scope, path-planning filter zero avoids
+an unwanted ordinary final image copy, and typed object/measurement artifacts
+plus selected checkpoints remain materialized.
+
+For the same source identities behind a smaller public surface, use
+``openhcs/processing/presets/pipelines/loose_operaphenix_neurite_outgrowth_metaxpress.py``.
+It composes the registered CellProfiler-compatible leaves behind one
+MetaXpress-style step while retaining typed measurements and unified neuron
+labels.
+
+Use the native ``Microscope.OPERAPHENIX`` handler when the complete plate and
+``Index.xml`` are available. Source bindings are appropriate here because the
+loose files no longer carry the plate-level metadata needed by that handler.
+
 CellProfiler import
 -------------------
 

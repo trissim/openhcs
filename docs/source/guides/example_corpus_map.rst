@@ -61,7 +61,7 @@ inventory, and viewer inspection tools.
 Native OpenHCS Examples
 -----------------------
 
-The current checked-in native preset authority is
+The checked-in MFD preset authority is
 ``openhcs/processing/presets/mfd_specs.py``. It owns the typed preset keys,
 variant declarations, shared step templates, materializers, and
 ``build_mfd_preset``. These four small modules are current materialization
@@ -72,8 +72,32 @@ wrappers over that authority:
 * ``openhcs/processing/presets/pipelines/10x_mfd_stitch_ashlar_cpu.py``
 * ``openhcs/processing/presets/pipelines/10x_mfd_stitch_gpu.py``
 
-The MCP knowledge renderer derives a ``Native Example Source Index`` from
-exactly those declared Python paths, so agents can inspect the owning source and
+For loose Opera Phenix TIFF exports without the plate ``Index.xml``, use
+``openhcs/processing/presets/pipelines/loose_operaphenix_neurite_outgrowth.py``.
+It is a parameterized CellProfiler-backed example that reconstructs exact
+Hoechst, MAP2, and SMI312 source identities, bounds loading to one well, and
+produces all of the following review evidence:
+
+* MAP2 neuronal seed/body labels;
+* SMI312 signal, foreground, and skeleton checkpoints;
+* per-seed neurite length, trunk, non-trunk branch, and branch-end measurements;
+* one unified neuron label result in which each body and its assigned neurites
+  share an object identity, from which the viewer derives a stable color; and
+* a schema-bearing spreadsheet export.
+
+The compact counterpart,
+``openhcs/processing/presets/pipelines/loose_operaphenix_neurite_outgrowth_metaxpress.py``,
+queries the same source/configuration owner and exposes the analysis as one
+MetaXpress-style ``FunctionStep`` backed by the same CellProfiler-compatible
+segmentation and skeleton leaves.
+
+The intermediate layers diagnose the workflow; the unified neuron labels and
+per-seed table are the final result a user needs to review. A complete Opera
+Phenix plate with ``Index.xml`` should use its native microscope handler rather
+than this exact-file SourceBindings example.
+
+The MCP knowledge renderer derives a ``Native Example Source Index`` from the
+Python paths declared in this section, so agents can inspect owning source and
 thin wrappers without copying preset names or implementation into this page.
 
 The larger, source-backed current corpus is

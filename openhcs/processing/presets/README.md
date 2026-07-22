@@ -81,6 +81,26 @@ Lightweight workflows for basic image processing tasks.
 crop → filter → normalize
 ```
 
+### 🧠 Loose Opera Phenix Neurite Outgrowth
+
+`loose_operaphenix_neurite_outgrowth.py` is the current CellProfiler-backed
+example for a selected set of Opera Phenix TIFFs copied without `Index.xml`.
+Its editable `example_inputs` boundary declares exact Hoechst, MAP2, and
+SMI312 files plus well/site/Z/time identities. The pipeline reports per-seed
+neurite topology and streams a final `UnifiedNeurons` label layer where each
+body and its assigned neurites share one identity; the diagnostic skeleton is
+not presented as the final result.
+
+`loose_operaphenix_neurite_outgrowth_metaxpress.py` uses that same source
+identity boundary for a compact one-`FunctionStep` alternative. Its public
+settings select Hoechst nuclei, MAP2 cell bodies, and SMI312 neurites from the
+assembled CHANNEL stack. The callable returns typed summary/cell measurements,
+diagnostic masks, and a final `neurons` label artifact where every body and its
+owned outgrowth have the same label identity.
+
+Use the native Opera Phenix microscope handler for complete plate exports that
+still contain `Index.xml`.
+
 ---
 
 ## GPU vs CPU Variants

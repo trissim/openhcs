@@ -1,8 +1,8 @@
 """MetaXpress-style 2D neurite outgrowth analysis.
 
 The public controls mirror the documented MetaXpress Neurite Outgrowth module.
-Segmentation and topology are implemented locally and are not claimed to be a
-pixel-for-pixel reproduction of the proprietary Molecular Devices algorithm.
+The opinionated implementation composes the existing CellProfiler-compatible
+segmentation and skeleton leaves behind one simple callable boundary.
 """
 
 from collections import Counter, defaultdict
@@ -14,17 +14,8 @@ from typing import Iterable, Mapping, Sequence
 
 import numpy as np
 from scipy import ndimage as ndi
-from skimage.feature import peak_local_max
 from skimage.measure import regionprops
-from skimage.morphology import (
-    binary_closing,
-    binary_dilation,
-    binary_opening,
-    disk,
-    remove_small_objects,
-    skeletonize,
-)
-from skimage.segmentation import expand_labels, watershed
+from skimage.segmentation import expand_labels
 from skan import Skeleton, summarize
 
 from openhcs.core.artifacts import (
@@ -34,11 +25,14 @@ from openhcs.core.artifacts import (
     ObjectLabelsArtifactType,
     ObjectMeasurementSubjectRelation,
 )
+from openhcs.core.callable_contract import CallableContract
 from openhcs.core.memory import numpy
 from openhcs.core.measurement_row_materialization import (
     DataclassMeasurementColumnarRows,
 )
 from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs
+from openhcs.core.runtime_image_values import image_payload_data
+from openhcs.core.runtime_object_labels import object_label_dense_array
 from openhcs.processing.materialization import (
     CsvOptions,
     MaterializationSpec,
@@ -50,6 +44,20 @@ from .count_cells_simple import (
     segment_metaxpress_round_objects,
 )
 from .metaxpress_utils import HiddenPixelSize, local_background_response
+from ..cellprofiler.feature_enhancement import (
+    EnhanceMethod,
+    NeuriteMethod,
+    OperationMethod,
+    enhance_or_suppress_features,
+)
+from ..cellprofiler.medial_axis import medialaxis
+from ..cellprofiler.primary_objects import identify_primary_objects
+from ..cellprofiler.skeleton import measure_object_skeleton
+from ..cellprofiler.thresholding import (
+    CellProfilerThresholdMethod,
+    CellProfilerThresholdScope,
+    threshold,
+)
 
 
 class NeuriteIllumination(str, Enum):
@@ -72,6 +80,9 @@ class MetaXpressCellBodySettings:
     intensity_above_local_background: float = 100.0
     """Minimum absolute intensity difference from local background."""
 
+    channel_index: int | None = None
+    """Optional body channel; omitted means the neurite channel."""
+
     def validate(self) -> None:
         if (
             not np.isfinite(self.approximate_max_width)
@@ -85,6 +96,12 @@ class MetaXpressCellBodySettings:
             or self.intensity_above_local_background < 0
         ):
             raise ValueError("cell_body.intensity_above_local_background must be >= 0")
+        if self.channel_index is not None and (
+            isinstance(self.channel_index, bool)
+            or not isinstance(self.channel_index, (int, np.integer))
+            or self.channel_index < 0
+        ):
+            raise ValueError("cell_body.channel_index must be a non-negative integer")
 
 
 @dataclass(frozen=True)
@@ -129,6 +146,7 @@ class NeuriteOutgrowthSummary:
     """MetaXpress-style image-level neurite measurements."""
 
     neurite_channel_index: int
+    cell_body_channel_index: int
     nuclear_channel_index: int
     number_of_cells: int
     total_outgrowth_um: float
@@ -145,10 +163,12 @@ class NeuriteOutgrowthSummary:
     mean_outgrowth_average_intensity: float
     resolved_crossovers: int
 
+
 @dataclass(frozen=True)
 class NeuriteOutgrowthCellResult:
     """MetaXpress-style cell-by-cell neurite measurements."""
 
+    slice_index: int
     cell: int
     total_outgrowth_um: float
     processes: int
@@ -160,7 +180,6 @@ class NeuriteOutgrowthCellResult:
     cell_body_area_um2: float
     mean_outgrowth_intensity: float
     significant_growth: bool
-
 
 
 NEURITE_SUMMARY_OUTPUT = ArtifactSpec.output(
@@ -190,6 +209,11 @@ NEURITE_LABELS_OUTPUT = ArtifactSpec.output(
     ObjectLabelsArtifactType,
     materialization=MaterializationSpec(ROIOptions()),
 )
+UNIFIED_NEURONS_OUTPUT = ArtifactSpec.output(
+    "neurons",
+    ObjectLabelsArtifactType,
+    materialization=MaterializationSpec(ROIOptions()),
+)
 NUCLEI_OUTPUT = ArtifactSpec.output(
     "nuclei",
     ObjectLabelsArtifactType,
@@ -210,12 +234,19 @@ class _TopologyResult:
     crossing_nodes: frozenset[int]
 
 
+def _raw_processing_leaf(func):
+    """Resolve a composed leaf's runtime body through its callable contract."""
+
+    return CallableContract.from_callable(func).resolve_raw_runtime_callable()
+
+
 @numpy
 @artifact_outputs(
     NEURITE_SUMMARY_OUTPUT,
     NEURITE_CELLS_OUTPUT,
     CELL_BODIES_OUTPUT,
     NEURITE_LABELS_OUTPUT,
+    UNIFIED_NEURONS_OUTPUT,
     NUCLEI_OUTPUT,
 )
 @artifact_inputs("pixel_size")
@@ -235,28 +266,29 @@ def neurite_outgrowth_metaxpress(
     np.ndarray,
     np.ndarray,
     np.ndarray,
+    np.ndarray,
 ]:
     """Measure cell bodies and attached neurites in one 2D channel stack.
 
     The user-facing controls follow the MetaXpress Neurite Outgrowth module:
-    neurite image and illumination; cell-body maximum width, minimum area, and
-    local-background intensity; outgrowth maximum width, local-background
-    intensity, and scoring threshold; plus an optional nuclear wavelength with
-    minimum/maximum width and local-background intensity.
+    neurite image and illumination; optional cell-body channel, maximum width,
+    minimum area, and local-background intensity; outgrowth maximum width,
+    local-background intensity, and scoring threshold; plus an optional nuclear
+    wavelength with minimum/maximum width and local-background intensity.
 
     This implementation is deliberately 2D. ``image`` must have shape
     ``(C, Y, X)`` and should be produced by a step whose variable component is
     ``CHANNEL``. Outgrowth detection is independent of the significant-growth
-    threshold. Disconnected neurites are ignored. Skeleton lengths include
-    diagonal distances, and geometrically straight four-arm junctions are
-    routed as crossovers rather than counted as biological branch points.
+    threshold. CellProfiler-compatible primary-object, tubeness, adaptive Otsu,
+    medial-axis, and seed-relative skeleton measurements provide the opinionated
+    engine; disconnected traces are omitted from the rendered ownership mask.
 
     Args:
-        neurite_channel_index: Zero-based channel containing cell bodies and
-            neurite outgrowth.
+        neurite_channel_index: Zero-based channel containing neurite outgrowth.
         illumination: Fluorescence or transmission contrast model used for
             foreground detection.
-        cell_body: Width, area, and local-background thresholds for cell bodies.
+        cell_body: Optional channel plus width, area, and local-background
+            thresholds for cell bodies.
         outgrowth: Width, intensity, and significant-growth thresholds for
             attached neurites.
         use_nuclear_stain: Whether to segment a nuclear channel and return nuclei.
@@ -265,7 +297,10 @@ def neurite_outgrowth_metaxpress(
 
     Returns:
         The unchanged image, image- and cell-level measurement rows, and
-        channel-aligned cell-body, outgrowth, and nuclear masks.
+        channel-aligned cell-body, thin outgrowth, unified-neuron, and nuclear
+        masks. The unified layer assigns each body and its owned outgrowth the
+        same integer identity so the final biological result is directly
+        inspectable rather than inferred across independent layers.
     """
 
     image_array = np.asarray(image)
@@ -284,6 +319,14 @@ def neurite_outgrowth_metaxpress(
     if not np.isfinite(pixel_size_um) or pixel_size_um <= 0:
         raise ValueError("pixel_size must be a finite value > 0")
 
+    body_channel_index = (
+        neurite_channel_index
+        if cell_body.channel_index is None
+        else int(cell_body.channel_index)
+    )
+    if not 0 <= body_channel_index < image_array.shape[0]:
+        raise ValueError("cell_body.channel_index is outside the input stack")
+
     nuclei_labels = np.zeros(image_array.shape[1:], dtype=np.int32)
     if use_nuclear_stain:
         nuclear_stain.validate("nuclear_stain")
@@ -299,29 +342,33 @@ def neurite_outgrowth_metaxpress(
             pixel_size_um,
         )
 
-    neurite_image = image_array[neurite_channel_index]
     bright_objects = illumination == NeuriteIllumination.FLUORESCENCE
-    cell_body_labels = _segment_cell_bodies(
+    body_image = image_array[body_channel_index]
+    cell_body_payload = _identify_cell_bodies_cellprofiler(
+        body_image,
+        cell_body,
+        pixel_size_um,
+        bright_objects=bright_objects,
+    )
+    cell_body_labels = object_label_dense_array(
+        cell_body_payload,
+        dtype=np.int32,
+    )
+
+    neurite_image = image_array[neurite_channel_index]
+    outgrowth_binary, outgrowth_skeleton = _identify_neurites_cellprofiler(
         neurite_image,
         cell_body,
         outgrowth,
         pixel_size_um,
         bright_objects=bright_objects,
-        nuclei_labels=nuclei_labels if use_nuclear_stain else None,
     )
-    outgrowth_binary = _segment_outgrowths(
-        neurite_image,
-        cell_body_labels,
-        outgrowth,
-        pixel_size_um,
-        bright_objects=bright_objects,
-    )
-    outgrowth_skeleton = skeletonize(outgrowth_binary)
+    outgrowth_width_px = outgrowth.maximum_width / pixel_size_um
     topology = _analyze_topology(
         outgrowth_skeleton,
         cell_body_labels,
         pixel_size_um,
-        outgrowth.maximum_width / pixel_size_um,
+        outgrowth_width_px,
     )
     owner_skeleton = _render_owned_skeleton(
         outgrowth_skeleton.shape,
@@ -330,8 +377,18 @@ def neurite_outgrowth_metaxpress(
     owner_outgrowth = _expand_skeleton_ownership(
         owner_skeleton,
         outgrowth_binary,
-        outgrowth.maximum_width / pixel_size_um,
+        outgrowth_width_px,
     )
+
+    _, cp_measurement_rows = _raw_processing_leaf(measure_object_skeleton)(
+        outgrowth_skeleton,
+        seed_labels=cell_body_payload,
+        fill_small_holes=True,
+        maximum_hole_size=10,
+    )
+    cp_measurements = {
+        int(row["object_label"]): row for row in cp_measurement_rows.row_mappings()
+    }
 
     cell_results = _build_cell_results(
         cell_body_labels,
@@ -340,10 +397,13 @@ def neurite_outgrowth_metaxpress(
         topology,
         outgrowth.minimum_cell_growth_to_log_as_significant,
         pixel_size_um,
+        slice_index=body_channel_index,
+        cp_measurements=cp_measurements,
     )
     summary = _build_summary(
         cell_results,
         neurite_channel_index=neurite_channel_index,
+        cell_body_channel_index=body_channel_index,
         nuclear_channel_index=(
             nuclear_stain.channel_index if use_nuclear_stain else -1
         ),
@@ -356,9 +416,15 @@ def neurite_outgrowth_metaxpress(
     )
 
     cell_body_stack = np.zeros(image_array.shape, dtype=np.int32)
-    cell_body_stack[neurite_channel_index] = cell_body_labels
+    cell_body_stack[body_channel_index] = cell_body_labels
     neurite_stack = np.zeros(image_array.shape, dtype=np.int32)
     neurite_stack[neurite_channel_index] = owner_skeleton
+    unified_neuron_stack = np.zeros(image_array.shape, dtype=np.int32)
+    unified_neuron_stack[neurite_channel_index] = np.where(
+        cell_body_labels > 0,
+        cell_body_labels,
+        owner_outgrowth,
+    )
     nuclei_stack = np.zeros(image_array.shape, dtype=np.int32)
     if use_nuclear_stain:
         nuclei_stack[nuclear_stain.channel_index] = nuclei_labels
@@ -375,95 +441,129 @@ def neurite_outgrowth_metaxpress(
         ),
         cell_body_stack,
         neurite_stack,
+        unified_neuron_stack,
         nuclei_stack,
     )
 
 
-def _segment_cell_bodies(
+def _cellprofiler_foreground_image(
+    image: np.ndarray,
+    *,
+    bright_objects: bool,
+) -> np.ndarray:
+    """Present both illumination modes as bright foreground to CP leaves."""
+
+    image_array = np.asarray(image)
+    if bright_objects:
+        return image_array
+    return np.max(image_array) - image_array
+
+
+def _cellprofiler_adaptive_window(
+    reference_width_px: float,
+    image_shape: Sequence[int],
+) -> int:
+    """Choose a stable CP threshold neighborhood from the declared body scale."""
+
+    minimum_window = max(16, int(np.ceil(2.0 * reference_width_px)))
+    scale_window = 1 << (minimum_window - 1).bit_length()
+    maximum_window = max(1, min(int(size) for size in image_shape[:2]) // 2)
+    return min(scale_window, maximum_window)
+
+
+def _identify_cell_bodies_cellprofiler(
     image: np.ndarray,
     settings: MetaXpressCellBodySettings,
-    outgrowth: MetaXpressOutgrowthSettings,
     pixel_size_um: float,
     *,
     bright_objects: bool,
-    nuclei_labels: np.ndarray | None,
-) -> np.ndarray:
-    max_body_width_px = settings.approximate_max_width / pixel_size_um
+):
+    """Detect with CP IPO, then apply the MetaXpress-owned body predicates."""
+
+    maximum_width_px = settings.approximate_max_width / pixel_size_um
+    minimum_area_px = settings.minimum_area / pixel_size_um**2
+    _, _, detected_payload = _raw_processing_leaf(identify_primary_objects)(
+        _cellprofiler_foreground_image(image, bright_objects=bright_objects),
+        exclude_size=False,
+        exclude_border_objects=False,
+        threshold_scope=CellProfilerThresholdScope.ADAPTIVE,
+        threshold_method=CellProfilerThresholdMethod.OTSU,
+        adaptive_window_size=_cellprofiler_adaptive_window(
+            maximum_width_px,
+            image.shape,
+        ),
+    )
+    detected_labels = object_label_dense_array(detected_payload, dtype=np.int32)
     response = local_background_response(
         image,
-        object_width_px=max_body_width_px,
+        object_width_px=maximum_width_px,
         bright_objects=bright_objects,
     )
-    candidate = response >= settings.intensity_above_local_background
-    candidate = ndi.binary_fill_holes(candidate)
-
-    outgrowth_width_px = outgrowth.maximum_width / pixel_size_um
-    opening_radius = max(1, int(np.ceil(outgrowth_width_px / 2.0)))
-    candidate = binary_opening(candidate, footprint=disk(opening_radius))
-    minimum_area_px = max(1, int(np.ceil(settings.minimum_area / pixel_size_um**2)))
-    candidate = remove_small_objects(candidate, min_size=minimum_area_px)
-    if not candidate.any():
-        return np.zeros(candidate.shape, dtype=np.int32)
-
-    distance = ndi.distance_transform_edt(candidate)
-    markers = np.zeros(candidate.shape, dtype=np.int32)
-    if nuclei_labels is not None:
-        overlapping_nuclei = np.unique(nuclei_labels[candidate])
-        overlapping_nuclei = overlapping_nuclei[overlapping_nuclei > 0]
-        for marker_index, nucleus_label in enumerate(overlapping_nuclei, start=1):
-            nucleus_pixels = (nuclei_labels == nucleus_label) & candidate
-            if nucleus_pixels.any():
-                marker_position = np.unravel_index(
-                    np.argmax(np.where(nucleus_pixels, distance, -1.0)),
-                    candidate.shape,
-                )
-                markers[marker_position] = marker_index
-
-    if markers.max() == 0:
-        minimum_seed_spacing = max(1, int(round(max_body_width_px / 2.0)))
-        coordinates = peak_local_max(
-            distance,
-            labels=candidate,
-            min_distance=minimum_seed_spacing,
-            exclude_border=False,
+    minimum_equivalent_diameter_px = 2.0 * np.sqrt(minimum_area_px / np.pi)
+    keep = np.zeros(int(detected_labels.max()) + 1, dtype=bool)
+    for region in regionprops(detected_labels):
+        region_mask = detected_labels == region.label
+        region_response = response[region_mask]
+        maximum_inscribed_diameter_px = (
+            2.0 * float(np.max(ndi.distance_transform_edt(region_mask))) - 1.0
         )
-        if coordinates.size:
-            markers[tuple(coordinates.T)] = np.arange(1, len(coordinates) + 1)
-        else:
-            markers, _ = ndi.label(candidate)
-
-    labels = watershed(-distance, markers, mask=candidate).astype(np.int32)
-    keep = np.zeros(int(labels.max()) + 1, dtype=bool)
-    for region in regionprops(labels):
-        if region.area >= minimum_area_px:
+        if (
+            region.area >= minimum_area_px
+            and maximum_inscribed_diameter_px >= minimum_equivalent_diameter_px
+            and region.axis_minor_length <= maximum_width_px
+            and region_response.size
+            and float(np.mean(region_response))
+            >= settings.intensity_above_local_background
+        ):
             keep[region.label] = True
-    return _relabel(labels, keep)
+    filtered_labels = _relabel(detected_labels, keep)
+    return detected_payload.with_replacement_labels(filtered_labels)
 
 
-def _segment_outgrowths(
+def _identify_neurites_cellprofiler(
     image: np.ndarray,
-    cell_body_labels: np.ndarray,
+    cell_body: MetaXpressCellBodySettings,
     settings: MetaXpressOutgrowthSettings,
     pixel_size_um: float,
     *,
     bright_objects: bool,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the public intensity mask and its CP medial-axis skeleton."""
+
     outgrowth_width_px = settings.maximum_width / pixel_size_um
+    body_width_px = cell_body.approximate_max_width / pixel_size_um
+    cp_image = _cellprofiler_foreground_image(
+        image,
+        bright_objects=bright_objects,
+    )
+    enhanced = _raw_processing_leaf(enhance_or_suppress_features)(
+        cp_image,
+        method=OperationMethod.ENHANCE,
+        enhance_method=EnhanceMethod.NEURITES,
+        neurite_method=NeuriteMethod.TUBENESS,
+        smoothing_value=max(0.5, 0.375 * outgrowth_width_px),
+        neurite_rescale=True,
+    )
+    cp_mask_payload, _ = _raw_processing_leaf(threshold)(
+        enhanced,
+        threshold_scope=CellProfilerThresholdScope.ADAPTIVE,
+        threshold_method=CellProfilerThresholdMethod.OTSU,
+        threshold_correction_factor=0.85,
+        window_size=_cellprofiler_adaptive_window(body_width_px, image.shape),
+        smoothing=max(0.0, 0.25 * outgrowth_width_px),
+    )
+    cp_mask = np.asarray(image_payload_data(cp_mask_payload)) > 0
     response = local_background_response(
         image,
         object_width_px=outgrowth_width_px,
         bright_objects=bright_objects,
     )
-    candidate = response >= settings.intensity_above_local_background
-    closing_radius = max(1, int(np.floor(outgrowth_width_px / 4.0)))
-    candidate = binary_closing(candidate, footprint=disk(closing_radius))
-    body_exclusion_radius = max(1, int(np.ceil(outgrowth_width_px / 2.0)))
-    body_exclusion = binary_dilation(
-        cell_body_labels > 0,
-        footprint=disk(body_exclusion_radius),
+    outgrowth_mask = cp_mask & (response >= settings.intensity_above_local_background)
+    skeleton_payload = _raw_processing_leaf(medialaxis)(
+        outgrowth_mask.astype(np.float32, copy=False)
     )
-    candidate &= ~body_exclusion
-    return candidate.astype(bool, copy=False)
+    skeleton = np.asarray(image_payload_data(skeleton_payload)) > 0
+    return outgrowth_mask, skeleton
 
 
 def _relabel(labels: np.ndarray, keep: np.ndarray) -> np.ndarray:
@@ -763,21 +863,32 @@ def _build_cell_results(
     topology: _TopologyResult,
     significant_growth_threshold_um: float,
     pixel_size_um: float,
+    *,
+    slice_index: int,
+    cp_measurements: Mapping[int, Mapping[str, object]],
 ) -> list[NeuriteOutgrowthCellResult]:
     cell_count = int(cell_body_labels.max())
     body_areas = np.bincount(cell_body_labels.ravel(), minlength=cell_count + 1).astype(
         float
     )
     body_areas *= pixel_size_um**2
-    branch_counts = Counter(topology.branch_owner.values())
     results = []
 
     for cell in range(1, cell_count + 1):
+        cp_measurement = cp_measurements[cell]
         path_indexes = np.flatnonzero(topology.path_owners == cell)
-        total_outgrowth = float(np.sum(topology.path_lengths[path_indexes]))
+        total_outgrowth = float(cp_measurement["total_skeleton_length"]) * pixel_size_um
         roots = topology.root_paths_by_cell.get(cell, ())
-        process_lengths = _measure_process_lengths(cell, roots, topology)
-        process_count = len(process_lengths)
+        geometric_process_lengths = _measure_process_lengths(cell, roots, topology)
+        geometric_total = float(np.sum(geometric_process_lengths))
+        if geometric_total > 0 and total_outgrowth > 0:
+            process_lengths = [
+                length * total_outgrowth / geometric_total
+                for length in geometric_process_lengths
+            ]
+        else:
+            process_lengths = []
+        process_count = int(cp_measurement["number_trunks"])
         curve_length = float(np.sum(topology.path_lengths[path_indexes]))
         euclidean_length = float(np.sum(topology.path_euclidean_lengths[path_indexes]))
         straightness = euclidean_length / curve_length if curve_length else 0.0
@@ -789,6 +900,7 @@ def _build_cell_results(
         )
         results.append(
             NeuriteOutgrowthCellResult(
+                slice_index=slice_index,
                 cell=cell,
                 total_outgrowth_um=total_outgrowth,
                 processes=process_count,
@@ -801,7 +913,7 @@ def _build_cell_results(
                 max_process_length_um=(
                     float(np.max(process_lengths)) if process_lengths else 0.0
                 ),
-                branches=int(branch_counts[cell]),
+                branches=int(cp_measurement["number_non_trunk_branches"]),
                 straightness=straightness,
                 cell_body_area_um2=float(body_areas[cell]),
                 mean_outgrowth_intensity=mean_intensity,
@@ -854,6 +966,7 @@ def _build_summary(
     cell_results: Sequence[NeuriteOutgrowthCellResult],
     *,
     neurite_channel_index: int,
+    cell_body_channel_index: int,
     nuclear_channel_index: int,
     resolved_crossovers: int,
     mean_outgrowth_average_intensity: float,
@@ -866,6 +979,7 @@ def _build_summary(
     significant_count = sum(row.significant_growth for row in cell_results)
     return NeuriteOutgrowthSummary(
         neurite_channel_index=neurite_channel_index,
+        cell_body_channel_index=cell_body_channel_index,
         nuclear_channel_index=nuclear_channel_index,
         number_of_cells=cell_count,
         total_outgrowth_um=total_outgrowth,
