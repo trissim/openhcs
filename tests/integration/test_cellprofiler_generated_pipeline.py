@@ -193,8 +193,8 @@ def _execute_imported_cppipe_via_zmq(
         global_config=global_config,
         config_params=config_params,
     )
-    assert submission.pipeline_code() == (
-        FunctionStepTransportAuthority.source_from_pipeline(pipeline_steps)
+    assert submission.pipeline_code() == PipelineDocumentAuthority.render(
+        submission.pipeline_document
     )
 
     client = ZMQExecutionClient(
@@ -391,8 +391,8 @@ def test_invalid_public_cellprofiler_step_fails_during_zmq_compilation(
         global_config=global_config,
         config_params={"runtime_observation_export_path": str(observation_path)},
     )
-    assert submission.pipeline_code() == (
-        FunctionStepTransportAuthority.source_from_pipeline(pipeline_steps)
+    assert submission.pipeline_code() == PipelineDocumentAuthority.render(
+        submission.pipeline_document
     )
 
     client = ZMQExecutionClient(
