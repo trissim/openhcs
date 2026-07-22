@@ -99,6 +99,35 @@ least-privilege dependent job completes official Registry publication after
 PyPI confirms the exact release. Treat the full matrix as the release candidate
 gate before creating the tag.
 
+Tag and publish
+---------------
+
+After the release-candidate matrix is green and the release commit is on
+``main``, run the repository release entry point from a clean checkout:
+
+.. code-block:: bash
+
+   python scripts/release.py
+
+The script reads the version from ``openhcs/__init__.py``, requires it to be
+newer than the version currently published on PyPI, rechecks all generated MCP
+metadata against that version, asks for confirmation, and pushes one annotated
+``v<version>`` tag. Do not create a second MCP-specific or installer-specific
+tag.
+
+That tag starts ``.github/workflows/publish.yml``. The workflow builds and
+validates the Windows and macOS installer archives first, then builds and smoke
+tests the OpenHCS wheel outside the checkout. After publishing the wheel and
+source distribution to PyPI, it creates one GitHub Release containing those
+Python artifacts plus ``OpenHCS-Windows-Installer.zip`` and
+``OpenHCS-macOS-Installer.zip``. The dependent MCP Registry job waits until the
+exact PyPI version is downloadable, validates the generated registry metadata,
+and publishes it through GitHub OIDC.
+
+Monitor the tag workflow at the Actions URL printed by ``scripts/release.py``.
+The release is complete only when the installer-build, PyPI/GitHub Release, and
+MCP Registry jobs have all succeeded; a pushed tag by itself is not completion.
+
 External steps
 --------------
 
