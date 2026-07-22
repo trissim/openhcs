@@ -491,7 +491,7 @@ jobs:
             --output (Join-Path $stage "installer_contract.json")
 
           $env:UV_FIND_LINKS = (Resolve-Path "dist").Path
-          $powerShellExecutable = Join-Path $PSHOME "powershell.exe"
+          $powerShellExecutable = (Get-Command powershell.exe -CommandType Application).Source
           & $powerShellExecutable `
             -NoProfile -ExecutionPolicy Bypass `
             -File (Join-Path $stage "Install-OpenHCS.ps1") `
