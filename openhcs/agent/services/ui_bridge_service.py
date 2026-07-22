@@ -1215,6 +1215,7 @@ class UiBridgeGatewayResponseError(RuntimeError, UiBridgeGatewayErrorABC):
 @dataclass(frozen=True, slots=True)
 class UiBridgeGatewayTimeoutError(TimeoutError, UiBridgeGatewayErrorABC):
     registry_key = "timeout"
+    agent_error_code: ClassVar[str] = "ui_bridge_timeout"
 
     operation: str
     timeout_ms: int
@@ -1229,7 +1230,7 @@ class UiBridgeGatewayTimeoutError(TimeoutError, UiBridgeGatewayErrorABC):
         del fallback_code
         return (
             AgentError(
-                code="ui_bridge_timeout",
+                code=self.agent_error_code,
                 message=str(self),
                 hint=(
                     "The running UI may be blocked or busy; retry after the UI "

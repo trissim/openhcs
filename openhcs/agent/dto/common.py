@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Self
+from collections.abc import Mapping
+from dataclasses import dataclass, fields
+from functools import cache
+from typing import Self, get_type_hints
 
 from openhcs.serialization.json import (
     JsonObject,
@@ -64,6 +66,13 @@ class AgentError:
     path: str | None = None
 
     @classmethod
+    def code_from_serialized_mapping(cls, value: Mapping[str, object]) -> str | None:
+        """Project the error code through this DTO's declared field descriptor."""
+
+        code = value.get(cls.code.__name__)
+        return code if isinstance(code, str) else None
+
+    @classmethod
     def from_exception(
         cls,
         code: str,
@@ -86,6 +95,33 @@ class AgentResultEnvelope:
     schema_version: str
     errors: tuple[AgentError, ...] = ()
     warnings: tuple[AgentWarning, ...] = ()
+
+    @classmethod
+    @cache
+    def serialized_errors_field_name(cls) -> str:
+        """Derive the error-list wire field from the owning dataclass declaration."""
+
+        type_hints = get_type_hints(cls)
+        matching_fields = tuple(
+            field.name
+            for field in fields(cls)
+            if type_hints[field.name] == tuple[AgentError, ...]
+        )
+        if len(matching_fields) != 1:
+            raise TypeError(
+                f"{cls.__name__} must declare exactly one AgentError tuple field."
+            )
+        return matching_fields[0]
+
+    @classmethod
+    def error_items_from_serialized_mapping(
+        cls,
+        value: Mapping[str, object],
+    ) -> list[object] | None:
+        """Return the serialized error list through the declared envelope field."""
+
+        errors = value.get(cls.serialized_errors_field_name())
+        return errors if isinstance(errors, list) else None
 
 
 @dataclass(frozen=True, kw_only=True)

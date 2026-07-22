@@ -22,7 +22,12 @@ from openhcs.agent.capabilities import (
     FullLocalCapabilitySurfaceProfile,
     LocalCapabilitySurfaceProfile,
 )
-from openhcs.agent.dto.common import JsonObject, JsonValue
+from openhcs.agent.dto.common import (
+    AgentError,
+    AgentResultEnvelope,
+    JsonObject,
+    JsonValue,
+)
 from openhcs.agent.dto.execution import PipelineExecutionSubmissionRequest
 from openhcs.agent.dto.ui_bridge import (
     UiObjectStateFieldFilter,
@@ -347,6 +352,23 @@ class McpDevToolResult:
             _contains_agent_error(payload) for payload in self.payloads
         )
 
+    def agent_error_codes(self) -> tuple[str, ...]:
+        """Project structured agent error codes without interpreting their domain."""
+
+        return tuple(
+            code for payload in self.payloads for code in _agent_error_codes(payload)
+        )
+
+    def has_only_agent_error_code(self, code: str) -> bool:
+        """Return whether every structured failure carries one declared code."""
+
+        error_codes = self.agent_error_codes()
+        return (
+            not self.mcp_error
+            and bool(error_codes)
+            and all(error_code == code for error_code in error_codes)
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class WorkflowPollRowState:
@@ -474,6 +496,7 @@ class WorkflowPollSummary:
     target_scope_ids: tuple[str, ...]
     skip_reason: WorkflowPollSkipReason | None
     action_status: str | None
+    transient_poll_error_count: int = 0
 
     @property
     def mcp_error(self) -> bool:
@@ -493,6 +516,8 @@ class WorkflowPollSummary:
             payload["skip_reason"] = self.skip_reason.value
         if self.action_status is not None:
             payload["action_status"] = self.action_status
+        if self.transient_poll_error_count:
+            payload["transient_poll_error_count"] = self.transient_poll_error_count
         return payload
 
 
@@ -933,13 +958,35 @@ def require_json_object_payload(value: JsonValue) -> JsonObject:
 
 def _contains_agent_error(value: JsonValue) -> bool:
     if isinstance(value, Mapping):
-        errors = value.get("errors")
-        if isinstance(errors, list) and len(errors) > 0:
+        errors = AgentResultEnvelope.error_items_from_serialized_mapping(value)
+        if errors:
             return True
         return any(_contains_agent_error(child) for child in value.values())
     if isinstance(value, list):
         return any(_contains_agent_error(child) for child in value)
     return False
+
+
+def _agent_error_codes(value: JsonValue) -> tuple[str, ...]:
+    """Recursively project declared error codes from one JSON-facing payload."""
+
+    if isinstance(value, Mapping):
+        projected: list[str] = []
+        errors = AgentResultEnvelope.error_items_from_serialized_mapping(value)
+        if errors is not None:
+            for error in errors:
+                if not isinstance(error, Mapping):
+                    continue
+                code = AgentError.code_from_serialized_mapping(error)
+                if code is not None:
+                    projected.append(code)
+        for child in value.values():
+            if child is not errors:
+                projected.extend(_agent_error_codes(child))
+        return tuple(projected)
+    if isinstance(value, list):
+        return tuple(code for child in value for code in _agent_error_codes(child))
+    return ()
 
 
 def _command_failed(payload: JsonObject) -> bool:
@@ -1850,6 +1897,7 @@ def workflow_poll_summary_result(
     target_scope_ids: tuple[str, ...] = (),
     skip_reason: WorkflowPollSkipReason | None = None,
     action_status: str | None = None,
+    transient_poll_error_count: int = 0,
 ) -> McpDevToolResult:
     if status is None:
         status = (
@@ -1866,6 +1914,7 @@ def workflow_poll_summary_result(
         target_scope_ids=target_scope_ids,
         skip_reason=skip_reason,
         action_status=action_status,
+        transient_poll_error_count=transient_poll_error_count,
     )
     return McpDevToolResult(
         tool="mcp_dev_selected_workflow_poll",

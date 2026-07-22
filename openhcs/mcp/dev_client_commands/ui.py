@@ -14,6 +14,7 @@ from openhcs.agent.dto.ui_bridge import (
     UiObjectStateFieldFilter,
     UiSelectedPlateWorkflowKind,
 )
+from openhcs.agent.services.ui_bridge_service import UiBridgeGatewayTimeoutError
 from openhcs.agent.ui_bridge_identities import (
     PlateManagerStateSurfaceIdentityDeclaration,
     PlateManagerWidgetIdentity,
@@ -256,6 +257,7 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
         target_scope_ids = workflow_result_target_scope_ids(workflow_result)
         poll_status = WorkflowPollSummaryStatus.SKIPPED
         poll_terminal_status: WorkflowPollSummaryStatus | None = None
+        transient_poll_error_count = 0
         skip_reason: WorkflowPollSkipReason | None = None
         action_status = workflow_result_action_status(workflow_result)
 
@@ -270,11 +272,21 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
                     state_call,
                     timeout_seconds,
                 )
-                results.append(poll_result)
                 poll_count += 1
                 if poll_result.has_errors():
+                    if poll_result.has_only_agent_error_code(
+                        UiBridgeGatewayTimeoutError.agent_error_code
+                    ):
+                        transient_poll_error_count += 1
+                        if asyncio.get_running_loop().time() >= poll_deadline:
+                            results.append(poll_result)
+                            break
+                        await asyncio.sleep(args.poll_interval_seconds)
+                        continue
+                    results.append(poll_result)
                     poll_terminal_status = WorkflowPollSummaryStatus.FAILED
                     break
+                results.append(poll_result)
                 if (
                     baseline is None
                     or baseline.changed_by(poll_result)
@@ -311,6 +323,7 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
                 target_scope_ids=target_scope_ids,
                 skip_reason=skip_reason,
                 action_status=action_status,
+                transient_poll_error_count=transient_poll_error_count,
             )
         )
         return McpDevToolBatchResponse.from_results(
