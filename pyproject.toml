@@ -17,7 +17,7 @@ description = "High-Content Screening image processing engine with native GPU su
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_LICENSES/*"]
 authors = [
     {name = "Tristan Simas", email = "tristan.simas@mail.mcgill.ca"}
 ]
@@ -135,7 +135,6 @@ gui = [
 napari = [
     "napari>=0.7.1",
     "napari-crop>=0.1.12",
-    "napari-roi-manager>=0.0.7",
 ]
 
 # Fiji/ImageJ integration
@@ -166,7 +165,6 @@ bioformats = [
 viz = [
     "napari>=0.7.1",
     "napari-crop>=0.1.12",
-    "napari-roi-manager>=0.0.7",
     "pyimagej>=1.4.1",
     "scyjava>=1.9.1",
 ]
@@ -258,7 +256,6 @@ all = [
     # Viz
     "napari>=0.7.1",
     "napari-crop>=0.1.12",
-    "napari-roi-manager>=0.0.7",
     "pyimagej>=1.4.1",
     "scyjava>=1.9.1",
 

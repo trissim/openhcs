@@ -7,7 +7,13 @@ contributions:
     - id: openhcs.get_swc_reader
       python_name: openhcs.runtime.napari_swc_reader:napari_get_swc_reader
       title: Open SWC morphology with OpenHCS
+    - id: openhcs.make_roi_manager_widget
+      python_name: openhcs.napari_roi_manager:QRoiManager
+      title: Open the OpenHCS ROI Manager
   readers:
     - command: openhcs.get_swc_reader
       accepts_directories: false
       filename_patterns: ["*.swc"]
+  widgets:
+    - command: openhcs.make_roi_manager_widget
+      display_name: OpenHCS ROI Manager

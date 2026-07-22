@@ -66,18 +66,23 @@ def test_visualization_install_surface_composes_napari_and_fiji() -> None:
         Requirement(requirement).name for requirement in extras["fiji"]
     }
 
-    assert {"napari", "napari-crop", "napari-roi-manager"} <= set(napari_requirements)
+    assert {"napari", "napari-crop"} <= set(napari_requirements)
     napari_requirement = napari_requirements["napari"]
     assert napari_requirement.specifier.contains("0.7.1")
     assert not napari_requirement.specifier.contains("0.6.1")
-    roi_manager_requirement = napari_requirements["napari-roi-manager"]
-    assert roi_manager_requirement.specifier.contains("0.0.7")
-    assert not roi_manager_requirement.specifier.contains("0.0.6")
+    assert {
+        "napari-roi-manager",
+        "openhcs-napari-roi-manager",
+    }.isdisjoint(napari_requirements)
     for combined_extra in ("viz", "all"):
         combined_requirements = {
             Requirement(requirement).name for requirement in extras[combined_extra]
         }
         assert set(napari_requirements) | fiji_requirements <= combined_requirements
+        assert {
+            "napari-roi-manager",
+            "openhcs-napari-roi-manager",
+        }.isdisjoint(combined_requirements)
 
 
 def test_release_requirement_preserves_extras_and_pins_version() -> None:
