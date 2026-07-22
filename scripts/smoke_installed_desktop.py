@@ -102,11 +102,43 @@ def _installed_distribution_probe(
 ) -> dict[str, Any]:
     probe = r"""
 import json
-from importlib.metadata import distribution
+from importlib.metadata import PackageNotFoundError, distribution
 import sys
 
-package_name, entry_name = sys.argv[1:]
+from packaging.requirements import Requirement
+from packaging.version import Version
+
+package_name, entry_name, *selected_extras = sys.argv[1:]
 installed = distribution(package_name)
+provided_extras = set(installed.metadata.get_all("Provides-Extra") or ())
+missing_extras = sorted(set(selected_extras) - provided_extras)
+if missing_extras:
+    raise SystemExit(
+        "installed distribution does not declare selected extras: "
+        + ", ".join(missing_extras)
+    )
+
+resolved_requirements = {}
+for requirement_text in installed.requires or ():
+    requirement = Requirement(requirement_text)
+    if requirement.marker is not None and not any(
+        requirement.marker.evaluate({"extra": extra})
+        for extra in selected_extras
+    ):
+        continue
+    try:
+        dependency = distribution(requirement.name)
+    except PackageNotFoundError as exc:
+        raise SystemExit(
+            f"selected installer dependency is missing: {requirement}"
+        ) from exc
+    if requirement.specifier and Version(dependency.version) not in requirement.specifier:
+        raise SystemExit(
+            f"installed {requirement.name} {dependency.version} does not satisfy "
+            f"{requirement.specifier}"
+        )
+    resolved_requirements[requirement.name] = dependency.version
+
 entry_points = [
     {"name": item.name, "value": item.value}
     for item in installed.entry_points
@@ -116,6 +148,8 @@ print(json.dumps({
     "version": installed.version,
     "location": str(installed.locate_file("")),
     "entry_points": entry_points,
+    "selected_extras": sorted(selected_extras),
+    "resolved_requirements": resolved_requirements,
 }))
 """
     completed = _run_checked(
@@ -126,6 +160,7 @@ print(json.dumps({
             probe,
             contract.package_requirement.name,
             contract.entry_point,
+            *sorted(contract.package_requirement.extras),
         ],
         cwd=environment,
     )

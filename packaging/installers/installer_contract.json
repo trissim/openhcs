@@ -2,7 +2,7 @@
   "schema_version": "openhcs.installer.v1",
   "product_name": "OpenHCS",
   "python_version": "3.12",
-  "package_requirement": "openhcs[gui]",
+  "package_requirement": "openhcs[gui,viz,bioformats]",
   "entry_point": "openhcs",
   "uv_installer_urls": {
     "windows": "https://astral.sh/uv/install.ps1",

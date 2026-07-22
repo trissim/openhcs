@@ -21,9 +21,12 @@ entry point remain authoritative.
 - Installation is per-user and does not modify system Python or require an
   administrator account.
 - Re-running an installer updates/reinstalls the same isolated environment.
-- The default is the CPU-safe `openhcs[gui]` surface. GPU and optional viewer
-  stacks remain explicit post-install choices because their system requirements
-  cannot be inferred safely.
+- The default is the CPU-safe `openhcs[gui,viz,bioformats]` desktop surface:
+  the Qt application, Napari, Fiji/PyImageJ, and Bio-Formats support. GPU
+  dependencies remain an explicit post-install choice because the host's CUDA
+  environment cannot be inferred safely.
+- PyImageJ resolves and caches the Fiji/Bio-Formats Java distribution on first
+  Fiji or Bio-Formats use; the installer does not embed a standalone `Fiji.app`.
 - A durable log is kept in the platform's OpenHCS user log directory and is
   shown when installation fails.
 - The source-tree contract installs the latest published compatible OpenHCS.

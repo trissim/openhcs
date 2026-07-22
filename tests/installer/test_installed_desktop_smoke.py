@@ -16,7 +16,7 @@ def _write_contract(path: Path, *, entry_point: str = "openhcs") -> None:
             {
                 "schema_version": "openhcs.installer.v1",
                 "product_name": "OpenHCS",
-                "package_requirement": "openhcs[gui]==0.5.22",
+                "package_requirement": "openhcs[bioformats,gui,viz]==0.5.22",
                 "entry_point": entry_point,
             }
         ),
@@ -31,6 +31,58 @@ def _stub_installed_probe(monkeypatch) -> None:
         lambda *_args: {"version": "0.5.22"},
     )
     monkeypatch.setattr(desktop_smoke, "_smoke_entry_point", lambda *_args: None)
+
+
+def test_distribution_probe_queries_installed_extra_metadata(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    contract_path = tmp_path / "installer_contract.json"
+    _write_contract(contract_path)
+    contract = desktop_smoke.InstallerSmokeContract.load(contract_path)
+    environment = tmp_path / "environment"
+    environment.mkdir()
+    python_executable = environment / "python"
+    python_executable.touch()
+    observed: dict[str, object] = {}
+
+    def fake_run_checked(command, *, cwd, environment=None):
+        observed["command"] = command
+        assert cwd == tmp_path / "environment"
+        assert environment is None
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "version": "0.5.22",
+                    "location": str(cwd),
+                    "entry_points": [{"name": "openhcs", "value": "openhcs.cli:main"}],
+                    "selected_extras": sorted(contract.package_requirement.extras),
+                    "resolved_requirements": {"metadata-owned": "1.0"},
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(desktop_smoke, "_run_checked", fake_run_checked)
+
+    result = desktop_smoke._installed_distribution_probe(
+        python_executable,
+        contract,
+        environment,
+    )
+
+    command = observed["command"]
+    assert isinstance(command, list)
+    assert command[4:] == [
+        "openhcs",
+        "openhcs",
+        *sorted(contract.package_requirement.extras),
+    ]
+    assert "Provides-Extra" in command[3]
+    assert "installed.requires" in command[3]
+    assert result["selected_extras"] == sorted(contract.package_requirement.extras)
 
 
 def test_windows_smoke_resolves_generated_entry_and_launcher(

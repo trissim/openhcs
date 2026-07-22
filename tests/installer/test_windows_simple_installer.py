@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 import re
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER_ROOT = REPOSITORY_ROOT / "packaging" / "installers"
 WINDOWS_ROOT = INSTALLER_ROOT / "windows"
