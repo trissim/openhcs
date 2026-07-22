@@ -24,6 +24,7 @@ from openhcs.core.artifacts import (
     MeasurementsArtifactType,
     ObjectLabelsArtifactType,
     ObjectMeasurementSubjectRelation,
+    SpatialGraphArtifactType,
 )
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.memory import numpy
@@ -32,11 +33,24 @@ from openhcs.core.measurement_row_materialization import (
 )
 from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs
 from openhcs.core.runtime_image_values import image_payload_data
-from openhcs.core.runtime_object_labels import object_label_dense_array
+from openhcs.core.runtime_object_label_domains import (
+    PresentObjectLabelIdsDomainDeclaration,
+)
+from openhcs.core.runtime_object_labels import (
+    object_label_dense_array,
+    object_label_value_with_dense_labels,
+)
+from openhcs.core.runtime_spatial_graph import (
+    SpatialGraph,
+    SpatialGraphEdge,
+    SpatialGraphNode,
+)
 from openhcs.processing.materialization import (
     CsvOptions,
     MaterializationSpec,
     ROIOptions,
+    SpatialGraphROIOptions,
+    SWCOptions,
 )
 
 from .count_cells_simple import (
@@ -52,6 +66,7 @@ from ..cellprofiler.feature_enhancement import (
 )
 from ..cellprofiler.medial_axis import medialaxis
 from ..cellprofiler.primary_objects import identify_primary_objects
+from ..cellprofiler.secondary import SecondaryMethod, identify_secondary_objects
 from ..cellprofiler.skeleton import measure_object_skeleton
 from ..cellprofiler.thresholding import (
     CellProfilerThresholdMethod,
@@ -65,6 +80,114 @@ class NeuriteIllumination(str, Enum):
 
     FLUORESCENCE = "fluorescence"
     TRANSMISSION = "transmission"
+
+
+@dataclass(frozen=True)
+class CellProfilerNeuriteEngineProfile:
+    """Authoritative CP settings shared by compact and modular workflows."""
+
+    body_min_diameter_px: int = 12
+    compact_body_min_diameter_px: int = 10
+    body_max_diameter_px: int = 100
+    adaptive_window_size_px: int = 64
+    tubeness_smoothing_px: float = 1.5
+    threshold_correction_factor: float = 0.85
+    threshold_smoothing_px: float = 1.0
+    secondary_regularization_factor: float = 0.05
+
+    def body_detection_kwargs(
+        self,
+        *,
+        adaptive_window_size: int | None = None,
+        exclude_size: bool = True,
+        min_diameter: int | None = None,
+    ) -> dict[str, object]:
+        return {
+            "min_diameter": (
+                self.body_min_diameter_px if min_diameter is None else min_diameter
+            ),
+            "max_diameter": self.body_max_diameter_px,
+            "exclude_size": exclude_size,
+            "exclude_border_objects": False,
+            "threshold_scope": CellProfilerThresholdScope.ADAPTIVE,
+            "threshold_method": CellProfilerThresholdMethod.OTSU,
+            "adaptive_window_size": (
+                self.adaptive_window_size_px
+                if adaptive_window_size is None
+                else adaptive_window_size
+            ),
+        }
+
+    def compact_body_detection_kwargs(
+        self,
+        *,
+        adaptive_window_size: int,
+    ) -> dict[str, object]:
+        """Candidate settings for MetaXpress predicates and CP propagation."""
+
+        return self.body_detection_kwargs(
+            adaptive_window_size=adaptive_window_size,
+            exclude_size=False,
+            min_diameter=self.compact_body_min_diameter_px,
+        )
+
+    def enhancement_kwargs(
+        self,
+        *,
+        smoothing_value: float | None = None,
+    ) -> dict[str, object]:
+        return {
+            "method": OperationMethod.ENHANCE,
+            "enhance_method": EnhanceMethod.NEURITES,
+            "neurite_method": NeuriteMethod.TUBENESS,
+            "smoothing_value": (
+                self.tubeness_smoothing_px
+                if smoothing_value is None
+                else smoothing_value
+            ),
+            "neurite_rescale": True,
+        }
+
+    def threshold_kwargs(
+        self,
+        *,
+        window_size: int | None = None,
+        smoothing: float | None = None,
+    ) -> dict[str, object]:
+        return {
+            "threshold_scope": CellProfilerThresholdScope.ADAPTIVE,
+            "threshold_method": CellProfilerThresholdMethod.OTSU,
+            "threshold_correction_factor": self.threshold_correction_factor,
+            "window_size": (
+                self.adaptive_window_size_px if window_size is None else window_size
+            ),
+            "smoothing": (
+                self.threshold_smoothing_px if smoothing is None else smoothing
+            ),
+        }
+
+    def secondary_kwargs(
+        self,
+        *,
+        adaptive_window_size: int | None = None,
+    ) -> dict[str, object]:
+        return {
+            "method": SecondaryMethod.PROPAGATION,
+            "threshold_scope": CellProfilerThresholdScope.ADAPTIVE,
+            "threshold_method": CellProfilerThresholdMethod.OTSU,
+            "threshold_correction_factor": self.threshold_correction_factor,
+            "adaptive_window_size": (
+                self.adaptive_window_size_px
+                if adaptive_window_size is None
+                else adaptive_window_size
+            ),
+            "regularization_factor": self.secondary_regularization_factor,
+            "fill_holes": True,
+            "discard_edge_objects": False,
+        }
+
+
+CELLPROFILER_NEURITE_ENGINE_PROFILE = CellProfilerNeuriteEngineProfile()
 
 
 @dataclass(frozen=True)
@@ -219,6 +342,14 @@ NUCLEI_OUTPUT = ArtifactSpec.output(
     ObjectLabelsArtifactType,
     materialization=MaterializationSpec(ROIOptions()),
 )
+NEURITE_MORPHOLOGY_OUTPUT = ArtifactSpec.output(
+    "neurite_morphology",
+    SpatialGraphArtifactType,
+    materialization=MaterializationSpec(
+        SWCOptions(),
+        SpatialGraphROIOptions(),
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -228,6 +359,9 @@ class _TopologyResult:
     path_lengths: np.ndarray
     path_euclidean_lengths: np.ndarray
     path_coordinates: tuple[np.ndarray, ...]
+    path_endpoint_groups: tuple[tuple[int, int], ...]
+    path_branch_types: np.ndarray
+    endpoint_group_coordinates: Mapping[int, tuple[float, float]]
     transitions: Mapping[int, tuple[int, ...]]
     root_paths_by_cell: Mapping[int, tuple[int, ...]]
     branch_owner: Mapping[int, int]
@@ -248,6 +382,7 @@ def _raw_processing_leaf(func):
     NEURITE_LABELS_OUTPUT,
     UNIFIED_NEURONS_OUTPUT,
     NUCLEI_OUTPUT,
+    NEURITE_MORPHOLOGY_OUTPUT,
 )
 @artifact_inputs("pixel_size")
 def neurite_outgrowth_metaxpress(
@@ -267,6 +402,7 @@ def neurite_outgrowth_metaxpress(
     np.ndarray,
     np.ndarray,
     np.ndarray,
+    SpatialGraph,
 ]:
     """Measure cell bodies and attached neurites in one 2D channel stack.
 
@@ -298,9 +434,10 @@ def neurite_outgrowth_metaxpress(
     Returns:
         The unchanged image, image- and cell-level measurement rows, and
         channel-aligned cell-body, thin outgrowth, unified-neuron, and nuclear
-        masks. The unified layer assigns each body and its owned outgrowth the
-        same integer identity so the final biological result is directly
-        inspectable rather than inferred across independent layers.
+        masks, followed by a rooted spatial morphology forest. The unified
+        layer assigns each body and its owned outgrowth the same integer
+        identity, while the graph preserves branch geometry and metrics for
+        direct table, ROI-path, and SWC inspection.
     """
 
     image_array = np.asarray(image)
@@ -343,25 +480,49 @@ def neurite_outgrowth_metaxpress(
         )
 
     bright_objects = illumination == NeuriteIllumination.FLUORESCENCE
-    body_image = image_array[body_channel_index]
-    cell_body_payload = _identify_cell_bodies_cellprofiler(
-        body_image,
-        cell_body,
-        pixel_size_um,
-        bright_objects=bright_objects,
+    nuclear_seeded_signal_body_mode = (
+        use_nuclear_stain and body_channel_index == neurite_channel_index
     )
+    body_detection_channel_index = (
+        int(nuclear_stain.channel_index)
+        if nuclear_seeded_signal_body_mode
+        else body_channel_index
+    )
+    body_image = image_array[body_detection_channel_index]
+    if nuclear_seeded_signal_body_mode:
+        seed_payload_template = _identify_cell_bodies_cellprofiler(
+            body_image,
+            cell_body,
+            pixel_size_um,
+            bright_objects=bright_objects,
+        )
+        cell_body_payload = object_label_value_with_dense_labels(
+            seed_payload_template,
+            nuclei_labels,
+            domain_declaration=PresentObjectLabelIdsDomainDeclaration(),
+        )
+    else:
+        cell_body_payload = _identify_cell_bodies_cellprofiler(
+            body_image,
+            cell_body,
+            pixel_size_um,
+            bright_objects=bright_objects,
+            nuclei_labels=nuclei_labels if use_nuclear_stain else None,
+        )
     cell_body_labels = object_label_dense_array(
         cell_body_payload,
         dtype=np.int32,
     )
 
     neurite_image = image_array[neurite_channel_index]
-    outgrowth_binary, outgrowth_skeleton = _identify_neurites_cellprofiler(
-        neurite_image,
-        cell_body,
-        outgrowth,
-        pixel_size_um,
-        bright_objects=bright_objects,
+    outgrowth_binary, outgrowth_skeleton, outgrowth_response = (
+        _identify_neurites_cellprofiler(
+            neurite_image,
+            cell_body,
+            outgrowth,
+            pixel_size_um,
+            bright_objects=bright_objects,
+        )
     )
     outgrowth_width_px = outgrowth.maximum_width / pixel_size_um
     topology = _analyze_topology(
@@ -379,9 +540,130 @@ def neurite_outgrowth_metaxpress(
         outgrowth_binary,
         outgrowth_width_px,
     )
-
+    unified_neuron_labels = _identify_unified_neurons_cellprofiler(
+        neurite_image,
+        cell_body_payload,
+        body_width_px=cell_body.approximate_max_width / pixel_size_um,
+        bright_objects=bright_objects,
+    )
+    nuclear_seed_mode = use_nuclear_stain and body_detection_channel_index == int(
+        nuclear_stain.channel_index
+    )
+    if nuclear_seed_mode:
+        owner_skeleton = _adopt_secondary_owned_skeleton(
+            outgrowth_skeleton,
+            owner_skeleton,
+            unified_neuron_labels,
+        )
+        cell_body_payload = _qualify_nuclear_cell_bodies(
+            cell_body_payload,
+            cell_body_labels,
+            unified_neuron_labels,
+        )
+        cell_body_labels = object_label_dense_array(
+            cell_body_payload,
+            dtype=np.int32,
+        )
+        topology = _analyze_topology(
+            outgrowth_skeleton,
+            cell_body_labels,
+            pixel_size_um,
+            outgrowth_width_px,
+        )
+        owner_skeleton = _render_owned_skeleton(
+            outgrowth_skeleton.shape,
+            topology,
+        )
+        unified_neuron_labels = _identify_unified_neurons_cellprofiler(
+            neurite_image,
+            cell_body_payload,
+            body_width_px=cell_body.approximate_max_width / pixel_size_um,
+            bright_objects=bright_objects,
+        )
+        owner_skeleton = _adopt_secondary_owned_skeleton(
+            outgrowth_skeleton,
+            owner_skeleton,
+            unified_neuron_labels,
+        )
+        if nuclear_seeded_signal_body_mode:
+            signal_cell_bodies = _derive_signal_cell_bodies(
+                cell_body_labels,
+                unified_neuron_labels,
+                neurite_image,
+                cell_body,
+                pixel_size_um,
+                bright_objects=bright_objects,
+            )
+            keep_signal_body = (
+                np.bincount(
+                    signal_cell_bodies.ravel(),
+                    minlength=int(cell_body_labels.max()) + 1,
+                )
+                > 0
+            )
+            keep_signal_body[0] = False
+            cell_body_labels = _relabel(signal_cell_bodies, keep_signal_body)
+            owner_skeleton = _relabel(owner_skeleton, keep_signal_body)
+            unified_neuron_labels = _relabel(
+                unified_neuron_labels,
+                keep_signal_body,
+            )
+            cell_body_payload = object_label_value_with_dense_labels(
+                cell_body_payload,
+                cell_body_labels,
+                domain_declaration=PresentObjectLabelIdsDomainDeclaration(),
+            )
+            unified_neuron_labels = _identify_unified_neurons_cellprofiler(
+                neurite_image,
+                cell_body_payload,
+                body_width_px=cell_body.approximate_max_width / pixel_size_um,
+                bright_objects=bright_objects,
+            )
+            owner_skeleton = _adopt_secondary_owned_skeleton(
+                outgrowth_skeleton,
+                owner_skeleton,
+                unified_neuron_labels,
+            )
+    owner_skeleton = _repair_signal_supported_skeleton(
+        owner_skeleton,
+        outgrowth_response,
+        unified_neuron_labels,
+        cell_body_labels,
+        minimum_response=outgrowth.intensity_above_local_background,
+    )
+    neurite_skeleton = owner_skeleton.copy()
+    neurite_skeleton[cell_body_labels > 0] = 0
+    topology = _analyze_topology(
+        neurite_skeleton > 0,
+        cell_body_labels,
+        pixel_size_um,
+        outgrowth_width_px,
+        assigned_path_labels=neurite_skeleton,
+    )
+    neurite_skeleton = _render_owned_skeleton(
+        neurite_skeleton.shape,
+        topology,
+    )
+    soma_attached_skeleton = _prune_soma_detached_skeleton(
+        neurite_skeleton,
+        cell_body_labels,
+        attachment_distance=max(1.0, outgrowth_width_px / 2.0 + 0.5),
+    )
+    if not np.array_equal(soma_attached_skeleton, neurite_skeleton):
+        neurite_skeleton = soma_attached_skeleton
+        topology = _analyze_topology(
+            neurite_skeleton > 0,
+            cell_body_labels,
+            pixel_size_um,
+            outgrowth_width_px,
+            assigned_path_labels=neurite_skeleton,
+        )
+        neurite_skeleton = _render_owned_skeleton(
+            neurite_skeleton.shape,
+            topology,
+        )
     _, cp_measurement_rows = _raw_processing_leaf(measure_object_skeleton)(
-        outgrowth_skeleton,
+        neurite_skeleton,
         seed_labels=cell_body_payload,
         fill_small_holes=True,
         maximum_hole_size=10,
@@ -389,6 +671,33 @@ def neurite_outgrowth_metaxpress(
     cp_measurements = {
         int(row["object_label"]): row for row in cp_measurement_rows.row_mappings()
     }
+    keep_measured_skeleton = np.zeros(int(cell_body_labels.max()) + 1, dtype=bool)
+    for owner, measurements in cp_measurements.items():
+        keep_measured_skeleton[owner] = measurements["total_skeleton_length"] > 0
+    measured_neurite_skeleton = np.where(
+        keep_measured_skeleton[neurite_skeleton],
+        neurite_skeleton,
+        0,
+    ).astype(np.int32, copy=False)
+    if not np.array_equal(measured_neurite_skeleton, neurite_skeleton):
+        neurite_skeleton = measured_neurite_skeleton
+        topology = _analyze_topology(
+            neurite_skeleton > 0,
+            cell_body_labels,
+            pixel_size_um,
+            outgrowth_width_px,
+            assigned_path_labels=neurite_skeleton,
+        )
+        neurite_skeleton = _render_owned_skeleton(
+            neurite_skeleton.shape,
+            topology,
+        )
+    owner_outgrowth = _expand_skeleton_ownership(
+        neurite_skeleton,
+        outgrowth_binary,
+        outgrowth_width_px,
+    )
+    owner_outgrowth[cell_body_labels > 0] = 0
 
     cell_results = _build_cell_results(
         cell_body_labels,
@@ -418,16 +727,22 @@ def neurite_outgrowth_metaxpress(
     cell_body_stack = np.zeros(image_array.shape, dtype=np.int32)
     cell_body_stack[body_channel_index] = cell_body_labels
     neurite_stack = np.zeros(image_array.shape, dtype=np.int32)
-    neurite_stack[neurite_channel_index] = owner_skeleton
+    neurite_stack[neurite_channel_index] = neurite_skeleton
     unified_neuron_stack = np.zeros(image_array.shape, dtype=np.int32)
-    unified_neuron_stack[neurite_channel_index] = np.where(
-        cell_body_labels > 0,
-        cell_body_labels,
-        owner_outgrowth,
-    )
+    unified_neuron_stack[neurite_channel_index] = unified_neuron_labels
     nuclei_stack = np.zeros(image_array.shape, dtype=np.int32)
     if use_nuclear_stain:
         nuclei_stack[nuclear_stain.channel_index] = nuclei_labels
+    neurite_morphology = _build_neurite_morphology_graph(
+        topology,
+        cell_body_labels,
+        pixel_size_um=pixel_size_um,
+        outgrowth_width_px=outgrowth_width_px,
+        assigned_path_labels=neurite_skeleton,
+    )
+    neurite_morphology = neurite_morphology.replace_fields(
+        source_plane_index=neurite_channel_index
+    )
 
     return (
         image,
@@ -443,6 +758,7 @@ def neurite_outgrowth_metaxpress(
         neurite_stack,
         unified_neuron_stack,
         nuclei_stack,
+        neurite_morphology,
     )
 
 
@@ -477,6 +793,7 @@ def _identify_cell_bodies_cellprofiler(
     pixel_size_um: float,
     *,
     bright_objects: bool,
+    nuclei_labels: np.ndarray | None = None,
 ):
     """Detect with CP IPO, then apply the MetaXpress-owned body predicates."""
 
@@ -484,13 +801,11 @@ def _identify_cell_bodies_cellprofiler(
     minimum_area_px = settings.minimum_area / pixel_size_um**2
     _, _, detected_payload = _raw_processing_leaf(identify_primary_objects)(
         _cellprofiler_foreground_image(image, bright_objects=bright_objects),
-        exclude_size=False,
-        exclude_border_objects=False,
-        threshold_scope=CellProfilerThresholdScope.ADAPTIVE,
-        threshold_method=CellProfilerThresholdMethod.OTSU,
-        adaptive_window_size=_cellprofiler_adaptive_window(
-            maximum_width_px,
-            image.shape,
+        **CELLPROFILER_NEURITE_ENGINE_PROFILE.compact_body_detection_kwargs(
+            adaptive_window_size=_cellprofiler_adaptive_window(
+                maximum_width_px,
+                image.shape,
+            ),
         ),
     )
     detected_labels = object_label_dense_array(detected_payload, dtype=np.int32)
@@ -498,6 +813,13 @@ def _identify_cell_bodies_cellprofiler(
         image,
         object_width_px=maximum_width_px,
         bright_objects=bright_objects,
+    )
+    nuclear_supported = _nuclear_supported_body_candidates(
+        detected_labels,
+        response,
+        nuclei_labels,
+        maximum_width_px=maximum_width_px,
+        intensity_threshold=settings.intensity_above_local_background,
     )
     minimum_equivalent_diameter_px = 2.0 * np.sqrt(minimum_area_px / np.pi)
     keep = np.zeros(int(detected_labels.max()) + 1, dtype=bool)
@@ -514,10 +836,59 @@ def _identify_cell_bodies_cellprofiler(
             and region_response.size
             and float(np.mean(region_response))
             >= settings.intensity_above_local_background
+            and (nuclear_supported is None or nuclear_supported[region.label])
         ):
             keep[region.label] = True
     filtered_labels = _relabel(detected_labels, keep)
-    return detected_payload.with_replacement_labels(filtered_labels)
+    return object_label_value_with_dense_labels(
+        detected_payload,
+        filtered_labels,
+        domain_declaration=PresentObjectLabelIdsDomainDeclaration(),
+    )
+
+
+def _nuclear_supported_body_candidates(
+    detected_labels: np.ndarray,
+    response: np.ndarray,
+    nuclei_labels: np.ndarray | None,
+    *,
+    maximum_width_px: float,
+    intensity_threshold: float,
+) -> np.ndarray | None:
+    """Map valid nuclear seeds onto nearby, locally width-bounded CP bodies."""
+
+    if nuclei_labels is None:
+        return None
+    supported = np.zeros(int(detected_labels.max()) + 1, dtype=bool)
+    if not np.any(detected_labels):
+        return supported
+
+    distance, nearest = ndi.distance_transform_edt(
+        detected_labels == 0,
+        return_indices=True,
+    )
+    foreground_distance = ndi.distance_transform_edt(
+        response >= intensity_threshold,
+    )
+    maximum_seed_distance = maximum_width_px / 2.0
+    for nucleus in regionprops(nuclei_labels):
+        centroid = tuple(
+            int(np.clip(round(value), 0, detected_labels.shape[axis] - 1))
+            for axis, value in enumerate(nucleus.centroid)
+        )
+        if distance[centroid] > maximum_seed_distance:
+            continue
+        foreground_radius = float(foreground_distance[centroid])
+        if foreground_radius <= 0:
+            continue
+        local_foreground_width = 2.0 * foreground_radius - 1.0
+        if local_foreground_width > maximum_width_px:
+            continue
+        nearest_position = tuple(indices[centroid] for indices in nearest)
+        candidate = int(detected_labels[nearest_position])
+        if candidate > 0:
+            supported[candidate] = True
+    return supported
 
 
 def _identify_neurites_cellprofiler(
@@ -527,8 +898,8 @@ def _identify_neurites_cellprofiler(
     pixel_size_um: float,
     *,
     bright_objects: bool,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return the public intensity mask and its CP medial-axis skeleton."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return the public mask, CP medial axis, and local signal evidence."""
 
     outgrowth_width_px = settings.maximum_width / pixel_size_um
     body_width_px = cell_body.approximate_max_width / pixel_size_um
@@ -538,19 +909,16 @@ def _identify_neurites_cellprofiler(
     )
     enhanced = _raw_processing_leaf(enhance_or_suppress_features)(
         cp_image,
-        method=OperationMethod.ENHANCE,
-        enhance_method=EnhanceMethod.NEURITES,
-        neurite_method=NeuriteMethod.TUBENESS,
-        smoothing_value=max(0.5, 0.375 * outgrowth_width_px),
-        neurite_rescale=True,
+        **CELLPROFILER_NEURITE_ENGINE_PROFILE.enhancement_kwargs(
+            smoothing_value=max(0.5, 0.375 * outgrowth_width_px),
+        ),
     )
     cp_mask_payload, _ = _raw_processing_leaf(threshold)(
         enhanced,
-        threshold_scope=CellProfilerThresholdScope.ADAPTIVE,
-        threshold_method=CellProfilerThresholdMethod.OTSU,
-        threshold_correction_factor=0.85,
-        window_size=_cellprofiler_adaptive_window(body_width_px, image.shape),
-        smoothing=max(0.0, 0.25 * outgrowth_width_px),
+        **CELLPROFILER_NEURITE_ENGINE_PROFILE.threshold_kwargs(
+            window_size=_cellprofiler_adaptive_window(body_width_px, image.shape),
+            smoothing=max(0.0, 0.25 * outgrowth_width_px),
+        ),
     )
     cp_mask = np.asarray(image_payload_data(cp_mask_payload)) > 0
     response = local_background_response(
@@ -563,7 +931,336 @@ def _identify_neurites_cellprofiler(
         outgrowth_mask.astype(np.float32, copy=False)
     )
     skeleton = np.asarray(image_payload_data(skeleton_payload)) > 0
-    return outgrowth_mask, skeleton
+    return outgrowth_mask, skeleton, response
+
+
+def _identify_unified_neurons_cellprofiler(
+    image: np.ndarray,
+    cell_body_payload,
+    *,
+    body_width_px: float,
+    bright_objects: bool,
+) -> np.ndarray:
+    """Return the same seed-propagated final labels as the modular CP workflow."""
+
+    *_, unified_payload = _raw_processing_leaf(identify_secondary_objects)(
+        _cellprofiler_foreground_image(image, bright_objects=bright_objects),
+        primary_labels=cell_body_payload,
+        **CELLPROFILER_NEURITE_ENGINE_PROFILE.secondary_kwargs(
+            adaptive_window_size=_cellprofiler_adaptive_window(
+                body_width_px,
+                image.shape,
+            ),
+        ),
+    )
+    return object_label_dense_array(unified_payload, dtype=np.int32)
+
+
+def _adopt_secondary_owned_skeleton(
+    skeleton: np.ndarray,
+    owner_skeleton: np.ndarray,
+    unified_neuron_labels: np.ndarray,
+) -> np.ndarray:
+    """Adopt a whole skeleton component when CP gives it one neuron identity."""
+
+    adopted = np.asarray(owner_skeleton, dtype=np.int32).copy()
+    components, component_count = ndi.label(
+        np.asarray(skeleton, dtype=bool),
+        structure=np.ones((3, 3), dtype=bool),
+    )
+    for component in range(1, component_count + 1):
+        component_mask = components == component
+        owners = np.unique(
+            np.concatenate(
+                (
+                    adopted[component_mask],
+                    unified_neuron_labels[component_mask],
+                )
+            )
+        )
+        owners = owners[owners > 0]
+        if owners.size == 1:
+            adopted[component_mask] = int(owners[0])
+    return adopted
+
+
+def _qualify_nuclear_cell_bodies(
+    cell_body_payload,
+    cell_body_labels: np.ndarray,
+    unified_neuron_labels: np.ndarray,
+):
+    """Keep DAPI candidates that expand into declared neuronal cytoplasm."""
+
+    label_count = int(cell_body_labels.max())
+    body_areas = np.bincount(
+        cell_body_labels.ravel(),
+        minlength=label_count + 1,
+    )
+    secondary_areas = np.bincount(
+        unified_neuron_labels.ravel(),
+        minlength=label_count + 1,
+    )
+    keep = np.zeros(label_count + 1, dtype=bool)
+    keep[1:] = secondary_areas[1:] > body_areas[1:]
+    return object_label_value_with_dense_labels(
+        cell_body_payload,
+        _relabel(cell_body_labels, keep),
+        domain_declaration=PresentObjectLabelIdsDomainDeclaration(),
+    )
+
+
+def _derive_signal_cell_bodies(
+    nuclear_seed_labels: np.ndarray,
+    unified_neuron_labels: np.ndarray,
+    neurite_image: np.ndarray,
+    settings: MetaXpressCellBodySettings,
+    pixel_size_um: float,
+    *,
+    bright_objects: bool,
+) -> np.ndarray:
+    """Fill bounded neuronal-cytoplasm bodies around qualified nuclear seeds."""
+
+    seeds = np.asarray(nuclear_seed_labels, dtype=np.int32)
+    unified = np.asarray(unified_neuron_labels, dtype=np.int32)
+    if seeds.shape != unified.shape or seeds.shape != neurite_image.shape:
+        raise ValueError(
+            "nuclear seeds, unified neurons, and neurite image must share a shape"
+        )
+    maximum_radius_px = settings.approximate_max_width / (2.0 * pixel_size_um)
+    minimum_area_px = settings.minimum_area / pixel_size_um**2
+    response = local_background_response(
+        neurite_image,
+        object_width_px=settings.approximate_max_width / pixel_size_um,
+        bright_objects=bright_objects,
+    )
+    body_foreground = response >= settings.intensity_above_local_background
+    foreground_distance = ndi.distance_transform_edt(body_foreground)
+    bodies = np.zeros(seeds.shape, dtype=np.int32)
+    connectivity = np.ones((3, 3), dtype=bool)
+    for owner in range(1, int(seeds.max()) + 1):
+        seed = seeds == owner
+        if not np.any(seed):
+            continue
+        seed_coordinates = np.argwhere(seed)
+        seed_centroid = tuple(
+            int(np.clip(round(value), 0, seeds.shape[axis] - 1))
+            for axis, value in enumerate(seed_coordinates.mean(axis=0))
+        )
+        local_foreground_width = 2.0 * float(foreground_distance[seed_centroid]) - 1.0
+        if local_foreground_width > settings.approximate_max_width / pixel_size_um:
+            continue
+        distance_from_seed = ndi.distance_transform_edt(~seed)
+        candidate = (
+            (unified == owner)
+            & (distance_from_seed <= maximum_radius_px)
+            & body_foreground
+        )
+        components, component_count = ndi.label(candidate, structure=connectivity)
+        if component_count == 0:
+            continue
+        component = min(
+            range(1, component_count + 1),
+            key=lambda value: (
+                float(np.min(distance_from_seed[components == value])),
+                value,
+            ),
+        )
+        body = ndi.binary_fill_holes(components == component)
+        if np.count_nonzero(body) < minimum_area_px:
+            continue
+        bodies[body] = owner
+    return bodies
+
+
+def _repair_signal_supported_skeleton(
+    labels: np.ndarray,
+    signal_response: np.ndarray,
+    owner_regions: np.ndarray,
+    cell_body_labels: np.ndarray,
+    *,
+    minimum_response: float,
+) -> np.ndarray:
+    """Connect owned fragments only through continuous same-owner image evidence.
+
+    Each owner starts at a point inside its cell body. A deterministic
+    multi-source least-cost search may traverse that body, already accepted
+    skeleton pixels, or pixels that both exceed the declared neurite-response
+    threshold and belong to the owner's propagated region. Unsupported or
+    foreign-owner fragments are removed instead of receiving inferred chords.
+    """
+
+    repaired = np.asarray(labels, dtype=np.int32).copy()
+    response = np.asarray(signal_response, dtype=float)
+    regions = np.asarray(owner_regions, dtype=np.int32)
+    bodies = np.asarray(cell_body_labels, dtype=np.int32)
+    if not repaired.shape == response.shape == regions.shape == bodies.shape:
+        raise ValueError(
+            "labels, signal_response, owner_regions, and cell_body_labels must "
+            "have the same shape"
+        )
+    if not np.isfinite(minimum_response) or minimum_response < 0:
+        raise ValueError("minimum_response must be finite and >= 0")
+
+    connectivity = np.ones((3, 3), dtype=bool)
+    owners = sorted(int(value) for value in np.unique(repaired) if value > 0)
+    for owner in owners:
+        body_mask = bodies == owner
+        original_owner = (repaired == owner) & ~body_mask
+        repaired[(repaired == owner) & body_mask] = 0
+        if not np.any(original_owner):
+            continue
+        soma_coordinate = tuple(
+            int(round(value)) for value in _in_body_soma_coordinate(bodies, owner)
+        )
+        repaired[soma_coordinate] = owner
+        occupied_by_other_owner = (repaired > 0) & (repaired != owner)
+        signal_support = (response >= minimum_response) & (regions == owner)
+        allowed = (
+            signal_support | original_owner | body_mask
+        ) & ~occupied_by_other_owner
+
+        while True:
+            components, _ = ndi.label(
+                repaired == owner,
+                structure=connectivity,
+            )
+            root_component = int(components[soma_coordinate])
+            connected = components == root_component
+            targets = original_owner & ~connected
+            if not np.any(targets):
+                break
+            path = _least_cost_supported_path(
+                allowed,
+                response,
+                connected,
+                targets,
+                preferred=(original_owner | body_mask),
+                minimum_response=minimum_response,
+            )
+            if path is None:
+                break
+            repaired[tuple(path.T)] = owner
+
+        components, _ = ndi.label(
+            repaired == owner,
+            structure=connectivity,
+        )
+        root_component = int(components[soma_coordinate])
+        repaired[(repaired == owner) & (components != root_component)] = 0
+    return repaired
+
+
+def _prune_soma_detached_skeleton(
+    labels: np.ndarray,
+    cell_body_labels: np.ndarray,
+    *,
+    attachment_distance: float,
+) -> np.ndarray:
+    """Keep only external skeleton components that reach their owning soma."""
+
+    skeleton = np.asarray(labels, dtype=np.int32).copy()
+    bodies = np.asarray(cell_body_labels, dtype=np.int32)
+    if skeleton.shape != bodies.shape:
+        raise ValueError("labels and cell_body_labels must have the same shape")
+    if not np.isfinite(attachment_distance) or attachment_distance < 0:
+        raise ValueError("attachment_distance must be finite and >= 0")
+
+    connectivity = np.ones((3, 3), dtype=bool)
+    for owner in sorted(int(value) for value in np.unique(skeleton) if value > 0):
+        soma_distance = ndi.distance_transform_edt(bodies != owner)
+        components, component_count = ndi.label(
+            skeleton == owner,
+            structure=connectivity,
+        )
+        for component in range(1, component_count + 1):
+            component_mask = components == component
+            if float(np.min(soma_distance[component_mask])) > attachment_distance:
+                skeleton[component_mask] = 0
+    return skeleton
+
+
+def _least_cost_supported_path(
+    allowed: np.ndarray,
+    signal_response: np.ndarray,
+    starts: np.ndarray,
+    targets: np.ndarray,
+    *,
+    preferred: np.ndarray,
+    minimum_response: float,
+) -> np.ndarray | None:
+    """Return one deterministic 8-connected path over accepted support pixels."""
+
+    shape = allowed.shape
+    distances = np.full(shape, np.inf, dtype=float)
+    predecessor_rows = np.full(shape, -1, dtype=np.int32)
+    predecessor_columns = np.full(shape, -1, dtype=np.int32)
+    pixel_cost = np.full(shape, np.inf, dtype=float)
+    if minimum_response > 0:
+        supported_response = np.maximum(signal_response, minimum_response)
+        pixel_cost[allowed] = 1.0 + (minimum_response / supported_response[allowed])
+    else:
+        pixel_cost[allowed] = 1.0
+    pixel_cost[preferred & allowed] = 0.5
+
+    queue: list[tuple[float, int, int]] = []
+    for row, column in np.argwhere(starts & allowed):
+        row_index = int(row)
+        column_index = int(column)
+        distances[row_index, column_index] = 0.0
+        heapq.heappush(queue, (0.0, row_index, column_index))
+
+    neighbor_offsets = (
+        (-1, -1, np.sqrt(2.0)),
+        (-1, 0, 1.0),
+        (-1, 1, np.sqrt(2.0)),
+        (0, -1, 1.0),
+        (0, 1, 1.0),
+        (1, -1, np.sqrt(2.0)),
+        (1, 0, 1.0),
+        (1, 1, np.sqrt(2.0)),
+    )
+    destination: tuple[int, int] | None = None
+    while queue:
+        distance, row, column = heapq.heappop(queue)
+        if distance != distances[row, column]:
+            continue
+        if targets[row, column]:
+            destination = (row, column)
+            break
+        for row_offset, column_offset, step_length in neighbor_offsets:
+            next_row = row + row_offset
+            next_column = column + column_offset
+            if not (0 <= next_row < shape[0] and 0 <= next_column < shape[1]):
+                continue
+            if not allowed[next_row, next_column]:
+                continue
+            step_cost = (
+                0.5
+                * (pixel_cost[row, column] + pixel_cost[next_row, next_column])
+                * step_length
+            )
+            candidate = distance + step_cost
+            if candidate >= distances[next_row, next_column]:
+                continue
+            distances[next_row, next_column] = candidate
+            predecessor_rows[next_row, next_column] = row
+            predecessor_columns[next_row, next_column] = column
+            heapq.heappush(queue, (candidate, next_row, next_column))
+
+    if destination is None:
+        return None
+    path = [destination]
+    while not starts[path[-1]]:
+        row, column = path[-1]
+        predecessor = (
+            int(predecessor_rows[row, column]),
+            int(predecessor_columns[row, column]),
+        )
+        if predecessor[0] < 0:
+            raise RuntimeError("Signal-supported path has no predecessor to a start")
+        path.append(predecessor)
+    path.reverse()
+    return np.asarray(path, dtype=np.int32)
 
 
 def _relabel(labels: np.ndarray, keep: np.ndarray) -> np.ndarray:
@@ -578,7 +1275,16 @@ def _analyze_topology(
     cell_body_labels: np.ndarray,
     pixel_size_um: float,
     outgrowth_width_px: float,
+    *,
+    assigned_path_labels: np.ndarray | None = None,
 ) -> _TopologyResult:
+    if (
+        assigned_path_labels is not None
+        and assigned_path_labels.shape != skeleton.shape
+    ):
+        raise ValueError(
+            "assigned_path_labels must have the same shape as the skeleton"
+        )
     if not skeleton.any():
         return _empty_topology()
 
@@ -594,7 +1300,9 @@ def _analyze_topology(
     )
     path_lengths = branch_table["branch_distance"].to_numpy(dtype=float)
     path_euclidean_lengths = branch_table["euclidean_distance"].to_numpy(dtype=float)
+    path_branch_types = branch_table["branch_type"].to_numpy(dtype=np.int32)
     node_incidence: dict[int, list[int]] = defaultdict(list)
+    node_endpoints: dict[int, list[tuple[int, int]]] = defaultdict(list)
     node_is_source: dict[tuple[int, int], bool] = {}
     node_coordinates: dict[int, np.ndarray] = {}
     for path_index, row in branch_table.iterrows():
@@ -602,6 +1310,8 @@ def _analyze_topology(
         destination = int(row["node_id_dst"])
         node_incidence[source].append(path_index)
         node_incidence[destination].append(path_index)
+        node_endpoints[source].append((path_index, 0))
+        node_endpoints[destination].append((path_index, 1))
         node_is_source[(source, path_index)] = True
         node_is_source[(destination, path_index)] = False
         node_coordinates[source] = np.array(
@@ -616,8 +1326,12 @@ def _analyze_topology(
     }
     branch_nodes: set[int] = set()
     crossing_nodes: set[int] = set()
+    path_endpoint_groups = [[0, 0] for _ in range(path_count)]
+    endpoint_group_coordinates: dict[int, tuple[float, float]] = {}
+    next_endpoint_group = 1
     lookahead = max(2, int(np.ceil(outgrowth_width_px)))
-    for node, incident_paths in node_incidence.items():
+    for node in sorted(node_incidence):
+        incident_paths = node_incidence[node]
         unique_paths = sorted(set(incident_paths))
         crossing_pairs = _crossing_pairs(
             unique_paths,
@@ -628,14 +1342,33 @@ def _analyze_topology(
         )
         if crossing_pairs is not None:
             crossing_nodes.add(node)
-            pairs: Iterable[tuple[int, int]] = crossing_pairs
+            endpoint_groups = tuple(
+                tuple(
+                    endpoint for endpoint in node_endpoints[node] if endpoint[0] in pair
+                )
+                for pair in crossing_pairs
+            )
         else:
             if len(unique_paths) >= 3:
                 branch_nodes.add(node)
-            pairs = combinations(unique_paths, 2)
-        for first, second in pairs:
-            transitions[first].add(second)
-            transitions[second].add(first)
+            endpoint_groups = (tuple(node_endpoints[node]),)
+
+        for endpoint_group in endpoint_groups:
+            group_id = next_endpoint_group
+            next_endpoint_group += 1
+            group_paths = sorted({path_index for path_index, _ in endpoint_group})
+            for path_index, endpoint_index in endpoint_group:
+                path_endpoint_groups[path_index][endpoint_index] = group_id
+            coordinate_path, coordinate_endpoint = min(endpoint_group)
+            coordinate = path_coordinates[coordinate_path][
+                0 if coordinate_endpoint == 0 else -1
+            ]
+            endpoint_group_coordinates[group_id] = tuple(
+                float(value) for value in coordinate
+            )
+            for first, second in combinations(group_paths, 2):
+                transitions[first].add(second)
+                transitions[second].add(first)
 
     expanded_bodies = expand_labels(
         cell_body_labels,
@@ -656,6 +1389,14 @@ def _analyze_topology(
         transitions,
         root_labels_by_path,
     )
+    if assigned_path_labels is not None:
+        for path_index, coordinates in enumerate(path_coordinates):
+            labels = assigned_path_labels[tuple(coordinates.T)]
+            labels = labels[labels > 0]
+            if labels.size:
+                path_owners[path_index] = Counter(
+                    int(label) for label in labels
+                ).most_common(1)[0][0]
     roots_by_cell: dict[int, list[int]] = defaultdict(list)
     for path_index, labels in root_labels_by_path.items():
         owner = int(path_owners[path_index])
@@ -688,6 +1429,11 @@ def _analyze_topology(
         path_lengths=path_lengths,
         path_euclidean_lengths=path_euclidean_lengths,
         path_coordinates=path_coordinates,
+        path_endpoint_groups=tuple(
+            tuple(endpoint_groups) for endpoint_groups in path_endpoint_groups
+        ),
+        path_branch_types=path_branch_types,
+        endpoint_group_coordinates=endpoint_group_coordinates,
         transitions={key: tuple(sorted(value)) for key, value in transitions.items()},
         root_paths_by_cell={
             cell: tuple(sorted(set(paths))) for cell, paths in roots_by_cell.items()
@@ -738,6 +1484,9 @@ def _empty_topology() -> _TopologyResult:
         path_lengths=np.zeros(0, dtype=float),
         path_euclidean_lengths=np.zeros(0, dtype=float),
         path_coordinates=(),
+        path_endpoint_groups=(),
+        path_branch_types=np.zeros(0, dtype=np.int32),
+        endpoint_group_coordinates={},
         transitions={},
         root_paths_by_cell={},
         branch_owner={},
@@ -821,6 +1570,285 @@ def _propagate_path_owners(
             if neighbor_distance <= distances[neighbor]:
                 heapq.heappush(queue, (neighbor_distance, owner, neighbor))
     return path_owners, distances
+
+
+def _build_neurite_morphology_graph(
+    topology: _TopologyResult,
+    cell_body_labels: np.ndarray,
+    *,
+    pixel_size_um: float,
+    outgrowth_width_px: float,
+    assigned_path_labels: np.ndarray | None = None,
+) -> SpatialGraph:
+    """Project owned Skan paths into deterministic soma-rooted forests."""
+
+    if assigned_path_labels is not None and assigned_path_labels.shape != (
+        cell_body_labels.shape
+    ):
+        raise ValueError(
+            "assigned_path_labels must have the same shape as cell_body_labels"
+        )
+    paths_by_owner: dict[int, list[int]] = defaultdict(list)
+    for path_index, coordinates in enumerate(topology.path_coordinates):
+        owner = int(topology.path_owners[path_index])
+        if assigned_path_labels is not None:
+            labels = assigned_path_labels[tuple(coordinates.T)]
+            labels = labels[labels > 0]
+            owner = (
+                Counter(int(label) for label in labels).most_common(1)[0][0]
+                if labels.size
+                else 0
+            )
+        if owner > 0:
+            paths_by_owner[owner].append(path_index)
+
+    graph_nodes: list[SpatialGraphNode] = []
+    graph_edges: list[SpatialGraphEdge] = []
+    next_node_id = 1
+    next_edge_id = 1
+    process_radius_um = max(
+        pixel_size_um / 2.0,
+        outgrowth_width_px * pixel_size_um / 2.0,
+    )
+
+    for owner in sorted(paths_by_owner):
+        owner_paths = tuple(sorted(paths_by_owner[owner]))
+        adjacency: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        for path_index in owner_paths:
+            first_group, second_group = topology.path_endpoint_groups[path_index]
+            adjacency[first_group].append((path_index, second_group))
+            adjacency[second_group].append((path_index, first_group))
+        for incident_paths in adjacency.values():
+            incident_paths.sort()
+
+        body_area_um2 = float(np.count_nonzero(cell_body_labels == owner)) * (
+            pixel_size_um**2
+        )
+        soma_distance = ndi.distance_transform_edt(cell_body_labels != owner)
+        soma_coordinate = _in_body_soma_coordinate(cell_body_labels, owner)
+        soma_radius_um = max(
+            process_radius_um,
+            float(np.sqrt(body_area_um2 / np.pi)),
+        )
+        primary_root_group = min(
+            adjacency,
+            key=lambda group_id: (
+                sum(
+                    (
+                        topology.endpoint_group_coordinates[group_id][axis]
+                        - soma_coordinate[axis]
+                    )
+                    ** 2
+                    for axis in range(2)
+                ),
+                group_id,
+            ),
+        )
+        remaining_groups = set(adjacency)
+
+        while remaining_groups:
+            component_seed = min(remaining_groups)
+            component_groups: set[int] = set()
+            component_paths: set[int] = set()
+            frontier = [component_seed]
+            while frontier:
+                group_id = frontier.pop()
+                if group_id in component_groups:
+                    continue
+                component_groups.add(group_id)
+                for path_index, neighbor_group in adjacency[group_id]:
+                    component_paths.add(path_index)
+                    if neighbor_group not in component_groups:
+                        frontier.append(neighbor_group)
+            remaining_groups.difference_update(component_groups)
+
+            root_group = min(
+                component_groups,
+                key=lambda group_id: (
+                    sum(
+                        (
+                            topology.endpoint_group_coordinates[group_id][axis]
+                            - soma_coordinate[axis]
+                        )
+                        ** 2
+                        for axis in range(2)
+                    ),
+                    group_id,
+                ),
+            )
+            is_soma_component = root_group == primary_root_group
+            root_coordinate = topology.endpoint_group_coordinates[root_group]
+            root_index = tuple(
+                int(np.clip(round(value), 0, cell_body_labels.shape[axis] - 1))
+                for axis, value in enumerate(root_coordinate)
+            )
+            root_inside_soma = cell_body_labels[root_index] == owner
+            soma_attachment_distance = max(
+                1.0,
+                outgrowth_width_px / 2.0 + 0.5,
+            )
+            root_touches_soma = any(
+                float(
+                    np.min(
+                        soma_distance[tuple(topology.path_coordinates[path_index].T)]
+                    )
+                )
+                <= soma_attachment_distance
+                for path_index in component_paths
+            )
+            soma_connected = root_inside_soma or root_touches_soma
+            if root_inside_soma and is_soma_component:
+                root_role = "soma_root"
+            elif root_touches_soma:
+                root_role = "soma_attachment_root"
+            else:
+                root_role = "disconnected_root"
+            root_node = SpatialGraphNode.from_features(
+                node_id=next_node_id,
+                coordinates=root_coordinate,
+                radius=(
+                    soma_radius_um if root_role == "soma_root" else process_radius_um
+                ),
+                features={
+                    "label": owner,
+                    "neuron_label": owner,
+                    "node_role": root_role,
+                },
+            )
+            next_node_id += 1
+            graph_nodes.append(root_node)
+            nodes_by_group: dict[int, SpatialGraphNode] = {root_group: root_node}
+            for group_id in sorted(component_groups):
+                if group_id == root_group:
+                    continue
+                node = SpatialGraphNode.from_features(
+                    node_id=next_node_id,
+                    coordinates=topology.endpoint_group_coordinates[group_id],
+                    radius=process_radius_um,
+                    features={
+                        "label": owner,
+                        "neuron_label": owner,
+                        "node_role": "neurite",
+                    },
+                )
+                next_node_id += 1
+                graph_nodes.append(node)
+                nodes_by_group[group_id] = node
+
+            node_distances = {root_group: 0.0}
+            visited_groups = {root_group}
+            emitted_paths: set[int] = set()
+            candidate_edges: list[tuple[float, int, int, int]] = []
+
+            def enqueue_from(group_id: int) -> None:
+                for path_index, neighbor_group in adjacency[group_id]:
+                    if path_index not in component_paths:
+                        continue
+                    candidate_distance = node_distances[group_id] + float(
+                        topology.path_lengths[path_index]
+                    )
+                    heapq.heappush(
+                        candidate_edges,
+                        (
+                            candidate_distance,
+                            path_index,
+                            group_id,
+                            neighbor_group,
+                        ),
+                    )
+
+            enqueue_from(root_group)
+            while candidate_edges:
+                (
+                    target_distance,
+                    path_index,
+                    source_group,
+                    target_group,
+                ) = heapq.heappop(candidate_edges)
+                if path_index in emitted_paths:
+                    continue
+
+                endpoint_groups = topology.path_endpoint_groups[path_index]
+                coordinates = topology.path_coordinates[path_index]
+                if endpoint_groups != (source_group, target_group):
+                    coordinates = coordinates[::-1]
+                target_is_cycle_break = target_group in visited_groups
+                if target_is_cycle_break:
+                    target_node = SpatialGraphNode.from_features(
+                        node_id=next_node_id,
+                        coordinates=coordinates[-1],
+                        radius=process_radius_um,
+                        features={
+                            "label": owner,
+                            "neuron_label": owner,
+                            "node_role": "cycle_break",
+                        },
+                    )
+                    next_node_id += 1
+                    graph_nodes.append(target_node)
+                else:
+                    visited_groups.add(target_group)
+                    node_distances[target_group] = target_distance
+                    target_node = nodes_by_group[target_group]
+                branch_distance_um = float(topology.path_lengths[path_index])
+                euclidean_distance_um = float(
+                    topology.path_euclidean_lengths[path_index]
+                )
+                graph_edges.append(
+                    SpatialGraphEdge.from_features(
+                        edge_id=next_edge_id,
+                        source=nodes_by_group[source_group],
+                        target=target_node,
+                        coordinates=coordinates,
+                        features={
+                            "label": owner,
+                            "neuron_label": owner,
+                            "branch_distance_um": branch_distance_um,
+                            "euclidean_distance_um": euclidean_distance_um,
+                            "tortuosity": (
+                                max(
+                                    1.0,
+                                    branch_distance_um / euclidean_distance_um,
+                                )
+                                if euclidean_distance_um > 0
+                                else 0.0
+                            ),
+                            "distance_from_soma_um": (
+                                node_distances[source_group]
+                                if soma_connected
+                                else float("nan")
+                            ),
+                            "branch_type": int(topology.path_branch_types[path_index]),
+                        },
+                    )
+                )
+                next_edge_id += 1
+                emitted_paths.add(path_index)
+                if not target_is_cycle_break:
+                    enqueue_from(target_group)
+
+    graph = SpatialGraph(
+        name=NEURITE_MORPHOLOGY_OUTPUT.name,
+        nodes=tuple(graph_nodes),
+        edges=tuple(graph_edges),
+        coordinate_spacing=(pixel_size_um, pixel_size_um),
+    )
+    graph.require_directed_forest()
+    return graph
+
+
+def _in_body_soma_coordinate(
+    cell_body_labels: np.ndarray,
+    owner: int,
+) -> tuple[float, float]:
+    owner_coordinates = np.argwhere(cell_body_labels == owner)
+    if not len(owner_coordinates):
+        raise ValueError(
+            f"Neurite topology owner {owner} has no corresponding cell body."
+        )
+    centroid = owner_coordinates.mean(axis=0)
+    soma_index = int(np.argmin(np.sum((owner_coordinates - centroid) ** 2, axis=1)))
+    return tuple(float(value) for value in owner_coordinates[soma_index])
 
 
 def _render_owned_skeleton(

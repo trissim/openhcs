@@ -11,7 +11,7 @@ import openhcs  # noqa: F401 - prefer repository submodules before direct import
 import numpy as np
 import tifffile
 from objectstate import ObjectStateRegistry
-from polystore.roi import load_rois_from_zip
+from polystore.roi import PolylineShape, load_rois_from_zip
 from skimage.draw import disk, line
 
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
@@ -174,7 +174,7 @@ def test_neurite_outgrowth_runs_on_synthetic_plate_as_2d_channel_stack(
         assert len(summary_rows) == 2
         assert len(cell_rows) == 2
         assert all(int(row["number_of_cells"]) == 1 for row in summary_rows)
-        assert all(int(row["total_processes"]) == 5 for row in summary_rows)
+        assert all(int(row["total_processes"]) == 1 for row in summary_rows)
         assert all(int(row["total_branches"]) == 1 for row in summary_rows)
         assert all(int(row["cell_body_channel_index"]) == 0 for row in summary_rows)
         assert all(int(row["nuclear_channel_index"]) == 1 for row in summary_rows)
@@ -203,6 +203,30 @@ def test_neurite_outgrowth_runs_on_synthetic_plate_as_2d_channel_stack(
         )
         assert all("_w2_" in path.name for path in roi_paths if "nuclei" in path.name)
         assert all(load_rois_from_zip(path) for path in roi_paths)
+
+        swc_paths = sorted(tmp_path.rglob("*neurite_morphology*.swc"))
+        graph_roi_paths = sorted(
+            tmp_path.rglob("*neurite_morphology*.graph.roi.zip")
+        )
+        assert len(swc_paths) == 2
+        assert len(graph_roi_paths) == 2
+        assert all(
+            "# OpenHCS spatial graph: neurite_morphology" in path.read_text()
+            for path in swc_paths
+        )
+        for graph_roi_path in graph_roi_paths:
+            branch_rois = load_rois_from_zip(graph_roi_path)
+            assert branch_rois
+            for branch_roi in branch_rois:
+                assert len(branch_roi.shapes) == 1
+                assert isinstance(branch_roi.shapes[0], PolylineShape)
+                assert branch_roi.metadata["label"] == 1
+                assert branch_roi.metadata["neuron_label"] == 1
+                assert branch_roi.metadata["branch_distance_um"] > 0
+                assert branch_roi.metadata["euclidean_distance_um"] > 0
+                assert branch_roi.metadata["tortuosity"] >= 1.0
+                assert branch_roi.metadata["distance_from_soma_um"] >= 0
+                assert "branch_type" in branch_roi.metadata
 
         summaries = sorted(
             (
