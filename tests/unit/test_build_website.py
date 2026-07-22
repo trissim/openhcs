@@ -83,15 +83,16 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     assert "Download for Windows" in html
     assert "Download for macOS" in html
     assert (
-        "User-scoped, CPU-only installation with Napari and Fiji/Bio-Formats support"
+        "User-scoped, CPU-only installation with CellProfiler compatibility, local MCP"
         in html
     )
+    assert "Napari, and Fiji/Bio-Formats support" in html
     assert "GPU libraries are not included" in html
     assert "Fiji Java components are resolved on first use" in html
     assert "not code-signed" in html and "not notarized" in html
     assert 'class="install-routes"' in html
     assert html.index("Download for Windows") < html.index(
-        'python -m pip install "openhcs[gui,viz]"'
+        'python -m pip install "openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]"'
     )
     assert "This release adds supported CellProfiler" in html
     assert "Production MCPB signing" in html

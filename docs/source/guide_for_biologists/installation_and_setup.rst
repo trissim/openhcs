@@ -13,6 +13,11 @@ user account: it uses uv to install a managed Python, creates a dedicated
 OpenHCS environment, installs the CPU-safe GUI package, and creates an OpenHCS
 desktop launcher. It does not replace or modify a system Python.
 
+The desktop bundle includes the Qt application, CellProfiler compatibility,
+the local MCP server, Napari, and Fiji/Bio-Formats support. GPU libraries are
+not included. PyImageJ resolves and caches the Fiji/Bio-Formats Java
+distribution on first use rather than embedding a standalone ``Fiji.app``.
+
 Download the installer archive for your operating system from the matching
 `GitHub release <https://github.com/OpenHCSDev/openhcs/releases>`_, extract it,
 and open the included installer. Re-running the same installer updates the
@@ -27,12 +32,13 @@ Python and OpenHCS remain managed by uv and PyPI in the dedicated environment.
 Manual installation
 -------------------
 
-Create a Python virtual environment if possible, then install the GUI extra:
+Create a Python virtual environment if possible, then install the same CPU-safe
+desktop capabilities selected by the native installers:
 
 .. code-block:: bash
 
    python -m pip install --upgrade pip
-   python -m pip install "openhcs[gui]"
+   python -m pip install "openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]"
 
 Launch the application with:
 
@@ -42,6 +48,18 @@ Launch the application with:
 
 ``openhcs-gui`` launches the same application. The old terminal interface is
 deprecated and is not part of the published package.
+
+To verify the installed MCP, runtime, and Napari path with a bounded portable
+neurite workflow, run:
+
+.. code-block:: bash
+
+   openhcs-mcp-demo --json
+
+The command generates a small local plate, executes the packaged neurite preset,
+requires MCP to observe nonzero payloads in the live Napari window, and shuts
+down only the runtime and viewer endpoints it allocated. Its output directory is
+reported in the JSON result.
 
 Optional viewers
 ----------------
@@ -63,9 +81,9 @@ Only install the GPU extra on a system with a compatible CUDA 12 environment:
 
    python -m pip install "openhcs[gui,gpu]"
 
-A CPU-only installation is the normal ``openhcs[gui]`` installation without
-the ``gpu`` extra. Do not use ``--no-deps``: OpenHCS requires its declared core
-dependencies even when CUDA libraries are absent.
+A CPU-only installation is any installation without the ``gpu`` extra. Do not
+use ``--no-deps``: OpenHCS requires its declared core dependencies even when
+CUDA libraries are absent.
 
 First launch
 ------------
@@ -89,7 +107,7 @@ backend:
 
 .. code-block:: bash
 
-   python -m pip install --upgrade "openhcs[gui]"
+   python -m pip install --upgrade "openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]"
 
 See :doc:`../getting_started/getting_started` for CellProfiler import and the
 current programmatic declaration boundary.

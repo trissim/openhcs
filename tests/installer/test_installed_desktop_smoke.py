@@ -16,7 +16,9 @@ def _write_contract(path: Path, *, entry_point: str = "openhcs") -> None:
             {
                 "schema_version": "openhcs.installer.v1",
                 "product_name": "OpenHCS",
-                "package_requirement": "openhcs[bioformats,gui,viz]==0.5.22",
+                "package_requirement": (
+                    "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.5.22"
+                ),
                 "entry_point": entry_point,
             }
         ),
@@ -31,6 +33,121 @@ def _stub_installed_probe(monkeypatch) -> None:
         lambda *_args: {"version": "0.5.22"},
     )
     monkeypatch.setattr(desktop_smoke, "_smoke_entry_point", lambda *_args: None)
+    monkeypatch.setattr(
+        desktop_smoke,
+        "_smoke_installed_mcp",
+        lambda *_args: {"health_status": "ok"},
+    )
+    monkeypatch.setattr(
+        desktop_smoke,
+        "_smoke_installed_demo",
+        lambda *_args: {
+            "execution_status": "complete",
+            "viewer_observed": True,
+            "viewer_type": "napari",
+        },
+    )
+
+
+def test_mcp_smoke_uses_installed_python_in_isolated_mode(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    installed_python = tmp_path / "installed" / "python"
+    installed_python.parent.mkdir()
+    installed_python.touch()
+    observed: dict[str, object] = {}
+
+    def fake_run_checked(command, *, cwd, environment=None):
+        observed.update(command=command, cwd=cwd, environment=environment)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"health_status": "ok"}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(desktop_smoke, "_run_checked", fake_run_checked)
+
+    payload = desktop_smoke._smoke_installed_mcp(installed_python, tmp_path)
+
+    assert payload == {"health_status": "ok"}
+    assert observed["command"] == [
+        str(installed_python),
+        "-I",
+        str(desktop_smoke.INSTALLED_MCP_SMOKE_PATH.resolve()),
+        "--forbid-import-root",
+        str(desktop_smoke.REPOSITORY_ROOT),
+    ]
+    assert observed["cwd"] == tmp_path
+    smoke_environment = observed["environment"]
+    assert isinstance(smoke_environment, dict)
+    assert smoke_environment["OPENHCS_CPU_ONLY"] == "true"
+    assert smoke_environment["XDG_CACHE_HOME"] == str(
+        (tmp_path / "mcp-cache").resolve()
+    )
+
+
+def test_portable_demo_uses_installed_python_and_real_viewer_contract(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    installed_python = tmp_path / "installed" / "python"
+    installed_python.parent.mkdir()
+    installed_python.touch()
+    observed: dict[str, object] = {}
+
+    def fake_run_checked(
+        command,
+        *,
+        cwd,
+        environment=None,
+        timeout_seconds=120,
+    ):
+        observed.update(
+            command=command,
+            cwd=cwd,
+            environment=environment,
+            timeout_seconds=timeout_seconds,
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "execution_status": "complete",
+                    "viewer_observed": True,
+                    "viewer_type": "napari",
+                    "viewer_layer_count": 2,
+                    "viewer_nonzero_payload_count": 2,
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(desktop_smoke, "_run_checked", fake_run_checked)
+
+    payload = desktop_smoke._smoke_installed_demo(installed_python, tmp_path)
+
+    demo_root = (tmp_path / "installer-smoke-demo").resolve()
+    assert payload["viewer_type"] == "napari"
+    assert observed["command"] == [
+        str(installed_python),
+        "-I",
+        "-m",
+        "openhcs.mcp.installed_demo",
+        "--output-root",
+        str(demo_root),
+        "--forbid-import-root",
+        str(desktop_smoke.REPOSITORY_ROOT),
+        "--json",
+    ]
+    assert observed["cwd"] == tmp_path
+    assert observed["timeout_seconds"] == 300
+    demo_environment = observed["environment"]
+    assert isinstance(demo_environment, dict)
+    assert demo_environment["OPENHCS_AGENT_READ_ROOTS"] == str(demo_root)
+    assert demo_environment["OPENHCS_AGENT_WRITE_ROOTS"] == str(demo_root)
 
 
 def test_distribution_probe_queries_installed_extra_metadata(

@@ -21,10 +21,12 @@ entry point remain authoritative.
 - Installation is per-user and does not modify system Python or require an
   administrator account.
 - Re-running an installer updates/reinstalls the same isolated environment.
-- The default is the CPU-safe `openhcs[gui,viz,bioformats]` desktop surface:
-  the Qt application, Napari, Fiji/PyImageJ, and Bio-Formats support. GPU
-  dependencies remain an explicit post-install choice because the host's CUDA
-  environment cannot be inferred safely.
+- The default is the CPU-safe
+  `openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]` desktop surface: the Qt
+  application, Napari, Fiji/PyImageJ, Bio-Formats, supported CellProfiler
+  compatibility libraries, and the local MCP server. GPU dependencies remain
+  an explicit post-install choice because the host's CUDA environment cannot
+  be inferred safely.
 - PyImageJ resolves and caches the Fiji/Bio-Formats Java distribution on first
   Fiji or Bio-Formats use; the installer does not embed a standalone `Fiji.app`.
 - A durable log is kept in the platform's OpenHCS user log directory and is
@@ -58,8 +60,21 @@ archives to the GitHub release:
   with the bootstrap and pinned contract embedded as application resources.
 
 Pull-request CI parses the Windows PowerShell source on Windows and compiles the
-AppleScript application on macOS. The tag workflow repeats those gates before
-making either archive a release asset.
+AppleScript application on macOS. It also executes both native installers,
+checks every selected dependency against installed OpenHCS metadata, launches
+the canonical desktop command, and drives the installed MCP server through a
+real stdio session. It then runs ``openhcs-mcp-demo`` from that installed wheel:
+MCP generates a two-channel synthetic plate, the packaged neurite preset runs
+through the real execution server, Napari receives the result, MCP validates
+mounted nonzero viewer payloads, and the smoke shuts down only its dynamically
+allocated TCP runtime/viewer endpoints. The tag workflow repeats the source
+gates before making either archive a release asset.
+
+Users can run the same portable acceptance after installation:
+
+```bash
+openhcs-mcp-demo --json
+```
 
 ## Current distribution boundary
 

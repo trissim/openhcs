@@ -17,6 +17,10 @@ from packaging.requirements import Requirement
 from scripts.render_installer_contract import SCHEMA_VERSION
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+INSTALLED_MCP_SMOKE_PATH = Path(__file__).with_name("smoke_installed_mcp.py")
+
+
 @dataclass(frozen=True, slots=True)
 class InstallerSmokeContract:
     """Validated values needed to inspect an installed desktop application."""
@@ -77,6 +81,7 @@ def _run_checked(
     *,
     cwd: Path,
     environment: dict[str, str] | None = None,
+    timeout_seconds: float = 120,
 ) -> subprocess.CompletedProcess[str]:
     completed = subprocess.run(
         command,
@@ -85,7 +90,7 @@ def _run_checked(
         check=False,
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=timeout_seconds,
     )
     if completed.returncode != 0:
         raise AssertionError(
@@ -200,6 +205,84 @@ def _smoke_entry_point(entry_executable: Path, install_root: Path) -> None:
         raise AssertionError("Installed OpenHCS entry point did not render GUI help")
 
 
+def _smoke_installed_mcp(
+    python_executable: Path,
+    install_root: Path,
+) -> dict[str, Any]:
+    """Exercise the installed MCP server over stdio from outside the checkout."""
+
+    environment = os.environ.copy()
+    environment["OPENHCS_CPU_ONLY"] = "true"
+    environment["XDG_CACHE_HOME"] = str((install_root / "mcp-cache").resolve())
+    completed = _run_checked(
+        [
+            str(python_executable),
+            "-I",
+            str(INSTALLED_MCP_SMOKE_PATH.resolve()),
+            "--forbid-import-root",
+            str(REPOSITORY_ROOT),
+        ],
+        cwd=install_root,
+        environment=environment,
+    )
+    payload = json.loads(completed.stdout)
+    if payload.get("health_status") != "ok":
+        raise AssertionError(f"Installed MCP smoke did not report health: {payload}")
+    return payload
+
+
+def _smoke_installed_demo(
+    python_executable: Path,
+    install_root: Path,
+) -> dict[str, Any]:
+    """Execute the installed MCP/runtime/Napari demo outside the checkout."""
+
+    demo_root = (install_root / "installer-smoke-demo").resolve()
+    environment = os.environ.copy()
+    environment["OPENHCS_CPU_ONLY"] = "true"
+    environment["OPENHCS_AGENT_READ_ROOTS"] = str(demo_root)
+    environment["OPENHCS_AGENT_WRITE_ROOTS"] = str(demo_root)
+    environment["XDG_CACHE_HOME"] = str((install_root / "mcp-cache").resolve())
+    completed = _run_checked(
+        [
+            str(python_executable),
+            "-I",
+            "-m",
+            "openhcs.mcp.installed_demo",
+            "--output-root",
+            str(demo_root),
+            "--forbid-import-root",
+            str(REPOSITORY_ROOT),
+            "--json",
+        ],
+        cwd=install_root,
+        environment=environment,
+        timeout_seconds=300,
+    )
+    payload = json.loads(completed.stdout)
+    required_values = {
+        "execution_status": "complete",
+        "viewer_observed": True,
+        "viewer_type": "napari",
+    }
+    mismatches = {
+        name: {"expected": expected, "actual": payload.get(name)}
+        for name, expected in required_values.items()
+        if payload.get(name) != expected
+    }
+    if mismatches:
+        raise AssertionError(
+            f"Installed MCP/Napari demo did not satisfy its contract: {mismatches}"
+        )
+    if payload.get("viewer_layer_count", 0) < 1:
+        raise AssertionError(f"Installed Napari demo mounted no layers: {payload}")
+    if payload.get("viewer_nonzero_payload_count", 0) < 1:
+        raise AssertionError(
+            f"Installed Napari demo exposed no nonzero payloads: {payload}"
+        )
+    return payload
+
+
 def _verify_windows_launcher(
     contract: InstallerSmokeContract,
     install_root: Path,
@@ -312,6 +395,7 @@ def smoke_installed_desktop(
         environment,
     )
     _smoke_entry_point(entry_executable, install_root)
+    mcp = _smoke_installed_mcp(python_executable, install_root)
 
     if platform_name == "windows":
         if desktop_root is None:
@@ -333,10 +417,14 @@ def smoke_installed_desktop(
             home_root.resolve(),
         )
 
+    demo = _smoke_installed_demo(python_executable, install_root)
+
     return {
         "platform": platform_name,
         "version": distribution["version"],
         "environment": str(environment),
+        "mcp": mcp,
+        "demo": demo,
         **launcher,
     }
 

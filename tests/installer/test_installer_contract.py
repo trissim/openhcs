@@ -35,7 +35,13 @@ def test_installer_contract_queries_published_project_authorities() -> None:
     assert contract["schema_version"] == "openhcs.installer.v1"
     assert contract["product_name"] == "OpenHCS"
     assert requirement.name == project["name"]
-    assert requirement.extras == {"bioformats", "gui", "viz"}
+    assert requirement.extras == {
+        "bioformats",
+        "cellprofiler-compat",
+        "gui",
+        "mcp",
+        "viz",
+    }
     assert not requirement.specifier
     assert requirement.extras <= project["optional-dependencies"].keys()
     assert contract["entry_point"] == project["name"]
@@ -50,25 +56,34 @@ def test_installer_contract_queries_published_project_authorities() -> None:
 def test_visualization_install_surface_composes_napari_and_fiji() -> None:
     project = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))["project"]
     extras = project["optional-dependencies"]
+    parsed_napari_requirements = [
+        Requirement(requirement) for requirement in extras["napari"]
+    ]
     napari_requirements = {
-        Requirement(requirement).name for requirement in extras["napari"]
+        requirement.name: requirement for requirement in parsed_napari_requirements
     }
     fiji_requirements = {
         Requirement(requirement).name for requirement in extras["fiji"]
     }
 
-    assert {"napari", "napari-crop"} <= napari_requirements
+    assert {"napari", "napari-crop", "napari-roi-manager"} <= set(napari_requirements)
+    napari_requirement = napari_requirements["napari"]
+    assert napari_requirement.specifier.contains("0.7.1")
+    assert not napari_requirement.specifier.contains("0.6.1")
+    roi_manager_requirement = napari_requirements["napari-roi-manager"]
+    assert roi_manager_requirement.specifier.contains("0.0.7")
+    assert not roi_manager_requirement.specifier.contains("0.0.6")
     for combined_extra in ("viz", "all"):
         combined_requirements = {
             Requirement(requirement).name for requirement in extras[combined_extra]
         }
-        assert napari_requirements | fiji_requirements <= combined_requirements
+        assert set(napari_requirements) | fiji_requirements <= combined_requirements
 
 
 def test_release_requirement_preserves_extras_and_pins_version() -> None:
-    assert release_requirement("openhcs[gui,viz,bioformats]", "0.5.22") == (
-        "openhcs[bioformats,gui,viz]==0.5.22"
-    )
+    assert release_requirement(
+        "openhcs[gui,viz,bioformats,mcp,cellprofiler-compat]", "0.5.22"
+    ) == ("openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.5.22")
     with pytest.raises(ValueError, match="unversioned PyPI requirement"):
         release_requirement("openhcs[gui]>=0.5", "0.5.22")
 
@@ -81,7 +96,9 @@ def test_render_contract_changes_only_the_package_requirement(tmp_path: Path) ->
     loaded = json.loads(output_path.read_text(encoding="utf-8"))
 
     assert loaded == rendered
-    assert loaded["package_requirement"] == ("openhcs[bioformats,gui,viz]==0.5.22")
+    assert loaded["package_requirement"] == (
+        "openhcs[bioformats,cellprofiler-compat,gui,mcp,viz]==0.5.22"
+    )
     assert {
         key: value for key, value in loaded.items() if key != "package_requirement"
     } == {key: value for key, value in source.items() if key != "package_requirement"}
