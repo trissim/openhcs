@@ -6,6 +6,7 @@ from openhcs.agent.authoring_contexts import (
     AuthoringContextDeclaration,
     AuthoringContextRoute,
 )
+from openhcs.agent.capabilities import agent_capabilities
 from openhcs.agent.dto.common import SCHEMA_VERSION
 from openhcs.agent.dto.config import ConfigFieldSchema, ConfigSchema
 from openhcs.agent.dto.knowledge import (
@@ -156,6 +157,12 @@ def test_task_contexts_expose_only_the_next_relevant_boundary() -> None:
     assert "UI-VISIBLE WORKFLOW" in ui
     assert "FOLDER ONBOARDING WORKFLOW" not in ui
     assert "HEADLESS EXECUTION WORKFLOW" not in ui
+    assert "'view_results' action relates" in ui
+    assert "Do not select a surface by title matching" in ui
+    assert "object/source identity" in ui
+    assert "not a mirror of dialog tabs or table cells" in ui
+    assert "reconciling its object identifiers and row cardinality" in ui
+    assert "do not scrape the widget tree" in ui
 
     assert "FOLDER ONBOARDING WORKFLOW" in folder
     assert "openhcs_sample_plate_image" in folder
@@ -229,9 +236,15 @@ def test_task_contexts_expose_only_the_next_relevant_boundary() -> None:
     assert "Before changing biological thresholds" in debugging
     assert "openhcs_sample_plate_image" in debugging
     assert "openhcs_sample_viewer_window_image" in debugging
+    assert "Pixel values are omitted by default from viewer sampling" in debugging
+    assert "include_array_values=true" in debugging
+    assert "max_array_elements" in debugging
     assert "openhcs_get_viewer_window_payloads" in debugging
     assert "openhcs_summarize_viewer_window_rois" in debugging
     assert "schema-bearing per-object measurement rows" in debugging
+    assert "follow the 'view_results' action's `related_state_surface_ids`" in debugging
+    assert "never guess from a title substring" in debugging
+    assert "bounded retained-table authority" in debugging
     assert "row/object cardinality" in debugging
     assert "visual interpretation with the biologist" in debugging
     assert "Screenshots are secondary presentation evidence" in debugging
@@ -250,7 +263,17 @@ def test_task_contexts_expose_only_the_next_relevant_boundary() -> None:
     assert "user-controlled presentation state" in viewer
     assert "raw route payloads, label identities" in viewer
     assert "Review one current execution in raw-evidence order" in viewer
+    assert "structural evidence only" in viewer
+    assert "cannot establish pixel-level segmentation or tracing completeness" in viewer
+    assert "explicit array slices and array values" in viewer
+    assert "Do not wait for the user to find a missed region by zooming" in viewer
+    assert "rank strong unassigned residual components" in viewer
+    assert "exact raw-versus-result pixels or rasterized shapes" in viewer
     assert "reconcile schema-bearing per-object measurement rows" in viewer
+    assert "declared 'view_results' action's `related_state_surface_ids`" in viewer
+    assert "Do not select by title substring" in viewer
+    assert "Plate Manager Results action" in viewer
+    assert "widget-tree cell scraping" in viewer
     assert "interpret the visualization with the biologist" in viewer
     assert "compact opinionated analysis" in viewer
     assert "modular CellProfiler-derived pipeline" in viewer
@@ -259,6 +282,18 @@ def test_task_contexts_expose_only_the_next_relevant_boundary() -> None:
 
     assert "derives stack axes, post-stack grouping" in cellprofiler
     assert "does not choose native OpenHCS viewer" in cellprofiler
+
+
+def test_viewer_array_capabilities_expose_value_opt_in_and_bounded_tiling() -> None:
+    payload_description = agent_capabilities.get_viewer_window_payloads.description
+    sample_description = agent_capabilities.sample_viewer_window_image.description
+
+    assert "Array values are omitted by default" in payload_description
+    assert "include_array_values=true" in payload_description
+    assert "max_array_elements" in payload_description
+    assert "Pixel values are omitted by default" in sample_description
+    assert "height*width within max_array_elements" in sample_description
+    assert "tile a field" in sample_description
 
 
 def test_declaration_owned_knowledge_targets_exist_in_the_live_catalog() -> None:

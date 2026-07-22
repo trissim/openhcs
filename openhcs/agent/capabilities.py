@@ -2287,8 +2287,10 @@ class GetViewerWindowPayloadsCapability(ViewerWindowCliConnectionCapability):
     title = "Get viewer window payloads"
     description = (
         "Returns bounded per-layer, per-axis image and shape payload records, "
-        "including optional arrays and shapes, from a running viewer control "
-        "endpoint."
+        "including exact optional arrays and shapes, from a running viewer "
+        "control endpoint. Array values are omitted by default: explicitly set "
+        "include_array_values=true with a sufficient max_array_elements, or use "
+        "the image-sampling capability for bounded tiles."
     )
     service = "viewer_window"
     runtime_requirements = ("running_openhcs_viewer_server",)
@@ -2312,8 +2314,11 @@ class SampleViewerWindowImageCapability(ViewerWindowCliConnectionCapability):
     kind = CapabilityKind.TOOL
     title = "Sample viewer image payload"
     description = (
-        "Returns bounded image records and bounded pixel samples for routed "
-        "image payloads from a running viewer control endpoint."
+        "Returns native-resolution bounded image records and bounded pixel samples "
+        "for routed image payloads from a running viewer control endpoint. Pixel "
+        "values are omitted by default: set include_array_values=true and keep "
+        "height*width within max_array_elements; tile a field when exact pixels "
+        "are needed beyond that bound."
     )
     service = "viewer_window"
     runtime_requirements = ("running_openhcs_viewer_server",)
@@ -2504,7 +2509,10 @@ class UiListStateSurfacesCapability(UiSelectedPlateCapability):
     cli_command = "state-surfaces"
     kind = CapabilityKind.TOOL
     title = "List UI state surfaces"
-    description = "Lists pollable UI state surfaces with flat surface_id values."
+    description = (
+        "Lists pollable domain state surfaces, including workflow status and live "
+        "measurement results, with flat surface_id values for follow-up reads."
+    )
     service = "ui_bridge"
     exposition = UiSelectedPlateCapability.exposition.refine(
         workflow_stage=CapabilityWorkflowStage.STATUS,
@@ -2521,7 +2529,8 @@ class UiGetStateSurfaceCapability(UiSelectedPlateCapability):
     kind = CapabilityKind.TOOL
     title = "Get UI state surface"
     description = (
-        "Reads or polls one typed UI state surface such as plate-manager status rows."
+        "Reads or polls one typed UI domain state surface such as plate-manager "
+        "status rows or bounded live measurement tables."
     )
     service = "ui_bridge"
     exposition = UiSelectedPlateCapability.exposition.refine(
