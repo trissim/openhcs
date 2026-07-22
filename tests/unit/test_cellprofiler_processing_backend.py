@@ -2185,6 +2185,36 @@ def test_numpy_124_arccos_matches_cp_angle_order_bits() -> None:
     np.testing.assert_array_equal(_numpy_124_arccos(inputs), expected)
 
 
+def test_numpy_124_arccos_uses_native_ufunc_without_svml(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openhcs.processing.backends.cellprofiler import label_geometry
+
+    inputs = np.asarray((-0.75, 0.0, 0.75), dtype=np.float64)
+    monkeypatch.setattr(label_geometry, "_NUMPY_124_SVML_ACOS_AVAILABLE", False)
+
+    np.testing.assert_array_equal(
+        label_geometry._numpy_124_arccos(inputs),
+        np.arccos(inputs),
+    )
+
+
+def test_numpy_124_power_two_uses_compiled_native_fallback_without_svml() -> None:
+    from numba import types
+
+    from openhcs.processing.backends.analysis.region_properties import (
+        _native_power_two,
+        _numpy_124_power_two_implementation,
+    )
+
+    fallback = _numpy_124_power_two_implementation(svml_available=False)
+
+    assert fallback is _native_power_two
+    assert fallback(0.3846153846153846) == 0.3846153846153846**2
+    llvm = fallback.inspect_llvm((types.float64,))
+    assert "__svml_pow8" not in llvm
+
+
 def test_legacy_fast_shape_zernike_backend_zeros_pixels_outside_unit_circle() -> None:
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,

@@ -17,6 +17,12 @@ _NUMPY_UMATH_GLOBAL = ctypes.CDLL(
     _multiarray_umath.__file__,
     mode=ctypes.RTLD_GLOBAL,
 )
+try:
+    _NUMPY_UMATH_GLOBAL.__svml_acos8
+except AttributeError:
+    _NUMPY_124_SVML_ACOS_AVAILABLE = False
+else:
+    _NUMPY_124_SVML_ACOS_AVAILABLE = True
 
 
 @intrinsic
@@ -56,12 +62,20 @@ def _numpy_124_scalar_arccos(typing_context, value):
 
 
 @njit(cache=True)
-def _numpy_124_arccos(values: np.ndarray) -> np.ndarray:
+def _numpy_124_svml_arccos(values: np.ndarray) -> np.ndarray:
     """Return NumPy 1.24 standard-SVML arccos values for a flat array."""
     result = np.empty(values.size, dtype=np.float64)
     for index in range(values.size):
         result[index] = _numpy_124_scalar_arccos(values[index])
     return result
+
+
+def _numpy_124_arccos(values: np.ndarray) -> np.ndarray:
+    """Return the NumPy 1.24 angle primitive available on this architecture."""
+    value_array = np.asarray(values, dtype=np.float64)
+    if _NUMPY_124_SVML_ACOS_AVAILABLE:
+        return _numpy_124_svml_arccos(value_array)
+    return np.arccos(value_array)
 
 
 def feret_diameters_from_labels(

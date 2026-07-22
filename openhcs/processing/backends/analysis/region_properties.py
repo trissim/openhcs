@@ -23,10 +23,16 @@ _NUMPY_UMATH_GLOBAL = ctypes.CDLL(
     _multiarray_umath.__file__,
     mode=ctypes.RTLD_GLOBAL,
 )
+try:
+    _NUMPY_UMATH_GLOBAL.__svml_pow8
+except AttributeError:
+    _NUMPY_124_SVML_POW_AVAILABLE = False
+else:
+    _NUMPY_124_SVML_POW_AVAILABLE = True
 
 
 @intrinsic
-def _numpy_124_power_two(typing_context, value):
+def _numpy_124_svml_power_two(typing_context, value):
     """Emit the NumPy 1.24 AVX-512 power operation used by CP 4.2.8.1."""
 
     del typing_context, value
@@ -69,6 +75,24 @@ def _numpy_124_power_two(typing_context, value):
         return builder.extract_element(result, lane_zero)
 
     return signature, codegen
+
+
+@njit(cache=True, inline="always")
+def _native_power_two(value: float) -> float:
+    """Return the portable one-operation square used without NumPy SVML."""
+    return value * value
+
+
+def _numpy_124_power_two_implementation(*, svml_available: bool):
+    """Select the exact primitive supported by the loaded NumPy binary."""
+    if svml_available:
+        return _numpy_124_svml_power_two
+    return _native_power_two
+
+
+_numpy_124_power_two = _numpy_124_power_two_implementation(
+    svml_available=_NUMPY_124_SVML_POW_AVAILABLE,
+)
 
 
 class AnalysisBackendProvider(str, Enum):
