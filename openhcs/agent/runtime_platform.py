@@ -79,6 +79,10 @@ class AgentRuntimePlatformAuthority(
         """Return whether descriptor ownership and mode checks are meaningful."""
         return False
 
+    def child_process_environment_keys(self) -> tuple[str, ...]:
+        """Return host variables required by a sanitized child process."""
+        return ()
+
     def application_data_root(self, application_name: str) -> Path:
         """Return the user-scoped persistent data root for an application."""
         return (Path.home() / ".local" / "share" / application_name.casefold()).resolve(
@@ -210,6 +214,21 @@ class WindowsAgentRuntimePlatformAuthority(AgentRuntimePlatformAuthority):
     """Windows user-data and local runtime path conventions."""
 
     platform_key = AgentRuntimePlatformKey.WINDOWS
+
+    def child_process_environment_keys(self) -> tuple[str, ...]:
+        """Preserve native Windows process, home, app-data, and temp roots."""
+        return (
+            "APPDATA",
+            "HOMEDRIVE",
+            "HOMEPATH",
+            "LOCALAPPDATA",
+            "SYSTEMROOT",
+            "TEMP",
+            "TMP",
+            "TMPDIR",
+            "USERPROFILE",
+            "WINDIR",
+        )
 
     def _local_data_home(self) -> Path:
         configured = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")

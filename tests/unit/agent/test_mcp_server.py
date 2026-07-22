@@ -14099,6 +14099,44 @@ def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatc
     )
 
 
+def test_mcp_dev_client_server_spec_preserves_windows_host_environment(monkeypatch):
+    import openhcs.mcp.dev_client as dev_client
+    from openhcs.agent.runtime_platform import (
+        AgentRuntimePlatformAuthority,
+        AgentRuntimePlatformKey,
+    )
+
+    windows_authority = AgentRuntimePlatformAuthority.for_enum_member(
+        AgentRuntimePlatformKey.WINDOWS
+    )
+    expected_keys = {
+        "APPDATA",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "LOCALAPPDATA",
+        "SYSTEMROOT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "USERPROFILE",
+        "WINDIR",
+    }
+    assert set(windows_authority.child_process_environment_keys()) == expected_keys
+    monkeypatch.setattr(
+        AgentRuntimePlatformAuthority,
+        "current",
+        classmethod(lambda cls: windows_authority),
+    )
+    for key in expected_keys:
+        monkeypatch.setenv(key, f"test-{key.casefold()}")
+
+    environment = dev_client.McpDevServerSpec(sys.executable).environment()
+
+    assert {key: environment[key] for key in expected_keys} == {
+        key: f"test-{key.casefold()}" for key in expected_keys
+    }
+
+
 def test_mcp_dev_client_reports_startup_transport_failure():
     if importlib.util.find_spec("mcp") is None:
         return
