@@ -24,7 +24,7 @@ def test_multi_call_command_honors_its_declared_timeout_floor() -> None:
     extended_args = parser.parse_args(
         (
             "--timeout-seconds",
-            "90",
+            "180",
             "execute-source",
             "/tmp/plate",
             "--source-text",
@@ -34,9 +34,9 @@ def test_multi_call_command_honors_its_declared_timeout_floor() -> None:
     command = dev_client.McpDevCommandSpec.for_name("execute-source")
 
     assert default_args.timeout_seconds == dev_client.DEFAULT_CALL_TIMEOUT_SECONDS
-    assert command.default_timeout_seconds == 60.0
-    assert command.timeout_seconds(default_args) == 60.0
-    assert command.timeout_seconds(extended_args) == 90.0
+    assert command.default_timeout_seconds == 120.0
+    assert command.timeout_seconds(default_args) == 120.0
+    assert command.timeout_seconds(extended_args) == 180.0
 
 
 def test_persistent_client_initializes_once_for_distinct_command_specs(

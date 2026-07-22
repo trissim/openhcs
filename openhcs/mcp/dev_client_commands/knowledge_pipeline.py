@@ -474,7 +474,7 @@ class ArtifactPlanCommandSpec(SingleToolCommandSpec):
 class ExecuteSourceCommandSpec(McpDevCommandSpec):
     command = "execute-source"
     help = "Create and submit a source-backed headless execution session."
-    default_timeout_seconds: ClassVar[float] = 60.0
+    default_timeout_seconds: ClassVar[float] = 120.0
 
     def calls_from_args(
         self,
