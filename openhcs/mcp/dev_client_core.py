@@ -50,6 +50,7 @@ from openhcs.mcp.control_timeout import (
 
 DEFAULT_CALL_TIMEOUT_SECONDS = 5.0
 DEFAULT_REGISTRY_DISCOVERY_TIMEOUT_SECONDS = 30.0
+MCP_TOOL_TIMEOUT_MARGIN_SECONDS = 5.0
 DEFAULT_WORKFLOW_POLL_INTERVAL_SECONDS = 0.5
 DEFAULT_WORKFLOW_POLL_TIMEOUT_SECONDS = 30.0
 AliasValueT = TypeVar("AliasValueT")
@@ -1324,8 +1325,24 @@ def execute_source_submit_timeout_seconds(
 ) -> float:
     if not args.wait:
         return timeout_seconds
-    tool_timeout = (args.submit_timeout_ms + args.wait_timeout_ms) / 1000.0
-    return max(timeout_seconds, tool_timeout + 5.0)
+    return mcp_tool_timeout_seconds(
+        args.submit_timeout_ms + args.wait_timeout_ms,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def mcp_tool_timeout_seconds(
+    request_timeout_ms: int,
+    *,
+    timeout_seconds: float,
+) -> float:
+    """Keep a client tool call outside its request-owned operation timeout."""
+
+    request_timeout_seconds = request_timeout_ms / 1000.0
+    return max(
+        timeout_seconds,
+        request_timeout_seconds + MCP_TOOL_TIMEOUT_MARGIN_SECONDS,
+    )
 
 
 async def list_mcp_session_tools(

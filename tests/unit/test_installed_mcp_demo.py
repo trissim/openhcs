@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import socket
 import subprocess
@@ -178,22 +179,33 @@ def test_command_payload_selects_declaration_owned_tool_result() -> None:
     assert payload == {"observed": True, "valid": True, "errors": []}
 
 
-def test_execute_pipeline_relies_on_declared_phase_timeouts(
+def test_execute_pipeline_submits_then_polls_declared_job_status(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    observed: dict[str, object] = {}
+    observed: dict[str, object] = {"submissions": []}
 
     def fake_run_mcp(client, argv, *, tool_name, timeout_seconds):
-        observed.update(
-            client=client,
-            argv=tuple(argv),
-            tool_name=tool_name,
-            timeout_seconds=timeout_seconds,
+        observed["submissions"].append(
+            {
+                "client": client,
+                "argv": tuple(argv),
+                "tool_name": tool_name,
+                "timeout_seconds": timeout_seconds,
+            }
         )
-        return {"status": "complete"}
+        return {"status": "submitted", "job_id": "job-1"}
+
+    def fake_poll(client, *, job_id, timeout_seconds=180.0):
+        observed.update(
+            poll_client=client,
+            job_id=job_id,
+            poll_timeout_seconds=timeout_seconds,
+        )
+        return {"status": "complete", "job_id": job_id}
 
     monkeypatch.setattr(installed_demo, "_run_mcp", fake_run_mcp)
+    monkeypatch.setattr(installed_demo, "_poll_execution_job", fake_poll)
     client = object()
 
     payload = installed_demo._execute_pipeline(
@@ -203,9 +215,82 @@ def test_execute_pipeline_relies_on_declared_phase_timeouts(
         runtime_port=43125,
     )
 
-    assert payload == {"status": "complete"}
-    assert observed["client"] is client
-    assert observed["tool_name"] == agent_capabilities.submit_pipeline_execution.name
+    assert payload == {"status": "complete", "job_id": "job-1"}
+    submissions = observed["submissions"]
+    assert isinstance(submissions, list) and len(submissions) == 1
+    submission = submissions[0]
+    assert submission["client"] is client
+    assert submission["tool_name"] == agent_capabilities.submit_pipeline_execution.name
+    assert submission["timeout_seconds"] is None
+    assert "--submit-timeout-ms" in submission["argv"]
+    assert "--no-wait" in submission["argv"]
+    assert "--wait-timeout-ms" not in submission["argv"]
+    assert observed["poll_client"] is client
+    assert observed["job_id"] == "job-1"
+
+
+def test_execution_status_call_uses_owned_job_request() -> None:
+    tool_name = agent_capabilities.get_execution_status.name
+    observed: dict[str, object] = {}
+
+    class FakeClient:
+        def execute(self, argv, *, timeout_seconds):
+            observed.update(argv=tuple(argv), timeout_seconds=timeout_seconds)
+            return McpDevCommandExecution(
+                argv=tuple(argv),
+                payload={
+                    "results": [
+                        {
+                            "tool": tool_name,
+                            "mcp_error": False,
+                            "payloads": [{"status": "running", "job_id": "job-1"}],
+                        }
+                    ]
+                },
+                rendered_output="",
+                returncode=0,
+                server_stderr_tail=None,
+            )
+
+    payload = installed_demo._execution_status_payload(
+        FakeClient(),
+        request=installed_demo.ExecutionStatusRequest(job_id="job-1"),
+    )
+
+    argv = observed["argv"]
+    assert payload == {"status": "running", "job_id": "job-1"}
     assert observed["timeout_seconds"] is None
-    assert "--submit-timeout-ms" in observed["argv"]
-    assert "--wait-timeout-ms" in observed["argv"]
+    assert argv[:5] == (
+        "--timeout-seconds",
+        "10.0",
+        "--allow-error-payloads",
+        "call",
+        tool_name,
+    )
+    arguments_index = argv.index("--arguments")
+    assert json.loads(argv[arguments_index + 1]) == {
+        "job_id": "job-1",
+        "timeout_ms": 5000,
+    }
+
+
+def test_execution_poll_observes_progress_until_complete(monkeypatch) -> None:
+    statuses = iter(("submitted", "running", "complete"))
+    calls: list[str] = []
+
+    def fake_status(_client, *, request):
+        status = next(statuses)
+        calls.append(status)
+        return {"status": status, "job_id": request.job_id}
+
+    monkeypatch.setattr(installed_demo, "_execution_status_payload", fake_status)
+    monkeypatch.setattr(installed_demo.time, "sleep", lambda _seconds: None)
+
+    payload = installed_demo._poll_execution_job(
+        object(),
+        job_id="job-1",
+        timeout_seconds=1.0,
+    )
+
+    assert calls == ["submitted", "running", "complete"]
+    assert payload == {"status": "complete", "job_id": "job-1"}

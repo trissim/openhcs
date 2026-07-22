@@ -19,12 +19,14 @@ from pathlib import Path
 import socket
 import sys
 import tempfile
+import time
 from typing import TYPE_CHECKING, Any
 
 from zmqruntime.config import TransportMode as ZMQTransportMode
 from zmqruntime.messages import ControlMessageType
 
 from openhcs.agent.capabilities import agent_capabilities
+from openhcs.agent.dto.execution import ExecutionStatusRequest
 from openhcs.constants.constants import AllComponents
 from openhcs.core.config import LazyNapariStreamingConfig, TransportMode
 from openhcs.core.execution_state import TerminalExecutionStatus
@@ -32,6 +34,10 @@ from openhcs.core.plate_file_inventory import PlateFileKind
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.mcp.dev_client import McpDevClient, McpDevCommandExecution
+from openhcs.mcp.dev_client_core import (
+    DEFAULT_CALL_TIMEOUT_SECONDS,
+    mcp_tool_timeout_seconds,
+)
 from openhcs.mcp.dev_client_commands.knowledge_pipeline import (
     ExecuteSourceCommandSpec,
 )
@@ -57,6 +63,10 @@ if TYPE_CHECKING:
 
 class InstalledDemoFailure(RuntimeError):
     """A portable installed-demo acceptance condition was not met."""
+
+
+_EXECUTION_POLL_TIMEOUT_SECONDS = 180.0
+_EXECUTION_POLL_INTERVAL_SECONDS = 0.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,7 +371,7 @@ def _execute_pipeline(
     source_path: Path,
     runtime_port: int,
 ) -> dict[str, Any]:
-    payload = _run_mcp(
+    submission = _run_mcp(
         client,
         (
             ExecuteSourceCommandSpec.command,
@@ -375,22 +385,110 @@ def _execute_pipeline(
             "--transport-mode",
             "tcp",
             "--non-persistent",
-            "--wait",
+            "--no-wait",
             "--submit-timeout-ms",
             "15000",
-            "--wait-timeout-ms",
-            "90000",
             "--json",
         ),
         tool_name=agent_capabilities.submit_pipeline_execution.name,
         timeout_seconds=None,
     )
-    status = payload.get("status")
-    if status != TerminalExecutionStatus.COMPLETE.value:
+    job_id = submission.get("job_id")
+    if not isinstance(job_id, str) or not job_id:
         raise InstalledDemoFailure(
-            f"Portable neurite execution did not complete: {payload}"
+            f"Portable neurite execution returned no job identity: {submission}"
         )
-    return payload
+    return _poll_execution_job(client, job_id=job_id)
+
+
+def _execution_status_payload(
+    client: McpDevClient,
+    *,
+    request: ExecutionStatusRequest,
+) -> dict[str, Any]:
+    """Return one independently bounded submitted-job status projection."""
+
+    tool_name = agent_capabilities.get_execution_status.name
+    timeout_seconds = mcp_tool_timeout_seconds(
+        request.timeout_ms,
+        timeout_seconds=DEFAULT_CALL_TIMEOUT_SECONDS,
+    )
+    argv = (
+        "--timeout-seconds",
+        str(timeout_seconds),
+        "--allow-error-payloads",
+        "call",
+        tool_name,
+        "--arguments",
+        json.dumps(asdict(request), sort_keys=True),
+        "--json",
+    )
+    execution = client.execute(argv, timeout_seconds=None)
+    projected = McpDevPayloadProjection.tool_payload(execution.payload, tool_name)
+    if projected is None:
+        raise InstalledDemoFailure(
+            f"MCP status command {execution.argv!r} returned no payload for "
+            f"{tool_name}: payload={execution.payload!r}; "
+            f"server_stderr={execution.server_stderr_tail!r}"
+        )
+    return dict(projected)
+
+
+def _poll_execution_job(
+    client: McpDevClient,
+    *,
+    job_id: str,
+    timeout_seconds: float = _EXECUTION_POLL_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Poll one submitted job through bounded calls until terminal state."""
+
+    deadline = time.monotonic() + timeout_seconds
+    request = ExecutionStatusRequest(job_id=job_id)
+    last_payload: dict[str, Any] | None = None
+    last_error: InstalledDemoFailure | None = None
+    last_reported_status: str | None = None
+    terminal_failures = {
+        TerminalExecutionStatus.FAILED.value,
+        TerminalExecutionStatus.CANCELLED.value,
+    }
+    while True:
+        try:
+            payload = _execution_status_payload(client, request=request)
+        except InstalledDemoFailure as exc:
+            last_error = exc
+        else:
+            last_payload = payload
+            status = str(payload.get("status", "unknown"))
+            if status != last_reported_status:
+                print(
+                    f"Installed demo execution job {job_id}: {status}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                last_reported_status = status
+            if status == TerminalExecutionStatus.COMPLETE.value:
+                return payload
+            if status in terminal_failures:
+                raise InstalledDemoFailure(
+                    f"Portable neurite execution ended with {status}: {payload}"
+                )
+            errors = payload.get("errors")
+            last_error = (
+                InstalledDemoFailure(
+                    f"Portable neurite execution status failed: {payload}"
+                )
+                if errors
+                else None
+            )
+
+        remaining_seconds = deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            raise InstalledDemoFailure(
+                "Portable neurite execution polling timed out after "
+                f"{timeout_seconds:.1f}s: last_payload={last_payload!r}; "
+                f"last_error={last_error!r}"
+            )
+        time.sleep(min(_EXECUTION_POLL_INTERVAL_SECONDS, remaining_seconds))
 
 
 def _validate_viewer(client: McpDevClient, viewer_port: int) -> dict[str, Any]:
