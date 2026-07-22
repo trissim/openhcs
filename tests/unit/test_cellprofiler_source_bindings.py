@@ -24,6 +24,7 @@ from openhcs.core.source_metadata import SourceVoxelSpacing
 from openhcs.core.source_image_semantics import apply_source_binding_payload
 from openhcs.core.runtime_image_loading import ImagePayloadSourceMetadataContext
 from openhcs.core.runtime_image_values import (
+    image_payload_data,
     image_payload_metadata,
 )
 from openhcs.core.runtime_tabular_values import FieldSpec
@@ -851,6 +852,34 @@ def test_names_and_types_contributes_payload_loading_semantics(
     assert objects.artifact_kind is ObjectLabelsArtifactType
     assert objects.source_set_role is SourceSetRole.MATCHED
     assert objects.projection_role is SourceProjectionRole.SOURCE_ARTIFACT
+
+
+def test_monochrome_source_normalizes_before_collapsing_rgb_channels() -> None:
+    from skimage.color import rgb2gray
+
+    codes = np.asarray(
+        (
+            (7, 98, 128, 254),
+            (23, 46, 115, 205),
+        ),
+        dtype=np.uint8,
+    )
+    rgb = np.repeat(codes[..., np.newaxis], 3, axis=-1)
+    binding = NamedSourceBinding(
+        alias="phase",
+        load_as_monochrome=True,
+        source_channel_axis=-1,
+        source_channel_counts=frozenset((3, 4)),
+    )
+
+    observed = apply_source_binding_payload(rgb, binding, None)
+    expected = rgb2gray(rgb.astype(np.float32) / np.float32(255))
+
+    np.testing.assert_array_equal(image_payload_data(observed), expected)
+    metadata = image_payload_metadata(observed)
+    assert image_payload_data(observed).dtype == np.float32
+    assert metadata.source_channel_axis is None
+    assert metadata.unit_interval_intensity_scale is None
 
 
 def test_names_and_types_repeated_columns_require_exact_cardinality() -> None:

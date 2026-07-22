@@ -11,6 +11,7 @@ from openhcs.core.runtime_image_values import (
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
+    normalize_image_payload_intensity,
 )
 from openhcs.core.runtime_image_loading import ImagePayloadSourceMetadataContext
 from openhcs.core.runtime_array_values import RuntimeArrayData
@@ -26,10 +27,19 @@ def _cellprofiler_rgb_to_gray(data: np.ndarray) -> np.ndarray:
 def _monochrome_source_data(
     data: RuntimeArrayData,
     channel_axis: int | None,
+    metadata: ImagePayloadMetadata,
 ) -> RuntimeArrayData:
     if channel_axis is None:
         return data
-    channel_last = np.moveaxis(np.asarray(data), channel_axis, -1)
+    normalized = normalize_image_payload_intensity(
+        metadata.payload_with(data),
+        dtype=np.float32,
+    )
+    channel_last = np.moveaxis(
+        np.asarray(image_payload_data(normalized)),
+        channel_axis,
+        -1,
+    )
     return _cellprofiler_rgb_to_gray(channel_last[..., :3])
 
 
@@ -75,10 +85,10 @@ def apply_source_binding_payload(
         source_channel_axis,
     )
     if binding.load_as_monochrome and source_channel_axis is not None:
-        data = _monochrome_source_data(data, source_channel_axis)
+        data = _monochrome_source_data(data, source_channel_axis, metadata)
         source_channel_axis = None
         metadata = replace(
-            metadata,
+            metadata.without_unit_interval_intensity_scale(),
             intensity_scale=ImagePayloadMetadata.for_array(data).intensity_scale,
         )
     if binding.load_as_mask:
