@@ -86,7 +86,7 @@ def test_git_sparse_source_fetches_immutable_revision_after_clone(
     source = DatasetSourceSpec(
         kind=DatasetSourceKind.GIT_SPARSE,
         git_url="https://example.invalid/dataset.git",
-        git_ref="264a8155da21a2d468051f78211bed2e580a8934",
+        git_ref="a" * 40,
         sparse_paths=("examples",),
     )
     context = DatasetAcquisitionContext(
