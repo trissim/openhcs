@@ -42,7 +42,7 @@ in this dependency order:
 1. `metaclass-registry 0.1.5`
 2. `python-introspect 0.1.5`, then `ObjectState 1.0.18`
 3. `arraybridge 0.2.11`
-4. `zmqruntime 0.1.9`, then `PolyStore 0.1.11`
+4. `zmqruntime 0.1.10`, then `PolyStore 0.1.12`
 5. `pycodify 0.1.3`
 6. `pyqt-reactive 0.1.22` after its ObjectState and python-introspect owners
 7. OpenHCS last
@@ -77,6 +77,13 @@ All eight are now available. Run the existing OpenHCS cross-platform matrix
 without local wheel overlays as the ordinary pre-merge CI gate. The final local
 acceptance installed `wheel[gui,mcp]` from PyPI-only dependencies and exercised
 the installed stdio server outside the checkout.
+
+The final transport/storage owner refresh passed 41 ZMQRuntime tests and 251
+PolyStore tests (with 13 declared Zarr capability skips). Clean PyPI installs
+resolved `zmqruntime==0.1.10` and `polystore==0.1.12`; the installed transport
+exposed the viewer data/control socket and response-serialization APIs consumed
+by OpenHCS. OpenHCS 0.5.21 remains isolated because its published metadata
+exact-pins the earlier owner train.
 
 ## Pre-merge OpenHCS publication gate
 
