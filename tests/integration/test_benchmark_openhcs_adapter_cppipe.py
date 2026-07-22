@@ -217,9 +217,9 @@ def test_openhcs_adapter_reports_missing_source_schema_images(
     with pytest.raises(
         ToolExecutionError,
         match=(
-            "Failed to materialize CellProfiler source schema for "
-            "ExampleHuman\\.cppipe: Source schema image alias 'DNA' matched "
-            "no image files\\."
+            "Failed to prepare CellProfiler source workspace for "
+            "ExampleHuman\\.cppipe: Required source alias 'DNA' matched "
+            "no source files\\."
         ),
     ):
         _run_openhcs_adapter(
@@ -371,10 +371,22 @@ def _write_cppipe(cppipe_path: Path) -> Path:
                 "ModuleCount:3",
                 "HasImagePlaneDetails:False",
                 (
-                    "LoadData:[module_num:1|svn_version:'Unknown'|"
+                    "LoadImages:[module_num:1|svn_version:'Unknown'|"
                     "enabled:True|wants_pause:False]"
                 ),
-                "    Input data file location:Elsewhere...",
+                "    What type of files are you loading?:individual images",
+                "    How do you want to load these files?:Text-Exact match",
+                "    Do you want to exclude certain files?:No",
+                (
+                    "    Type the text that these images have in common "
+                    "(case-sensitive):w1"
+                ),
+                "    What do you want to call this image in CellProfiler?:OrigBlue",
+                "    What is the position of this image in each group?:1",
+                (
+                    "    Do you want to extract metadata from the file name, "
+                    "the subfolder path or both?:None"
+                ),
                 (
                     "IdentifyPrimaryObjects:[module_num:2|svn_version:'Unknown'|"
                     "enabled:True|wants_pause:False]"

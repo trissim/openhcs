@@ -470,15 +470,21 @@ class OpenHCSAdapter(ToolAdapter):
 
         equivalence_report = None
         equivalence_failure_message = None
-        with phase_timing.phase(BenchmarkPhase.COMPILE_DIALECT):
-            ingestion = prepare_cellprofiler_input_workspace(
-                InputWorkspacePreparationRequest(
-                    selected_path=request.dataset_path,
-                    selected_pipeline_path=cppipe_path,
-                    workspace_root=source_workspace_path,
-                    generated_source_path=generated_source_path,
+        try:
+            with phase_timing.phase(BenchmarkPhase.COMPILE_DIALECT):
+                ingestion = prepare_cellprofiler_input_workspace(
+                    InputWorkspacePreparationRequest(
+                        selected_path=request.dataset_path,
+                        selected_pipeline_path=cppipe_path,
+                        workspace_root=source_workspace_path,
+                        generated_source_path=generated_source_path,
+                    )
                 )
-            )
+        except ValueError as exc:
+            raise ToolExecutionError(
+                "Failed to prepare CellProfiler source workspace for "
+                f"{cppipe_path.name}: {exc}"
+            ) from exc
         if ingestion.pipeline_import_error is not None:
             raise ToolExecutionError(ingestion.pipeline_import_error.message)
         pipeline_steps = ingestion.pipeline_steps
