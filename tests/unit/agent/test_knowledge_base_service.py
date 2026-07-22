@@ -187,10 +187,12 @@ def test_knowledge_base_retrieves_canonical_image_source_guide():
     assert "simplest inherited full stack" in document.content
     assert "omit ``FunctionStep.source_bindings``" in document.content
     assert "``nuclear_stain.channel_index=0``" in document.content
+    assert "``cell_body.channel_index=1``" in document.content
     assert "``neurite_channel_index=2``" in document.content
-    assert "efficient selected stack" in document.content
+    assert "legacy shared-signal subset" in document.content
     assert "``neurite_channel_index=0``" in document.content
     assert "``nuclear_stain.channel_index=1``" in document.content
+    assert "not equivalent to MAP2-seeded analysis" in document.content
     assert "``variable_components=[CHANNEL]`` assembles the channel stack" in (
         document.content
     )

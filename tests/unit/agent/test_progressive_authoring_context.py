@@ -181,8 +181,9 @@ def test_task_contexts_expose_only_the_next_relevant_boundary() -> None:
     assert "leaked source only on a current route" in folder
     assert "route from another submission or a step that selects MAP2" in folder
     assert "simplest canonical MetaXpress neurite step" in folder
-    assert "nuclear index 0 plus neurite index 2" in folder
-    assert "efficient alternative explicitly selects/reorders" in folder
+    assert "nuclear index 0, cell-body index 1, and neurite index 2" in folder
+    assert "only the legacy shared-signal model" in folder
+    assert "not equivalent to MAP2-seeded analysis" in folder
     assert "generic compiler regression protects any explicit ordered" in folder
     assert "variable_components=[CHANNEL] assembles that stack" in folder
     assert "normalizes group_by to GroupBy.NONE" in folder

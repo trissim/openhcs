@@ -119,16 +119,18 @@ simplest inherited full stack
   Set ``input_source=PIPELINE_START`` and
   ``variable_components=[CHANNEL]``, but omit ``FunctionStep.source_bindings``.
   The step inherits the complete pipeline order, so use
-  ``nuclear_stain.channel_index=0`` and ``neurite_channel_index=2``; MAP2
-  remains at position 1. Source provenance retains physical channels 1, 2, and
-  4; viewer routes expose those values when the output carries them.
+  ``nuclear_stain.channel_index=0``, ``cell_body.channel_index=1``, and
+  ``neurite_channel_index=2``. Source provenance retains physical channels 1,
+  2, and 4; viewer routes expose those values when the output carries them.
 
-efficient selected stack
+legacy shared-signal subset
   Explicitly enable step source bindings and order them as ``(SMI312,
   Hoechst)``. The callable then uses ``neurite_channel_index=0`` and
-  ``nuclear_stain.channel_index=1``, while source provenance remains physical
-  channels 4 and 1. Viewer routes retain those values when the output carries
-  them. This avoids assembling MAP2 for a callable that does not use it.
+  ``nuclear_stain.channel_index=1`` while leaving
+  ``cell_body.channel_index`` omitted, so SMI312 supplies both the body and
+  neurite signal. Source provenance remains physical channels 4 and 1. This is
+  not equivalent to MAP2-seeded analysis: retain MAP2 and use the inherited
+  three-channel form whenever MAP2 owns the neuronal bodies.
 
 In either option, ``variable_components=[CHANNEL]`` assembles the channel stack.
 Do not use ``group_by=CHANNEL`` for assembly. ``group_by`` partitions an already
