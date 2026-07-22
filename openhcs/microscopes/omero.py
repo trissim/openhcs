@@ -8,7 +8,7 @@ for OMERO microscopes using native OMERO metadata.
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import ClassVar, Dict, List, Optional, Tuple, Type, Union
 
 from openhcs.constants.constants import Backend, Microscope
 from polystore.exceptions import MetadataNotFoundError
@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 
 
 class OMEROMetadataHandler(MetadataHandler):
+    GRID_DIMENSIONS_METADATA_KEY: ClassVar[str] = "openhcs.grid_dimensions"
+
     """
     Metadata handler that queries OMERO API for native metadata with caching.
 
@@ -227,7 +229,7 @@ class OMEROMetadataHandler(MetadataHandler):
         Extract grid dimensions from OMERO plate metadata.
 
         Grid dimensions should be stored in the plate's MapAnnotation under
-        the key "openhcs.grid_dimensions" as "rows,cols" (e.g., "2,2").
+        the key declared by ``GRID_DIMENSIONS_METADATA_KEY`` as ``rows,cols``.
 
         Returns:
             Tuple of (rows, cols) representing the grid dimensions
@@ -242,16 +244,21 @@ class OMEROMetadataHandler(MetadataHandler):
         import omero.model  # Lazy import - only needed when OMERO is actually used
 
         for ann in plate.listAnnotations():
-            if ann.OMERO_TYPE == omero.model.MapAnnotationI:
-                if ann.getNs() == "openhcs.metadata":
-                    for nv in ann.getMapValue():
-                        if nv.name == "openhcs.grid_dimensions":
-                            rows, cols = map(int, nv.value.split(','))
-                            logger.info(f"Found grid_dimensions ({rows}, {cols}) in OMERO metadata")
-                            return (rows, cols)
+            if ann.OMERO_TYPE != omero.model.MapAnnotationI:
+                continue
+            for nv in ann.getMapValue():
+                if nv.name == self.GRID_DIMENSIONS_METADATA_KEY:
+                    rows, cols = map(int, nv.value.split(','))
+                    logger.info(
+                        "Found grid_dimensions (%s, %s) in OMERO metadata",
+                        rows,
+                        cols,
+                    )
+                    return (rows, cols)
 
         raise ValueError(
-            f"OMERO Plate {plate_id} metadata does not declare openhcs.grid_dimensions."
+            f"OMERO Plate {plate_id} metadata does not declare "
+            f"{self.GRID_DIMENSIONS_METADATA_KEY}."
         )
 
     def get_pixel_size(self, plate_path: Union[str, Path, int]) -> float:
@@ -454,6 +461,6 @@ class OMEROHandler(MicroscopeHandler):
 
 
 # Set metadata handler class after class definition for automatic registration
-from openhcs.microscopes.microscope_base import register_metadata_handler
+from openhcs.microscopes.microscope_base import register_metadata_handler  # noqa: E402
 OMEROHandler._metadata_handler_class = OMEROMetadataHandler
 register_metadata_handler(OMEROHandler, OMEROMetadataHandler)

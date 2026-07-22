@@ -84,7 +84,6 @@ class ZMQOrchestratorEnvironmentRequest(ZMQExecutionIdentity):
             raise RuntimeError("OMERO server not available")
         storage_registry["omero_local"] = OMEROLocalBackend(
             omero_conn=omero_manager.conn,
-            namespace_prefix="openhcs",
             lock_dir_name=".openhcs",
         )
         if plate_path_str.startswith("/omero/"):

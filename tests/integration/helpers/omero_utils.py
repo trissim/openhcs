@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 from omero.gateway import BlitzGateway
 import omero.model
-from omero.rtypes import rstring, rint, rdouble, rlong
+from omero.rtypes import rstring, rint
 import omero.gateway
 
 
@@ -39,7 +39,7 @@ def upload_plate_to_omero(
         int: OMERO plate ID
     """
     # Create Plate in OMERO
-    print(f"\n[2/4] Creating OMERO Plate...")
+    print("\n[2/4] Creating OMERO Plate...")
     update_service = conn.getUpdateService()
 
     plate = omero.model.PlateI()
@@ -64,8 +64,13 @@ def upload_plate_to_omero(
 
     # Add grid dimensions if provided
     if grid_dimensions:
+        from openhcs.microscopes.omero import OMEROMetadataHandler
+
         metadata_values.append(
-            omero.model.NamedValue("openhcs.grid_dimensions", f"{grid_dimensions[0]},{grid_dimensions[1]}")
+            omero.model.NamedValue(
+                OMEROMetadataHandler.GRID_DIMENSIONS_METADATA_KEY,
+                f"{grid_dimensions[0]},{grid_dimensions[1]}",
+            )
         )
 
     map_ann.setMapValue(metadata_values)
@@ -76,10 +81,10 @@ def upload_plate_to_omero(
     link.setParent(plate)
     link.setChild(map_ann)
     update_service.saveAndReturnObject(link)
-    print(f"✓ Added OpenHCS metadata to plate")
+    print("✓ Added OpenHCS metadata to plate")
 
     # Upload images and create Wells
-    print(f"\n[3/4] Uploading images and creating Wells...")
+    print("\n[3/4] Uploading images and creating Wells...")
 
     # Group images by well and site
     image_files = sorted(Path(data_dir).rglob("*.tif"))
@@ -192,7 +197,7 @@ def generate_and_upload_synthetic_plate(
     preserving the plate organization that OpenHCS expects.
     """
 
-    print(f"[1/4] Generating synthetic microscopy data...")
+    print("[1/4] Generating synthetic microscopy data...")
     print(f"  Grid: {grid_size[0]}x{grid_size[1]}, Tile: {tile_size}, Channels: {wavelengths}, Z-levels: {z_stack_levels}")
     print(f"  Wells: {wells}")
 
@@ -244,7 +249,7 @@ def main():
             wells=['A01', 'A02', 'B01', 'B02']
         )
 
-        print(f"\n✅ Setup complete!")
+        print("\n✅ Setup complete!")
         print(f"   Plate ID: {plate_id}")
         print(f"\n   Plate ID: {plate_id}")
         print(f"\n   View in OMERO.web: http://localhost:4080/webclient/?show=plate-{plate_id}")
@@ -257,4 +262,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
