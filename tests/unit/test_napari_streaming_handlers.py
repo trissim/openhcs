@@ -8,6 +8,7 @@ import pytest
 from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.identity import StreamProducerIdentity
 
+from openhcs.core.artifacts import ObjectArtifactSubjectBinding
 from openhcs.core.runtime_plane_projection import RuntimePlaneAxis
 from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
@@ -80,7 +81,8 @@ def _layer_item(
 ) -> NapariStreamLayerItem:
     return NapariStreamLayerItem(
         data=data,
-        producer=producer or StreamProducerIdentity.pipeline_output(
+        producer=producer
+        or StreamProducerIdentity.pipeline_output(
             output_kind="main",
             output_key="main",
             projection_key="main",
@@ -357,9 +359,7 @@ def test_napari_viewer_payload_projection_reuses_state_producer_identities():
     state_layer = projection.layer_state_for(route_key)
     payload_layer = projection.layer_payloads_for(route_key)
 
-    assert payload_layer["producer_identities"] == state_layer[
-        "producer_identities"
-    ]
+    assert payload_layer["producer_identities"] == state_layer["producer_identities"]
     assert payload_layer["producer_identities"] == (producer.to_payload(),)
 
 
@@ -680,10 +680,15 @@ class _FakeLayerState:
 class _FakeNapariServer:
     def __init__(self):
         self.layer_route_state = _FakeLayerState()
-        self.component_name_metadata = _component_name_metadata({"channel": {"1": "DAPI"}})
+        self.component_name_metadata = _component_name_metadata(
+            {"channel": {"1": "DAPI"}}
+        )
         self.component_values = ViewerRouteComponentValueTracker()
         self.display_axis_domain = ViewerDisplayAxisDomain()
         self.transport_failure = None
+
+    def bind_result_selection_layer(self, _layer):
+        """Accept Shapes binding without modeling native Qt selection events."""
 
 
 def test_napari_layer_update_authority_replaces_existing_image_without_global_axis_labels():
@@ -957,12 +962,15 @@ def test_napari_display_pipeline_rejects_unbound_payload_local_image_axes():
     )
     with pytest.raises(ValueError, match="component-axis binding"):
         policy.axis_labels(np.zeros((4, 16, 16, 3)), color_stack_metadata)
-    assert policy.axis_labels(
-        np.zeros((4, 16, 16, 3)), color_stack_metadata, (0,)
-    ) == ()
-    assert policy.axis_labels(
-        np.zeros((16, 16, 3)), ImagePayloadMetadata(source_channel_axis=-1)
-    ) == ()
+    assert (
+        policy.axis_labels(np.zeros((4, 16, 16, 3)), color_stack_metadata, (0,)) == ()
+    )
+    assert (
+        policy.axis_labels(
+            np.zeros((16, 16, 3)), ImagePayloadMetadata(source_channel_axis=-1)
+        )
+        == ()
+    )
 
 
 def test_napari_display_pipeline_labels_collapsed_route_components():
@@ -1009,14 +1017,16 @@ def test_napari_display_pipeline_projects_route_axes_locally():
     component_value_domain = _component_value_domain(
         {"channel": [1, 2, 3, 4, 5], "site": [1, 2]}
     )
-    component_axis_semantics = ViewerComponentAxisSemanticsAuthority.from_display_config(
-        ViewerMappingDisplayConfigInput(
-            {
-                "component_modes": {"channel": "stack", "site": "stack"},
-                "component_order": ["channel", "site"],
-            }
-        ),
-        component_value_domain,
+    component_axis_semantics = (
+        ViewerComponentAxisSemanticsAuthority.from_display_config(
+            ViewerMappingDisplayConfigInput(
+                {
+                    "component_modes": {"channel": "stack", "site": "stack"},
+                    "component_order": ["channel", "site"],
+                }
+            ),
+            component_value_domain,
+        )
     )
 
     first = pipeline.display_axis_projection(
@@ -1057,14 +1067,16 @@ def test_napari_display_pipeline_projects_route_axes_locally():
 def test_napari_display_pipeline_aligns_derived_route_to_observed_source_domain():
     napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
     pipeline = napari_viewer_server.NapariLayerDisplayPipeline(_FakeNapariServer())
-    component_axis_semantics = ViewerComponentAxisSemanticsAuthority.from_display_config(
-        ViewerMappingDisplayConfigInput(
-            {
-                "component_modes": {"channel": "stack"},
-                "component_order": ["channel"],
-            }
-        ),
-        _component_value_domain({"channel": [1, 2, 4]}),
+    component_axis_semantics = (
+        ViewerComponentAxisSemanticsAuthority.from_display_config(
+            ViewerMappingDisplayConfigInput(
+                {
+                    "component_modes": {"channel": "stack"},
+                    "component_order": ["channel"],
+                }
+            ),
+            _component_value_domain({"channel": [1, 2, 4]}),
+        )
     )
 
     source = pipeline.display_axis_projection(
@@ -1094,14 +1106,16 @@ def test_napari_display_pipeline_projects_aggregate_payload_axes_into_route_doma
     component_value_domain = _component_value_domain(
         {"channel": [1], "z_index": [1, 2]}
     )
-    component_axis_semantics = ViewerComponentAxisSemanticsAuthority.from_display_config(
-        ViewerMappingDisplayConfigInput(
-            {
-                "component_modes": {"channel": "stack", "z_index": "stack"},
-                "component_order": ["z_index", "channel"],
-            }
-        ),
-        component_value_domain,
+    component_axis_semantics = (
+        ViewerComponentAxisSemanticsAuthority.from_display_config(
+            ViewerMappingDisplayConfigInput(
+                {
+                    "component_modes": {"channel": "stack", "z_index": "stack"},
+                    "component_order": ["z_index", "channel"],
+                }
+            ),
+            component_value_domain,
+        )
     )
 
     projection = pipeline.display_axis_projection(
@@ -1146,7 +1160,9 @@ def test_napari_axis_projector_validates_declared_domain_and_drops_route_singlet
 def test_napari_axis_projector_rejects_missing_declared_singleton_component():
     pytest.importorskip("openhcs.runtime.napari_viewer_server")
 
-    with pytest.raises(ValueError, match="route component domain for 'timepoint' is empty"):
+    with pytest.raises(
+        ValueError, match="route component domain for 'timepoint' is empty"
+    ):
         ViewerLayerAxisProjector().project(
             ViewerLayerAxisProjectionRequest.from_component_values(
                 projected_axis_components=("timepoint", "well", "channel"),
@@ -1172,7 +1188,9 @@ def test_napari_axis_projector_rejects_missing_declared_singleton_component():
 def test_napari_axis_projector_rejects_missing_empty_declared_component():
     pytest.importorskip("openhcs.runtime.napari_viewer_server")
 
-    with pytest.raises(ValueError, match="route component domain for 'timepoint' is empty"):
+    with pytest.raises(
+        ValueError, match="route component domain for 'timepoint' is empty"
+    ):
         ViewerLayerAxisProjector().project(
             ViewerLayerAxisProjectionRequest.from_component_values(
                 projected_axis_components=("timepoint", "well", "channel"),
@@ -1198,7 +1216,9 @@ def test_napari_axis_projector_rejects_missing_empty_declared_component():
 def test_napari_axis_projector_rejects_missing_non_singleton_component():
     pytest.importorskip("openhcs.runtime.napari_viewer_server")
 
-    with pytest.raises(ValueError, match="route component domain for 'timepoint' is empty"):
+    with pytest.raises(
+        ValueError, match="route component domain for 'timepoint' is empty"
+    ):
         ViewerLayerAxisProjector().project(
             ViewerLayerAxisProjectionRequest.from_component_values(
                 projected_axis_components=("timepoint", "channel"),
@@ -1848,9 +1868,7 @@ def test_napari_display_pipeline_falls_back_from_selected_offset_channel():
     server.layer_route_state.set_dimension_state(
         "source",
         NapariDimensionLayerState(
-            labels={
-                "channel": ["Ch1: Hoechst", "Ch2: MAP2", "Ch4: SMI312"]
-            },
+            labels={"channel": ["Ch1: Hoechst", "Ch2: MAP2", "Ch4: SMI312"]},
             presentation=_axis_presentation(
                 layer_key="source",
                 projected_axis_components=("channel",),
@@ -2113,7 +2131,9 @@ def test_napari_display_pipeline_registers_recreated_shapes_before_selection_res
     work = pipeline.display_layer_batch(
         layer_key=route_key,
         items=[
-            _layer_item({}, data=shapes, stream_layer_data_type=StreamingDataType.SHAPES)
+            _layer_item(
+                {}, data=shapes, stream_layer_data_type=StreamingDataType.SHAPES
+            )
         ],
         display_payload=ViewerComponentAxisSemanticsAuthority.empty(),
         component_names_metadata=ViewerComponentNameMetadata.empty(),
@@ -2214,6 +2234,7 @@ def _run_fake_napari_entrypoint(
             self._ready = ready
             self._running = False
             self.data_socket = FakeDataSocket()
+            self.result_selection_controller = object()
             events.append("server_construct")
 
         def start(self):
@@ -2367,7 +2388,18 @@ def _run_fake_napari_entrypoint(
     monkeypatch.setattr(QtWidgets, "QApplication", FakeApplication)
     monkeypatch.setattr(napari_viewer_server, "NapariViewerServer", FakeServer)
     monkeypatch.setattr(napari_viewer_server, "QTimer", FakeTimer)
-    monkeypatch.setattr(napari_viewer_server.napari, "Viewer", lambda **_kwargs: FakeViewer())
+    monkeypatch.setattr(
+        napari_viewer_server,
+        "_install_result_selection_toolbar",
+        lambda _dock, _controller: (
+            events.append("result_selection_toolbar_open") or object()
+        ),
+    )
+    monkeypatch.setattr(
+        napari_viewer_server.napari,
+        "Viewer",
+        lambda **_kwargs: FakeViewer(),
+    )
     entrypoint_error = None
     try:
         napari_viewer_server.run_napari_viewer_process(
@@ -2387,6 +2419,9 @@ def test_napari_entrypoint_publishes_endpoints_from_live_qt_event_loop(monkeypat
     assert entrypoint_error is None
     assert events.index("startup_callback_queued") < events.index("event_loop_enter")
     assert events.index("features_table_open") < events.index("startup_callback_queued")
+    assert events.index("features_table_open") < events.index(
+        "result_selection_toolbar_open"
+    )
     assert events.index("event_loop_enter") < events.index("message_timer_construct")
     assert events.index("message_timer_connect") < events.index("message_timer_start")
     assert events.index("message_timer_start") < events.index("server_start")
@@ -2517,6 +2552,11 @@ def test_napari_features_table_selects_authoritative_shapes_members(qtbot):
         features={"label": [11, 12], "area": [3.0, 4.0]},
         name="OpenHCS ROIs",
     )
+    _native_roi_selection_server(
+        pytest.importorskip("openhcs.runtime.napari_viewer_server"),
+        viewer,
+        (("rois", layer, 1),),
+    )
     widget = FeaturesTable(viewer)
     qtbot.addWidget(widget)
 
@@ -2528,6 +2568,7 @@ def test_napari_features_table_selects_authoritative_shapes_members(qtbot):
 
     assert len(viewer.layers) == 1
     assert layer.selected_data == {1}
+    assert all(isinstance(index, np.integer) for index in layer.selected_data)
     assert widget.table.model().rowCount() == len(layer.data)
 
     layer.selected_data = {0}
@@ -2536,6 +2577,433 @@ def test_napari_features_table_selects_authoritative_shapes_members(qtbot):
     assert [index.row() for index in widget.table.selectionModel().selectedRows()] == [
         0
     ]
+
+
+def _native_roi_selection_server(napari_viewer_server, viewer, layers):
+    server = napari_viewer_server.NapariViewerServer.__new__(
+        napari_viewer_server.NapariViewerServer
+    )
+    server.viewer = viewer
+    server.layer_route_state = NapariLayerRouteStateStore.empty()
+    for route_key, layer, site_count in layers:
+        has_stack_axis = layer.ndim > 2
+        projected_axis_components = ("site",) if has_stack_axis else ()
+        component_values = {"site": list(range(site_count))} if has_stack_axis else {}
+        server.layer_route_state.set_title(route_key, layer.name)
+        server.layer_route_state.set_layer(route_key, layer)
+        server.layer_route_state.set_dimension_state(
+            route_key,
+            NapariDimensionLayerState(
+                labels=(
+                    {"site": [f"Site {index}" for index in range(site_count)]}
+                    if has_stack_axis
+                    else {}
+                ),
+                presentation=_axis_presentation(
+                    layer_key=route_key,
+                    projected_axis_components=projected_axis_components,
+                    component_values=component_values,
+                ),
+            ),
+        )
+    server.result_selection_controller = (
+        napari_viewer_server.NapariResultSelectionController(server)
+    )
+    for _route_key, layer, _site_count in layers:
+        server.result_selection_controller.bind(layer)
+    return server
+
+
+def test_declared_object_subject_selects_all_neuron_paths_and_metrics_row(qtbot):
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    from napari.components import ViewerModel
+
+    subject_feature = (
+        napari_viewer_server.ObjectArtifactSubjectBinding.SUBJECT_FEATURE
+    )
+    subject_id_feature = (
+        napari_viewer_server.ObjectArtifactSubjectBinding.SUBJECT_ID_FEATURE
+    )
+    viewer = ViewerModel()
+    graph_layer = viewer.add_shapes(
+        [
+            np.array([[0, 0], [0, 2]], dtype=float),
+            np.array([[0, 2], [1, 4]], dtype=float),
+            np.array([[5, 5], [6, 7]], dtype=float),
+        ],
+        shape_type=["path", "path", "path"],
+        features={
+            "edge_id": [11, 12, 21],
+            "branch_distance_um": [2.0, 2.4, 3.1],
+        },
+        metadata={
+            subject_feature: "neurons@step-4",
+            subject_id_feature: (1, 1, 2),
+        },
+        edge_color=["magenta", "magenta", "lime"],
+        name="Neuron branches",
+    )
+    metrics_layer = viewer.add_shapes(
+        [
+            np.array([[0, 0], [0, 1], [1, 1]], dtype=float),
+            np.array([[5, 5], [5, 6], [6, 6]], dtype=float),
+        ],
+        shape_type=["polygon", "polygon"],
+        features={
+            "total_outgrowth_um": [41.2, 22.7],
+            "branches": [2, 1],
+        },
+        metadata={
+            subject_feature: "neurons@step-4",
+            subject_id_feature: (1, 2),
+        },
+        edge_color=["magenta", "lime"],
+        name="Per-neuron metrics",
+    )
+    server = _native_roi_selection_server(
+        napari_viewer_server,
+        viewer,
+        (
+            ("neuron-branches", graph_layer, 1),
+            ("neuron-metrics", metrics_layer, 1),
+        ),
+    )
+    original_order = tuple(viewer.layers)
+
+    graph_layer.selected_data = {1}
+    qtbot.waitUntil(
+        lambda: graph_layer.selected_data == {0, 1}
+        and metrics_layer.selected_data == {0},
+        timeout=2_000,
+    )
+    server.result_selection_controller.set_result_group_color(
+        graph_layer,
+        (1.0, 0.5, 0.0, 1.0),
+    )
+    np.testing.assert_allclose(
+        np.asarray(graph_layer.edge_color)[:2],
+        np.tile(np.asarray((1.0, 0.5, 0.0, 1.0)), (2, 1)),
+    )
+    np.testing.assert_allclose(
+        np.asarray(metrics_layer.edge_color)[0],
+        np.asarray((1.0, 0.5, 0.0, 1.0)),
+    )
+    assert not np.allclose(
+        np.asarray(graph_layer.edge_color)[2],
+        np.asarray((1.0, 0.5, 0.0, 1.0)),
+    )
+
+    metrics_layer.selected_data = {1}
+    qtbot.waitUntil(
+        lambda: graph_layer.selected_data == {2}
+        and metrics_layer.selected_data == {1},
+        timeout=2_000,
+    )
+    assert metrics_layer.features.iloc[1]["total_outgrowth_um"] == 22.7
+    assert tuple(viewer.layers) == original_order
+
+
+def _select_feature_table_layer_row(widget, layer_name: str) -> None:
+    from qtpy.QtCore import QItemSelectionModel
+
+    proxy_model = widget.table.model()
+    source_model = proxy_model.sourceModel()
+    layer_column = source_model.df.columns.get_loc("Layer")
+    source_row = next(
+        row
+        for row in range(source_model.rowCount())
+        if source_model.df.iloc[row, layer_column] == layer_name
+    )
+    proxy_index = proxy_model.mapFromSource(source_model.index(source_row, 0))
+    widget.table.selectionModel().select(
+        proxy_index,
+        QItemSelectionModel.SelectionFlag.ClearAndSelect
+        | QItemSelectionModel.SelectionFlag.Rows,
+    )
+
+
+def test_features_table_selection_reveals_3d_roi_on_its_exact_slice(qtbot, monkeypatch):
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    from napari.components import ViewerModel
+    from napari.settings import get_settings
+    from napari_builtins._qt.features_table import FeaturesTable
+
+    settings = get_settings()
+    monkeypatch.setattr(settings.appearance.highlight, "highlight_thickness", 1)
+    viewer = ViewerModel(ndisplay=2)
+    viewer.add_image(
+        np.zeros((6, 64, 64), dtype=np.uint8),
+        name="Reference image",
+    )
+    selected_layer = viewer.add_shapes(
+        [
+            np.array(
+                [[3, 10, 10], [3, 10, 20], [3, 20, 20]],
+                dtype=float,
+            )
+        ],
+        shape_type="polygon",
+        features={"label": [11], "area": [50.0]},
+        ndim=3,
+        name="First ROIs",
+    )
+    other_layer = viewer.add_shapes(
+        [
+            np.array(
+                [[5, 30, 30], [5, 30, 40], [5, 40, 40]],
+                dtype=float,
+            )
+        ],
+        shape_type="polygon",
+        features={"label": [22], "area": [60.0]},
+        ndim=3,
+        name="Second ROIs",
+    )
+    _native_roi_selection_server(
+        napari_viewer_server,
+        viewer,
+        (
+            ("first-rois", selected_layer, 6),
+            ("second-rois", other_layer, 6),
+        ),
+    )
+    selected_layer.visible = False
+    viewer.dims.set_current_step(0, 0)
+    viewer.layers.selection.update({selected_layer, other_layer})
+    widget = FeaturesTable(viewer)
+    qtbot.addWidget(widget)
+    original_layer_order = tuple(viewer.layers)
+
+    _select_feature_table_layer_row(widget, selected_layer.name)
+
+    qtbot.waitUntil(
+        lambda: selected_layer.visible and viewer.dims.current_step[0] == 3,
+        timeout=2_000,
+    )
+    assert set(viewer.layers.selection) == {selected_layer, other_layer}
+    assert viewer.layers.selection.active is None
+    assert selected_layer.selected_data == {0}
+    assert other_layer.selected_data == set()
+    assert tuple(viewer.layers) == original_layer_order
+    assert settings.appearance.highlight.highlight_thickness >= 3
+
+    # A later redraw of the already-selected ROI must not steal a deliberate
+    # user layer selection or collapse the table back to its old owner.
+    viewer.layers.selection.active = other_layer
+    selected_layer.events.highlight()
+    qtbot.wait(10)
+    assert viewer.layers.selection.active is other_layer
+    assert tuple(viewer.layers.selection) == (other_layer,)
+
+    # Route ownership follows the native layer object, never its list position.
+    viewer.layers.move(viewer.layers.index(selected_layer), 0)
+    reordered_layers = tuple(viewer.layers)
+    viewer.layers.selection.update({selected_layer, other_layer})
+    viewer.dims.set_current_step(0, 0)
+    selected_layer.selected_data = set()
+    selected_layer.selected_data = {0}
+    qtbot.waitUntil(lambda: viewer.dims.current_step[0] == 3, timeout=2_000)
+    assert set(viewer.layers.selection) == {selected_layer, other_layer}
+    assert selected_layer.selected_data == {0}
+    assert tuple(viewer.layers) == reordered_layers
+
+
+def test_empty_shapes_selection_does_not_change_viewer_context(qtbot):
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    from napari.components import ViewerModel
+
+    viewer = ViewerModel(ndisplay=2)
+    viewer.add_image(
+        np.zeros((5, 32, 32), dtype=np.uint8),
+        name="Reference image",
+    )
+    layer = viewer.add_shapes(
+        [
+            np.array(
+                [[4, 10, 10], [4, 10, 20], [4, 20, 20]],
+                dtype=float,
+            )
+        ],
+        shape_type="polygon",
+        features={"label": [11]},
+        ndim=3,
+        name="ROIs",
+    )
+    _native_roi_selection_server(
+        napari_viewer_server,
+        viewer,
+        (("rois", layer, 5),),
+    )
+    layer.visible = False
+    viewer.layers.selection.active = None
+    viewer.dims.set_current_step(0, 0)
+
+    layer.selected_data = set()
+    layer.events.highlight()
+    qtbot.wait(10)
+
+    assert layer.visible is False
+    assert viewer.layers.selection.active is None
+    assert viewer.dims.current_step[0] == 0
+
+
+def test_roi_selection_preserves_user_adjusted_native_highlight_thickness(
+    qtbot,
+    monkeypatch,
+):
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    from napari.components import ViewerModel
+    from napari.settings import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings.appearance.highlight, "highlight_thickness", 7)
+    monkeypatch.setattr(
+        settings.appearance.highlight,
+        "highlight_color",
+        [0.3, 0.9, 0.2, 1.0],
+    )
+    viewer = ViewerModel()
+    layer = viewer.add_shapes(
+        [np.array([[10, 10], [10, 20], [20, 20]], dtype=float)],
+        shape_type="polygon",
+        features={"label": [11]},
+        name="ROIs",
+    )
+    _native_roi_selection_server(
+        napari_viewer_server,
+        viewer,
+        (("rois", layer, 1),),
+    )
+
+    layer.selected_data = {0}
+    qtbot.waitUntil(lambda: viewer.layers.selection.active is layer, timeout=2_000)
+
+    assert settings.appearance.highlight.highlight_thickness == 7
+    assert settings.appearance.highlight.highlight_color == [0.3, 0.9, 0.2, 1.0]
+
+
+def test_roi_selection_toolbar_adjusts_native_highlight_setting(qtbot, monkeypatch):
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    from napari.settings import get_settings
+    from qtpy.QtWidgets import QMainWindow, QPushButton, QSpinBox
+
+    settings = get_settings()
+    monkeypatch.setattr(settings.appearance.highlight, "highlight_thickness", 1)
+    monkeypatch.setattr(
+        settings.appearance.highlight,
+        "highlight_color",
+        [0.0, 0.6, 1.0, 1.0],
+    )
+    qt_window = QMainWindow()
+    qtbot.addWidget(qt_window)
+    feature_table_dock = type(
+        "FeatureTableDock",
+        (),
+        {"window": lambda self: qt_window},
+    )()
+    server = type("ResultSelectionServer", (), {"viewer": None})()
+    controller = napari_viewer_server.NapariResultSelectionController(server)
+
+    toolbar = napari_viewer_server._install_result_selection_toolbar(
+        feature_table_dock,
+        controller,
+    )
+    thickness = toolbar.findChild(QSpinBox, "openhcs_roi_highlight_thickness")
+    color = toolbar.findChild(QPushButton, "openhcs_roi_highlight_color")
+    layer_color = toolbar.findChild(QPushButton, "openhcs_roi_layer_color")
+
+    assert thickness is not None
+    assert color is not None
+    assert layer_color is not None
+    assert layer_color.isEnabled() is False
+    assert thickness.minimum() == 1
+    assert thickness.maximum() == 10
+    assert thickness.value() >= 3
+    thickness.setValue(6)
+    assert settings.appearance.highlight.highlight_thickness == 6
+
+    settings.appearance.highlight.highlight_thickness = 8
+    qtbot.waitUntil(lambda: thickness.value() == 8, timeout=2_000)
+    assert settings.appearance.highlight.highlight_color == [1.0, 0.82, 0.0, 1.0]
+    assert "#ffd100" in color.styleSheet()
+
+    controller.set_highlight_color((1.0, 0.0, 0.0, 1.0))
+    qtbot.waitUntil(lambda: "#ff0000" in color.styleSheet(), timeout=2_000)
+    settings.appearance.highlight.highlight_color = [0.0, 1.0, 0.0, 1.0]
+    qtbot.waitUntil(lambda: "#00ff00" in color.styleSheet(), timeout=2_000)
+
+
+def test_roi_layer_color_button_recolors_every_shape(qtbot, monkeypatch):
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    from napari.components import ViewerModel
+    from qtpy.QtCore import Qt
+    from qtpy.QtGui import QColor
+    from qtpy.QtWidgets import QColorDialog, QMainWindow, QPushButton
+
+    viewer = ViewerModel()
+    layer = viewer.add_shapes(
+        [
+            np.array([[0, 0], [0, 2], [2, 2]], dtype=float),
+            np.array([[4, 4], [4, 6], [6, 6]], dtype=float),
+        ],
+        shape_type=["polygon", "polygon"],
+        features={"label": [11, 12]},
+        edge_color=["red", "blue"],
+        name="Result ROIs",
+    )
+    server = _native_roi_selection_server(
+        napari_viewer_server,
+        viewer,
+        (("result-rois", layer, 1),),
+    )
+    qt_window = QMainWindow()
+    qtbot.addWidget(qt_window)
+    feature_table_dock = type(
+        "FeatureTableDock",
+        (),
+        {"window": lambda self: qt_window},
+    )()
+    monkeypatch.setattr(
+        QColorDialog,
+        "getColor",
+        lambda *_args, **_kwargs: QColor.fromRgbF(0.2, 0.8, 0.3, 1.0),
+    )
+
+    toolbar = napari_viewer_server._install_result_selection_toolbar(
+        feature_table_dock,
+        server.result_selection_controller,
+    )
+    layer_color = toolbar.findChild(QPushButton, "openhcs_roi_layer_color")
+    group_color = toolbar.findChild(QPushButton, "openhcs_roi_group_color")
+
+    assert layer_color is not None
+    assert group_color is not None
+    assert layer_color.isEnabled()
+    assert group_color.isEnabled() is False
+    layer.selected_data = {0}
+    qtbot.waitUntil(group_color.isEnabled, timeout=2_000)
+    qtbot.mouseClick(group_color, Qt.MouseButton.LeftButton)
+
+    assert np.allclose(
+        np.asarray(layer.edge_color)[0],
+        np.array([0.2, 0.8, 0.3, 1.0]),
+        atol=1e-4,
+    )
+    assert not np.allclose(
+        np.asarray(layer.edge_color)[1],
+        np.array([0.2, 0.8, 0.3, 1.0]),
+        atol=1e-4,
+    )
+    assert "#33cc4d" in group_color.styleSheet()
+
+    qtbot.mouseClick(layer_color, Qt.MouseButton.LeftButton)
+
+    assert np.allclose(
+        np.asarray(layer.edge_color),
+        np.tile(np.array([0.2, 0.8, 0.3, 1.0]), (2, 1)),
+        atol=1e-4,
+    )
+    assert "#33cc4d" in layer_color.styleSheet()
 
 
 def test_napari_entrypoint_does_not_receive_data_after_shutdown_control(monkeypatch):
@@ -2685,7 +3153,13 @@ def test_napari_axis_projector_drops_only_globally_singleton_axes():
 
     projection = ViewerLayerAxisProjector().project(
         ViewerLayerAxisProjectionRequest.from_component_values(
-            projected_axis_components=("site", "timepoint", "channel", "z_index", "well"),
+            projected_axis_components=(
+                "site",
+                "timepoint",
+                "channel",
+                "z_index",
+                "well",
+            ),
             route_component_values=component_values,
             viewer_component_values=component_values,
             declared_component_values=component_values,
@@ -2784,9 +3258,7 @@ def test_napari_component_display_coordinator_splits_declared_image_layouts():
             data_type,
             component_axis_semantics,
         ):
-            self.scheduled.append(
-                (layer_key, data_type, component_axis_semantics)
-            )
+            self.scheduled.append((layer_key, data_type, component_axis_semantics))
 
     class _FakeServer:
         def __init__(self):
@@ -2809,9 +3281,11 @@ def test_napari_component_display_coordinator_splits_declared_image_layouts():
         "component_modes": {"well": "stack"},
         "component_order": ["well"],
     }
-    component_axis_semantics = ViewerComponentAxisSemanticsAuthority.from_display_config(
-        ViewerMappingDisplayConfigInput(display_config),
-        _component_value_domain({"well": ["A01"]}),
+    component_axis_semantics = (
+        ViewerComponentAxisSemanticsAuthority.from_display_config(
+            ViewerMappingDisplayConfigInput(display_config),
+            _component_value_domain({"well": ["A01"]}),
+        )
     )
 
     for data, image_metadata in (
@@ -2863,9 +3337,7 @@ def test_napari_component_display_coordinator_preserves_declared_singleton_stack
             data_type,
             component_axis_semantics,
         ):
-            self.scheduled.append(
-                (layer_key, data_type, component_axis_semantics)
-            )
+            self.scheduled.append((layer_key, data_type, component_axis_semantics))
 
     class _FakeServer:
         def __init__(self):
@@ -2884,14 +3356,16 @@ def test_napari_component_display_coordinator_preserves_declared_singleton_stack
         step_name="OverlayOutlines",
         pipeline_position=7,
     )
-    component_axis_semantics = ViewerComponentAxisSemanticsAuthority.from_display_config(
-        ViewerMappingDisplayConfigInput(
-            {
-                "component_modes": {"well": "stack", "channel": "stack"},
-                "component_order": ["well", "channel"],
-            }
-        ),
-        _component_value_domain({"well": ["A01"], "channel": [2]}),
+    component_axis_semantics = (
+        ViewerComponentAxisSemanticsAuthority.from_display_config(
+            ViewerMappingDisplayConfigInput(
+                {
+                    "component_modes": {"well": "stack", "channel": "stack"},
+                    "component_order": ["well", "channel"],
+                }
+            ),
+            _component_value_domain({"well": ["A01"], "channel": [2]}),
+        )
     )
 
     coordinator.display(
@@ -3001,9 +3475,7 @@ def test_napari_settle_rejects_recorded_layer_update_failure():
 
     class SuccessfulProcessor:
         def add_items(self, **_kwargs):
-            return napari_viewer_server.NapariImmediateLayerDisplayWork(
-                lambda: None
-            )
+            return napari_viewer_server.NapariImmediateLayerDisplayWork(lambda: None)
 
     class BatchProcessors:
         def __init__(self, processor):
@@ -3056,9 +3528,7 @@ def test_napari_settlement_reports_incremental_qt_progress(monkeypatch):
 
     class SuccessfulProcessor:
         def add_items(self, **_kwargs):
-            return napari_viewer_server.NapariImmediateLayerDisplayWork(
-                lambda: None
-            )
+            return napari_viewer_server.NapariImmediateLayerDisplayWork(lambda: None)
 
     class BatchProcessors:
         def get_or_create(self, **_kwargs):
@@ -3407,8 +3877,6 @@ def test_napari_image_stack_builder_rejects_unrouted_axis_values():
         )
 
 
-
-
 def test_napari_component_value_tracker_tracks_observed_axis_values_by_route():
     tracker = ViewerRouteComponentValueTracker()
 
@@ -3505,10 +3973,7 @@ def test_napari_component_value_tracker_sorts_unpadded_indices_numerically():
     tracker.update(
         "main",
         ["z_index"],
-        [
-            _layer_item({"z_index": value})
-            for value in [1, 10, 100, 11, 2, 20, 3, 9]
-        ],
+        [_layer_item({"z_index": value}) for value in [1, 10, 100, 11, 2, 20, 3, 9]],
     )
 
     assert tracker.values_for(("main", ("z_index",)), ["z_index"]) == {
@@ -3551,12 +4016,6 @@ def test_viewer_component_name_metadata_owns_channel_well_and_generic_labels():
     assert metadata.axis_labels("channel", [1, 2]) == ["Ch1: DAPI", "Ch 2"]
     assert metadata.axis_labels("well", ["A01"]) == ["A01"]
     assert metadata.axis_labels("site", [3]) == ["Site 3: Field"]
-
-
-
-
-
-
 
 
 def test_napari_shape_layer_payload_builds_native_nd_rois_from_plane_metadata():
@@ -3604,6 +4063,48 @@ def test_napari_shape_layer_payload_builds_native_nd_rois_from_plane_metadata():
     assert np.array_equal(payload.data[1][:, 1:], [[0, 1], [1, 1], [2, 1]])
     assert payload.features["label"] == [7, 7]
     assert payload.features["path"] == ["test", "test"]
+
+
+def test_napari_shape_payload_hides_framework_subject_columns_in_layer_metadata():
+    payload = NapariShapeLayerPayload.build(
+        layer_items=[
+            _layer_item(
+                {},
+                [
+                    {
+                        "type": "path",
+                        "coordinates": [[0, 0], [1, 1]],
+                        "metadata": {
+                            "label": 3,
+                            "edge_id": 10,
+                            ObjectArtifactSubjectBinding.SUBJECT_FEATURE: "neurons",
+                            ObjectArtifactSubjectBinding.SUBJECT_ID_FEATURE: 3,
+                        },
+                    },
+                    {
+                        "type": "path",
+                        "coordinates": [[1, 1], [2, 2]],
+                        "metadata": {
+                            "label": 3,
+                            "edge_id": 11,
+                            ObjectArtifactSubjectBinding.SUBJECT_FEATURE: "neurons",
+                            ObjectArtifactSubjectBinding.SUBJECT_ID_FEATURE: 3,
+                        },
+                    },
+                ],
+                stream_layer_data_type=StreamingDataType.SHAPES,
+            )
+        ],
+        axis_projection=_axis_projection([], {}),
+    )
+
+    assert ObjectArtifactSubjectBinding.SUBJECT_FEATURE not in payload.features
+    assert ObjectArtifactSubjectBinding.SUBJECT_ID_FEATURE not in payload.features
+    assert payload.features["edge_id"] == [10, 11]
+    assert payload.result_metadata == {
+        ObjectArtifactSubjectBinding.SUBJECT_FEATURE: "neurons",
+        ObjectArtifactSubjectBinding.SUBJECT_ID_FEATURE: (3, 3),
+    }
 
 
 def test_napari_shape_layer_payload_accepts_registered_native_ellipse_kind():
@@ -3682,8 +4183,9 @@ def test_napari_shape_layer_payload_chunks_by_member_and_vertex_limits():
     ]
     assert payload.label_colors[0] == payload.label_colors[1]
     assert payload.label_colors[1] != payload.label_colors[2]
-    assert payload.colors_for_labels(chunks[1].features["label"]) == (
-        payload.label_colors[2:]
+    assert (
+        payload.colors_for_labels(chunks[1].features["label"])
+        == (payload.label_colors[2:])
     )
 
 
@@ -3691,14 +4193,16 @@ def test_napari_aggregate_axis_binding_uses_declared_component_not_equal_extent(
     component_value_domain = _component_value_domain(
         {"site": [1, 2], "channel": [1, 2]}
     )
-    component_axis_semantics = ViewerComponentAxisSemanticsAuthority.from_display_config(
-        ViewerMappingDisplayConfigInput(
-            {
-                "component_modes": {"site": "stack", "channel": "stack"},
-                "component_order": ["site", "channel"],
-            }
-        ),
-        component_value_domain,
+    component_axis_semantics = (
+        ViewerComponentAxisSemanticsAuthority.from_display_config(
+            ViewerMappingDisplayConfigInput(
+                {
+                    "component_modes": {"site": "stack", "channel": "stack"},
+                    "component_order": ["site", "channel"],
+                }
+            ),
+            component_value_domain,
+        )
     )
     items = [
         _layer_item(
@@ -3743,14 +4247,16 @@ def test_napari_shape_plane_metadata_requires_declared_component_axis():
     component_value_domain = _component_value_domain(
         {"site": [1, 2], "channel": [1, 2]}
     )
-    component_axis_semantics = ViewerComponentAxisSemanticsAuthority.from_display_config(
-        ViewerMappingDisplayConfigInput(
-            {
-                "component_modes": {"site": "stack", "channel": "stack"},
-                "component_order": ["site", "channel"],
-            }
-        ),
-        component_value_domain,
+    component_axis_semantics = (
+        ViewerComponentAxisSemanticsAuthority.from_display_config(
+            ViewerMappingDisplayConfigInput(
+                {
+                    "component_modes": {"site": "stack", "channel": "stack"},
+                    "component_order": ["site", "channel"],
+                }
+            ),
+            component_value_domain,
+        )
     )
 
     with pytest.raises(ValueError, match="plane_component_values"):
@@ -3780,14 +4286,16 @@ def test_napari_shape_label_rasterizer_rejects_mixed_aggregate_plane_metadata():
     component_value_domain = _component_value_domain(
         {"channel": [1], "z_index": [1, 2]}
     )
-    component_axis_semantics = ViewerComponentAxisSemanticsAuthority.from_display_config(
-        ViewerMappingDisplayConfigInput(
-            {
-                "component_modes": {"channel": "stack", "z_index": "stack"},
-                "component_order": ["z_index", "channel"],
-            }
-        ),
-        component_value_domain,
+    component_axis_semantics = (
+        ViewerComponentAxisSemanticsAuthority.from_display_config(
+            ViewerMappingDisplayConfigInput(
+                {
+                    "component_modes": {"channel": "stack", "z_index": "stack"},
+                    "component_order": ["z_index", "channel"],
+                }
+            ),
+            component_value_domain,
+        )
     )
 
     with pytest.raises(ValueError, match="mixes plane-indexed and unindexed"):
@@ -3816,12 +4324,6 @@ def test_napari_shape_label_rasterizer_rejects_mixed_aggregate_plane_metadata():
             ],
             component_axis_semantics,
         )
-
-
-
-
-
-
 
 
 def test_napari_shapes_layer_display_applies_route_global_axis_translate():
@@ -4011,8 +4513,7 @@ def test_napari_shapes_display_work_preserves_real_layer_features_across_chunks(
     assert layer.edge_color_mode == "cycle"
     assert layer.face_color_mode == "cycle"
     label_colors = {
-        label: tuple(layer.edge_color[index])
-        for index, label in enumerate(labels)
+        label: tuple(layer.edge_color[index]) for index, label in enumerate(labels)
     }
     assert all(
         tuple(layer.edge_color[index]) == label_colors[label]

@@ -13,6 +13,7 @@ import pickle
 import queue
 import sys
 import threading
+import weakref
 import zmq
 import numpy as np
 from abc import ABC, abstractmethod
@@ -20,10 +21,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from itertools import product
+from numbers import Integral
 from typing import ClassVar, Optional, Protocol, Sequence, TypeAlias, cast
 from qtpy.QtCore import Qt, QTimer
 
 from openhcs.core.config import TransportMode as OpenHCSTransportMode
+from openhcs.core.artifacts import ObjectArtifactSubjectBinding
 from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
 )
@@ -65,6 +68,7 @@ from openhcs.runtime.viewer_protocol import (
     ViewerSettleProgress,
     ViewerType,
 )
+from openhcs.runtime.viewer_controls import ViewerResultElementCoordinateAuthority
 from openhcs.runtime.napari_streaming_handlers import (
     DimensionLabelMap,
     LayerData,
@@ -137,6 +141,9 @@ DEFAULT_DIRECT_IMAGE_PATH = "<direct_napari_image>"
 DEFAULT_IMAGE_DATA_TYPE = "image"
 _DEFAULT_WINDOW_SCREEN_FRACTION = 0.9
 _FEATURE_TABLE_HEIGHT_FRACTION = 0.32
+_DEFAULT_RESULT_SELECTION_HIGHLIGHT_THICKNESS = 4
+_NAPARI_STOCK_HIGHLIGHT_COLOR = (0.0, 0.6, 1.0, 1.0)
+_DEFAULT_RESULT_SELECTION_HIGHLIGHT_COLOR = (1.0, 0.82, 0.0, 1.0)
 
 NapariWireValue: TypeAlias = (
     str | int | float | bool | np.ndarray | np.dtype | tuple | list | dict | None
@@ -144,6 +151,68 @@ NapariWireValue: TypeAlias = (
 NapariBatchImagePayloads: TypeAlias = list[Mapping[str, NapariWireValue]]
 NapariComponentModeMap: TypeAlias = dict[str, str]
 NapariComponentGroups: TypeAlias = dict[str, list[NapariStreamLayerItem]]
+
+
+class NapariQtWindowSurface(Protocol):
+    """Typed Qt main-window surface used by native result selection."""
+
+    def isMinimized(self) -> bool:
+        """Return whether the window is currently minimized."""
+
+    def showNormal(self) -> None:
+        """Restore a minimized window."""
+
+    def show(self) -> None:
+        """Show the window."""
+
+    def raise_(self) -> None:
+        """Raise the window in its native window system."""
+
+    def activateWindow(self) -> None:
+        """Request native Qt window activation."""
+
+
+class NapariFeatureTableDockSurface(Protocol):
+    """Typed authoritative Napari Features table dock surface."""
+
+    def show(self) -> None:
+        """Show the dock."""
+
+    def raise_(self) -> None:
+        """Raise the dock, including within a tabified dock area."""
+
+    def window(self) -> NapariQtWindowSurface:
+        """Return the dock's owning Napari Qt main window."""
+
+
+class NapariRoiManagerDockSurface(Protocol):
+    """Public dock surface for the installed Napari ROI Manager."""
+
+    def show(self) -> None:
+        """Show the manager when an ROI result first becomes available."""
+
+
+class NapariRoiManagerWidgetSurface(Protocol):
+    """Public native-layer binding seam owned by the ROI Manager plugin."""
+
+    def connect_layer(self, layer: NapariLayerHandle) -> None:
+        """Bind the exact native Shapes owner without copying its state."""
+
+
+class NapariHighlightEmitterSurface(Protocol):
+    """Native Napari highlight event used by selectable Shapes layers."""
+
+    def connect(self, callback: Callable[[object], None]) -> None:
+        """Connect one selection-change callback."""
+
+    def __call__(self) -> None:
+        """Request a native selection-highlight redraw."""
+
+
+class NapariSelectableLayerEventsSurface(Protocol):
+    """Selection events exposed by a native selectable Napari layer."""
+
+    highlight: NapariHighlightEmitterSurface
 
 
 def _apply_default_window_layout(viewer, feature_table_dock) -> None:
@@ -190,11 +259,7 @@ def _apply_scope_accent_styling(feature_table_dock, scope_accent_color: str) -> 
     qt_window = feature_table_dock.window()
     qt_window.setProperty("openhcs_scope_accent_color", canonical_color)
     existing_style = qt_window.styleSheet()
-    scope_style = (
-        "QMainWindow { "
-        f"border: 6px solid {canonical_color}; "
-        "}"
-    )
+    scope_style = f"QMainWindow {{ border: 6px solid {canonical_color}; }}"
     qt_window.setStyleSheet(f"{existing_style}\n{scope_style}".strip())
 
 
@@ -289,9 +354,11 @@ class ShapePayload:
 
     @property
     def shape_type(self) -> str:
-        return str(PayloadMap(self.payload, "Napari shape payload").required(
-            ViewerBatchWireField.TYPE
-        ))
+        return str(
+            PayloadMap(self.payload, "Napari shape payload").required(
+                ViewerBatchWireField.TYPE
+            )
+        )
 
     @property
     def coordinates(self) -> LayerData:
@@ -459,9 +526,7 @@ class NapariStreamLayerContext(ViewerComponentAxisSemantics):
                     context="Napari image component metadata",
                 ),
                 path=str(payload.required(ViewerWireField.PATH)),
-                stream_layer_data_type=StreamingDataType(
-                    str(data_type_value)
-                ),
+                stream_layer_data_type=StreamingDataType(str(data_type_value)),
             ),
             image_metadata=ImagePayloadMetadata(
                 source_channel_axis=source_channel_axis,
@@ -610,12 +675,16 @@ class NapariImagePayloadLayoutRole(str, Enum):
     SCALAR_STACK = "scalar_stack"
     COLOR_PLANE = "color_plane"
     COLOR_STACK = "color_stack"
+
     @classmethod
     def for_stream_layer_context(
         cls,
         stream_layer_context: NapariStreamLayerContext,
     ) -> "NapariImagePayloadLayoutRole | None":
-        if stream_layer_context.address.stream_layer_data_type is not StreamingDataType.IMAGE:
+        if (
+            stream_layer_context.address.stream_layer_data_type
+            is not StreamingDataType.IMAGE
+        ):
             return None
         metadata = stream_layer_context.image_metadata
         has_channel_axis = metadata.source_channel_axis is not None
@@ -877,6 +946,7 @@ _global_viewer_process: Optional[multiprocessing.Process] = None
 _global_viewer_port: Optional[int] = None
 _global_process_lock = threading.Lock()
 
+
 # Registry of data type handlers (will be populated after helper functions are defined)
 def _cleanup_global_viewer() -> None:
     """
@@ -1049,7 +1119,9 @@ class NapariLayerTitleAuthority:
         payload_layout_role: NapariImagePayloadLayoutRole | None = None,
     ) -> str:
         parts = [StreamProducerDisplayNameAuthority.output_label(producer)]
-        for component in component_layout.components_for_mode(ViewerComponentMode.SLICE):
+        for component in component_layout.components_for_mode(
+            ViewerComponentMode.SLICE
+        ):
             value = ViewerComponentCoordinateAuthority.required_value(
                 component_info,
                 component,
@@ -1346,9 +1418,7 @@ class NapariDimensionLabelOverlayController:
                 self.server.layer_route_state.set_active_dimension_label_route(
                     layer_key
                 )
-                self.server.viewer.text_overlay.text = self._dimension_label_text(
-                    state
-                )
+                self.server.viewer.text_overlay.text = self._dimension_label_text(state)
                 logger.info(
                     "🔬 NAPARI PROCESS: Applied route-local axis labels for %s "
                     "without a current value-label overlay.",
@@ -1729,6 +1799,7 @@ class NapariShapesLayerDisplayWork(NapariLayerDisplayWork):
         if self.layer.face_color_mode != "cycle":
             self.layer.face_color_mode = "cycle"
         route_key = self.request.presentation.route_key
+        self.request.pipeline.server.bind_result_selection_layer(self.layer)
         self.request.pipeline.dimension_label_overlay.setup_for_layer(route_key)
         logger.info(
             "🔬 NAPARI PROCESS: Created ROI layer %s with %d shape members in "
@@ -1786,6 +1857,8 @@ class NapariShapesLayerDisplayHandler(NapariLayerDisplayHandler):
             "ndim": shape_payload.ndim,
             "translate": presentation.projection.translate(),
         }
+        if shape_payload.result_metadata:
+            layer_kwargs["metadata"] = dict(shape_payload.result_metadata)
         if axis_labels is not None:
             layer_kwargs["axis_labels"] = axis_labels
         return NapariShapesLayerDisplayWork(
@@ -2061,8 +2134,7 @@ class NapariLayerDisplayPipeline:
             )
             if not isinstance(work, NapariLayerDisplayWork):
                 raise TypeError(
-                    "Napari batch display adapter must return "
-                    "NapariLayerDisplayWork."
+                    "Napari batch display adapter must return NapariLayerDisplayWork."
                 )
             self.server.layer_route_state.clear_update_error(layer_key)
             return work
@@ -2213,9 +2285,7 @@ class NapariMessageTypeBase(ABC):
 class NapariControlMessageAction(NapariMessageTypeBase, metaclass=AutoRegisterMeta):
     """Registered handler for one Napari control message type."""
 
-    __registry__: ClassVar[
-        dict[str, type["NapariControlMessageAction"]]
-    ] = {}
+    __registry__: ClassVar[dict[str, type["NapariControlMessageAction"]]] = {}
 
     @classmethod
     def for_message_type(cls, message_type: str | None) -> "NapariControlMessageAction":
@@ -2519,7 +2589,17 @@ class NapariSelectableFeatureLayer(Protocol):
     """Structural native contract shared by Napari Shapes and Points layers."""
 
     features: NapariFeatureRows
+    metadata: Mapping[str, object]
     selected_data: set[int]
+
+
+class NapariSelectableResultLayer(NapariSelectableFeatureLayer, Protocol):
+    """Native selectable layer carrying exact N-D element coordinates."""
+
+    data: Sequence[object]
+    edge_color: object
+    visible: bool
+    events: NapariSelectableLayerEventsSurface
 
 
 @dataclass(frozen=True, slots=True)
@@ -2529,6 +2609,112 @@ class NapariResultElementSelectionState:
     supported: bool
     feature_row_count: int = 0
     selected_data_indices: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class NapariResultSelectionGroupBinding:
+    """Bind native feature rows to one declared cross-layer object subject."""
+
+    subject_token: object
+    id_feature: str
+
+    def __post_init__(self) -> None:
+        if not self.id_feature:
+            raise ValueError(
+                "NapariResultSelectionGroupBinding.id_feature cannot be empty."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class NapariResultSelectionGroupState:
+    """One object subject represented by one or more native feature rows."""
+
+    subject_token: object
+    subject_id: object
+    member_indices: tuple[int, ...]
+
+
+class NapariResultSelectionGroupAuthority:
+    """Resolve object-owned ROI groups from framework-declared feature metadata."""
+
+    @staticmethod
+    def feature_values(
+        layer: NapariLayerHandle,
+        feature_name: str,
+    ) -> tuple[object, ...] | None:
+        try:
+            values = cast(Mapping[str, Sequence[object]], layer.features)[feature_name]
+        except (KeyError, TypeError):
+            metadata = cast(NapariSelectableFeatureLayer, layer).metadata
+            metadata_values = metadata.get(feature_name)
+            if (
+                metadata_values is None
+                or isinstance(metadata_values, (str, bytes))
+                or not isinstance(metadata_values, Sequence)
+            ):
+                return None
+            values = metadata_values
+        return tuple(
+            value.item() if isinstance(value, np.generic) else value
+            for value in values
+        )
+
+    @classmethod
+    def declared_binding(
+        cls,
+        layer: NapariLayerHandle,
+    ) -> NapariResultSelectionGroupBinding | None:
+        layer_metadata = cast(NapariSelectableFeatureLayer, layer).metadata
+        metadata_subject = layer_metadata.get(
+            ObjectArtifactSubjectBinding.SUBJECT_FEATURE
+        )
+        metadata_ids = cls.feature_values(
+            layer,
+            ObjectArtifactSubjectBinding.SUBJECT_ID_FEATURE,
+        )
+        if metadata_subject is not None or metadata_ids is not None:
+            if metadata_subject is None or metadata_ids is None:
+                raise ValueError(
+                    "OpenHCS result layer metadata requires both subject and ID values."
+                )
+            if len(metadata_ids) != len(layer.features):
+                raise ValueError(
+                    "OpenHCS result layer subject IDs do not align with feature rows."
+                )
+            return NapariResultSelectionGroupBinding(
+                subject_token=metadata_subject,
+                id_feature=ObjectArtifactSubjectBinding.SUBJECT_ID_FEATURE,
+            )
+
+        return None
+
+    @classmethod
+    def state(
+        cls,
+        layer: NapariLayerHandle,
+        binding: NapariResultSelectionGroupBinding,
+        data_index: int,
+    ) -> NapariResultSelectionGroupState:
+        values = cls.feature_values(layer, binding.id_feature)
+        if values is None:
+            raise ValueError(
+                f"Bound result group feature {binding.id_feature!r} is absent."
+            )
+        if data_index < 0 or data_index >= len(values):
+            raise ValueError(
+                f"Result group data index {data_index} is outside {len(values)} row(s)."
+            )
+        subject_id = values[data_index]
+        members = tuple(
+            index for index, value in enumerate(values) if value == subject_id
+        )
+        if not members:
+            raise RuntimeError("OpenHCS result group resolved no native members.")
+        return NapariResultSelectionGroupState(
+            subject_token=binding.subject_token,
+            subject_id=subject_id,
+            member_indices=members,
+        )
 
 
 class NapariResultElementSelectionAuthority:
@@ -2544,20 +2730,22 @@ class NapariResultElementSelectionAuthority:
         selectable_layer = cast(NapariSelectableFeatureLayer, layer)
         try:
             feature_row_count = len(selectable_layer.features)
-            selected_data_indices = tuple(sorted(selectable_layer.selected_data))
+            native_selected_data = tuple(selectable_layer.selected_data)
         except AttributeError:
             return NapariResultElementSelectionState(supported=False)
         if feature_row_count < 0:
             raise ValueError("Napari feature row count must be nonnegative.")
-        for index in selected_data_indices:
-            if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        selected_data_indices: list[int] = []
+        for index in native_selected_data:
+            if isinstance(index, bool) or not isinstance(index, Integral) or index < 0:
                 raise TypeError(
                     "Napari selected_data must contain nonnegative integer indices."
                 )
+            selected_data_indices.append(int(index))
         return NapariResultElementSelectionState(
             supported=True,
             feature_row_count=feature_row_count,
-            selected_data_indices=selected_data_indices,
+            selected_data_indices=tuple(sorted(selected_data_indices)),
         )
 
     @classmethod
@@ -2595,13 +2783,587 @@ class NapariResultElementSelectionAuthority:
         return observed
 
 
+class NapariResultSelectionController:
+    """Turn native result selection into an unambiguous visible viewer state."""
+
+    def __init__(self, server: "NapariViewerServer") -> None:
+        self.server = server
+        self._callbacks: weakref.WeakKeyDictionary[
+            object,
+            Callable[[object], None],
+        ] = weakref.WeakKeyDictionary()
+        self._observed_indices: weakref.WeakKeyDictionary[
+            object,
+            tuple[int, ...],
+        ] = weakref.WeakKeyDictionary()
+        self._group_bindings: weakref.WeakKeyDictionary[
+            object,
+            NapariResultSelectionGroupBinding,
+        ] = weakref.WeakKeyDictionary()
+        self._selection_observers: list[Callable[[], None]] = []
+        self._pending_generation = 0
+        self._refreshing_highlights = False
+        self._synchronizing_group_selection = False
+        self.ensure_default_highlight_thickness()
+        self.ensure_default_highlight_color()
+
+    @staticmethod
+    def _highlight_settings():
+        """Return Napari's native, Preferences-backed highlight authority."""
+
+        from napari.settings import get_settings
+
+        return get_settings().appearance.highlight
+
+    def ensure_default_highlight_thickness(self) -> int:
+        """Replace Napari's nearly invisible stock width while preserving choices."""
+
+        settings = self._highlight_settings()
+        if settings.highlight_thickness == 1:
+            settings.highlight_thickness = _DEFAULT_RESULT_SELECTION_HIGHLIGHT_THICKNESS
+        return int(settings.highlight_thickness)
+
+    def ensure_default_highlight_color(self) -> tuple[float, float, float, float]:
+        """Replace Napari's stock cyan when it would blend into result layers."""
+
+        settings = self._highlight_settings()
+        color = tuple(float(component) for component in settings.highlight_color)
+        if color == _NAPARI_STOCK_HIGHLIGHT_COLOR:
+            settings.highlight_color = list(_DEFAULT_RESULT_SELECTION_HIGHLIGHT_COLOR)
+            color = _DEFAULT_RESULT_SELECTION_HIGHLIGHT_COLOR
+        return cast(tuple[float, float, float, float], color)
+
+    def set_highlight_thickness(self, thickness: int) -> None:
+        """Set the native selected-outline width and redraw current selections."""
+
+        if isinstance(thickness, bool) or not isinstance(thickness, int):
+            raise TypeError("Napari result highlight thickness must be an integer.")
+        if thickness < 1 or thickness > 10:
+            raise ValueError(
+                "Napari result highlight thickness must be between 1 and 10."
+            )
+        settings = self._highlight_settings()
+        settings.highlight_thickness = thickness
+        self.refresh_highlights()
+
+    def set_highlight_color(self, color: Sequence[float]) -> None:
+        """Set the native selected-outline color and redraw current selections."""
+
+        rgba = self._normalize_rgba(color, context="result highlight")
+        settings = self._highlight_settings()
+        settings.highlight_color = list(rgba)
+        self.refresh_highlights()
+
+    @staticmethod
+    def _normalize_rgba(
+        color: Sequence[float],
+        *,
+        context: str,
+    ) -> tuple[float, float, float, float]:
+        if isinstance(color, (str, bytes)) or len(color) != 4:
+            raise ValueError(f"Napari {context} color must contain RGBA values.")
+        rgba = tuple(float(component) for component in color)
+        if any(
+            not np.isfinite(component) or component < 0 or component > 1
+            for component in rgba
+        ):
+            raise ValueError(
+                f"Napari {context} RGBA values must be finite and between 0 and 1."
+            )
+        return cast(tuple[float, float, float, float], rgba)
+
+    def is_bound_result_layer(self, layer: object) -> bool:
+        """Return whether a native layer owns OpenHCS result selection."""
+
+        return layer in self._callbacks
+
+    def result_layer_color(
+        self,
+        layer: NapariLayerHandle,
+    ) -> tuple[float, float, float, float]:
+        """Return the first native edge color for a bound result layer."""
+
+        if not self.is_bound_result_layer(layer):
+            raise ValueError("Target layer is not a bound OpenHCS result layer.")
+        colors = np.asarray(
+            cast(NapariSelectableResultLayer, layer).edge_color,
+            dtype=float,
+        )
+        if colors.ndim == 1:
+            color = colors
+        elif colors.ndim == 2 and len(colors):
+            color = colors[0]
+        else:
+            raise ValueError("Bound OpenHCS result layer has no native edge color.")
+        return self._normalize_rgba(color, context="result layer")
+
+    def set_result_layer_color(
+        self,
+        layer: NapariLayerHandle,
+        color: Sequence[float],
+    ) -> None:
+        """Apply one native edge color to every ROI in a bound result layer."""
+
+        if not self.is_bound_result_layer(layer):
+            raise ValueError("Target layer is not a bound OpenHCS result layer.")
+        rgba = self._normalize_rgba(color, context="result layer")
+        cast(NapariSelectableResultLayer, layer).edge_color = list(rgba)
+        self._notify_selection_observers()
+
+    def result_group_color(
+        self,
+        layer: NapariLayerHandle,
+    ) -> tuple[float, float, float, float]:
+        """Return the native edge color for the selected object-owned ROI group."""
+
+        state = NapariResultElementSelectionAuthority.state(layer)
+        if not state.selected_data_indices:
+            raise ValueError("Bound OpenHCS result layer has no selected ROI group.")
+        colors = np.asarray(
+            cast(NapariSelectableResultLayer, layer).edge_color,
+            dtype=float,
+        )
+        if colors.ndim == 1:
+            color = colors
+        elif colors.ndim == 2 and len(colors):
+            color = colors[state.selected_data_indices[0]]
+        else:
+            raise ValueError("Bound OpenHCS result layer has no native edge color.")
+        return self._normalize_rgba(color, context="result group")
+
+    def set_result_group_color(
+        self,
+        layer: NapariLayerHandle,
+        color: Sequence[float],
+    ) -> None:
+        """Recolor every native ROI member of the selected object subject."""
+
+        state = NapariResultElementSelectionAuthority.state(layer)
+        if not state.selected_data_indices:
+            raise ValueError("Bound OpenHCS result layer has no selected ROI group.")
+        rgba = self._normalize_rgba(color, context="result group")
+        linked = self._linked_group_members(layer, state.selected_data_indices[0])
+        for candidate, member_indices in linked:
+            candidate_state = NapariResultElementSelectionAuthority.state(candidate)
+            result_layer = cast(NapariSelectableResultLayer, candidate)
+            colors = np.asarray(result_layer.edge_color, dtype=float)
+            if colors.ndim == 1:
+                colors = np.broadcast_to(
+                    colors,
+                    (candidate_state.feature_row_count, 4),
+                ).copy()
+            elif (
+                colors.ndim == 2
+                and len(colors) == candidate_state.feature_row_count
+            ):
+                colors = colors.copy()
+            else:
+                raise ValueError(
+                    "Bound OpenHCS result layer edge colors do not align with features."
+                )
+            colors[np.asarray(member_indices, dtype=int)] = rgba
+            result_layer.edge_color = colors
+        self._notify_selection_observers()
+
+    def connect_selection_observer(self, callback: Callable[[], None]) -> None:
+        """Observe native group selection or result color changes."""
+
+        self._selection_observers.append(callback)
+
+    def _notify_selection_observers(self) -> None:
+        for callback in tuple(self._selection_observers):
+            callback()
+
+    def refresh_highlights(self) -> None:
+        """Redraw selected native layers without scheduling navigation again."""
+
+        self._refreshing_highlights = True
+        try:
+            for layer in tuple(self._callbacks):
+                state = NapariResultElementSelectionAuthority.state(
+                    cast(NapariLayerHandle, layer)
+                )
+                if state.selected_data_indices:
+                    cast(NapariSelectableResultLayer, layer).events.highlight()
+        finally:
+            self._refreshing_highlights = False
+
+    def bind(
+        self,
+        layer: NapariLayerHandle,
+        group_binding: NapariResultSelectionGroupBinding | None = None,
+    ) -> None:
+        """Bind one authoritative streamed result layer exactly once."""
+
+        result_layer = cast(NapariSelectableResultLayer, layer)
+        NapariResultElementSelectionAuthority.state(layer)
+        if layer in self._callbacks:
+            return
+        resolved_group_binding = (
+            group_binding
+            if group_binding is not None
+            else NapariResultSelectionGroupAuthority.declared_binding(layer)
+        )
+        if resolved_group_binding is not None:
+            self._group_bindings[layer] = resolved_group_binding
+        layer_reference = weakref.ref(layer)
+
+        def on_highlight(_event: object = None) -> None:
+            bound_layer = layer_reference()
+            if bound_layer is None or self._refreshing_highlights:
+                return
+            self._queue_selection(cast(NapariLayerHandle, bound_layer))
+
+        result_layer.events.highlight.connect(on_highlight)
+        self._callbacks[layer] = on_highlight
+        self._observed_indices[layer] = NapariResultElementSelectionAuthority.state(
+            layer
+        ).selected_data_indices
+
+    def _queue_selection(self, layer: NapariLayerHandle) -> None:
+        if self._synchronizing_group_selection:
+            return
+        state = NapariResultElementSelectionAuthority.state(layer)
+        previous_indices = self._observed_indices.get(layer, ())
+        self._observed_indices[layer] = state.selected_data_indices
+        if state.selected_data_indices == previous_indices:
+            # Shapes highlight events also report redraws, layer activation,
+            # and other presentation changes. Replaying an unchanged result
+            # selection here steals focus and can make another layer impossible
+            # to select.
+            return
+        self._pending_generation += 1
+        generation = self._pending_generation
+        if not state.selected_data_indices:
+            self._notify_selection_observers()
+            return
+        newly_selected = tuple(
+            index
+            for index in state.selected_data_indices
+            if index not in previous_indices
+        )
+        data_index = (
+            newly_selected[-1] if newly_selected else state.selected_data_indices[-1]
+        )
+        self._synchronize_linked_group(layer, data_index)
+        layer_reference = weakref.ref(layer)
+        QTimer.singleShot(
+            0,
+            lambda: self._apply_selection(
+                layer_reference,
+                data_index,
+                generation,
+            ),
+        )
+
+    def _linked_group_members(
+        self,
+        layer: NapariLayerHandle,
+        data_index: int,
+    ) -> tuple[tuple[NapariLayerHandle, tuple[int, ...]], ...]:
+        binding = self._group_bindings.get(layer)
+        if binding is None:
+            return ((layer, (data_index,)),)
+        source_group = NapariResultSelectionGroupAuthority.state(
+            layer,
+            binding,
+            data_index,
+        )
+        linked: list[tuple[NapariLayerHandle, tuple[int, ...]]] = []
+        for candidate, candidate_binding in tuple(self._group_bindings.items()):
+            if candidate_binding.subject_token != source_group.subject_token:
+                continue
+            values = NapariResultSelectionGroupAuthority.feature_values(
+                cast(NapariLayerHandle, candidate),
+                candidate_binding.id_feature,
+            )
+            if values is None:
+                continue
+            member_indices = tuple(
+                index
+                for index, value in enumerate(values)
+                if value == source_group.subject_id
+            )
+            if member_indices:
+                linked.append(
+                    (cast(NapariLayerHandle, candidate), member_indices)
+                )
+        return tuple(linked) or ((layer, source_group.member_indices),)
+
+    def _synchronize_linked_group(
+        self,
+        layer: NapariLayerHandle,
+        data_index: int,
+    ) -> tuple[tuple[NapariLayerHandle, tuple[int, ...]], ...]:
+        linked = self._linked_group_members(layer, data_index)
+        self._synchronizing_group_selection = True
+        try:
+            for candidate, member_indices in linked:
+                cast(NapariSelectableFeatureLayer, candidate).selected_data = set(
+                    member_indices
+                )
+                self._observed_indices[candidate] = member_indices
+        finally:
+            self._synchronizing_group_selection = False
+        self._notify_selection_observers()
+        return linked
+
+    def _apply_selection(
+        self,
+        layer_reference: weakref.ReferenceType[object],
+        data_index: int,
+        generation: int,
+    ) -> None:
+        if generation != self._pending_generation:
+            return
+        layer = layer_reference()
+        if layer is None or layer not in self.server.viewer.layers:
+            return
+        native_layer = cast(NapariLayerHandle, layer)
+        state = NapariResultElementSelectionAuthority.state(native_layer)
+        if data_index not in state.selected_data_indices:
+            return
+
+        result_layer = cast(NapariSelectableResultLayer, layer)
+        result_layer.visible = True
+        layer_selection = self.server.viewer.layers.selection
+        if layer not in layer_selection or len(layer_selection) <= 1:
+            # Napari defines ``active`` as "select only". Preserve an existing
+            # multi-layer selection so its combined native Features Table does
+            # not collapse after every row click.
+            layer_selection.active = layer
+
+        route_key = self.server.layer_route_state.route_for_layer(native_layer)
+        if route_key is None:
+            logger.warning(
+                "Selected Napari result layer is mounted without an OpenHCS route."
+            )
+            return
+        try:
+            navigation = NapariNavigationControlMessageAction()
+            axis_indices = navigation.result_element_axis_indices(
+                self.server,
+                native_layer,
+                route_key,
+                data_index,
+            )
+            self._refreshing_highlights = True
+            try:
+                if axis_indices:
+                    navigation.apply_axis_indices(
+                        self.server,
+                        native_layer,
+                        ViewerNavigationControlOptions.from_overrides(
+                            route_key=route_key,
+                            axis_indices=axis_indices,
+                        ),
+                    )
+            finally:
+                # Napari clears Shapes.selected_data when a dims change slices the
+                # selected geometry out of view. Re-assert the same authoritative
+                # member even if navigation fails so a UI interaction cannot erase
+                # an otherwise valid native selection.
+                try:
+                    self._synchronize_linked_group(native_layer, data_index)
+                finally:
+                    self._refreshing_highlights = False
+        except Exception:
+            logger.exception(
+                "Failed to navigate to selected Napari result element %d on %s",
+                data_index,
+                route_key,
+            )
+
+
+def _install_result_selection_toolbar(
+    feature_table_dock: NapariFeatureTableDockSurface,
+    controller: NapariResultSelectionController,
+):
+    """Expose native selection thickness beside the result-table workflow."""
+
+    from qtpy.QtGui import QColor
+    from qtpy.QtWidgets import QColorDialog, QLabel, QPushButton, QSpinBox, QToolBar
+
+    qt_window = feature_table_dock.window()
+    toolbar = QToolBar("OpenHCS ROI selection", qt_window)
+    toolbar.setObjectName("openhcs_roi_selection_toolbar")
+    label = QLabel("Selected ROI outline:", toolbar)
+    thickness = QSpinBox(toolbar)
+    thickness.setObjectName("openhcs_roi_highlight_thickness")
+    thickness.setRange(1, 10)
+    thickness.setSuffix(" px")
+    thickness.setToolTip(
+        "Width of Napari's native selected-ROI outline. Color remains available "
+        "under Napari Preferences > Appearance > Highlight."
+    )
+    thickness.setValue(controller.ensure_default_highlight_thickness())
+    thickness.valueChanged.connect(controller.set_highlight_thickness)
+    highlight_settings = controller._highlight_settings()
+    color_button = QPushButton("Selection color", toolbar)
+    color_button.setObjectName("openhcs_roi_highlight_color")
+    layer_color_button = QPushButton("ROI layer color", toolbar)
+    layer_color_button.setObjectName("openhcs_roi_layer_color")
+    group_color_button = QPushButton("ROI group color", toolbar)
+    group_color_button.setObjectName("openhcs_roi_group_color")
+
+    def sync_from_preferences(_event: object = None) -> None:
+        thickness.setValue(int(highlight_settings.highlight_thickness))
+
+    def sync_color_from_preferences(_event: object = None) -> None:
+        rgba = tuple(float(value) for value in highlight_settings.highlight_color)
+        color = QColor.fromRgbF(*rgba)
+        foreground = "#000000" if color.lightnessF() > 0.55 else "#ffffff"
+        color_button.setStyleSheet(
+            "QPushButton { "
+            f"background-color: {color.name()}; color: {foreground}; "
+            "padding-left: 8px; padding-right: 8px; }"
+        )
+        color_button.setToolTip(
+            f"Selected ROI outline color ({color.name()}). Also synchronized "
+            "with Napari Preferences > Appearance > Highlight."
+        )
+
+    def active_result_layer() -> NapariLayerHandle | None:
+        viewer = controller.server.viewer
+        if viewer is None:
+            return None
+        layer = viewer.layers.selection.active
+        if layer is None or not controller.is_bound_result_layer(layer):
+            return None
+        return layer
+
+    def sync_layer_color(_event: object = None) -> None:
+        layer = active_result_layer()
+        layer_color_button.setEnabled(layer is not None)
+        if layer is None:
+            layer_color_button.setStyleSheet("")
+            layer_color_button.setToolTip(
+                "Select one OpenHCS ROI layer to recolor every ROI in that layer."
+            )
+            return
+        rgba = controller.result_layer_color(layer)
+        color = QColor.fromRgbF(*rgba)
+        foreground = "#000000" if color.lightnessF() > 0.55 else "#ffffff"
+        layer_color_button.setStyleSheet(
+            "QPushButton { "
+            f"background-color: {color.name()}; color: {foreground}; "
+            "padding-left: 8px; padding-right: 8px; }"
+        )
+        layer_color_button.setToolTip(
+            "Apply one edge color to every ROI in the active OpenHCS result layer."
+        )
+
+    def sync_group_color(_event: object = None) -> None:
+        layer = active_result_layer()
+        state = NapariResultElementSelectionAuthority.state(layer)
+        has_group = layer is not None and bool(state.selected_data_indices)
+        group_color_button.setEnabled(has_group)
+        if layer is None or not has_group:
+            group_color_button.setStyleSheet("")
+            group_color_button.setToolTip(
+                "Select one ROI to recolor every ROI member of its declared object group."
+            )
+            return
+        rgba = controller.result_group_color(layer)
+        color = QColor.fromRgbF(*rgba)
+        foreground = "#000000" if color.lightnessF() > 0.55 else "#ffffff"
+        group_color_button.setStyleSheet(
+            "QPushButton { "
+            f"background-color: {color.name()}; color: {foreground}; "
+            "padding-left: 8px; padding-right: 8px; }"
+        )
+        group_color_button.setToolTip(
+            "Recolor the selected object group while preserving other ROI groups."
+        )
+
+    def choose_color() -> None:
+        initial = QColor.fromRgbF(
+            *(float(value) for value in highlight_settings.highlight_color)
+        )
+        chosen = QColorDialog.getColor(
+            initial,
+            qt_window,
+            "Selected ROI outline color",
+        )
+        if chosen.isValid():
+            controller.set_highlight_color(
+                (chosen.redF(), chosen.greenF(), chosen.blueF(), 1.0)
+            )
+
+    def choose_layer_color() -> None:
+        layer = active_result_layer()
+        if layer is None:
+            sync_layer_color()
+            return
+        initial = QColor.fromRgbF(*controller.result_layer_color(layer))
+        chosen = QColorDialog.getColor(
+            initial,
+            qt_window,
+            "ROI layer color",
+        )
+        if chosen.isValid():
+            controller.set_result_layer_color(
+                layer,
+                (chosen.redF(), chosen.greenF(), chosen.blueF(), 1.0),
+            )
+            sync_layer_color()
+
+    def choose_group_color() -> None:
+        layer = active_result_layer()
+        if layer is None:
+            sync_group_color()
+            return
+        state = NapariResultElementSelectionAuthority.state(layer)
+        if not state.selected_data_indices:
+            sync_group_color()
+            return
+        initial = QColor.fromRgbF(*controller.result_group_color(layer))
+        chosen = QColorDialog.getColor(
+            initial,
+            qt_window,
+            "ROI group color",
+        )
+        if chosen.isValid():
+            controller.set_result_group_color(
+                layer,
+                (chosen.redF(), chosen.greenF(), chosen.blueF(), 1.0),
+            )
+            sync_group_color()
+
+    highlight_settings.events.highlight_thickness.connect(sync_from_preferences)
+    highlight_settings.events.highlight_color.connect(sync_color_from_preferences)
+    color_button.clicked.connect(choose_color)
+    layer_color_button.clicked.connect(choose_layer_color)
+    group_color_button.clicked.connect(choose_group_color)
+    controller.connect_selection_observer(sync_group_color)
+    if controller.server.viewer is not None:
+        controller.server.viewer.layers.selection.events.active.connect(
+            sync_layer_color
+        )
+        controller.server.viewer.layers.selection.events.active.connect(
+            sync_group_color
+        )
+    toolbar.addWidget(label)
+    toolbar.addWidget(thickness)
+    toolbar.addWidget(color_button)
+    toolbar.addWidget(group_color_button)
+    toolbar.addWidget(layer_color_button)
+    sync_color_from_preferences()
+    sync_layer_color()
+    sync_group_color()
+    qt_window.addToolBar(Qt.ToolBarArea.BottomToolBarArea, toolbar)
+    return toolbar
+
+
 @dataclass(frozen=True, slots=True)
 class NapariViewerStateProjection:
     """Project live Napari route/component stores into an agent-readable state."""
 
     server: "NapariViewerServer"
     viewer: NapariViewerLayerCreator
-    request: ViewerStateControlOptions = field(default_factory=ViewerStateControlOptions)
+    request: ViewerStateControlOptions = field(
+        default_factory=ViewerStateControlOptions
+    )
 
     def wire_envelope(
         self,
@@ -2622,10 +3384,7 @@ class NapariViewerStateProjection:
 
     def to_wire_mapping(self) -> dict[str, NapariWireValue]:
         route_keys = self.route_keys()
-        layers = tuple(
-            self.layer_state_for(route_key)
-            for route_key in route_keys
-        )
+        layers = tuple(self.layer_state_for(route_key) for route_key in route_keys)
         wire_mapping = self.wire_envelope(response_type="state_ack", layers=layers)
         wire_mapping.update(
             {
@@ -2696,8 +3455,7 @@ class NapariViewerStateProjection:
             ViewerLayerField.ITEM_COUNT.value: len(item_tuple),
             ViewerLayerField.DATA_TYPES.value: tuple(
                 dict.fromkeys(
-                    item.address.stream_layer_data_type.value
-                    for item in item_tuple
+                    item.address.stream_layer_data_type.value for item in item_tuple
                 )
             ),
             ViewerLayerField.COMPONENT_VALUES.value: component_values,
@@ -2877,7 +3635,9 @@ class NapariViewerStateProjection:
             ViewerPayloadField.COMPONENTS.value: dict(components),
             "payload_type": type(data).__name__,
         }
-        summary.update(item.image_metadata.source_spatial_domain.to_viewer_wire_mapping())
+        summary.update(
+            item.image_metadata.source_spatial_domain.to_viewer_wire_mapping()
+        )
         if aggregate_axis_bindings is not None and aggregate_axis_bindings.bindings:
             summary["aggregate_component_values"] = {
                 binding.component: tuple(binding.values)
@@ -2949,9 +3709,7 @@ class NapariViewerStateProjection:
             ),
             "dtype": str(array.dtype),
             "size": int(array.size),
-            ViewerPayloadSummaryField.NONZERO_COUNT.value: int(
-                np.count_nonzero(array)
-            ),
+            ViewerPayloadSummaryField.NONZERO_COUNT.value: int(np.count_nonzero(array)),
         }
         if array.size:
             summary["min"] = NapariViewerStateProjection.json_scalar(array.min())
@@ -2982,8 +3740,7 @@ class NapariViewerPayloadProjection(NapariViewerStateProjection):
 
     def to_wire_mapping(self) -> dict[str, NapariWireValue]:
         layers = tuple(
-            self.layer_payloads_for(route_key)
-            for route_key in self.route_keys()
+            self.layer_payloads_for(route_key) for route_key in self.route_keys()
         )
         return self.wire_envelope(response_type="payloads_ack", layers=layers)
 
@@ -3008,9 +3765,7 @@ class NapariViewerPayloadProjection(NapariViewerStateProjection):
                 ViewerLayerField.PRODUCER_IDENTITIES.value
             ],
             ViewerLayerField.TITLE.value: layer_state[ViewerLayerField.TITLE.value],
-            ViewerLayerField.MOUNTED.value: layer_state[
-                ViewerLayerField.MOUNTED.value
-            ],
+            ViewerLayerField.MOUNTED.value: layer_state[ViewerLayerField.MOUNTED.value],
             ViewerLayerField.ITEM_COUNT.value: len(item_tuple),
             ViewerLayerField.AXIS_LABELS.value: layer_state[
                 ViewerLayerField.AXIS_LABELS.value
@@ -3092,7 +3847,10 @@ class NapariViewerPayloadProjection(NapariViewerStateProjection):
             if axis_name not in axis_labels:
                 return False
             tuple_index = axis_labels.index(axis_name)
-            if tuple_index >= len(axis_indices) or axis_indices[tuple_index] != axis_index:
+            if (
+                tuple_index >= len(axis_indices)
+                or axis_indices[tuple_index] != axis_index
+            ):
                 return False
         return True
 
@@ -3209,9 +3967,7 @@ class NapariViewerPayloadProjection(NapariViewerStateProjection):
     ) -> tuple[np.ndarray, dict[str, NapariWireValue]]:
         if self.request.array_slices is None:
             return data, {
-                "slice_ranges": tuple(
-                    (0, int(axis_size)) for axis_size in data.shape
-                )
+                "slice_ranges": tuple((0, int(axis_size)) for axis_size in data.shape)
             }
         if len(self.request.array_slices) > data.ndim:
             if data.ndim == 0:
@@ -3253,10 +4009,7 @@ class NapariViewerPayloadProjection(NapariViewerStateProjection):
             if not isinstance(payload, Mapping):
                 continue
             records.append(
-                {
-                    str(key): self.wire_value(value)
-                    for key, value in payload.items()
-                }
+                {str(key): self.wire_value(value) for key, value in payload.items()}
             )
             if len(records) >= self.request.max_shape_payloads:
                 break
@@ -3405,9 +4158,7 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
                 request.data_index,
             )
             target_visible = (
-                bool(layer.visible)
-                if request.visible is None
-                else request.visible
+                bool(layer.visible) if request.visible is None else request.visible
             )
             target_selected = (
                 server.viewer.layers.selection.active is layer
@@ -3419,15 +4170,35 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
                     "Viewer data_index requires the target result layer to be "
                     "visible and selected."
                 )
+            result_axis_indices = self.result_element_axis_indices(
+                server,
+                layer,
+                request.route_key,
+                request.data_index,
+            )
+            conflicts = {
+                axis_name: (result_index, request.axis_indices[axis_name])
+                for axis_name, result_index in result_axis_indices.items()
+                if axis_name in request.axis_indices
+                and request.axis_indices[axis_name] != result_index
+            }
+            if conflicts:
+                raise ValueError(
+                    "Viewer data_index axis coordinates conflict with explicit "
+                    f"axis_indices: {conflicts!r}."
+                )
+            request = replace(
+                request,
+                axis_indices={**result_axis_indices, **request.axis_indices},
+            )
         if request.visible is not None:
             layer.visible = request.visible
         if request.axis_indices:
-            self._apply_axis_indices(server, layer, request)
+            self.apply_axis_indices(server, layer, request)
         if request.selected is True:
             server.viewer.layers.selection.active = layer
         elif (
-            request.selected is False
-            and server.viewer.layers.selection.active is layer
+            request.selected is False and server.viewer.layers.selection.active is layer
         ):
             server.viewer.layers.selection.active = None
         if request.data_index is not None:
@@ -3439,6 +4210,8 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
         server.display_pipeline.dimension_label_overlay.setup_for_layer(
             request.route_key
         )
+        if request.data_index is not None:
+            server.raise_result_selection_surface()
 
     def _mounted_layer(
         self,
@@ -3446,13 +4219,43 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
         route_key: str,
     ) -> NapariLayerHandle:
         if not server.layer_route_state.has_layer(route_key):
-            raise ValueError(f"No Napari layer is registered for route_key {route_key!r}.")
+            raise ValueError(
+                f"No Napari layer is registered for route_key {route_key!r}."
+            )
         layer = server.layer_route_state.layer(route_key)
         if layer not in server.viewer.layers:
-            raise ValueError(f"Napari layer for route_key {route_key!r} is not mounted.")
+            raise ValueError(
+                f"Napari layer for route_key {route_key!r} is not mounted."
+            )
         return layer
 
-    def _apply_axis_indices(
+    def result_element_axis_indices(
+        self,
+        server: "NapariViewerServer",
+        layer: NapariLayerHandle,
+        route_key: str,
+        data_index: int,
+    ) -> dict[str, int]:
+        """Derive one result element's route-local slice from native geometry."""
+
+        NapariResultElementSelectionAuthority.require_data_index(layer, data_index)
+        dimension_state = server.layer_route_state.dimension_state_for(route_key)
+        if not dimension_state.axis_labels:
+            return {}
+        result_layer = cast(NapariSelectableResultLayer, layer)
+        try:
+            coordinates = result_layer.data[data_index]
+        except IndexError as exc:
+            raise ValueError(
+                f"Viewer data_index {data_index} has no native layer geometry."
+            ) from exc
+        return ViewerResultElementCoordinateAuthority.axis_indices(
+            coordinates=cast(Sequence[object], coordinates),
+            axis_labels=dimension_state.axis_labels,
+            displayed_axis_count=int(server.viewer.dims.ndisplay),
+        )
+
+    def apply_axis_indices(
         self,
         server: "NapariViewerServer",
         layer: NapariLayerHandle,
@@ -3492,9 +4295,7 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
                     f"Route {request.route_key!r} has no axis presentation "
                     "for semantic navigation."
                 )
-            viewer_axis_origins = server.layer_route_state.axis_origins_for(
-                axis_labels
-            )
+            viewer_axis_origins = server.layer_route_state.axis_origins_for(axis_labels)
             current_step[axis_position] = presentation.viewer_step(
                 local_axis_index,
                 axis_position,
@@ -3535,6 +4336,7 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
                 f"the route-local extent {local_extent}."
             )
 
+
 class NapariScreenshotControlMessageAction(NapariControlMessageAction):
     """Registered action that captures the Napari Qt window."""
 
@@ -3563,8 +4365,7 @@ class NapariScreenshotControlMessageAction(NapariControlMessageAction):
         capture_spec = message.get(ViewerControlResponseField.PAYLOAD.value)
         if not isinstance(capture_spec, WindowSnapshotCaptureSpec):
             raise TypeError(
-                "Napari screenshot control payload must be "
-                "WindowSnapshotCaptureSpec."
+                "Napari screenshot control payload must be WindowSnapshotCaptureSpec."
             )
         snapshot = QtWindowSnapshotService().capture(
             QtWindowSnapshotRequest(
@@ -3729,9 +4530,7 @@ class NapariDataTransportPump:
                 self._startup_error = error
                 self._ready_event.set()
             elif not self._stop_event.is_set():
-                logger.exception(
-                    "🔬 NAPARI PROCESS: Data transport pump failed"
-                )
+                logger.exception("🔬 NAPARI PROCESS: Data transport pump failed")
                 self.server.record_transport_failure(error)
         finally:
             if socket is not None:
@@ -3783,8 +4582,7 @@ class NapariControlTransportPump:
             thread.join(timeout=5.0)
             if thread.is_alive():
                 logger.warning(
-                    "Napari control transport thread on port %s did not stop "
-                    "promptly",
+                    "Napari control transport thread on port %s did not stop promptly",
                     self.server.control_port,
                 )
         self._thread = None
@@ -3811,9 +4609,7 @@ class NapariControlTransportPump:
                 self._startup_error = error
                 self._ready_event.set()
             elif not self._stop_event.is_set():
-                logger.exception(
-                    "🔬 NAPARI PROCESS: Control transport pump failed"
-                )
+                logger.exception("🔬 NAPARI PROCESS: Control transport pump failed")
                 self.server.record_transport_failure(error)
         finally:
             if socket is not None:
@@ -3874,9 +4670,7 @@ class NapariViewerServer(StreamingVisualizerServer):
 
     _server_type = ViewerType.NAPARI.value
 
-    def __init__(
-        self, request: NapariViewerServerRequest
-    ):
+    def __init__(self, request: NapariViewerServerRequest):
         """
         Initialize Napari viewer server.
 
@@ -3898,6 +4692,10 @@ class NapariViewerServer(StreamingVisualizerServer):
         self.napari_window_title = request.viewer_title
         self.replace_layers = request.replace_layers
         self.viewer = None
+        self.feature_table_dock: NapariFeatureTableDockSurface | None = None
+        self.roi_manager_dock: NapariRoiManagerDockSurface | None = None
+        self.roi_manager_widget: NapariRoiManagerWidgetSurface | None = None
+        self.result_selection_toolbar = None
         self.layer_route_state = NapariLayerRouteStateStore.empty()
         self.component_groups = NapariComponentGroupStore()
         self.component_name_metadata = ViewerComponentNameMetadata.empty()
@@ -3911,17 +4709,56 @@ class NapariViewerServer(StreamingVisualizerServer):
             debounce_policy=self.layer_batch_processor_debounce_policy,
         )
         self.display_pipeline = NapariLayerDisplayPipeline(self)
+        self.result_selection_controller = NapariResultSelectionController(self)
         self.accepted_stream_batches: queue.Queue[NapariAcceptedStreamBatch] = (
             queue.Queue()
         )
-        self.accepted_control_requests: queue.Queue[
-            NapariAcceptedControlRequest
-        ] = queue.Queue()
+        self.accepted_control_requests: queue.Queue[NapariAcceptedControlRequest] = (
+            queue.Queue()
+        )
         self.data_transport_pump = NapariDataTransportPump(self)
         self.control_transport_pump = NapariControlTransportPump(self)
         self.transport_failure: Exception | None = None
 
         # Ack socket handled by StreamingVisualizerServer
+
+    def raise_result_selection_surface(self) -> None:
+        """Make the authoritative feature table and Napari window prominent."""
+
+        feature_table_dock = self.feature_table_dock
+        if feature_table_dock is None:
+            raise RuntimeError("Napari Features table dock is not available.")
+        feature_table_dock.show()
+        feature_table_dock.raise_()
+        qt_window = feature_table_dock.window()
+        if qt_window.isMinimized():
+            qt_window.showNormal()
+        qt_window.show()
+        qt_window.raise_()
+        qt_window.activateWindow()
+
+    def bind_result_selection_layer(self, layer: NapariLayerHandle) -> None:
+        """Bind native selection behavior to one authoritative streamed layer."""
+
+        self.result_selection_controller.bind(layer)
+        self.bind_roi_manager_layer(layer)
+
+    def bind_roi_manager_layer(self, layer: NapariLayerHandle) -> None:
+        """Lazily mount one Fiji-style manager on the native Shapes owner."""
+
+        if self.viewer is None:
+            raise RuntimeError("Napari viewer is not available.")
+        if self.roi_manager_widget is None:
+            dock, widget = self.viewer.window.add_plugin_dock_widget(
+                "openhcs",
+                "OpenHCS ROI Manager",
+            )
+            self.roi_manager_dock = dock
+            self.roi_manager_widget = cast(NapariRoiManagerWidgetSurface, widget)
+        self.roi_manager_widget.connect_layer(layer)
+        if self.roi_manager_dock is None:
+            raise RuntimeError("Napari ROI Manager dock is not available.")
+        self.roi_manager_dock.show()
 
     def start(self) -> None:
         """Bind each ZMQ endpoint in its dedicated socket-owner thread."""
@@ -3951,9 +4788,7 @@ class NapariViewerServer(StreamingVisualizerServer):
         self.data_transport_pump.stop()
         self.control_transport_pump.stop()
         with self._lock:
-            if self.transport_mode == coerce_transport_mode(
-                OpenHCSTransportMode.IPC
-            ):
+            if self.transport_mode == coerce_transport_mode(OpenHCSTransportMode.IPC):
                 remove_ipc_socket(self.port, self.config)
                 remove_ipc_socket(self.control_port, self.config)
         logger.info("ZMQ Server stopped")
@@ -4062,9 +4897,11 @@ class NapariViewerServer(StreamingVisualizerServer):
         try:
             data = json.loads(message.decode("utf-8"))
             msg_type = ViewerBatchMessageType(
-                str(PayloadMap(data, "Napari message").required(
-                    ViewerBatchWireField.TYPE
-                ))
+                str(
+                    PayloadMap(data, "Napari message").required(
+                        ViewerBatchWireField.TYPE
+                    )
+                )
             )
             accepted_batch = NapariStreamMessageHandler.for_message_type(
                 msg_type
@@ -4099,9 +4936,7 @@ class NapariViewerServer(StreamingVisualizerServer):
                 request = self.accepted_control_requests.get_nowait()
             except queue.Empty:
                 return
-            request.response_queue.put(
-                self.control_response_payload(request.message)
-            )
+            request.response_queue.put(self.control_response_payload(request.message))
 
     def _accept_single_image(
         self,
@@ -4206,7 +5041,12 @@ def run_napari_viewer_process(
             "napari",
             "Features table widget",
         )
+        server.feature_table_dock = feature_table_dock
         _apply_default_window_layout(viewer, feature_table_dock)
+        server.result_selection_toolbar = _install_result_selection_toolbar(
+            feature_table_dock,
+            server.result_selection_controller,
+        )
         if scope_accent_color is not None:
             _apply_scope_accent_styling(feature_table_dock, scope_accent_color)
         logger.info("🔬 NAPARI PROCESS: Qt viewer construction complete")

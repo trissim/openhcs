@@ -17,6 +17,7 @@ from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.identity import StreamProducerIdentity
 from zmqruntime.viewer_protocol import ViewerComponentMode, ViewerWireField
 
+from openhcs.core.artifacts import ObjectArtifactSubjectBinding
 from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
 )
@@ -113,7 +114,6 @@ class NapariLayerCollection(ABC):
     @abstractmethod
     def __contains__(self, layer: NapariLayerHandle) -> bool:
         """Return whether the concrete Napari layer is still mounted."""
-
 
 class NapariDimsController(ABC):
     """Subset of napari dims state mutated by streaming updates."""
@@ -390,9 +390,7 @@ class NapariImagePayloadAxisLabelPolicy:
         local_axis_count = len(cls.local_axis_indices(data, image_metadata))
         consumed = frozenset(consumed_payload_axes)
         unbound_axes = tuple(
-            index
-            for index in range(local_axis_count)
-            if index not in consumed
+            index for index in range(local_axis_count) if index not in consumed
         )
         if unbound_axes:
             raise ValueError(
@@ -411,15 +409,14 @@ class NapariImagePayloadAxisLabelPolicy:
         ndim = int(np.ndim(data))
         spatial_axes = image_metadata.spatial_axes_yx(data)
         if spatial_axes is None:
-            raise ValueError(
-                "Napari image payload requires two declared spatial axes."
-            )
+            raise ValueError("Napari image payload requires two declared spatial axes.")
         channel_axis = image_metadata.normalized_source_channel_axis(data)
         return tuple(
             axis
             for axis in range(ndim)
             if axis not in spatial_axes and axis != channel_axis
         )
+
 
 @dataclass(frozen=True, slots=True)
 class NapariAggregateAxisBinding:
@@ -450,10 +447,7 @@ class NapariAggregateAxisBindingSet:
 
     @property
     def component_values(self) -> ComponentValues:
-        return {
-            binding.component: list(binding.values)
-            for binding in self.bindings
-        }
+        return {binding.component: list(binding.values) for binding in self.bindings}
 
     @property
     def payload_axes(self) -> tuple[int, ...]:
@@ -489,8 +483,8 @@ class NapariAggregateAxisBindingSet:
                 f"{payload_indices!r} for {len(self.bindings)} binding(s)."
             )
         for binding, payload_index in zip(self.bindings, payload_indices):
-            components[binding.component] = (
-                binding.component_value_for_payload_index(payload_index)
+            components[binding.component] = binding.component_value_for_payload_index(
+                payload_index
             )
         return components
 
@@ -519,8 +513,8 @@ class NapariAggregateAxisBindingAuthority:
         axis_components = component_axis_semantics.layout.components_for_mode(
             ViewerComponentMode.STACK
         )
-        declared_component_values = (
-            component_axis_semantics.required_component_values(axis_components)
+        declared_component_values = component_axis_semantics.required_component_values(
+            axis_components
         )
         extents = cls._aggregate_extents(items)
         if not extents:
@@ -530,10 +524,7 @@ class NapariAggregateAxisBindingAuthority:
                     "payload-local plane axis."
                 )
             return NapariAggregateAxisBindingSet()
-        plane_domains = tuple(
-            item.plane_component_domain.entries
-            for item in items
-        )
+        plane_domains = tuple(item.plane_component_domain.entries for item in items)
         present_domains = tuple(domain for domain in plane_domains if domain)
         if not present_domains:
             raise ValueError(
@@ -687,6 +678,7 @@ class NapariAggregateAxisBindingAuthority:
                 f"{shapes!r}."
             )
         return first
+
 
 @dataclass(frozen=True, slots=True)
 class NapariShapePlaneMetadata:
@@ -980,6 +972,7 @@ class NapariLayerUpdateAuthority:
             return layer
         return None
 
+
 @dataclass(slots=True)
 class NapariDimensionLayerState:
     """Semantic dimension-label state for one streamed Napari layer."""
@@ -1091,9 +1084,7 @@ class NapariAxisPresentation(ViewerComponentAxisSemantics):
     ) -> int:
         """Project one shared-viewer coordinate into this route's local axis."""
         return (
-            viewer_step
-            + viewer_axis_origin
-            - self.projection.axis_offset(axis_index)
+            viewer_step + viewer_axis_origin - self.projection.axis_offset(axis_index)
         )
 
     def viewer_step(
@@ -1105,9 +1096,7 @@ class NapariAxisPresentation(ViewerComponentAxisSemantics):
     ) -> int:
         """Project one route-local label index into the shared viewer axis."""
         return (
-            label_index
-            + self.projection.axis_offset(axis_index)
-            - viewer_axis_origin
+            label_index + self.projection.axis_offset(axis_index) - viewer_axis_origin
         )
 
 
@@ -1485,6 +1474,7 @@ class NapariShapeLayerPayload:
     shape_types: list[str]
     features: dict[str, list[object]]
     ndim: int
+    result_metadata: dict[str, object] = field(default_factory=dict)
 
     @property
     def label_color_cycle(self) -> list[tuple[float, float, float, float]]:
@@ -1544,8 +1534,7 @@ class NapariShapeLayerPayload:
             member_vertex_count = max(1, len(coordinates))
             shape_limit_reached = index - start >= max_shape_count
             vertex_limit_reached = (
-                index > start
-                and vertex_count + member_vertex_count > max_vertex_count
+                index > start and vertex_count + member_vertex_count > max_vertex_count
             )
             if shape_limit_reached or vertex_limit_reached:
                 bounds.append((start, index))
@@ -1556,14 +1545,22 @@ class NapariShapeLayerPayload:
         return tuple(self._slice(start, stop) for start, stop in bounds)
 
     def _slice(self, start: int, stop: int) -> "NapariShapeLayerPayload":
+        result_metadata = dict(self.result_metadata)
+        subject_ids = result_metadata.get(
+            ObjectArtifactSubjectBinding.SUBJECT_ID_FEATURE
+        )
+        if isinstance(subject_ids, tuple):
+            result_metadata[ObjectArtifactSubjectBinding.SUBJECT_ID_FEATURE] = (
+                subject_ids[start:stop]
+            )
         return NapariShapeLayerPayload(
             data=self.data[start:stop],
             shape_types=self.shape_types[start:stop],
             features={
-                name: values[start:stop]
-                for name, values in self.features.items()
+                name: values[start:stop] for name, values in self.features.items()
             },
             ndim=self.ndim,
+            result_metadata=result_metadata,
         )
 
     @classmethod
@@ -1580,6 +1577,9 @@ class NapariShapeLayerPayload:
         shape_data: list[np.ndarray] = []
         shape_types: list[str] = []
         feature_records: list[dict[str, object]] = []
+        object_subject_tokens: list[object] = []
+        object_subject_ids: list[object] = []
+        subject_metadata_member_count = 0
         label_allocator = NapariShapeLabelAllocator.for_items(layer_items)
 
         for item in layer_items:
@@ -1624,9 +1624,28 @@ class NapariShapeLayerPayload:
                 metadata = shape_dict.get(ViewerWireField.METADATA.value, {})
                 if not isinstance(metadata, Mapping):
                     raise TypeError("Napari SHAPES payload metadata must be a mapping.")
+                subject_token = metadata.get(
+                    ObjectArtifactSubjectBinding.SUBJECT_FEATURE
+                )
+                subject_id = metadata.get(
+                    ObjectArtifactSubjectBinding.SUBJECT_ID_FEATURE
+                )
+                if subject_token is not None or subject_id is not None:
+                    if subject_token is None or subject_id is None:
+                        raise ValueError(
+                            "OpenHCS ROI subject metadata requires both subject and ID."
+                        )
+                    subject_metadata_member_count += 1
+                    object_subject_tokens.append(cls._feature_value(subject_token))
+                    object_subject_ids.append(cls._feature_value(subject_id))
                 feature_record = {
                     str(name): cls._feature_value(value)
                     for name, value in metadata.items()
+                    if name
+                    not in (
+                        ObjectArtifactSubjectBinding.SUBJECT_FEATURE,
+                        ObjectArtifactSubjectBinding.SUBJECT_ID_FEATURE,
+                    )
                 }
                 feature_record[VisualMetadataField.LABEL.value] = (
                     label_allocator.label_for(shape_dict)
@@ -1644,11 +1663,29 @@ class NapariShapeLayerPayload:
             name: [record.get(name) for record in feature_records]
             for name in feature_names
         }
+        result_metadata: dict[str, object] = {}
+        if subject_metadata_member_count:
+            if subject_metadata_member_count != len(shape_data):
+                raise ValueError(
+                    "One Napari result layer cannot mix subject-bound and unbound ROIs."
+                )
+            subject_tokens = tuple(dict.fromkeys(object_subject_tokens))
+            if len(subject_tokens) != 1:
+                raise ValueError(
+                    "One Napari result layer cannot mix multiple object subjects."
+                )
+            result_metadata = {
+                ObjectArtifactSubjectBinding.SUBJECT_FEATURE: subject_tokens[0],
+                ObjectArtifactSubjectBinding.SUBJECT_ID_FEATURE: tuple(
+                    object_subject_ids
+                ),
+            }
         return cls(
             data=shape_data,
             shape_types=shape_types,
             features=features,
             ndim=len(axis_projection.projected_axis_components) + 2,
+            result_metadata=result_metadata,
         )
 
     @staticmethod

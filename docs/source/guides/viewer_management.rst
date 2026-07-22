@@ -31,9 +31,10 @@ control protocol before image data is sent.
 ROI inspection and cropping
 ---------------------------
 
-The ``openhcs[napari]`` installation includes both ``napari-roi-manager`` and
-``napari-crop``. The ``viz`` and ``all`` extras include the same Napari
-surface, so ROI inspection and cropping do not require a second plugin install.
+The ``openhcs[napari]`` installation includes OpenHCS's first-party ROI Manager
+and ``napari-crop``. The ``viz`` and ``all`` extras include the same Napari
+surface, so ROI inspection and cropping do not require a second plugin install
+or a separately published ROI-manager distribution.
 
 OpenHCS streams ROI artifacts through the registered ``SHAPES`` display
 boundary as native N-dimensional Napari Shapes layers. Each member retains its
@@ -46,19 +47,48 @@ row selects that member directly on the same Shapes layer; there is no
 projected or synchronized copy. The table follows whichever feature-bearing
 layer is selected in the layer list.
 
+For streamed result layers, a table-row selection also reveals and activates
+the row's owning layer and moves every non-displayed viewer axis to that
+member's native N-dimensional coordinates. This remains unambiguous when
+several ROI layers were selected: the row's authoritative Shapes layer becomes
+the active layer without changing the user-defined layer-stack order, and
+restores the native selection after the slice change so its outline stays
+visible. An ``OpenHCS ROI selection`` toolbar beside this workflow exposes
+``Selected ROI outline`` from 1 to 10 pixels plus synchronized ``Selection
+color``, ``ROI group color``, and ``ROI layer color`` buttons. Selection color
+controls Napari's native, Preferences-backed global highlight. ROI group color
+changes every native ROI member linked to the currently selected object while
+preserving other groups; ROI layer color assigns the active result layer's
+native edge-color property uniformly across every ROI. OpenHCS
+replaces only Napari's untouched stock cyan highlight with a high-contrast
+yellow default; any user-selected color remains authoritative.
+
 Fresh OpenHCS Napari windows use the available desktop geometry and place the
 feature table in a full-width lower dock. This leaves a useful image canvas and
-table visible together without depending on fixed screen coordinates. The ROI
-Manager remains an optional independent workspace; opening or closing it does
-not replace the streamed Shapes layer or the table that owns its features.
+table visible together without depending on fixed screen coordinates.
 
-The ``napari-roi-manager`` plugin currently owns a separate fixed-2D Shapes
-layer and does not attach its table to an existing N-dimensional Shapes layer.
-OpenHCS therefore does not mirror streamed geometry into that private layer.
-Use ``Plugins > napari-roi-manager > ROI Manager`` when an independent ImageJ
-ROI import/export workspace is useful, and use
+The OpenHCS ROI Manager opens lazily when the first streamed ROI result arrives.
+It can also be opened through
+``Plugins > OpenHCS > OpenHCS ROI Manager``. Opening the
+manager does not create a layer: its rows, shape types, feature columns, and
+selection are live projections of the active native Shapes layer. Select a
+different Shapes layer in Napari's layer list and the manager reconnects to
+that owner. Its Fiji-style Add/Register, Remove, Rename, Specify, Load, Save,
+and Show All actions therefore edit that same layer instead of a private ROI
+copy. With Show All disabled, the selected ROI keeps Napari's visible native
+highlight while the unselected base outlines are hidden; layer opacity and
+user-assigned colors are restored unchanged. Table selection writes the
+layer's native ``selected_data``, so the same exact-slice navigation and
+visible highlight used by the built-in Features Table apply. Creating an empty
+ROI set is an explicit manager action; its dimensionality follows the current
+viewer. Use
 ``Plugins > napari-crop > Crop Region(s)`` to crop an image directly from the
-authoritative streamed Shapes geometry.
+same authoritative Shapes geometry.
+
+The first-party widget incorporates the native-Shapes implementation reviewed
+at ``OpenHCSDev/openhcs-napari-roi-manager`` tag ``v0.0.7``. OpenHCS preserves
+the upstream authorship and BSD-3-Clause license in the wheel's
+``THIRD_PARTY_LICENSES/napari-roi-manager-LICENSE`` artifact.
 
 Dense segmentation masks remain Napari Labels layers. If a downstream workflow
 needs editable contours or paths, stream or materialize the callable-owned ROI
@@ -81,7 +111,12 @@ capability routing selects that ROI projection for Napari automatically, where
 it appears as a native path Shapes layer. Select that layer to see branch
 distance, Euclidean distance, tortuosity, distance from the soma, branch type,
 and neuron identity in the feature table. Selecting a row selects the exact
-rendered branch.
+rendered branch. When the graph output declares an object-member subject,
+selection expands to every branch owned by that object and to the one linked
+aggregate-measurement row. The branch rows remain separate and retain their
+edge metrics; OpenHCS does not fabricate one disconnected polygon to represent
+the neuron. Framework linkage keys live in native layer metadata rather than
+cluttering the biological feature table.
 
 Saved ``.swc`` files are viewer-readable too. The OpenHCS Napari plugin
 registers a standard SWC reader and opens the physical morphology as 3-D sample

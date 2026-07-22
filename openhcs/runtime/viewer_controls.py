@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from math import isfinite
+from numbers import Real
 from typing import Self, TypeAlias
 
 
@@ -15,6 +17,132 @@ ViewerControlWireValue: TypeAlias = (
     | dict[str, "ViewerControlWireValue"]
 )
 ViewerPayloadAxisIndices: TypeAlias = tuple[int, ...] | dict[str, int]
+
+
+class ViewerResultElementCoordinateAuthority:
+    """Derive a selected element's slice from its native N-D coordinates."""
+
+    @classmethod
+    def axis_indices(
+        cls,
+        *,
+        coordinates: Iterable[object],
+        axis_labels: Sequence[str],
+        displayed_axis_count: int,
+    ) -> dict[str, int]:
+        """Return exact route-local indices for every non-displayed axis."""
+
+        if isinstance(displayed_axis_count, bool) or not isinstance(
+            displayed_axis_count,
+            int,
+        ):
+            raise TypeError("Viewer displayed_axis_count must be an integer.")
+        if displayed_axis_count <= 0:
+            raise ValueError("Viewer displayed_axis_count must be positive.")
+
+        labels = tuple(axis_labels)
+        if any(not isinstance(label, str) or not label for label in labels):
+            raise ValueError("Viewer axis_labels must contain non-empty strings.")
+        if len(set(labels)) != len(labels):
+            raise ValueError("Viewer axis_labels must be unique.")
+
+        rows = cls._coordinate_rows(coordinates)
+        coordinate_width = len(rows[0])
+        if any(len(row) != coordinate_width for row in rows):
+            raise ValueError(
+                "Viewer result element coordinates must have a consistent width."
+            )
+        if coordinate_width != len(labels):
+            raise ValueError(
+                "Viewer result element coordinate width must match its axis labels: "
+                f"{coordinate_width} != {len(labels)}."
+            )
+        if displayed_axis_count > coordinate_width:
+            raise ValueError(
+                "Viewer displayed_axis_count exceeds the result element coordinate "
+                f"width: {displayed_axis_count} > {coordinate_width}."
+            )
+
+        slice_axis_count = coordinate_width - displayed_axis_count
+        return {
+            labels[axis_position]: cls._slice_index(
+                rows,
+                axis_position=axis_position,
+                axis_label=labels[axis_position],
+            )
+            for axis_position in range(slice_axis_count)
+        }
+
+    @classmethod
+    def _coordinate_rows(
+        cls,
+        coordinates: Iterable[object],
+    ) -> tuple[tuple[object, ...], ...]:
+        if isinstance(coordinates, (str, bytes)):
+            raise TypeError("Viewer result element coordinates must be numeric.")
+        values = tuple(coordinates)
+        if not values:
+            raise ValueError("Viewer result element coordinates must not be empty.")
+        if all(cls._is_coordinate_scalar(value) for value in values):
+            return (values,)
+
+        rows: list[tuple[object, ...]] = []
+        for value in values:
+            if isinstance(value, (str, bytes)) or not isinstance(value, Iterable):
+                raise TypeError(
+                    "Viewer result element coordinates must be one coordinate "
+                    "or a sequence of coordinate rows."
+                )
+            row = tuple(value)
+            if not row:
+                raise ValueError(
+                    "Viewer result element coordinate rows must not be empty."
+                )
+            if not all(cls._is_coordinate_scalar(item) for item in row):
+                raise TypeError("Viewer result element coordinates must be numeric.")
+            rows.append(row)
+        return tuple(rows)
+
+    @staticmethod
+    def _is_coordinate_scalar(value: object) -> bool:
+        return not isinstance(value, bool) and isinstance(value, Real)
+
+    @classmethod
+    def _slice_index(
+        cls,
+        rows: tuple[tuple[object, ...], ...],
+        *,
+        axis_position: int,
+        axis_label: str,
+    ) -> int:
+        coordinates = tuple(
+            cls._integral_coordinate(
+                row[axis_position],
+                axis_label=axis_label,
+            )
+            for row in rows
+        )
+        if len(set(coordinates)) != 1:
+            raise ValueError(
+                f"Viewer result element spans multiple {axis_label!r} slices: "
+                f"{coordinates!r}."
+            )
+        return coordinates[0]
+
+    @staticmethod
+    def _integral_coordinate(value: object, *, axis_label: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, Real):
+            raise TypeError(
+                f"Viewer result element coordinate for axis {axis_label!r} "
+                "must be numeric."
+            )
+        numeric_value = float(value)
+        if not isfinite(numeric_value) or not numeric_value.is_integer():
+            raise ValueError(
+                f"Viewer result element coordinate for axis {axis_label!r} "
+                f"must identify one integral slice, got {value!r}."
+            )
+        return int(numeric_value)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -67,7 +195,9 @@ class ViewerPayloadControlOptions:
         return cls(
             route_key=route_key,
             axis_indices=(
-                dict(axis_indices) if isinstance(axis_indices, Mapping) else axis_indices
+                dict(axis_indices)
+                if isinstance(axis_indices, Mapping)
+                else axis_indices
             ),
             include_array_values=(
                 defaults.include_array_values
@@ -237,7 +367,10 @@ class ViewerNavigationControlOptions:
                 raise ValueError(
                     f"Viewer navigation index for axis {axis_name!r} must be nonnegative."
                 )
-        for field_name, value in (("visible", self.visible), ("selected", self.selected)):
+        for field_name, value in (
+            ("visible", self.visible),
+            ("selected", self.selected),
+        ):
             if value is not None and not isinstance(value, bool):
                 raise TypeError(f"Viewer navigation {field_name} must be a bool.")
         if self.data_index is not None:
