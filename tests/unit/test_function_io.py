@@ -44,6 +44,9 @@ def _filemanager() -> FileManager:
 
 def test_get_all_image_paths_contextualizes_relative_backend_listings() -> None:
     class ListedPathFileManager:
+        def __init__(self):
+            self.resolution_calls = []
+
         def list_image_files(self, *_args, **_kwargs):
             return (
                 "nested/A01_s001_w1_z001_t001.tif",
@@ -51,22 +54,47 @@ def test_get_all_image_paths_contextualizes_relative_backend_listings() -> None:
                 "nested/B01_s001_w1_z001_t001.tif",
             )
 
+        def resolve_listed_address(
+            self,
+            listed_address,
+            backend,
+            *,
+            directory,
+        ):
+            self.resolution_calls.append((listed_address, backend, directory))
+            if listed_address.startswith("/"):
+                return listed_address
+            return f"{directory}/{listed_address}"
+
     class WellParser:
         @staticmethod
         def parse_filename(filename: str):
             return {"well": filename[:3]}
 
+    filemanager = ListedPathFileManager()
     paths = get_all_image_paths(
         "/virtual/plate_1",
         "relative_backend",
         "A01",
-        ListedPathFileManager(),
+        filemanager,
         SimpleNamespace(parser=WellParser()),
     )
 
     assert paths == [
         "/already/absolute/A01_s002_w1_z001_t001.tif",
         "/virtual/plate_1/nested/A01_s001_w1_z001_t001.tif",
+    ]
+    assert filemanager.resolution_calls == [
+        (
+            "nested/A01_s001_w1_z001_t001.tif",
+            "relative_backend",
+            "/virtual/plate_1",
+        ),
+        (
+            "/already/absolute/A01_s002_w1_z001_t001.tif",
+            "relative_backend",
+            "/virtual/plate_1",
+        ),
     ]
 
 

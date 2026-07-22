@@ -213,11 +213,16 @@ def get_all_image_paths(
         if metadata and metadata.get(axis_key) == axis_id:
             axis_files.append(str(file_path))
 
-    input_dir_path = Path(input_dir)
     full_file_paths = sorted(
         {
-            str(path if path.is_absolute() else input_dir_path / path)
-            for path in map(Path, axis_files)
+            str(
+                filemanager.resolve_listed_address(
+                    path,
+                    backend,
+                    directory=input_dir,
+                )
+            )
+            for path in axis_files
         }
     )
 
