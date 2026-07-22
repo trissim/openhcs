@@ -986,10 +986,12 @@ class NapariAxisPresentation(ViewerComponentAxisSemantics):
         )
 
     def label_index(self, viewer_step: int, axis_index: int) -> int:
-        del axis_index
-        # Napari current_step is normalized against each dimension range start,
-        # so it is already route-local even when the layer carries a translate.
-        return viewer_step
+        """Project one shared-viewer coordinate into this route's local axis."""
+        return viewer_step - self.projection.axis_offset(axis_index)
+
+    def viewer_step(self, label_index: int, axis_index: int) -> int:
+        """Project one route-local label index into the shared viewer axis."""
+        return label_index + self.projection.axis_offset(axis_index)
 
 
 @dataclass(slots=True)

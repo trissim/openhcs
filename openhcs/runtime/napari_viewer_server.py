@@ -3031,7 +3031,16 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
                 axis_position,
                 local_axis_index,
             )
-            current_step[axis_position] = local_axis_index
+            presentation = dimension_state.presentation
+            if presentation is None:
+                raise ValueError(
+                    f"Route {request.route_key!r} has no axis presentation "
+                    "for semantic navigation."
+                )
+            current_step[axis_position] = presentation.viewer_step(
+                local_axis_index,
+                axis_position,
+            )
         server.viewer.dims.current_step = tuple(current_step)
 
     @staticmethod

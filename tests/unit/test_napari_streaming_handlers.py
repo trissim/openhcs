@@ -1329,7 +1329,7 @@ def test_napari_display_pipeline_applies_value_overlay_for_offset_route():
 
     class FakeDims:
         axis_labels = None
-        current_step = (0, 0, 0)
+        current_step = (1, 0, 0)
         ndim = 3
 
     class FakeTextOverlay:
@@ -1375,7 +1375,7 @@ def test_napari_display_pipeline_uses_route_local_steps_for_offset_labels():
 
     class FakeDims:
         axis_labels = None
-        current_step = (0, 1, 0, 0)
+        current_step = (3, 1, 0, 0)
         ndim = 4
 
     class FakeTextOverlay:
@@ -1461,12 +1461,12 @@ def test_napari_navigation_control_selects_visible_layer_and_route_local_axes():
     )
 
     assert response["status"] == "success"
-    assert viewer.dims.current_step == (0, 1, 0, 0)
+    assert viewer.dims.current_step == (3, 1, 0, 0)
     assert viewer.dims.axis_labels == ("channel", "site", "y", "x")
     assert viewer.layers.selection.active is layer
     assert layer.visible is True
     assert viewer.text_overlay.text == "Ch4 | Site 2"
-    assert response["current_step"] == (0, 1, 0, 0)
+    assert response["current_step"] == (3, 1, 0, 0)
     assert response["layers"][0]["selected"] is True
     assert response["layers"][0]["visible"] is True
 
@@ -1769,6 +1769,70 @@ def test_napari_display_pipeline_falls_back_when_selected_route_lacks_current_st
 
     assert server.viewer.dims.axis_labels == ("well", "site", "channel", "y", "x")
     assert server.viewer.text_overlay.text == "A14 | Site 1 | Ch2: OrigER"
+
+
+def test_napari_display_pipeline_falls_back_from_selected_offset_channel():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    source_layer = object()
+    selected_neurite_layer = object()
+
+    class FakeSelection:
+        active = selected_neurite_layer
+
+    class FakeLayers:
+        selection = FakeSelection()
+
+    class FakeDims:
+        axis_labels = None
+        current_step = (0, 0, 0)
+        ndim = 3
+
+    class FakeTextOverlay:
+        text = ""
+
+    class FakeViewer:
+        layers = FakeLayers()
+        dims = FakeDims()
+        text_overlay = FakeTextOverlay()
+
+    server = _FakeNapariServer()
+    server.layer_route_state = NapariLayerRouteStateStore.empty()
+    server.viewer = FakeViewer()
+    server.layer_route_state.set_layer("source", source_layer)
+    server.layer_route_state.set_dimension_state(
+        "source",
+        NapariDimensionLayerState(
+            labels={
+                "channel": ["Ch1: Hoechst", "Ch2: MAP2", "Ch4: SMI312"]
+            },
+            presentation=_axis_presentation(
+                layer_key="source",
+                projected_axis_components=("channel",),
+                component_values={"channel": [1, 2, 4]},
+            ),
+        ),
+    )
+    server.layer_route_state.set_layer("neurites", selected_neurite_layer)
+    server.layer_route_state.set_dimension_state(
+        "neurites",
+        NapariDimensionLayerState(
+            labels={"channel": ["Ch4: SMI312"]},
+            presentation=_axis_presentation(
+                layer_key="neurites",
+                projected_axis_components=("channel",),
+                component_values={"channel": [4]},
+                axis_offsets=(2,),
+            ),
+        ),
+    )
+    server.layer_route_state.set_active_dimension_label_route("neurites")
+    pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
+
+    pipeline.dimension_label_overlay._update_overlay()
+
+    assert server.layer_route_state.active_dimension_label_route == "source"
+    assert server.viewer.text_overlay.text == "Ch1: Hoechst"
 
 
 def test_napari_display_pipeline_rejects_axis_labels_for_wrong_viewer_ndim():
