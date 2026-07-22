@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import colorsys
 import logging
 import threading
 from abc import ABC, abstractmethod
@@ -19,7 +20,6 @@ from zmqruntime.viewer_protocol import ViewerComponentMode, ViewerWireField
 from openhcs.core.runtime_image_values import (
     ImagePayloadMetadata,
 )
-from openhcs.core.source_spatial_domain import SourceSpatialDomain
 from openhcs.runtime.viewer_protocol import (
     NapariLayerKind,
     ViewerComponentValueOrdering,
@@ -62,6 +62,29 @@ class VisualMetadataField(str, Enum):
 
 class NapariLayerHandle(ABC):
     """Nominal marker for concrete layer objects returned by a Napari viewer."""
+
+
+class NapariShapesLayerHandle(NapariLayerHandle):
+    """Public mutation surface used for incremental native Shapes updates."""
+
+    features: Mapping[str, Sequence[object]]
+    edge_color: str
+    face_color: str
+    edge_color_mode: str
+    face_color_mode: str
+    edge_color_cycle: Sequence[tuple[float, float, float, float]]
+    face_color_cycle: Sequence[tuple[float, float, float, float]]
+
+    @abstractmethod
+    def add(
+        self,
+        data: Sequence[np.ndarray],
+        *,
+        shape_type: Sequence[str],
+        edge_color: Sequence[tuple[float, float, float, float]],
+        face_color: Sequence[tuple[float, float, float, float]],
+    ) -> None:
+        """Append one bounded batch of Shapes data."""
 
 
 class NapariLayerSelectionController(ABC):
@@ -189,74 +212,132 @@ class NapariLayerSettlementState:
     updates: tuple[tuple[str, NapariPendingLayerUpdate], ...]
     completed_update_count: int = 0
     active_route: str | None = None
+    active_route_work_unit_count: int = 0
+    active_route_work_unit_active: bool = False
     failed: bool = False
+    _lock: threading.RLock = field(
+        default_factory=threading.RLock,
+        repr=False,
+        compare=False,
+    )
 
     @property
     def phase(self) -> ViewerSettlePhase:
-        if self.failed:
-            return ViewerSettlePhase.FAILED
-        if (
-            self.completed_update_count == len(self.updates)
-            and self.active_route is None
-        ):
-            return ViewerSettlePhase.COMPLETE
-        return ViewerSettlePhase.RUNNING
+        with self._lock:
+            if self.failed:
+                return ViewerSettlePhase.FAILED
+            if (
+                self.completed_update_count == len(self.updates)
+                and self.active_route is None
+            ):
+                return ViewerSettlePhase.COMPLETE
+            return ViewerSettlePhase.RUNNING
 
     def begin_next(
         self,
     ) -> tuple[str, NapariPendingLayerUpdate] | None:
         """Claim the next exact update for one Qt callback."""
 
-        if self.phase is not ViewerSettlePhase.RUNNING:
-            return None
-        if self.active_route is not None:
-            raise RuntimeError(
-                f"Napari settlement route {self.active_route!r} is already active."
-            )
-        route_key, update = self.updates[self.completed_update_count]
-        self.active_route = route_key
-        return route_key, update
+        with self._lock:
+            if self.phase is not ViewerSettlePhase.RUNNING:
+                return None
+            if self.active_route is not None:
+                raise RuntimeError(
+                    f"Napari settlement route {self.active_route!r} is already active."
+                )
+            route_key, update = self.updates[self.completed_update_count]
+            self.active_route = route_key
+            self.active_route_work_unit_count = 0
+            self.active_route_work_unit_active = False
+            return route_key, update
+
+    def begin_active_work_unit(self, route_key: str) -> None:
+        """Declare entry into one native display mutation."""
+
+        with self._lock:
+            if self.active_route != route_key:
+                raise RuntimeError(
+                    f"Cannot begin Napari work for route {route_key!r}; active "
+                    f"route is {self.active_route!r}."
+                )
+            if self.active_route_work_unit_active:
+                raise RuntimeError(
+                    f"Napari settlement route {route_key!r} already has active work."
+                )
+            self.active_route_work_unit_active = True
+
+    def complete_active_work_unit(self, route_key: str) -> None:
+        """Record one bounded unit of forward progress for the active route."""
+
+        with self._lock:
+            if self.active_route != route_key:
+                raise RuntimeError(
+                    f"Cannot advance Napari settlement route {route_key!r}; active "
+                    f"route is {self.active_route!r}."
+                )
+            if not self.active_route_work_unit_active:
+                raise RuntimeError(
+                    f"Napari settlement route {route_key!r} has no active work "
+                    "unit to complete."
+                )
+            self.active_route_work_unit_active = False
+            self.active_route_work_unit_count += 1
 
     def complete_active(self, route_key: str) -> None:
         """Record successful completion of the claimed update."""
 
-        if self.active_route != route_key:
-            raise RuntimeError(
-                f"Cannot complete Napari settlement route {route_key!r}; active "
-                f"route is {self.active_route!r}."
-            )
-        self.completed_update_count += 1
-        self.active_route = None
+        with self._lock:
+            if self.active_route != route_key:
+                raise RuntimeError(
+                    f"Cannot complete Napari settlement route {route_key!r}; active "
+                    f"route is {self.active_route!r}."
+                )
+            if not self.active_route_work_unit_active:
+                raise RuntimeError(
+                    f"Napari settlement route {route_key!r} has no active work "
+                    "unit to finish."
+                )
+            self.completed_update_count += 1
+            self.active_route = None
+            self.active_route_work_unit_count = 0
+            self.active_route_work_unit_active = False
 
     def fail_active(self, route_key: str) -> None:
         """Record terminal failure of the claimed update."""
 
-        if self.active_route != route_key:
-            raise RuntimeError(
-                f"Cannot fail Napari settlement route {route_key!r}; active route "
-                f"is {self.active_route!r}."
-            )
-        self.failed = True
-        self.active_route = None
+        with self._lock:
+            if self.active_route != route_key:
+                raise RuntimeError(
+                    f"Cannot fail Napari settlement route {route_key!r}; active route "
+                    f"is {self.active_route!r}."
+                )
+            self.failed = True
+            self.active_route = None
+            self.active_route_work_unit_count = 0
+            self.active_route_work_unit_active = False
 
     def fail(self) -> None:
         """Record a terminal settlement failure without an active route."""
 
-        if self.active_route is not None:
-            raise RuntimeError(
-                "Napari settlement has an active route; use fail_active()."
-            )
-        self.failed = True
+        with self._lock:
+            if self.active_route is not None:
+                raise RuntimeError(
+                    "Napari settlement has an active route; use fail_active()."
+                )
+            self.failed = True
 
     def progress(self) -> ViewerSettleProgress:
         """Project current settlement state onto the shared wire contract."""
 
-        return ViewerSettleProgress(
-            phase=self.phase,
-            completed_update_count=self.completed_update_count,
-            total_update_count=len(self.updates),
-            active_route=self.active_route,
-        )
+        with self._lock:
+            return ViewerSettleProgress(
+                phase=self.phase,
+                completed_update_count=self.completed_update_count,
+                total_update_count=len(self.updates),
+                active_route=self.active_route,
+                active_route_work_unit_count=self.active_route_work_unit_count,
+                active_route_work_unit_active=self.active_route_work_unit_active,
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1041,6 +1122,11 @@ class NapariLayerRouteStateStore:
     layer_update_errors: dict[str, str]
     active_dimension_label_route: str | None
     layer_settlement: NapariLayerSettlementState | None
+    _settlement_lock: threading.RLock = field(
+        default_factory=threading.RLock,
+        repr=False,
+        compare=False,
+    )
 
     @classmethod
     def empty(cls) -> "NapariLayerRouteStateStore":
@@ -1071,7 +1157,8 @@ class NapariLayerRouteStateStore:
         self.layer_titles.pop(layer_key, None)
         self.layer_dimension_states.pop(layer_key, None)
         self.layer_pending_updates.pop(layer_key, None)
-        self.layer_update_errors.pop(layer_key, None)
+        with self._settlement_lock:
+            self.layer_update_errors.pop(layer_key, None)
         if self.active_dimension_label_route == layer_key:
             self.active_dimension_label_route = None
 
@@ -1121,18 +1208,27 @@ class NapariLayerRouteStateStore:
         layer_key: str,
         update: NapariPendingLayerUpdate,
     ) -> None:
-        if self.layer_settlement is not None:
-            if self.layer_settlement.phase is ViewerSettlePhase.RUNNING:
-                raise RuntimeError(
-                    "Cannot queue a Napari layer update while settlement is active."
-                )
-            self.layer_settlement = None
+        with self._settlement_lock:
+            if self.layer_settlement is not None:
+                if self.layer_settlement.phase is ViewerSettlePhase.RUNNING:
+                    raise RuntimeError(
+                        "Cannot queue a Napari layer update while settlement is active."
+                    )
+                self.layer_settlement = None
         self.layer_pending_updates[layer_key] = update
 
     def pop_pending_update(self, layer_key: str) -> NapariPendingLayerUpdate | None:
         if layer_key not in self.layer_pending_updates:
             return None
         return self.layer_pending_updates.pop(layer_key)
+
+    def pending_update_for(
+        self,
+        layer_key: str,
+    ) -> NapariPendingLayerUpdate | None:
+        """Return the exact queued update generation for one route."""
+
+        return self.layer_pending_updates.get(layer_key)
 
     def drain_pending_updates(self) -> tuple[tuple[str, NapariPendingLayerUpdate], ...]:
         updates = tuple(self.layer_pending_updates.items())
@@ -1144,30 +1240,44 @@ class NapariLayerRouteStateStore:
     def begin_settlement(self) -> NapariLayerSettlementState:
         """Return the active settlement or begin one from queued updates."""
 
-        if self.layer_settlement is None:
-            self.layer_settlement = NapariLayerSettlementState(
-                self.drain_pending_updates()
-            )
-        return self.layer_settlement
+        with self._settlement_lock:
+            if self.layer_settlement is None:
+                self.layer_settlement = NapariLayerSettlementState(
+                    self.drain_pending_updates()
+                )
+            return self.layer_settlement
+
+    def existing_settlement_progress(self) -> ViewerSettleProgress | None:
+        """Return a thread-safe snapshot without starting Qt display work."""
+
+        with self._settlement_lock:
+            settlement = self.layer_settlement
+        if settlement is None:
+            return None
+        return settlement.progress()
 
     def reset_settlement(self) -> None:
         """Discard terminal settlement state before a new stream cycle."""
 
-        if (
-            self.layer_settlement is not None
-            and self.layer_settlement.phase is ViewerSettlePhase.RUNNING
-        ):
-            raise RuntimeError("Cannot reset an active Napari layer settlement.")
-        self.layer_settlement = None
+        with self._settlement_lock:
+            if (
+                self.layer_settlement is not None
+                and self.layer_settlement.phase is ViewerSettlePhase.RUNNING
+            ):
+                raise RuntimeError("Cannot reset an active Napari layer settlement.")
+            self.layer_settlement = None
 
     def record_update_error(self, layer_key: str, error: Exception) -> None:
-        self.layer_update_errors[layer_key] = str(error)
+        with self._settlement_lock:
+            self.layer_update_errors[layer_key] = str(error)
 
     def clear_update_error(self, layer_key: str) -> None:
-        self.layer_update_errors.pop(layer_key, None)
+        with self._settlement_lock:
+            self.layer_update_errors.pop(layer_key, None)
 
     def clear_update_errors(self) -> None:
-        self.layer_update_errors.clear()
+        with self._settlement_lock:
+            self.layer_update_errors.clear()
 
     def require_updates_succeeded(self) -> None:
         failure_message = self.update_failure_message()
@@ -1179,12 +1289,13 @@ class NapariLayerRouteStateStore:
     def update_failure_message(self) -> str | None:
         """Return the exact recorded route failures, if any."""
 
-        if not self.layer_update_errors:
-            return None
-        return "; ".join(
-            f"{layer_key}: {message}"
-            for layer_key, message in self.layer_update_errors.items()
-        )
+        with self._settlement_lock:
+            if not self.layer_update_errors:
+                return None
+            return "; ".join(
+                f"{layer_key}: {message}"
+                for layer_key, message in self.layer_update_errors.items()
+            )
 
     def has_layer(self, layer_key: str) -> bool:
         return layer_key in self.layers
@@ -1194,6 +1305,18 @@ class NapariLayerRouteStateStore:
 
     def set_layer(self, layer_key: str, layer: NapariLayerHandle) -> None:
         self.layers[layer_key] = layer
+
+    def route_for_layer(self, layer: NapariLayerHandle) -> str | None:
+        """Return the authoritative route owning ``layer``, if it is streamed."""
+
+        return next(
+            (
+                layer_key
+                for layer_key, candidate in self.layers.items()
+                if candidate is layer
+            ),
+            None,
+        )
 
 
 @dataclass(slots=True)
@@ -1291,121 +1414,11 @@ class NapariBatchProcessorStore:
             return self.processors[layer_key]
 
 
-class NapariShapeKind(Enum):
-    """Shape kinds accepted by the Napari ROI label rasterizer."""
-
-    POLYGON = "polygon"
-    PATH = "path"
-    POINTS = "points"
-
-
-@dataclass(frozen=True, slots=True)
-class NapariShapePaintContext:
-    """Mutable label volume position passed to shape painters."""
-
-    target_label_volume: np.ndarray
-    indices: tuple[int, ...]
-    label_id: int
-
-    @property
-    def spatial_shape(self) -> tuple[int, int]:
-        return (
-            int(self.target_label_volume.shape[-2]),
-            int(self.target_label_volume.shape[-1]),
-        )
-
-    def paint_pixels(self, rows: np.ndarray, columns: np.ndarray) -> None:
-        target_indices = self.indices + (rows, columns)
-        self.target_label_volume[target_indices] = self.label_id
-
-    @property
-    def target_plane(self) -> np.ndarray:
-        return self.target_label_volume[self.indices]
-
-
-class NapariShapeLabelRasterizer:
-    """Convert streamed Napari shape payloads into dense label arrays."""
-
-    def __init__(self) -> None:
-        self._paint_routes: Mapping[
-            NapariShapeKind,
-            Callable[[ShapePayloadMap, NapariShapePaintContext], int],
-        ] = {
-            NapariShapeKind.POLYGON: self._paint_polygon,
-            NapariShapeKind.PATH: self._paint_path,
-            NapariShapeKind.POINTS: self._skip_points,
-        }
-
-    def rasterize(
-        self,
-        *,
-        layer_items: Sequence[NapariStreamLayerItem],
-        axis_projection: ViewerLayerAxisProjection,
-        aggregate_axis_bindings: NapariAggregateAxisBindingSet | None = None,
-    ) -> np.ndarray:
-        if aggregate_axis_bindings is None:
-            aggregate_axis_bindings = NapariAggregateAxisBindingSet()
-        projected_axis_components = axis_projection.projected_axis_components
-        component_values = axis_projection.component_values
-        logger.info("🔬 NAPARI PROCESS: Building ROI stack with global component values")
-        for component, values in component_values.items():
-            logger.info("🔬 NAPARI PROCESS:   %s: %s", component, values)
-
-        image_shape = self._source_spatial_shape(layer_items)
-        nd_shape = [
-            *(len(component_values[component]) for component in projected_axis_components),
-            *image_shape,
-        ]
-        declared_label_ids = self._declared_label_ids(layer_items)
-        label_volume = np.zeros(nd_shape, dtype=np.uint32)
-
-        next_fallback_label_id = 1
-        painted_label_ids: set[int] = set()
-        for item in layer_items:
-            for shape_dict in item.data:
-                components = aggregate_axis_bindings.shape_component_values(
-                    item,
-                    shape_dict,
-                )
-                indices = axis_projection.coordinate_index(
-                    components,
-                    context="Napari shape item",
-                )
-                shape_kind = NapariShapeKind(str(shape_dict["type"]))
-                label_id = self._declared_label_id(shape_dict)
-                if label_id is None:
-                    while next_fallback_label_id in declared_label_ids:
-                        next_fallback_label_id += 1
-                    label_id = next_fallback_label_id
-                    next_fallback_label_id += 1
-                next_label_id = self._paint_routes[shape_kind](
-                    shape_dict,
-                    NapariShapePaintContext(label_volume, indices, label_id),
-                )
-                if next_label_id != label_id:
-                    painted_label_ids.add(label_id)
-
-        logger.info(
-            "🔬 NAPARI PROCESS: Created labels array with shape %s and %d labels",
-            label_volume.shape,
-            len(painted_label_ids),
-        )
-        return label_volume
-
-    @classmethod
-    def _declared_label_ids(
-        cls,
-        layer_items: Sequence[NapariStreamLayerItem],
-    ) -> set[int]:
-        return {
-            label_id
-            for item in layer_items
-            for shape_dict in item.data
-            if (label_id := cls._declared_label_id(shape_dict)) is not None
-        }
+class NapariShapeLabelAuthority:
+    """Own validation and allocation of streamed ROI object identities."""
 
     @staticmethod
-    def _declared_label_id(shape_dict: ShapePayloadMap) -> int | None:
+    def declared_label(shape_dict: ShapePayloadMap) -> int | None:
         metadata = shape_dict.get(ViewerWireField.METADATA.value)
         if not isinstance(metadata, Mapping):
             return None
@@ -1421,103 +1434,229 @@ class NapariShapeLabelRasterizer:
             )
         if label > np.iinfo(np.uint32).max:
             raise ValueError(
-                "Napari ROI shape metadata label exceeds the uint32 labels-layer "
+                "Napari ROI shape metadata label exceeds the uint32 ROI-label "
                 f"domain: {label!r}."
             )
         return label
 
-    def _source_spatial_shape(
-        self,
+    @classmethod
+    def declared_labels(
+        cls,
         layer_items: Sequence[NapariStreamLayerItem],
-    ) -> tuple[int, int]:
-        source_shapes: set[tuple[int, int]] = set()
-        missing_paths: set[str] = set()
+    ) -> set[int]:
+        return {
+            label_id
+            for item in layer_items
+            for shape_dict in item.data
+            if (label_id := cls.declared_label(shape_dict)) is not None
+        }
+
+
+@dataclass(slots=True)
+class NapariShapeLabelAllocator:
+    """Allocate stable fallback identities without colliding with declared labels."""
+
+    reserved_labels: set[int]
+    next_fallback_label: int = 1
+
+    @classmethod
+    def for_items(
+        cls,
+        layer_items: Sequence[NapariStreamLayerItem],
+    ) -> "NapariShapeLabelAllocator":
+        return cls(NapariShapeLabelAuthority.declared_labels(layer_items))
+
+    def label_for(self, shape_dict: ShapePayloadMap) -> int:
+        declared_label = NapariShapeLabelAuthority.declared_label(shape_dict)
+        if declared_label is not None:
+            return declared_label
+        while self.next_fallback_label in self.reserved_labels:
+            self.next_fallback_label += 1
+        label = self.next_fallback_label
+        self.next_fallback_label += 1
+        return label
+
+
+@dataclass(frozen=True, slots=True)
+class NapariShapeLayerPayload:
+    """Native N-D Napari Shapes data assembled from streamed ROI payloads."""
+
+    data: list[np.ndarray]
+    shape_types: list[str]
+    features: dict[str, list[object]]
+    ndim: int
+
+    @property
+    def label_color_cycle(self) -> list[tuple[float, float, float, float]]:
+        """Return stable, distinct colors in first-observed label order."""
+
+        labels = tuple(
+            dict.fromkeys(self.features.get(VisualMetadataField.LABEL.value, ()))
+        )
+        golden_ratio_conjugate = 0.618033988749895
+        return [
+            (
+                *colorsys.hsv_to_rgb(
+                    (int(label) * golden_ratio_conjugate) % 1.0,
+                    0.78,
+                    1.0,
+                ),
+                1.0,
+            )
+            for label in labels
+        ]
+
+    @property
+    def label_colors(self) -> list[tuple[float, float, float, float]]:
+        """Return the stable declared-label color for every shape member."""
+
+        labels = self.features.get(VisualMetadataField.LABEL.value, ())
+        return self.colors_for_labels(labels)
+
+    def colors_for_labels(
+        self,
+        labels: Sequence[object],
+    ) -> list[tuple[float, float, float, float]]:
+        """Project arbitrary members through this full payload's label palette."""
+
+        payload_labels = self.features.get(VisualMetadataField.LABEL.value, ())
+        label_order = tuple(dict.fromkeys(payload_labels))
+        colors_by_label = dict(zip(label_order, self.label_color_cycle))
+        return [colors_by_label[label] for label in labels]
+
+    def chunks(
+        self,
+        *,
+        max_shape_count: int,
+        max_vertex_count: int,
+    ) -> tuple["NapariShapeLayerPayload", ...]:
+        """Partition members in order into bounded native Shapes work units."""
+
+        if max_shape_count <= 0 or max_vertex_count <= 0:
+            raise ValueError("Napari Shapes chunk limits must be positive.")
+        if not self.data:
+            return (self,)
+
+        bounds: list[tuple[int, int]] = []
+        start = 0
+        vertex_count = 0
+        for index, coordinates in enumerate(self.data):
+            member_vertex_count = max(1, len(coordinates))
+            shape_limit_reached = index - start >= max_shape_count
+            vertex_limit_reached = (
+                index > start
+                and vertex_count + member_vertex_count > max_vertex_count
+            )
+            if shape_limit_reached or vertex_limit_reached:
+                bounds.append((start, index))
+                start = index
+                vertex_count = 0
+            vertex_count += member_vertex_count
+        bounds.append((start, len(self.data)))
+        return tuple(self._slice(start, stop) for start, stop in bounds)
+
+    def _slice(self, start: int, stop: int) -> "NapariShapeLayerPayload":
+        return NapariShapeLayerPayload(
+            data=self.data[start:stop],
+            shape_types=self.shape_types[start:stop],
+            features={
+                name: values[start:stop]
+                for name, values in self.features.items()
+            },
+            ndim=self.ndim,
+        )
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        layer_items: Sequence[NapariStreamLayerItem],
+        axis_projection: ViewerLayerAxisProjection,
+        aggregate_axis_bindings: NapariAggregateAxisBindingSet | None = None,
+    ) -> "NapariShapeLayerPayload":
+        if aggregate_axis_bindings is None:
+            aggregate_axis_bindings = NapariAggregateAxisBindingSet()
+
+        shape_data: list[np.ndarray] = []
+        shape_types: list[str] = []
+        feature_records: list[dict[str, object]] = []
+        label_allocator = NapariShapeLabelAllocator.for_items(layer_items)
+
         for item in layer_items:
-            for shape_dict in item.data:
-                if "metadata" not in shape_dict:
-                    missing_paths.add(item.address.path)
-                    continue
-                metadata = shape_dict["metadata"]
-                if not isinstance(metadata, Mapping):
-                    missing_paths.add(item.address.path)
-                    continue
-                source_domain = SourceSpatialDomain.from_viewer_wire_mapping(
-                    metadata,
-                    source_label=f"Napari ROI shape payload at {item.address.path!r}",
-                    value_name="Napari ROI shape payload",
+            if not isinstance(item.data, Sequence) or isinstance(
+                item.data,
+                (str, bytes),
+            ):
+                raise TypeError(
+                    "Napari SHAPES payload data must be a sequence of shape mappings."
                 )
-                if source_domain.source_shape_yx is None:
-                    missing_paths.add(item.address.path)
-                    continue
-                source_shapes.add(source_domain.source_shape_yx)
-        if missing_paths:
-            raise ValueError(
-                "Napari ROI label rasterization requires source_spatial_shape_yx "
-                f"metadata for every shape payload; missing for {sorted(missing_paths)!r}."
-            )
-        if not source_shapes:
-            raise ValueError(
-                "Napari ROI label rasterization requires source_spatial_shape_yx "
-                "metadata, but no shapes were provided."
-            )
-        max_shape = (
-            max(shape[0] for shape in source_shapes),
-            max(shape[1] for shape in source_shapes),
+            for shape_dict in item.data:
+                if not isinstance(shape_dict, Mapping):
+                    raise TypeError(
+                        "Napari SHAPES payload entries must be shape mappings."
+                    )
+                shape_type = shape_dict.get(ViewerWireField.TYPE.value)
+                if not isinstance(shape_type, str) or not shape_type:
+                    raise TypeError(
+                        "Napari SHAPES payload type must be a non-empty string."
+                    )
+                coordinates = np.asarray(shape_dict["coordinates"], dtype=float)
+                if coordinates.ndim != 2 or coordinates.shape[1] != 2:
+                    raise ValueError(
+                        "Napari streamed ROI coordinates must be an Nx2 YX array, "
+                        f"got shape {coordinates.shape!r}."
+                    )
+                components = aggregate_axis_bindings.shape_component_values(
+                    item,
+                    shape_dict,
+                )
+                indices = axis_projection.coordinate_index(
+                    components,
+                    context="Napari shape item",
+                )
+                if indices:
+                    prefix = np.broadcast_to(
+                        np.asarray(indices, dtype=float),
+                        (len(coordinates), len(indices)),
+                    )
+                    coordinates = np.concatenate((prefix, coordinates), axis=1)
+
+                metadata = shape_dict.get(ViewerWireField.METADATA.value, {})
+                if not isinstance(metadata, Mapping):
+                    raise TypeError("Napari SHAPES payload metadata must be a mapping.")
+                feature_record = {
+                    str(name): cls._feature_value(value)
+                    for name, value in metadata.items()
+                }
+                feature_record[VisualMetadataField.LABEL.value] = (
+                    label_allocator.label_for(shape_dict)
+                )
+                feature_record[ViewerWireField.PATH.value] = item.address.path
+
+                shape_data.append(coordinates)
+                shape_types.append(shape_type)
+                feature_records.append(feature_record)
+
+        feature_names = tuple(
+            dict.fromkeys(name for record in feature_records for name in record)
         )
-        if len(source_shapes) > 1:
-            logger.info(
-                "🔬 NAPARI PROCESS: ROI label source shapes differ; "
-                "padding labels canvas to %s from %s",
-                max_shape,
-                sorted(source_shapes),
-            )
-        return max_shape
-
-    def _paint_polygon(
-        self,
-        shape_dict: ShapePayloadMap,
-        context: NapariShapePaintContext,
-    ) -> int:
-        import cv2
-
-        coords = np.asarray(shape_dict["coordinates"], dtype=np.float32)
-        if coords.ndim != 2 or coords.shape[1] != 2:
-            raise ValueError(
-                "Napari polygon ROI coordinates must be an Nx2 YX array, "
-                f"got shape {coords.shape!r}."
-            )
-        xy = np.rint(coords[:, ::-1]).astype(np.int32).reshape((-1, 1, 2))
-        paint_mask = np.zeros(context.spatial_shape, dtype=np.uint8)
-        cv2.fillPoly(paint_mask, [xy], 1)
-        rows, columns = np.nonzero(paint_mask)
-        context.paint_pixels(rows, columns)
-        return context.label_id + 1
-
-    def _paint_path(
-        self,
-        shape_dict: ShapePayloadMap,
-        context: NapariShapePaintContext,
-    ) -> int:
-        coords = np.array(shape_dict["coordinates"])
-        if len(coords) < 1:
-            return context.label_id
-
-        rr = coords[:, 0].astype(int)
-        cc = coords[:, 1].astype(int)
-        max_row, max_column = context.spatial_shape
-        valid = (
-            (rr >= 0)
-            & (rr < max_row)
-            & (cc >= 0)
-            & (cc < max_column)
+        features = {
+            name: [record.get(name) for record in feature_records]
+            for name in feature_names
+        }
+        return cls(
+            data=shape_data,
+            shape_types=shape_types,
+            features=features,
+            ndim=len(axis_projection.projected_axis_components) + 2,
         )
-        rr, cc = rr[valid], cc[valid]
-        context.paint_pixels(rr, cc)
-        return context.label_id + 1
 
-    def _skip_points(
-        self,
-        shape_dict: ShapePayloadMap,
-        context: NapariShapePaintContext,
-    ) -> int:
-        return context.label_id
+    @staticmethod
+    def _feature_value(value: object) -> object:
+        """Keep Napari feature columns scalar while retaining metadata detail."""
+
+        if isinstance(value, np.generic):
+            return value.item()
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        return repr(value)

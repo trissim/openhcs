@@ -11,7 +11,6 @@ import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import ClassVar, TypeAlias
 
 import numpy as np
@@ -41,6 +40,7 @@ from openhcs.runtime.viewer_protocol import (
     ViewerControlReplyPayload,
     ViewerComponentValueOrdering,
     ViewerProtocolStatus,
+    ViewerSettlePhase,
     ViewerSettleProgress,
     ViewerServerLaunchRequest,
 )
@@ -96,6 +96,138 @@ class FijiBatchProcessingContext(FijiDisplayItemContext):
     """Semantic context carried through PolyStore's debounced batch engine."""
 
     images_dir: str | None
+
+
+@dataclass(slots=True)
+class FijiBatchSettlementState:
+    """Own queued and active Fiji display-batch settlement progress."""
+
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _pending_item_count: int = 0
+    _active_update: bool = False
+    _active_item_count: int = 0
+    _completed_update_count: int = 0
+    _total_update_count: int = 0
+    _active_route: str | None = None
+    _active_route_work_unit_count: int = 0
+    _route_serial: int = 0
+    _failure_message: str | None = None
+
+    def queue_items(self, item_count: int) -> None:
+        """Record exact pending items independently of debounce drain timing."""
+
+        if item_count <= 0:
+            raise ValueError("Fiji settlement queue item count must be positive.")
+        with self._lock:
+            self._pending_item_count += item_count
+            self._total_update_count += item_count
+
+    def begin_pending_update(self, item_count: int) -> str:
+        """Claim the exact pending debounce aggregate for native processing."""
+
+        if item_count <= 0:
+            raise ValueError("Fiji settlement active item count must be positive.")
+        with self._lock:
+            if self._active_update:
+                raise RuntimeError(
+                    f"Fiji settlement route {self._active_route!r} is already active."
+                )
+            if item_count > self._pending_item_count:
+                raise RuntimeError(
+                    f"Fiji settlement cannot claim {item_count} item(s); only "
+                    f"{self._pending_item_count} are pending."
+                )
+            self._pending_item_count -= item_count
+            self._active_update = True
+            self._active_item_count = item_count
+            self._route_serial += 1
+            self._active_route = f"fiji-display-batch-{self._route_serial}"
+            self._active_route_work_unit_count = 0
+            return self._active_route
+
+    def complete_active_work_unit(self, route: str) -> None:
+        """Record one bounded native Fiji work unit."""
+
+        with self._lock:
+            self._require_active_route(route)
+            self._active_route_work_unit_count += 1
+
+    def complete_active_update(self, route: str) -> None:
+        """Release one successfully rendered debounce aggregate."""
+
+        with self._lock:
+            self._require_active_route(route)
+            self._active_update = False
+            self._completed_update_count += self._active_item_count
+            self._active_item_count = 0
+            self._active_route = None
+            self._active_route_work_unit_count = 0
+
+    def fail_active_update(self, route: str, error: Exception) -> None:
+        """Retain a terminal native-rendering failure for settle callers."""
+
+        with self._lock:
+            self._require_active_route(route)
+            self._active_update = False
+            self._active_item_count = 0
+            self._active_route = None
+            self._active_route_work_unit_count = 0
+            self._failure_message = str(error)
+
+    def progress(self) -> ViewerSettleProgress:
+        """Project the thread-safe Fiji state onto the shared settle contract."""
+
+        with self._lock:
+            if self._failure_message is not None:
+                phase = ViewerSettlePhase.FAILED
+            elif (
+                self._completed_update_count == self._total_update_count
+                and not self._pending_item_count
+                and not self._active_update
+            ):
+                phase = ViewerSettlePhase.COMPLETE
+            else:
+                phase = ViewerSettlePhase.RUNNING
+            return ViewerSettleProgress(
+                phase=phase,
+                completed_update_count=self._completed_update_count,
+                total_update_count=self._total_update_count,
+                active_route=self._active_route,
+                active_route_work_unit_count=(
+                    self._active_route_work_unit_count
+                    if self._active_route is not None
+                    else 0
+                ),
+            )
+
+    def failure_message(self) -> str | None:
+        """Return the retained native-rendering failure, if any."""
+
+        with self._lock:
+            return self._failure_message
+
+    def reset(self) -> None:
+        """Reset terminal settlement state before a new persistent-viewer run."""
+
+        with self._lock:
+            if self._pending_item_count or self._active_update:
+                raise RuntimeError(
+                    "Cannot reset Fiji settlement while display work is pending "
+                    "or active."
+                )
+            self._active_item_count = 0
+            self._completed_update_count = 0
+            self._total_update_count = 0
+            self._active_route = None
+            self._active_route_work_unit_count = 0
+            self._failure_message = None
+
+    def _require_active_route(self, route: str) -> None:
+        if not self._active_update or self._active_route != route:
+            raise RuntimeError(
+                f"Cannot advance Fiji settlement route {route!r}; active route "
+                f"is {self._active_route!r}."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -380,18 +512,24 @@ class FijiStackSliceLabelBuilder:
 class FijiImageStackBuilder:
     """Create an ImageJ ImageStack from typed Fiji image planes."""
 
+    PLANES_PER_WORK_UNIT: ClassVar[int] = 32
+
     image_lookup: FijiImagePlaneLookup
     coordinates: "FijiHyperstackCoordinates"
     width: int
     height: int
 
-    def build(self):
+    def build(
+        self,
+        work_unit_completed: Callable[[], None] | None = None,
+    ):
         import jpype
         import scyjava as sj
 
         ImageStack = sj.jimport("ij.ImageStack")
         stack = ImageStack(self.width, self.height)
         label_builder = FijiStackSliceLabelBuilder(self.coordinates)
+        pending_plane_count = 0
 
         for t_key in self.coordinates.frame.values:
             for z_key in self.coordinates.z_axis_coordinates.values:
@@ -402,6 +540,13 @@ class FijiImageStackBuilder:
                         stack.addSlice(label_builder.label_for(key), processor)
                     else:
                         stack.addSlice("BLANK", self._blank_processor(sj))
+                    pending_plane_count += 1
+                    if pending_plane_count == self.PLANES_PER_WORK_UNIT:
+                        if work_unit_completed is not None:
+                            work_unit_completed()
+                        pending_plane_count = 0
+        if pending_plane_count and work_unit_completed is not None:
+            work_unit_completed()
         return stack
 
     def _processor_for_key(self, key: FijiCoordinateKey, jpype, sj):
@@ -938,6 +1083,7 @@ class FijiControlRequestContext:
 
     windows: FijiWindowRegistry
     imagej_runtime: object
+    settlement: FijiBatchSettlementState
 
 
 class FijiControlMessagePlan(ABC, metaclass=AutoRegisterMeta):
@@ -1018,6 +1164,7 @@ class FijiClearStateControlPlan(FijiControlMessagePlan):
             "🔬 FIJI SERVER: Clearing dimension values (had %d windows)",
             windows.count_with_dimensions(),
         )
+        context.settlement.reset()
         windows.clear_dimensions_and_labels()
         return FijiControlMessageResponse(
             ViewerControlReplyHeader(
@@ -1029,7 +1176,7 @@ class FijiClearStateControlPlan(FijiControlMessagePlan):
 
 
 class FijiSettleControlPlan(FijiControlMessagePlan):
-    """Acknowledge viewer-settle requests for the synchronous Fiji path."""
+    """Report exact queued and active Fiji display-batch progress."""
 
     wire_value = ViewerControlMessageType.SETTLE.value
 
@@ -1038,13 +1185,23 @@ class FijiSettleControlPlan(FijiControlMessagePlan):
         context: FijiControlRequestContext,
         payload: object | None,
     ) -> FijiControlMessageResponse:
-        del context, payload
-        progress = ViewerSettleProgress.complete()
+        del payload
+        progress = context.settlement.progress()
+        failed = progress.phase is ViewerSettlePhase.FAILED
+        failure = context.settlement.failure_message()
         return FijiControlMessageResponse(
             ViewerControlReplyHeader(
-                ViewerProtocolStatus.SUCCESS,
+                ViewerProtocolStatus.ERROR if failed else ViewerProtocolStatus.SUCCESS,
                 response_type="settle_ack",
-                message="Fiji viewer has no queued debounced layer updates.",
+                message=(
+                    f"Fiji viewer settlement failed: {failure}"
+                    if failed
+                    else (
+                        "Fiji viewer settlement progress: "
+                        f"{progress.completed_update_count}/"
+                        f"{progress.total_update_count}."
+                    )
+                ),
             ),
             fields=progress.to_wire_mapping(),
         )
@@ -1269,6 +1426,7 @@ class FijiPayloadHandlerRequest(FijiDisplayItemContext):
     window_key: str
     items: list[FijiWireItem]
     coordinates: FijiHyperstackCoordinates
+    work_unit_completed: Callable[[], None] | None
 
 
 class FijiPayloadHandler(
@@ -1401,6 +1559,8 @@ class FijiPayloadKindGroups:
         server: "FijiViewerServer",
         request: FijiWindowProcessingRequest,
         coordinates: FijiHyperstackCoordinates,
+        *,
+        work_unit_completed: Callable[[], None] | None,
     ) -> None:
         for group in self.buckets.nonempty():
             FijiPayloadHandler.for_data_type(group.payload_stream_data_type).handle(
@@ -1413,6 +1573,7 @@ class FijiPayloadKindGroups:
                     store=request.store,
                     entries=request.entries,
                     layout=request.layout,
+                    work_unit_completed=work_unit_completed,
                 )
             )
 
@@ -1467,6 +1628,10 @@ class FijiBatchProcessingAuthority:
 
     server: "FijiViewerServer"
     engine: DebouncedBatchEngine = field(init=False)
+    settlement: FijiBatchSettlementState = field(
+        default_factory=FijiBatchSettlementState
+    )
+    processing_lock: threading.Lock = field(default_factory=threading.Lock)
     hyperstack_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def __post_init__(self) -> None:
@@ -1495,6 +1660,7 @@ class FijiBatchProcessingAuthority:
         batch_context: FijiBatchProcessingContext,
     ) -> None:
         """Queue copied items for debounced batch processing."""
+        self.settlement.queue_items(len(items))
         self.engine.enqueue(
             items=items,
             context={"batch_context": batch_context},
@@ -1512,13 +1678,21 @@ class FijiBatchProcessingAuthority:
         """Batch-engine callback that unpacks context into canonical arguments."""
         if not items:
             return
-        batch_context = context.get("batch_context")
-        if not isinstance(batch_context, FijiBatchProcessingContext):
-            raise TypeError(
-                "Fiji debounced batch context missing FijiBatchProcessingContext."
-            )
         logger.info(f"🔄 FIJI SERVER: Processing debounced batch of {len(items)} items")
-        self.process_items(items, batch_context)
+        with self.processing_lock:
+            route = self.settlement.begin_pending_update(len(items))
+            try:
+                batch_context = context.get("batch_context")
+                if not isinstance(batch_context, FijiBatchProcessingContext):
+                    raise TypeError(
+                        "Fiji debounced batch context missing "
+                        "FijiBatchProcessingContext."
+                    )
+                self.process_items(items, batch_context, route)
+            except Exception as error:
+                self.settlement.fail_active_update(route, error)
+                raise
+            self.settlement.complete_active_update(route)
 
     def process_image_message(self, message: bytes) -> dict:
         """Parse, copy, and queue one incoming Fiji batch message."""
@@ -1560,6 +1734,7 @@ class FijiBatchProcessingAuthority:
         self,
         items: list[FijiWireItem],
         batch_context: FijiBatchProcessingContext,
+        settlement_route: str | None = None,
     ) -> None:
         """Project a copied batch into Fiji window groups and dispatch handlers."""
         if not items:
@@ -1571,6 +1746,13 @@ class FijiBatchProcessingAuthority:
         )
         projection.log_summary()
 
+        work_unit_completed = (
+            None
+            if settlement_route is None
+            else lambda: self.settlement.complete_active_work_unit(
+                settlement_route
+            )
+        )
         for window_key in projection.windows:
             self.process_window_group(
                 FijiWindowProcessingRequest(
@@ -1580,7 +1762,8 @@ class FijiBatchProcessingAuthority:
                     store=batch_context.store,
                     entries=batch_context.entries,
                     layout=batch_context.layout,
-                )
+                ),
+                work_unit_completed=work_unit_completed,
             )
 
     def process_wire_items(
@@ -1611,14 +1794,21 @@ class FijiBatchProcessingAuthority:
     def process_window_group(
         self,
         request: FijiWindowProcessingRequest,
+        *,
+        work_unit_completed: Callable[[], None] | None = None,
     ) -> None:
         """Process all items for one Fiji window group."""
         with self.hyperstack_lock:
-            self.process_window_group_locked(request)
+            self.process_window_group_locked(
+                request,
+                work_unit_completed=work_unit_completed,
+            )
 
     def process_window_group_locked(
         self,
         request: FijiWindowProcessingRequest,
+        *,
+        work_unit_completed: Callable[[], None] | None = None,
     ) -> None:
         """Process a Fiji window group while the hyperstack lock is held."""
         coordinate_resolution = self.server.windows.resolve_coordinates(
@@ -1655,6 +1845,7 @@ class FijiBatchProcessingAuthority:
             self.server,
             request,
             coordinates,
+            work_unit_completed=work_unit_completed,
         )
 
 
@@ -1848,7 +2039,11 @@ class FijiViewerServer(StreamingVisualizerServer):
     ) -> dict[str, FijiWireScalar]:
         """Handle control messages beyond ping/pong."""
         response = FijiControlMessageAuthority(
-            FijiControlRequestContext(self.windows, self.ij)
+            FijiControlRequestContext(
+                self.windows,
+                self.ij,
+                self.batch_processor.settlement,
+            )
         ).response_for(message)
         if response.shutdown_requested:
             self._shutdown_requested = True
@@ -1870,6 +2065,7 @@ class FijiViewerServer(StreamingVisualizerServer):
         coordinates: FijiHyperstackCoordinates,
         display_config: FijiDisplayConfig,
         component_names_metadata: ViewerComponentNameMetadata,
+        work_unit_completed: Callable[[], None] | None = None,
     ):
         """
         Incrementally add new slices to an existing hyperstack WITHOUT rebuilding.
@@ -1890,8 +2086,6 @@ class FijiViewerServer(StreamingVisualizerServer):
         stack_width = stack.getWidth()
         stack_height = stack.getHeight()
         old_nChannels = existing_imp.getNChannels()
-        old_nSlices = existing_imp.getNSlices()
-        old_nFrames = existing_imp.getNFrames()
 
         # Collect dimension values from existing images
         existing_coordinates = FijiHyperstackCoordinateComponents(
@@ -1955,8 +2149,16 @@ class FijiViewerServer(StreamingVisualizerServer):
 
             # CRITICAL: Replace ALL changed slices in ONE call to avoid repeated min/max recalc
             # This is the key to avoiding fibonacci performance
+            pending_plane_count = 0
             for slice_idx, np_data in new_pixel_data.items():
                 stack.setPixels(slice_idx, np_data)
+                pending_plane_count += 1
+                if pending_plane_count == FijiImageStackBuilder.PLANES_PER_WORK_UNIT:
+                    if work_unit_completed is not None:
+                        work_unit_completed()
+                    pending_plane_count = 0
+            if pending_plane_count and work_unit_completed is not None:
+                work_unit_completed()
 
             # Update metadata
             self.windows.replace_images(window_key, list(existing_lookup.values()))
@@ -2013,6 +2215,7 @@ class FijiViewerServer(StreamingVisualizerServer):
                 is_new=False,
                 preserved_display_ranges=display_ranges,
                 component_names_metadata=component_names_metadata,
+                work_unit_completed=work_unit_completed,
             )
 
     def _build_single_hyperstack(
@@ -2022,6 +2225,7 @@ class FijiViewerServer(StreamingVisualizerServer):
         display_config: FijiDisplayConfig,
         coordinates: FijiHyperstackCoordinates,
         component_names_metadata: ViewerComponentNameMetadata | None = None,
+        work_unit_completed: Callable[[], None] | None = None,
     ):
         """
         Build or update a single ImageJ hyperstack from images.
@@ -2051,6 +2255,7 @@ class FijiViewerServer(StreamingVisualizerServer):
                 coordinates,
                 display_config,
                 component_names_metadata or ViewerComponentNameMetadata.empty(),
+                work_unit_completed=work_unit_completed,
             )
             return
 
@@ -2065,6 +2270,7 @@ class FijiViewerServer(StreamingVisualizerServer):
             display_config,
             is_new=True,
             component_names_metadata=component_names_metadata,
+            work_unit_completed=work_unit_completed,
         )
 
     def _convert_to_hyperstack(self, imp, nChannels, nSlices, nFrames, window_key):
@@ -2170,7 +2376,7 @@ class FijiViewerServer(StreamingVisualizerServer):
         import scyjava as sj
 
         try:
-            logger.info(f"🏷️  FIJI SERVER: Creating dimension label overlay")
+            logger.info("🏷️  FIJI SERVER: Creating dimension label overlay")
 
             label_text = coordinates.label_text_for_position(
                 imp=imp,
@@ -2179,7 +2385,7 @@ class FijiViewerServer(StreamingVisualizerServer):
             )
             if label_text is None:
                 logger.info(
-                    f"🏷️  FIJI SERVER: No dimensions to label (no channels/slices/frames)"
+                    "🏷️  FIJI SERVER: No dimensions to label (no channels/slices/frames)"
                 )
                 return
             logger.info(f"🏷️  FIJI SERVER: Creating overlay with text: '{label_text}'")
@@ -2217,7 +2423,7 @@ class FijiViewerServer(StreamingVisualizerServer):
             imp.setOverlay(overlay)
 
             logger.info(
-                f"🏷️  FIJI SERVER: Text overlay created successfully with white text"
+                "🏷️  FIJI SERVER: Text overlay created successfully with white text"
             )
 
             # Add listener to update overlay when hyperstack position changes
@@ -2287,7 +2493,7 @@ class FijiViewerServer(StreamingVisualizerServer):
                     canvas = imp.getCanvas()
                     if canvas is not None:
                         canvas.repaint()
-                    logger.info(f"🔄 FIJI SERVER: Overlay updated successfully")
+                    logger.info("🔄 FIJI SERVER: Overlay updated successfully")
                 except Exception as e:
                     logger.error(
                         f"🔄 FIJI SERVER: Error updating overlay: {e}", exc_info=True
@@ -2363,7 +2569,7 @@ class FijiViewerServer(StreamingVisualizerServer):
                         )
                     else:
                         logger.warning(
-                            f"🏷️  FIJI SERVER: No scrollbars found to attach listener (not a hyperstack?)"
+                            "🏷️  FIJI SERVER: No scrollbars found to attach listener (not a hyperstack?)"
                         )
 
                     # Add WindowListener to detect when user closes the window
@@ -2419,7 +2625,7 @@ class FijiViewerServer(StreamingVisualizerServer):
                         f"Could not add scrollbar listeners: {e}", exc_info=True
                     )
             else:
-                logger.warning(f"🏷️  FIJI SERVER: No window found, cannot add listeners")
+                logger.warning("🏷️  FIJI SERVER: No window found, cannot add listeners")
 
         except Exception as e:
             logger.error(
@@ -2493,6 +2699,7 @@ class FijiViewerServer(StreamingVisualizerServer):
         is_new: bool,
         preserved_display_ranges: FijiDisplayRanges = None,
         component_names_metadata: ViewerComponentNameMetadata | None = None,
+        work_unit_completed: Callable[[], None] | None = None,
     ):
         """Build a new hyperstack from scratch."""
         import scyjava as sj
@@ -2534,7 +2741,7 @@ class FijiViewerServer(StreamingVisualizerServer):
             coordinates=coordinates,
             width=width,
             height=height,
-        ).build()
+        ).build(work_unit_completed=work_unit_completed)
 
         # Create ImagePlus
         ImagePlus = sj.jimport("ij.ImagePlus")
@@ -2677,6 +2884,7 @@ class FijiImagePayloadHandler(FijiPayloadHandler):
             request.viewer_display_config,
             request.coordinates,
             request,
+            work_unit_completed=request.work_unit_completed,
         )
 
 
@@ -2692,30 +2900,60 @@ class FijiRoiManagerProvider:
         if roi_manager is not None:
             return roi_manager
 
+        roi_manager_holder = [None]
+        self.invoke_on_event_dispatch_thread(
+            lambda: roi_manager_holder.__setitem__(0, RoiManager())
+        )
+        return roi_manager_holder[0]
+
+    def add_rois(self, roi_manager, java_rois: Sequence[object]) -> None:
+        """Apply one bounded ROI-manager mutation on Swing's event thread."""
+
+        def add_work_unit() -> None:
+            for java_roi in java_rois:
+                roi_manager.addRoi(java_roi)
+
+        self.invoke_on_event_dispatch_thread(add_work_unit)
+
+    def show(self, roi_manager) -> None:
+        """Show the ROI manager on Swing's event thread."""
+
+        self.invoke_on_event_dispatch_thread(lambda: roi_manager.setVisible(True))
+
+    @staticmethod
+    def invoke_on_event_dispatch_thread(action: Callable[[], None]) -> None:
+        """Run one bounded ImageJ UI mutation on Swing's event thread."""
+
+        import scyjava as sj
+
         try:
             from jpype import JImplements, JOverride
         except ImportError:
             logger.warning(
-                "JPype not available, creating RoiManager without EDT safety (may fail with IPC mode)"
+                "JPype not available; running Fiji UI work without EDT dispatch."
             )
-            return RoiManager()
+            action()
+            return
 
         SwingUtilities = sj.jimport("javax.swing.SwingUtilities")
-        roi_manager_holder = [None]
+        if SwingUtilities.isEventDispatchThread():
+            action()
+            return
 
         @JImplements("java.lang.Runnable")
-        class CreateRoiManagerRunnable:
+        class FijiUiWorkUnit:
             @JOverride
             def run(self):
-                roi_manager_holder[0] = RoiManager()
+                action()
 
-        SwingUtilities.invokeAndWait(CreateRoiManagerRunnable())
-        return roi_manager_holder[0]
+        SwingUtilities.invokeAndWait(FijiUiWorkUnit())
 
 
 @dataclass(frozen=True, slots=True)
 class FijiRoiPayloadHandler(FijiPayloadHandler):
     """Add ROI payloads to ImageJ's ROI manager in hyperstack coordinates."""
+
+    ROIS_PER_WORK_UNIT: ClassVar[int] = 128
 
     streaming_data_type: ClassVar[StreamingDataType] = StreamingDataType.ROIS
     roi_manager_provider: FijiRoiManagerProvider = field(
@@ -2755,22 +2993,29 @@ class FijiRoiPayloadHandler(FijiPayloadHandler):
 
             base_name = Path(file_path).stem
 
-            java_rois = FijiROIConverter.transmission_to_java_rois(
-                list(rois_encoded),
-                sj,
-            )
-            for roi_idx, java_roi in enumerate(java_rois):
-                java_roi.setName(f"{base_name}_{roi_idx:04d}")
-                java_roi.setPosition(c_value, z_value, t_value)
-                java_roi.setGroup(group_id)
-                roi_manager.addRoi(java_roi)
-                total_rois_added += 1
+            for roi_offset in range(0, len(rois_encoded), self.ROIS_PER_WORK_UNIT):
+                encoded_work_unit = rois_encoded[
+                    roi_offset : roi_offset + self.ROIS_PER_WORK_UNIT
+                ]
+                java_rois = FijiROIConverter.transmission_to_java_rois(
+                    list(encoded_work_unit),
+                    sj,
+                )
+                for work_unit_index, java_roi in enumerate(java_rois):
+                    roi_idx = roi_offset + work_unit_index
+                    java_roi.setName(f"{base_name}_{roi_idx:04d}")
+                    java_roi.setPosition(c_value, z_value, t_value)
+                    java_roi.setGroup(group_id)
+                    total_rois_added += 1
+                self.roi_manager_provider.add_rois(roi_manager, java_rois)
+                if request.work_unit_completed is not None:
+                    request.work_unit_completed()
 
             if image_id := roi_item.image_id:
                 request.server._send_ack(image_id, status=_ACK_SUCCESS)
 
         if not roi_manager.isVisible():
-            roi_manager.setVisible(True)
+            self.roi_manager_provider.show(roi_manager)
 
         logger.info(
             f"🔬 FIJI SERVER: Added {total_rois_added} ROIs to group {group_id} ('{request.window_key}') with shared coordinate space"

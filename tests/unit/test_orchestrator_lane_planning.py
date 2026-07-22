@@ -49,7 +49,11 @@ from openhcs.core.compiled_execution import (
     CompiledRuntimeEnvironmentPlan,
     CompiledWorkerStartPlan,
 )
-from openhcs.runtime.viewer_protocol import ViewerControlResponse
+from openhcs.runtime.viewer_protocol import (
+    ViewerControlResponse,
+    ViewerSettlePhase,
+    ViewerSettleProgress,
+)
 
 
 PROGRESS_CONTEXT = ProgressExecutionContext(
@@ -833,8 +837,19 @@ def test_compiled_execution_returns_settled_nonpersistent_viewer_state_before_cl
         def is_running(self):
             return self.running
 
-        def settle_viewer_state(self):
+        def settle_viewer_state(self, *, progress_callback=None):
             events.append("settle")
+            if progress_callback is not None:
+                progress_callback(
+                    ViewerSettleProgress(
+                        ViewerSettlePhase.RUNNING,
+                        1,
+                        2,
+                        "large-rois",
+                        4,
+                        True,
+                    )
+                )
             return True
 
         def read_viewer_state(self):
@@ -868,10 +883,60 @@ def test_compiled_execution_returns_settled_nonpersistent_viewer_state_before_cl
     )
     assert events == [
         "settle",
+        ProgressPhase.VIEWER_SETTLEMENT.value,
         "capture",
         ProgressPhase.SUCCESS.value,
         "stop",
     ]
+
+
+def test_viewer_settlement_progress_throttles_unchanged_active_observations(
+    monkeypatch,
+):
+    active = ViewerSettleProgress(
+        ViewerSettlePhase.RUNNING,
+        1,
+        2,
+        "large-rois",
+        4,
+        True,
+    )
+    complete = ViewerSettleProgress.complete(2)
+    observed_events = []
+
+    class Viewer:
+        port = 5563
+        persistent = False
+
+        def settle_viewer_state(self, *, progress_callback=None):
+            assert progress_callback is not None
+            for progress in (active, active, active, complete):
+                progress_callback(progress)
+            return True
+
+        def read_viewer_state(self):
+            return ViewerControlResponse(payload={"status": "success"})
+
+    monotonic_values = iter((0.0, 0.5, 2.1, 2.2))
+    monkeypatch.setattr(
+        compiled_plate_execution_module.time,
+        "monotonic",
+        lambda: next(monotonic_values),
+    )
+
+    states = settle_viewer_state(
+        [Viewer()],
+        progress_queue=SimpleNamespace(put=observed_events.append),
+        progress_context=PROGRESS_CONTEXT,
+    )
+
+    assert states == {5563: ViewerControlResponse(payload={"status": "success"})}
+    progress_events = [ProgressEvent.from_dict(event) for event in observed_events]
+    assert len(progress_events) == 3
+    assert [
+        event.context["active_route_work_unit_active"]
+        for event in progress_events
+    ] == [True, True, False]
 
 
 def test_compiled_execution_cleans_up_after_viewer_state_capture_failure(monkeypatch):
@@ -888,7 +953,8 @@ def test_compiled_execution_cleans_up_after_viewer_state_capture_failure(monkeyp
         def is_running(self):
             return self.running
 
-        def settle_viewer_state(self):
+        def settle_viewer_state(self, *, progress_callback=None):
+            del progress_callback
             events.append("settle")
             return True
 

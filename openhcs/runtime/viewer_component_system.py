@@ -1282,11 +1282,13 @@ class ViewerLayerAxisProjectionStep:
 
     def project_component_values(self) -> tuple[list[ComponentValue], int]:
         route_values = self.route_domain_values()
-        coordinate_values = self.request.declared_domain.required_values(self.component)
-        start_index = self.viewer_index(route_values[0], coordinate_values)
-        if not self.is_contiguous_subset(start_index, route_values, coordinate_values):
-            return route_values, 0
-        return route_values, start_index
+        coordinate_values = self.request.viewer_domain.required_values(self.component)
+        route_indices = tuple(
+            self.viewer_index(value, coordinate_values) for value in route_values
+        )
+        start_index = min(route_indices)
+        stop_index = max(route_indices) + 1
+        return list(coordinate_values[start_index:stop_index]), start_index
 
     def viewer_index(
         self,
@@ -1300,16 +1302,6 @@ class ViewerLayerAxisProjectionStep:
                 f"Route component value {value!r} for '{self.component}' is absent "
                 f"from viewer domain {list(viewer_values)!r}."
             ) from error
-
-    def is_contiguous_subset(
-        self,
-        start_index: int,
-        route_values: Sequence[ComponentValue],
-        viewer_values: Sequence[ComponentValue],
-    ) -> bool:
-        stop_index = start_index + len(route_values)
-        return list(viewer_values)[start_index:stop_index] == list(route_values)
-
 
 @dataclass(frozen=True, slots=True)
 class ViewerLayerAxisProjectionRequest:

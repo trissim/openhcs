@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from multiprocessing.process import BaseProcess
@@ -87,6 +87,8 @@ class ViewerSettleField(str, Enum):
     COMPLETED_UPDATE_COUNT = "completed_update_count"
     TOTAL_UPDATE_COUNT = "total_update_count"
     ACTIVE_ROUTE = "active_route"
+    ACTIVE_ROUTE_WORK_UNIT_COUNT = "active_route_work_unit_count"
+    ACTIVE_ROUTE_WORK_UNIT_ACTIVE = "active_route_work_unit_active"
 
 
 class ViewerPayloadSummaryField(str, Enum):
@@ -140,6 +142,8 @@ class ViewerLayerField(str, Enum):
     TRANSLATE = "translate"
     VISIBLE = "visible"
     SELECTED = "selected"
+    FEATURE_ROW_COUNT = "feature_row_count"
+    SELECTED_DATA_INDICES = "selected_data_indices"
     PENDING_UPDATE = "pending_update"
     PAYLOADS = "payloads"
 
@@ -212,6 +216,8 @@ class ViewerSettleProgress:
     completed_update_count: int
     total_update_count: int
     active_route: str | None = None
+    active_route_work_unit_count: int = 0
+    active_route_work_unit_active: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -235,6 +241,23 @@ class ViewerSettleProgress:
             )
         if self.active_route is not None and not isinstance(self.active_route, str):
             raise TypeError("Viewer settle active_route must be a string or None.")
+        if (
+            type(self.active_route_work_unit_count) is not int
+            or self.active_route_work_unit_count < 0
+        ):
+            raise ValueError(
+                "Viewer settle active-route work-unit count must be non-negative."
+            )
+        if self.active_route is None and self.active_route_work_unit_count:
+            raise ValueError(
+                "Viewer settle work-unit progress requires an active route."
+            )
+        if type(self.active_route_work_unit_active) is not bool:
+            raise TypeError("Viewer settle active work-unit state must be boolean.")
+        if self.active_route is None and self.active_route_work_unit_active:
+            raise ValueError(
+                "Viewer settle active work-unit state requires an active route."
+            )
 
     @classmethod
     def complete(cls, total_update_count: int = 0) -> "ViewerSettleProgress":
@@ -255,6 +278,11 @@ class ViewerSettleProgress:
 
         payload = response.payload
         active_route_value = payload[ViewerSettleField.ACTIVE_ROUTE.value]
+        active_work_unit_value = payload[
+            ViewerSettleField.ACTIVE_ROUTE_WORK_UNIT_ACTIVE.value
+        ]
+        if type(active_work_unit_value) is not bool:
+            raise TypeError("Viewer settle active work-unit state must be boolean.")
         return cls(
             phase=ViewerSettlePhase(
                 str(payload[ViewerSettleField.PHASE.value])
@@ -268,6 +296,10 @@ class ViewerSettleProgress:
             active_route=(
                 None if active_route_value is None else str(active_route_value)
             ),
+            active_route_work_unit_count=int(
+                payload[ViewerSettleField.ACTIVE_ROUTE_WORK_UNIT_COUNT.value]
+            ),
+            active_route_work_unit_active=active_work_unit_value,
         )
 
     def to_wire_mapping(self) -> dict[str, object]:
@@ -280,6 +312,12 @@ class ViewerSettleProgress:
             ),
             ViewerSettleField.TOTAL_UPDATE_COUNT.value: self.total_update_count,
             ViewerSettleField.ACTIVE_ROUTE.value: self.active_route,
+            ViewerSettleField.ACTIVE_ROUTE_WORK_UNIT_COUNT.value: (
+                self.active_route_work_unit_count
+            ),
+            ViewerSettleField.ACTIVE_ROUTE_WORK_UNIT_ACTIVE.value: (
+                self.active_route_work_unit_active
+            ),
         }
 
 
@@ -1072,6 +1110,7 @@ class ManagedViewerLifecycleMixin(
         super().__init__(port=runtime_config.transport_endpoint.port)
         self.persistent: bool = runtime_config.persistent
         self.display_enabled: bool = runtime_config.display_enabled
+        self.scope_accent_color = runtime_config.scope_accent_color
         self.lifecycle_presentation = runtime_config.presentation
         self.runtime_endpoint = ViewerRuntimeEndpoint(
             transport=runtime_config.transport_endpoint,
@@ -1274,14 +1313,19 @@ class ManagedViewerLifecycleMixin(
 
         return self.send_control_message(ViewerControlMessageType.CLEAR_STATE.value)
 
-    def settle_viewer_state(self, timeout: float = 30.0) -> bool:
+    def settle_viewer_state(
+        self,
+        timeout: float = 30.0,
+        *,
+        progress_callback: Callable[[ViewerSettleProgress], None] | None = None,
+    ) -> bool:
         """Wait while the viewer reports forward settlement progress."""
 
         if timeout <= 0:
             raise ValueError("Viewer settlement no-progress timeout must be positive.")
 
         logger = logging.getLogger(type(self).__module__)
-        last_completed_count = -1
+        last_progress_marker = (-1, -1)
         no_progress_deadline = time.monotonic() + timeout
         while True:
             try:
@@ -1291,6 +1335,8 @@ class ManagedViewerLifecycleMixin(
                     timeout=timeout,
                 ).send()
                 progress = ViewerSettleProgress.from_response(response)
+                if progress_callback is not None:
+                    progress_callback(progress)
             except Exception as error:
                 logger.warning(
                     "%s viewer settlement progress request failed: %s",
@@ -1316,23 +1362,32 @@ class ManagedViewerLifecycleMixin(
                 return True
 
             now = time.monotonic()
-            if progress.completed_update_count > last_completed_count:
-                last_completed_count = progress.completed_update_count
+            progress_marker = (
+                progress.completed_update_count,
+                progress.active_route_work_unit_count,
+            )
+            if progress_marker > last_progress_marker:
+                last_progress_marker = progress_marker
                 no_progress_deadline = now + timeout
                 logger.info(
-                    "%s viewer settling layer updates: %d/%d",
+                    "%s viewer settling layer updates: %d/%d; active route "
+                    "completed %d bounded work unit(s)",
                     self.viewer_process_label,
                     progress.completed_update_count,
                     progress.total_update_count,
+                    progress.active_route_work_unit_count,
                 )
+            elif progress.active_route_work_unit_active:
+                no_progress_deadline = now + timeout
             elif now >= no_progress_deadline:
                 logger.warning(
                     "%s viewer settlement made no progress for %.1f seconds "
-                    "at %d/%d updates",
+                    "at %d/%d updates and %d active-route work unit(s)",
                     self.viewer_process_label,
                     timeout,
                     progress.completed_update_count,
                     progress.total_update_count,
+                    progress.active_route_work_unit_count,
                 )
                 return False
             time.sleep(min(0.05, max(0.0, no_progress_deadline - now)))

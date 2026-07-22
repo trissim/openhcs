@@ -37,6 +37,7 @@ class ProgressPhase(Enum):
     STEP_COMPLETED = "step_completed"
     PATTERN_GROUP = "pattern_group"
     AXIS_COMPLETED = "axis_completed"
+    VIEWER_SETTLEMENT = "viewer_settlement"
 
     # Error phases
     AXIS_ERROR = "axis_error"
@@ -287,6 +288,15 @@ class AxisCompletedProgressPhase(
     ProgressPhaseDeclarationBase,
 ):
     phase = ProgressPhase.AXIS_COMPLETED
+
+
+class ViewerSettlementProgressPhase(
+    PipelineChannelProgressPhase,
+    ProgressPhaseDeclarationBase,
+):
+    """Parent-observed progress while streamed viewer state is materialized."""
+
+    phase = ProgressPhase.VIEWER_SETTLEMENT
 
 
 class AxisErrorProgressPhase(

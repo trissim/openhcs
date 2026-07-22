@@ -615,6 +615,14 @@ class NavigateViewerCommandSpec(SingleToolCommandSpec):
             metavar="NAME=INDEX",
             help="Route-local semantic axis index; repeat for multiple axes.",
         )
+        parser.add_argument(
+            "--data-index",
+            type=int,
+            help=(
+                "Select one zero-based row on a native feature-bearing result "
+                "layer so the overlay and feature table highlight stay linked."
+            ),
+        )
         visibility = parser.add_mutually_exclusive_group()
         visibility.add_argument(
             "--visible",
@@ -699,6 +707,7 @@ class NavigateViewerCommandSpec(SingleToolCommandSpec):
             axis_indices=parse_navigation_axis_indices(args.axis_index),
             visible=args.visible,
             selected=args.selected,
+            data_index=args.data_index,
         )
         return McpToolArgumentAuthority.from_payload(request.as_tool_arguments())
 

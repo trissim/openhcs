@@ -288,6 +288,7 @@ class ViewerWindowNavigationRequest(ViewerWindowControlRequest):
         axis_indices: dict[str, int] | None = None,
         visible: bool | None = True,
         selected: bool | None = True,
+        data_index: int | None = None,
     ) -> Self:
         return cls(
             connection=connection,
@@ -297,6 +298,7 @@ class ViewerWindowNavigationRequest(ViewerWindowControlRequest):
                 axis_indices=axis_indices,
                 visible=visible,
                 selected=selected,
+                data_index=data_index,
             ),
         )
 
@@ -666,6 +668,8 @@ class ViewerWindowLayerState(ViewerWindowLayerDescriptor):
     translate: tuple[float, ...] = ()
     visible: bool = False
     selected: bool = False
+    feature_row_count: int = 0
+    selected_data_indices: tuple[int, ...] = ()
 
 
 class ViewerWindowErrorResultFactory(ABC, metaclass=AutoRegisterMeta):
@@ -855,6 +859,9 @@ class ViewerWindowNavigationResult(
     route_key: str | None = None
     visible: bool | None = None
     selected: bool | None = None
+    data_index: int | None = None
+    feature_row_count: int = 0
+    selected_data_indices: tuple[int, ...] = ()
     active_dimension_label_route: str | None = None
     current_step: tuple[int, ...] = ()
     axis_labels: tuple[str, ...] = ()

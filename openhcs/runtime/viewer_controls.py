@@ -217,6 +217,7 @@ class ViewerNavigationControlOptions:
     axis_indices: Mapping[str, int] = field(default_factory=dict)
     visible: bool | None = None
     selected: bool | None = None
+    data_index: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.route_key, str) or not self.route_key:
@@ -239,6 +240,22 @@ class ViewerNavigationControlOptions:
         for field_name, value in (("visible", self.visible), ("selected", self.selected)):
             if value is not None and not isinstance(value, bool):
                 raise TypeError(f"Viewer navigation {field_name} must be a bool.")
+        if self.data_index is not None:
+            if isinstance(self.data_index, bool) or not isinstance(
+                self.data_index,
+                int,
+            ):
+                raise TypeError("Viewer navigation data_index must be an integer.")
+            if self.data_index < 0:
+                raise ValueError("Viewer navigation data_index must be nonnegative.")
+            if self.visible is False:
+                raise ValueError(
+                    "Viewer navigation data_index cannot target a hidden layer."
+                )
+            if self.selected is False:
+                raise ValueError(
+                    "Viewer navigation data_index cannot target a deselected layer."
+                )
 
     @classmethod
     def from_overrides(
@@ -248,10 +265,12 @@ class ViewerNavigationControlOptions:
         axis_indices: Mapping[str, int] | None = None,
         visible: bool | None = None,
         selected: bool | None = None,
+        data_index: int | None = None,
     ) -> Self:
         return cls(
             route_key=route_key,
             axis_indices=dict(axis_indices or {}),
             visible=visible,
             selected=selected,
+            data_index=data_index,
         )

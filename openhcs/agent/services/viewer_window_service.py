@@ -1942,6 +1942,13 @@ class ViewerWindowService:
             route_key=request.navigation.route_key,
             visible=target_layer.visible if target_layer is not None else None,
             selected=target_layer.selected if target_layer is not None else None,
+            data_index=request.navigation.data_index,
+            feature_row_count=(
+                target_layer.feature_row_count if target_layer is not None else 0
+            ),
+            selected_data_indices=(
+                target_layer.selected_data_indices if target_layer is not None else ()
+            ),
             active_dimension_label_route=state.active_dimension_label_route,
             current_step=state.current_step,
             axis_labels=state.axis_labels,
@@ -2191,6 +2198,16 @@ class ViewerWindowService:
             selected=self._required_scalar(
                 payload, ViewerLayerField.SELECTED, bool, "a boolean"
             ),
+            feature_row_count=self._optional_typed(
+                payload,
+                ViewerLayerField.FEATURE_ROW_COUNT,
+                int,
+            ) or 0,
+            selected_data_indices=self._optional_typed_tuple(
+                payload,
+                ViewerLayerField.SELECTED_DATA_INDICES,
+                int,
+            ),
             pending_update=self._required_scalar(
                 payload, ViewerLayerField.PENDING_UPDATE, bool, "a boolean"
             ),
@@ -2275,6 +2292,20 @@ class ViewerWindowService:
                     f"Viewer response field {field_name!r} values must be {type_name}."
                 )
         return values
+
+    @staticmethod
+    def _optional_typed_tuple(
+        payload: Mapping[str, JsonValue],
+        field_name: str,
+        expected_type: type[OptionalViewerFieldT],
+    ) -> tuple[OptionalViewerFieldT, ...]:
+        if field_name not in payload:
+            return ()
+        return ViewerWindowService._required_typed_tuple(
+            payload,
+            field_name,
+            expected_type,
+        )
 
     @staticmethod
     def _required_mapping_tuple(

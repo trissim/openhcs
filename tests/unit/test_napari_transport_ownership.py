@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pickle
 import uuid
 from multiprocessing import shared_memory
 
@@ -122,3 +123,77 @@ def test_napari_transport_rep_follows_receiver_owned_shared_memory_copy(
             shm.unlink()
         except FileNotFoundError:
             pass
+
+
+def test_napari_control_pump_reports_active_settlement_without_qt_dispatch() -> None:
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+    from polystore.streaming_constants import StreamingDataType
+
+    from openhcs.runtime.napari_streaming_handlers import NapariPendingLayerUpdate
+    from openhcs.runtime.viewer_component_system import (
+        ViewerComponentAxisSemanticsAuthority,
+    )
+    from openhcs.runtime.viewer_protocol import (
+        ViewerControlResponse,
+        ViewerSettlePhase,
+        ViewerSettleProgress,
+    )
+
+    class FakeTimer:
+        def stop(self) -> None:
+            pass
+
+    port = 47000 + uuid.uuid4().int % 8000
+    control_port = port + OPENHCS_ZMQ_CONFIG.control_port_offset
+    remove_ipc_socket(control_port, OPENHCS_ZMQ_CONFIG)
+    server = napari_viewer_server.NapariViewerServer(
+        NapariViewerServerRequest(
+            port=port,
+            viewer_title="control ownership test",
+            replace_layers=False,
+            log_file_path=None,
+            transport_mode=TransportMode.IPC,
+        )
+    )
+    server.viewer = object()
+    update = NapariPendingLayerUpdate.from_semantics(
+        timer=FakeTimer(),
+        data_type=StreamingDataType.SHAPES,
+        semantics=ViewerComponentAxisSemanticsAuthority.empty(),
+    )
+    server.layer_route_state.set_pending_update("large-shapes", update)
+    settlement = server.layer_route_state.begin_settlement()
+    claimed = settlement.begin_next()
+    assert claimed is not None
+    settlement.begin_active_work_unit(claimed[0])
+
+    context = zmq.Context()
+    socket = context.socket(zmq.REQ)
+    socket.setsockopt(zmq.LINGER, 0)
+    socket.setsockopt(zmq.RCVTIMEO, 2000)
+    server._running = True
+    server.control_transport_pump.start()
+    socket.connect(
+        get_zmq_transport_url(
+            control_port,
+            host="localhost",
+            mode=server.transport_mode,
+            config=server.config,
+        )
+    )
+    try:
+        socket.send(pickle.dumps({"type": "settle"}))
+        response = pickle.loads(socket.recv())
+        progress = ViewerSettleProgress.from_response(ViewerControlResponse(response))
+        assert progress.phase is ViewerSettlePhase.RUNNING
+        assert progress.completed_update_count == 0
+        assert progress.active_route == "large-shapes"
+        assert progress.active_route_work_unit_count == 0
+        assert progress.active_route_work_unit_active is True
+        assert server.accepted_control_requests.empty()
+    finally:
+        server._running = False
+        server.control_transport_pump.stop()
+        socket.close(linger=0)
+        context.term()
+        remove_ipc_socket(control_port, OPENHCS_ZMQ_CONFIG)

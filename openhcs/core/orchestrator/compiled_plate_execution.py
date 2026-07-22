@@ -10,6 +10,7 @@ from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import (
+    Callable,
     ClassVar,
     Dict,
     List,
@@ -81,7 +82,10 @@ from openhcs.core.runtime_artifact_values import RuntimeValue
 if TYPE_CHECKING:
     from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
     from openhcs.core.source_matching import SourceImageSetIdentityPolicy
-    from openhcs.runtime.viewer_protocol import ViewerControlResponse
+    from openhcs.runtime.viewer_protocol import (
+        ViewerControlResponse,
+        ViewerSettleProgress,
+    )
 
 
 logger = logging.getLogger(__name__)
@@ -98,7 +102,12 @@ class ExecutionVisualizer(Protocol):
     def clear_viewer_state(self) -> bool:
         """Clear all viewer state before a new execution."""
 
-    def settle_viewer_state(self, timeout: float = 30.0) -> bool:
+    def settle_viewer_state(
+        self,
+        timeout: float = 30.0,
+        *,
+        progress_callback: Callable[["ViewerSettleProgress"], None] | None = None,
+    ) -> bool:
         """Drain all queued viewer updates before execution completes."""
 
     def read_viewer_state(self, timeout: float = 30.0) -> "ViewerControlResponse":
@@ -264,7 +273,11 @@ def execute_compiled_plate_request(
                 validated.compiled_contexts,
                 orchestrator.microscope_handler,
             )
-            viewer_states_by_port = settle_viewer_state(visualizers)
+            viewer_states_by_port = settle_viewer_state(
+                visualizers,
+                progress_queue=validated.progress_queue,
+                progress_context=validated,
+            )
         else:
             viewer_states_by_port = MappingProxyType({})
         project_execution_state(orchestrator, execution_results)
@@ -576,6 +589,7 @@ def _emit_execution_progress(
     completed: int,
     total: int,
     percent: float,
+    context: dict[str, object] | None = None,
 ) -> None:
     """Publish one parent-owned execution event without a worker claim."""
 
@@ -591,6 +605,7 @@ def _emit_execution_progress(
                 completed=completed,
                 total=total,
                 percent=percent,
+                context=context,
             )
         ).to_dict()
     )
@@ -952,13 +967,93 @@ def clear_viewer_state(visualizers: list[ExecutionVisualizer]) -> None:
             raise RuntimeError(f"Failed to clear state for viewer on port {vis.port}.")
 
 
+@dataclass(slots=True)
+class ViewerSettlementProgressObserver:
+    """Project authoritative viewer progress into the execution event stream."""
+
+    progress_queue: ProgressQueue
+    progress_context: ProgressExecutionContext
+    viewer_port: int
+    heartbeat_interval_seconds: float = PLATE_STEP_PROGRESS_HEARTBEAT_SECONDS
+    _last_progress: "ViewerSettleProgress | None" = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _last_emitted_at: float = field(
+        default=float("-inf"),
+        init=False,
+        repr=False,
+    )
+
+    def __post_init__(self) -> None:
+        if self.heartbeat_interval_seconds <= 0:
+            raise ValueError(
+                "Viewer settlement heartbeat interval must be positive."
+            )
+
+    def __call__(self, progress: "ViewerSettleProgress") -> None:
+        observed_at = time.monotonic()
+        if progress == self._last_progress and (
+            not progress.active_route_work_unit_active
+            or observed_at - self._last_emitted_at
+            < self.heartbeat_interval_seconds
+        ):
+            return
+
+        self._last_progress = progress
+        self._last_emitted_at = observed_at
+        total = progress.total_update_count
+        percent = (
+            100.0
+            if total == 0
+            else (progress.completed_update_count / total) * 100.0
+        )
+        _emit_execution_progress(
+            progress_queue=self.progress_queue,
+            progress_context=self.progress_context,
+            step_name=f"viewer_settlement_{self.viewer_port}",
+            phase=ProgressPhase.VIEWER_SETTLEMENT,
+            status=ProgressStatus.RUNNING,
+            completed=progress.completed_update_count,
+            total=total,
+            percent=percent,
+            context={
+                "viewer_port": self.viewer_port,
+                **progress.to_wire_mapping(),
+            },
+        )
+
+
 def settle_viewer_state(
     visualizers: list[ExecutionVisualizer],
+    *,
+    progress_queue: ProgressQueue | None = None,
+    progress_context: ProgressExecutionContext | None = None,
 ) -> Mapping[int, "ViewerControlResponse"]:
     """Drain queued updates and capture state before transient viewer shutdown."""
 
+    if (progress_queue is None) is not (progress_context is None):
+        raise ValueError(
+            "Viewer settlement progress requires both queue and execution context."
+        )
+
     for vis in visualizers:
-        if not vis.settle_viewer_state():
+        observer = (
+            None
+            if progress_queue is None or progress_context is None
+            else ViewerSettlementProgressObserver(
+                progress_queue,
+                progress_context,
+                vis.port,
+            )
+        )
+        settled = (
+            vis.settle_viewer_state()
+            if observer is None
+            else vis.settle_viewer_state(progress_callback=observer)
+        )
+        if not settled:
             raise RuntimeError(
                 f"Failed to settle streamed updates for viewer on port {vis.port}."
             )

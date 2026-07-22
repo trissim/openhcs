@@ -90,6 +90,7 @@ class StreamingViewerRuntimeConfig:
     presentation: StreamingViewerPresentation
     transport_config: ZMQConfig = OPENHCS_ZMQ_CONFIG
     display_enabled: bool = True
+    scope_accent_color: str | None = None
 
 
 class StreamingConfigBehaviorMixin:
@@ -145,6 +146,7 @@ class StreamingConfigBehaviorMixin:
             persistent=self.persistent,
             display_enabled=self.enabled,
             presentation=self.streaming_spec.presentation,
+            scope_accent_color=self.scope_accent_color,
         )
 
     def viewer_surface(

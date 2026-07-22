@@ -817,6 +817,9 @@ class StreamingDefaults(Enableable, StepWellFilterConfig):
     N = show incrementally every N images (provides visual feedback but slower).
     """
 
+    scope_accent_color: Annotated[Optional[str], abbreviation("accent")] = None
+    """Exact owner-projected scope accent used to frame a managed viewer."""
+
 
 @abbreviation("stream_cfg")
 @global_pipeline_config(ui_hidden=True)

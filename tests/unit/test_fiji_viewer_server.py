@@ -5,6 +5,7 @@ import tifffile
 
 from openhcs.core.config import FijiDisplayConfig, FijiLUT, FijiStreamingConfig
 from openhcs.runtime.fiji_viewer_server import (
+    FijiBatchSettlementState,
     FijiBatchWireParser,
     FijiClearStateControlPlan,
     FijiControlMessageAuthority,
@@ -12,16 +13,20 @@ from openhcs.runtime.fiji_viewer_server import (
     FijiControlRequestContext,
     FijiDimensionAxis,
     FijiDisplayConfigWireAdapter,
-    FijiImagePayload,
-    FijiImageIntensityRange,
-    FijiSharedMemoryItemCopier,
-    FijiPlaneGeometry,
-    FijiStackSliceLabelBuilder,
     FijiHyperstackCoordinates,
+    FijiImageIntensityRange,
+    FijiImagePayload,
+    FijiImagePlaneLookup,
+    FijiImageStackBuilder,
+    FijiPlaneGeometry,
+    FijiPayloadHandlerRequest,
+    FijiRoiPayloadHandler,
+    FijiSettleControlPlan,
+    FijiSharedMemoryItemCopier,
+    FijiStackSliceLabelBuilder,
     FijiWindowItemProjection,
     FijiWindowRegistry,
     FijiWireItem,
-    FijiSettleControlPlan,
 )
 from openhcs.runtime.fiji_macro_runtime import (
     FijiMacroExecutionRequest,
@@ -30,10 +35,12 @@ from openhcs.runtime.fiji_macro_runtime import (
 from openhcs.runtime.viewer_protocol import (
     ViewerControlMessageType,
     ViewerControlResponse,
+    ViewerSettlePhase,
     ViewerSettleProgress,
 )
 from openhcs.runtime.viewer_component_system import (
     ViewerComponentAxisSemanticsAuthority,
+    ViewerComponentNameMetadata,
     ViewerComponentValueDomainPayload,
     ViewerObjectDisplayConfigInput,
 )
@@ -114,7 +121,11 @@ def test_fiji_control_dispatch_registry_is_module_local_and_eager() -> None:
 
 def test_fiji_settlement_reports_typed_terminal_progress() -> None:
     response = FijiControlMessageAuthority(
-        FijiControlRequestContext(FijiWindowRegistry(), object())
+        FijiControlRequestContext(
+            FijiWindowRegistry(),
+            object(),
+            FijiBatchSettlementState(),
+        )
     ).response_for({"type": ViewerControlMessageType.SETTLE.value})
     wire_response = ViewerControlResponse(response.to_wire_mapping())
 
@@ -122,6 +133,69 @@ def test_fiji_settlement_reports_typed_terminal_progress() -> None:
     assert ViewerSettleProgress.from_response(wire_response) == (
         ViewerSettleProgress.complete()
     )
+
+
+def test_fiji_settlement_tracks_queued_and_bounded_native_work() -> None:
+    settlement = FijiBatchSettlementState()
+
+    settlement.queue_items(2)
+    settlement.queue_items(3)
+    queued_response = FijiSettleControlPlan().response(
+        FijiControlRequestContext(FijiWindowRegistry(), object(), settlement),
+        None,
+    )
+    queued = ViewerSettleProgress.from_response(
+        ViewerControlResponse(queued_response.to_wire_mapping())
+    )
+
+    assert queued.phase is ViewerSettlePhase.RUNNING
+    assert queued.completed_update_count == 0
+    assert queued.total_update_count == 5
+    assert queued.active_route is None
+
+    # A new enqueue can race after the debounce engine drained the first five
+    # items but before its callback claims them. Exact item counts preserve the
+    # second aggregate instead of folding it into the active one.
+    settlement.queue_items(4)
+    route = settlement.begin_pending_update(5)
+    settlement.complete_active_work_unit(route)
+    settlement.complete_active_work_unit(route)
+    active = settlement.progress()
+
+    assert active.phase is ViewerSettlePhase.RUNNING
+    assert active.active_route == route
+    assert active.active_route_work_unit_count == 2
+
+    settlement.complete_active_update(route)
+    between_batches = settlement.progress()
+
+    assert between_batches.phase is ViewerSettlePhase.RUNNING
+    assert between_batches.completed_update_count == 5
+    assert between_batches.total_update_count == 9
+
+    next_route = settlement.begin_pending_update(4)
+    settlement.complete_active_work_unit(next_route)
+    settlement.complete_active_update(next_route)
+
+    assert settlement.progress() == ViewerSettleProgress.complete(
+        total_update_count=9
+    )
+
+
+def test_fiji_clear_state_resets_terminal_settlement_for_next_run() -> None:
+    settlement = FijiBatchSettlementState()
+    settlement.queue_items(1)
+    route = settlement.begin_pending_update(1)
+    settlement.fail_active_update(route, ValueError("invalid Fiji ROI"))
+
+    response = FijiClearStateControlPlan().response(
+        FijiControlRequestContext(FijiWindowRegistry(), object(), settlement),
+        None,
+    )
+
+    assert response.header.status.value == "success"
+    assert settlement.progress() == ViewerSettleProgress.complete()
+    assert settlement.failure_message() is None
 
 
 def test_fiji_window_registry_owns_window_state_and_group_identity() -> None:
@@ -161,7 +235,11 @@ def test_fiji_window_registry_closes_replaced_hyperstack() -> None:
 
 def test_fiji_state_control_message_fails_loudly_until_projector_exists() -> None:
     response = FijiControlMessageAuthority(
-        FijiControlRequestContext(FijiWindowRegistry(), object())
+        FijiControlRequestContext(
+            FijiWindowRegistry(),
+            object(),
+            FijiBatchSettlementState(),
+        )
     ).response_for({"type": ViewerControlMessageType.STATE.value})
 
     wire_response = response.to_wire_mapping()
@@ -200,7 +278,11 @@ def test_fiji_macro_control_executes_inside_managed_imagej_runtime(tmp_path) -> 
         input_images=(np.zeros((4, 5), dtype=np.uint8),),
     )
     response = FijiControlMessageAuthority(
-        FijiControlRequestContext(FijiWindowRegistry(), FakeImageJ())
+        FijiControlRequestContext(
+            FijiWindowRegistry(),
+            FakeImageJ(),
+            FijiBatchSettlementState(),
+        )
     ).response_for(
         {
             "type": FijiMacroExecutionRequest.message_type,
@@ -358,6 +440,70 @@ def test_fiji_plane_geometry_owns_extraction_padding_and_shape() -> None:
     assert FijiPlaneGeometry.target_spatial_shape(images) == (4, 3)
 
 
+def test_fiji_image_stack_builder_reports_bounded_native_work_units(
+    monkeypatch,
+) -> None:
+    import jpype
+    import scyjava
+
+    built_stacks = []
+
+    class FakeImageStack:
+        def __init__(self, width: int, height: int) -> None:
+            self.width = width
+            self.height = height
+            self.slices = []
+            built_stacks.append(self)
+
+        def addSlice(self, label, processor) -> None:
+            self.slices.append((label, processor))
+
+    class FakeByteProcessor:
+        def __init__(self, width, height, pixels, color_model) -> None:
+            self.width = width
+            self.height = height
+            self.pixels = pixels
+            self.color_model = color_model
+
+    imported_types = {
+        "ij.ImageStack": FakeImageStack,
+        "ij.process.ByteProcessor": FakeByteProcessor,
+        "ij.process.ShortProcessor": object,
+        "ij.process.FloatProcessor": object,
+    }
+    monkeypatch.setattr(scyjava, "jimport", imported_types.__getitem__)
+    monkeypatch.setattr(jpype, "JByte", object())
+    monkeypatch.setattr(jpype, "JArray", lambda _type: lambda values: values)
+
+    channel_values = [(index,) for index in range(65)]
+    coordinates = FijiHyperstackCoordinates(
+        channel=FijiDimensionAxis("channel", ["channel"], channel_values),
+        z_axis_coordinates=FijiDimensionAxis("z_axis", [], [()]),
+        frame=FijiDimensionAxis("frame", [], [()]),
+    )
+    image_lookup = FijiImagePlaneLookup(
+        {
+            (channel_value, (), ()): np.full((2, 3), index, dtype=np.uint8)
+            for index, channel_value in enumerate(channel_values)
+        }
+    )
+    completed_units = []
+
+    stack = FijiImageStackBuilder(
+        image_lookup=image_lookup,
+        coordinates=coordinates,
+        width=3,
+        height=2,
+    ).build(
+        work_unit_completed=lambda: completed_units.append(
+            len(built_stacks[0].slices)
+        )
+    )
+
+    assert len(stack.slices) == 65
+    assert completed_units == [32, 64, 65]
+
+
 def test_fiji_image_intensity_range_uses_extracted_planes() -> None:
     images = [
         FijiImagePayload(
@@ -387,3 +533,127 @@ def test_fiji_stack_slice_label_builder_uses_coordinate_axes() -> None:
         FijiStackSliceLabelBuilder(coordinates).label_for(((1,), (0,), (2, "A14")))
         == "C1_Z0_T2_A14"
     )
+
+
+def test_fiji_roi_handler_converts_and_adds_bounded_native_work_units(
+    monkeypatch,
+) -> None:
+    from polystore.roi_converters import FijiROIConverter
+
+    class FakeJavaRoi:
+        def __init__(self) -> None:
+            self.name = None
+            self.position = None
+            self.group = None
+
+        def setName(self, name) -> None:
+            self.name = name
+
+        def setPosition(self, channel, z_slice, frame) -> None:
+            self.position = (channel, z_slice, frame)
+
+        def setGroup(self, group) -> None:
+            self.group = group
+
+    class FakeRoiManager:
+        def __init__(self) -> None:
+            self.rois = []
+            self.visible = False
+
+        def addRoi(self, roi) -> None:
+            self.rois.append(roi)
+
+        def isVisible(self) -> bool:
+            return self.visible
+
+        def setVisible(self, visible) -> None:
+            self.visible = visible
+
+    class FakeRoiManagerProvider:
+        def __init__(self, manager) -> None:
+            self._manager = manager
+
+        def manager(self):
+            return self._manager
+
+        def add_rois(self, roi_manager, java_rois) -> None:
+            for java_roi in java_rois:
+                roi_manager.addRoi(java_roi)
+
+        def show(self, roi_manager) -> None:
+            roi_manager.setVisible(True)
+
+    class FakeServer:
+        def __init__(self) -> None:
+            self.windows = FijiWindowRegistry()
+            self.acknowledgments = []
+
+        def _send_ack(self, image_id, status="success", error=None) -> None:
+            self.acknowledgments.append((image_id, status, error))
+
+    conversion_sizes = []
+
+    def convert_work_unit(encoded_rois, _scyjava):
+        conversion_sizes.append(len(encoded_rois))
+        return [FakeJavaRoi() for _ in encoded_rois]
+
+    monkeypatch.setattr(
+        FijiROIConverter,
+        "transmission_to_java_rois",
+        convert_work_unit,
+    )
+
+    display_config = FijiDisplayConfig()
+    semantics = ViewerComponentAxisSemanticsAuthority.from_display_config(
+        ViewerObjectDisplayConfigInput(display_config),
+        _component_value_domain(
+            {
+                "channel": [1],
+                "z_index": [0],
+                "timepoint": [0],
+            }
+        ),
+    )
+    component_names = ViewerComponentNameMetadata.empty()
+    coordinates = FijiHyperstackCoordinates(
+        channel=FijiDimensionAxis("channel", ["channel"], [(1,)]),
+        z_axis_coordinates=FijiDimensionAxis("z_axis", ["z_index"], [(0,)]),
+        frame=FijiDimensionAxis("frame", ["timepoint"], [(0,)]),
+    )
+    item = FijiWireItem.from_payload(
+        {
+            "data_type": "rois",
+            "image_id": "roi-batch",
+            "path": "/tmp/cells.tif",
+            "metadata": {"channel": 1, "z_index": 0, "timepoint": 0},
+            "rois": [{"index": index} for index in range(257)],
+        }
+    )
+    manager = FakeRoiManager()
+    server = FakeServer()
+    completed_units = []
+    request = FijiPayloadHandlerRequest(
+        viewer_display_config=display_config,
+        store=component_names.store,
+        entries=semantics.entries,
+        layout=semantics.layout,
+        server=server,
+        window_key="cells",
+        items=[item],
+        coordinates=coordinates,
+        work_unit_completed=lambda: completed_units.append(len(manager.rois)),
+    )
+
+    FijiRoiPayloadHandler(
+        roi_manager_provider=FakeRoiManagerProvider(manager)
+    ).handle(request)
+
+    assert conversion_sizes == [128, 128, 1]
+    assert completed_units == [128, 256, 257]
+    assert len(manager.rois) == 257
+    assert manager.rois[0].name == "cells_0000"
+    assert manager.rois[-1].name == "cells_0256"
+    assert manager.rois[-1].position == (1, 1, 1)
+    assert manager.rois[-1].group == server.windows.group_id("cells")
+    assert manager.visible is True
+    assert server.acknowledgments == [("roi-batch", "success", None)]

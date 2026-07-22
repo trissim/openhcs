@@ -290,10 +290,10 @@ def test_managed_viewer_settlement_tracks_progress_without_total_timeout(
             return DetachedViewerPythonArguments.from_literals(str(log_file))
 
     progress_rows = (
-        ViewerSettleProgress(ViewerSettlePhase.RUNNING, 0, 3, "first"),
-        ViewerSettleProgress(ViewerSettlePhase.RUNNING, 1, 3, "second"),
-        ViewerSettleProgress(ViewerSettlePhase.RUNNING, 2, 3, "third"),
-        ViewerSettleProgress.complete(3),
+        ViewerSettleProgress(ViewerSettlePhase.RUNNING, 0, 1, "large", 0, True),
+        ViewerSettleProgress(ViewerSettlePhase.RUNNING, 0, 1, "large", 0, True),
+        ViewerSettleProgress(ViewerSettlePhase.RUNNING, 0, 1, "large", 1),
+        ViewerSettleProgress.complete(1),
     )
     responses = [
         ViewerControlResponse(
@@ -313,9 +313,14 @@ def test_managed_viewer_settlement_tracks_progress_without_total_timeout(
     monkeypatch.setattr(viewer_protocol.time, "sleep", lambda _seconds: None)
     viewer = ProgressViewer()
     viewer.lifecycle_state.mark_connected_external()
+    observed_progress = []
 
-    assert viewer.settle_viewer_state(timeout=1.0)
+    assert viewer.settle_viewer_state(
+        timeout=1.0,
+        progress_callback=observed_progress.append,
+    )
     assert len(requests) == 4
+    assert observed_progress == list(progress_rows)
     assert all(
         request.message_type == ViewerControlMessageType.SETTLE.value
         for request in requests

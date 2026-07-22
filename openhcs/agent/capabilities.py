@@ -2366,14 +2366,22 @@ class NavigateViewerWindowCapability(ViewerWindowCliConnectionCapability):
     kind = CapabilityKind.TOOL
     title = "Navigate viewer window"
     description = (
-        "Sets a viewer layer visible or selected and moves zero-based, "
-        "route-local axis indices through the running viewer control endpoint."
+        "Sets a viewer layer visible or selected, moves zero-based route-local "
+        "axis indices, and can select one zero-based data_index on a native "
+        "feature-bearing result layer. The result reports feature_row_count and "
+        "selected_data_indices so agents can verify the visible overlay and "
+        "Napari feature-table selection are linked."
     )
     service = "viewer_window"
     mutating = True
     side_effects = ("mutates_viewer_window_state",)
     runtime_requirements = ("running_openhcs_viewer_server",)
-    data_exposure = ("viewer_layer_state", "viewer_axis_state")
+    data_exposure = (
+        "viewer_layer_state",
+        "viewer_axis_state",
+        "viewer_feature_row_count",
+        "viewer_selected_data_indices",
+    )
     input_contract = ViewerWindowNavigationRequest
     output_contract = ViewerWindowNavigationResult
     request_invocation = AgentViewerWindowRequestServiceInvocation(

@@ -116,7 +116,10 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin):
             self.viewer_title,
             self.replace_layers,
             str(log_file),
-        ).append(DetachedViewerPythonExpression.symbol("transport_mode"))
+        ).append(
+            DetachedViewerPythonExpression.symbol("transport_mode"),
+            DetachedViewerPythonExpression.literal(self.scope_accent_color),
+        )
 
     def start_viewer(self, async_mode: bool = True):
         """

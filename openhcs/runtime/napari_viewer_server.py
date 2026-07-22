@@ -9,18 +9,19 @@ from __future__ import annotations
 
 import logging
 import multiprocessing
+import pickle
 import queue
 import sys
 import threading
 import zmq
 import numpy as np
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from itertools import product
-from typing import ClassVar, Optional, Sequence, TypeAlias
-from qtpy.QtCore import QTimer
+from typing import ClassVar, Optional, Protocol, Sequence, TypeAlias, cast
+from qtpy.QtCore import Qt, QTimer
 
 from openhcs.core.config import TransportMode as OpenHCSTransportMode
 from openhcs.core.runtime_image_values import (
@@ -69,6 +70,7 @@ from openhcs.runtime.napari_streaming_handlers import (
     LayerData,
     LayerKwargValue,
     NapariLayerHandle,
+    NapariShapesLayerHandle,
     NapariAxisPresentation,
     NapariAggregateAxisBindingSet,
     NapariAggregateAxisBindingAuthority,
@@ -82,9 +84,9 @@ from openhcs.runtime.napari_streaming_handlers import (
     NapariLayerSettlementState,
     NapariPendingLayerUpdate,
     NapariLayerRouteStateStore,
+    NapariShapeLayerPayload,
     NapariStreamLayerAddress,
     NapariStreamLayerItem,
-    NapariShapeLabelRasterizer,
     NapariViewerLayerCreator,
     VisualMetadataField,
 )
@@ -133,6 +135,8 @@ logger = logging.getLogger(__name__)
 _NAPARI_LAYER_UPDATES = NapariLayerUpdateAuthority()
 DEFAULT_DIRECT_IMAGE_PATH = "<direct_napari_image>"
 DEFAULT_IMAGE_DATA_TYPE = "image"
+_DEFAULT_WINDOW_SCREEN_FRACTION = 0.9
+_FEATURE_TABLE_HEIGHT_FRACTION = 0.32
 
 NapariWireValue: TypeAlias = (
     str | int | float | bool | np.ndarray | np.dtype | tuple | list | dict | None
@@ -140,6 +144,58 @@ NapariWireValue: TypeAlias = (
 NapariBatchImagePayloads: TypeAlias = list[Mapping[str, NapariWireValue]]
 NapariComponentModeMap: TypeAlias = dict[str, str]
 NapariComponentGroups: TypeAlias = dict[str, list[NapariStreamLayerItem]]
+
+
+def _apply_default_window_layout(viewer, feature_table_dock) -> None:
+    """Give the image canvas and authoritative feature table useful space."""
+
+    qt_window = feature_table_dock.window()
+    available_geometry = qt_window.screen().availableGeometry()
+    target_width = min(
+        available_geometry.width(),
+        max(
+            qt_window.width(),
+            round(available_geometry.width() * _DEFAULT_WINDOW_SCREEN_FRACTION),
+        ),
+    )
+    target_height = min(
+        available_geometry.height(),
+        max(
+            qt_window.height(),
+            round(available_geometry.height() * _DEFAULT_WINDOW_SCREEN_FRACTION),
+        ),
+    )
+
+    bottom_area = Qt.DockWidgetArea.BottomDockWidgetArea
+    qt_window.setCorner(Qt.Corner.BottomLeftCorner, bottom_area)
+    qt_window.setCorner(Qt.Corner.BottomRightCorner, bottom_area)
+    qt_window.addDockWidget(bottom_area, feature_table_dock)
+    viewer.window.resize(target_width, target_height)
+    qt_window.resizeDocks(
+        [feature_table_dock],
+        [round(target_height * _FEATURE_TABLE_HEIGHT_FRACTION)],
+        Qt.Orientation.Vertical,
+    )
+
+
+def _apply_scope_accent_styling(feature_table_dock, scope_accent_color: str) -> None:
+    """Mark one viewer with the exact accent projected by its owning UI scope."""
+
+    from qtpy.QtGui import QColor
+
+    accent = QColor(scope_accent_color)
+    if not accent.isValid():
+        raise ValueError(f"Invalid scope accent color: {scope_accent_color!r}")
+    canonical_color = accent.name().lower()
+    qt_window = feature_table_dock.window()
+    qt_window.setProperty("openhcs_scope_accent_color", canonical_color)
+    existing_style = qt_window.styleSheet()
+    scope_style = (
+        "QMainWindow { "
+        f"border: 6px solid {canonical_color}; "
+        "}"
+    )
+    qt_window.setStyleSheet(f"{existing_style}\n{scope_style}".strip())
 
 
 class NapariWireField(str, Enum):
@@ -326,6 +382,14 @@ class NapariAcceptedStreamBatch:
 
         for item in self.items:
             server._process_loaded_image(item)
+
+
+@dataclass(frozen=True, slots=True)
+class NapariAcceptedControlRequest:
+    """Qt-bound control request received by the socket-owning pump."""
+
+    message: Mapping[str, object]
+    response_queue: queue.Queue[bytes]
 
 
 @dataclass(frozen=True)
@@ -532,7 +596,7 @@ class NapariImagePayload(NapariStreamLayerContext):
             ViewerWireField.DATA
         )
 
-_NAPARI_SHAPE_RASTERIZER = NapariShapeLabelRasterizer()
+
 _COMPONENT_METADATA_NORMALIZER = ViewerComponentMetadataNormalizer()
 _ACK_ERROR = ViewerProtocolStatus.ERROR.value
 _ACK_SUCCESS = ViewerProtocolStatus.SUCCESS.value
@@ -974,12 +1038,6 @@ def _build_nd_image_array(
 class NapariLayerTitleAuthority:
     """Build visible layer titles from producer identity and real slice axes."""
 
-    DATA_TYPE_SUFFIX = {
-        StreamingDataType.IMAGE: "",
-        StreamingDataType.SHAPES: "labels",
-        StreamingDataType.POINTS: "points",
-    }
-
     @classmethod
     def title(
         cls,
@@ -998,7 +1056,9 @@ class NapariLayerTitleAuthority:
                 context="Napari layer title",
             )
             parts.append(f"{component} {value}")
-        suffix = cls.DATA_TYPE_SUFFIX[stream_layer_data_type]
+        suffix = NapariLayerDisplayHandler.for_data_type(
+            stream_layer_data_type
+        ).title_suffix
         if suffix:
             parts.append(suffix)
         title = " ".join(str(part) for part in parts if part)
@@ -1420,11 +1480,43 @@ class NapariLayerDisplayRequest:
         )
 
 
+class NapariLayerDisplayWork(ABC):
+    """One handler-owned display operation advanced in bounded Qt work units."""
+
+    @abstractmethod
+    def advance(self) -> bool:
+        """Execute one bounded unit and return whether the operation is complete."""
+
+
+@dataclass(slots=True)
+class NapariImmediateLayerDisplayWork(NapariLayerDisplayWork):
+    """Adapt an existing atomic display handler to the bounded-work contract."""
+
+    callback: Callable[[], None]
+    complete: bool = False
+
+    def advance(self) -> bool:
+        if not self.complete:
+            self.callback()
+            self.complete = True
+        return True
+
+
 class NapariLayerDisplayHandler(
     ViewerStreamingDataTypeHandler[NapariLayerDisplayRequest],
     metaclass=ViewerStreamingDataTypeHandlerMeta,
 ):
     """Executable display handler for one Napari stream data type."""
+
+    title_suffix: ClassVar[str] = ""
+
+    def display_work(
+        self,
+        request: NapariLayerDisplayRequest,
+    ) -> NapariLayerDisplayWork:
+        """Return the handler-owned work needed to display one route."""
+
+        return NapariImmediateLayerDisplayWork(lambda: self.handle(request))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1571,50 +1663,144 @@ class NapariImageLayerDisplayHandler(NapariLayerDisplayHandler):
             )
 
 
+@dataclass(slots=True)
+class NapariShapesLayerDisplayWork(NapariLayerDisplayWork):
+    """Incrementally materialize one native Shapes layer without starving Qt."""
+
+    request: NapariLayerDisplayRequest
+    payload: NapariShapeLayerPayload
+    chunks: tuple[NapariShapeLayerPayload, ...]
+    common_layer_kwargs: dict[str, LayerKwargValue]
+    next_chunk_index: int = 0
+    layer: NapariShapesLayerHandle | None = None
+
+    def advance(self) -> bool:
+        if self.next_chunk_index >= len(self.chunks):
+            return True
+
+        chunk = self.chunks[self.next_chunk_index]
+        member_colors = self.payload.colors_for_labels(
+            chunk.features.get(VisualMetadataField.LABEL.value, ())
+        )
+        if self.layer is None:
+            layer_kwargs = dict(self.common_layer_kwargs)
+            layer_kwargs.update(
+                {
+                    "shape_type": chunk.shape_types,
+                    "features": chunk.features,
+                    "edge_color": VisualMetadataField.LABEL.value,
+                    "face_color": VisualMetadataField.LABEL.value,
+                }
+            )
+            self.layer = cast(
+                NapariShapesLayerHandle,
+                self.request.create_or_update_layer(
+                    layer_kind=NapariLayerKind.SHAPES,
+                    data=chunk.data,
+                    layer_kwargs=layer_kwargs,
+                ),
+            )
+        else:
+            self.layer.add(
+                chunk.data,
+                shape_type=chunk.shape_types,
+                edge_color=member_colors,
+                face_color=member_colors,
+            )
+
+        self.next_chunk_index += 1
+        if self.next_chunk_index < len(self.chunks):
+            logger.debug(
+                "🔬 NAPARI PROCESS: Materialized ROI chunk %d/%d for %s",
+                self.next_chunk_index,
+                len(self.chunks),
+                self.request.presentation.route_key,
+            )
+            return False
+
+        if self.layer is None:
+            raise RuntimeError("Napari Shapes display completed without a layer.")
+        color_cycle = self.payload.label_color_cycle
+        self.layer.features = self.payload.features
+        self.layer.edge_color_cycle = color_cycle
+        self.layer.face_color_cycle = color_cycle
+        if self.layer.edge_color_mode != "cycle":
+            self.layer.edge_color_mode = "cycle"
+        if self.layer.face_color_mode != "cycle":
+            self.layer.face_color_mode = "cycle"
+        route_key = self.request.presentation.route_key
+        self.request.pipeline.dimension_label_overlay.setup_for_layer(route_key)
+        logger.info(
+            "🔬 NAPARI PROCESS: Created ROI layer %s with %d shape members in "
+            "%d bounded work unit(s)",
+            route_key,
+            len(self.payload.data),
+            len(self.chunks),
+        )
+        return True
+
+
 @dataclass(frozen=True, slots=True)
 class NapariShapesLayerDisplayHandler(NapariLayerDisplayHandler):
-    """Build or update a Napari labels layer from routed shape payloads."""
+    """Build or update a native N-D Napari Shapes layer from routed ROIs."""
 
     streaming_data_type: ClassVar[StreamingDataType] = StreamingDataType.SHAPES
+    title_suffix: ClassVar[str] = "ROIs"
+    MAX_SHAPES_PER_WORK_UNIT: ClassVar[int] = 128
+    MAX_VERTICES_PER_WORK_UNIT: ClassVar[int] = 4_096
 
-    def handle(self, request: NapariLayerDisplayRequest) -> None:
+    def display_work(
+        self,
+        request: NapariLayerDisplayRequest,
+    ) -> NapariLayerDisplayWork:
         pipeline = request.pipeline
         presentation = request.presentation
         logger.info(
-            "🔬 NAPARI PROCESS: Converting shapes to labels for %s from %d items",
+            "🔬 NAPARI PROCESS: Building native ROIs for %s from %d items",
             presentation.route_key,
             len(request.items),
         )
 
-        labels_data = _NAPARI_SHAPE_RASTERIZER.rasterize(
+        shape_payload = NapariShapeLayerPayload.build(
             layer_items=request.items,
             axis_projection=presentation.projection,
             aggregate_axis_bindings=presentation.aggregate_axis_bindings,
+        )
+        chunks = shape_payload.chunks(
+            max_shape_count=self.MAX_SHAPES_PER_WORK_UNIT,
+            max_vertex_count=self.MAX_VERTICES_PER_WORK_UNIT,
         )
 
         axis_labels = pipeline.dimension_label_store.apply(presentation)
         if axis_labels is not None:
             logger.info(
-                "🔬 NAPARI PROCESS: Labels route %s carries layer-local axis_labels=%s",
+                "🔬 NAPARI PROCESS: ROI route %s carries layer-local axis_labels=%s",
                 presentation.route_key,
                 axis_labels,
             )
 
-        layer_kwargs = {"translate": presentation.projection.translate()}
+        layer_kwargs: dict[str, LayerKwargValue] = {
+            "edge_color_cycle": shape_payload.label_color_cycle,
+            "face_color_cycle": shape_payload.label_color_cycle,
+            "opacity": 0.7,
+            "ndim": shape_payload.ndim,
+            "translate": presentation.projection.translate(),
+        }
         if axis_labels is not None:
             layer_kwargs["axis_labels"] = axis_labels
+        return NapariShapesLayerDisplayWork(
+            request=request,
+            payload=shape_payload,
+            chunks=chunks,
+            common_layer_kwargs=layer_kwargs,
+        )
 
-        request.create_or_update_layer(
-            layer_kind=NapariLayerKind.LABELS,
-            data=labels_data,
-            layer_kwargs=layer_kwargs,
-        )
-        pipeline.dimension_label_overlay.setup_for_layer(presentation.route_key)
-        logger.info(
-            "🔬 NAPARI PROCESS: Created labels layer %s with shape %s",
-            presentation.route_key,
-            labels_data.shape,
-        )
+    def handle(self, request: NapariLayerDisplayRequest) -> None:
+        """Synchronously exhaust work for direct handler callers and tests."""
+
+        work = self.display_work(request)
+        while not work.advance():
+            pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -1622,6 +1808,7 @@ class NapariPointsLayerDisplayHandler(NapariLayerDisplayHandler):
     """Build or update a Napari points layer from routed point payloads."""
 
     streaming_data_type: ClassVar[StreamingDataType] = StreamingDataType.POINTS
+    title_suffix: ClassVar[str] = "points"
 
     def handle(self, request: NapariLayerDisplayRequest) -> None:
         pipeline = request.pipeline
@@ -1673,6 +1860,15 @@ class NapariLayerDisplayPipeline:
             server,
             route_resolver,
         )
+        self._display_work_by_route: dict[
+            str,
+            tuple[NapariPendingLayerUpdate, NapariLayerDisplayWork],
+        ] = {}
+
+    def clear_display_work(self) -> None:
+        """Discard every deferred display continuation for a reset or shutdown."""
+
+        self._display_work_by_route.clear()
 
     def display_axis_projection(
         self,
@@ -1733,25 +1929,20 @@ class NapariLayerDisplayPipeline:
     ) -> None:
         if self.server.layer_route_state.cancel_pending_update(layer_key):
             logger.debug(f"🔬 NAPARI PROCESS: Cancelled pending update for {layer_key}")
+        self._display_work_by_route.pop(layer_key, None)
 
         timer = QTimer()
         timer.setSingleShot(True)
+        update = NapariPendingLayerUpdate.from_semantics(
+            timer=timer,
+            data_type=data_type,
+            semantics=layer_axis_projection_semantics,
+        )
         timer.timeout.connect(
-            lambda: self.execute_scheduled_layer_update(
-                layer_key,
-                data_type,
-                layer_axis_projection_semantics,
-            )
+            lambda: self.execute_scheduled_layer_update(layer_key, update)
         )
         self.server.layer_batch_processor_debounce_policy.start_timer(timer)
-        self.server.layer_route_state.set_pending_update(
-            layer_key,
-            NapariPendingLayerUpdate.from_semantics(
-                timer=timer,
-                data_type=data_type,
-                semantics=layer_axis_projection_semantics,
-            ),
-        )
+        self.server.layer_route_state.set_pending_update(layer_key, update)
         logger.debug(
             "🔬 NAPARI PROCESS: Scheduled update for %s in %sms",
             layer_key,
@@ -1761,42 +1952,84 @@ class NapariLayerDisplayPipeline:
     def execute_scheduled_layer_update(
         self,
         layer_key: str,
-        data_type: StreamingDataType,
-        layer_axis_projection_semantics: ViewerComponentAxisSemantics,
+        update: NapariPendingLayerUpdate,
     ) -> None:
-        """Run one Qt-timer update while retaining failures for state settlement."""
+        """Advance one debounced route in bounded Qt callbacks."""
 
-        try:
-            self.execute_layer_update(
-                layer_key,
-                data_type,
-                layer_axis_projection_semantics,
-            )
-        except Exception:
-            # execute_layer_update already records and logs the exact route error.
-            # Let the ZMQ/Qt event loop continue so the public state request can
-            # surface it through typed settlement progress instead of timing out.
+        if self.server.layer_route_state.pending_update_for(layer_key) is not update:
             return
+        try:
+            work = self._work_for_update(
+                layer_key=layer_key,
+                update=update,
+            )
+            if work.advance():
+                self._complete_scheduled_work(layer_key, update)
+                return
+            QTimer.singleShot(
+                NAPARI_SETTLEMENT_UPDATE_YIELD_MS,
+                lambda: self.execute_scheduled_layer_update(layer_key, update),
+            )
+        except Exception as error:
+            self.server.layer_route_state.record_update_error(layer_key, error)
+            self._display_work_by_route.pop(layer_key, None)
+            if self.server.layer_route_state.pending_update_for(layer_key) is update:
+                self.server.layer_route_state.pop_pending_update(layer_key)
+            logger.exception(
+                "🔬 NAPARI PROCESS: Failed scheduled layer work for %s",
+                layer_key,
+            )
+            return
+
+    def _complete_scheduled_work(
+        self,
+        layer_key: str,
+        update: NapariPendingLayerUpdate,
+    ) -> None:
+        """Release one exact debounced update after all display work completes."""
+
+        self._display_work_by_route.pop(layer_key, None)
+        if self.server.layer_route_state.pending_update_for(layer_key) is update:
+            self.server.layer_route_state.pop_pending_update(layer_key)
+        self.server.layer_route_state.clear_update_error(layer_key)
+
+    def _work_for_update(
+        self,
+        *,
+        layer_key: str,
+        update: NapariPendingLayerUpdate,
+    ) -> NapariLayerDisplayWork:
+        """Return or prepare the exact handler-owned work for one update."""
+
+        existing = self._display_work_by_route.get(layer_key)
+        if existing is not None and existing[0] is update:
+            return existing[1]
+        work = self.execute_layer_update(
+            layer_key,
+            update.data_type,
+            update,
+        )
+        self._display_work_by_route[layer_key] = (update, work)
+        return work
 
     def execute_layer_update(
         self,
         layer_key: str,
         data_type: StreamingDataType,
         layer_axis_projection_semantics: ViewerComponentAxisSemantics,
-    ) -> None:
-        self.server.layer_route_state.pop_pending_update(layer_key)
+    ) -> NapariLayerDisplayWork:
         try:
             layer_items = self.server.component_groups.existing_items_for(layer_key)
             if layer_items is None:
                 logger.warning(
                     f"🔬 NAPARI PROCESS: No items found for {layer_key}, skipping update"
                 )
-                return
+                return NapariImmediateLayerDisplayWork(lambda: None)
             if not layer_items:
                 logger.warning(
                     f"🔬 NAPARI PROCESS: Empty item group for {layer_key}, skipping update"
                 )
-                return
+                return NapariImmediateLayerDisplayWork(lambda: None)
 
             component_values = {
                 component: sorted(
@@ -1820,13 +2053,19 @@ class NapariLayerDisplayPipeline:
                 layer_key=layer_key,
                 napari_server=self.server,
             )
-            batch_processor.add_items(
+            work = batch_processor.add_items(
                 layer_key=layer_key,
                 items=layer_items,
                 display_payload=layer_axis_projection_semantics,
                 component_names_metadata=self.server.component_name_metadata,
             )
+            if not isinstance(work, NapariLayerDisplayWork):
+                raise TypeError(
+                    "Napari batch display adapter must return "
+                    "NapariLayerDisplayWork."
+                )
             self.server.layer_route_state.clear_update_error(layer_key)
+            return work
         except Exception as error:
             self.server.layer_route_state.record_update_error(layer_key, error)
             logger.exception(
@@ -1875,17 +2114,36 @@ class NapariLayerDisplayPipeline:
         route_key: str,
         update: NapariPendingLayerUpdate,
     ) -> None:
-        """Execute one queued route and publish progress before the next."""
+        """Advance one bounded route work unit and publish genuine progress."""
 
         try:
-            self.execute_layer_update(
-                route_key,
-                update.data_type,
-                update,
+            settlement.begin_active_work_unit(route_key)
+            work = self._work_for_update(
+                layer_key=route_key,
+                update=update,
             )
-        except Exception:
+            if not work.advance():
+                settlement.complete_active_work_unit(route_key)
+                QTimer.singleShot(
+                    NAPARI_SETTLEMENT_UPDATE_YIELD_MS,
+                    lambda: self._execute_settlement_update(
+                        settlement,
+                        route_key,
+                        update,
+                    ),
+                )
+                return
+        except Exception as error:
+            self.server.layer_route_state.record_update_error(route_key, error)
+            self._display_work_by_route.pop(route_key, None)
+            logger.exception(
+                "🔬 NAPARI PROCESS: Failed settlement layer work for %s",
+                route_key,
+            )
             settlement.fail_active(route_key)
             return
+        self._display_work_by_route.pop(route_key, None)
+        self.server.layer_route_state.clear_update_error(route_key)
         settlement.complete_active(route_key)
         self._schedule_next_settlement_update(settlement)
 
@@ -1896,7 +2154,7 @@ class NapariLayerDisplayPipeline:
         items: list[NapariStreamLayerItem],
         display_payload: ViewerComponentAxisSemantics,
         component_names_metadata: ViewerComponentNameMetadata,
-    ) -> None:
+    ) -> NapariLayerDisplayWork:
         if component_names_metadata:
             self.server.component_name_metadata.merge(component_names_metadata)
 
@@ -1922,7 +2180,7 @@ class NapariLayerDisplayPipeline:
             items,
             aggregate_axis_bindings,
         )
-        NapariLayerDisplayHandler.for_data_type(data_type).handle(
+        work = NapariLayerDisplayHandler.for_data_type(data_type).display_work(
             NapariLayerDisplayRequest(
                 pipeline=self,
                 items=items,
@@ -1936,11 +2194,12 @@ class NapariLayerDisplayPipeline:
             )
         )
         logger.info(
-            "🔬 NAPARI PROCESS: Displayed %d %s item(s) in layer %s",
+            "🔬 NAPARI PROCESS: Prepared %d %s item(s) for layer %s",
             len(items),
             data_type.value,
             layer_key,
         )
+        return work
 
 
 class NapariMessageTypeBase(ABC):
@@ -1971,6 +2230,16 @@ class NapariControlMessageAction(NapariMessageTypeBase, metaclass=AutoRegisterMe
         message: Mapping[str, object],
     ) -> dict[str, object]:
         """Handle a control message and return the control reply."""
+
+    def transport_thread_response(
+        self,
+        server: "NapariViewerServer",
+        message: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        """Return a socket-thread-safe reply, or defer this action to Qt."""
+
+        del server, message
+        return None
 
 
 class NapariShutdownControlMessageAction(NapariControlMessageAction):
@@ -2046,6 +2315,35 @@ class NapariSettleControlMessageAction(NapariControlMessageAction):
         server: "NapariViewerServer",
         message: Mapping[str, object],
     ) -> dict[str, object]:
+        del message
+        unavailable = self._unavailable_response(server)
+        if unavailable is not None:
+            return unavailable
+        return self._progress_response(
+            server,
+            server.display_pipeline.settlement_progress(),
+        )
+
+    def transport_thread_response(
+        self,
+        server: "NapariViewerServer",
+        message: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        """Snapshot an existing settlement without waiting for Qt rendering."""
+
+        del message
+        unavailable = self._unavailable_response(server)
+        if unavailable is not None:
+            return unavailable
+        progress = server.layer_route_state.existing_settlement_progress()
+        if progress is None:
+            return None
+        return self._progress_response(server, progress)
+
+    @staticmethod
+    def _unavailable_response(
+        server: "NapariViewerServer",
+    ) -> dict[str, object] | None:
         if server.transport_failure is not None:
             return ViewerControlReplyPayload(
                 ViewerControlReplyHeader(
@@ -2065,8 +2363,13 @@ class NapariSettleControlMessageAction(NapariControlMessageAction):
                     message="Napari viewer is not available.",
                 )
             ).to_wire_mapping()
+        return None
 
-        progress = server.display_pipeline.settlement_progress()
+    @staticmethod
+    def _progress_response(
+        server: "NapariViewerServer",
+        progress: ViewerSettleProgress,
+    ) -> dict[str, object]:
         failed = progress.phase is ViewerSettlePhase.FAILED
         failure = server.layer_route_state.update_failure_message()
         return ViewerControlReplyPayload(
@@ -2205,6 +2508,93 @@ class ShapeCoordinateBounds:
         )
 
 
+class NapariFeatureRows(Protocol):
+    """Native Napari feature-table rows attached to a selectable layer."""
+
+    def __len__(self) -> int:
+        """Return the number of feature rows."""
+
+
+class NapariSelectableFeatureLayer(Protocol):
+    """Structural native contract shared by Napari Shapes and Points layers."""
+
+    features: NapariFeatureRows
+    selected_data: set[int]
+
+
+@dataclass(frozen=True, slots=True)
+class NapariResultElementSelectionState:
+    """Observed native feature-row selection for one mounted Napari layer."""
+
+    supported: bool
+    feature_row_count: int = 0
+    selected_data_indices: tuple[int, ...] = ()
+
+
+class NapariResultElementSelectionAuthority:
+    """Own native feature-row selection without layer-kind or assay dispatch."""
+
+    @classmethod
+    def state(
+        cls,
+        layer: NapariLayerHandle | None,
+    ) -> NapariResultElementSelectionState:
+        if layer is None:
+            return NapariResultElementSelectionState(supported=False)
+        selectable_layer = cast(NapariSelectableFeatureLayer, layer)
+        try:
+            feature_row_count = len(selectable_layer.features)
+            selected_data_indices = tuple(sorted(selectable_layer.selected_data))
+        except AttributeError:
+            return NapariResultElementSelectionState(supported=False)
+        if feature_row_count < 0:
+            raise ValueError("Napari feature row count must be nonnegative.")
+        for index in selected_data_indices:
+            if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+                raise TypeError(
+                    "Napari selected_data must contain nonnegative integer indices."
+                )
+        return NapariResultElementSelectionState(
+            supported=True,
+            feature_row_count=feature_row_count,
+            selected_data_indices=selected_data_indices,
+        )
+
+    @classmethod
+    def require_data_index(
+        cls,
+        layer: NapariLayerHandle,
+        data_index: int,
+    ) -> NapariResultElementSelectionState:
+        state = cls.state(layer)
+        if not state.supported:
+            raise ValueError(
+                "Target layer does not support native feature-bearing data selection."
+            )
+        if data_index >= state.feature_row_count:
+            raise ValueError(
+                f"Viewer data_index {data_index} is outside "
+                f"{state.feature_row_count} populated feature row(s)."
+            )
+        return state
+
+    @classmethod
+    def select(
+        cls,
+        layer: NapariLayerHandle,
+        data_index: int,
+    ) -> NapariResultElementSelectionState:
+        cls.require_data_index(layer, data_index)
+        selectable_layer = cast(NapariSelectableFeatureLayer, layer)
+        selectable_layer.selected_data = {data_index}
+        observed = cls.state(layer)
+        if observed.selected_data_indices != (data_index,):
+            raise RuntimeError(
+                "Napari did not retain the requested native data selection."
+            )
+        return observed
+
+
 @dataclass(frozen=True, slots=True)
 class NapariViewerStateProjection:
     """Project live Napari route/component stores into an agent-readable state."""
@@ -2287,6 +2677,7 @@ class NapariViewerStateProjection:
         if layer is not None:
             layer_visible = bool(layer.visible)
             layer_selected = layer is self.viewer.layers.selection.active
+        result_selection = NapariResultElementSelectionAuthority.state(layer)
         component_values = self.component_values_for(dimension_state, item_tuple)
         payload_summaries = self.payload_summaries_for(dimension_state, item_tuple)
         producer_identities = tuple(
@@ -2334,6 +2725,12 @@ class NapariViewerStateProjection:
             ViewerLayerField.TRANSLATE.value: self.layer_translate(layer),
             ViewerLayerField.VISIBLE.value: layer_visible,
             ViewerLayerField.SELECTED.value: layer_selected,
+            ViewerLayerField.FEATURE_ROW_COUNT.value: (
+                result_selection.feature_row_count
+            ),
+            ViewerLayerField.SELECTED_DATA_INDICES.value: (
+                result_selection.selected_data_indices
+            ),
             ViewerLayerField.PENDING_UPDATE.value: (
                 route_key in self.server.layer_route_state.layer_pending_updates
             ),
@@ -3002,6 +3399,26 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
         request: ViewerNavigationControlOptions,
     ) -> None:
         layer = self._mounted_layer(server, request.route_key)
+        if request.data_index is not None:
+            NapariResultElementSelectionAuthority.require_data_index(
+                layer,
+                request.data_index,
+            )
+            target_visible = (
+                bool(layer.visible)
+                if request.visible is None
+                else request.visible
+            )
+            target_selected = (
+                server.viewer.layers.selection.active is layer
+                if request.selected is None
+                else request.selected
+            )
+            if not target_visible or not target_selected:
+                raise ValueError(
+                    "Viewer data_index requires the target result layer to be "
+                    "visible and selected."
+                )
         if request.visible is not None:
             layer.visible = request.visible
         if request.axis_indices:
@@ -3013,6 +3430,11 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
             and server.viewer.layers.selection.active is layer
         ):
             server.viewer.layers.selection.active = None
+        if request.data_index is not None:
+            NapariResultElementSelectionAuthority.select(
+                layer,
+                request.data_index,
+            )
 
         server.display_pipeline.dimension_label_overlay.setup_for_layer(
             request.route_key
@@ -3317,6 +3739,131 @@ class NapariDataTransportPump:
             context.term()
 
 
+class NapariControlTransportPump:
+    """Socket owner that keeps typed settlement observable while Qt renders."""
+
+    def __init__(self, server: "NapariViewerServer") -> None:
+        self.server = server
+        self._stop_event = threading.Event()
+        self._ready_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._startup_error: Exception | None = None
+
+    def start(self) -> None:
+        """Bind and serve the control endpoint from its dedicated owner thread."""
+
+        if self._thread is not None:
+            raise RuntimeError("Napari control transport pump is already started.")
+        self._stop_event.clear()
+        self._ready_event.clear()
+        self._startup_error = None
+        self._thread = threading.Thread(
+            target=self._serve,
+            name=f"napari-control-transport-{self.server.control_port}",
+            daemon=True,
+        )
+        self._thread.start()
+        if not self._ready_event.wait(timeout=10.0):
+            raise TimeoutError(
+                "Napari control transport failed to bind port "
+                f"{self.server.control_port}."
+            )
+        if self._startup_error is not None:
+            raise RuntimeError(
+                "Napari control transport failed to start on port "
+                f"{self.server.control_port}."
+            ) from self._startup_error
+
+    def stop(self) -> None:
+        """Stop control intake and wait for the socket-owning thread."""
+
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=5.0)
+            if thread.is_alive():
+                logger.warning(
+                    "Napari control transport thread on port %s did not stop "
+                    "promptly",
+                    self.server.control_port,
+                )
+        self._thread = None
+
+    def _serve(self) -> None:
+        context = zmq.Context()
+        socket = None
+        try:
+            socket = self.server.bind_control_socket(context)
+            poller = zmq.Poller()
+            poller.register(socket, zmq.POLLIN)
+            self._ready_event.set()
+            logger.info(
+                "🔬 NAPARI PROCESS: Control transport pump bound %s",
+                self.server.control_transport_url(),
+            )
+            while not self._stop_event.is_set() and self.server.is_running():
+                if socket not in dict(poller.poll(timeout=50)):
+                    continue
+                payload = self._response_payload(socket.recv())
+                socket.send(payload)
+        except Exception as error:
+            if not self._ready_event.is_set():
+                self._startup_error = error
+                self._ready_event.set()
+            elif not self._stop_event.is_set():
+                logger.exception(
+                    "🔬 NAPARI PROCESS: Control transport pump failed"
+                )
+                self.server.record_transport_failure(error)
+        finally:
+            if socket is not None:
+                socket.close(linger=0)
+            context.term()
+
+    def _response_payload(self, request_payload: bytes) -> bytes:
+        """Dispatch a control request to its declared thread owner."""
+
+        try:
+            message = pickle.loads(request_payload)
+            if not isinstance(message, Mapping):
+                raise TypeError("Napari control request must decode to a mapping.")
+        except Exception as error:
+            return self.server.serialize_control_response(
+                self.server.control_error_response(error)
+            )
+
+        msg_type = message.get(ViewerControlResponseField.TYPE.value)
+        if msg_type == ControlMessageType.PING.value:
+            return self.server.control_response_payload(message)
+        action = NapariControlMessageAction.for_message_type(
+            msg_type if isinstance(msg_type, str) else None
+        )
+        transport_response = action.transport_thread_response(
+            self.server,
+            message,
+        )
+        if transport_response is not None:
+            return self.server.serialize_control_response(transport_response)
+
+        response_queue: queue.Queue[bytes] = queue.Queue(maxsize=1)
+        self.server.accepted_control_requests.put(
+            NapariAcceptedControlRequest(message, response_queue)
+        )
+        while True:
+            try:
+                return response_queue.get(timeout=0.05)
+            except queue.Empty:
+                if self._stop_event.is_set() or not self.server.is_running():
+                    return self.server.serialize_control_response(
+                        self.server.control_error_response(
+                            RuntimeError(
+                                "Napari viewer stopped before completing its "
+                                "Qt-bound control request."
+                            )
+                        )
+                    )
+
+
 class NapariViewerServer(StreamingVisualizerServer):
     """
     ZMQ server for Napari viewer that receives images from clients.
@@ -3367,22 +3914,25 @@ class NapariViewerServer(StreamingVisualizerServer):
         self.accepted_stream_batches: queue.Queue[NapariAcceptedStreamBatch] = (
             queue.Queue()
         )
+        self.accepted_control_requests: queue.Queue[
+            NapariAcceptedControlRequest
+        ] = queue.Queue()
         self.data_transport_pump = NapariDataTransportPump(self)
+        self.control_transport_pump = NapariControlTransportPump(self)
         self.transport_failure: Exception | None = None
 
         # Ack socket handled by StreamingVisualizerServer
 
     def start(self) -> None:
-        """Bind control on Qt and data on the dedicated transport thread."""
+        """Bind each ZMQ endpoint in its dedicated socket-owner thread."""
 
         with self._lock:
             if self._running:
                 return
-            self.zmq_context = zmq.Context()
-            self.control_socket = self.bind_control_socket(self.zmq_context)
             self._running = True
 
         try:
+            self.control_transport_pump.start()
             self.data_transport_pump.start()
         except Exception:
             self.stop()
@@ -3399,13 +3949,8 @@ class NapariViewerServer(StreamingVisualizerServer):
         with self._lock:
             self._running = False
         self.data_transport_pump.stop()
+        self.control_transport_pump.stop()
         with self._lock:
-            if self.control_socket is not None:
-                self.control_socket.close(linger=0)
-                self.control_socket = None
-            if self.zmq_context is not None:
-                self.zmq_context.term()
-                self.zmq_context = None
             if self.transport_mode == coerce_transport_mode(
                 OpenHCSTransportMode.IPC
             ):
@@ -3423,6 +3968,7 @@ class NapariViewerServer(StreamingVisualizerServer):
 
         super().request_shutdown()
         pending_updates = self.layer_route_state.drain_pending_updates()
+        self.display_pipeline.clear_display_work()
         if pending_updates:
             logger.info(
                 "🔬 NAPARI SERVER: Cancelled %d pending layer update(s) for shutdown",
@@ -3436,9 +3982,9 @@ class NapariViewerServer(StreamingVisualizerServer):
         items: list[NapariStreamLayerItem],
         display_payload: ViewerComponentAxisSemantics,
         component_names_metadata: ViewerComponentNameMetadata,
-    ) -> None:
+    ) -> NapariLayerDisplayWork:
         """Display one debounced batch through the composed display pipeline."""
-        self.display_pipeline.display_layer_batch(
+        return self.display_pipeline.display_layer_batch(
             layer_key=layer_key,
             items=items,
             display_payload=display_payload,
@@ -3449,6 +3995,7 @@ class NapariViewerServer(StreamingVisualizerServer):
         """Reset stream domains that must not leak across pipeline executions."""
         self.layer_route_state.reset_settlement()
         pending_updates = self.layer_route_state.drain_pending_updates()
+        self.display_pipeline.clear_display_work()
         if pending_updates:
             logger.info(
                 "🔬 NAPARI SERVER: Cancelled %d pending layer update(s) before "
@@ -3544,6 +4091,18 @@ class NapariViewerServer(StreamingVisualizerServer):
             accepted_batch.dispatch_to(self)
             processed_count += 1
 
+    def process_messages(self) -> None:
+        """Drain control actions whose registered owners require the Qt thread."""
+
+        while True:
+            try:
+                request = self.accepted_control_requests.get_nowait()
+            except queue.Empty:
+                return
+            request.response_queue.put(
+                self.control_response_payload(request.message)
+            )
+
     def _accept_single_image(
         self,
         image_info: Mapping[str, NapariWireValue],
@@ -3613,6 +4172,7 @@ def run_napari_viewer_process(
     replace_layers: bool = False,
     log_file_path: str | None = None,
     transport_mode: OpenHCSTransportMode = OpenHCSTransportMode.IPC,
+    scope_accent_color: str | None = None,
 ) -> None:
     """
     Napari viewer process entry point. Runs in a separate process.
@@ -3624,6 +4184,7 @@ def run_napari_viewer_process(
         replace_layers: If True, replace existing layers; if False, add new layers with unique names
         log_file_path: Path to log file (for client discovery via ping/pong)
         transport_mode: ZMQ transport mode (IPC or TCP)
+        scope_accent_color: Exact UI-owned scope accent used to frame this window
     """
     server: NapariViewerServer | None = None
     try:
@@ -3641,6 +4202,13 @@ def run_napari_viewer_process(
         # Create napari viewer in this process (main thread)
         viewer = napari.Viewer(title=viewer_title, show=True)
         server.viewer = viewer
+        feature_table_dock, _feature_table = viewer.window.add_plugin_dock_widget(
+            "napari",
+            "Features table widget",
+        )
+        _apply_default_window_layout(viewer, feature_table_dock)
+        if scope_accent_color is not None:
+            _apply_scope_accent_styling(feature_table_dock, scope_accent_color)
         logger.info("🔬 NAPARI PROCESS: Qt viewer construction complete")
 
         # Initialize layers dictionary with existing layers (for reconnection scenarios)
