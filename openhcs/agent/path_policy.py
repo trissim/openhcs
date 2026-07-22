@@ -46,17 +46,6 @@ DEFAULT_AGENT_WINDOW_SNAPSHOT_DIR = (
 )
 
 
-class AgentPathPolicyError(AgentFacingErrorMixin, ValueError):
-    """Raised when a path is outside the agent policy boundary."""
-
-    agent_error_code = "agent_path_policy_rejected"
-    agent_error_hint = (
-        "Pass a local path under OPENHCS_AGENT_READ_ROOTS or "
-        "OPENHCS_AGENT_WRITE_ROOTS as appropriate. Use openhcs_inspect_plate_path "
-        "first to validate a plate folder."
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class AgentPathRootSet:
     roots: tuple[Path, ...]
@@ -94,8 +83,22 @@ class AgentPathRootSet:
 
 @dataclass(frozen=True, slots=True)
 class AgentPathPolicy:
+    """Own the roots and environment contract for agent-visible paths."""
+
+    readable_roots_environment_key = "OPENHCS_AGENT_READ_ROOTS"
+    writable_roots_environment_key = "OPENHCS_AGENT_WRITE_ROOTS"
+
     readable_roots: AgentPathRootSet
     writable_roots: AgentPathRootSet
+
+    @classmethod
+    def environment_keys(cls) -> tuple[str, str]:
+        """Return the complete environment contract for path-policy overrides."""
+
+        return (
+            cls.readable_roots_environment_key,
+            cls.writable_roots_environment_key,
+        )
 
     @classmethod
     def with_roots(
@@ -132,11 +135,11 @@ class AgentPathPolicy:
     def from_environment(cls) -> "AgentPathPolicy":
         default = cls.default()
         readable = AgentPathRootSet.from_environment(
-            "OPENHCS_AGENT_READ_ROOTS",
+            cls.readable_roots_environment_key,
             default.readable_roots,
         )
         writable = AgentPathRootSet.from_environment(
-            "OPENHCS_AGENT_WRITE_ROOTS",
+            cls.writable_roots_environment_key,
             default.writable_roots,
         )
         return cls(
@@ -161,3 +164,14 @@ class AgentPathPolicy:
                 f"Writable path is outside allowed roots: {candidate}"
             )
         return candidate
+
+
+class AgentPathPolicyError(AgentFacingErrorMixin, ValueError):
+    """Raised when a path is outside the agent policy boundary."""
+
+    agent_error_code = "agent_path_policy_rejected"
+    agent_error_hint = (
+        f"Pass a local path under {AgentPathPolicy.readable_roots_environment_key} "
+        f"or {AgentPathPolicy.writable_roots_environment_key} as appropriate. "
+        "Use openhcs_inspect_plate_path first to validate a plate folder."
+    )

@@ -13951,13 +13951,24 @@ def test_mcp_dev_client_launches_fresh_current_source_server():
 
 def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatch):
     import openhcs.mcp.dev_client as dev_client
+    from openhcs.agent.path_policy import AgentPathPolicy
 
     for key in dev_client.McpDevServerSpec.gui_environment_keys:
+        monkeypatch.delenv(key, raising=False)
+    for key in AgentPathPolicy.environment_keys():
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.setenv("XAUTHORITY", "/tmp/test.Xauthority")
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/dbus-test")
     monkeypatch.setenv("XDG_DATA_HOME", "/tmp/test-data-home")
+    monkeypatch.setenv(
+        AgentPathPolicy.readable_roots_environment_key,
+        "/tmp/readable-one:/tmp/readable-two",
+    )
+    monkeypatch.setenv(
+        AgentPathPolicy.writable_roots_environment_key,
+        "/tmp/writable",
+    )
     monkeypatch.setenv("OPENHCS_UNRELATED_TEST_VALUE", "ignored")
 
     environment = dev_client.McpDevServerSpec(sys.executable).environment()
@@ -13966,6 +13977,12 @@ def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatc
     assert environment["XAUTHORITY"] == "/tmp/test.Xauthority"
     assert environment["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/tmp/dbus-test"
     assert environment["XDG_DATA_HOME"] == "/tmp/test-data-home"
+    assert environment[AgentPathPolicy.readable_roots_environment_key] == (
+        "/tmp/readable-one:/tmp/readable-two"
+    )
+    assert environment[AgentPathPolicy.writable_roots_environment_key] == (
+        "/tmp/writable"
+    )
     assert "OPENHCS_UNRELATED_TEST_VALUE" not in environment
     assert dev_client.McpDevServerSpec(sys.executable).process_args() == (
         "-m",

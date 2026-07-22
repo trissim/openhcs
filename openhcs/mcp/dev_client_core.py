@@ -22,6 +22,7 @@ from openhcs.agent.capabilities import (
     FullLocalCapabilitySurfaceProfile,
     LocalCapabilitySurfaceProfile,
 )
+from openhcs.agent.path_policy import AgentPathPolicy
 from openhcs.agent.dto.common import (
     AgentError,
     AgentResultEnvelope,
@@ -248,6 +249,7 @@ class McpDevServerSpec:
             for key in (
                 *self.default_environment_keys,
                 *self.gui_environment_keys,
+                *AgentPathPolicy.environment_keys(),
             )
             if (value := os.environ.get(key)) is not None
         }
