@@ -116,6 +116,7 @@ jobs:
       - name: Run boundary version tests
         env:
           OPENHCS_CPU_ONLY: true
+          NUMBA_DISABLE_INTEL_SVML: ${{ runner.os == 'macOS' && '1' || '0' }}
         run: python -m pytest tests/integration/ --cov=openhcs --cov-report=term --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
 
       - name: Upload coverage artifact
@@ -232,6 +233,7 @@ jobs:
       - name: Run backend/microscope combination tests
         env:
           OPENHCS_CPU_ONLY: true
+          NUMBA_DISABLE_INTEL_SVML: ${{ runner.os == 'macOS' && '1' || '0' }}
         run: python -m pytest tests/integration/ --cov=openhcs --cov-report=term --it-backends ${{ matrix.backend }} --it-microscopes ${{ matrix.microscope }} --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
 
       - name: Upload coverage artifact

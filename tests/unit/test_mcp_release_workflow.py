@@ -145,6 +145,21 @@ def test_pypi_classifiers_cover_every_ci_matrix_python_version():
     } <= classifiers
 
 
+def test_macos_integration_jobs_disable_x86_only_intel_svml():
+    workflow = yaml.safe_load(
+        INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
+    )
+    expected = "${{ runner.os == 'macOS' && '1' || '0' }}"
+
+    for job_name, step_name in (
+        ("python-boundary-tests", "Run boundary version tests"),
+        ("backend-microscope-tests", "Run backend/microscope combination tests"),
+    ):
+        steps = workflow["jobs"][job_name]["steps"]
+        test_step = next(step for step in steps if step.get("name") == step_name)
+        assert test_step["env"]["NUMBA_DISABLE_INTEL_SVML"] == expected
+
+
 def test_mcpb_python_ranges_match_the_ci_supported_boundary():
     project = tomllib.loads(
         (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
