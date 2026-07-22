@@ -44,10 +44,21 @@ def _stub_installed_probe(monkeypatch) -> None:
     monkeypatch.setattr(
         desktop_smoke,
         "_smoke_installed_demo",
-        lambda *_args: {
+        lambda *_args, **_kwargs: {
             "execution_status": "complete",
             "viewer_observed": True,
             "viewer_type": "napari",
+        },
+    )
+    monkeypatch.setattr(
+        desktop_smoke,
+        "_smoke_installed_napari",
+        lambda *_args: {
+            "viewer_type": "napari",
+            "qt_platform": "cocoa",
+            "layer_count": 1,
+            "nonzero_count": 64,
+            "closed": True,
         },
     )
 
@@ -146,7 +157,11 @@ def test_portable_demo_uses_installed_python_and_real_viewer_contract(
 
     monkeypatch.setattr(desktop_smoke, "_run_checked", fake_run_checked)
 
-    payload = desktop_smoke._smoke_installed_demo(installed_python, tmp_path)
+    payload = desktop_smoke._smoke_installed_demo(
+        installed_python,
+        tmp_path,
+        viewer=True,
+    )
 
     demo_root = (tmp_path / "installer-smoke-demo").resolve()
     assert payload["viewer_type"] == "napari"
@@ -167,6 +182,103 @@ def test_portable_demo_uses_installed_python_and_real_viewer_contract(
     assert isinstance(demo_environment, dict)
     assert demo_environment["OPENHCS_AGENT_READ_ROOTS"] == str(demo_root)
     assert demo_environment["OPENHCS_AGENT_WRITE_ROOTS"] == str(demo_root)
+
+
+def test_portable_demo_headless_mode_preserves_runtime_contract(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    installed_python = tmp_path / "installed" / "python"
+    installed_python.parent.mkdir()
+    installed_python.touch()
+    observed: dict[str, object] = {}
+
+    def fake_run_checked(
+        command,
+        *,
+        cwd,
+        environment=None,
+        timeout_seconds=120,
+    ):
+        observed.update(
+            command=command,
+            cwd=cwd,
+            environment=environment,
+            timeout_seconds=timeout_seconds,
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "execution_status": "complete",
+                    "viewer_observed": False,
+                    "viewer_type": None,
+                    "viewer_port": None,
+                    "viewer_layer_count": 0,
+                    "viewer_nonzero_payload_count": 0,
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(desktop_smoke, "_run_checked", fake_run_checked)
+
+    payload = desktop_smoke._smoke_installed_demo(
+        installed_python,
+        tmp_path,
+        viewer=False,
+    )
+
+    assert payload["execution_status"] == "complete"
+    assert "--no-viewer" in observed["command"]
+    assert observed["command"][-1] == "--json"
+    assert observed["timeout_seconds"] == 300
+
+
+def test_native_napari_smoke_uses_installed_python_without_offscreen_qt(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    installed_python = tmp_path / "installed" / "python"
+    installed_python.parent.mkdir()
+    installed_python.touch()
+    observed: dict[str, object] = {}
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+    def fake_run_checked(command, *, cwd, environment=None):
+        observed.update(command=command, cwd=cwd, environment=environment)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "viewer_type": "napari",
+                    "qt_platform": "cocoa",
+                    "layer_count": 1,
+                    "layer_name": "OpenHCS installer smoke",
+                    "shape": [8, 8],
+                    "nonzero_count": 64,
+                    "closed": True,
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(desktop_smoke, "_run_checked", fake_run_checked)
+
+    payload = desktop_smoke._smoke_installed_napari(installed_python, tmp_path)
+
+    command = observed["command"]
+    assert command[:3] == [str(installed_python), "-I", "-c"]
+    assert "napari.Viewer(show=False)" in command[3]
+    assert "viewer.add_image" in command[3]
+    assert "np.count_nonzero" in command[3]
+    assert "viewer.close()" in command[3]
+    environment = observed["environment"]
+    assert isinstance(environment, dict)
+    assert "QT_QPA_PLATFORM" not in environment
+    assert payload["qt_platform"] == "cocoa"
 
 
 def test_distribution_probe_queries_installed_extra_metadata(
@@ -243,6 +355,22 @@ def test_windows_smoke_resolves_generated_entry_and_launcher(
     desktop_root.mkdir()
     (desktop_root / "OpenHCS.lnk").touch()
     _stub_installed_probe(monkeypatch)
+    viewer_modes: list[bool] = []
+
+    def fake_demo(*_args, viewer):
+        viewer_modes.append(viewer)
+        return {
+            "execution_status": "complete",
+            "viewer_observed": True,
+            "viewer_type": "napari",
+        }
+
+    monkeypatch.setattr(desktop_smoke, "_smoke_installed_demo", fake_demo)
+    monkeypatch.setattr(
+        desktop_smoke,
+        "_smoke_installed_napari",
+        lambda *_args: pytest.fail("Windows must keep its full viewer demo"),
+    )
 
     result = desktop_smoke.smoke_installed_desktop(
         contract_path=contract_path,
@@ -255,6 +383,8 @@ def test_windows_smoke_resolves_generated_entry_and_launcher(
     assert result["version"] == "0.5.22"
     assert Path(result["environment"]) == environment.resolve()
     assert Path(result["launcher_path"]) == launcher_path.resolve()
+    assert viewer_modes == [True]
+    assert "napari" not in result
 
 
 def test_macos_smoke_executes_the_published_app_launcher(
@@ -284,6 +414,29 @@ def test_macos_smoke_executes_the_published_app_launcher(
     (desktop_root / "OpenHCS.app").symlink_to(launcher_app)
     _stub_installed_probe(monkeypatch)
     launched: list[list[str]] = []
+    viewer_modes: list[bool] = []
+    native_napari_calls: list[tuple[Path, Path]] = []
+
+    def fake_demo(*_args, viewer):
+        viewer_modes.append(viewer)
+        return {
+            "execution_status": "complete",
+            "viewer_observed": False,
+            "viewer_type": None,
+        }
+
+    def fake_napari(python_executable, installed_root):
+        native_napari_calls.append((python_executable, installed_root))
+        return {
+            "viewer_type": "napari",
+            "qt_platform": "cocoa",
+            "layer_count": 1,
+            "nonzero_count": 64,
+            "closed": True,
+        }
+
+    monkeypatch.setattr(desktop_smoke, "_smoke_installed_demo", fake_demo)
+    monkeypatch.setattr(desktop_smoke, "_smoke_installed_napari", fake_napari)
 
     def fake_run_checked(command, *, cwd, environment=None):
         launched.append(command)
@@ -308,3 +461,6 @@ def test_macos_smoke_executes_the_published_app_launcher(
 
     assert launched == [[str(executable), "--help"]]
     assert Path(result["launcher_path"]) == launcher_app.resolve()
+    assert viewer_modes == [False]
+    assert native_napari_calls == [(bin_root / "python", install_root.resolve())]
+    assert result["napari"]["qt_platform"] == "cocoa"

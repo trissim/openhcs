@@ -160,7 +160,7 @@ def test_macos_integration_jobs_disable_x86_only_intel_svml():
         assert test_step["env"]["NUMBA_DISABLE_INTEL_SVML"] == expected
 
 
-def test_native_macos_installer_runs_real_napari_with_headless_qt_diagnostics():
+def test_native_macos_installer_uses_native_qt_smoke_harness():
     workflow = yaml.safe_load(
         INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
     )
@@ -170,15 +170,8 @@ def test_native_macos_installer_runs_real_napari_with_headless_qt_diagnostics():
         for step in steps
         if step.get("name") == "Execute and verify macOS installer"
     )
-    failure_step = next(
-        step
-        for step in steps
-        if step.get("name") == "Show macOS installer log on failure"
-    )
-
-    assert smoke_step["env"]["QT_QPA_PLATFORM"] == "offscreen"
+    assert "QT_QPA_PLATFORM" not in smoke_step.get("env", {})
     assert "scripts.smoke_installed_desktop" in smoke_step["run"]
-    assert "napari_detached_port_*.log" in failure_step["run"]
 
 
 def test_mcpb_python_ranges_match_the_ci_supported_boundary():

@@ -561,8 +561,6 @@ jobs:
 
       - name: Execute and verify macOS installer
         if: matrix.platform == 'macos'
-        env:
-          QT_QPA_PLATFORM: offscreen
         run: |
           python -m build --wheel
           release_version=$(python -c "from pathlib import Path; from packaging.utils import parse_wheel_filename; print(parse_wheel_filename(next(Path('dist').glob('*.whl')).name)[1])")
@@ -599,17 +597,6 @@ jobs:
             /bin/cat "$installer_log"
           else
             printf 'macOS installer log was not created at %s.\n' "$installer_log"
-          fi
-          viewer_log_root="$RUNNER_TEMP/openhcs-installer-home/.local/share/openhcs/logs"
-          if [[ -d "$viewer_log_root" ]]; then
-            while IFS= read -r -d '' viewer_log; do
-              printf '=== detached viewer log: %s ===\n' "$viewer_log"
-              /bin/cat "$viewer_log"
-            done < <(/usr/bin/find "$viewer_log_root" -type f \
-              -name 'napari_detached_port_*.log' -print0)
-          else
-            printf 'Detached viewer log directory was not created at %s.\n' \
-              "$viewer_log_root"
           fi
 
   # Test PyPI-style installation across Python versions and OSes (6 jobs)

@@ -236,8 +236,10 @@ def _smoke_installed_mcp(
 def _smoke_installed_demo(
     python_executable: Path,
     install_root: Path,
+    *,
+    viewer: bool,
 ) -> dict[str, Any]:
-    """Execute the installed MCP/runtime/Napari demo outside the checkout."""
+    """Execute the installed MCP/runtime demo outside the checkout."""
 
     demo_root = (install_root / "installer-smoke-demo").resolve()
     environment = os.environ.copy()
@@ -245,28 +247,33 @@ def _smoke_installed_demo(
     environment["OPENHCS_AGENT_READ_ROOTS"] = str(demo_root)
     environment["OPENHCS_AGENT_WRITE_ROOTS"] = str(demo_root)
     environment["XDG_CACHE_HOME"] = str((install_root / "mcp-cache").resolve())
+    command = [
+        str(python_executable),
+        "-I",
+        "-m",
+        "openhcs.mcp.installed_demo",
+        "--output-root",
+        str(demo_root),
+        "--forbid-import-root",
+        str(REPOSITORY_ROOT),
+    ]
+    if not viewer:
+        command.append("--no-viewer")
+    command.append("--json")
     completed = _run_checked(
-        [
-            str(python_executable),
-            "-I",
-            "-m",
-            "openhcs.mcp.installed_demo",
-            "--output-root",
-            str(demo_root),
-            "--forbid-import-root",
-            str(REPOSITORY_ROOT),
-            "--json",
-        ],
+        command,
         cwd=install_root,
         environment=environment,
         timeout_seconds=300,
     )
     payload = json.loads(completed.stdout)
-    required_values = {
-        "execution_status": "complete",
-        "viewer_observed": True,
-        "viewer_type": "napari",
-    }
+    required_values = {"execution_status": "complete"}
+    required_values.update(
+        {
+            "viewer_observed": viewer,
+            "viewer_type": "napari" if viewer else None,
+        }
+    )
     mismatches = {
         name: {"expected": expected, "actual": payload.get(name)}
         for name, expected in required_values.items()
@@ -274,13 +281,87 @@ def _smoke_installed_demo(
     }
     if mismatches:
         raise AssertionError(
-            f"Installed MCP/Napari demo did not satisfy its contract: {mismatches}"
+            f"Installed MCP/runtime demo did not satisfy its contract: {mismatches}"
         )
-    if payload.get("viewer_layer_count", 0) < 1:
-        raise AssertionError(f"Installed Napari demo mounted no layers: {payload}")
-    if payload.get("viewer_nonzero_payload_count", 0) < 1:
+    if viewer:
+        if payload.get("viewer_layer_count", 0) < 1:
+            raise AssertionError(f"Installed Napari demo mounted no layers: {payload}")
+        if payload.get("viewer_nonzero_payload_count", 0) < 1:
+            raise AssertionError(
+                f"Installed Napari demo exposed no nonzero payloads: {payload}"
+            )
+    elif any(
+        payload.get(name) not in (None, 0)
+        for name in (
+            "viewer_port",
+            "viewer_layer_count",
+            "viewer_nonzero_payload_count",
+        )
+    ):
         raise AssertionError(
-            f"Installed Napari demo exposed no nonzero payloads: {payload}"
+            f"Headless installed demo unexpectedly reported viewer state: {payload}"
+        )
+    return payload
+
+
+def _smoke_installed_napari(
+    python_executable: Path,
+    install_root: Path,
+) -> dict[str, Any]:
+    """Construct, populate, and close installed Napari under native Qt."""
+
+    probe = r"""
+import json
+
+import napari
+import numpy as np
+from qtpy.QtGui import QGuiApplication
+
+viewer = napari.Viewer(show=False)
+try:
+    source = np.arange(1, 65, dtype=np.uint16).reshape(8, 8)
+    layer = viewer.add_image(source, name="OpenHCS installer smoke")
+    mounted = np.asarray(layer.data)
+    payload = {
+        "viewer_type": "napari",
+        "qt_platform": QGuiApplication.platformName(),
+        "layer_count": len(viewer.layers),
+        "layer_name": layer.name,
+        "shape": list(mounted.shape),
+        "nonzero_count": int(np.count_nonzero(mounted)),
+    }
+finally:
+    viewer.close()
+payload["closed"] = True
+print(json.dumps(payload))
+"""
+    environment = os.environ.copy()
+    environment.pop("QT_QPA_PLATFORM", None)
+    environment["OPENHCS_CPU_ONLY"] = "true"
+    environment["XDG_CACHE_HOME"] = str((install_root / "napari-cache").resolve())
+    completed = _run_checked(
+        [str(python_executable), "-I", "-c", probe],
+        cwd=install_root,
+        environment=environment,
+    )
+    payload = json.loads(completed.stdout)
+    expected_values = {
+        "viewer_type": "napari",
+        "qt_platform": "cocoa",
+        "layer_count": 1,
+        "layer_name": "OpenHCS installer smoke",
+        "shape": [8, 8],
+        "nonzero_count": 64,
+        "closed": True,
+    }
+    mismatches = {
+        name: {"expected": expected, "actual": payload.get(name)}
+        for name, expected in expected_values.items()
+        if payload.get(name) != expected
+    }
+    if mismatches:
+        raise AssertionError(
+            f"Installed native Napari smoke did not satisfy its contract: {mismatches}"
         )
     return payload
 
@@ -419,9 +500,22 @@ def smoke_installed_desktop(
             home_root.resolve(),
         )
 
-    demo = _smoke_installed_demo(python_executable, install_root)
+    if platform_name == "macos":
+        demo = _smoke_installed_demo(
+            python_executable,
+            install_root,
+            viewer=False,
+        )
+        napari = _smoke_installed_napari(python_executable, install_root)
+    else:
+        demo = _smoke_installed_demo(
+            python_executable,
+            install_root,
+            viewer=True,
+        )
+        napari = None
 
-    return {
+    result = {
         "platform": platform_name,
         "version": distribution["version"],
         "environment": str(environment),
@@ -429,6 +523,9 @@ def smoke_installed_desktop(
         "demo": demo,
         **launcher,
     }
+    if napari is not None:
+        result["napari"] = napari
+    return result
 
 
 def main() -> int:
