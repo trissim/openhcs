@@ -45,6 +45,12 @@ from openhcs.runtime.zmq_execution_observation import (
 )
 
 
+_HAS_INTERVAL_TIMER = all(
+    hasattr(signal, attribute)
+    for attribute in ("SIGALRM", "ITIMER_REAL", "setitimer")
+)
+
+
 def _public_steps() -> list[FunctionStep]:
     return [
         FunctionStep(
@@ -234,6 +240,23 @@ def test_openhcs_progress_observer_tracks_every_server_event(
     assert observer.progress_description() == "artifact_transfer/running"
 
 
+def test_openhcs_watchdog_allows_execution_without_interval_timer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observer = _ZMQProgressTimingObserver()
+    entered = False
+    monkeypatch.delattr("benchmark.adapters.openhcs.signal.SIGALRM", raising=False)
+
+    with _openhcs_execution_watchdog(20.0, observer):
+        entered = True
+
+    assert entered is True
+
+
+@pytest.mark.skipif(
+    not _HAS_INTERVAL_TIMER,
+    reason="POSIX interval timers are unavailable on this platform",
+)
 def test_openhcs_watchdog_renews_after_recent_server_progress(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -260,6 +283,10 @@ def test_openhcs_watchdog_renews_after_recent_server_progress(
     assert timers[-1] == 0.0
 
 
+@pytest.mark.skipif(
+    not _HAS_INTERVAL_TIMER,
+    reason="POSIX interval timers are unavailable on this platform",
+)
 def test_openhcs_watchdog_reports_progress_inactivity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

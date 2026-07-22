@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,7 @@ def test_openhcs_adapter_runs_converted_cppipe_pipeline(tmp_path: Path) -> None:
     assert result.metrics["execution_time_seconds"] >= 0.0
     assert result.provenance["pipeline_source"] == "converted_cppipe"
     assert result.provenance["axis_count"] == 1
+    assert result.provenance["image_output_count"] == 1
 
     parity_result = _run_openhcs_adapter(
         OpenHCSAdapterRunCase.local_cppipe(
@@ -53,6 +55,7 @@ def test_openhcs_adapter_runs_converted_cppipe_pipeline(tmp_path: Path) -> None:
     )
 
     assert parity_result.success is True
+    assert parity_result.provenance["image_output_count"] == 1
     assert parity_result.provenance["equivalence_reference_output_dir"] == str(
         result.output_path
     )
@@ -281,7 +284,7 @@ class OpenHCSAdapterRunCase:
 
 
 def _run_openhcs_adapter(run_case: OpenHCSAdapterRunCase) -> BenchmarkResult:
-    return OpenHCSAdapter().run(
+    return OpenHCSAdapter(execution_port=18000 + os.getpid() % 20000).run(
         dataset_path=run_case.dataset_path,
         pipeline_name=run_case.pipeline_name,
         pipeline_params=run_case.pipeline_params,

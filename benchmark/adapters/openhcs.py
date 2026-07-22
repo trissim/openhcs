@@ -44,6 +44,7 @@ from openhcs.core.equivalence.outputs import RuntimeOutputSnapshot
 from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.core.input_workspace import InputWorkspacePreparationRequest
 from openhcs.core.runtime_equivalence import (
+    runtime_output_equivalence,
     runtime_reference_artifact_equivalence,
 )
 from openhcs.core.steps.abstract import AbstractStep
@@ -604,7 +605,10 @@ class OpenHCSAdapter(ToolAdapter):
         axis_count = server_execution.axis_count
         executed_axes = tuple(observation.records_by_axis)
         csv_output_count = len(observation.exports.table_outputs)
-        image_output_count = len(observation.exports.image_outputs)
+        execution_output_snapshot = RuntimeOutputSnapshot.from_output_root(
+            execution_output_root
+        )
+        image_output_count = len(execution_output_snapshot.images)
         equivalence_reference = request.equivalence_reference_output_dir
         if equivalence_reference is not None:
             if not equivalence_reference.exists():
@@ -617,15 +621,23 @@ class OpenHCSAdapter(ToolAdapter):
                 reference_snapshot = RuntimeOutputSnapshot.from_output_root(
                     equivalence_reference
                 )
-                if not request.compare_image_outputs:
-                    reference_snapshot = RuntimeOutputSnapshot(
-                        tables=reference_snapshot.tables,
-                    )
                 equivalence_report = runtime_reference_artifact_equivalence(
-                    reference_snapshot,
+                    RuntimeOutputSnapshot(tables=reference_snapshot.tables),
                     observation,
                     policy=equivalence_policy,
                 )
+                if request.compare_image_outputs and reference_snapshot.images:
+                    image_report = runtime_output_equivalence(
+                        RuntimeOutputSnapshot(images=reference_snapshot.images),
+                        RuntimeOutputSnapshot(images=execution_output_snapshot.images),
+                        policy=equivalence_policy,
+                    )
+                    equivalence_report = RuntimeEquivalenceReport(
+                        (
+                            *equivalence_report.differences,
+                            *image_report.differences,
+                        )
+                    )
                 database_export_report = cellprofiler_database_export_equivalence(
                     equivalence_reference,
                     observation.exports,
@@ -765,17 +777,25 @@ def _openhcs_execution_watchdog(
     timing_observer: _ZMQProgressTimingObserver,
 ):
     """Interrupt execution only after server progress has remained silent."""
-    if threading.current_thread() is not threading.main_thread():
+    alarm_signal = getattr(signal, "SIGALRM", None)
+    interval_timer = getattr(signal, "ITIMER_REAL", None)
+    set_interval_timer = getattr(signal, "setitimer", None)
+    if (
+        threading.current_thread() is not threading.main_thread()
+        or alarm_signal is None
+        or interval_timer is None
+        or set_interval_timer is None
+    ):
         yield
         return
 
-    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_handler = signal.getsignal(alarm_signal)
 
     def _renew_or_raise_timeout(_signum: int, _frame: object) -> None:
         inactivity_seconds = timing_observer.inactivity_seconds()
         remaining_seconds = timeout_seconds - inactivity_seconds
         if remaining_seconds > 0.0:
-            signal.setitimer(signal.ITIMER_REAL, remaining_seconds)
+            set_interval_timer(interval_timer, remaining_seconds)
             return
         raise TimeoutError(
             "OpenHCS execution made no server progress for "
@@ -784,15 +804,15 @@ def _openhcs_execution_watchdog(
             f"{timing_observer.progress_description()})."
         )
 
-    signal.signal(signal.SIGALRM, _renew_or_raise_timeout)
-    signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+    signal.signal(alarm_signal, _renew_or_raise_timeout)
+    set_interval_timer(interval_timer, timeout_seconds)
     try:
         yield
     except TimeoutError as exc:
         raise ToolExecutionError(str(exc)) from exc
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0.0)
-        signal.signal(signal.SIGALRM, previous_handler)
+        set_interval_timer(interval_timer, 0.0)
+        signal.signal(alarm_signal, previous_handler)
 
 
 def _truthy_debug_flag(value: object) -> bool:
