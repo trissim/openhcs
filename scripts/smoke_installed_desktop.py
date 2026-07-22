@@ -90,6 +90,8 @@ def _run_checked(
         check=False,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout_seconds,
     )
     if completed.returncode != 0:

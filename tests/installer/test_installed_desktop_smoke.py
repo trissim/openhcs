@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 import plistlib
 import subprocess
+import sys
+
+import pytest
 
 from scripts import smoke_installed_desktop as desktop_smoke
 
@@ -47,6 +50,22 @@ def _stub_installed_probe(monkeypatch) -> None:
             "viewer_type": "napari",
         },
     )
+
+
+def test_checked_command_decodes_child_diagnostics_independently_of_host_locale(
+    tmp_path: Path,
+) -> None:
+    command = [
+        sys.executable,
+        "-c",
+        "import sys; sys.stderr.buffer.write(b'\\x8d'); raise SystemExit(1)",
+    ]
+
+    with pytest.raises(AssertionError) as exc_info:
+        desktop_smoke._run_checked(command, cwd=tmp_path)
+
+    assert "Command failed with exit code 1" in str(exc_info.value)
+    assert "\ufffd" in str(exc_info.value)
 
 
 def test_mcp_smoke_uses_installed_python_in_isolated_mode(
