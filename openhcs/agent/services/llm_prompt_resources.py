@@ -72,7 +72,33 @@ class LLMPromptResourceCatalog:
 
     def dynamic_imports_section(self) -> str:
         """Generate imports section with actual module paths."""
-        return """=== REQUIRED IMPORTS (use exactly these paths) ===
+        from openhcs.core.artifacts import ArtifactType
+        from openhcs.processing.materialization import (
+            registered_materialization_option_types,
+        )
+
+        artifact_type_names = "\n".join(
+            f"    {artifact_type.__name__},"
+            for artifact_type in ArtifactType.__registry__.values()
+        )
+        materialization_option_names = "\n".join(
+            f"    {option_type.__name__},"
+            for option_type in registered_materialization_option_types()
+        )
+        runtime_payload_types_by_module: dict[str, list[str]] = {}
+        for artifact_type in ArtifactType.__registry__.values():
+            for runtime_type in artifact_type.runtime_parameter_types():
+                if not runtime_type.__module__.startswith("openhcs."):
+                    continue
+                runtime_payload_types_by_module.setdefault(
+                    runtime_type.__module__,
+                    [],
+                ).append(runtime_type.__name__)
+        runtime_payload_imports = "\n".join(
+            f"from {module_name} import {', '.join(dict.fromkeys(type_names))}"
+            for module_name, type_names in runtime_payload_types_by_module.items()
+        )
+        return f"""=== REQUIRED IMPORTS (use exactly these paths) ===
 # Backend decorators
 from openhcs.core.memory import numpy, pyclesperanto, cupy
 
@@ -80,20 +106,18 @@ from openhcs.core.memory import numpy, pyclesperanto, cupy
 from openhcs.core.artifacts import (
     ArtifactMeasurementSubjectRelation,
     ArtifactSpec,
-    MeasurementsArtifactType,
-    ObjectLabelsArtifactType,
+{artifact_type_names}
 )
 from openhcs.core.measurement_row_materialization import DataclassMeasurementColumnarRows
 from openhcs.core.pipeline.function_contracts import artifact_outputs, artifact_inputs
 
-# Materializers for measurements and object labels
+# Nominal runtime payloads declared by the registered artifact types
+{runtime_payload_imports}
+
+# Registered materialization writer options
 from openhcs.processing.materialization import (
     MaterializationSpec,
-    CsvOptions,
-    JsonOptions,
-    ROIOptions,
-    TiffStackOptions,
-    TextOptions,
+{materialization_option_names}
 )
 
 # Standard library (include as needed)
@@ -102,11 +126,14 @@ import numpy as np"""
 
     def dynamic_materializers_section(self) -> str:
         """Generate typed artifact materialization examples from live options."""
-        from openhcs.processing.materialization import CsvOptions, JsonOptions, ROIOptions
+        from openhcs.processing.materialization import (
+            registered_materialization_option_types,
+        )
 
-        csv_sig = str(inspect.signature(CsvOptions))
-        json_sig = str(inspect.signature(JsonOptions))
-        roi_sig = str(inspect.signature(ROIOptions))
+        option_signatures = "\n".join(
+            f"{option_type.__name__}{inspect.signature(option_type)}"
+            for option_type in registered_materialization_option_types()
+        )
 
         return f"""=== TYPED ARTIFACT MATERIALIZATION ===
 from openhcs.core.artifacts import (
@@ -135,10 +162,31 @@ Measurement outputs return schema-bearing ColumnarRows. Object-label outputs ret
 the complete integer label array. OpenHCS binds compiled names, materializes CSV/ROI
 files, streams labels to Napari/Fiji, and exposes measurement snapshots.
 
+For a path-bearing topology result, return one nominal ``SpatialGraph`` and
+declare both projections on the same artifact:
+
+```python
+ArtifactSpec.output(
+    "neurite_graph",
+    SpatialGraphArtifactType,
+    materialization=MaterializationSpec(
+        SWCOptions(),
+        SpatialGraphROIOptions(),
+    ),
+)
+```
+
+``SWCOptions`` persists a directed morphology forest. The separate
+``SpatialGraphROIOptions`` writer projects those same edges and scalar features
+to ``.graph.roi.zip`` so Napari receives native path Shapes and its feature table
+without recomputing topology or maintaining a viewer-only graph. A saved SWC
+reopens through the OpenHCS Napari reader as physical 3D samples and parent-child
+paths, or through Fiji SNT. Standard SWC retains sample/type/radius/parent fields,
+not arbitrary OpenHCS edge features, so use the graph-ROI projection for the full
+branch measurement table.
+
 === ADVANCED CUSTOMIZATION (When needed) ===
-CsvOptions{csv_sig}
-JsonOptions{json_sig}
-ROIOptions{roi_sig}
+{option_signatures}
 
 Usage: MaterializationSpec(CsvOptions(filename_suffix="_custom.csv", fields=["x", "y"]))"""
 

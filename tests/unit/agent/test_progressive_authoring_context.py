@@ -223,6 +223,8 @@ def test_task_contexts_expose_only_the_next_relevant_boundary() -> None:
     assert "openhcs_search_functions" in custom
     assert "example preprocessing intents, not a promised built-in catalog" in custom
     assert "memory decorator, ProcessingContract, and artifact declarations" in custom
+    assert "Path-bearing topology belongs in one SpatialGraphArtifactType" in custom
+    assert "do not reduce graph semantics to a mask" in custom
 
     assert "DEBUGGING WORKFLOW" in debugging
     assert "pipeline_debug_toolbar.session" in debugging
@@ -259,6 +261,10 @@ def test_task_contexts_expose_only_the_next_relevant_boundary() -> None:
     assert "Start from the user's scientific question" in viewer
     assert "same stable object or label identity" in viewer
     assert "derive matching display colors from that identity" in viewer
+    assert "final SpatialGraph path Shapes layer" in viewer
+    assert "SWC is the persistent morphology projection" in viewer
+    assert "OpenHCS Napari reader or Fiji SNT" in viewer
+    assert "standard SWC cannot retain arbitrary edge measurements" in viewer
     assert "Layer existence and nonzero pixels prove transport" in viewer
     assert "user-controlled presentation state" in viewer
     assert "raw route payloads, label identities" in viewer
