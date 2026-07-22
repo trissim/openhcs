@@ -90,6 +90,8 @@ class RecordingFileManager(FileManagerLike):
         self.resolve_calls.append((authored, backend, base))
         return authored if authored.is_absolute() else base / authored
 
+    physical_source_path = resolve_address
+
     def save(
         self,
         data: object,

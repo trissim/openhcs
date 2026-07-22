@@ -145,12 +145,11 @@ class ImagePayloadSourceMetadataContext:
         """Resolve this source through the declared I/O backend, when present."""
         address = self.source_address or self.source_path
         if self.read_backend is not None and self.filemanager is not None:
-            return Path(
-                self.filemanager.resolve_address(
-                    address,
-                    self.read_backend,
-                    base_path=Path(address).parent,
-                )
+            source_path = self.filemanager.physical_source_path(
+                address,
+                self.read_backend,
+                base_path=Path(address).parent,
             )
+            return None if source_path is None else Path(source_path)
         path = Path(address)
         return path if path.exists() else None

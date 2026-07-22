@@ -74,6 +74,18 @@ class FileManagerLike(ABC):
         )
 
     @abstractmethod
+    def physical_source_path(
+        self,
+        backend_address: str | Path,
+        backend: str,
+        *,
+        base_path: str | Path,
+    ) -> str | Path | None:
+        """Return a physical source path when the backend declares one."""
+
+        raise NotImplementedError
+
+    @abstractmethod
     def save(
         self,
         data: object,

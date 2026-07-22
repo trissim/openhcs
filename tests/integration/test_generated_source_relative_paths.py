@@ -57,6 +57,8 @@ class FilesystemFileManager(FileManagerLike):
         authored = Path(backend_address)
         return authored if authored.is_absolute() else Path(base_path) / authored
 
+    physical_source_path = resolve_address
+
     def save(
         self,
         data: object,

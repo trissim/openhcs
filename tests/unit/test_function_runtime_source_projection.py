@@ -399,6 +399,8 @@ def test_workspace_source_loading_preserves_declared_tiff_intensity_scale(
             assert Path(base_path) == source_path.parent
             return backend_address
 
+        physical_source_path = resolve_address
+
     runtime = PatternGroupRuntime.__new__(PatternGroupRuntime)
     runtime.request = SimpleNamespace(
         source_binding_plan=source_binding_plan,
@@ -3296,6 +3298,8 @@ def test_unbound_workspace_source_keeps_filename_component_provenance(
             assert backend_address == source_ref.backend_address
             return backend_address
 
+        physical_source_path = resolve_address
+
     runtime = function_runtime.PatternGroupRuntime.__new__(
         function_runtime.PatternGroupRuntime
     )
@@ -3506,6 +3510,8 @@ def test_producer_anchored_pipeline_start_paths_use_exact_source_projection_bund
             del base_path
             assert backend == "disk"
             return backend_address
+
+        physical_source_path = resolve_address
 
     monkeypatch.setattr(
         function_runtime,

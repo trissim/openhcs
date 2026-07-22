@@ -556,6 +556,8 @@ class FileManagerStub:
     def resolve_address(self, backend_address, backend, *, base_path):
         return backend_address
 
+    physical_source_path = resolve_address
+
     def load_batch(self, paths, backend, **kwargs):
         self.loaded_batches.append((tuple(paths), backend, dict(kwargs)))
         return [self.saved[(backend, path)] for path in paths]

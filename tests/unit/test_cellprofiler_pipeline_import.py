@@ -198,6 +198,8 @@ class _MemoryFileManager(FileManagerLike):
         del backend, base_path
         return Path(backend_address)
 
+    physical_source_path = resolve_address
+
     def save(
         self,
         data: object,

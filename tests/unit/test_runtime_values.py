@@ -2183,6 +2183,33 @@ def test_source_image_loading_keeps_identity_separate_from_storage_address(
     }
 
 
+def test_source_image_loading_allows_virtual_source_without_physical_path() -> None:
+    class VirtualFileManager:
+        @staticmethod
+        def physical_source_path(backend_address, backend, *, base_path):
+            assert backend_address == "/omero/plate_7/A01_s001_w1_z001_t001.tif"
+            assert backend == "omero_local"
+            assert base_path == Path("/omero/plate_7")
+            return None
+
+    metadata = ImagePayloadSourceMetadataContext(
+        SourceImageIdentity(
+            "/omero/plate_7/A01_s001_w1_z001_t001.tif",
+            {"well": "A01", "site": 1, "channel": 1},
+        ),
+        read_backend="omero_local",
+        filemanager=VirtualFileManager(),
+    ).metadata(np.zeros((4, 5), dtype=np.uint16))
+
+    assert metadata.source_path == "/omero/plate_7/A01_s001_w1_z001_t001.tif"
+    assert metadata.source_dtype == "uint16"
+    assert dict(metadata.source_component_metadata) == {
+        "well": "A01",
+        "site": 1,
+        "channel": 1,
+    }
+
+
 def test_source_image_loading_preserves_existing_nominal_source_name() -> None:
     image = np.zeros((4, 5), dtype=np.uint16)
     projected = ImagePayloadMetadata(
