@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import multiprocessing
+import queue
 import sys
 import threading
 import zmq
@@ -113,7 +114,7 @@ from openhcs.runtime.viewer_component_system import (
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from zmqruntime.streaming import StreamingVisualizerServer
-from zmqruntime.transport import coerce_transport_mode
+from zmqruntime.transport import coerce_transport_mode, remove_ipc_socket
 
 # Optional napari import - this module should only be imported if napari is available
 try:
@@ -296,6 +297,35 @@ class NapariBatchPayload(ViewerDisplayBatchContext[Mapping[str, NapariWireValue]
             entries=component_axis_semantics.entries,
             layout=component_axis_semantics.layout,
         )
+
+
+@dataclass(frozen=True)
+class NapariAcceptedStreamItem:
+    """One stream item after receiver-owned payload materialization."""
+
+    payload: "NapariImagePayload"
+    data: LayerData
+
+
+@dataclass(frozen=True)
+class NapariAcceptedStreamBatch:
+    """Immutable transport-to-Qt handoff for one accepted stream batch."""
+
+    payload: NapariBatchPayload
+    items: tuple[NapariAcceptedStreamItem, ...]
+
+    def dispatch_to(self, server: "NapariViewerServer") -> None:
+        """Apply copied payloads to viewer state on the Qt thread."""
+
+        if self.payload.store:
+            server.component_name_metadata.merge(self.payload)
+            logger.info(
+                "🔬 NAPARI PROCESS: Updated component metadata: %s",
+                list(self.payload),
+            )
+
+        for item in self.items:
+            server._process_loaded_image(item)
 
 
 @dataclass(frozen=True)
@@ -581,7 +611,7 @@ class NapariPayloadDataLoader:
         raise ValueError("No image data in message")
 
     def _shared_memory_image(self, payload: NapariImagePayload) -> np.ndarray:
-        from multiprocessing import shared_memory
+        from multiprocessing import resource_tracker, shared_memory
 
         try:
             shm = shared_memory.SharedMemory(name=payload.shm_name)
@@ -589,6 +619,7 @@ class NapariPayloadDataLoader:
             raise FileNotFoundError(
                 f"Shared memory {payload.shm_name} not found"
             ) from exc
+        resource_tracker.unregister(shm._name, "shared_memory")
         try:
             return np.ndarray(
                 payload.image_shape,
@@ -597,24 +628,6 @@ class NapariPayloadDataLoader:
             ).copy()
         finally:
             shm.close()
-            self._unlink_shared_memory(payload.shm_name)
-
-    @staticmethod
-    def _unlink_shared_memory(shm_name: str) -> None:
-        from multiprocessing import shared_memory
-
-        shm = None
-        try:
-            shm = shared_memory.SharedMemory(name=shm_name)
-            shm.unlink()
-        except FileNotFoundError:
-            logger.debug(
-                "🔬 NAPARI PROCESS: Shared memory %s already unlinked",
-                shm_name,
-            )
-        finally:
-            if shm is not None:
-                shm.close()
 
 
 @dataclass(frozen=True)
@@ -2033,6 +2046,17 @@ class NapariSettleControlMessageAction(NapariControlMessageAction):
         server: "NapariViewerServer",
         message: Mapping[str, object],
     ) -> dict[str, object]:
+        if server.transport_failure is not None:
+            return ViewerControlReplyPayload(
+                ViewerControlReplyHeader(
+                    ViewerProtocolStatus.ERROR,
+                    response_type="settle_ack",
+                    message=(
+                        "Viewer transport failed before settlement: "
+                        f"{server.transport_failure}"
+                    ),
+                )
+            ).to_wire_mapping()
         if server.viewer is None:
             return ViewerControlReplyPayload(
                 ViewerControlReplyHeader(
@@ -3185,12 +3209,12 @@ class NapariStreamMessageHandler(NapariMessageTypeBase, metaclass=AutoRegisterMe
         return cls.__registry__[message_type]()
 
     @abstractmethod
-    def handle(
+    def accept(
         self,
         server: "NapariViewerServer",
         data: Mapping[str, NapariWireValue],
-    ) -> None:
-        """Handle one decoded stream message."""
+    ) -> NapariAcceptedStreamBatch:
+        """Copy one decoded stream message into receiver-owned memory."""
 
 
 class NapariBatchStreamMessageHandler(NapariStreamMessageHandler):
@@ -3198,24 +3222,99 @@ class NapariBatchStreamMessageHandler(NapariStreamMessageHandler):
 
     message_type = ViewerBatchMessageType.BATCH
 
-    def handle(
+    def accept(
         self,
         server: "NapariViewerServer",
         data: Mapping[str, NapariWireValue],
-    ) -> None:
+    ) -> NapariAcceptedStreamBatch:
         batch_payload = NapariBatchPayload.from_json_payload(data)
-        if batch_payload.store:
-            server.component_name_metadata.merge(batch_payload)
-            logger.info(
-                "🔬 NAPARI PROCESS: Updated component metadata: %s",
-                list(batch_payload),
-            )
+        return NapariAcceptedStreamBatch(
+            payload=batch_payload,
+            items=tuple(
+                server._accept_single_image(image_info, batch_payload)
+                for image_info in batch_payload.images
+            ),
+        )
 
-        for image_info in batch_payload.images:
-            server._process_single_image(
-                image_info,
-                batch_payload,
+
+class NapariDataTransportPump:
+    """Socket-owning stream intake that never waits for Qt rendering."""
+
+    def __init__(self, server: "NapariViewerServer") -> None:
+        self.server = server
+        self._stop_event = threading.Event()
+        self._ready_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._startup_error: Exception | None = None
+
+    def start(self) -> None:
+        """Bind and serve the data endpoint from its dedicated owner thread."""
+
+        if self._thread is not None:
+            raise RuntimeError("Napari data transport pump is already started.")
+        self._stop_event.clear()
+        self._ready_event.clear()
+        self._startup_error = None
+        self._thread = threading.Thread(
+            target=self._serve,
+            name=f"napari-data-transport-{self.server.port}",
+            daemon=True,
+        )
+        self._thread.start()
+        if not self._ready_event.wait(timeout=10.0):
+            raise TimeoutError(
+                f"Napari data transport failed to bind port {self.server.port}."
             )
+        if self._startup_error is not None:
+            raise RuntimeError(
+                f"Napari data transport failed to start on port {self.server.port}."
+            ) from self._startup_error
+
+    def stop(self) -> None:
+        """Stop intake and wait for the socket-owning thread to release it."""
+
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=5.0)
+            if thread.is_alive():
+                logger.warning(
+                    "Napari data transport thread on port %s did not stop promptly",
+                    self.server.port,
+                )
+        self._thread = None
+
+    def _serve(self) -> None:
+        context = zmq.Context()
+        socket = None
+        try:
+            socket = self.server.bind_data_socket(context)
+            poller = zmq.Poller()
+            poller.register(socket, zmq.POLLIN)
+            self._ready_event.set()
+            logger.info(
+                "🔬 NAPARI PROCESS: Data transport pump bound %s",
+                self.server.data_transport_url(),
+            )
+            while not self._stop_event.is_set() and self.server.is_running():
+                if socket not in dict(poller.poll(timeout=50)):
+                    continue
+                message = socket.recv()
+                reply = self.server.accept_stream_message(message)
+                socket.send_json(reply.to_wire_mapping())
+        except Exception as error:
+            if not self._ready_event.is_set():
+                self._startup_error = error
+                self._ready_event.set()
+            elif not self._stop_event.is_set():
+                logger.exception(
+                    "🔬 NAPARI PROCESS: Data transport pump failed"
+                )
+                self.server.record_transport_failure(error)
+        finally:
+            if socket is not None:
+                socket.close(linger=0)
+            context.term()
 
 
 class NapariViewerServer(StreamingVisualizerServer):
@@ -3265,8 +3364,59 @@ class NapariViewerServer(StreamingVisualizerServer):
             debounce_policy=self.layer_batch_processor_debounce_policy,
         )
         self.display_pipeline = NapariLayerDisplayPipeline(self)
+        self.accepted_stream_batches: queue.Queue[NapariAcceptedStreamBatch] = (
+            queue.Queue()
+        )
+        self.data_transport_pump = NapariDataTransportPump(self)
+        self.transport_failure: Exception | None = None
 
         # Ack socket handled by StreamingVisualizerServer
+
+    def start(self) -> None:
+        """Bind control on Qt and data on the dedicated transport thread."""
+
+        with self._lock:
+            if self._running:
+                return
+            self.zmq_context = zmq.Context()
+            self.control_socket = self.bind_control_socket(self.zmq_context)
+            self._running = True
+
+        try:
+            self.data_transport_pump.start()
+        except Exception:
+            self.stop()
+            raise
+        logger.info(
+            "ZMQ Server started on %s (REP), control %s",
+            self.data_transport_url(),
+            self.control_transport_url(),
+        )
+
+    def stop(self) -> None:
+        """Stop each socket from the same thread that created it."""
+
+        with self._lock:
+            self._running = False
+        self.data_transport_pump.stop()
+        with self._lock:
+            if self.control_socket is not None:
+                self.control_socket.close(linger=0)
+                self.control_socket = None
+            if self.zmq_context is not None:
+                self.zmq_context.term()
+                self.zmq_context = None
+            if self.transport_mode == coerce_transport_mode(
+                OpenHCSTransportMode.IPC
+            ):
+                remove_ipc_socket(self.port, self.config)
+                remove_ipc_socket(self.control_port, self.config)
+        logger.info("ZMQ Server stopped")
+
+    def record_transport_failure(self, error: Exception) -> None:
+        """Retain a terminal intake failure for control-plane diagnostics."""
+
+        self.transport_failure = error
 
     def request_shutdown(self) -> None:
         """Stop accepting display work and cancel every deferred layer update."""
@@ -3356,17 +3506,12 @@ class NapariViewerServer(StreamingVisualizerServer):
             ViewerComponentAxisSemanticsAuthority.empty(),
         )
 
-    def process_image_message(self, message: bytes):
-        """
-        Process incoming image data message and send reply for REP socket.
+    def accept_stream_message(self, message: bytes) -> NapariStreamMessageReply:
+        """Copy one wire batch and enqueue it before acknowledging ownership."""
 
-        Args:
-            message: Raw ZMQ message containing image data
-        """
         import json
 
         msg_type: ViewerBatchMessageType | None = None
-        reply_sent = False
         try:
             data = json.loads(message.decode("utf-8"))
             msg_type = ViewerBatchMessageType(
@@ -3374,52 +3519,78 @@ class NapariViewerServer(StreamingVisualizerServer):
                     ViewerBatchWireField.TYPE
                 ))
             )
-            reply = NapariStreamMessageReply.success(msg_type)
-            self.data_socket.send_json(reply.to_wire_mapping())
-            reply_sent = True
-            NapariStreamMessageHandler.for_message_type(msg_type).handle(self, data)
-        except Exception as e:
+            accepted_batch = NapariStreamMessageHandler.for_message_type(
+                msg_type
+            ).accept(self, data)
+            self.accepted_stream_batches.put(accepted_batch)
+            return NapariStreamMessageReply.success(msg_type)
+        except Exception as error:
             logger.error(
-                "🔬 NAPARI PROCESS: Failed to process stream message: %s",
-                e,
+                "🔬 NAPARI PROCESS: Failed to accept stream message: %s",
+                error,
                 exc_info=True,
             )
-            if not reply_sent:
-                try:
-                    reply = NapariStreamMessageReply.failure(msg_type, str(e))
-                    self.data_socket.send_json(reply.to_wire_mapping())
-                except Exception as reply_error:
-                    logger.error(
-                        "🔬 NAPARI PROCESS: Failed to send failure reply: %s",
-                        reply_error,
-                    )
+            return NapariStreamMessageReply.failure(msg_type, str(error))
+
+    def process_accepted_stream_messages(self) -> int:
+        """Drain receiver-owned batches into viewer state on the Qt thread."""
+
+        processed_count = 0
+        while True:
+            try:
+                accepted_batch = self.accepted_stream_batches.get_nowait()
+            except queue.Empty:
+                return processed_count
+            accepted_batch.dispatch_to(self)
+            processed_count += 1
+
+    def _accept_single_image(
+        self,
+        image_info: Mapping[str, NapariWireValue],
+        layer_axis_projection_semantics: ViewerComponentAxisSemantics,
+    ) -> NapariAcceptedStreamItem:
+        """Materialize one payload without reading or mutating Qt state."""
+
+        payload = NapariImagePayload.from_payload(
+            image_info,
+            layer_axis_projection_semantics,
+        )
+        loaded_data = _NAPARI_PAYLOAD_DATA_LOADER.load(payload)
+        return NapariAcceptedStreamItem(payload=payload, data=loaded_data)
 
     def _process_single_image(
         self,
         image_info: Mapping[str, NapariWireValue],
         layer_axis_projection_semantics: ViewerComponentAxisSemantics,
     ) -> None:
-        """Process a single image or shapes data and display in Napari."""
-        payload = NapariImagePayload.from_payload(
-            image_info,
-            layer_axis_projection_semantics,
+        """Materialize and display one direct payload on the Qt thread."""
+
+        self._process_loaded_image(
+            self._accept_single_image(
+                image_info,
+                layer_axis_projection_semantics,
+            )
         )
-        payload_address = payload.address
+
+    def _process_loaded_image(self, item: NapariAcceptedStreamItem) -> None:
+        """Route one receiver-owned payload into deferred Napari display."""
+
+        payload = item.payload
+        payload_address = item.payload.address
         logger.info(
             f"🔍 NAPARI PROCESS: Received {payload_address.stream_layer_data_type} with metadata: {payload_address.components} (path: {payload_address.path})"
         )
 
         try:
-            loaded_data = _NAPARI_PAYLOAD_DATA_LOADER.load(payload)
-            if isinstance(loaded_data, np.ndarray):
+            if isinstance(item.data, np.ndarray):
                 logger.info(
                     "🔬 STREAM RECEIVE: path=%s components=%s %s",
                     payload_address.path,
                     payload_address.components,
-                    NapariViewerStateProjection.array_summary(loaded_data),
+                    NapariViewerStateProjection.array_summary(item.data),
                 )
             _NAPARI_COMPONENT_DISPLAY_COORDINATOR.display(
-                data=loaded_data,
+                data=item.data,
                 stream_layer_context=payload,
                 server=self,
             )
@@ -3501,18 +3672,14 @@ def run_napari_viewer_process(
                 message_service_started = True
                 logger.info("🔬 NAPARI PROCESS: First Qt message-service callback")
 
-            # Process control messages (ping/pong handled by ABC)
-            server.process_messages()
+            # The socket-owning transport thread has already copied shared-memory
+            # payloads. Drain those immutable batches before control settlement so
+            # a SETTLE request cannot overtake accepted display work.
+            server.process_accepted_stream_messages()
 
-            # Process data messages (images) if ready
-            # REP socket requires recv->send alternation, so process one at a time
-            if server._ready and server.is_running():
-                try:
-                    message = server.data_socket.recv(zmq.NOBLOCK)
-                    server.process_image_message(message)
-                except zmq.Again:
-                    # No message available
-                    pass
+            # Process control messages (ping/pong handled by ABC) on Qt because
+            # viewer state and navigation remain Qt-owned.
+            server.process_messages()
 
         # Do not publish transport endpoints until Qt has dispatched at least one
         # event and the recurring service timer is live. Endpoint presence must

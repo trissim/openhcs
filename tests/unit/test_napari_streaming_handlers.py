@@ -673,6 +673,7 @@ class _FakeNapariServer:
         self.component_name_metadata = _component_name_metadata({"channel": {"1": "DAPI"}})
         self.component_values = ViewerRouteComponentValueTracker()
         self.display_axis_domain = ViewerDisplayAxisDomain()
+        self.transport_failure = None
 
 
 def test_napari_layer_update_authority_replaces_existing_image_without_global_axis_labels():
@@ -2177,8 +2178,9 @@ def _run_fake_napari_entrypoint(
             if shutdown_during_service:
                 self._running = False
 
-        def process_image_message(self, _message):
-            events.append("data_process")
+        def process_accepted_stream_messages(self):
+            events.append("accepted_stream_process")
+            return 0
 
     class FakeTimer:
         zero_shot_callback = None

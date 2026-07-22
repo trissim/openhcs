@@ -440,7 +440,7 @@ class FijiSharedMemoryItemCopier:
     send_error_ack: Callable[[str, str], None]
 
     def copy(self, items: Sequence[FijiWireItem]) -> list[FijiWireItem]:
-        from multiprocessing import shared_memory
+        from multiprocessing import resource_tracker, shared_memory
 
         copied_items = []
         for item in items:
@@ -451,13 +451,13 @@ class FijiSharedMemoryItemCopier:
 
             try:
                 shm = shared_memory.SharedMemory(name=shared_memory_spec.name)
+                resource_tracker.unregister(shm._name, "shared_memory")
                 data = np.ndarray(
                     shared_memory_spec.shape,
                     dtype=shared_memory_spec.dtype,
                     buffer=shm.buf,
                 ).copy()
                 shm.close()
-                shm.unlink()
                 copied_items.append(item.with_local_data(data))
                 logger.debug(
                     "📋 FIJI SERVER: Copied image data from shared memory %s",

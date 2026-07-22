@@ -14,6 +14,7 @@ from openhcs.runtime.fiji_viewer_server import (
     FijiDisplayConfigWireAdapter,
     FijiImagePayload,
     FijiImageIntensityRange,
+    FijiSharedMemoryItemCopier,
     FijiPlaneGeometry,
     FijiStackSliceLabelBuilder,
     FijiHyperstackCoordinates,
@@ -245,6 +246,42 @@ def test_fiji_batch_message_normalizes_wire_items() -> None:
     assert image_payload.image_id == "img-1"
     assert batch.store.display_name("channel", 1) == "DNA"
     assert batch.to_wire_mapping() == {"channel": [1]}
+
+
+def test_fiji_shared_memory_copy_leaves_sender_allocation_owned(monkeypatch) -> None:
+    from multiprocessing import resource_tracker, shared_memory
+
+    source = np.arange(12, dtype=np.uint16).reshape(3, 4)
+    shm = shared_memory.SharedMemory(create=True, size=source.nbytes)
+    np.ndarray(source.shape, dtype=source.dtype, buffer=shm.buf)[:] = source
+    item = FijiWireItem.from_payload(
+        {
+            "data_type": "image",
+            "image_id": "fiji-copy",
+            "shm_name": shm.name,
+            "shape": source.shape,
+            "dtype": str(source.dtype),
+        }
+    )
+    errors = []
+
+    try:
+        # Production uses separate sender/receiver trackers; this unit probe
+        # hosts both roles in one process.
+        monkeypatch.setattr(resource_tracker, "unregister", lambda *_args: None)
+        copied = FijiSharedMemoryItemCopier(
+            lambda image_id, error: errors.append((image_id, error))
+        ).copy([item])
+        monkeypatch.undo()
+
+        assert errors == []
+        np.testing.assert_array_equal(copied[0].data, source)
+        reopened = shared_memory.SharedMemory(name=shm.name)
+        reopened.close()
+    finally:
+        monkeypatch.undo()
+        shm.close()
+        shm.unlink()
 
 
 def test_fiji_window_item_projection_preserves_nominal_items() -> None:
