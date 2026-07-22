@@ -501,7 +501,7 @@ jobs:
           }
 
           $desktopRoot = [Environment]::GetFolderPath("DesktopDirectory")
-          $summaryJson = python scripts/smoke_installed_desktop.py `
+          $summaryJson = python -m scripts.smoke_installed_desktop `
             --platform windows `
             --contract (Join-Path $stage "installer_contract.json") `
             --install-root $installRoot `
@@ -540,6 +540,19 @@ jobs:
           }
           Write-Host $summaryJson
 
+      - name: Show Windows installer log on failure
+        if: failure() && matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $installerLog = Join-Path $env:RUNNER_TEMP "OpenHCS Installed\installer.log"
+          if (Test-Path -LiteralPath $installerLog -PathType Leaf) {
+            Write-Host "=== Windows installer log ==="
+            Get-Content -LiteralPath $installerLog
+          }
+          else {
+            Write-Host "Windows installer log was not created at '$installerLog'."
+          }
+
       - name: Validate macOS installer sources
         if: matrix.platform == 'macos'
         run: |
@@ -569,11 +582,22 @@ jobs:
 
           product_name=$(/usr/bin/plutil -extract product_name raw -o - \
             "$staged_contract")
-          python scripts/smoke_installed_desktop.py \
+          python -m scripts.smoke_installed_desktop \
             --platform macos \
             --contract "$staged_contract" \
             --install-root "$HOME/Library/Application Support/$product_name" \
             --home-root "$HOME"
+
+      - name: Show macOS installer log on failure
+        if: failure() && matrix.platform == 'macos'
+        run: |
+          installer_log="$RUNNER_TEMP/openhcs-installer-home/Library/Logs/OpenHCS/installer.log"
+          if [[ -f "$installer_log" ]]; then
+            printf '%s\n' '=== macOS installer log ==='
+            /bin/cat "$installer_log"
+          else
+            printf 'macOS installer log was not created at %s.\n' "$installer_log"
+          fi
 
   # Test PyPI-style installation across Python versions and OSes (6 jobs)
   pypi-installation-test:
