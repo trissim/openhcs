@@ -215,7 +215,7 @@ jobs:
           cat > site/README.md << 'EOF'
           # OpenHCS Code Coverage Reports
 
-          This site contains the combined code coverage reports for the [OpenHCS](https://github.com/trissim/openhcs) project.
+          This site contains the combined code coverage reports for the [OpenHCS](https://github.com/OpenHCSDev/OpenHCS) project.
 
           ## Navigation
 
