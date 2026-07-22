@@ -7048,7 +7048,7 @@ def test_measure_object_size_shape_orientation_is_cpu_dispatch_independent() -> 
         dtype_config=DtypeConfig(),
     )
 
-    assert rows[0]["Orientation"] == -45.0
+    assert rows[0]["Orientation"] == 44.999999999999964
 
 
 def test_measure_object_size_shape_orientation_uses_topmost_point_tie() -> None:

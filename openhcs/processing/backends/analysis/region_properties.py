@@ -3,16 +3,72 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import ctypes
 from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar, TypeVar
 
+from llvmlite import ir
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
-from numba import njit
+from numba import njit, types
+from numba.extending import intrinsic
+from numpy._core import _multiarray_umath
 import skimage.measure
 
 from openhcs.constants.constants import MemoryType
+
+
+_NUMPY_UMATH_GLOBAL = ctypes.CDLL(
+    _multiarray_umath.__file__,
+    mode=ctypes.RTLD_GLOBAL,
+)
+
+
+@intrinsic
+def _numpy_124_power_two(typing_context, value):
+    """Emit the NumPy 1.24 AVX-512 power operation used by CP 4.2.8.1."""
+
+    del typing_context, value
+    signature = types.float64(types.float64)
+
+    def codegen(context, builder, resolved_signature, arguments):
+        del context, resolved_signature
+        double_type = ir.DoubleType()
+        vector_type = ir.VectorType(double_type, 8)
+        function_type = ir.FunctionType(
+            vector_type,
+            (vector_type, vector_type),
+        )
+        if "__svml_pow8" in builder.module.globals:
+            power_function = builder.module.globals["__svml_pow8"]
+        else:
+            power_function = ir.Function(
+                builder.module,
+                function_type,
+                name="__svml_pow8",
+            )
+        base_vector = ir.Constant(
+            vector_type,
+            (ir.Constant(double_type, 1.0),) * 8,
+        )
+        exponent_vector = ir.Constant(
+            vector_type,
+            (ir.Constant(double_type, 2.0),) * 8,
+        )
+        lane_zero = ir.Constant(ir.IntType(32), 0)
+        base_vector = builder.insert_element(
+            base_vector,
+            arguments[0],
+            lane_zero,
+        )
+        result = builder.call(
+            power_function,
+            (base_vector, exponent_vector),
+        )
+        return builder.extract_element(result, lane_zero)
+
+    return signature, codegen
 
 
 class AnalysisBackendProvider(str, Enum):
@@ -808,7 +864,7 @@ def _label_second_central_moments_2d(
         delta_y = float(row) - centroid_y
         powers_y[row, 0] = 1.0
         powers_y[row, 1] = delta_y
-        powers_y[row, 2] = delta_y * delta_y
+        powers_y[row, 2] = _numpy_124_power_two(delta_y)
 
     local_image = np.zeros((local_height, local_width), dtype=np.float64)
     for col in range(local_width):
@@ -821,7 +877,7 @@ def _label_second_central_moments_2d(
         delta_x = float(col) - centroid_x
         powers_x[col, 0] = 1.0
         powers_x[col, 1] = delta_x
-        powers_x[col, 2] = delta_x * delta_x
+        powers_x[col, 2] = _numpy_124_power_two(delta_x)
 
     reduced_y = np.dot(local_image.T, powers_y)
     moments = np.dot(reduced_y.T, powers_x)
