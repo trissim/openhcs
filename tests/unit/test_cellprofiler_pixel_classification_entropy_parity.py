@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 from openhcs.interop.cellprofiler.image_normalization import (
-    _cellprofiler_uint8_float32_lut,
     normalize_cellprofiler_image_payload,
 )
 from openhcs.processing.backends.cellprofiler import thresholding
@@ -24,10 +23,10 @@ def _codebook_image(*, seed: int) -> np.ndarray:
         size=(64, 64),
         dtype=np.uint8,
     )
-    return _cellprofiler_uint8_float32_lut()[codes]
+    return codes.astype(np.float32) / np.float32(255)
 
 
-def test_virtual_source_uses_structured_physical_png_format() -> None:
+def test_virtual_source_uses_generic_payload_intensity_scale() -> None:
     from openhcs.core.runtime_image_values import ImagePayloadMetadata, MaskedImagePayload
     from openhcs.core.source_metadata import (
         SOURCE_FILTER_PATHS_METADATA_FIELD,
@@ -53,7 +52,10 @@ def test_virtual_source_uses_structured_physical_png_format() -> None:
 
     observed = np.asarray(normalize_cellprofiler_image_payload(payload))
 
-    np.testing.assert_array_equal(observed, _cellprofiler_uint8_float32_lut()[image])
+    np.testing.assert_array_equal(
+        observed,
+        image.astype(np.float32) / np.float32(255),
+    )
 
 
 def test_full_stack_uses_retained_source_plane_dtype_scale() -> None:
@@ -98,7 +100,7 @@ def test_threshold_entropy_fast_path_preserves_producer_float32_logs(
 ) -> None:
     rng = np.random.default_rng(17)
     codes = rng.integers(0, 255, size=(64, 64), dtype=np.uint8)
-    image = _cellprofiler_uint8_float32_lut()[codes]
+    image = codes.astype(np.float32) / np.float32(255)
     binary = rng.random(image.shape) > 0.5
     mask = np.ones(image.shape, dtype=np.bool_)
     expected = thresholding._numpy_threshold_sum_of_entropies(image, mask, binary)
@@ -121,7 +123,7 @@ def test_threshold_entropy_fast_path_preserves_producer_float32_logs(
         )
     )
 
-    assert expected == -13.022839004723934
+    assert expected == -13.022928470071477
     assert observed == pytest.approx(expected, rel=0.0, abs=1e-12)
 
 

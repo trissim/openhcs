@@ -638,7 +638,6 @@ def normalize_cellprofiler_image(image: np.ndarray) -> np.ndarray:
         normalize_cellprofiler_image_payload(
             image,
             dtype=np.float32,
-            allow_unproven_uint8_float_domain=True,
         )
     )
 
@@ -2891,7 +2890,6 @@ def threshold(
     source_payload = normalize_cellprofiler_image_payload(
         image,
         dtype=np.float32,
-        allow_unproven_uint8_float_domain=True,
     )
     image = np.asarray(image_payload_data(source_payload), dtype=np.float32)
     metadata = image_payload_metadata(source_payload)

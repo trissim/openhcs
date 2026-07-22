@@ -666,20 +666,7 @@ def test_cellprofiler_uint8_source_normalization_matches_native_pixel_domain() -
 
     np.testing.assert_array_equal(pathless_normalized, core_normalized)
     np.testing.assert_array_equal(jpg_normalized, core_normalized)
-    assert cellprofiler_normalized.dtype == np.float32
-    assert cellprofiler_normalized[0, 0].view(np.uint32) == np.nextafter(
-        core_normalized[0, 0], np.float32(0.0), dtype=np.float32
-    ).view(np.uint32)
-    assert cellprofiler_normalized[0, 1].view(np.uint32) == np.nextafter(
-        core_normalized[0, 1], np.float32(0.0), dtype=np.float32
-    ).view(np.uint32)
-    assert cellprofiler_normalized[0, 2].view(np.uint32) == core_normalized[0, 2].view(
-        np.uint32
-    )
-    assert cellprofiler_normalized[0, 3].view(np.uint32) == core_normalized[0, 3].view(
-        np.uint32
-    )
-    assert cellprofiler_normalized[0, 4] == np.float32(1.0)
+    np.testing.assert_array_equal(cellprofiler_normalized, core_normalized)
 
     normalized_payload = MaskedImagePayload(
         data=core_normalized,
@@ -690,52 +677,26 @@ def test_cellprofiler_uint8_source_normalization_matches_native_pixel_domain() -
     )
     remapped = np.asarray(normalize_cellprofiler_image_payload(normalized_payload))
 
-    np.testing.assert_array_equal(remapped, cellprofiler_normalized)
+    np.testing.assert_array_equal(remapped, core_normalized)
 
 
-@pytest.mark.parametrize(
-    ("virtual_path", "filter_path", "uses_png_domain"),
-    (
-        ("virtual/source.tif", "/physical/source.png", True),
-        ("virtual/source.png", "/physical/source.tif", False),
-    ),
-)
-def test_cellprofiler_uint8_normalization_uses_authoritative_filter_paths(
+def test_cellprofiler_uint8_normalization_is_source_format_blind(
     monkeypatch,
-    virtual_path: str,
-    filter_path: str,
-    uses_png_domain: bool,
 ) -> None:
     from openhcs.core.runtime_image_values import (
         ImagePayloadMetadata,
         MaskedImagePayload,
         normalize_image_payload_intensity,
     )
-    from openhcs.core.source_metadata import (
-        SOURCE_FILTER_PATHS_METADATA_FIELD,
-        SourceFilterPathMetadata,
-    )
     from openhcs.interop.cellprofiler.image_normalization import (
         normalize_cellprofiler_image_payload,
     )
 
     image = np.asarray([[7, 98, 128, 254, 255]], dtype=np.uint8)
-    png_payload = MaskedImagePayload(
-        data=image,
-        mask=np.ones(image.shape, dtype=bool),
-        metadata=ImagePayloadMetadata.for_array(image, source_path="source.png"),
-    )
-    png_domain = np.asarray(normalize_cellprofiler_image_payload(png_payload))
     numpy_domain = np.asarray(normalize_image_payload_intensity(image))
     metadata = ImagePayloadMetadata.for_array(
         image,
-        source_path=virtual_path,
-    ).replace_fields(
-        source_component_metadata={
-            SOURCE_FILTER_PATHS_METADATA_FIELD: SourceFilterPathMetadata.from_paths(
-                (filter_path,)
-            ).as_dict()
-        }
+        source_path="virtual/source.png",
     )
     payload = MaskedImagePayload(
         data=image,
@@ -744,7 +705,7 @@ def test_cellprofiler_uint8_normalization_uses_authoritative_filter_paths(
     )
 
     def fail_source_image_path_reconstruction(_metadata) -> tuple[str, ...]:
-        raise AssertionError("authoritative filter paths must bypass source identities")
+        raise AssertionError("normalization must not inspect source format")
 
     monkeypatch.setattr(
         ImagePayloadMetadata,
@@ -754,10 +715,7 @@ def test_cellprofiler_uint8_normalization_uses_authoritative_filter_paths(
 
     observed = np.asarray(normalize_cellprofiler_image_payload(payload))
 
-    np.testing.assert_array_equal(
-        observed,
-        png_domain if uses_png_domain else numpy_domain,
-    )
+    np.testing.assert_array_equal(observed, numpy_domain)
 
 
 def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
