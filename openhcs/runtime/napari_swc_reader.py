@@ -37,14 +37,20 @@ def read_swc_layers(path: str | Sequence[str]) -> list[LayerData]:
                 [node.node_id for node in graph.nodes], dtype=np.int64
             ),
             "sample_type": np.asarray(
-                [features["swc_type"] for features in node_features],
+                [
+                    features[SpatialGraph.SWC_TYPE_FEATURE]
+                    for features in node_features
+                ],
                 dtype=np.int64,
             ),
             "radius": np.asarray(
                 [node.radius for node in graph.nodes], dtype=float
             ),
             "parent_sample_id": np.asarray(
-                [features["swc_parent_id"] for features in node_features],
+                [
+                    features[SpatialGraph.SWC_PARENT_SAMPLE_ID_FEATURE]
+                    for features in node_features
+                ],
                 dtype=np.int64,
             ),
         }
@@ -77,7 +83,10 @@ def read_swc_layers(path: str | Sequence[str]) -> list[LayerData]:
                 [edge.target_node_id for edge in graph.edges], dtype=np.int64
             ),
             "sample_type": np.asarray(
-                [features["swc_type"] for features in edge_features],
+                [
+                    features[SpatialGraph.SWC_TYPE_FEATURE]
+                    for features in edge_features
+                ],
                 dtype=np.int64,
             ),
             "radius": np.asarray(

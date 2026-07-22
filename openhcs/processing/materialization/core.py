@@ -61,7 +61,7 @@ from openhcs.core.runtime_array_values import runtime_array_operand
 from openhcs.core.runtime_object_labels import (
     ObjectLabelValue,
 )
-from openhcs.core.runtime_spatial_graph import SpatialGraph
+from openhcs.core.runtime_spatial_graph import SpatialGraph, SpatialGraphNode
 from openhcs.core.source_image_provenance import (
     SourceComponentMetadata,
     VariableComponentAxisProjection,
@@ -2789,6 +2789,30 @@ def _swc_xyz(
     return x, y, z
 
 
+def _swc_sample_type(node: SpatialGraphNode, default: int) -> int:
+    """Return an imported sample type or the projection's declared default."""
+
+    features = node.feature_mapping()
+    if SpatialGraph.SWC_TYPE_FEATURE not in features:
+        return default
+    sample_type = features[SpatialGraph.SWC_TYPE_FEATURE]
+    if isinstance(sample_type, bool) or not isinstance(
+        sample_type,
+        (int, np.integer),
+    ):
+        raise TypeError(
+            f"SpatialGraphNode {node.node_id} "
+            f"{SpatialGraph.SWC_TYPE_FEATURE!r} must be an "
+            "integer."
+        )
+    if sample_type < 0:
+        raise ValueError(
+            f"SpatialGraphNode {node.node_id} "
+            f"{SpatialGraph.SWC_TYPE_FEATURE!r} cannot be negative."
+        )
+    return int(sample_type)
+
+
 @writer_for(
     SWCOptions,
     MaterializationFormat.SWC,
@@ -2846,7 +2870,10 @@ def _write_spatial_graph_swc(
             for coordinates in edge.coordinates[1:]:
                 edge_parent_id = append_sample(
                     coordinates,
-                    sample_type=options.process_type,
+                    sample_type=_swc_sample_type(
+                        edge.target,
+                        options.process_type,
+                    ),
                     radius=edge.target.radius,
                     parent_sample_id=edge_parent_id,
                 )
@@ -2858,7 +2885,7 @@ def _write_spatial_graph_swc(
     for root in graph.roots():
         root_sample_id = append_sample(
             root.coordinates,
-            sample_type=options.root_type,
+            sample_type=_swc_sample_type(root, options.root_type),
             radius=root.radius,
             parent_sample_id=-1,
         )

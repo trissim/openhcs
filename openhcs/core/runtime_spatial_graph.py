@@ -6,7 +6,7 @@ from collections import defaultdict, deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Self
+from typing import ClassVar, Self
 
 import numpy as np
 
@@ -191,6 +191,9 @@ class SpatialGraphEdge:
 class SpatialGraph(SourceImageProvenanceFields, NamedArtifactPayload):
     """Named spatial graph with direct node references and path geometry."""
 
+    SWC_TYPE_FEATURE: ClassVar[str] = "swc_type"
+    SWC_PARENT_SAMPLE_ID_FEATURE: ClassVar[str] = "swc_parent_id"
+
     name: str
     nodes: tuple[SpatialGraphNode, ...]
     edges: tuple[SpatialGraphEdge, ...]
@@ -317,8 +320,8 @@ class SpatialGraph(SourceImageProvenanceFields, NamedArtifactPayload):
                     coordinates=(z, y, x),
                     radius=radius,
                     features={
-                        "swc_type": sample_type,
-                        "swc_parent_id": parent_sample_id,
+                        cls.SWC_TYPE_FEATURE: sample_type,
+                        cls.SWC_PARENT_SAMPLE_ID_FEATURE: parent_sample_id,
                     },
                 ),
                 parent_sample_id,
@@ -343,8 +346,10 @@ class SpatialGraph(SourceImageProvenanceFields, NamedArtifactPayload):
                     target=node,
                     coordinates=(parent.coordinates, node.coordinates),
                     features={
-                        "swc_type": node.feature_mapping()["swc_type"],
-                        "swc_parent_id": parent_sample_id,
+                        cls.SWC_TYPE_FEATURE: node.feature_mapping()[
+                            cls.SWC_TYPE_FEATURE
+                        ],
+                        cls.SWC_PARENT_SAMPLE_ID_FEATURE: parent_sample_id,
                     },
                 )
             )

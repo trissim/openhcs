@@ -286,6 +286,36 @@ def test_swc_reader_restores_physical_forest_and_standard_features(tmp_path) -> 
 
 
 @pytest.mark.unit
+def test_swc_reader_writer_round_trip_preserves_structure_types(tmp_path) -> None:
+    source_path = tmp_path / "typed-neurites.swc"
+    source_path.write_text(
+        "\n".join(
+            (
+                "10 1 1 2 3 4 -1",
+                "30 3 2 4 6 2 10",
+                "70 4 3 6 9 1 30",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    restored = SpatialGraph.from_swc(source_path)
+
+    swc_output = materialization_outputs(
+        MaterializationSpec(SWCOptions()),
+        data=restored,
+        path="/tmp/typed-neurites.roi.zip",
+        filemanager=FileManager({"memory": MemoryStorageBackend()}),
+    )[0]
+
+    assert swc_output.content.splitlines()[2:] == [
+        "1 1 1 2 3 4 -1",
+        "2 3 2 4 6 2 1",
+        "3 4 3 6 9 1 2",
+    ]
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("rows", "message"),
     (
