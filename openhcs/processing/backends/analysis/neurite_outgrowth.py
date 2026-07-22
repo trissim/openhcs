@@ -306,6 +306,28 @@ class NeuriteOutgrowthCellResult:
     significant_growth: bool
 
 
+@dataclass(frozen=True)
+class NeuronalCellBodySummary:
+    """Image-level neuronal soma count independent of axon ownership."""
+
+    cell_body_channel_index: int
+    nuclear_channel_index: int
+    nuclei_detected: int
+    neuronal_cell_body_count: int
+    total_cell_body_area_um2: float
+    mean_cell_body_area_um2: float
+    mean_cell_body_intensity: float
+
+
+@dataclass(frozen=True)
+class NeuronalCellBodyResult:
+    """Per-soma measurements for an independently detected neuronal body."""
+
+    cell: int
+    cell_body_area_um2: float
+    mean_cell_body_intensity: float
+
+
 NEURITE_SUMMARY_OUTPUT = ArtifactSpec.output(
     "neurite_outgrowth_summary",
     MeasurementsArtifactType,
@@ -356,6 +378,28 @@ NUCLEI_OUTPUT = ArtifactSpec.output(
     ObjectLabelsArtifactType,
     materialization=MaterializationSpec(ROIOptions()),
 )
+NEURONAL_CELL_BODY_SUMMARY_OUTPUT = ArtifactSpec.output(
+    "neuronal_cell_body_summary",
+    MeasurementsArtifactType,
+    materialization=MaterializationSpec(CsvOptions()),
+    relations=(ArtifactMeasurementSubjectRelation(),),
+)
+NEURONAL_CELL_BODIES_OUTPUT = ArtifactSpec.output(
+    "neuronal_cell_bodies",
+    ObjectLabelsArtifactType,
+    materialization=MaterializationSpec(ROIOptions()),
+)
+NEURONAL_CELL_BODY_MEASUREMENTS_OUTPUT = ArtifactSpec.output(
+    "neuronal_cell_body_measurements",
+    MeasurementsArtifactType,
+    materialization=MaterializationSpec(CsvOptions()),
+    relations=(
+        ObjectMeasurementSubjectRelation(
+            source=NEURONAL_CELL_BODIES_OUTPUT.ref(),
+            id_field="cell",
+        ),
+    ),
+)
 NEURITE_MORPHOLOGY_OUTPUT = ArtifactSpec.output(
     "neurite_morphology",
     SpatialGraphArtifactType,
@@ -392,6 +436,125 @@ def _raw_processing_leaf(func):
     """Resolve a composed leaf's runtime body through its callable contract."""
 
     return CallableContract.from_callable(func).resolve_raw_runtime_callable()
+
+
+@numpy
+@artifact_outputs(
+    NEURONAL_CELL_BODY_SUMMARY_OUTPUT,
+    NEURONAL_CELL_BODY_MEASUREMENTS_OUTPUT,
+    NEURONAL_CELL_BODIES_OUTPUT,
+    NUCLEI_OUTPUT,
+)
+@artifact_inputs("pixel_size")
+def count_neuronal_cell_bodies_metaxpress(
+    image,
+    illumination: NeuriteIllumination = NeuriteIllumination.FLUORESCENCE,
+    cell_body: MetaXpressCellBodySettings = MetaXpressCellBodySettings(),
+    nuclear_stain: MetaXpressNuclearSettings = MetaXpressNuclearSettings(),
+    pixel_size: HiddenPixelSize = HiddenPixelSize(1.0),
+) -> tuple[
+    np.ndarray,
+    DataclassMeasurementColumnarRows,
+    DataclassMeasurementColumnarRows,
+    np.ndarray,
+    np.ndarray,
+]:
+    """Count nuclear-supported neuronal somas without assigning axons.
+
+    The soma channel defines neuronal cytoplasm candidates. The nuclear channel
+    confirms those candidates, but does not turn every detected nucleus into a
+    neuronal cell. This callable deliberately has no neurite, graph, or unified
+    neuron outputs, so its cell identities cannot imply ownership of axons in a
+    tissue field.
+    """
+
+    image_array = np.asarray(image)
+    if image_array.ndim != 3:
+        raise ValueError(
+            "Expected a 2D channel stack with shape (C, Y, X), got "
+            f"shape {image_array.shape}"
+        )
+
+    illumination = NeuriteIllumination(illumination)
+    cell_body.validate()
+    nuclear_stain.validate("nuclear_stain")
+    pixel_size_um = float(pixel_size)
+    if not np.isfinite(pixel_size_um) or pixel_size_um <= 0:
+        raise ValueError("pixel_size must be a finite value > 0")
+
+    body_channel_index = 0 if cell_body.channel_index is None else int(
+        cell_body.channel_index
+    )
+    nuclear_channel_index = int(nuclear_stain.channel_index)
+    for name, channel_index in (
+        ("cell_body.channel_index", body_channel_index),
+        ("nuclear_stain.channel_index", nuclear_channel_index),
+    ):
+        if not 0 <= channel_index < image_array.shape[0]:
+            raise ValueError(f"{name} is outside the input stack")
+    if body_channel_index == nuclear_channel_index:
+        raise ValueError(
+            "cell_body.channel_index and nuclear_stain.channel_index must differ"
+        )
+
+    nuclei_labels = segment_metaxpress_round_objects(
+        image_array[nuclear_channel_index],
+        nuclear_stain,
+        pixel_size_um,
+    )
+    cell_body_payload = _identify_nuclear_seeded_cell_bodies_cellprofiler(
+        image_array[body_channel_index],
+        cell_body,
+        pixel_size_um,
+        bright_objects=illumination == NeuriteIllumination.FLUORESCENCE,
+        nuclei_labels=nuclei_labels,
+    )
+    cell_body_labels = object_label_dense_array(
+        cell_body_payload,
+        dtype=np.int32,
+    )
+    body_image = image_array[body_channel_index]
+    cell_results = tuple(
+        NeuronalCellBodyResult(
+            cell=int(region.label),
+            cell_body_area_um2=float(region.area) * pixel_size_um**2,
+            mean_cell_body_intensity=float(region.mean_intensity),
+        )
+        for region in regionprops(cell_body_labels, intensity_image=body_image)
+    )
+    total_area = float(sum(result.cell_body_area_um2 for result in cell_results))
+    mean_intensity = (
+        float(np.mean([result.mean_cell_body_intensity for result in cell_results]))
+        if cell_results
+        else 0.0
+    )
+    summary = NeuronalCellBodySummary(
+        cell_body_channel_index=body_channel_index,
+        nuclear_channel_index=nuclear_channel_index,
+        nuclei_detected=int(nuclei_labels.max()),
+        neuronal_cell_body_count=len(cell_results),
+        total_cell_body_area_um2=total_area,
+        mean_cell_body_area_um2=(total_area / len(cell_results) if cell_results else 0.0),
+        mean_cell_body_intensity=mean_intensity,
+    )
+
+    cell_body_stack = np.zeros(image_array.shape, dtype=np.int32)
+    cell_body_stack[body_channel_index] = cell_body_labels
+    nuclei_stack = np.zeros(image_array.shape, dtype=np.int32)
+    nuclei_stack[nuclear_channel_index] = nuclei_labels
+    return (
+        image,
+        DataclassMeasurementColumnarRows(
+            (summary,),
+            row_type=NeuronalCellBodySummary,
+        ),
+        DataclassMeasurementColumnarRows(
+            cell_results,
+            row_type=NeuronalCellBodyResult,
+        ),
+        cell_body_stack,
+        nuclei_stack,
+    )
 
 
 @numpy
@@ -834,37 +997,122 @@ def _identify_cell_bodies_cellprofiler(
         object_width_px=maximum_width_px,
         bright_objects=bright_objects,
     )
-    nuclear_supported = _nuclear_supported_body_candidates(
+    contract_candidates = _cell_body_contract_candidates(
         detected_labels,
+        response,
+        minimum_area_px=minimum_area_px,
+        maximum_width_px=maximum_width_px,
+        intensity_threshold=settings.intensity_above_local_background,
+    )
+
+    candidate_labels = np.where(
+        contract_candidates[detected_labels],
+        detected_labels,
+        0,
+    )
+    nuclear_supported = _nuclear_supported_body_candidates(
+        candidate_labels,
         response,
         nuclei_labels,
         maximum_width_px=maximum_width_px,
         intensity_threshold=settings.intensity_above_local_background,
     )
-    minimum_equivalent_diameter_px = 2.0 * np.sqrt(minimum_area_px / np.pi)
-    keep = np.zeros(int(detected_labels.max()) + 1, dtype=bool)
-    for region in regionprops(detected_labels):
-        region_mask = detected_labels == region.label
-        region_response = response[region_mask]
-        maximum_inscribed_diameter_px = (
-            2.0 * float(np.max(ndi.distance_transform_edt(region_mask))) - 1.0
-        )
-        if (
-            region.area >= minimum_area_px
-            and maximum_inscribed_diameter_px >= minimum_equivalent_diameter_px
-            and region.axis_minor_length <= maximum_width_px
-            and region_response.size
-            and float(np.mean(region_response))
-            >= settings.intensity_above_local_background
-            and (nuclear_supported is None or nuclear_supported[region.label])
-        ):
-            keep[region.label] = True
+    keep = contract_candidates.copy()
+    if nuclear_supported is not None:
+        for label in np.flatnonzero(contract_candidates):
+            keep[label] = (
+                label < nuclear_supported.size and nuclear_supported[label]
+            )
     filtered_labels = _relabel(detected_labels, keep)
     return object_label_value_with_dense_labels(
         detected_payload,
         filtered_labels,
         domain_declaration=PresentObjectLabelIdsDomainDeclaration(),
     )
+
+
+def _identify_nuclear_seeded_cell_bodies_cellprofiler(
+    image: np.ndarray,
+    settings: MetaXpressCellBodySettings,
+    pixel_size_um: float,
+    *,
+    bright_objects: bool,
+    nuclei_labels: np.ndarray,
+):
+    """Propagate DAPI seeds through soma signal, then apply the body contract."""
+
+    maximum_width_px = settings.approximate_max_width / pixel_size_um
+    seed_payload_template = _identify_cell_bodies_cellprofiler(
+        image,
+        settings,
+        pixel_size_um,
+        bright_objects=bright_objects,
+    )
+    nuclear_seed_payload = object_label_value_with_dense_labels(
+        seed_payload_template,
+        nuclei_labels,
+        domain_declaration=PresentObjectLabelIdsDomainDeclaration(),
+    )
+    *_, propagated_payload = _raw_processing_leaf(identify_secondary_objects)(
+        _cellprofiler_foreground_image(image, bright_objects=bright_objects),
+        primary_labels=nuclear_seed_payload,
+        **CELLPROFILER_NEURITE_ENGINE_PROFILE.secondary_kwargs(
+            adaptive_window_size=_cellprofiler_adaptive_window(
+                maximum_width_px,
+                image.shape,
+            ),
+        ),
+    )
+    propagated_labels = object_label_dense_array(
+        propagated_payload,
+        dtype=np.int32,
+    )
+    response = local_background_response(
+        image,
+        object_width_px=maximum_width_px,
+        bright_objects=bright_objects,
+    )
+    keep = _cell_body_contract_candidates(
+        propagated_labels,
+        response,
+        minimum_area_px=settings.minimum_area / pixel_size_um**2,
+        maximum_width_px=maximum_width_px,
+        intensity_threshold=settings.intensity_above_local_background,
+    )
+    return object_label_value_with_dense_labels(
+        propagated_payload,
+        _relabel(propagated_labels, keep),
+        domain_declaration=PresentObjectLabelIdsDomainDeclaration(),
+    )
+
+
+def _cell_body_contract_candidates(
+    labels: np.ndarray,
+    response: np.ndarray,
+    *,
+    minimum_area_px: float,
+    maximum_width_px: float,
+    intensity_threshold: float,
+) -> np.ndarray:
+    """Return label-indexed MetaXpress soma-contract qualification."""
+
+    keep = np.zeros(int(labels.max()) + 1, dtype=bool)
+    for region in regionprops(labels):
+        region_mask = labels == region.label
+        region_response = response[region_mask]
+        maximum_inscribed_diameter_px = (
+            2.0 * float(np.max(ndi.distance_transform_edt(region_mask))) - 1.0
+        )
+        if (
+            region.area >= minimum_area_px
+            and maximum_inscribed_diameter_px
+            >= CELLPROFILER_NEURITE_ENGINE_PROFILE.compact_body_min_diameter_px
+            and region.axis_minor_length <= maximum_width_px
+            and region_response.size
+            and float(np.mean(region_response)) >= intensity_threshold
+        ):
+            keep[region.label] = True
+    return keep
 
 
 def _nuclear_supported_body_candidates(
@@ -875,7 +1123,7 @@ def _nuclear_supported_body_candidates(
     maximum_width_px: float,
     intensity_threshold: float,
 ) -> np.ndarray | None:
-    """Map valid nuclear seeds onto nearby, locally width-bounded CP bodies."""
+    """Map valid nuclear seeds onto contract-qualified CP body candidates."""
 
     if nuclei_labels is None:
         return None

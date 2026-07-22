@@ -35,8 +35,10 @@ from openhcs.processing.backends.analysis.neurite_outgrowth import (
     _TopologyResult,
     _analyze_topology,
     _build_neurite_morphology_graph,
+    _identify_cell_bodies_cellprofiler,
     _prune_soma_detached_skeleton,
     _repair_signal_supported_skeleton,
+    count_neuronal_cell_bodies_metaxpress,
     neurite_outgrowth_metaxpress,
 )
 from openhcs.processing.materialization import SpatialGraphROIOptions, SWCOptions
@@ -45,6 +47,12 @@ from openhcs.processing.materialization import SpatialGraphROIOptions, SWCOption
 def _implementation():
     return CallableContract.from_callable(
         neurite_outgrowth_metaxpress
+    ).resolve_raw_runtime_callable()
+
+
+def _cell_body_count_implementation():
+    return CallableContract.from_callable(
+        count_neuronal_cell_bodies_metaxpress
     ).resolve_raw_runtime_callable()
 
 
@@ -169,6 +177,156 @@ def test_signature_exposes_documented_metaxpress_controls_only():
         SWCOptions,
         SpatialGraphROIOptions,
     )
+
+
+def test_cell_body_minimum_area_does_not_impose_hidden_roundness(monkeypatch):
+    image = np.zeros((96, 96), dtype=np.uint16)
+    image[42:54, 30:60] = 2000
+    detected_labels = np.zeros(image.shape, dtype=np.int32)
+    detected_labels[42:54, 30:60] = 1
+
+    monkeypatch.setattr(
+        "openhcs.processing.backends.analysis.neurite_outgrowth.identify_primary_objects",
+        lambda *_args, **_kwargs: (image, image, detected_labels),
+    )
+
+    payload = _identify_cell_bodies_cellprofiler(
+        image,
+        MetaXpressCellBodySettings(
+            approximate_max_width=30.0,
+            minimum_area=300.0,
+            intensity_above_local_background=100.0,
+        ),
+        1.0,
+        bright_objects=True,
+    )
+
+    assert np.array_equal(
+        object_label_dense_array(payload, dtype=np.int32),
+        detected_labels,
+    )
+
+
+def test_nuclear_support_ignores_rejected_nearer_body_candidate(monkeypatch):
+    image = np.zeros((96, 96), dtype=np.uint16)
+    image[38:60, 28:50] = 2000
+    image[47:50, 54:57] = 2000
+    detected_labels = np.zeros(image.shape, dtype=np.int32)
+    detected_labels[38:60, 28:50] = 1
+    detected_labels[47:50, 54:57] = 2
+    nuclei_labels = np.zeros(image.shape, dtype=np.int32)
+    nuclei_labels[46:51, 53:58] = 1
+
+    monkeypatch.setattr(
+        "openhcs.processing.backends.analysis.neurite_outgrowth.identify_primary_objects",
+        lambda *_args, **_kwargs: (image, image, detected_labels),
+    )
+    monkeypatch.setattr(
+        "openhcs.processing.backends.analysis.neurite_outgrowth.local_background_response",
+        lambda *_args, **_kwargs: np.where(image > 0, 1000.0, 0.0),
+    )
+
+    payload = _identify_cell_bodies_cellprofiler(
+        image,
+        MetaXpressCellBodySettings(
+            approximate_max_width=30.0,
+            minimum_area=100.0,
+            intensity_above_local_background=100.0,
+        ),
+        1.0,
+        bright_objects=True,
+        nuclei_labels=nuclei_labels,
+    )
+
+    expected = np.zeros(image.shape, dtype=np.int32)
+    expected[38:60, 28:50] = 1
+    assert np.array_equal(
+        object_label_dense_array(payload, dtype=np.int32),
+        expected,
+    )
+
+
+def test_independent_neuronal_cell_body_counter_has_no_neurite_contract():
+    image = np.zeros((2, 128, 128), dtype=np.uint16)
+    rows, columns = disk((64, 64), 12, shape=image.shape[1:])
+    image[0, rows, columns] = 1200
+    rows, columns = disk((64, 64), 6, shape=image.shape[1:])
+    image[1, rows, columns] = 1400
+
+    result = _cell_body_count_implementation()(
+        image,
+        cell_body=MetaXpressCellBodySettings(
+            approximate_max_width=30.0,
+            minimum_area=100.0,
+            intensity_above_local_background=100.0,
+            channel_index=0,
+        ),
+        nuclear_stain=MetaXpressNuclearSettings(
+            channel_index=1,
+            approx_min_width=6.0,
+            approx_max_width=20.0,
+            intensity_above_local_background=200.0,
+        ),
+        pixel_size=1.0,
+    )
+
+    summary = _rows(result[1])[0]
+    cells = _rows(result[2])
+    assert summary["neuronal_cell_body_count"] == 1
+    assert summary["nuclei_detected"] == 1
+    assert len(cells) == 1
+    assert cells[0]["cell"] == 1
+    assert result[3][0].max() == 1
+    assert result[4][1].max() == 1
+    assert CallableContract.from_callable(
+        count_neuronal_cell_bodies_metaxpress
+    ).artifact_outputs.names() == (
+        "neuronal_cell_body_summary",
+        "neuronal_cell_body_measurements",
+        "neuronal_cell_bodies",
+        "nuclei",
+    )
+
+
+def test_independent_counter_propagates_nuclear_seed_through_soma_signal(monkeypatch):
+    image = np.zeros((2, 128, 128), dtype=np.uint16)
+    image[0, 50:62, 40:46] = 1200
+    image[0, 50:62, 47:53] = 1200
+    rows, columns = disk((56, 46), 5, shape=image.shape[1:])
+    image[1, rows, columns] = 1400
+    calls = []
+
+    def propagated_secondary(body_image, *, primary_labels, **kwargs):
+        calls.append((body_image, primary_labels, kwargs))
+        propagated = np.zeros(body_image.shape, dtype=np.int32)
+        propagated[50:62, 40:53] = 1
+        return body_image, primary_labels.with_replacement_labels(propagated)
+
+    monkeypatch.setattr(
+        "openhcs.processing.backends.analysis.neurite_outgrowth.identify_secondary_objects",
+        propagated_secondary,
+    )
+    result = _cell_body_count_implementation()(
+        image,
+        cell_body=MetaXpressCellBodySettings(
+            approximate_max_width=30.0,
+            minimum_area=100.0,
+            intensity_above_local_background=100.0,
+            channel_index=0,
+        ),
+        nuclear_stain=MetaXpressNuclearSettings(
+            channel_index=1,
+            approx_min_width=6.0,
+            approx_max_width=20.0,
+            intensity_above_local_background=200.0,
+        ),
+        pixel_size=1.0,
+    )
+
+    assert len(calls) == 1
+    assert int(object_label_dense_array(calls[0][1]).max()) == 1
+    assert _rows(result[1])[0]["neuronal_cell_body_count"] == 1
+    assert result[3][0, 56, 46] == 1
 
 
 def test_cp_metrics_and_significant_threshold_is_scoring_only():
