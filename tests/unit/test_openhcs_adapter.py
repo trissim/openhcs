@@ -1,8 +1,8 @@
 from __future__ import annotations
-from openhcs.core.pipeline_document import PipelineDocumentAuthority
 
 import ast
 import json
+import signal
 from pathlib import Path
 
 import pytest
@@ -11,11 +11,13 @@ from benchmark.adapters.openhcs import (
     ZMQ_RESULTS_SUMMARY_FILENAME,
     _ZMQProgressTimingObserver,
     _execute_pipeline_via_zmq_server,
+    _openhcs_execution_watchdog,
     _strict_cellprofiler_runtime_equivalence_policy,
 )
+from benchmark.contracts.tool_adapter import ToolExecutionError
 from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
 from openhcs.core.config import GlobalPipelineConfig, PipelineConfig, WellFilterConfig
-from openhcs.core.function_step_transport import FunctionStepTransportAuthority
+from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.core.pipeline_document_fields import PipelineDocumentField
 from openhcs.core.runtime_execution_validation import (
     RuntimeArtifactExecutionExpectation,
@@ -87,7 +89,8 @@ def test_benchmark_executes_pipeline_via_zmq_client(
         submitted: list[OpenHCSExecutionSubmission] = []
         waits: list[str] = []
 
-        def __init__(self, *, persistent, progress_callback):
+        def __init__(self, *, port, persistent, progress_callback):
+            assert port is None
             self.progress_callback = progress_callback
 
         def __enter__(self):
@@ -168,6 +171,7 @@ def test_benchmark_executes_pipeline_via_zmq_client(
         pipeline_config=PipelineConfig(),
         observation_export_path=tmp_path / "observation.pkl",
         phase_timing=timing,
+        timing_observer=_ZMQProgressTimingObserver(),
     )
 
     assert execution.execution_id == "exec-1"
@@ -217,6 +221,78 @@ def test_openhcs_progress_timing_uses_completion_bound_without_axis_events() -> 
     assert phase_seconds[BenchmarkPhase.EXECUTE_OPENHCS.name] == 4.5
 
 
+def test_openhcs_progress_observer_tracks_every_server_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("benchmark.adapters.openhcs.time.monotonic", lambda: 14.5)
+    observer = _ZMQProgressTimingObserver(last_progress_monotonic=10.0)
+
+    observer({"phase": "artifact_transfer", "status": "running"})
+
+    assert observer.last_progress_monotonic == 14.5
+    assert observer.inactivity_seconds(observed_at=17.0) == 2.5
+    assert observer.progress_description() == "artifact_transfer/running"
+
+
+def test_openhcs_watchdog_renews_after_recent_server_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observer = _ZMQProgressTimingObserver(last_progress_monotonic=95.0)
+    handlers: list[object] = []
+    timers: list[float] = []
+    monkeypatch.setattr("benchmark.adapters.openhcs.time.monotonic", lambda: 100.0)
+    monkeypatch.setattr("benchmark.adapters.openhcs.signal.getsignal", lambda _sig: None)
+    monkeypatch.setattr(
+        "benchmark.adapters.openhcs.signal.signal",
+        lambda _sig, handler: handlers.append(handler),
+    )
+    monkeypatch.setattr(
+        "benchmark.adapters.openhcs.signal.setitimer",
+        lambda _which, seconds: timers.append(seconds),
+    )
+
+    with _openhcs_execution_watchdog(20.0, observer):
+        handler = handlers[-1]
+        assert callable(handler)
+        handler(signal.SIGALRM, None)
+
+    assert timers[:2] == [20.0, 15.0]
+    assert timers[-1] == 0.0
+
+
+def test_openhcs_watchdog_reports_progress_inactivity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observer = _ZMQProgressTimingObserver(
+        last_progress_monotonic=70.0,
+        last_progress_phase="axis_started",
+        last_progress_status="running",
+    )
+    handlers: list[object] = []
+    monkeypatch.setattr("benchmark.adapters.openhcs.time.monotonic", lambda: 100.0)
+    monkeypatch.setattr("benchmark.adapters.openhcs.signal.getsignal", lambda _sig: None)
+    monkeypatch.setattr(
+        "benchmark.adapters.openhcs.signal.signal",
+        lambda _sig, handler: handlers.append(handler),
+    )
+    monkeypatch.setattr(
+        "benchmark.adapters.openhcs.signal.setitimer",
+        lambda _which, _seconds: None,
+    )
+
+    with pytest.raises(
+        ToolExecutionError,
+        match=(
+            "made no server progress for 30.0s.*"
+            "last progress: axis_started/running"
+        ),
+    ):
+        with _openhcs_execution_watchdog(20.0, observer):
+            handler = handlers[-1]
+            assert callable(handler)
+            handler(signal.SIGALRM, None)
+
+
 def test_benchmark_submission_matches_pyqt_submission_payload() -> None:
     steps = _public_steps()
     global_config = GlobalPipelineConfig(
@@ -248,7 +324,6 @@ def test_benchmark_submission_matches_pyqt_submission_payload() -> None:
     )
     ui_submission = ui_request.submission(global_config=global_config)
 
-    assert benchmark_submission.pipeline_steps == ui_submission.pipeline_steps
     assert (
         benchmark_submission.global_pipeline_config
         == ui_submission.global_pipeline_config

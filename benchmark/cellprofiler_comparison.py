@@ -418,10 +418,15 @@ class ComparisonSuiteRunContext:
     continue_on_error: bool
     metric_policy: ComparisonMetricPolicy
     openhcs_global_config: GlobalPipelineConfig
+    openhcs_execution_port: int | None = None
 
     def validate(self) -> None:
         if self.speedup_target <= 0:
             raise ValueError("speedup_target must be positive.")
+        if self.openhcs_execution_port is not None and not (
+            1 <= self.openhcs_execution_port <= 65535
+        ):
+            raise ValueError("openhcs_execution_port must be between 1 and 65535.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -767,6 +772,7 @@ def run_comparison_suite(
     metric_policy: ComparisonMetricPolicy = ComparisonMetricPolicy(),
     coverage_manifest_path: Path | None = None,
     openhcs_global_config: GlobalPipelineConfig | None = None,
+    openhcs_execution_port: int | None = None,
 ) -> tuple[CellProfilerComparisonObservation, ...]:
     """Run all cases and write raw benchmark observations."""
     if repeats < 1:
@@ -780,6 +786,7 @@ def run_comparison_suite(
         continue_on_error=continue_on_error,
         metric_policy=metric_policy,
         openhcs_global_config=openhcs_global_config or GlobalPipelineConfig(),
+        openhcs_execution_port=openhcs_execution_port,
     )
     context.validate()
     output_root.mkdir(parents=True, exist_ok=True)
@@ -1154,6 +1161,7 @@ def _run_comparison_case(
         ),
         openhcs_adapter=OpenHCSAdapter(
             global_config=effective_global_config,
+            execution_port=context.openhcs_execution_port,
         ),
     )
     observation = comparison_observation_from_result(

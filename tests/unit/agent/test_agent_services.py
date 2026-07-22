@@ -875,6 +875,19 @@ class _CoordinateGapViewerWindowGateway(_FakeViewerWindowGateway):
         return state
 
 
+class _UnroutedAxisPositionViewerWindowGateway(_FakeViewerWindowGateway):
+    def window_state(self, request):
+        state = super().window_state(request)
+        layer = dict(state["layers"][0])
+        layer["axis_component_values"] = {
+            "well": ("A14", "B13"),
+            "site": (1,),
+            "channel": (0, 1, 2),
+        }
+        state["layers"] = (layer,)
+        return state
+
+
 class _CollapsedComponentViewerWindowGateway(_FakeViewerWindowGateway):
     def window_state(self, request):
         state = super().window_state(request)
@@ -1863,6 +1876,20 @@ def test_viewer_window_service_validation_reports_coordinate_gaps():
     assert [warning.code for warning in result.warnings] == [
         "viewer_layer_coordinate_gaps",
         "viewer_payload_coordinates_missing",
+    ]
+
+
+def test_viewer_window_service_accepts_unrouted_axis_positions():
+    result = ViewerWindowService(
+        gateway=_UnroutedAxisPositionViewerWindowGateway()
+    ).validation_summary(ViewerWindowValidationRequest(connection=_viewer_connection()))
+
+    assert result.valid is True
+    assert result.layer_summaries[0].valid is True
+    assert result.layer_summaries[0].coordinate_gap_count == 4
+    assert result.layer_summaries[0].missing_payload_coordinate_count == 0
+    assert [warning.code for warning in result.warnings] == [
+        "viewer_layer_coordinate_gaps",
     ]
 
 

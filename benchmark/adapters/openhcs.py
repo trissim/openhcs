@@ -13,7 +13,7 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -100,10 +100,16 @@ class _ZMQProgressTimingObserver:
     compile_completed_at: float | None = None
     execution_started_at: float | None = None
     execution_completed_at: float | None = None
+    last_progress_monotonic: float = field(default_factory=time.monotonic)
+    last_progress_phase: str = ""
+    last_progress_status: str = ""
 
     def __call__(self, event: Mapping[str, Any]) -> None:
         phase = str(event.get("phase", ""))
         status = str(event.get("status", ""))
+        self.last_progress_monotonic = time.monotonic()
+        self.last_progress_phase = phase
+        self.last_progress_status = status
         timestamp = self._timestamp(event)
         if phase == "compile" and status == "started":
             self.compile_started_at = self.compile_started_at or timestamp
@@ -178,6 +184,19 @@ class _ZMQProgressTimingObserver:
             return None
         return max(0.0, wait_seconds - (compile_seconds or 0.0))
 
+    def inactivity_seconds(self, *, observed_at: float | None = None) -> float:
+        """Return elapsed monotonic time since the latest server progress event."""
+        current = time.monotonic() if observed_at is None else observed_at
+        return max(0.0, current - self.last_progress_monotonic)
+
+    def progress_description(self) -> str:
+        """Describe the most recently observed server progress event."""
+        if not self.last_progress_phase:
+            return "none observed"
+        if not self.last_progress_status:
+            return self.last_progress_phase
+        return f"{self.last_progress_phase}/{self.last_progress_status}"
+
 
 def _phase_seconds_total(
     phase_timing: PhaseTimingTrace,
@@ -221,6 +240,8 @@ def _execute_pipeline_via_zmq_server(
     pipeline_config: Any,
     observation_export_path: Path,
     phase_timing: PhaseTimingTrace,
+    timing_observer: _ZMQProgressTimingObserver,
+    execution_port: int | None = None,
 ) -> tuple[_ZMQOpenHCSExecution, str]:
     """Submit pipeline through the ZMQ compiler/executor and load observation."""
 
@@ -240,8 +261,11 @@ def _execute_pipeline_via_zmq_server(
         },
     )
     pipeline_source = submission.pipeline_code()
-    timing_observer = _ZMQProgressTimingObserver()
-    client = ZMQExecutionClient(persistent=False, progress_callback=timing_observer)
+    client = ZMQExecutionClient(
+        port=execution_port,
+        persistent=False,
+        progress_callback=timing_observer,
+    )
     try:
         with client:
             with phase_timing.phase(BenchmarkPhase.SUBMIT_OPENHCS):
@@ -412,11 +436,13 @@ class OpenHCSAdapter(ToolAdapter):
         self,
         *,
         global_config: GlobalPipelineConfig | None = None,
+        execution_port: int | None = None,
     ) -> None:
         import openhcs
 
         self.version = openhcs.__version__
         self.global_config = global_config or GlobalPipelineConfig()
+        self.execution_port = execution_port
 
     def validate_installation(self) -> None:
         """Check OpenHCS is importable."""
@@ -542,7 +568,11 @@ class OpenHCSAdapter(ToolAdapter):
         with ExitStack() as stack:
             for metric in request.metrics:
                 stack.enter_context(metric)
-            with _openhcs_execution_watchdog(request.openhcs_timeout_seconds):
+            timing_observer = _ZMQProgressTimingObserver()
+            with _openhcs_execution_watchdog(
+                request.openhcs_timeout_seconds,
+                timing_observer,
+            ):
                 server_execution, pipeline_source = _execute_pipeline_via_zmq_server(
                     plate_id=request.dataset_path,
                     execution_plate_id=execution_plate_path,
@@ -552,6 +582,8 @@ class OpenHCSAdapter(ToolAdapter):
                     pipeline_config=pipeline_config,
                     observation_export_path=observation_export_path,
                     phase_timing=phase_timing,
+                    timing_observer=timing_observer,
+                    execution_port=self.execution_port,
                 )
         submitted_pipeline_source_sha = hashlib.sha256(
             pipeline_source.encode("utf-8")
@@ -728,20 +760,31 @@ class OpenHCSAdapter(ToolAdapter):
 
 
 @contextmanager
-def _openhcs_execution_watchdog(timeout_seconds: float):
-    """Interrupt benchmark OpenHCS execution that exceeds the run budget."""
+def _openhcs_execution_watchdog(
+    timeout_seconds: float,
+    timing_observer: _ZMQProgressTimingObserver,
+):
+    """Interrupt execution only after server progress has remained silent."""
     if threading.current_thread() is not threading.main_thread():
         yield
         return
 
     previous_handler = signal.getsignal(signal.SIGALRM)
 
-    def _raise_timeout(_signum: int, _frame: object) -> None:
+    def _renew_or_raise_timeout(_signum: int, _frame: object) -> None:
+        inactivity_seconds = timing_observer.inactivity_seconds()
+        remaining_seconds = timeout_seconds - inactivity_seconds
+        if remaining_seconds > 0.0:
+            signal.setitimer(signal.ITIMER_REAL, remaining_seconds)
+            return
         raise TimeoutError(
-            f"OpenHCS execution exceeded {timeout_seconds:.1f}s watchdog."
+            "OpenHCS execution made no server progress for "
+            f"{inactivity_seconds:.1f}s (watchdog threshold "
+            f"{timeout_seconds:.1f}s; last progress: "
+            f"{timing_observer.progress_description()})."
         )
 
-    signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.signal(signal.SIGALRM, _renew_or_raise_timeout)
     signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
     try:
         yield

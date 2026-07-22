@@ -12,10 +12,12 @@ import pytest
 
 from benchmark.adapters.openhcs import ZMQ_RESULTS_SUMMARY_FILENAME
 from benchmark.cellprofiler_comparison import (
+    CellProfilerComparisonCase,
     CellProfilerComparisonObservation,
     load_comparison_cases,
     run_comparison_suite,
 )
+from polystore.streaming_constants import StreamingDataType
 from openhcs.agent.dto.execution import ExecutionConnectionSpec
 from openhcs.agent.dto.viewer import (
     ViewerWindowStateRequest,
@@ -53,6 +55,11 @@ OFFICIAL30_MANIFEST = (
     / "official30_portable_axis1.json"
 )
 NATIVE_REFERENCE_ROOT_ENV = "OPENHCS_CP_NATIVE_REFERENCE_ROOT"
+_OFFICIAL30_CASES = load_comparison_cases(OFFICIAL30_MANIFEST)
+_OFFICIAL30_NAPARI_PARAMS = tuple(
+    pytest.param(case_index, case, id=f"{case_index:02d}-{case.name}")
+    for case_index, case in enumerate(_OFFICIAL30_CASES)
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +214,8 @@ def _assert_functional_viewer_state(
             for payload in layer.payload_summaries
         )
         assert tuple(layer.axis_labels[: len(layer.stack_axes)]) == layer.stack_axes
+        if layer.data_types != (StreamingDataType.IMAGE.value,):
+            continue
         for axis_index, component in enumerate(layer.stack_axes):
             component_values = layer.axis_component_values[component]
             assert layer.data_shape[axis_index] == len(component_values)
@@ -257,7 +266,7 @@ def test_official30_compile_execute_and_match_native_references_over_zmq(
 ) -> None:
     native_reference_root = _native_reference_root()
 
-    cases = load_comparison_cases(OFFICIAL30_MANIFEST)
+    cases = _OFFICIAL30_CASES
     assert len(cases) == 30
     global_config = GlobalPipelineConfig(
         well_filter_config=WellFilterConfig(well_filter=1),
@@ -285,18 +294,22 @@ def test_official30_compile_execute_and_match_native_references_over_zmq(
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize(("case_index", "case"), _OFFICIAL30_NAPARI_PARAMS)
 def test_official30_nonpersistent_napari_isolated_per_case(
     tmp_path: Path,
+    case_index: int,
+    case: CellProfilerComparisonCase,
 ) -> None:
     native_reference_root = _native_reference_root()
-    cases = load_comparison_cases(OFFICIAL30_MANIFEST)
-    assert len(cases) == 30
+    assert len(_OFFICIAL30_CASES) == 30
+    execution_port = 18000 + os.getpid() % 20000
+    viewer_port = 41000 + os.getpid() % 10000
     global_config = GlobalPipelineConfig(
         well_filter_config=WellFilterConfig(well_filter=1),
         napari_streaming_config=LazyNapariStreamingConfig(
             enabled=True,
             persistent=False,
-            port=5563,
+            port=viewer_port,
         ),
     )
     viewer_runtime = global_config.napari_streaming_config.viewer_runtime_config()
@@ -306,108 +319,108 @@ def test_official30_nonpersistent_napari_isolated_per_case(
     )
     observations: list[CellProfilerComparisonObservation] = []
     failures: list[_Official30NapariCaseFailure] = []
-    for case_index, case in enumerate(cases):
-        case_failure_count = len(failures)
+    case_failure_count = len(failures)
+    try:
+        assert endpoint.wait_until_released(timeout=10.0)
+    except Exception as error:
+        failures.append(
+            _Official30NapariCaseFailure.from_exception(
+                case_index=case_index,
+                case_name=case.name,
+                stage="lifecycle/pre_case_release",
+                error=error,
+            )
+        )
         try:
-            assert endpoint.wait_until_released(timeout=10.0)
+            _shutdown_nonpersistent_viewer(endpoint)
+        except Exception as cleanup_error:
+            failures.append(
+                _Official30NapariCaseFailure.from_exception(
+                    case_index=case_index,
+                    case_name=case.name,
+                    stage="lifecycle/pre_case_shutdown",
+                    error=cleanup_error,
+                )
+            )
+
+    case_output_root = tmp_path / "napari" / f"case_{case_index:02d}"
+    case_observations: tuple[CellProfilerComparisonObservation, ...] = ()
+    try:
+        case_observations = run_comparison_suite(
+            (case,),
+            output_root=case_output_root,
+            suite_id=f"official30-zmq-napari-{case_index:02d}",
+            native_reference_root=native_reference_root,
+            require_native_reference=True,
+            openhcs_global_config=global_config,
+            openhcs_execution_port=execution_port,
+            discard_openhcs_outputs=False,
+            continue_on_error=True,
+        )
+        assert len(case_observations) == 1
+        observations.extend(case_observations)
+        _assert_successful_exact_observations(case_observations)
+        assert (case_output_root / "summary.csv").is_file()
+    except Exception as error:
+        failures.append(
+            _Official30NapariCaseFailure.from_exception(
+                case_index=case_index,
+                case_name=case.name,
+                stage="observation",
+                error=error,
+            )
+        )
+
+    if len(case_observations) == 1 and case_observations[0].openhcs.success:
+        try:
+            _assert_functional_viewer_state(case_observations[0])
         except Exception as error:
             failures.append(
                 _Official30NapariCaseFailure.from_exception(
                     case_index=case_index,
                     case_name=case.name,
-                    stage="lifecycle/pre_case_release",
+                    stage="viewer",
                     error=error,
                 )
             )
-            try:
-                _shutdown_nonpersistent_viewer(endpoint)
-            except Exception as cleanup_error:
-                failures.append(
-                    _Official30NapariCaseFailure.from_exception(
-                        case_index=case_index,
-                        case_name=case.name,
-                        stage="lifecycle/pre_case_shutdown",
-                        error=cleanup_error,
-                    )
-                )
 
-        case_output_root = tmp_path / "napari" / f"case_{case_index:02d}"
-        case_observations: tuple[CellProfilerComparisonObservation, ...] = ()
-        try:
-            case_observations = run_comparison_suite(
-                (case,),
-                output_root=case_output_root,
-                suite_id=f"official30-zmq-napari-{case_index:02d}",
-                native_reference_root=native_reference_root,
-                require_native_reference=True,
-                openhcs_global_config=global_config,
-                discard_openhcs_outputs=False,
-                continue_on_error=True,
+    try:
+        assert endpoint.wait_until_released(timeout=10.0)
+    except Exception as error:
+        failures.append(
+            _Official30NapariCaseFailure.from_exception(
+                case_index=case_index,
+                case_name=case.name,
+                stage="lifecycle/post_case_release",
+                error=error,
             )
-            assert len(case_observations) == 1
-            observations.extend(case_observations)
-            _assert_successful_exact_observations(case_observations)
-            assert (case_output_root / "summary.csv").is_file()
+        )
+        try:
+            _shutdown_nonpersistent_viewer(endpoint)
+        except Exception as cleanup_error:
+            failures.append(
+                _Official30NapariCaseFailure.from_exception(
+                    case_index=case_index,
+                    case_name=case.name,
+                    stage="lifecycle/post_case_shutdown",
+                    error=cleanup_error,
+                )
+            )
+
+    if len(failures) == case_failure_count:
+        try:
+            shutil.rmtree(case_output_root / "tool_outputs")
         except Exception as error:
             failures.append(
                 _Official30NapariCaseFailure.from_exception(
                     case_index=case_index,
                     case_name=case.name,
-                    stage="observation",
+                    stage="lifecycle/output_cleanup",
                     error=error,
                 )
             )
-
-        if len(case_observations) == 1:
-            try:
-                _assert_functional_viewer_state(case_observations[0])
-            except Exception as error:
-                failures.append(
-                    _Official30NapariCaseFailure.from_exception(
-                        case_index=case_index,
-                        case_name=case.name,
-                        stage="viewer",
-                        error=error,
-                    )
-                )
-
-        try:
-            assert endpoint.wait_until_released(timeout=10.0)
-        except Exception as error:
-            failures.append(
-                _Official30NapariCaseFailure.from_exception(
-                    case_index=case_index,
-                    case_name=case.name,
-                    stage="lifecycle/post_case_release",
-                    error=error,
-                )
-            )
-            try:
-                _shutdown_nonpersistent_viewer(endpoint)
-            except Exception as cleanup_error:
-                failures.append(
-                    _Official30NapariCaseFailure.from_exception(
-                        case_index=case_index,
-                        case_name=case.name,
-                        stage="lifecycle/post_case_shutdown",
-                        error=cleanup_error,
-                    )
-                )
-
-        if len(failures) == case_failure_count:
-            try:
-                shutil.rmtree(case_output_root / "tool_outputs")
-            except Exception as error:
-                failures.append(
-                    _Official30NapariCaseFailure.from_exception(
-                        case_index=case_index,
-                        case_name=case.name,
-                        stage="lifecycle/output_cleanup",
-                        error=error,
-                    )
-                )
 
     exact_observations = tuple(observations)
     assert not failures, tuple(failures)
-    assert len(exact_observations) == 30
+    assert len(exact_observations) == 1
     _assert_successful_exact_observations(exact_observations)

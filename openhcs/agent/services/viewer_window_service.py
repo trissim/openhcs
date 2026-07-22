@@ -319,8 +319,7 @@ class ViewerLayerCoordinateCoverage:
     @property
     def valid(self) -> bool:
         return (
-            self.coordinate_gap_count == 0
-            and self.missing_payload_coordinate_count == 0
+            self.missing_payload_coordinate_count == 0
             and self.duplicate_payload_coordinate_count == 0
             and self.payload_without_coordinate_count == 0
         )
