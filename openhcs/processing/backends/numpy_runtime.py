@@ -12,11 +12,15 @@ _NUMPY_UMATH_GLOBAL = ctypes.CDLL(
 )
 
 
-def numpy_avx512_svml_symbol_available(symbol: str) -> bool:
-    """Return whether one NumPy SVML symbol is executable on this CPU."""
+def numpy_avx512_skx_svml_symbol_available(symbol: str) -> bool:
+    """Return whether one NumPy AVX-512-SKX SVML symbol is executable."""
 
     cpu_features = _multiarray_umath.__cpu_features__
-    return "AVX512F" in cpu_features and bool(cpu_features["AVX512F"]) and hasattr(
-        _NUMPY_UMATH_GLOBAL,
-        symbol,
+    return (
+        "AVX512_SKX" in cpu_features
+        and bool(cpu_features["AVX512_SKX"])
+        and hasattr(
+            _NUMPY_UMATH_GLOBAL,
+            symbol,
+        )
     )

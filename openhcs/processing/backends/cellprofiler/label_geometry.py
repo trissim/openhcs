@@ -10,10 +10,12 @@ from numba.extending import intrinsic
 import scipy.ndimage
 
 from openhcs.processing.backends.numpy_runtime import (
-    numpy_avx512_svml_symbol_available,
+    numpy_avx512_skx_svml_symbol_available,
 )
 
-_NUMPY_124_SVML_ACOS_AVAILABLE = numpy_avx512_svml_symbol_available("__svml_acos8")
+_NUMPY_124_SVML_ACOS_AVAILABLE = numpy_avx512_skx_svml_symbol_available(
+    "__svml_acos8"
+)
 
 
 @intrinsic

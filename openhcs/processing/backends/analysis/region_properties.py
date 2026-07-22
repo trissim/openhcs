@@ -16,10 +16,12 @@ import skimage.measure
 
 from openhcs.constants.constants import MemoryType
 from openhcs.processing.backends.numpy_runtime import (
-    numpy_avx512_svml_symbol_available,
+    numpy_avx512_skx_svml_symbol_available,
 )
 
-_NUMPY_124_SVML_POW_AVAILABLE = numpy_avx512_svml_symbol_available("__svml_pow8")
+_NUMPY_124_SVML_POW_AVAILABLE = numpy_avx512_skx_svml_symbol_available(
+    "__svml_pow8"
+)
 
 
 @intrinsic
