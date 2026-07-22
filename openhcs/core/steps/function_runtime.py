@@ -39,6 +39,7 @@ from openhcs.core.artifacts import (
     ImageArtifactType,
     MeasurementsArtifactType,
     ObjectLabelsArtifactType,
+    SpatialGraphArtifactType,
     ArtifactSpecRef,
 )
 from openhcs.core.callable_contract import (
@@ -144,6 +145,7 @@ from openhcs.core.runtime_image_values import (
 from openhcs.core.runtime_image_loading import ImagePayloadSourceMetadataContext
 from openhcs.core.runtime_array_values import RuntimeArrayData
 from openhcs.core.runtime_measurements import MeasurementSubject, MeasurementTable
+from openhcs.core.runtime_spatial_graph import SpatialGraph
 from openhcs.core.runtime_object_labels import (
     ObjectLabelSet,
     ObjectLabelValue,
@@ -200,6 +202,7 @@ FunctionOutputContextualizedValue = (
     | ObjectLabelValue
     | ColumnarRows
     | MeasurementTable
+    | SpatialGraph
     | RuntimeSliceAlignedValueSet
 )
 ObjectLabelContextualizableOutput = (
@@ -643,6 +646,37 @@ class MeasurementsFunctionOutputContextStrategy(FunctionOutputContextStrategy):
             subject=subject,
             source_provenance=image_payload_metadata(source_payload).source_provenance,
         )
+
+
+class SpatialGraphFunctionOutputContextStrategy(FunctionOutputContextStrategy):
+    """Preserve invocation source identity on spatial graph outputs."""
+
+    artifact_type = SpatialGraphArtifactType
+
+    def contextualize(
+        self,
+        source_payload: RuntimePayload,
+        output_value: RuntimePayload,
+        output_plan: ArtifactOutputPlan | None,
+        plane_projection: RuntimePlaneAxisValueProjection | None,
+    ) -> FunctionOutputContextualizedValue:
+        del plane_projection
+        if not isinstance(output_value, SpatialGraph):
+            raise TypeError(
+                "Spatial graph output requires SpatialGraph, got "
+                f"{type(output_value).__name__}."
+            )
+        if output_plan is not None:
+            output_value.validate_artifact_name(output_plan.name)
+        source_provenance = output_value.contextualized_source_provenance(
+            image_payload_metadata(source_payload).source_provenance
+        )
+        contextualized_provenance = output_value.source_provenance.with_missing_from(
+            source_provenance
+        )
+        if contextualized_provenance == output_value.source_provenance:
+            return output_value
+        return replace(output_value, source_provenance=contextualized_provenance)
 
 
 @singledispatch

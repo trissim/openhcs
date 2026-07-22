@@ -56,6 +56,7 @@ from openhcs.core.runtime_object_labels import (
 from openhcs.core.runtime_spatial_grid import (
     SpatialGrid,
 )
+from openhcs.core.runtime_spatial_graph import SpatialGraph, SpatialGraphNode
 from openhcs.core.source_image_provenance import SourceImageProvenancePlanes
 import openhcs.processing.backends.cellprofiler  # noqa: F401
 
@@ -118,6 +119,34 @@ def test_runtime_slice_projection_rejects_undeclared_value_type() -> None:
 
     with pytest.raises(RuntimeSliceProjectionDeclarationError, match="no nominal"):
         RuntimeSliceProjectionStrategy.strategy_for_value(UndeclaredValue())
+
+
+def test_spatial_graph_declares_scalar_pass_through_projection() -> None:
+    graph = SpatialGraph(
+        name="morphology",
+        nodes=(SpatialGraphNode(1, (2.0, 3.0)),),
+        edges=(),
+    )
+
+    strategy = RuntimeSliceProjectionStrategy.strategy_for_value(graph)
+
+    assert RuntimeSliceProjection.slice_count_from_values((graph,)) is None
+    assert RuntimeSliceProjection.value_for_slice(
+        graph,
+        RuntimePlaneAxisValueProjection.from_selected_plane(
+            axis=RuntimePlaneAxis.RUNTIME_SLICE,
+            plane_index=1,
+            axis_size=2,
+        ),
+    ) is graph
+    assert strategy.identity_projected_value(
+        graph,
+        RuntimePlaneAxisValueProjection.from_selected_plane(
+            axis=RuntimePlaneAxis.RUNTIME_SLICE,
+            plane_index=1,
+            axis_size=2,
+        ),
+    ) is graph
 
 
 def test_object_label_payload_selects_nominal_object_label_projection() -> None:

@@ -1,0 +1,13 @@
+name: openhcs
+display_name: OpenHCS
+visibility: public
+categories: ["IO"]
+contributions:
+  commands:
+    - id: openhcs.get_swc_reader
+      python_name: openhcs.runtime.napari_swc_reader:napari_get_swc_reader
+      title: Open SWC morphology with OpenHCS
+  readers:
+    - command: openhcs.get_swc_reader
+      accepts_directories: false
+      filename_patterns: ["*.swc"]

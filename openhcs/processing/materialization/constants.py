@@ -11,6 +11,7 @@ class MaterializationFormat(str, Enum):
     CSV = "csv"
     JSON = "json"
     ROI_ZIP = "roi_zip"
+    SWC = "swc"
     TIFF_STACK = "tiff_stack"
     TEXT = "text"
     IMAGE_FILE = "image_file"

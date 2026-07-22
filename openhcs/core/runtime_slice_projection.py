@@ -56,6 +56,7 @@ from openhcs.core.runtime_sparse_labels import SparseIJVLabelRows
 from openhcs.core.runtime_relationships import (
     ObjectRelationship,
 )
+from openhcs.core.runtime_spatial_graph import SpatialGraph
 from openhcs.core.source_image_provenance import (
     SourceComponentMetadata,
 )
@@ -70,6 +71,7 @@ RuntimeProjectionData: TypeAlias = (
     | ColumnarRows
     | DirectedObjectRelationshipPayload
     | ObjectRelationship
+    | SpatialGraph
     | SparseIJVLabelRows
     | ObjectLabelSet
     | ObjectLabelPayload
@@ -440,6 +442,12 @@ class PassThroughRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
         DtypeConversionConfig,
         type(None),
     )
+
+
+class SpatialGraphRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
+    """Explicitly preserve one scalar spatial graph across slice projection."""
+
+    value_type = SpatialGraph
 
 
 class ImagePayloadRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):

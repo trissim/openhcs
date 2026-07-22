@@ -41,6 +41,8 @@ from openhcs.processing.materialization.options import (
     JsonOptions,
     MaterializedFilenameIdentity,
     ROIOptions,
+    SpatialGraphROIOptions,
+    SWCOptions,
     SourceOptions,
     TabularExtractionOptions,
     TextOptions,
@@ -59,6 +61,7 @@ from openhcs.core.runtime_array_values import runtime_array_operand
 from openhcs.core.runtime_object_labels import (
     ObjectLabelValue,
 )
+from openhcs.core.runtime_spatial_graph import SpatialGraph
 from openhcs.core.source_image_provenance import (
     SourceComponentMetadata,
     VariableComponentAxisProjection,
@@ -107,6 +110,7 @@ MaterializationValue = (
     | dict
     | ColumnarRows
     | ObjectLabelValue
+    | SpatialGraph
     | np.ndarray
     | pd.DataFrame
     | pd.Series
@@ -1567,6 +1571,13 @@ class WriterSpec:
 WriterFunction = Callable
 _WRITERS_BY_OPTIONS: dict[type, WriterSpec] = {}
 
+
+def registered_materialization_option_types() -> tuple[type[FileOutputOptions], ...]:
+    """Return writer option declarations from the authoritative writer registry."""
+
+    return tuple(_WRITERS_BY_OPTIONS)
+
+
 class PrimaryPathAuthority:
     """Resolve the primary materialized path for writer outputs."""
 
@@ -2736,6 +2747,167 @@ def _write_roi_zip(
         summary += "No ROIs extracted (all regions below min_area threshold)\n"
     outs.append(Output(path=summary_path, content=summary))
     return outs
+
+
+def _swc_xyz(
+    coordinates: Sequence[float],
+    spacing: Sequence[float],
+) -> tuple[float, float, float]:
+    """Project array-order coordinates into physical SWC x/y/z coordinates."""
+
+    physical = tuple(
+        float(coordinate) * float(axis_spacing)
+        for coordinate, axis_spacing in zip(coordinates, spacing, strict=True)
+    )
+    if len(physical) == 2:
+        y, x = physical
+        return x, y, 0.0
+    z, y, x = physical
+    return x, y, z
+
+
+@writer_for(
+    SWCOptions,
+    MaterializationFormat.SWC,
+)
+def _write_spatial_graph_swc(
+    data: MaterializationValue,
+    options: SWCOptions,
+    ctx: MaterializationContext,
+) -> list[Output]:
+    """Write a directed spatial forest as standard SWC sample rows."""
+
+    materialization_input = MaterializationInput.from_value(data, options)
+    graph = materialization_input.data
+    if not isinstance(graph, SpatialGraph):
+        raise TypeError(
+            "SWCOptions expects a SpatialGraph payload, "
+            f"got {type(graph).__name__}."
+        )
+    graph.require_directed_forest()
+
+    outgoing = {node.node_id: [] for node in graph.nodes}
+    for edge in graph.edges:
+        outgoing[edge.source.node_id].append(edge)
+    for edges in outgoing.values():
+        edges.sort(key=lambda edge: edge.edge_id)
+
+    rows: list[str] = []
+    next_sample_id = 1
+
+    def append_sample(
+        coordinates: Sequence[float],
+        *,
+        sample_type: int,
+        radius: float,
+        parent_sample_id: int,
+    ) -> int:
+        nonlocal next_sample_id
+        sample_id = next_sample_id
+        next_sample_id += 1
+        x, y, z = _swc_xyz(coordinates, graph.coordinate_spacing)
+        rows.append(
+            f"{sample_id} {sample_type} {x:.9g} {y:.9g} {z:.9g} "
+            f"{radius:.9g} {parent_sample_id}"
+        )
+        return sample_id
+
+    def append_descendants(node, parent_sample_id: int) -> None:
+        pending = [
+            (edge, parent_sample_id)
+            for edge in reversed(outgoing[node.node_id])
+        ]
+        while pending:
+            edge, source_sample_id = pending.pop()
+            edge_parent_id = source_sample_id
+            for coordinates in edge.coordinates[1:]:
+                edge_parent_id = append_sample(
+                    coordinates,
+                    sample_type=options.process_type,
+                    radius=edge.target.radius,
+                    parent_sample_id=edge_parent_id,
+                )
+            pending.extend(
+                (child_edge, edge_parent_id)
+                for child_edge in reversed(outgoing[edge.target.node_id])
+            )
+
+    for root in graph.roots():
+        root_sample_id = append_sample(
+            root.coordinates,
+            sample_type=options.root_type,
+            radius=root.radius,
+            parent_sample_id=-1,
+        )
+        append_descendants(root, root_sample_id)
+
+    content = (
+        f"# OpenHCS spatial graph: {graph.name}\n"
+        "# id type x y z radius parent\n"
+        + ("\n".join(rows) + "\n" if rows else "")
+    )
+    return [
+        Output(
+            path=ctx.paths(options).primary_output_path(options),
+            content=content,
+        )
+    ]
+
+
+@writer_for(
+    SpatialGraphROIOptions,
+    MaterializationFormat.ROI_ZIP,
+)
+def _write_spatial_graph_roi_zip(
+    data: MaterializationValue,
+    options: SpatialGraphROIOptions,
+    ctx: MaterializationContext,
+) -> list[Output]:
+    """Write graph edges as feature-bearing polyline ROIs."""
+
+    from polystore.roi import PolylineShape, ROI
+
+    materialization_input = MaterializationInput.from_value(data, options)
+    graph = materialization_input.data
+    if not isinstance(graph, SpatialGraph):
+        raise TypeError(
+            "SpatialGraphROIOptions expects a SpatialGraph payload, "
+            f"got {type(graph).__name__}."
+        )
+
+    rois = []
+    for edge in graph.edges:
+        coordinates = np.asarray(edge.coordinates, dtype=float)
+        if coordinates.shape[1] != 2:
+            raise ValueError(
+                "SpatialGraphROIOptions requires 2D edge coordinates because "
+                "ImageJ polyline ROI archives are 2D. Use SWCOptions for 3D graphs."
+            )
+        segment_lengths = np.linalg.norm(np.diff(coordinates, axis=0), axis=1)
+        metadata = {
+            "label": edge.edge_id,
+            "area": 0.0,
+            "perimeter": float(np.sum(segment_lengths)),
+            "centroid": tuple(float(value) for value in coordinates.mean(axis=0)),
+            "graph": graph.name,
+            "edge_id": edge.edge_id,
+            "source_node_id": edge.source_node_id,
+            "target_node_id": edge.target_node_id,
+            **edge.feature_mapping(),
+        }
+        rois.append(
+            ROI(
+                shapes=[PolylineShape(coordinates=coordinates)],
+                metadata=metadata,
+            )
+        )
+
+    return [
+        Output(
+            path=ctx.paths(options).primary_output_path(options),
+            content=rois,
+        )
+    ]
 
 class TiffStackSlicePayloadAuthority:
     """Own how TIFF stack materialization expands payloads into saved slices."""

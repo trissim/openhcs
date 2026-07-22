@@ -9,6 +9,7 @@ from openhcs.processing.materialization.core import (
     PathHelper,
     materialize,
     materialization_outputs,
+    registered_materialization_option_types,
     tabular_field_names_from_materialization,
 )
 from openhcs.processing.materialization.options import (
@@ -19,6 +20,8 @@ from openhcs.processing.materialization.options import (
     JsonOptions,
     MaterializedFilenameIdentity,
     ROIOptions,
+    SpatialGraphROIOptions,
+    SWCOptions,
     TextOptions,
     TiffStackOptions,
 )
@@ -44,6 +47,7 @@ __all__ = [
     "BackendSaver",
     "materialize",
     "materialization_outputs",
+    "registered_materialization_option_types",
     "FileOutputOptions",
     "ImageFileOptions",
     "FileBundleOptions",
@@ -51,6 +55,8 @@ __all__ = [
     "CsvOptions",
     "JsonOptions",
     "ROIOptions",
+    "SpatialGraphROIOptions",
+    "SWCOptions",
     "TiffStackOptions",
     "TextOptions",
     "csv_materializer",

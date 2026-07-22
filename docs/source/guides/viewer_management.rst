@@ -28,13 +28,88 @@ Persistence and reuse are configuration policies, not guarantees that an
 arbitrary process on the same port is compatible. Readiness uses the typed
 control protocol before image data is sent.
 
+ROI inspection and cropping
+---------------------------
+
+The ``openhcs[napari]`` installation includes both ``napari-roi-manager`` and
+``napari-crop``. The ``viz`` and ``all`` extras include the same Napari
+surface, so ROI inspection and cropping do not require a second plugin install.
+
+OpenHCS streams ROI artifacts through the registered ``SHAPES`` display
+boundary as native N-dimensional Napari Shapes layers. Each member retains its
+stable ``label`` feature and scalarized source metadata. Consequently the same
+layer can be selected, edited with Napari's Shapes controls, inspected as ROI
+geometry, or supplied to the crop plugin without a callable-specific viewer
+adapter. The viewer's built-in feature table reads those Shapes features
+directly and is opened by default with every OpenHCS Napari viewer. Selecting a
+row selects that member directly on the same Shapes layer; there is no
+projected or synchronized copy. The table follows whichever feature-bearing
+layer is selected in the layer list.
+
+Fresh OpenHCS Napari windows use the available desktop geometry and place the
+feature table in a full-width lower dock. This leaves a useful image canvas and
+table visible together without depending on fixed screen coordinates. The ROI
+Manager remains an optional independent workspace; opening or closing it does
+not replace the streamed Shapes layer or the table that owns its features.
+
+The ``napari-roi-manager`` plugin currently owns a separate fixed-2D Shapes
+layer and does not attach its table to an existing N-dimensional Shapes layer.
+OpenHCS therefore does not mirror streamed geometry into that private layer.
+Use ``Plugins > napari-roi-manager > ROI Manager`` when an independent ImageJ
+ROI import/export workspace is useful, and use
+``Plugins > napari-crop > Crop Region(s)`` to crop an image directly from the
+authoritative streamed Shapes geometry.
+
+Dense segmentation masks remain Napari Labels layers. If a downstream workflow
+needs editable contours or paths, stream or materialize the callable-owned ROI
+artifact rather than inferring object identity from a screenshot.
+
+Spatial graphs and neuronal morphology
+--------------------------------------
+
+A skeleton mask records occupied pixels; it does not preserve nodes, directed
+edges, parentage, or branch measurements. Callables whose scientific result is
+path topology should therefore declare a ``SpatialGraphArtifactType`` and return
+one ``SpatialGraph`` containing the authoritative nodes, paths, and scalar edge
+features.
+
+The same graph can have multiple format projections without duplicating the
+analysis. ``SWCOptions`` writes a directed acyclic morphology forest as standard
+SWC. ``SpatialGraphROIOptions`` writes a 2-D ``.graph.roi.zip`` projection whose
+polyline members retain graph/node identities and branch features. Viewer
+capability routing selects that ROI projection for Napari automatically, where
+it appears as a native path Shapes layer. Select that layer to see branch
+distance, Euclidean distance, tortuosity, distance from the soma, branch type,
+and neuron identity in the feature table. Selecting a row selects the exact
+rendered branch.
+
+Saved ``.swc`` files are viewer-readable too. The OpenHCS Napari plugin
+registers a standard SWC reader and opens the physical morphology as 3-D sample
+Points plus parent-child Shapes. Both layers retain the standard sample ID,
+structure type, radius, and parent ID columns. Fiji users can open the same SWC
+through Fiji's SNT morphology support. Standard SWC has no field for arbitrary
+OpenHCS edge measurements, so use the ``.graph.roi.zip`` projection when the
+full branch-feature table is the important review surface. Live pipeline
+viewing projects the in-memory graph directly; it does not serialize and parse
+SWC first.
+
+SWC materialization rejects cyclic or multiple-parent graphs. A generic spatial
+graph may still represent a cyclic assay, but it must use a format that can
+preserve that topology rather than silently losing edges through SWC. The ROI
+projection is a visualization/interchange view; the ``SpatialGraph`` remains
+the semantic owner.
+
 Execution completion also has a typed viewer boundary. Napari drains queued
 layer routes incrementally on the Qt thread and reports completed/total update
-counts plus the active route. The caller renews its deadline whenever that
-count advances, so the configured interval means "no progress for this long"
-rather than "the whole viewer must finish this quickly." A route failure or a
-stalled count is an execution failure; a successful transport acknowledgment
-alone is not evidence that the corresponding layer was rendered.
+counts, the active route, completed bounded work units within that route, and
+whether one native work unit is currently executing. Control transport owns its
+socket independently of Qt, so settlement remains observable while Napari is
+triangulating a complex Shapes member. The caller renews its no-progress
+deadline when a route or work-unit count advances and does not misclassify a
+declared active native mutation as an idle viewer. A route failure or a route
+that neither advances nor executes declared work is an execution failure; a
+successful transport acknowledgment alone is not evidence that the
+corresponding layer was rendered.
 
 Choosing one step to inspect
 ----------------------------

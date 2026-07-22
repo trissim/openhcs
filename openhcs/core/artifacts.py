@@ -801,6 +801,26 @@ class SpatialGridArtifactType(ArtifactType):
         return cast(SpatialGrid, value.data).as_mapping()
 
 
+class SpatialGraphArtifactType(ArtifactType):
+    """Spatial graph with edge paths, topology, and scalar edge features."""
+
+    value = "spatial_graph"
+    carries_source_image_context = True
+    payload_description = "spatial graph payload"
+
+    @classmethod
+    def runtime_parameter_types(cls) -> tuple[type, ...]:
+        from openhcs.core.runtime_spatial_graph import SpatialGraph
+
+        return (SpatialGraph,)
+
+    @classmethod
+    def accepts_runtime_payload(cls, data: object) -> bool:
+        from openhcs.core.runtime_spatial_graph import SpatialGraph
+
+        return isinstance(data, SpatialGraph)
+
+
 class MetadataArtifactType(ArtifactType):
     """Metadata mapping artifact type."""
 

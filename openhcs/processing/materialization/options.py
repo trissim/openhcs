@@ -98,6 +98,31 @@ class ROIOptions(FileOutputOptions, SourceOptions):
 
 
 @dataclass(frozen=True)
+class SWCOptions(FileOutputOptions, SourceOptions):
+    """SWC writer options for a rooted neuronal morphology forest."""
+
+    filename_suffix: str = ".swc"
+    root_type: int = 1
+    process_type: int = 2
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.root_type < 0 or self.process_type < 0:
+            raise ValueError("SWC node type codes must be nonnegative integers.")
+
+
+@dataclass(frozen=True)
+class SpatialGraphROIOptions(FileOutputOptions, SourceOptions):
+    """Polyline ROI ZIP writer options for spatial graph edges."""
+
+    graph_suffix: str = ".graph.roi.zip"
+
+    @property
+    def primary_output_suffix(self) -> str:
+        return self.graph_suffix
+
+
+@dataclass(frozen=True)
 class TiffStackOptions(FileOutputOptions, SourceOptions):
     """TIFF stack writer options (per-slice TIFF + summary)."""
 
