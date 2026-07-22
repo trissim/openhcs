@@ -113,11 +113,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,cellprofiler-compat]"
 
+      - name: Run generated CellProfiler ZMQ corpus in a fresh process
+        env:
+          OPENHCS_CPU_ONLY: true
+          NUMBA_DISABLE_INTEL_SVML: ${{ runner.os == 'macOS' && '1' || '0' }}
+        run: python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --cov=openhcs --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+
       - name: Run boundary version tests
         env:
           OPENHCS_CPU_ONLY: true
           NUMBA_DISABLE_INTEL_SVML: ${{ runner.os == 'macOS' && '1' || '0' }}
-        run: python -m pytest tests/integration/ --cov=openhcs --cov-report=term --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+        run: python -m pytest tests/integration/ --ignore=tests/integration/test_cellprofiler_generated_pipeline.py --cov=openhcs --cov-append --cov-report=term --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -234,7 +240,9 @@ jobs:
         env:
           OPENHCS_CPU_ONLY: true
           NUMBA_DISABLE_INTEL_SVML: ${{ runner.os == 'macOS' && '1' || '0' }}
-        run: python -m pytest tests/integration/ --cov=openhcs --cov-report=term --it-backends ${{ matrix.backend }} --it-microscopes ${{ matrix.microscope }} --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+        # The generated CellProfiler corpus is independent of backend and
+        # microscope fixtures and runs in the Python/OS boundary jobs above.
+        run: python -m pytest tests/integration/ --ignore=tests/integration/test_cellprofiler_generated_pipeline.py --cov=openhcs --cov-report=term --it-backends ${{ matrix.backend }} --it-microscopes ${{ matrix.microscope }} --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
@@ -352,7 +360,9 @@ jobs:
       - name: Run OMERO integration tests (auto-starts Docker + OMERO)
         env:
           OPENHCS_CPU_ONLY: true
-        run: python -m pytest tests/integration/ --cov=openhcs --cov-report=term --it-backends disk --it-microscopes OMERO --it-dims 3d --it-exec-mode multiprocessing --it-visualizers none -v --tb=short -s --log-cli-level=INFO
+        # The generated CellProfiler corpus has no OMERO fixture dependency and
+        # runs in the Python/OS boundary jobs rather than after the Docker suite.
+        run: python -m pytest tests/integration/ --ignore=tests/integration/test_cellprofiler_generated_pipeline.py --cov=openhcs --cov-report=term --it-backends disk --it-microscopes OMERO --it-dims 3d --it-exec-mode multiprocessing --it-visualizers none -v --tb=short -s --log-cli-level=INFO
         # A cold runner may spend nearly 15 minutes pulling the 1.5 GB OMERO
         # image before the integration suite starts.
         timeout-minutes: 30
@@ -621,7 +631,8 @@ jobs:
           source test_wheel/bin/activate
           WHEEL=$(ls dist/*.whl)
           pip install "${WHEEL}[dev,cellprofiler-compat]"
-          python -m pytest tests/integration/ --cov=openhcs --cov-report=term --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          python -m pytest tests/integration/test_cellprofiler_generated_pipeline.py --cov=openhcs --cov-report= --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
+          python -m pytest tests/integration/ --ignore=tests/integration/test_cellprofiler_generated_pipeline.py --cov=openhcs --cov-append --cov-report=term --it-backends disk --it-microscopes ImageXpress --it-dims 3d --it-exec-mode multiprocessing --it-zmq-mode zmq --it-visualizers none -v --tb=short
           cp .coverage ../.coverage.wheel
           deactivate
 
