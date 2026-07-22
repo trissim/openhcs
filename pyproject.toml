@@ -283,10 +283,10 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/OpenHCSDev/OpenHCS"
+Homepage = "https://openhcsdev.github.io/openhcs/"
 "Bug Reports" = "https://github.com/OpenHCSDev/OpenHCS/issues"
 Source = "https://github.com/OpenHCSDev/OpenHCS"
-Documentation = "https://github.com/OpenHCSDev/OpenHCS/blob/main/README.md"
+Documentation = "https://openhcs.readthedocs.io/"
 
 [project.scripts]
 # Main interfaces - the top-level dispatcher defaults to the GUI and exposes
