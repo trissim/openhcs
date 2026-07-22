@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import subprocess
-import sys
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
@@ -52,6 +51,14 @@ def style_docx_tables(docx_path: Path) -> None:
                 border.set(word_tag("space"), "0")
                 border.set(word_tag("color"), TABLE_BORDER_COLOR)
 
+            for row in table.findall("w:tr", namespace):
+                row_properties = row.find("w:trPr", namespace)
+                if row_properties is None:
+                    row_properties = ET.Element(word_tag("trPr"))
+                    row.insert(0, row_properties)
+                if row_properties.find("w:cantSplit", namespace) is None:
+                    ET.SubElement(row_properties, word_tag("cantSplit"))
+
         for run_node in root.findall(".//w:tbl//w:r", namespace):
             properties = run_node.find("w:rPr", namespace)
             if properties is None:
@@ -63,6 +70,15 @@ def style_docx_tables(docx_path: Path) -> None:
                 if size is None:
                     size = ET.SubElement(properties, word_tag(tag_name))
                 size.set(word_tag("val"), TABLE_FONT_SIZE_HALF_POINTS)
+
+        for paragraph in root.findall(".//w:p", namespace):
+            paragraph_properties = paragraph.find("w:pPr", namespace)
+            if (
+                paragraph_properties is not None
+                and paragraph_properties.find("w:numPr", namespace) is not None
+                and paragraph_properties.find("w:keepLines", namespace) is None
+            ):
+                ET.SubElement(paragraph_properties, word_tag("keepLines"))
 
         updated_xml = ET.tostring(root, encoding="utf-8", xml_declaration=True)
         temp_docx = docx_path.with_suffix(".tmp.docx")
