@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -128,4 +129,14 @@ def test_generated_relative_path_compiles_against_explicit_plate_not_cwd(
     assert first == repeated == plate_a / authored_path
     assert second_plate == plate_b / authored_path
     assert step.func[1]["macro_path"] == authored_path
-    assert "Path('templates/template.tif')" in source
+    generated_paths = tuple(
+        node.args[0].value
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Path"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    )
+    assert str(authored_path) in generated_paths
