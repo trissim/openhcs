@@ -102,6 +102,23 @@ transport and signature analysis. During compilation an invocation-contract
 provider may derive a runtime adapter or module executor, but that compile-only
 object does not replace the public declaration format.
 
+Numerical backend portability
+-----------------------------
+
+Some compatibility functions reproduce a historical NumPy numerical primitive
+through an eight-lane SVML symbol. Symbol presence alone is not an execution
+capability: NumPy wheels can contain AVX-512 code on a host that cannot execute
+it. ``numpy_avx512_skx_svml_symbol_available()`` therefore joins two facts owned
+by the loaded NumPy runtime: the complete ``AVX512_SKX`` CPU feature and the
+requested symbol's presence in NumPy's loaded binary.
+
+The CellProfiler-compatible leaf retains ownership of the symbol it requires
+and of its portable Numba or NumPy implementation. The shared runtime query
+does not name CellProfiler modules or choose processing semantics. Unsupported,
+AVX512F-only, and non-x86 hosts select the leaf's portable implementation before
+Numba lowers the call; there is no operating-system table, signal recovery,
+runtime retry, or silent substitution with an unrelated backend.
+
 Exact compile-time reconstruction
 ---------------------------------
 
