@@ -57,7 +57,7 @@ The validation corpus contains 22 workflows and associated images from the offic
 
 Native CellProfiler produced the reference outputs for each workflow. OpenHCS imported and ran the same `.cppipe` file on the same biological images, then compared corresponding output values under the declared equivalence policy. All 30 workflows reached an accuracy fraction of 1.0, with no unresolved differences under the enabled checks. The benchmark artifacts retain the comparison profile, pass table, module coverage, unsupported-feature status, speedup, and tolerated numerical differences.
 
-The benchmark coverage table contained 30 supported `.cppipe` cases, 471 CellProfiler module instances, 58 unique CellProfiler module names, and 7,158 setting rows. All setting rows were mapped, and the benchmark reported no missing processing modules and no known-invalid absorbed processing modules. Across the current absorbed CellProfiler module catalogue, 53 modules are explicitly covered, 28 additional modules are covered by a shared semantic abstraction, and 8 modules remain outside the covered set. Version-specific parity artifacts record the CellProfiler and OpenHCS versions used for each comparison; new CellProfiler versions receive their own declared compatibility checks before output preservation or speed is reported for those versions.
+The current executable compatibility report contains 30 supported `.cppipe` cases, 471 CellProfiler module instances, 58 unique CellProfiler module names, and 5,640 setting rows. All setting rows are covered. The corpus exercises 54 absorbed processing modules plus four source/infrastructure modules, with no missing processing module and no known-invalid absorbed processing module; 32 additional registered processing modules remain outside the tested corpus. Version-specific parity artifacts record the CellProfiler and OpenHCS versions used for each comparison; new CellProfiler versions receive their own declared compatibility checks before output preservation or speed is reported for those versions.
 
 `ExportToDatabase` is translated as an executable terminal step over the same typed measurements and source provenance, rather than as a benchmark-only postprocessing script. The implemented CellProfiler Analyst route writes a self-contained SQLite database and matching `.properties` files with image, object, location, grouping, relationship, channel-display, and optional thumbnail information [Jones2008]. It does not currently generate a CellProfiler Analyst `.workspace` file, support non-SQLite databases, or implement every historical filter and aggregation setting; those requests remain explicit compatibility boundaries.
 
@@ -207,7 +207,7 @@ Each row lists one `.cppipe` workflow, official CellProfiler source collection, 
 
 ### Supplementary Table 2. CellProfiler module coverage
 
-Each row lists one CellProfiler module class, import status, explicitly parity-tested status, theoretically covered status for modules sharing implemented abstractions, not-covered status, accelerated path where relevant, backend used, unsupported settings or features, and notes.
+Each row lists one registered CellProfiler module class, whether the 30-workflow corpus exercises it, its source/infrastructure or processing role, importability, declared contract and backend, unsupported settings or features, and notes. Processing modules outside the corpus remain explicitly untested rather than being inferred covered from family similarity.
 
 ### Supplementary Table 3. Worker/RAM scaling
 

@@ -20,7 +20,7 @@ Completed in this pass:
 - Bio-Formats language remains explicitly gated by TODOs until implementation evidence exists.
 - Discussion now includes a direct positioning table.
 - Discussion limitations now cover parity scope, backend-specific methods, Bio-Formats semantics, persistent workers, viewer environments, and benchmark-condition scope.
-- Supplementary table captions now separate parity from speed and explicitly distinguish tested, theoretically covered, and not-covered modules.
+- Supplementary table captions now separate parity from speed and distinguish corpus-exercised processing modules, source/infrastructure modules, and additional registered processing modules outside the corpus without inferring coverage from family similarity.
 - Main-text architecture jargon reduced where it appeared before Results/Methods detail.
 
 ## Action 1: Make The Abstract Less Crowded
@@ -218,7 +218,7 @@ Problem:
 Edit:
 
 - Ensure supplementary benchmark table includes workflow source, assay family, module coverage, parity status, speedup, and notes.
-- Ensure module coverage table separates explicitly tested modules, theoretically covered modules, and not-covered modules.
+- Ensure the module coverage table separates corpus-exercised processing modules, source/infrastructure modules, additional registered processing modules outside the corpus, and any missing or known-invalid absorbed modules.
 - Make the 4x result visibly a minimum, not just mean/median.
 
 Evidence gate:

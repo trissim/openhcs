@@ -37,7 +37,7 @@ Suggested panels:
 - C. `.cppipe` import and native CellProfiler equivalence comparison pipeline.
 - D. Output equivalence across the 30-workflow corpus.
 - E. Single-sample, one-thread/core, CPU-only speedup distribution showing every tested workflow at least 4x faster; timeout-censored cases must be marked rather than plotted as completed native runtimes.
-- F. Module coverage: explicitly tested modules, shared-abstraction coverage, and not-covered modules.
+- F. Module coverage: corpus-exercised processing modules, source/infrastructure modules, additional registered processing modules outside the corpus, and any missing or known-invalid absorbed modules.
 - G. Persistent-worker throughput, labeled as measured OpenHCS throughput with projected comparison to serial native CellProfiler execution.
 - H. RAM or worker-scaling tradeoff, likely supplementary if space is tight.
 
@@ -78,7 +78,7 @@ Each row should list one `.cppipe` workflow, official CellProfiler source collec
 
 ## Supplementary Table 2. CellProfiler Module Coverage
 
-Each row should list one CellProfiler module class, import status, explicitly parity-tested status, theoretically covered status for modules sharing implemented abstractions, not-covered status, accelerated path if relevant, backend used, unsupported settings or features, and notes.
+Each row should list one registered CellProfiler module class, whether the benchmark corpus exercises it, its source/infrastructure or processing role, importability, declared contract and backend, unsupported settings or features, and notes. Processing modules outside the corpus should remain explicitly untested rather than being inferred covered from family similarity.
 
 ## Supplementary Table 3. Worker/RAM Scaling
 

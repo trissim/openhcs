@@ -273,7 +273,7 @@ Replace the current long representative-run sentence with Figure 1 plus short pr
 - Confirm OpenHCS version/commit used in all benchmark runs.
 - Confirm CPU model, RAM, OS, Python version, and GPU model if any GPU result or GPU support claim appears in Results.
 - Verify source handling claims for symlinks, network storage, SMB/NFS latency, aliases, and cloud/HPC launch environments before mentioning them.
-- Confirm the benchmark corpus counts: 30 workflows, 471 CellProfiler module instances, 58 unique module names, 7,158 setting rows, 53 explicitly covered modules, 28 semantically covered modules, and 8 out of current catalogue scope.
+- Confirm the current executable compatibility counts: 30 workflows, 471 CellProfiler module instances, 58 unique module names, 5,640 covered setting rows, 54 corpus-exercised absorbed processing modules, four source/infrastructure modules, 32 additional registered processing modules outside the tested corpus, zero missing processing modules, and zero known-invalid absorbed processing modules.
 - Confirm the exact meaning of “official30 coverage analysis” and rename if needed for reader clarity.
 
 ## Suggested Edit Sequence
