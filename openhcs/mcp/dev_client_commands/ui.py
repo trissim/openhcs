@@ -242,6 +242,9 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
             ),
         )
         baseline_result = await call_mcp_tool(session, state_call, timeout_seconds)
+        baseline_timed_out = baseline_result.has_only_agent_error_code(
+            UiBridgeGatewayTimeoutError.agent_error_code
+        )
         workflow_result = await call_mcp_tool(
             session,
             McpDevToolCall(
@@ -250,14 +253,18 @@ class SelectedWorkflowCommandSpec(CapabilityBackedCommandSpec):
             ),
             timeout_seconds,
         )
-        results = [baseline_result, workflow_result]
+        results = (
+            [workflow_result]
+            if baseline_timed_out
+            else [baseline_result, workflow_result]
+        )
         baseline = WorkflowPollBaseline.from_result(baseline_result)
         poll_completed = False
         poll_count = 0
         target_scope_ids = workflow_result_target_scope_ids(workflow_result)
         poll_status = WorkflowPollSummaryStatus.SKIPPED
         poll_terminal_status: WorkflowPollSummaryStatus | None = None
-        transient_poll_error_count = 0
+        transient_poll_error_count = int(baseline_timed_out)
         skip_reason: WorkflowPollSkipReason | None = None
         action_status = workflow_result_action_status(workflow_result)
 

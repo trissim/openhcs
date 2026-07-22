@@ -10994,6 +10994,113 @@ def test_mcp_dev_client_selected_workflow_poll_recovers_from_transient_read_time
     }
 
 
+def test_mcp_dev_client_selected_workflow_poll_recovers_from_transient_baseline_timeout(
+    monkeypatch,
+):
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    import openhcs.mcp.dev_client as dev_client
+    import openhcs.mcp.dev_client_commands.ui as ui_commands
+    from openhcs.agent.services.ui_bridge_service import UiBridgeGatewayTimeoutError
+
+    workflow_call_count = 0
+    state_call_count = 0
+
+    async def fake_call_tool(session, call, timeout_seconds):
+        nonlocal state_call_count, workflow_call_count
+        if call.name == "openhcs_ui_selected_plate_workflow":
+            workflow_call_count += 1
+            return dev_client.McpDevToolResult(
+                tool=call.name,
+                mcp_error=False,
+                payloads=(
+                    {
+                        "action_result": {
+                            "status": "accepted",
+                            "target_scope_ids": ["scope-a"],
+                        }
+                    },
+                ),
+            )
+        state_call_count += 1
+        if state_call_count == 1:
+            return dev_client.McpDevToolResult(
+                tool=call.name,
+                mcp_error=False,
+                payloads=(
+                    {
+                        "errors": [
+                            {
+                                "code": UiBridgeGatewayTimeoutError.agent_error_code,
+                                "message": "The busy UI did not answer yet.",
+                            }
+                        ]
+                    },
+                ),
+            )
+        return dev_client.McpDevToolResult(
+            tool=call.name,
+            mcp_error=False,
+            payloads=(
+                {
+                    "current_revision_token": "terminal",
+                    "payload": {
+                        "object_state_token": 2,
+                        "rows": [
+                            {
+                                "plate_scope_id": "scope-a",
+                                "compile_pending": False,
+                                "compiled": True,
+                            }
+                        ],
+                    },
+                },
+            ),
+        )
+
+    monkeypatch.setattr(ui_commands, "call_mcp_tool", fake_call_tool)
+
+    parser = dev_client._build_parser()
+    args = parser.parse_args(
+        (
+            "selected-workflow",
+            "compile_plate",
+            "--poll-state",
+            "--poll-timeout-seconds",
+            "1",
+            "--poll-interval-seconds",
+            "0",
+        )
+    )
+
+    response = asyncio.run(
+        dev_client.McpDevCommandSpec.for_name("selected-workflow").run_session(
+            SimpleNamespace(server_spec=dev_client.McpDevServerSpec(sys.executable)),
+            args,
+        )
+    )
+
+    assert workflow_call_count == 1
+    assert state_call_count == 2
+    assert not any(
+        UiBridgeGatewayTimeoutError.agent_error_code in str(result.payloads)
+        for result in response.results
+    )
+    summary = response.results[-1]
+    assert summary.mcp_error is False
+    assert summary.payloads[0] == {
+        "poll_status": "completed",
+        "poll_requested": True,
+        "poll_completed": True,
+        "poll_count": 1,
+        "target_scope_ids": ["scope-a"],
+        "workflow": "compile_plate",
+        "action_status": "accepted",
+        "transient_poll_error_count": 1,
+    }
+
+
 def test_mcp_dev_client_selected_workflow_poll_exhausts_transient_read_timeout(
     monkeypatch,
 ):
