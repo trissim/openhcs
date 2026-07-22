@@ -329,13 +329,15 @@ class GitSparseSourceHandler(DatasetSourceHandler):
                 f"Dataset {context.spec.id!r} uses git_sparse without git_url."
             )
 
+        needs_ref_fetch = source.git_ref != "HEAD"
         if (context.data_dir / ".git").exists():
             cached = True
-            if source.git_ref != "HEAD":
+            if needs_ref_fetch:
                 self._run_git(
                     ["fetch", "--depth", "1", "origin", source.git_ref],
                     context.data_dir,
                 )
+                needs_ref_fetch = False
         else:
             cached = False
             if context.data_dir.exists():
@@ -348,10 +350,14 @@ class GitSparseSourceHandler(DatasetSourceHandler):
                 "--filter=blob:none",
                 "--sparse",
             ]
-            if source.git_ref != "HEAD":
-                clone_command.extend(["--branch", source.git_ref])
             clone_command.extend([source.git_url, str(context.data_dir)])
             self._run_git(clone_command, None)
+
+        if needs_ref_fetch:
+            self._run_git(
+                ["fetch", "--depth", "1", "origin", source.git_ref],
+                context.data_dir,
+            )
 
         if source.sparse_paths:
             self._run_git(

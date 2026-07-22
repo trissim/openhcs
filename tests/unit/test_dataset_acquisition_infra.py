@@ -12,9 +12,11 @@ from benchmark.contracts.dataset import (
     DatasetValidationRule,
 )
 from benchmark.datasets.acquire import (
+    DatasetAcquisitionContext,
     DatasetSourceHandler,
     DatasetValidationContext,
     DatasetValidationStrategy,
+    GitSparseSourceHandler,
     acquire_dataset,
     _materialize_nested_archives,
 )
@@ -74,6 +76,64 @@ def test_source_handlers_are_registered_by_enum() -> None:
         DatasetSourceHandler.for_source(source).source_kind
         is DatasetSourceKind.GIT_SPARSE_WITH_ARCHIVES
     )
+
+
+def test_git_sparse_source_fetches_immutable_revision_after_clone(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "dataset" / "data"
+    source = DatasetSourceSpec(
+        kind=DatasetSourceKind.GIT_SPARSE,
+        git_url="https://example.invalid/dataset.git",
+        git_ref="264a8155da21a2d468051f78211bed2e580a8934",
+        sparse_paths=("examples",),
+    )
+    context = DatasetAcquisitionContext(
+        spec=DatasetSpec(
+            id="immutable_revision",
+            urls=[],
+            size_bytes=1,
+            archive_format=ArchiveFormat.ZIP,
+            microscope_type="example",
+            validation_rule=DatasetValidationRule.NON_EMPTY,
+            source=source,
+        ),
+        cache_root=data_dir.parent,
+        archive_dir=data_dir.parent / "archives",
+        data_dir=data_dir,
+    )
+    git_commands: list[tuple[tuple[str, ...], Path | None]] = []
+
+    def fake_run_git(args: list[str], cwd: Path | None) -> None:
+        git_commands.append((tuple(args), cwd))
+        if args[0] == "clone":
+            (data_dir / ".git").mkdir(parents=True)
+
+    monkeypatch.setattr(
+        GitSparseSourceHandler,
+        "_run_git",
+        staticmethod(fake_run_git),
+    )
+
+    assert GitSparseSourceHandler().acquire(context, source) is False
+    assert git_commands == [
+        (
+            (
+                "clone",
+                "--depth",
+                "1",
+                "--filter=blob:none",
+                "--sparse",
+                source.git_url,
+                str(data_dir),
+            ),
+            None,
+        ),
+        (("fetch", "--depth", "1", "origin", source.git_ref), data_dir),
+        (("sparse-checkout", "set", "examples"), data_dir),
+        (("checkout", "FETCH_HEAD"), data_dir),
+    ]
 
 
 def test_url_file_source_acquires_plain_files(monkeypatch, tmp_path: Path) -> None:
