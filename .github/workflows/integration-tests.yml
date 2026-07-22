@@ -492,6 +492,13 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Install PyQt runtime libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1
+          sudo apt-get install -y libegl1 || sudo apt-get install -y libegl1-mesa
+
       - name: Build wheel
         run: |
           python -m pip install --upgrade pip build
@@ -541,7 +548,7 @@ jobs:
             WHEEL=$(ls dist/*.whl)
           fi
           pip install "${WHEEL}[gui]"
-          # Verify GUI dependencies installed (can't import PyQt6 without X11/EGL in CI)
+          # Verify the GUI dependency set before the combined entrypoint smoke below.
           python -c "import openhcs; import psutil; import GPUtil; print(f'[OK] OpenHCS {openhcs.__version__} GUI dependencies installed')"
 
       - name: Test dev dependencies installation
