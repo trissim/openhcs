@@ -22,16 +22,16 @@
 #   - Validates PyPI-style installation across all platforms
 #   - 2 Python versions × 3 OSes = 6 jobs
 #
-# Group 5: Desktop installer source tests (2 jobs)
-#   - Native PowerShell parse on Windows
-#   - Native AppleScript app compilation on macOS
+# Group 5: Native desktop installer tests (2 jobs)
+#   - Real isolated Windows install plus shortcut/entry-point verification
+#   - Real isolated macOS install plus app/desktop-launcher verification
 #
 # Group 6: Wheel integration test (1 job)
 #   - Python 3.12 on Linux
 #   - Full integration test suite against wheel installation
 #
 # Total: 29 jobs covering all Python versions (3.11-3.13), all 3 OSes,
-# all backends, all microscope formats, and both desktop installer adapters
+# all backends, all microscope formats, and both native desktop installers
 
 name: Integration Tests
 
@@ -437,7 +437,7 @@ jobs:
         run: |
           mypy openhcs/ --ignore-missing-imports --no-strict-optional
 
-  # Validate native bootstrap sources before tag-only release packaging.
+  # Execute native bootstrap installers before tag-only release packaging.
   desktop-installer-source-test:
     runs-on: ${{ matrix.os }}
     if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -465,7 +465,7 @@ jobs:
 
       - name: Validate shared installer contract
         run: |
-          python -m pip install packaging pytest
+          python -m pip install build packaging pytest
           python -m pytest -q -c tests/installer/pytest.ini tests/installer
 
       - name: Parse Windows PowerShell installer
@@ -475,16 +475,105 @@ jobs:
           $source = Get-Content packaging/installers/windows/Install-OpenHCS.ps1 -Raw
           [void][scriptblock]::Create($source)
 
-      - name: Compile macOS installer application
+      - name: Execute and verify Windows installer
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          python -m build --wheel
+          $releaseVersion = python -c "from pathlib import Path; from packaging.utils import parse_wheel_filename; print(parse_wheel_filename(next(Path('dist').glob('*.whl')).name)[1])"
+          $releaseVersion = $releaseVersion.Trim()
+          $stage = Join-Path $env:RUNNER_TEMP "OpenHCS-Windows-Smoke"
+          $installRoot = Join-Path $env:RUNNER_TEMP "OpenHCS Installed"
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item packaging/installers/windows/* -Destination $stage
+          python scripts/render_installer_contract.py `
+            --version $releaseVersion `
+            --output (Join-Path $stage "installer_contract.json")
+
+          $env:UV_FIND_LINKS = (Resolve-Path "dist").Path
+          $powerShellExecutable = Join-Path $PSHOME "powershell.exe"
+          & $powerShellExecutable `
+            -NoProfile -ExecutionPolicy Bypass `
+            -File (Join-Path $stage "Install-OpenHCS.ps1") `
+            -Worker -InstallRoot $installRoot
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows installer failed with exit code $LASTEXITCODE."
+          }
+
+          $desktopRoot = [Environment]::GetFolderPath("DesktopDirectory")
+          $summaryJson = python scripts/smoke_installed_desktop.py `
+            --platform windows `
+            --contract (Join-Path $stage "installer_contract.json") `
+            --install-root $installRoot `
+            --desktop-root $desktopRoot
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installed Windows desktop smoke failed."
+          }
+          $summary = $summaryJson | ConvertFrom-Json
+
+          $shell = New-Object -ComObject WScript.Shell
+          try {
+            $shortcut = $shell.CreateShortcut($summary.shortcut_path)
+            try {
+              $expectedArguments = (
+                '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f
+                $summary.launcher_path
+              )
+              if ($shortcut.TargetPath -ne $powerShellExecutable) {
+                throw "Desktop shortcut targets '$($shortcut.TargetPath)'."
+              }
+              if ($shortcut.Arguments -ne $expectedArguments) {
+                throw "Desktop shortcut arguments do not target the launch adapter."
+              }
+              if ($shortcut.WorkingDirectory -ne $installRoot) {
+                throw "Desktop shortcut working directory is not the install root."
+              }
+            }
+            finally {
+              [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) |
+                Out-Null
+            }
+          }
+          finally {
+            [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) |
+              Out-Null
+          }
+          Write-Host $summaryJson
+
+      - name: Validate macOS installer sources
         if: matrix.platform == 'macos'
         run: |
           bash -n packaging/installers/macos/install-openhcs.sh
           bash -n packaging/installers/macos/build-installer.sh
+
+      - name: Execute and verify macOS installer
+        if: matrix.platform == 'macos'
+        run: |
+          python -m build --wheel
+          release_version=$(python -c "from pathlib import Path; from packaging.utils import parse_wheel_filename; print(parse_wheel_filename(next(Path('dist').glob('*.whl')).name)[1])")
+          staged_contract="$RUNNER_TEMP/installer_contract.json"
+          installer_app="$RUNNER_TEMP/OpenHCS Release Installer.app"
+          smoke_home="$RUNNER_TEMP/openhcs-installer-home"
+          python scripts/render_installer_contract.py \
+            --version "$release_version" \
+            --output "$staged_contract"
           packaging/installers/macos/build-installer.sh \
-            packaging/installers/installer_contract.json \
-            "$RUNNER_TEMP/OpenHCS Installer.app"
-          test -x "$RUNNER_TEMP/OpenHCS Installer.app/Contents/Resources/install-openhcs.sh"
-          test -f "$RUNNER_TEMP/OpenHCS Installer.app/Contents/Resources/installer_contract.json"
+            "$staged_contract" \
+            "$installer_app"
+
+          mkdir -p "$smoke_home"
+          export HOME="$smoke_home"
+          export UV_FIND_LINKS="$GITHUB_WORKSPACE/dist"
+          "$installer_app/Contents/Resources/install-openhcs.sh" \
+            "$installer_app/Contents/Resources/installer_contract.json"
+
+          product_name=$(/usr/bin/plutil -extract product_name raw -o - \
+            "$staged_contract")
+          python scripts/smoke_installed_desktop.py \
+            --platform macos \
+            --contract "$staged_contract" \
+            --install-root "$HOME/Library/Application Support/$product_name" \
+            --home-root "$HOME"
 
   # Test PyPI-style installation across Python versions and OSes (6 jobs)
   pypi-installation-test:

@@ -39,6 +39,7 @@ def test_installer_contract_queries_published_project_authorities() -> None:
     assert requirement.extras == {"gui"}
     assert not requirement.specifier
     assert "gui" in project["optional-dependencies"]
+    assert contract["entry_point"] == project["name"]
     assert contract["entry_point"] in project["scripts"]
     assert python_version in SpecifierSet(project["requires-python"])
     assert contract["uv_installer_urls"] == {

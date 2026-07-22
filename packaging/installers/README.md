@@ -8,8 +8,9 @@ These installers are thin, user-scoped adapters over existing authorities:
 2. uv installs its standalone executable without requiring Python, installs or
    locates the selected Python, creates the dedicated virtual environment, and
    installs the contract's PyPI requirement.
-3. The platform adapter creates a desktop launcher for the installed
-   `openhcs-gui` console script with `OPENHCS_CPU_ONLY=true`.
+3. The platform adapter creates a desktop launcher for the installed canonical
+   `openhcs` console script with `OPENHCS_CPU_ONLY=true`; that dispatcher opens
+   the GUI by default.
 
 The platform scripts do not carry dependency lists, Python download tables, or
 an alternate OpenHCS startup implementation. PyPI metadata and the installed

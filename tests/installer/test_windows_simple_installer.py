@@ -38,6 +38,7 @@ def test_windows_installer_fails_closed_on_validated_shared_contract() -> None:
     assert "Resolve-ContractPath" in source
     assert '"installer_contract.json"' in source
     assert "ConvertFrom-Json" in source
+    assert 'Get-RequiredTextProperty $contract "entry_point"' in source
     assert '"openhcs.installer.v1"' in source
     assert "Expected exactly one installer_contract.json" in source
     assert "Uri]::TryCreate" in source
@@ -50,7 +51,6 @@ def test_windows_installer_fails_closed_on_validated_shared_contract() -> None:
     for value in (
         contract["python_version"],
         contract["package_requirement"],
-        contract["entry_point"],
         contract["uv_installer_urls"]["windows"],
     ):
         assert value not in source
