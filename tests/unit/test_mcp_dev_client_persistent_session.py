@@ -11,6 +11,34 @@ import openhcs.mcp.dev_client as dev_client
 import pytest
 
 
+def test_multi_call_command_honors_its_declared_timeout_floor() -> None:
+    parser = dev_client._build_parser()
+    default_args = parser.parse_args(
+        (
+            "execute-source",
+            "/tmp/plate",
+            "--source-text",
+            "pipeline_config = None\npipeline_steps = []",
+        )
+    )
+    extended_args = parser.parse_args(
+        (
+            "--timeout-seconds",
+            "90",
+            "execute-source",
+            "/tmp/plate",
+            "--source-text",
+            "pipeline_config = None\npipeline_steps = []",
+        )
+    )
+    command = dev_client.McpDevCommandSpec.for_name("execute-source")
+
+    assert default_args.timeout_seconds == dev_client.DEFAULT_CALL_TIMEOUT_SECONDS
+    assert command.default_timeout_seconds == 60.0
+    assert command.timeout_seconds(default_args) == 60.0
+    assert command.timeout_seconds(extended_args) == 90.0
+
+
 def test_persistent_client_initializes_once_for_distinct_command_specs(
     monkeypatch,
 ) -> None:

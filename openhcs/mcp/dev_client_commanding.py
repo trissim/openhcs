@@ -71,6 +71,7 @@ class McpDevCommandSpec(ABC, metaclass=AutoRegisterMeta):
     help: ClassVar[str | None] = None
     aliases: ClassVar[tuple[str, ...]] = ()
     execution_phase: ClassVar[McpDevClientPhase] = McpDevClientPhase.CALL_TOOL
+    default_timeout_seconds: ClassVar[float] = DEFAULT_CALL_TIMEOUT_SECONDS
 
     @classmethod
     def all_specs(cls) -> tuple["McpDevCommandSpec", ...]:
@@ -167,7 +168,7 @@ class McpDevCommandSpec(ABC, metaclass=AutoRegisterMeta):
 
     def timeout_seconds(self, args: argparse.Namespace) -> float:
         """Return the timeout shared by initialization and this command's calls."""
-        return args.timeout_seconds
+        return max(args.timeout_seconds, self.default_timeout_seconds)
 
     def transport_failure_response(
         self,
@@ -371,8 +372,6 @@ class ToolsCommandSpec(McpDevCommandSpec):
 class SingleToolCommandSpec(CapabilityBackedCommandSpec):
     """Command that maps to one MCP tool call."""
 
-    default_timeout_seconds: ClassVar[float] = DEFAULT_CALL_TIMEOUT_SECONDS
-
     @property
     def tool_name(self) -> str:
         return self.capability.name
@@ -390,9 +389,6 @@ class SingleToolCommandSpec(CapabilityBackedCommandSpec):
                 self.tool_arguments(args),
             ),
         )
-
-    def timeout_seconds(self, args: argparse.Namespace) -> float:
-        return max(args.timeout_seconds, self.default_timeout_seconds)
 
 
 class UiBridgeCommandSpec(McpDevCommandSpec):
