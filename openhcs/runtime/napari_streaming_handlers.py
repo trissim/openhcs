@@ -932,6 +932,7 @@ class NapariDimensionLayerState:
     def label_parts_for_current_step(
         self,
         current_step: tuple[int, ...],
+        viewer_axis_origins: tuple[int, ...] = (),
     ) -> tuple[str, ...] | None:
         """Return overlay labels for the current viewer position, or None if out of domain."""
         if self.presentation is None:
@@ -950,6 +951,11 @@ class NapariDimensionLayerState:
             label_index = self.presentation.label_index(
                 current_step[axis_index],
                 axis_index,
+                viewer_axis_origin=(
+                    viewer_axis_origins[axis_index]
+                    if axis_index < len(viewer_axis_origins)
+                    else 0
+                ),
             )
             if label_index < 0 or label_index >= len(labels):
                 return None
@@ -958,9 +964,19 @@ class NapariDimensionLayerState:
                 stack_label_parts.append(label)
         return (*label_parts, *stack_label_parts)
 
-    def describes_current_step(self, current_step: tuple[int, ...]) -> bool:
+    def describes_current_step(
+        self,
+        current_step: tuple[int, ...],
+        viewer_axis_origins: tuple[int, ...] = (),
+    ) -> bool:
         """Return whether this route has labels for the current viewer position."""
-        return self.label_parts_for_current_step(current_step) is not None
+        return (
+            self.label_parts_for_current_step(
+                current_step,
+                viewer_axis_origins,
+            )
+            is not None
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -985,13 +1001,33 @@ class NapariAxisPresentation(ViewerComponentAxisSemantics):
             ]
         )
 
-    def label_index(self, viewer_step: int, axis_index: int) -> int:
+    def label_index(
+        self,
+        viewer_step: int,
+        axis_index: int,
+        *,
+        viewer_axis_origin: int = 0,
+    ) -> int:
         """Project one shared-viewer coordinate into this route's local axis."""
-        return viewer_step - self.projection.axis_offset(axis_index)
+        return (
+            viewer_step
+            + viewer_axis_origin
+            - self.projection.axis_offset(axis_index)
+        )
 
-    def viewer_step(self, label_index: int, axis_index: int) -> int:
+    def viewer_step(
+        self,
+        label_index: int,
+        axis_index: int,
+        *,
+        viewer_axis_origin: int = 0,
+    ) -> int:
         """Project one route-local label index into the shared viewer axis."""
-        return label_index + self.projection.axis_offset(axis_index)
+        return (
+            label_index
+            + self.projection.axis_offset(axis_index)
+            - viewer_axis_origin
+        )
 
 
 @dataclass(slots=True)
@@ -1050,6 +1086,25 @@ class NapariLayerRouteStateStore:
         state: NapariDimensionLayerState,
     ) -> None:
         self.layer_dimension_states[layer_key] = state
+
+    def axis_origins_for(self, axis_labels: tuple[str, ...]) -> tuple[int, ...]:
+        """Return normalized-viewer origins derived from mounted route offsets."""
+        compatible_states = tuple(
+            state
+            for state in self.layer_dimension_states.values()
+            if state.axis_labels == axis_labels
+        )
+        return tuple(
+            min(
+                (
+                    state.presentation.projection.axis_offset(axis_index)
+                    for state in compatible_states
+                    if state.presentation is not None
+                ),
+                default=0,
+            )
+            for axis_index in range(len(axis_labels))
+        )
 
     def set_active_dimension_label_route(self, layer_key: str) -> None:
         self.active_dimension_label_route = layer_key

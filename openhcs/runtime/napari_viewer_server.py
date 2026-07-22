@@ -1207,10 +1207,16 @@ class NapariDimensionLabelRouteResolver:
             return False
         state = self.server.layer_route_state.dimension_state_for(route_key)
         axis_labels = state.axis_labels
+        viewer_axis_origins = self.server.layer_route_state.axis_origins_for(
+            axis_labels
+        )
         return (
             bool(axis_labels)
             and len(axis_labels) == viewer_ndim
-            and state.describes_current_step(current_step)
+            and state.describes_current_step(
+                current_step,
+                viewer_axis_origins,
+            )
         )
 
     def _latest_compatible_route(
@@ -1363,7 +1369,10 @@ class NapariDimensionLabelOverlayController:
 
     def _dimension_label_text(self, state: NapariDimensionLayerState) -> str:
         current_step = tuple(int(step) for step in self.server.viewer.dims.current_step)
-        label_parts = state.label_parts_for_current_step(current_step)
+        label_parts = state.label_parts_for_current_step(
+            current_step,
+            self.server.layer_route_state.axis_origins_for(state.axis_labels),
+        )
         if label_parts is None:
             return ""
         return " | ".join(label_parts)
@@ -3037,9 +3046,13 @@ class NapariNavigationControlMessageAction(NapariControlMessageAction):
                     f"Route {request.route_key!r} has no axis presentation "
                     "for semantic navigation."
                 )
+            viewer_axis_origins = server.layer_route_state.axis_origins_for(
+                axis_labels
+            )
             current_step[axis_position] = presentation.viewer_step(
                 local_axis_index,
                 axis_position,
+                viewer_axis_origin=viewer_axis_origins[axis_position],
             )
         server.viewer.dims.current_step = tuple(current_step)
 

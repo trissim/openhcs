@@ -1329,7 +1329,7 @@ def test_napari_display_pipeline_applies_value_overlay_for_offset_route():
 
     class FakeDims:
         axis_labels = None
-        current_step = (1, 0, 0)
+        current_step = (0, 0, 0)
         ndim = 3
 
     class FakeTextOverlay:
@@ -1375,7 +1375,7 @@ def test_napari_display_pipeline_uses_route_local_steps_for_offset_labels():
 
     class FakeDims:
         axis_labels = None
-        current_step = (3, 1, 0, 0)
+        current_step = (0, 1, 0, 0)
         ndim = 4
 
     class FakeTextOverlay:
@@ -1461,12 +1461,12 @@ def test_napari_navigation_control_selects_visible_layer_and_route_local_axes():
     )
 
     assert response["status"] == "success"
-    assert viewer.dims.current_step == (3, 1, 0, 0)
+    assert viewer.dims.current_step == (0, 1, 0, 0)
     assert viewer.dims.axis_labels == ("channel", "site", "y", "x")
     assert viewer.layers.selection.active is layer
     assert layer.visible is True
     assert viewer.text_overlay.text == "Ch4 | Site 2"
-    assert response["current_step"] == (3, 1, 0, 0)
+    assert response["current_step"] == (0, 1, 0, 0)
     assert response["layers"][0]["selected"] is True
     assert response["layers"][0]["visible"] is True
 
@@ -1833,6 +1833,102 @@ def test_napari_display_pipeline_falls_back_from_selected_offset_channel():
 
     assert server.layer_route_state.active_dimension_label_route == "source"
     assert server.viewer.text_overlay.text == "Ch1: Hoechst"
+
+
+def test_napari_display_pipeline_labels_all_slices_from_nonzero_axis_origin():
+    napari_viewer_server = pytest.importorskip("openhcs.runtime.napari_viewer_server")
+
+    map2_layer = object()
+    smi312_layer = object()
+
+    class FakeSelection:
+        active = map2_layer
+
+    class FakeLayers:
+        selection = FakeSelection()
+
+    class FakeDims:
+        axis_labels = None
+        current_step = (0, 0, 0)
+        ndim = 3
+
+    class FakeTextOverlay:
+        text = ""
+
+    class FakeViewer:
+        layers = FakeLayers()
+        dims = FakeDims()
+        text_overlay = FakeTextOverlay()
+
+    server = _FakeNapariServer()
+    server.layer_route_state = NapariLayerRouteStateStore.empty()
+    server.viewer = FakeViewer()
+    server.layer_route_state.set_layer("map2", map2_layer)
+    server.layer_route_state.set_dimension_state(
+        "map2",
+        NapariDimensionLayerState(
+            labels={"channel": ["Ch2: MAP2"]},
+            presentation=_axis_presentation(
+                layer_key="map2",
+                projected_axis_components=("channel",),
+                component_values={"channel": [2]},
+                axis_offsets=(1,),
+            ),
+        ),
+    )
+    server.layer_route_state.set_layer("smi312", smi312_layer)
+    server.layer_route_state.set_dimension_state(
+        "smi312",
+        NapariDimensionLayerState(
+            labels={"channel": ["Ch4: SMI312"]},
+            presentation=_axis_presentation(
+                layer_key="smi312",
+                projected_axis_components=("channel",),
+                component_values={"channel": [4]},
+                axis_offsets=(2,),
+            ),
+        ),
+    )
+    pipeline = napari_viewer_server.NapariLayerDisplayPipeline(server)
+
+    pipeline.dimension_label_overlay._update_overlay()
+
+    assert server.layer_route_state.active_dimension_label_route == "map2"
+    assert server.viewer.text_overlay.text == "Ch2: MAP2"
+
+    server.viewer.dims.current_step = (1, 0, 0)
+    pipeline.dimension_label_overlay._update_overlay()
+
+    assert server.layer_route_state.active_dimension_label_route == "smi312"
+    assert server.viewer.text_overlay.text == "Ch4: SMI312"
+
+
+def test_napari_axis_origin_includes_implicit_zero_route_offsets():
+    state_store = NapariLayerRouteStateStore.empty()
+    state_store.set_dimension_state(
+        "implicit-zero",
+        NapariDimensionLayerState(
+            labels={"channel": ["Ch1"]},
+            presentation=_axis_presentation(
+                layer_key="implicit-zero",
+                projected_axis_components=("channel",),
+                axis_offsets=(),
+            ),
+        ),
+    )
+    state_store.set_dimension_state(
+        "offset",
+        NapariDimensionLayerState(
+            labels={"channel": ["Ch4"]},
+            presentation=_axis_presentation(
+                layer_key="offset",
+                projected_axis_components=("channel",),
+                axis_offsets=(2,),
+            ),
+        ),
+    )
+
+    assert state_store.axis_origins_for(("channel", "y", "x")) == (0, 0, 0)
 
 
 def test_napari_display_pipeline_rejects_axis_labels_for_wrong_viewer_ndim():
