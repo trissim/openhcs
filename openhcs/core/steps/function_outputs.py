@@ -212,7 +212,7 @@ class MemoryOutputWriter:
     ) -> list[StreamPayload]:
         if plan.write_backend == Backend.DISK.value:
             return prepare_disk_image_payloads(memory_data, memory_paths)
-        return memory_data
+        return [image_payload_data(payload) for payload in memory_data]
 
 
 class MaterializedImageOutputWriter:

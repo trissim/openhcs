@@ -21,6 +21,7 @@ from openhcs.core.artifacts import (
     ObjectLabelsArtifactType,
 )
 from openhcs.core.runtime_image_values import (
+    ImageMetadataPayload,
     ImagePayloadMetadata,
 )
 from openhcs.core.runtime_image_loading import ImagePayloadSourceMetadataContext
@@ -36,6 +37,7 @@ from openhcs.core.source_metadata import (
 )
 from openhcs.core.steps.function_outputs import (
     MaterializedImageOutputWriter,
+    MemoryOutputWriter,
     OpenHCSMetadataWriter,
     ProducedMemoryPathsAuthority,
     StreamOutputsAuthority,
@@ -52,6 +54,23 @@ from openhcs.core.streaming_config_factory import (
     StreamingViewerSurface,
 )
 from openhcs.utils.display_config_factory import ViewerDisplayConfigObject
+
+
+def test_memory_output_writer_projects_runtime_image_payload_for_non_disk_storage():
+    image = np.zeros((2, 3), dtype=np.uint16)
+    payload = ImageMetadataPayload(
+        data=image,
+        metadata=ImagePayloadMetadata(source_dtype="uint16"),
+    )
+
+    prepared = MemoryOutputWriter.payloads(
+        [payload],
+        ["/virtual/A01_s1_w1.tif"],
+        SimpleNamespace(write_backend="non_disk"),
+    )
+
+    assert len(prepared) == 1
+    assert prepared[0] is image
 
 
 def complete_component_metadata(metadata):
