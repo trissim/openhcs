@@ -6,7 +6,84 @@ on:
       - 'v*'
 
 jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate installer contract and sources
+        shell: pwsh
+        run: |
+          python -m pip install packaging pytest
+          python -m pytest -q tests/installer
+          $source = Get-Content packaging/installers/windows/Install-OpenHCS.ps1 -Raw
+          [void][scriptblock]::Create($source)
+
+      - name: Build release-pinned Windows installer archive
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP "OpenHCS-Windows-Installer"
+          $releaseVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item packaging/installers/windows/* -Destination $stage
+          python scripts/render_installer_contract.py `
+            --version $releaseVersion `
+            --output (Join-Path $stage "installer_contract.json")
+          Compress-Archive -Path (Join-Path $stage "*") `
+            -DestinationPath OpenHCS-Windows-Installer.zip
+
+      - name: Upload Windows installer archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: openhcs-windows-installer
+          path: OpenHCS-Windows-Installer.zip
+          if-no-files-found: error
+
+  build-macos-installer:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate installer contract and sources
+        run: |
+          python -m pip install packaging pytest
+          python -m pytest -q tests/installer
+          bash -n packaging/installers/macos/install-openhcs.sh
+          bash -n packaging/installers/macos/build-installer.sh
+
+      - name: Build release-pinned macOS installer archive
+        run: |
+          STAGE="$RUNNER_TEMP/OpenHCS-macOS-Installer"
+          mkdir -p "$STAGE"
+          python scripts/render_installer_contract.py \
+            --version "${GITHUB_REF_NAME#v}" \
+            --output "$STAGE/installer_contract.json"
+          packaging/installers/macos/build-installer.sh \
+            "$STAGE/installer_contract.json" \
+            "$STAGE/OpenHCS Installer.app"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$STAGE/OpenHCS Installer.app" \
+            "$GITHUB_WORKSPACE/OpenHCS-macOS-Installer.zip"
+
+      - name: Upload macOS installer archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: openhcs-macos-installer
+          path: OpenHCS-macOS-Installer.zip
+          if-no-files-found: error
+
   build-and-publish:
+    needs: [build-windows-installer, build-macos-installer]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -54,10 +131,19 @@ jobs:
           twine check dist/*
           twine upload dist/* --skip-existing
 
+      - name: Download desktop installer archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: openhcs-*-installer
+          path: installer-assets
+          merge-multiple: true
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: dist/*
+          files: |
+            dist/*
+            installer-assets/*
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
