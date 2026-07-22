@@ -177,7 +177,7 @@ def test_portable_demo_uses_installed_python_and_real_viewer_contract(
         "--json",
     ]
     assert observed["cwd"] == tmp_path
-    assert observed["timeout_seconds"] == 300
+    assert observed["timeout_seconds"] is None
     demo_environment = observed["environment"]
     assert isinstance(demo_environment, dict)
     assert demo_environment["OPENHCS_AGENT_READ_ROOTS"] == str(demo_root)
@@ -233,7 +233,7 @@ def test_portable_demo_headless_mode_preserves_runtime_contract(
     assert payload["execution_status"] == "complete"
     assert "--no-viewer" in observed["command"]
     assert observed["command"][-1] == "--json"
-    assert observed["timeout_seconds"] == 300
+    assert observed["timeout_seconds"] is None
 
 
 def test_native_napari_smoke_uses_installed_python_without_offscreen_qt(

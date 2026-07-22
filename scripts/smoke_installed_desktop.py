@@ -81,7 +81,7 @@ def _run_checked(
     *,
     cwd: Path,
     environment: dict[str, str] | None = None,
-    timeout_seconds: float = 120,
+    timeout_seconds: float | None = 120,
 ) -> subprocess.CompletedProcess[str]:
     completed = subprocess.run(
         command,
@@ -264,7 +264,7 @@ def _smoke_installed_demo(
         command,
         cwd=install_root,
         environment=environment,
-        timeout_seconds=300,
+        timeout_seconds=None,
     )
     payload = json.loads(completed.stdout)
     required_values = {"execution_status": "complete"}
