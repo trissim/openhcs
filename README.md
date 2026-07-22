@@ -352,6 +352,11 @@ CompiledExecutionBundle
 runtime values + materialized artifacts
 ```
 
+The authoring surface remains an ordered linear step list. ObjectState
+inheritance keeps defaulted configuration sparse, while compilation derives and
+exposes the exact source and artifact dependencies required for execution; the
+derived dependency graph is not a second workflow the user must author.
+
 Pipelines are compiled for every selected execution axis before processing begins. Runtime workers consume the compiled bundle rather than reinterpreting mutable declaration objects. [Read more →](https://openhcs.readthedocs.io/en/latest/architecture/pipeline-compilation-system.html)
 
 </details>

@@ -40,6 +40,12 @@ and processing defaults. Each ``FunctionStep`` owns a function pattern and
 step-level configuration. Function patterns may be a callable, callable with
 keyword arguments, a callable chain, or a dictionary pattern.
 
+The public pipeline is intentionally an ordered linear step list. ObjectState
+inheritance lets forms and generated code retain defaults without expanding
+every field into a local override. Compilation resolves those effective values
+and derives the source and artifact dependency graph internally; that graph is
+inspectable execution evidence, not a second user-authored workflow.
+
 The GUI, generated Python, MCP/UI bridge, and CellProfiler importer all converge
 on these declarations. There is no second runtime-pipeline object that carries
 hidden semantics.
