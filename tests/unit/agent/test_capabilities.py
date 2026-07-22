@@ -36,6 +36,20 @@ def test_capability_registry_declares_schema_and_unique_names():
     assert len(names) == len(set(names))
 
 
+def test_source_session_capability_owns_progress_heartbeat_policy():
+    capabilities = {
+        capability.name: capability
+        for capability in get_capability_registry().capabilities
+    }
+
+    source_session = capabilities[
+        "openhcs_create_orchestrator_session_from_pipeline_source"
+    ]
+
+    assert source_session.progress_heartbeat_seconds == 10.0
+    assert source_session.as_jsonable()["progress_heartbeat_seconds"] == 10.0
+
+
 def test_create_pipeline_capability_accepts_optional_pipeline_config_reference():
     declarations = {
         declaration.name: declaration for declaration in agent_capability_declarations()

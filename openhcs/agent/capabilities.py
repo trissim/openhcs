@@ -6,6 +6,7 @@ from abc import ABC
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from math import isfinite
 from typing import ClassVar, Generic, TypeAlias, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
@@ -770,9 +771,17 @@ class AgentCapabilitySpec:
     runtime_requirements: tuple[str, ...] = ()
     data_exposure: tuple[str, ...] = ()
     security_requirements: tuple[str, ...] = ()
+    progress_heartbeat_seconds: float | None = None
     input_contract: AgentContract | None = None
     output_contract: AgentContract | None = None
     exposition: AgentCapabilityExposition | None = None
+
+    def __post_init__(self) -> None:
+        if self.progress_heartbeat_seconds is not None and (
+            not isfinite(self.progress_heartbeat_seconds)
+            or self.progress_heartbeat_seconds <= 0
+        ):
+            raise ValueError("progress_heartbeat_seconds must be positive and finite.")
 
     @property
     def input_type(self) -> str | None:
@@ -840,6 +849,7 @@ class AgentCapabilitySpec:
             "runtime_requirements": list(self.runtime_requirements),
             "data_exposure": list(self.data_exposure),
             "security_requirements": list(self.security_requirements),
+            "progress_heartbeat_seconds": self.progress_heartbeat_seconds,
             "input_type": self.input_type,
             "output_type": self.output_type,
             "workflow_group": _enum_json_value(self.workflow_group),
@@ -892,6 +902,7 @@ class AgentCapabilityDeclaration(ABC, metaclass=AutoRegisterMeta):
     runtime_requirements: ClassVar[tuple[str, ...]] = ()
     data_exposure: ClassVar[tuple[str, ...]] = ()
     security_requirements: ClassVar[tuple[str, ...]] = ()
+    progress_heartbeat_seconds: ClassVar[float | None] = None
     input_contract: ClassVar[AgentContract | None] = None
     output_contract: ClassVar[AgentContract | None] = None
     exposition: ClassVar[AgentCapabilityExposition | None] = None
@@ -996,6 +1007,7 @@ class AgentCapabilityDeclaration(ABC, metaclass=AutoRegisterMeta):
             runtime_requirements=cls.runtime_requirements,
             data_exposure=cls.data_exposure,
             security_requirements=cls.security_requirements,
+            progress_heartbeat_seconds=cls.progress_heartbeat_seconds,
             input_contract=cls.input_contract,
             output_contract=cls.output_contract,
             exposition=cls.exposition,
@@ -2041,6 +2053,7 @@ class CreateOrchestratorSessionFromPipelineSourceCapability(
     service = "execution_session"
     mutating = True
     side_effects = ("creates_in_memory_execution_session",)
+    progress_heartbeat_seconds = 10.0
     input_contract = PipelineSourceOrchestratorSessionRequest
     output_contract = OrchestratorSessionRef
     request_invocation = AgentFromFieldsServiceInvocation(

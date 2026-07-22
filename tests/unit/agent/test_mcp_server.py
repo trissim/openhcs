@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 import sys
+import time
 from types import SimpleNamespace
 import tomllib
 
@@ -19,11 +20,13 @@ from openhcs.agent.capabilities import (
     CoreLocalCapabilitySurfaceProfile,
     DesktopLocalCapabilitySurfaceProfile,
     FullLocalCapabilitySurfaceProfile,
+    CreateOrchestratorSessionFromPipelineSourceCapability,
     agent_capabilities,
     get_capability_registry,
 )
 from openhcs.agent.authoring_contexts import AuthoringContextDeclaration
 from openhcs.agent.dto.common import AgentError, SCHEMA_VERSION
+from openhcs.agent.dto.execution import OrchestratorSessionRef
 from openhcs.agent.dto.config import ConfigPatch
 from openhcs.agent.dto.functions import (
     CustomFunctionRegistrationResult,
@@ -14426,6 +14429,92 @@ def test_mcp_server_exposes_execution_session_tools():
     assert "openhcs_probe_viewer_window" in tool_names
     assert "openhcs_validate_viewer_window_state" in tool_names
     assert "openhcs_ui_get_object_state_fields" in tool_names
+
+
+def test_source_session_progress_adapter_keeps_event_loop_responsive(monkeypatch):
+    if importlib.util.find_spec("mcp") is None:
+        return
+
+    class SlowExecutionService:
+        def create_session_from_pipeline_source_request(self, request):
+            del request
+            time.sleep(0.04)
+            return OrchestratorSessionRef(
+                schema_version=SCHEMA_VERSION,
+                session_id="session-1",
+                uri="openhcs://execution/sessions/session-1",
+            )
+
+    monkeypatch.setattr(
+        CreateOrchestratorSessionFromPipelineSourceCapability,
+        "progress_heartbeat_seconds",
+        0.005,
+    )
+    built = server.build_server(
+        SimpleNamespace(execution_service=SlowExecutionService())
+    )
+
+    async def exercise():
+        call = asyncio.create_task(
+            built.call_tool(
+                "openhcs_create_orchestrator_session_from_pipeline_source",
+                {
+                    "plate_path": "/tmp/plate",
+                    "pipeline_source": "pipeline_config = None\npipeline_steps = []",
+                },
+            )
+        )
+        event_loop_ticks = 0
+        while not call.done():
+            await asyncio.sleep(0.002)
+            event_loop_ticks += 1
+        return await call, event_loop_ticks
+
+    result, event_loop_ticks = asyncio.run(exercise())
+    payload = json.loads(_direct_tool_text(result))
+
+    assert payload["session_id"] == "session-1"
+    assert event_loop_ticks >= 2
+
+
+def test_declared_progress_helper_emits_heartbeats_while_work_runs(monkeypatch):
+    class RecordingMcpContext:
+        request_context = object()
+
+        def __init__(self):
+            self.progress = []
+
+        async def report_progress(self, progress, total=None, message=None):
+            self.progress.append((progress, total, message))
+
+    monkeypatch.setattr(
+        CreateOrchestratorSessionFromPipelineSourceCapability,
+        "progress_heartbeat_seconds",
+        0.005,
+    )
+    capability = CreateOrchestratorSessionFromPipelineSourceCapability.to_spec()
+    context = RecordingMcpContext()
+
+    def slow_operation():
+        time.sleep(0.025)
+        return "complete"
+
+    async def exercise():
+        return await server._await_with_declared_progress(
+            capability,
+            context,
+            asyncio.to_thread(slow_operation),
+        )
+
+    result = asyncio.run(exercise())
+
+    assert result == "complete"
+    assert context.progress[0] == (
+        0.0,
+        None,
+        "Create source-backed orchestrator session: started",
+    )
+    assert len(context.progress) >= 3
 
 
 def test_execution_capabilities_distinguish_headless_and_ui_owned_runs():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import subprocess
@@ -135,6 +136,51 @@ def test_persistent_client_preserves_local_usage_errors(monkeypatch) -> None:
     with dev_client.McpDevClient(sys.executable) as client:
         with pytest.raises(dev_client.McpDevCliUsageError, match="requires a port"):
             client.execute(("viewer-state", "--json"))
+
+
+def test_stdio_tool_call_requests_and_consumes_progress_notifications(monkeypatch):
+    session = dev_client.McpDevStdioSession(
+        dev_client.McpDevServerSpec(sys.executable),
+        io.StringIO(),
+    )
+    written_messages = []
+    read_timeouts = []
+    responses = iter(
+        (
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/progress",
+                "params": {
+                    "progressToken": 1,
+                    "progress": 10.0,
+                    "message": "still running",
+                },
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"content": []},
+            },
+        )
+    )
+
+    async def fake_write_message(message):
+        written_messages.append(message)
+
+    async def fake_read_message(*, timeout_seconds):
+        read_timeouts.append(timeout_seconds)
+        return next(responses)
+
+    monkeypatch.setattr(session, "write_message", fake_write_message)
+    monkeypatch.setattr(session, "read_message", fake_read_message)
+
+    result = asyncio.run(
+        session.call_tool("openhcs_slow_tool", {}, timeout_seconds=7.0)
+    )
+
+    assert result == {"content": []}
+    assert written_messages[0]["params"]["_meta"] == {"progressToken": 1}
+    assert read_timeouts == [7.0, 7.0]
 
 
 def test_persistent_shell_reuses_client_and_preserves_quoted_arguments(

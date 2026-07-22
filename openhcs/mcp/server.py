@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import (
     MISSING,
     dataclass,
@@ -17,7 +18,13 @@ from dataclasses import (
 )
 from enum import Enum
 from functools import wraps
-from inspect import Parameter, Signature, getsourcefile, signature as inspect_signature
+from inspect import (
+    Parameter,
+    Signature,
+    getsourcefile,
+    iscoroutinefunction,
+    signature as inspect_signature,
+)
 from pathlib import Path
 from typing import Any, ClassVar, Generic, Self, TypeVar, get_type_hints
 
@@ -452,6 +459,55 @@ def _mcp_transport_projected_result(
             get_capability_registry(selection.transport, selection.local_profile)
         )
     return result
+
+
+async def _await_with_declared_progress(
+    capability: AgentCapabilitySpec,
+    mcp_context,
+    operation: Awaitable[object],
+) -> object:
+    """Await one declared long operation while emitting MCP liveness progress."""
+
+    heartbeat_seconds = capability.progress_heartbeat_seconds
+    if heartbeat_seconds is None:
+        return await operation
+    task = asyncio.ensure_future(operation)
+    elapsed_seconds = 0.0
+    await _report_progress_if_available(
+        mcp_context,
+        elapsed_seconds,
+        message=f"{capability.title}: started",
+    )
+    while True:
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(task),
+                timeout=heartbeat_seconds,
+            )
+        except TimeoutError:
+            elapsed_seconds += heartbeat_seconds
+            await _report_progress_if_available(
+                mcp_context,
+                elapsed_seconds,
+                message=f"{capability.title}: still running",
+            )
+
+
+async def _report_progress_if_available(
+    mcp_context,
+    progress: float,
+    *,
+    message: str,
+) -> None:
+    """Report standard MCP progress when execution has a request context."""
+
+    try:
+        mcp_context.request_context
+    except ValueError:
+        # FastMCP's direct ``call_tool`` test/application seam has no request
+        # context. The same tool still needs to execute correctly there.
+        return
+    await mcp_context.report_progress(progress, message=message)
 
 
 class McpNoArgumentToolBindingABC(ABC, metaclass=AutoRegisterMeta):
@@ -2085,37 +2141,109 @@ def build_server(
         allow_stale_server: bool = False,
     ):
         def decorator(fn):
-            @wraps(fn)
-            def guarded_tool(*args, **kwargs):
-                if not allow_stale_server and _mcp_server_source_changed_since_import():
-                    observe_invocation(
-                        capability,
-                        McpInvocationOutcome.BLOCKED_STALE,
-                    )
-                    return _mcp_server_stale_error(fn.__name__)
-                try:
-                    result = fn(*args, **kwargs)
-                    projected_result = _mcp_transport_projected_result(
-                        capability,
-                        result,
-                        capability_surface_selection,
-                    )
-                    observe_invocation(
-                        capability,
-                        McpInvocationOutcome.SUCCEEDED,
-                    )
-                    return projected_result
-                except Exception as exc:
-                    observe_invocation(
-                        capability,
-                        McpInvocationOutcome.FAILED,
-                    )
-                    return _mcp_tool_error(fn.__name__, exc)
+            def stale_result():
+                if allow_stale_server or not _mcp_server_source_changed_since_import():
+                    return None
+                observe_invocation(
+                    capability,
+                    McpInvocationOutcome.BLOCKED_STALE,
+                )
+                return _mcp_server_stale_error(fn.__name__)
 
-            guarded_tool.__annotations__ = dict(fn.__annotations__)
+            def project_success(result):
+                projected_result = _mcp_transport_projected_result(
+                    capability,
+                    result,
+                    capability_surface_selection,
+                )
+                observe_invocation(
+                    capability,
+                    McpInvocationOutcome.SUCCEEDED,
+                )
+                return projected_result
+
+            def project_failure(exception: Exception):
+                observe_invocation(
+                    capability,
+                    McpInvocationOutcome.FAILED,
+                )
+                return _mcp_tool_error(fn.__name__, exception)
+
+            if capability.progress_heartbeat_seconds is not None:
+                from mcp.server.fastmcp import Context
+
+                @wraps(fn)
+                async def guarded_tool(mcp_context: Context, *args, **kwargs):
+                    stale = stale_result()
+                    if stale is not None:
+                        return stale
+
+                    async def invoke():
+                        if iscoroutinefunction(fn):
+                            return await fn(*args, **kwargs)
+                        return await asyncio.to_thread(fn, *args, **kwargs)
+
+                    try:
+                        result = await _await_with_declared_progress(
+                            capability,
+                            mcp_context,
+                            invoke(),
+                        )
+                        return project_success(result)
+                    except Exception as exc:
+                        return project_failure(exc)
+
+                guarded_annotations = {
+                    "mcp_context": Context,
+                    **fn.__annotations__,
+                }
+                guarded_signature = Signature(
+                    parameters=(
+                        Parameter(
+                            "mcp_context",
+                            Parameter.POSITIONAL_OR_KEYWORD,
+                            annotation=Context,
+                        ),
+                        *inspect_signature(fn).parameters.values(),
+                    ),
+                    return_annotation=inspect_signature(fn).return_annotation,
+                )
+            elif iscoroutinefunction(fn):
+
+                @wraps(fn)
+                async def guarded_tool(*args, **kwargs):
+                    stale = stale_result()
+                    if stale is not None:
+                        return stale
+                    try:
+                        result = await fn(*args, **kwargs)
+                        return project_success(result)
+                    except Exception as exc:
+                        return project_failure(exc)
+
+                guarded_annotations = dict(fn.__annotations__)
+                guarded_signature = inspect_signature(fn)
+
+            else:
+
+                @wraps(fn)
+                def guarded_tool(*args, **kwargs):
+                    stale = stale_result()
+                    if stale is not None:
+                        return stale
+                    try:
+                        result = fn(*args, **kwargs)
+                        return project_success(result)
+                    except Exception as exc:
+                        return project_failure(exc)
+
+                guarded_annotations = dict(fn.__annotations__)
+                guarded_signature = inspect_signature(fn)
+
+            guarded_tool.__annotations__ = guarded_annotations
             result_contract = _mcp_tool_result_contract(capability)
             guarded_tool.__annotations__["return"] = result_contract
-            guarded_tool.__signature__ = inspect_signature(fn).replace(
+            guarded_tool.__signature__ = guarded_signature.replace(
                 return_annotation=result_contract
             )
             server.tool(

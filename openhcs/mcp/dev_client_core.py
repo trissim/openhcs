@@ -1153,7 +1153,10 @@ class McpDevStdioSession:
             "method": method.value,
         }
         if params is not None:
-            message["params"] = dict(params)
+            request_params = dict(params)
+            if method is McpWireMethod.CALL_TOOL:
+                request_params["_meta"] = {"progressToken": request_id}
+            message["params"] = request_params
         await self.write_message(message)
         while True:
             response = await self.read_message(timeout_seconds=timeout_seconds)
