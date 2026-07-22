@@ -34,6 +34,51 @@ also validates its setting-derived names, source availability, grouping
 sources, and module-specific relations before the invocation reaches generic
 compilation.
 
+Relations and cross-artifact subject identity
+---------------------------------------------
+
+``ArtifactSpecRelation`` is the nominal owner for semantics that connect one
+target artifact declaration, whether input or output, to an exact
+``ArtifactSpecRef``. Relation leaves expose hooks for group scope, source
+context, materialization identity, measurement subject, and artifact-member
+subject. Generic planners and materializers call those hooks; they do not branch
+on a callable name, artifact filename, feature-column spelling, or concrete
+relation subclass.
+
+Object-scoped tables and feature-bearing artifacts use the same declared object
+subject without flattening their different local schemas:
+
+``ObjectMeasurementSubjectRelation``
+  Binds one measurement row's local identifier to an exact object-label output.
+  Declarations without an ``id_field`` still own the measurement subject but do
+  not project a row-identity binding for runtime viewer linkage.
+
+``ObjectArtifactMemberSubjectRelation``
+  Binds one feature-bearing artifact member's local identifier to that same
+  object-label output. A self-owned object-label output can declare the relation
+  without adding a dependency edge to itself.
+
+When a relation declares a local identifier, it projects an
+``ObjectArtifactSubjectBinding``. The binding derives one producer-scoped
+subject token from the referenced object declaration and keeps each target's
+local identifier field on its own declaration. Thus a measurement row and
+several disconnected path members can represent one object without copying
+aggregate measurements onto every path or fabricating combined geometry.
+
+``ArtifactOutputPlan.relations`` preserves these declarations through
+compilation. Runtime artifact materialization passes the exact output plan into
+the registered writer, which may project the binding into framework-owned
+metadata beside the artifact's ordinary features. ROI persistence and viewer
+streaming carry that metadata without exposing the framework keys as biological
+table columns. A viewer can then join native rows by the exact subject token and
+subject identifier while leaving geometry, feature values, selection, colors,
+and layer order on the native layer owner.
+
+This is a generic relation path, not ROI- or neurite-specific dispatch. A new
+cross-artifact linkage belongs on an ``ArtifactSpecRelation`` leaf and its
+owning declarations; it must not be recovered later by matching column names,
+display labels, output paths, or assay vocabulary.
+
 Callable ABI versus semantic artifacts
 --------------------------------------
 
