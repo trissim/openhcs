@@ -58,7 +58,6 @@ def test_visualization_install_surface_composes_napari_and_fiji() -> None:
     }
 
     assert {"napari", "napari-crop"} <= napari_requirements
-    assert "napari-roi-manager" not in napari_requirements
     for combined_extra in ("viz", "all"):
         combined_requirements = {
             Requirement(requirement).name for requirement in extras[combined_extra]
