@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
 
 import pytest
@@ -806,6 +807,96 @@ class RuntimeCallable:
 
     def __call__(self, image, threshold: int = 1):
         return image
+
+
+@dataclass(frozen=True)
+class RuntimeSettings:
+    threshold: int = 1
+
+
+def runtime_with_settings(
+    image,
+    settings: RuntimeSettings = RuntimeSettings(),
+):
+    return image
+
+
+def test_step_registration_preserves_and_updates_nested_function_kwargs() -> None:
+    ObjectStateRegistry.clear()
+    ScopeTokenService.clear_scope("plate")
+    initial_settings = RuntimeSettings(threshold=3)
+    replacement_settings = RuntimeSettings(threshold=7)
+
+    PipelineObjectStateBinding.update_plate_steps(
+        "plate",
+        [
+            FunctionStep(
+                func=(runtime_with_settings, {"settings": initial_settings}),
+                name="Nested settings",
+            )
+        ],
+    )
+
+    initial_editor_state = PipelineObjectStateBinding.editor_state_for_plate("plate")
+    initial_step_scope_id = initial_editor_state.step_scope_ids[0]
+    initial_step_state = ObjectStateRegistry.get_by_scope(initial_step_scope_id)
+    assert initial_step_state is not None
+    function_token = initial_step_state.metadata[
+        FUNC_EDITOR_PATTERN_TOKENS_META_KEY
+    ][0]
+    function_scope_id = f"{initial_step_scope_id}::{function_token}"
+    initial_function_state = ObjectStateRegistry.get_by_scope(function_scope_id)
+    assert initial_function_state is not None
+    assert initial_function_state.parameters["settings"] == initial_settings
+    assert initial_function_state.parameters["settings.threshold"] == 3
+    assert initial_function_state.reconstruct_top_level_parameters() == {
+        "settings": initial_settings,
+    }
+
+    initial_step = PipelineObjectStateBinding.steps_for_plate("plate")[0]
+    assert initial_step.func[1]["settings"] == initial_settings
+
+    PipelineObjectStateBinding.update_plate_steps(
+        "plate",
+        [
+            FunctionStep(
+                func=(runtime_with_settings, {"settings": replacement_settings}),
+                name="Nested settings",
+            )
+        ],
+    )
+
+    replacement_function_state = ObjectStateRegistry.get_by_scope(function_scope_id)
+    assert replacement_function_state is initial_function_state
+    assert replacement_function_state.parameters["settings"] == replacement_settings
+    assert replacement_function_state.parameters["settings.threshold"] == 7
+    assert replacement_function_state.reconstruct_top_level_parameters() == {
+        "settings": replacement_settings,
+    }
+
+    replacement_step = PipelineObjectStateBinding.steps_for_plate("plate")[0]
+    assert replacement_step.func[1]["settings"] == replacement_settings
+
+    PipelineObjectStateBinding.update_plate_steps(
+        "plate",
+        [
+            FunctionStep(
+                func=runtime_with_settings,
+                name="Nested settings",
+            )
+        ],
+    )
+
+    reset_function_state = ObjectStateRegistry.get_by_scope(function_scope_id)
+    assert reset_function_state is initial_function_state
+    assert reset_function_state.parameters["settings"] == RuntimeSettings()
+    assert reset_function_state.parameters["settings.threshold"] == 1
+    assert reset_function_state.reconstruct_top_level_parameters() == {
+        "settings": RuntimeSettings(),
+    }
+
+    reset_step = PipelineObjectStateBinding.steps_for_plate("plate")[0]
+    assert reset_step.func[1]["settings"] == RuntimeSettings()
 
 
 def test_step_registration_persists_function_editor_scope_tokens() -> None:

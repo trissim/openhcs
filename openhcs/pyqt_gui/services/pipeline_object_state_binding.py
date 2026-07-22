@@ -283,7 +283,17 @@ class PipelineObjectStateBinding:
 
         for func_obj, kwargs in self._normalize_func_items(step.func):
             func_scope_id = ScopeTokenService.build_scope_id(scope_id, func_obj)
-            if ObjectStateRegistry.get_by_scope(func_scope_id) is not None:
+            existing_func_state = ObjectStateRegistry.get_by_scope(func_scope_id)
+            if existing_func_state is not None:
+                FunctionPatternCodeDocumentService.apply_kwargs_to_state(
+                    state=existing_func_state,
+                    previous_kwargs=(
+                        FunctionPatternCodeDocumentService.reconstruct_kwargs_from_state(
+                            existing_func_state
+                        )
+                    ),
+                    next_kwargs=kwargs,
+                )
                 continue
             editable_func = EditableFunctionPatternCallable.for_entry(
                 func_obj,
