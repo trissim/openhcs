@@ -26,6 +26,11 @@ from benchmark.cellprofiler_comparison import (
     CellProfilerComparisonCase,
     load_comparison_cases,
 )
+from benchmark.datasets.cache import (
+    CELLPROFILER_EXAMPLES_ROOT_ENV,
+    BenchmarkPathRootKind,
+    resolve_benchmark_path_root,
+)
 from openhcs.constants import Backend, Microscope
 from openhcs.constants.constants import AllComponents
 from openhcs.constants.input_source import InputSource
@@ -477,13 +482,13 @@ def test_bbbc021_cppipe_executes_named_channel_bindings_through_zmq(
 
     nuclei_records = _runtime_records(
         export,
-        name="Nuclei",
+        name="IdentifyPrimaryObjects_1_object_labels_1",
         artifact_type=ObjectLabelsArtifactType,
         axis_id="A01",
     )
     composite_records = _runtime_records(
         export,
-        name="Composite",
+        name="GrayToColor_2_image_1",
         artifact_type=ImageArtifactType,
         axis_id="A01",
     )
@@ -553,7 +558,7 @@ def test_loadimages_cppipe_preserves_source_artifact_bindings_through_zmq(
 
     corrected_records = _runtime_records(
         export,
-        name="CorrectedRaw",
+        name="CorrectIlluminationApply_1_image_1",
         artifact_type=ImageArtifactType,
         axis_id="A01",
     )
@@ -659,7 +664,7 @@ def test_percent_positive_cppipe_executes_measurement_consumers_over_zmq(
     assert len(filtered_object_records) == 1
     assert _runtime_records(
         export,
-        name="DisplayImage",
+        name="DisplayDataOnImage_6_image_1",
         artifact_type=ImageArtifactType,
     )
     calculate_math_records = tuple(
@@ -768,18 +773,20 @@ def test_official_untangleworms_brightfield_preserves_overlay_pixels_over_zmq(
     )
 
     overlay_outputs = sorted(
-        path for path in export.exports.image_outputs if path.suffix.lower() == ".png"
+        path
+        for output_root in export.output_roots
+        for path in output_root.rglob("*OverlayOutlines*.tif")
     )
     assert [path.name for path in overlay_outputs] == [
-        "A01_s001_w1_z001_t001.png",
-        "A01_s002_w1_z001_t001.png",
+        "A01_s001_w1_z001_t001_OverlayOutlines_17_image_1.tif",
+        "A01_s002_w1_z001_t001_OverlayOutlines_17_image_1.tif",
     ]
-    overlay = np.asarray(Image.open(overlay_outputs[0]))
-    assert overlay.dtype == np.uint8
+    overlay = np.asarray(tifffile.imread(overlay_outputs[0]))
+    assert overlay.dtype == np.float32
     assert overlay.ndim == 3
-    red = overlay[..., 0].astype(np.int16)
-    blue = overlay[..., 2].astype(np.int16)
-    assert np.count_nonzero(blue > red + 32) > 0
+    red = overlay[..., 0]
+    blue = overlay[..., 2]
+    assert np.count_nonzero(blue > red + (32 / 255)) > 0
 
 
 def test_official_cometassay_preserves_mask_geometry_over_zmq(
@@ -949,22 +956,24 @@ def test_official_neighbors_preserves_measurement_and_image_exports_over_zmq(
         path.name: list(export.exports.table_headers_by_path[path])
         for path in export.exports.table_outputs
     }
-    assert _matching_header(headers_by_name, "MeasureObjectNeighbors") == [
-        "slice_index",
-        "object_id",
-        "scale",
-        "number_of_neighbors",
-        "percent_touching",
-        "first_closest_object_number",
-        "first_closest_distance",
-        "second_closest_object_number",
-        "second_closest_distance",
-        "angle_between_neighbors",
-        "image_number",
+    assert [
+        field
+        for field in headers_by_name["Cells.csv"]
+        if field.startswith("Neighbors_")
+    ] == [
+        "Neighbors_NumberOfNeighbors_Expanded",
+        "Neighbors_PercentTouching_Expanded",
+        "Neighbors_FirstClosestObjectNumber_Expanded",
+        "Neighbors_FirstClosestDistance_Expanded",
+        "Neighbors_SecondClosestObjectNumber_Expanded",
+        "Neighbors_SecondClosestDistance_Expanded",
+        "Neighbors_AngleBetweenNeighbors_Expanded",
     ]
     image_names = {path.name for path in export.exports.image_outputs}
-    assert any("ColorNeighbors" in name for name in image_names)
-    assert any("InvertedRedOutlines" in name for name in image_names)
+    assert image_names == {
+        "A01_s001_w1_z001_t001_ColorNeighbors.png",
+        "A01_s001_w1_z001_t001_InvertedRed.png",
+    }
 
 
 def test_official_illumination_preserves_rule_row_binding_over_zmq(
@@ -991,7 +1000,9 @@ def test_official_illumination_preserves_rule_row_binding_over_zmq(
     assert orig_green is not None
     assert source_bindings.binding_for_alias("DNA") is None
     assert orig_green.origin is SourceBindingOrigin.PIPELINE_START
-    assert orig_green.component_identity == ()
+    assert orig_green.component_identity == (
+        ComponentSelector(AllComponents.CHANNEL, "1"),
+    )
     assert len(orig_green.selector.filters) == 1
     source_filter = orig_green.selector.filters[0]
     assert source_filter.subject is SourceFilterSubject.FILE
@@ -1004,14 +1015,12 @@ def test_official_illumination_preserves_rule_row_binding_over_zmq(
         source_root=source_root,
         well_filter=1,
     )
-    image_outputs = tuple(
-        path for path in export.exports.image_outputs if path.suffix == ".TIF"
-    )
-    assert len(image_outputs) == 3
-    corrected = tifffile.imread(image_outputs[0])
-    assert corrected.ndim == 2
-    assert corrected.shape[0] > 0
-    assert corrected.shape[1] > 0
+    assert tuple(path.name for path in export.exports.image_outputs) == ("Illum.npy",)
+    illumination = np.load(export.exports.image_outputs[0])
+    assert illumination.shape == (512, 512)
+    assert illumination.dtype == np.float32
+    assert np.isfinite(illumination).all()
+    assert float(illumination.max()) > float(illumination.min())
 
 
 def test_official_woundhealing_preserves_area_table_shape_over_zmq(
@@ -1025,13 +1034,14 @@ def test_official_woundhealing_preserves_area_table_shape_over_zmq(
         path.name: list(export.exports.table_headers_by_path[path])
         for path in export.exports.table_outputs
     }
-    assert _matching_header(headers_by_name, "MeasureImageAreaOccupied") == [
-        "slice_index",
-        "area_occupied",
-        "perimeter",
-        "total_area",
-        "source_image_name",
-        "image_number",
+    assert [
+        field
+        for field in headers_by_name["Image.csv"]
+        if field.startswith("AreaOccupied_")
+    ] == [
+        "AreaOccupied_AreaOccupied_Tissue",
+        "AreaOccupied_Perimeter_Tissue",
+        "AreaOccupied_TotalArea_Tissue",
     ]
 
 
@@ -1047,7 +1057,7 @@ def test_official_woundhealing_preserves_area_table_shape_over_zmq(
                 ("PH3PosNuclei", ObjectLabelsArtifactType),
                 (("Nuclei", "PH3"), RelationshipsArtifactType),
                 ("CalculateMath_13_measurements", MeasurementsArtifactType),
-                ("DisplayImage", ImageArtifactType),
+                ("DisplayDataOnImage_6_image_1", ImageArtifactType),
             ),
             id="percent-positive",
         ),
@@ -1444,11 +1454,9 @@ def _write_percent_positive_image(
 
 
 def _official_cellprofiler_examples_root() -> Path:
-    return Path(
-        os.environ.get(
-            "CELLPROFILER_EXAMPLES_ROOT",
-            "/tmp/cellprofiler_examples",
-        )
+    return resolve_benchmark_path_root(
+        BenchmarkPathRootKind.CELLPROFILER_EXAMPLES,
+        env_name=CELLPROFILER_EXAMPLES_ROOT_ENV,
     )
 
 

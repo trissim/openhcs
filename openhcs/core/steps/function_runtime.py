@@ -1241,17 +1241,46 @@ class PatternGroupExecutionScope:
         return str(self.component_value)
 
     @property
-    def main_flow_source_binding_plan(self) -> CompiledSourceBindingPlan:
-        """Return bindings that anchor and load this group's main-flow stack."""
+    def unscoped_main_flow_source_binding_plan(self) -> CompiledSourceBindingPlan:
+        """Return declared bindings that can contribute to main flow."""
 
         declared_plan = self.execution_plan.source_binding_plan
         main_flow_refs = self.compiled_group.main_flow_input_refs
-        main_flow_plan = (
+        return (
             declared_plan
             if main_flow_refs is None
             else declared_plan.for_artifact_refs(main_flow_refs)
         )
-        return main_flow_plan.for_execution_axis_scope(self.axis_scope)
+
+    @property
+    def main_flow_source_binding_plan(self) -> CompiledSourceBindingPlan:
+        """Return bindings that anchor and load this group's main-flow stack."""
+
+        return self.unscoped_main_flow_source_binding_plan.for_execution_axis_scope(
+            self.axis_scope
+        )
+
+    def active_main_flow_source_binding_plan(
+        self,
+        payload: RuntimeArrayData,
+    ) -> CompiledSourceBindingPlan:
+        """Project main-flow bindings through represented payload aliases."""
+
+        plan = self.unscoped_main_flow_source_binding_plan
+        represented_names = frozenset(
+            image_payload_metadata(
+                payload
+            ).source_provenance.represented_source_image_names
+        )
+        if represented_names:
+            variable_components = ComponentSet.coerce(
+                self.execution_plan.variable_components or ()
+            )
+            plan = plan.for_represented_source_stack(
+                represented_names,
+                variable_components=variable_components,
+            )
+        return plan.for_execution_axis_scope(self.axis_scope)
 
     @property
     def invocation_source_artifact_refs(self) -> tuple[ArtifactSpecRef, ...]:
@@ -1375,7 +1404,9 @@ class FunctionRuntimeScope(PatternGroupExecutionScope):
         current_memory_type = self.execution_plan.input_memory_type
         debug_sink = debug_event_sink_from_context(self.context)
         declared_source_bindings = self.execution_plan.source_binding_plan
-        active_main_flow_bindings = self.main_flow_source_binding_plan
+        active_main_flow_bindings = self.active_main_flow_source_binding_plan(
+            initial_data_stack
+        )
         for invocation in self.compiled_group.invocations:
             group_key = invocation.key.runtime_group_key(self.component_value)
             artifacts = self.artifacts.select_for_invocation(
@@ -1388,7 +1419,6 @@ class FunctionRuntimeScope(PatternGroupExecutionScope):
             )
             if (
                 invocation.adapter_records_artifact_outputs
-                and invocation.contract.preserves_input_main_flow()
                 and not artifacts.outputs
             ):
                 continue
@@ -2555,10 +2585,9 @@ class PatternGroupRuntime:
             )
         )
         workspace_source_lookups = (
-            tuple(
-                lookup
-                for lookup in workspace_path_lookups
-                if source_projection.source_projection_for(lookup) is not None
+            self._workspace_source_binding_lookups(
+                source_projection,
+                workspace_path_lookups,
             )
             if source_projection is not None
             else ()
@@ -2636,6 +2665,22 @@ class PatternGroupRuntime:
             matching_files=matching_files,
             main_data_stack=main_data_stack,
             source_binding_context=source_binding_context,
+        )
+
+    def _workspace_source_binding_lookups(
+        self,
+        source_projection: VirtualWorkspaceSourceProjection,
+        lookups: Sequence[VirtualWorkspacePathLookup],
+    ) -> tuple[VirtualWorkspacePathLookup, ...]:
+        """Return workspace paths owned by this step's exact source bindings."""
+
+        bindings = self.request.source_binding_plan.binding_declarations
+        return tuple(
+            lookup
+            for lookup in lookups
+            for projection in (source_projection.source_projection_for(lookup),)
+            if projection is not None
+            and any(projection.matches_binding(binding) for binding in bindings)
         )
 
     def _filter_matching_files_for_group(
@@ -2814,12 +2859,22 @@ class PatternGroupRuntime:
         source_ref = source_projection.source_ref_for(lookup)
         if source_ref is None:
             return payload
-        return self._apply_source_binding_payload(
-            payload,
-            source_metadata=source_projection.source_metadata_for(lookup),
-            source_path=lookup.full_virtual_path,
-            source_address=source_ref.backend_address,
-            read_backend=source_ref.backend,
+        source_context = ImagePayloadSourceMetadataContext(
+            SourceImageIdentity(
+                lookup.full_virtual_path,
+                source_projection.source_metadata_for(lookup),
+            ),
+            source_ref.backend,
+            self.request.context.filemanager,
+            source_ref.backend_address,
+        )
+        metadata = source_context.metadata(payload)
+        return source_projection.project_unbound_payload(
+            lookup,
+            metadata.payload_with(
+                image_payload_data(payload),
+                image_payload_mask(payload),
+            ),
         )
 
     def _apply_workspace_source_binding_payload(

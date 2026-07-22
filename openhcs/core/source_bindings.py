@@ -1140,6 +1140,74 @@ class SourceBindingDeclarationsMixin:
             )
         return matching_bindings
 
+    def bindings_for_represented_source_stack(
+        self,
+        source_image_names: Iterable[str],
+        *,
+        variable_components: ComponentSet,
+    ) -> tuple[NamedSourceBinding, ...]:
+        """Return bindings represented directly or across one declared stack."""
+
+        if not isinstance(variable_components, ComponentSet):
+            raise TypeError(
+                "Source binding stack projection requires a ComponentSet, got "
+                f"{type(variable_components).__name__}."
+            )
+        represented_names = frozenset(str(name) for name in source_image_names)
+        represented_bindings = tuple(
+            binding
+            for binding in self.binding_declarations
+            if binding.alias in represented_names
+        )
+
+        def belongs_to_represented_stack(binding: NamedSourceBinding) -> bool:
+            if binding.alias in represented_names:
+                return True
+            binding_identity = {
+                selector.component: selector.value
+                for selector in binding.component_identity
+            }
+            for represented in represented_bindings:
+                represented_identity = {
+                    selector.component: selector.value
+                    for selector in represented.component_identity
+                }
+                if binding_identity.keys() != represented_identity.keys():
+                    continue
+                differing_components = tuple(
+                    component
+                    for component, value in binding_identity.items()
+                    if represented_identity[component] != value
+                )
+                if differing_components and all(
+                    component in variable_components
+                    for component in differing_components
+                ):
+                    return True
+            return False
+
+        return tuple(
+            binding
+            for binding in self.binding_declarations
+            if belongs_to_represented_stack(binding)
+        )
+
+    def for_represented_source_stack(
+        self,
+        source_image_names: Iterable[str],
+        *,
+        variable_components: ComponentSet,
+    ) -> Self:
+        """Return this plan projected through exact payload source provenance."""
+
+        return replace(
+            self,
+            bindings=self.bindings_for_represented_source_stack(
+                source_image_names,
+                variable_components=variable_components,
+            ),
+        )
+
     def for_component_group(
         self,
         component: AllComponents,

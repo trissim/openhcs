@@ -241,6 +241,10 @@ def test_metadata_satisfied_artifact_input_compiles_without_runtime_plan():
     execution_bindings = planner.artifacts.source_bindings_for_contracts(
         snapshot,
         contracts,
+        StepInputDependency.step_output(
+            source_step_index=2,
+            source_step_scope_id="plate::functionstep_2",
+        ),
     )
     execution_group_scope = planner.execution_groups.get_execution_groups(
         snapshot,
@@ -329,6 +333,7 @@ def test_plate_artifact_consumer_omits_inherited_source_plans():
     execution_bindings = planner.artifacts.source_bindings_for_contracts(
         snapshot,
         contracts,
+        StepInputDependency.no_main_flow(),
     )
     maps = planner.artifacts.compile_plan_maps(
         snapshot,
@@ -3437,6 +3442,7 @@ def test_main_flow_source_anchor_restricts_execution_to_its_exact_channel():
     contract_bindings = planner.artifacts.source_bindings_for_contracts(
         snapshot,
         (source_contract,),
+        StepInputDependency.pipeline_start(),
     )
     source_anchor_specs = tuple(
         binding.input_spec() for binding in contract_bindings.primary_plane_bindings
@@ -3585,6 +3591,7 @@ def test_execution_anchor_ignores_source_artifact_lineage():
     contract_bindings = planner.artifacts.source_bindings_for_contracts(
         snapshot,
         (source_contract,),
+        StepInputDependency.pipeline_start(),
     )
     source_anchor_specs = tuple(
         binding.input_spec() for binding in contract_bindings.primary_plane_bindings

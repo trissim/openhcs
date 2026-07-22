@@ -78,6 +78,17 @@ def _external_source_consumer(image):
     return image
 
 
+@artifact_inputs(
+    ArtifactSpec.input(
+        "DNA",
+        ImageArtifactType,
+        parameter_name="dna",
+    )
+)
+def _previous_step_and_external_source(image, dna):
+    return image, dna
+
+
 def _snapshot(
     step: FunctionStep,
     index: int,
@@ -123,6 +134,7 @@ def _compile_source_plans_for_contract(
     session: CompilationSession,
     snapshot: StepSnapshot,
     func,
+    main_input_dependency: StepInputDependency = StepInputDependency.pipeline_start(),
 ):
     planner = SimpleNamespace(
         session=session,
@@ -133,6 +145,7 @@ def _compile_source_plans_for_contract(
     execution_bindings = stage.source_bindings_for_contracts(
         snapshot,
         (CallableContract.from_callable(func),),
+        main_input_dependency,
     )
     return execution_bindings, stage.compile_source_plans(
         snapshot,
@@ -493,6 +506,43 @@ def test_path_planner_preserves_pipeline_start_bindings_for_implicit_main_flow()
     assert execution_bindings.bindings == (binding,)
     assert source_binding_plan.bindings == (binding,)
     assert source_universe_plan == source_universe_plan.empty()
+
+
+def test_path_planner_step_output_projects_only_exact_source_artifacts() -> None:
+    dna = NamedSourceBinding(alias="DNA")
+    unrelated = NamedSourceBinding(alias="OrigRed")
+    step = FunctionStep(
+        func=_previous_step_and_external_source,
+        name="previous-step plus exact source",
+    )
+    snapshot = _snapshot(
+        step,
+        0,
+        source_bindings=StepSourceBindingsConfig(bindings=(dna, unrelated)),
+    )
+    session = CompilationSession.from_context(
+        context=_context(),
+        steps=[step],
+        orchestrator=_orchestrator(),
+        global_config=GlobalPipelineConfig(),
+        step_state_map={0: object()},
+        snapshots=(snapshot,),
+    )
+
+    execution_bindings, (source_binding_plan, _source_universe_plan) = (
+        _compile_source_plans_for_contract(
+            session,
+            snapshot,
+            _previous_step_and_external_source,
+            StepInputDependency.step_output(
+                source_step_index=0,
+                source_step_scope_id="plate::functionstep_0",
+            ),
+        )
+    )
+
+    assert execution_bindings.bindings == (dna,)
+    assert source_binding_plan.bindings == (dna,)
 
 
 def test_path_planner_preserves_metaxpress_primary_source_order() -> None:

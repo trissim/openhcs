@@ -19,6 +19,7 @@ from openhcs.core.source_bindings import (
 from openhcs.core.source_metadata import SourceMetadataMapping
 from openhcs.core.source_matching import (
     source_component_metadata_values,
+    source_metadata_value,
     source_metadata_values_equal,
 )
 from openhcs.core.source_path_identity import source_path_identity_key
@@ -230,6 +231,43 @@ class VirtualWorkspaceSourceProjection:
         """Carry one nominal source projection into runtime payload provenance."""
         projection = self.require_source_projection_for(lookup)
         source_metadata = self.source_metadata_for(lookup)
+        return self._project_payload_source_metadata(
+            payload,
+            source_metadata=source_metadata,
+            source_alias=projection.source_alias,
+        )
+
+    def project_unbound_payload(
+        self,
+        lookup: VirtualWorkspacePathLookup,
+        payload: RuntimeArrayData,
+    ) -> RuntimeArrayData:
+        """Carry workspace source metadata without requiring a step binding."""
+
+        source_metadata = self.source_metadata_for(lookup)
+        source_alias = (
+            None
+            if source_metadata is None
+            else source_metadata_value(
+                source_metadata,
+                SOURCE_BINDING_ALIAS_METADATA_FIELD,
+            )
+        )
+        return self._project_payload_source_metadata(
+            payload,
+            source_metadata=source_metadata,
+            source_alias=source_alias,
+        )
+
+    @staticmethod
+    def _project_payload_source_metadata(
+        payload: RuntimeArrayData,
+        *,
+        source_metadata: SourceMetadataMapping | None,
+        source_alias: str | None,
+    ) -> RuntimeArrayData:
+        """Apply component metadata and source-name provenance to one payload."""
+
         if source_metadata is not None:
             source_metadata = MappingProxyType(
                 {
@@ -241,10 +279,10 @@ class VirtualWorkspaceSourceProjection:
         metadata = image_payload_metadata(payload)
         if source_metadata is not None:
             metadata = metadata.with_source_component_metadata(source_metadata)
-        if projection.source_alias is not None:
+        if source_alias is not None:
             metadata = metadata.with_source_provenance(
                 metadata.source_provenance.with_source_image_names(
-                    (projection.source_alias,)
+                    (source_alias,)
                 )
             )
         return metadata.payload_with(

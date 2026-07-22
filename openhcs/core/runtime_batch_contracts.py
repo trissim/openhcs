@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from functools import lru_cache
 import inspect
@@ -14,8 +14,17 @@ from typing import ClassVar, Generic, TypeVar
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.callable_contract import KeywordRuntimeParameter
+from openhcs.core.aligned_image_payload import (
+    AlignedImageStack,
+    ImagePayloadExecutionMode,
+    aligned_image_stack_kwargs,
+)
 from openhcs.core.runtime_adapters import RuntimeImageExecutionContext
-from openhcs.core.runtime_plane_projection import RuntimePlaneAxisValueProjection
+from openhcs.core.runtime_plane_projection import (
+    RuntimePlaneAxis,
+    RuntimePlaneAxisValueProjection,
+)
+from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 
 
 F = TypeVar("F", bound=Callable)
@@ -84,6 +93,59 @@ class RuntimeBatchInvocationRequest(RuntimeImageExecutionContext):
                     **dict(self.kwargs),
                 }
             ),
+        )
+
+    def batch_executor_request(self) -> "RuntimeBatchInvocationRequest | None":
+        """Return a request projected into the batch executor's image domain.
+
+        A batch executor may inspect image pixels before it delegates the actual
+        call.  It must therefore see the same image domain as the callable.  A
+        singleton aligned runtime-slice axis can be consumed exactly; a larger
+        aligned axis requires per-slice execution and is left to the ordinary
+        contract executor by returning ``None``.
+        """
+
+        if self.execution_mode is not ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK:
+            return self
+        if not isinstance(self.image, AlignedImageStack):
+            raise TypeError(
+                "Aligned runtime batch execution requires AlignedImageStack, got "
+                f"{type(self.image).__name__}."
+            )
+        projection = self.plane_projection
+        if projection is None or projection.axis is not RuntimePlaneAxis.RUNTIME_SLICE:
+            raise ValueError(
+                "Aligned runtime batch execution requires a compiled runtime-slice "
+                "projection."
+            )
+        if projection.plane_index is not None:
+            raise ValueError(
+                "Aligned runtime batch execution received an image after its "
+                "runtime-slice projection was already selected."
+            )
+        if projection.axis_size != len(self.image.slices):
+            raise ValueError(
+                "Aligned runtime batch image cardinality conflicts with its "
+                f"compiled projection: {len(self.image.slices)} != "
+                f"{projection.axis_size}."
+            )
+        if projection.axis_size != 1:
+            return None
+        projected_image = RuntimeSliceProjection.value_for_slice(
+            self.image,
+            projection.selected_plane(0),
+        )
+        return replace(
+            self,
+            image=projected_image,
+            kwargs=aligned_image_stack_kwargs(
+                self.kwargs,
+                0,
+                1,
+                reference_payload=projected_image,
+            ),
+            execution_mode=ImagePayloadExecutionMode.FULL_STACK,
+            plane_projection=None,
         )
 
 

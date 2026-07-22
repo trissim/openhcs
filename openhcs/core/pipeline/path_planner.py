@@ -603,6 +603,7 @@ class PathPlannerArtifactStage:
         self,
         snapshot: StepSnapshot,
         contracts: Iterable[CallableContract],
+        main_input_dependency: StepInputDependency,
     ) -> StepSourceBindingsConfig:
         """Project bindings to implicit main flow and exact public source inputs."""
 
@@ -614,8 +615,13 @@ class PathPlannerArtifactStage:
                 binding.input_spec()
                 for binding in source_bindings.primary_plane_bindings
             )
-            if any(
-                contract.accepts_implicit_main_flow_input for contract in contracts
+            if (
+                main_input_dependency.kind
+                is StepInputDependencyKind.PIPELINE_START
+                and any(
+                    contract.accepts_implicit_main_flow_input
+                    for contract in contracts
+                )
             )
             else ()
         )
@@ -2256,9 +2262,18 @@ class PathPlannerStepAssemblyStage:
                 snapshot,
             )
         )
+        resolved_source_bindings = self.planner.source_bindings_for_snapshot(snapshot)
+        main_input_dependency = self.main_input_dependency(
+            snapshot,
+            step_index,
+            declarations=declarations,
+            execution_scope=execution_scope,
+            source_bindings=resolved_source_bindings,
+        )
         contract_source_bindings = self.planner.artifacts.source_bindings_for_contracts(
             snapshot,
             contracts,
+            main_input_dependency,
         )
         source_anchor_specs = tuple(
             binding.input_spec()
@@ -2267,13 +2282,6 @@ class PathPlannerStepAssemblyStage:
         execution_source_bindings = contract_source_bindings.for_artifact_specs(
             source_anchor_specs,
             self.planner.artifact_context.available_artifacts,
-        )
-        main_input_dependency = self.main_input_dependency(
-            snapshot,
-            step_index,
-            declarations=declarations,
-            execution_scope=execution_scope,
-            source_bindings=contract_source_bindings,
         )
         input_component_scopes = self.input_component_scopes(main_input_dependency)
         input_dir, output_dir = self.step_io_dirs(main_input_dependency, step_index)

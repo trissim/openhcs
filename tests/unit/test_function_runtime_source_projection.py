@@ -2012,13 +2012,8 @@ def test_runtime_invocation_uses_only_active_source_bound_main_flow_edges(
 
     source_binding_plan = CompiledSourceBindingPlan(
         bindings=tuple(
-            NamedSourceBinding(
-                alias=alias,
-                component_identity=(
-                    ComponentSelector(AllComponents.CHANNEL, channel),
-                ),
-            )
-            for alias, channel in (("OrigStain1", "1"), ("OrigStain2", "2"))
+            NamedSourceBinding(alias=alias)
+            for alias in ("OrigStain1", "OrigStain2")
         )
     )
     source_specs = tuple(
@@ -2117,7 +2112,10 @@ def test_runtime_invocation_uses_only_active_source_bound_main_flow_edges(
         lambda context: SimpleNamespace(captures_invocation_events=lambda: False),
     )
 
-    result = scope.execute_chain(np.zeros((1, 3, 4), dtype=np.uint16))
+    active_payload = ImagePayloadMetadata(
+        source_image_names=("OrigStain1",),
+    ).payload_with(np.zeros((1, 3, 4), dtype=np.uint16))
+    result = scope.execute_chain(active_payload)
 
     assert isinstance(result, NoMainFlowOutput)
     assert tuple(
@@ -2138,6 +2136,127 @@ def test_runtime_invocation_uses_only_active_source_bound_main_flow_edges(
         "OrigStain1",
     )
     assert request.selected_artifact_input_specs().names() == ("OrigStain1",)
+
+
+def test_runtime_chain_skips_adapter_invocation_without_component_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openhcs.core.function_patterns import CompiledFunctionGroup
+    from openhcs.core.source_load_plan import SourceLoadPlan
+    from openhcs.core.steps import function_runtime
+    from openhcs.core.steps.function_runtime import (
+        ComponentArtifactPlans,
+        FunctionRuntimeScope,
+    )
+
+    first_spec = ArtifactSpec.output("FirstLabels", ObjectLabelsArtifactType)
+    second_spec = ArtifactSpec.output("SecondLabels", ObjectLabelsArtifactType)
+    first_plan = ArtifactOutputPlan(
+        name=first_spec.name,
+        path="/memory/FirstLabels.pkl",
+        artifact_type=first_spec.artifact_type,
+        group_keys=("1",),
+        group_component=AllComponents.CHANNEL,
+        paths_by_group={"1": "/memory/FirstLabels_1.pkl"},
+    )
+    second_plan = ArtifactOutputPlan(
+        name=second_spec.name,
+        path="/memory/SecondLabels.pkl",
+        artifact_type=second_spec.artifact_type,
+        group_keys=("2",),
+        group_component=AllComponents.CHANNEL,
+        paths_by_group={"2": "/memory/SecondLabels_2.pkl"},
+    )
+
+    @runtime_adapter(
+        "runtime",
+        lambda _request: object(),
+        manages_artifact_outputs=True,
+    )
+    @artifact_outputs(first_spec)
+    def record_first_labels(image, *, runtime):
+        del runtime
+        return image
+
+    @runtime_adapter(
+        "runtime",
+        lambda _request: object(),
+        manages_artifact_outputs=True,
+    )
+    @artifact_outputs(second_spec)
+    def record_second_labels(image, *, runtime):
+        del runtime
+        return image
+
+    first_invocation = next(
+        compile_function_pattern(
+            record_first_labels,
+            {},
+            {first_plan.ref(): first_plan},
+        ).iter_invocations()
+    )
+    second_invocation = next(
+        compile_function_pattern(
+            record_second_labels,
+            {},
+            {second_plan.ref(): second_plan},
+        ).iter_invocations()
+    )
+    compiled_group = CompiledFunctionGroup(
+        group_key="default",
+        invocations=(first_invocation, second_invocation),
+    )
+    output_plans = {
+        first_plan.ref(): first_plan,
+        second_plan.ref(): second_plan,
+    }
+    execution_plan = SimpleNamespace(
+        axis_id="A01",
+        step_index=0,
+        step_scope_id="pipeline::step_0",
+        step_name="record labels",
+        execution_group_scope=ComponentGroupScope.dynamic(AllComponents.CHANNEL),
+        source_binding_plan=CompiledSourceBindingPlan.empty(),
+        source_load_plan=SourceLoadPlan(),
+        input_memory_type="numpy",
+        variable_components=(VariableComponents.SITE,),
+        artifact_inputs={},
+        artifact_outputs=output_plans,
+    )
+    scope = FunctionRuntimeScope(
+        context=SimpleNamespace(),
+        execution_plan=execution_plan,
+        compiled_group=compiled_group,
+        component_value="1",
+        artifacts=ComponentArtifactPlans.from_step_component(execution_plan, "1"),
+        source_binding_context=SourceBindingRuntimeContext.empty(),
+        runtime_plane_index=0,
+        runtime_plane_count=1,
+    )
+    executed = []
+
+    class CapturingExecutor:
+        def __init__(self, **kwargs):
+            self.invocation = kwargs["invocation"]
+
+        def execute(self, *, debug_sink=None):
+            del debug_sink
+            executed.append(self.invocation.key.function_name)
+            return np.zeros((1, 3, 4), dtype=np.uint16)
+
+        def memory_types(self):
+            return SimpleNamespace(output_type="numpy")
+
+    monkeypatch.setattr(function_runtime, "FunctionCoreExecutor", CapturingExecutor)
+    monkeypatch.setattr(
+        function_runtime,
+        "debug_event_sink_from_context",
+        lambda context: SimpleNamespace(captures_invocation_events=lambda: False),
+    )
+
+    scope.execute_chain(np.zeros((1, 3, 4), dtype=np.uint16))
+
+    assert executed == ["record_first_labels"]
 
 
 def test_invocation_source_artifact_owns_cross_component_runtime_binding_scope() -> (
@@ -2258,6 +2377,127 @@ def test_main_flow_input_owns_runtime_binding_scope_with_auxiliary_source() -> N
         binding.alias
         for binding in scope.main_flow_source_binding_plan.binding_declarations
     ) == ("OrigStain2",)
+
+
+def test_payload_provenance_excludes_auxiliary_binding_from_main_flow_scope() -> None:
+    from openhcs.core.steps.function_runtime import PatternGroupExecutionScope
+
+    source_binding_plan = CompiledSourceBindingPlan(
+        bindings=(
+            NamedSourceBinding(
+                alias="FilenamePrefix",
+                component_identity=(ComponentSelector(AllComponents.CHANNEL, "1"),),
+            ),
+        )
+    )
+    source_spec = source_binding_plan.binding_declarations[0].input_spec()
+
+    @artifact_inputs(source_spec)
+    def save_main_flow_with_source_prefix(image):
+        return image
+
+    compiled_pattern = compile_function_pattern(
+        save_main_flow_with_source_prefix,
+        {},
+        {},
+    )
+    scope = PatternGroupExecutionScope(
+        context=SimpleNamespace(),
+        execution_plan=SimpleNamespace(
+            axis_id="A01",
+            execution_group_scope=ComponentGroupScope.dynamic(AllComponents.CHANNEL),
+            source_binding_plan=source_binding_plan,
+            variable_components=(VariableComponents.SITE,),
+            compiled_function_pattern=compiled_pattern,
+        ),
+        compiled_group=compiled_pattern.default_group,
+        component_value="2",
+    )
+    payload = ImagePayloadMetadata(
+        source_image_names=("MainFlowChannel",),
+    ).payload_with(np.zeros((1, 3, 4), dtype=np.uint16))
+
+    assert not scope.active_main_flow_source_binding_plan(
+        payload
+    ).binding_declarations
+    assert tuple(
+        binding.alias for binding in scope.source_binding_plan.binding_declarations
+    ) == ("FilenamePrefix",)
+
+
+def test_payload_provenance_preserves_bindings_across_a_variable_stack_axis() -> None:
+    from openhcs.core.steps.function_runtime import PatternGroupExecutionScope
+
+    source_binding_plan = CompiledSourceBindingPlan(
+        bindings=tuple(
+            NamedSourceBinding(
+                alias=alias,
+                component_identity=(
+                    ComponentSelector(AllComponents.CHANNEL, channel),
+                ),
+            )
+            for alias, channel in (("OrigBlue", "1"), ("OrigGreen", "2"))
+        )
+    )
+    source_specs = tuple(
+        binding.input_spec()
+        for binding in source_binding_plan.binding_declarations
+    )
+
+    @artifact_inputs(*source_specs)
+    def consume_channel_stack(image):
+        return image
+
+    compiled_pattern = compile_function_pattern(
+        consume_channel_stack,
+        {},
+        {},
+    )
+    invocation = compiled_pattern.default_group.invocations[0]
+    invocation = invocation.with_artifact_input_edges(
+        tuple(
+            InvocationArtifactInputEdgePlan(
+                key=edge_key,
+                spec=spec,
+                storage_plan=None,
+                projection=None,
+                consumes_main_flow=True,
+            )
+            for edge_key, spec in zip(
+                InvocationArtifactInputProjectionKey.for_input_count(
+                    invocation.key,
+                    len(source_specs),
+                ),
+                source_specs,
+                strict=True,
+            )
+        )
+    )
+    compiled_group = replace(
+        compiled_pattern.default_group,
+        invocations=(invocation,),
+    )
+    scope = PatternGroupExecutionScope(
+        context=SimpleNamespace(),
+        execution_plan=SimpleNamespace(
+            axis_id="A01",
+            execution_group_scope=ComponentGroupScope.dynamic(AllComponents.SITE),
+            source_binding_plan=source_binding_plan,
+            variable_components=(VariableComponents.CHANNEL,),
+        ),
+        compiled_group=compiled_group,
+        component_value="1",
+    )
+    payload = ImagePayloadMetadata(
+        source_image_names=("OrigBlue",),
+    ).payload_with(np.zeros((2, 3, 4), dtype=np.uint16))
+
+    assert tuple(
+        binding.alias
+        for binding in scope.active_main_flow_source_binding_plan(
+            payload
+        ).binding_declarations
+    ) == ("OrigBlue", "OrigGreen")
 
 
 def test_main_flow_source_scope_intersects_cross_component_invocation_inputs() -> None:
@@ -3019,9 +3259,32 @@ def test_unbound_workspace_source_keeps_filename_component_provenance(
     virtual_path = "A01_s002_w1_z003_t004.tif"
     full_virtual_path = str(tmp_path / virtual_path)
     source_ref = SourcePixelRef("disk", str(tmp_path / "raw-image.tif"))
+    source_metadata = {
+        SOURCE_BINDING_ALIAS_METADATA_FIELD: "OrigDNA",
+        AllComponents.SITE.value: 2,
+        AllComponents.CHANNEL.value: 1,
+        AllComponents.Z_INDEX.value: 3,
+        AllComponents.TIMEPOINT.value: 4,
+        AllComponents.WELL.value: "A01",
+        SourceFilterSubject.EXTENSION.value: ".tif",
+    }
     projection = VirtualWorkspaceSourceProjection(
         source_refs_by_virtual_path={virtual_path: source_ref},
-        source_metadata_by_path={},
+        source_metadata_by_path={virtual_path: source_metadata},
+        source_projections_by_virtual_path={
+            virtual_path: SourcePlaneProjection(
+                address=OpenHCSPlaneAddress(
+                    well="A01",
+                    site="2",
+                    channel="1",
+                    z_index="3",
+                    timepoint="4",
+                ),
+                ref=source_ref,
+                source_alias="OrigDNA",
+                source_metadata=source_metadata,
+            ),
+        },
         workspace_root=str(tmp_path),
     )
 
@@ -3038,17 +3301,26 @@ def test_unbound_workspace_source_keeps_filename_component_provenance(
     )
     runtime.request = SimpleNamespace(
         context=SimpleNamespace(filemanager=SourceFileManager()),
-        source_binding_plan=CompiledSourceBindingPlan(),
+        source_binding_plan=CompiledSourceBindingPlan(
+            bindings=(NamedSourceBinding(alias="FilenamePrefix"),),
+        ),
     )
     payload = ImagePayloadMetadata(source_path=full_virtual_path).payload_with(
         np.zeros((4, 5), dtype=np.uint16),
         None,
     )
 
+    lookup = VirtualWorkspacePathLookup.from_paths(virtual_path, full_virtual_path)
+    workspace_source_lookups = runtime._workspace_source_binding_lookups(
+        projection,
+        (lookup,),
+    )
+    assert workspace_source_lookups == ()
+
     (projected,) = runtime._apply_source_image_loading_semantics(
         (payload,),
-        (VirtualWorkspacePathLookup.from_paths(virtual_path, full_virtual_path),),
-        (),
+        (lookup,),
+        workspace_source_lookups,
         SourceBindingRuntimeContext.empty(),
         projection,
     )
@@ -3061,6 +3333,9 @@ def test_unbound_workspace_source_keeps_filename_component_provenance(
         AllComponents.WELL.value: "A01",
         SourceFilterSubject.EXTENSION.value: ".tif",
     }
+    assert image_payload_metadata(
+        projected
+    ).source_provenance.represented_source_image_names == ("OrigDNA",)
 
 
 def test_step_output_load_filter_skips_source_binding_filter() -> None:
@@ -3402,6 +3677,7 @@ def test_step_output_load_preserves_producer_stack_plane_provenance(
         SimpleNamespace(
             context=context,
             execution_plan=plan,
+            source_binding_plan=CompiledSourceBindingPlan.empty(),
             compiled_group=SimpleNamespace(
                 runtime_domain=RuntimeInvocationDomain.SOURCE_ANCHORED,
             ),

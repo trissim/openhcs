@@ -1068,6 +1068,47 @@ def test_colocalization_threshold_batch_uses_one_aligned_image_pair_context() ->
     assert rows.columns["slice_index"].tolist() == [0, 0]
 
 
+def test_runtime_batch_projects_singleton_aligned_axis_before_colocalization() -> None:
+    channel_bundle = ImagePayloadBundleContext.from_payloads(
+        (
+            np.ones((2, 2), dtype=np.float32),
+            np.zeros((2, 2), dtype=np.float32),
+        )
+    ).compose()
+    request = RuntimeBatchInvocationRequest(
+        source_image_name=None,
+        func=measure_colocalization_objects,
+        image=AlignedImageStack((channel_bundle,)),
+        kwargs={
+            "labels": ObjectLabelPayload(
+                variant_data=ObjectLabelVariantData(
+                    labels=np.ones((2, 2), dtype=np.int32)
+                )
+            ),
+            "channel_1": 0,
+            "channel_2": 1,
+            "do_costes": False,
+        },
+        execution_mode=ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK,
+        plane_projection=RuntimePlaneAxisValueProjection.preserve(
+            axis=RuntimePlaneAxis.RUNTIME_SLICE,
+            axis_size=1,
+        ),
+        batch_index=0,
+        batch_count=1,
+    )
+
+    batch_request = request.batch_executor_request()
+
+    assert batch_request is not None
+    assert batch_request.execution_mode is ImagePayloadExecutionMode.FULL_STACK
+    assert batch_request.plane_projection is None
+    assert image_payload_data(batch_request.image).shape == (2, 2, 2)
+    context = ColocalizationCostesThresholdBatch().image_pair_context(batch_request)
+    np.testing.assert_array_equal(context.first_image, np.ones((2, 2)))
+    np.testing.assert_array_equal(context.second_image, np.zeros((2, 2)))
+
+
 def test_colocalization_threshold_batch_caches_semantic_label_context() -> None:
     image = np.stack(
         (np.ones((2, 2), dtype=np.float32), np.full((2, 2), 0.5, dtype=np.float32)),

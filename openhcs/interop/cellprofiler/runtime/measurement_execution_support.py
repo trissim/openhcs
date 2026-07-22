@@ -263,11 +263,19 @@ class PreparedObjectMeasurementInvocationBatch:
         self,
         output_recorder: "ObjectMeasurementOutputRecorder",
     ) -> float:
+        batch_requests = tuple(
+            invocation.batch_executor_request() for invocation in self.invocations
+        )
+        if any(request is None for request in batch_requests):
+            return self._execute_serial(output_recorder)
+        executable_requests = tuple(
+            request for request in batch_requests if request is not None
+        )
         contract_started_at = time.perf_counter()
         raw_outputs = tuple(
             self.require_batch_executor()(
                 self.func,
-                self.invocations,
+                executable_requests,
                 partial(
                     _execute_runtime_batch_invocation,
                     self.callable_contract,
