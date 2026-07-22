@@ -304,9 +304,11 @@ def test_volumetric_projection_accepts_metadata_payload_array_methods() -> None:
     )
 
     assert isinstance(result, ImageMetadataPayload)
-    assert image_payload_data(result).shape == (1, 5, 6)
-    np.testing.assert_array_equal(image_payload_data(result), stack.max(axis=0)[None])
-    assert image_payload_metadata(result).source_dtype == "float32"
+    assert image_payload_data(result).shape == (5, 6)
+    np.testing.assert_array_equal(image_payload_data(result), stack.max(axis=0))
+    result_metadata = image_payload_metadata(result)
+    assert result_metadata.source_dtype == "float32"
+    assert result_metadata.plane_axis is None
 
 
 def test_with_image_payload_data_rejects_implicit_channel_mask_collapse() -> None:

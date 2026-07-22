@@ -49,7 +49,6 @@ import numpy as np
 from openhcs.core.aligned_image_payload import AlignedImageStack
 from openhcs.core.xdg_paths import get_cache_file_path
 from openhcs.core.memory import (
-    stack_slices,
     stack_runtime_slices,
     unstack_runtime_slices,
 )
@@ -1757,10 +1756,8 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         return True
 
     def execute_volumetric_to_slice(self, func, image, *args, **kwargs):
-        """Execute 3D→2D function returning slice 3D array."""
-        # Get memory type from the decorated function
-        memory_type = func.output_memory_type
-        result_2d = (
+        """Execute a 3D→2D function and return its scalar slice-domain result."""
+        return (
             RuntimeCallablePolicy()
             .invocation(
                 func,
@@ -1769,7 +1766,6 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             )
             .call()
         )
-        return stack_slices([result_2d], memory_type, 0)
 
     # ===== LIBRARY WARM-UP HOOK =====
     def _warmup_library(self) -> None:
@@ -2088,7 +2084,7 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
             try:
                 result = func(test_array)
                 return True, result
-            except:
+            except Exception:
                 return False, None
 
         works_3d, result_3d = test_function(test_3d)
