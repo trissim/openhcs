@@ -42,6 +42,34 @@ def _filemanager() -> FileManager:
     return FileManager(dict(storage_registry))
 
 
+def test_get_all_image_paths_contextualizes_relative_backend_listings() -> None:
+    class ListedPathFileManager:
+        def list_image_files(self, *_args, **_kwargs):
+            return (
+                "nested/A01_s001_w1_z001_t001.tif",
+                "/already/absolute/A01_s002_w1_z001_t001.tif",
+                "nested/B01_s001_w1_z001_t001.tif",
+            )
+
+    class WellParser:
+        @staticmethod
+        def parse_filename(filename: str):
+            return {"well": filename[:3]}
+
+    paths = get_all_image_paths(
+        "/virtual/plate_1",
+        "relative_backend",
+        "A01",
+        ListedPathFileManager(),
+        SimpleNamespace(parser=WellParser()),
+    )
+
+    assert paths == [
+        "/already/absolute/A01_s002_w1_z001_t001.tif",
+        "/virtual/plate_1/nested/A01_s001_w1_z001_t001.tif",
+    ]
+
+
 def test_bulk_preload_preserves_nested_virtual_workspace_paths(tmp_path: Path) -> None:
     source_root = tmp_path / "source"
     workspace_root = tmp_path / "workspace"
