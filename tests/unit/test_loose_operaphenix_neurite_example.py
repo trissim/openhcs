@@ -126,6 +126,33 @@ def test_neurite_example_declares_bounded_sources_and_final_user_result(
     assert "/tmp/" not in Path(example_module.__file__).read_text(encoding="utf-8")
 
 
+def test_neurite_example_supports_dapi_smi312_without_map2(tmp_path: Path) -> None:
+    three_channel = _inputs(tmp_path / "plate", tmp_path / "output")
+    inputs = LooseOperaPhenixNeuriteInputs(
+        plate_path=three_channel.plate_path,
+        output_root=three_channel.output_root,
+        well=three_channel.well,
+        site=three_channel.site,
+        z_index=three_channel.z_index,
+        timepoint=three_channel.timepoint,
+        viewer_port=three_channel.viewer_port,
+        hoechst=three_channel.hoechst,
+        map2=None,
+        smi312=three_channel.smi312,
+    )
+
+    pipeline_config, steps = build_loose_operaphenix_neurite_pipeline(inputs)
+
+    assert inputs.cell_body_source is inputs.smi312
+    assert inputs.channel_stack == (inputs.hoechst, inputs.smi312)
+    assert [
+        binding.alias for binding in pipeline_config.source_bindings_config.bindings
+    ] == ["Hoechst", "SMI312"]
+    assert steps[0].source_bindings.bindings[0].alias == "SMI312"
+    assert steps[1].source_bindings.bindings[0].alias == "SMI312"
+    assert steps[6].source_bindings.bindings[0].alias == "SMI312"
+
+
 def test_neurite_example_compiles_with_declared_loose_file_identities(
     tmp_path: Path,
 ) -> None:

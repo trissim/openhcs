@@ -5,10 +5,13 @@ plate's ``Index.xml``. A complete Opera Phenix plate should use
 ``Microscope.OPERAPHENIX`` instead of reconstructing its identities here.
 
 Edit ``example_inputs`` for the local plate, exact filenames, axis identities,
-output directory, and viewer port. The top-level well filter bounds loading to
-one well. Step checkpoint and viewer filters are intentionally unset so they
-inherit that same scope; path-planning filter zero suppresses the ordinary final
-image copy while typed measurements and object labels remain materialized.
+output directory, and viewer port. Set ``map2=None`` for a two-channel workflow
+where SMI312 delineates neuronal bodies and neurites; the compact MetaXpress
+preset additionally uses Hoechst as nuclear seeds. Provide MAP2 to use its
+neuronal-body signal instead. The top-level well filter bounds loading to one
+well. Step checkpoint and viewer filters are intentionally unset so they inherit
+that same scope; path-planning filter zero suppresses the ordinary final image
+copy while typed measurements and object labels remain materialized.
 """
 
 from __future__ import annotations
@@ -38,10 +41,10 @@ from openhcs.core.source_bindings import (
     SourceSelector,
 )
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.processing.backends.analysis.neurite_outgrowth import (
+    CELLPROFILER_NEURITE_ENGINE_PROFILE,
+)
 from openhcs.processing.backends.cellprofiler.feature_enhancement import (
-    EnhanceMethod,
-    NeuriteMethod,
-    OperationMethod,
     enhance_or_suppress_features,
 )
 from openhcs.processing.backends.cellprofiler.intensity import measure_image_intensity
@@ -50,7 +53,6 @@ from openhcs.processing.backends.cellprofiler.primary_objects import (
     identify_primary_objects,
 )
 from openhcs.processing.backends.cellprofiler.secondary import (
-    SecondaryMethod,
     identify_secondary_objects,
 )
 from openhcs.processing.backends.cellprofiler.skeleton import (
@@ -60,8 +62,6 @@ from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
     export_to_spreadsheet,
 )
 from openhcs.processing.backends.cellprofiler.thresholding import (
-    CellProfilerThresholdMethod,
-    CellProfilerThresholdScope,
     threshold,
 )
 
@@ -87,14 +87,24 @@ class LooseOperaPhenixNeuriteInputs:
     timepoint: str
     viewer_port: int
     hoechst: SemanticImageSource
-    map2: SemanticImageSource
+    map2: SemanticImageSource | None
     smi312: SemanticImageSource
+
+    @property
+    def cell_body_source(self) -> SemanticImageSource:
+        """Use MAP2 bodies when supplied, otherwise use the SMI312 cell signal."""
+
+        return self.smi312 if self.map2 is None else self.map2
 
     @property
     def channel_stack(self) -> tuple[SemanticImageSource, ...]:
         """Authoritative semantic order of the assembled channel stack."""
 
-        return (self.hoechst, self.map2, self.smi312)
+        return tuple(
+            source
+            for source in (self.hoechst, self.map2, self.smi312)
+            if source is not None
+        )
 
     def channel_index(self, source: SemanticImageSource) -> int:
         """Resolve a semantic source against the owned assembled-stack order."""
@@ -182,29 +192,23 @@ def build_loose_operaphenix_neurite_config(
 def build_loose_operaphenix_neurite_pipeline(
     inputs: LooseOperaPhenixNeuriteInputs,
 ) -> tuple[PipelineConfig, list[FunctionStep]]:
-    """Build the accepted MAP2-seed/SMI312-neurite CellProfiler workflow."""
+    """Build an SMI312-neurite workflow with MAP2 or SMI312 cell bodies."""
 
     output_root = inputs.output_root.expanduser().resolve()
     pipeline_config = build_loose_operaphenix_neurite_config(inputs)
 
+    engine = CELLPROFILER_NEURITE_ENGINE_PROFILE
     pipeline_steps = [
         FunctionStep(
             name="NeuronBodies",
             func=(
                 identify_primary_objects,
-                {
-                    "min_diameter": 12,
-                    "max_diameter": 100,
-                    "exclude_border_objects": False,
-                    "threshold_scope": CellProfilerThresholdScope.ADAPTIVE,
-                    "threshold_method": CellProfilerThresholdMethod.OTSU,
-                    "adaptive_window_size": 64,
-                },
+                engine.body_detection_kwargs(),
             ),
             processing_config=LazyProcessingConfig(
                 input_source=InputSource.PIPELINE_START,
             ),
-            source_bindings=_named_source(inputs.map2.alias),
+            source_bindings=_named_source(inputs.cell_body_source.alias),
             napari_streaming_config=_qc_stream(inputs, NapariColormap.VIRIDIS),
         ),
         FunctionStep(
@@ -230,26 +234,14 @@ def build_loose_operaphenix_neurite_pipeline(
             name="EnhancedNeurites",
             func=(
                 enhance_or_suppress_features,
-                {
-                    "method": OperationMethod.ENHANCE,
-                    "enhance_method": EnhanceMethod.NEURITES,
-                    "neurite_method": NeuriteMethod.TUBENESS,
-                    "smoothing_value": 1.5,
-                    "neurite_rescale": True,
-                },
+                engine.enhancement_kwargs(),
             ),
         ),
         FunctionStep(
             name="NeuriteForeground",
             func=(
                 threshold,
-                {
-                    "threshold_scope": CellProfilerThresholdScope.ADAPTIVE,
-                    "threshold_method": CellProfilerThresholdMethod.OTSU,
-                    "threshold_correction_factor": 0.85,
-                    "window_size": 64,
-                    "smoothing": 1.0,
-                },
+                engine.threshold_kwargs(),
             ),
             step_materialization_config=_qc_checkpoint(
                 output_root,
@@ -282,16 +274,7 @@ def build_loose_operaphenix_neurite_pipeline(
             name="UnifiedNeurons",
             func=(
                 identify_secondary_objects,
-                {
-                    "method": SecondaryMethod.PROPAGATION,
-                    "threshold_scope": CellProfilerThresholdScope.ADAPTIVE,
-                    "threshold_method": CellProfilerThresholdMethod.OTSU,
-                    "threshold_correction_factor": 0.85,
-                    "adaptive_window_size": 64,
-                    "regularization_factor": 0.05,
-                    "fill_holes": True,
-                    "discard_edge_objects": False,
-                },
+                engine.secondary_kwargs(),
             ),
             processing_config=LazyProcessingConfig(
                 input_source=InputSource.PIPELINE_START,

@@ -40,7 +40,7 @@ from .loose_operaphenix_neurite_outgrowth import (
 def build_loose_operaphenix_neurite_metaxpress_pipeline(
     inputs: LooseOperaPhenixNeuriteInputs,
 ) -> tuple[PipelineConfig, list[FunctionStep]]:
-    """Build the compact MAP2-body/SMI312-neurite/Hoechst-nuclei workflow."""
+    """Build compact MAP2-or-SMI312 bodies, SMI312 neurites, and Hoechst nuclei."""
 
     pipeline_config = build_loose_operaphenix_neurite_config(inputs)
     step = FunctionStep(
@@ -52,9 +52,9 @@ def build_loose_operaphenix_neurite_metaxpress_pipeline(
                 "illumination": NeuriteIllumination.FLUORESCENCE,
                 "cell_body": MetaXpressCellBodySettings(
                     approximate_max_width=30.0,
-                    minimum_area=50.0,
+                    minimum_area=200.0,
                     intensity_above_local_background=1000.0,
-                    channel_index=inputs.channel_index(inputs.map2),
+                    channel_index=inputs.channel_index(inputs.cell_body_source),
                 ),
                 "outgrowth": MetaXpressOutgrowthSettings(
                     maximum_width=4.0,

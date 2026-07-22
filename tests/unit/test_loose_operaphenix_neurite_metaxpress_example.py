@@ -1,3 +1,4 @@
+from dataclasses import replace
 from multiprocessing import SimpleQueue
 from pathlib import Path
 
@@ -97,7 +98,7 @@ def test_compact_example_uses_owned_channel_order_and_one_function_step(
     assert kwargs["neurite_channel_index"] == 2
     assert kwargs["cell_body"] == MetaXpressCellBodySettings(
         approximate_max_width=30.0,
-        minimum_area=50.0,
+        minimum_area=200.0,
         intensity_above_local_background=1000.0,
         channel_index=1,
     )
@@ -126,6 +127,24 @@ def test_compact_example_uses_owned_channel_order_and_one_function_step(
         "openhcs/processing/presets/pipelines/"
         "loose_operaphenix_neurite_outgrowth_metaxpress.py"
     ) in source_index.content
+
+
+def test_compact_two_channel_example_delineates_bodies_on_smi312(
+    tmp_path: Path,
+) -> None:
+    inputs = replace(
+        _inputs(tmp_path / "plate", tmp_path / "output"),
+        map2=None,
+    )
+
+    _, steps = build_loose_operaphenix_neurite_metaxpress_pipeline(inputs)
+    kwargs = steps[0].func[1]
+
+    assert inputs.channel_stack == (inputs.hoechst, inputs.smi312)
+    assert inputs.cell_body_source is inputs.smi312
+    assert kwargs["neurite_channel_index"] == 1
+    assert kwargs["cell_body"].channel_index == 1
+    assert kwargs["nuclear_stain"].channel_index == 0
 
 
 def test_compact_example_compiles_the_full_ordered_channel_stack(
