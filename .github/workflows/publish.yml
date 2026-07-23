@@ -100,6 +100,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Install PyQt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1
+          sudo apt-get install -y libegl1 || sudo apt-get install -y libegl1-mesa
       
       - name: Install build dependencies
         run: |

@@ -111,6 +111,20 @@ def test_tag_workflow_publishes_registry_last_after_exact_pypi_signal():
     assert '"$RUNNER_TEMP/mcp-publisher" publish' in registry_step["run"]
 
 
+def test_tag_workflow_installs_linux_pyqt_runtime_before_wheel_smoke():
+    build_steps = _workflow()["jobs"]["build-and-publish"]["steps"]
+    step_names = tuple(step.get("name") for step in build_steps)
+    runtime_index = step_names.index("Install PyQt runtime libraries")
+    smoke_index = step_names.index("Smoke-test installed MCP wheel outside checkout")
+
+    assert runtime_index < smoke_index
+    runtime_setup = build_steps[runtime_index]["run"]
+    assert "sudo apt-get install -y libgl1" in runtime_setup
+    assert (
+        "sudo apt-get install -y libegl1 || sudo apt-get install -y libegl1-mesa"
+    ) in runtime_setup
+
+
 def test_pypi_wheel_smoke_uses_the_canonical_pipeline_document_boundary():
     workflow_text = INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "from openhcs.core.pipeline import Pipeline" not in workflow_text
