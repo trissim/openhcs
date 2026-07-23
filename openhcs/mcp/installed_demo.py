@@ -96,15 +96,18 @@ class InstalledDemoResult:
 def _free_tcp_port_pair(*, excluded: frozenset[int] = frozenset()) -> int:
     """Find one free data/control pair using the runtime's configured offset."""
 
-    for _attempt in range(100):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as data_socket:
-            data_socket.bind(("127.0.0.1", 0))
-            port = int(data_socket.getsockname()[1])
+    first_port = OPENHCS_ZMQ_CONFIG.default_port
+    last_port = 65535 - OPENHCS_ZMQ_CONFIG.control_port_offset
+    for port in range(first_port, last_port + 1):
         control_port = port + OPENHCS_ZMQ_CONFIG.control_port_offset
-        if port in excluded or control_port in excluded or control_port > 65535:
+        if port in excluded or control_port in excluded:
             continue
         try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as control_socket:
+            with (
+                socket.socket(socket.AF_INET, socket.SOCK_STREAM) as data_socket,
+                socket.socket(socket.AF_INET, socket.SOCK_STREAM) as control_socket,
+            ):
+                data_socket.bind(("127.0.0.1", port))
                 control_socket.bind(("127.0.0.1", control_port))
         except OSError:
             continue

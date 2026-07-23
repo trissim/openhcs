@@ -156,6 +156,37 @@ def test_tcp_allocator_returns_free_runtime_pair() -> None:
         control_socket.bind(("127.0.0.1", control_port))
 
 
+def test_tcp_allocator_scans_configured_pairs_without_ephemeral_offsets(
+    monkeypatch,
+) -> None:
+    first_port = OPENHCS_ZMQ_CONFIG.default_port
+    control_offset = OPENHCS_ZMQ_CONFIG.control_port_offset
+    attempted_ports: list[int] = []
+
+    class FakeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def bind(self, address) -> None:
+            port = int(address[1])
+            attempted_ports.append(port)
+            if port == first_port + control_offset:
+                raise OSError("simulated reserved Windows control port")
+
+    monkeypatch.setattr(installed_demo.socket, "socket", lambda *_args: FakeSocket())
+
+    port = installed_demo._free_tcp_port_pair()
+
+    assert port == first_port + 1
+    assert attempted_ports == (
+        [first_port, first_port + control_offset]
+        + [first_port + 1, first_port + 1 + control_offset]
+    )
+
+
 def test_command_payload_selects_declaration_owned_tool_result() -> None:
     tool_name = agent_capabilities.validate_viewer_window_state.name
     execution = McpDevCommandExecution(
