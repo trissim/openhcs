@@ -14063,6 +14063,7 @@ def test_mcp_dev_client_launches_fresh_current_source_server():
 def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatch):
     import openhcs.mcp.dev_client as dev_client
     from openhcs.agent.path_policy import AgentPathPolicy
+    from openhcs.core.native_threading import native_thread_count_environment_keys
     from openhcs.utils.environment import OpenHCSProcessEnvironment
 
     for key in dev_client.McpDevServerSpec.gui_environment_keys:
@@ -14083,6 +14084,8 @@ def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatc
     )
     for key in OpenHCSProcessEnvironment.child_process_environment_keys():
         monkeypatch.setenv(key, f"test-{key.casefold()}")
+    for key in native_thread_count_environment_keys():
+        monkeypatch.setenv(key, "1")
     monkeypatch.setenv(bootstrap.MCP_VERBOSE_ENVIRONMENT_VARIABLE, "1")
     monkeypatch.setenv("OPENHCS_UNRELATED_TEST_VALUE", "ignored")
 
@@ -14106,6 +14109,9 @@ def test_mcp_dev_client_server_spec_preserves_gui_session_environment(monkeypatc
         for key in OpenHCSProcessEnvironment.child_process_environment_keys()
     }
     assert environment[bootstrap.MCP_VERBOSE_ENVIRONMENT_VARIABLE] == "1"
+    assert {
+        key: environment[key] for key in native_thread_count_environment_keys()
+    } == {key: "1" for key in native_thread_count_environment_keys()}
     assert "OPENHCS_UNRELATED_TEST_VALUE" not in environment
     assert dev_client.McpDevServerSpec(sys.executable).process_args() == (
         "-m",

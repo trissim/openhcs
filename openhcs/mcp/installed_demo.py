@@ -30,6 +30,7 @@ from openhcs.agent.dto.execution import ExecutionStatusRequest
 from openhcs.constants.constants import AllComponents
 from openhcs.core.config import LazyNapariStreamingConfig, TransportMode
 from openhcs.core.execution_state import TerminalExecutionStatus
+from openhcs.core.native_threading import configure_native_thread_environment
 from openhcs.core.plate_file_inventory import PlateFileKind
 from openhcs.core.pipeline_document import PipelineDocumentAuthority
 from openhcs.core.steps.function_step import FunctionStep
@@ -708,6 +709,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     os.environ.setdefault(OpenHCSProcessEnvironment.cpu_only_key, "true")
     os.environ.setdefault(MCP_VERBOSE_ENVIRONMENT_VARIABLE, "1")
+    configure_native_thread_environment(1)
     session_root = args.output_root
     if session_root is None:
         session_root = Path(tempfile.mkdtemp(prefix="openhcs-mcp-neurite-demo-"))

@@ -19,16 +19,27 @@ _NATIVE_THREAD_COUNT_ENVIRONMENT_VARIABLES = (
 )
 
 
-def configure_native_thread_count(thread_count: int) -> None:
-    """Configure future and already-loaded native runtimes for one process."""
+def native_thread_count_environment_keys() -> tuple[str, ...]:
+    """Return the variables owned by native-library thread configuration."""
+
+    return _NATIVE_THREAD_COUNT_ENVIRONMENT_VARIABLES
+
+
+def configure_native_thread_environment(thread_count: int) -> None:
+    """Configure native runtimes imported later in this process or its children."""
 
     if thread_count < 1:
         raise ValueError("Native thread count must be positive.")
 
     value = str(thread_count)
-    for variable in _NATIVE_THREAD_COUNT_ENVIRONMENT_VARIABLES:
+    for variable in native_thread_count_environment_keys():
         os.environ.setdefault(variable, value)
 
+
+def configure_native_thread_count(thread_count: int) -> None:
+    """Configure future and already-loaded native runtimes for one process."""
+
+    configure_native_thread_environment(thread_count)
     threadpool_limits(limits=thread_count)
 
     import cv2

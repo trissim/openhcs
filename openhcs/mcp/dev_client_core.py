@@ -43,6 +43,7 @@ from openhcs.agent.ui_bridge_identities import (
 from openhcs.serialization.json import to_jsonable
 from openhcs.constants.constants import AllComponents, OrchestratorState
 from openhcs.core.execution_state import TerminalExecutionStatus
+from openhcs.core.native_threading import native_thread_count_environment_keys
 from openhcs.core.plate_file_inventory import PlateFileInventoryQuery
 from openhcs.mcp.control_timeout import (
     McpControlTimeoutPolicy,
@@ -260,6 +261,7 @@ class McpDevServerSpec:
                 *self.mcp_environment_keys,
                 *AgentPathPolicy.environment_keys(),
                 *OpenHCSProcessEnvironment.child_process_environment_keys(),
+                *native_thread_count_environment_keys(),
                 *AgentRuntimePlatformAuthority.current().child_process_environment_keys(),
             )
             if (value := os.environ.get(key)) is not None
