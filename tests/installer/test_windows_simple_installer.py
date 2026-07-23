@@ -74,6 +74,7 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     assert "UseShellExecute = false" in launcher
     assert "CreateNoWindow = true" in launcher
     assert "WindowStyle = ProcessWindowStyle.Hidden" in launcher
+    assert 'startInfo.EnvironmentVariables.Remove("PSModulePath")' in launcher
     assert "startInfo.ArgumentList" not in launcher
     assert (
         "powerShellArguments.Append(QuoteWindowsArgument(installerScript))" in launcher

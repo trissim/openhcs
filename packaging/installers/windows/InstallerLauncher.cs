@@ -77,6 +77,10 @@ internal static class InstallerLauncher
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden,
             };
+            // A launcher started from PowerShell 7 can inherit PS7-only module
+            // paths. Windows PowerShell reconstructs its correct user, system,
+            // and built-in module paths when the inherited override is absent.
+            startInfo.EnvironmentVariables.Remove("PSModulePath");
             StringBuilder powerShellArguments = new StringBuilder(
                 "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "
             );
