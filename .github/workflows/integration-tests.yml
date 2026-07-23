@@ -1,6 +1,6 @@
 # OpenHCS Integration Tests
 #
-# CI Strategy: Optimized boundary testing (30 jobs total)
+# CI Strategy: Optimized boundary testing (31 checks total)
 #
 # Group 1: Python boundary tests (6 jobs)
 #   - Python 3.11 (oldest) and 3.13 (newest well-supported) on Linux + Windows + macOS
@@ -35,9 +35,9 @@
 #   - Acquires the manifest-pinned inputs and compares all 30 cases against the
 #     committed native CellProfiler references over the real ZMQ execution path
 #
-# Total: 30 jobs covering all Python versions (3.11-3.13), all 3 OSes,
+# Total: 30 test jobs covering all Python versions (3.11-3.13), all 3 OSes,
 # all backends, all microscope formats, both native desktop installers, and one
-# serialized real Official30 parity corpus
+# serialized real Official30 parity corpus, plus the code-quality check.
 
 name: Integration Tests
 
