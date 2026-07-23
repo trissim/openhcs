@@ -16,7 +16,7 @@ the install-surface projections:
 
 .. code-block:: bash
 
-   RELEASE_VERSION=0.6.1
+   RELEASE_VERSION=0.6.2
    python scripts/sync_mcp_release_metadata.py
    python scripts/sync_mcp_release_metadata.py --check
    python scripts/sync_mcp_release_metadata.py --check --expected-version "$RELEASE_VERSION"
@@ -119,11 +119,12 @@ metadata against that version, asks for confirmation, and pushes one annotated
 tag.
 
 That tag starts ``.github/workflows/publish.yml``. The workflow builds and
-validates the Windows and macOS installer archives first, then builds and smoke
+validates the Windows and macOS installer assets first, then builds and smoke
 tests the OpenHCS wheel outside the checkout. After publishing the wheel and
 source distribution to PyPI, it creates one GitHub Release containing those
-Python artifacts plus ``OpenHCS-Windows-Installer.zip`` and
-``OpenHCS-macOS-Installer.zip``. The dependent MCP Registry job waits until the
+Python artifacts plus the directly runnable
+``OpenHCS-Windows-Installer.exe`` and the single-file
+``OpenHCS-macOS-Installer.dmg``. The dependent MCP Registry job waits until the
 exact PyPI version is downloadable, validates the generated registry metadata,
 and publishes it through GitHub OIDC.
 

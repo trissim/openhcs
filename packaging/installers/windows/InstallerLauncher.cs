@@ -2,12 +2,17 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Reflection;
 using System.Text;
 
 internal static class InstallerLauncher
 {
     private const uint MessageBoxOk = 0x00000000;
     private const uint MessageBoxIconError = 0x00000010;
+    private const string WorkerResourceName =
+        "OpenHCS.Installer.Install-OpenHCS.ps1";
+    private const string ContractResourceName =
+        "OpenHCS.Installer.installer_contract.json";
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int MessageBoxW(
@@ -18,21 +23,27 @@ internal static class InstallerLauncher
     );
 
     [STAThread]
-    private static int Main()
+    private static int Main(string[] arguments)
     {
+        string temporaryDirectory = null;
         try
         {
-            string launcherDirectory = AppContext.BaseDirectory;
+            temporaryDirectory = Path.Combine(
+                Path.GetTempPath(),
+                "OpenHCS Installer",
+                Guid.NewGuid().ToString("N")
+            );
+            Directory.CreateDirectory(temporaryDirectory);
             string installerScript = Path.Combine(
-                launcherDirectory,
+                temporaryDirectory,
                 "Install-OpenHCS.ps1"
             );
             string installerContract = Path.Combine(
-                launcherDirectory,
+                temporaryDirectory,
                 "installer_contract.json"
             );
-            RequireSiblingFile(installerScript);
-            RequireSiblingFile(installerContract);
+            ExtractEmbeddedFile(WorkerResourceName, installerScript);
+            ExtractEmbeddedFile(ContractResourceName, installerContract);
 
             string windowsDirectory = Environment.GetFolderPath(
                 Environment.SpecialFolder.Windows
@@ -55,15 +66,21 @@ internal static class InstallerLauncher
             ProcessStartInfo startInfo = new ProcessStartInfo
             {
                 FileName = powerShell,
-                WorkingDirectory = launcherDirectory,
+                WorkingDirectory = temporaryDirectory,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden,
             };
-            startInfo.Arguments = (
+            StringBuilder powerShellArguments = new StringBuilder(
                 "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "
-                + QuoteWindowsArgument(installerScript)
             );
+            powerShellArguments.Append(QuoteWindowsArgument(installerScript));
+            foreach (string argument in arguments)
+            {
+                powerShellArguments.Append(' ');
+                powerShellArguments.Append(QuoteWindowsArgument(argument));
+            }
+            startInfo.Arguments = powerShellArguments.ToString();
 
             Process process = Process.Start(startInfo);
             if (process == null)
@@ -72,8 +89,11 @@ internal static class InstallerLauncher
                     "Windows could not start the setup wizard."
                 );
             }
-            process.Dispose();
-            return 0;
+            using (process)
+            {
+                process.WaitForExit();
+                return process.ExitCode;
+            }
         }
         catch (Exception exception)
         {
@@ -85,16 +105,54 @@ internal static class InstallerLauncher
             );
             return 1;
         }
+        finally
+        {
+            TryDeleteTemporaryDirectory(temporaryDirectory);
+        }
     }
 
-    private static void RequireSiblingFile(string path)
+    private static void ExtractEmbeddedFile(string resourceName, string outputPath)
     {
-        if (!File.Exists(path))
+        Assembly assembly = Assembly.GetExecutingAssembly();
+        using (Stream input = assembly.GetManifestResourceStream(resourceName))
         {
-            throw new FileNotFoundException(
-                "The installer archive is incomplete. Extract all files together.",
-                path
-            );
+            if (input == null)
+            {
+                throw new InvalidDataException(
+                    "The installer is missing embedded resource " + resourceName + "."
+                );
+            }
+            using (
+                FileStream output = new FileStream(
+                    outputPath,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None
+                )
+            )
+            {
+                input.CopyTo(output);
+            }
+        }
+    }
+
+    private static void TryDeleteTemporaryDirectory(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, true);
+            }
+        }
+        catch
+        {
+            // A scanner can briefly retain an extracted file. The random
+            // user-temporary directory contains no credentials or user data.
         }
     }
 

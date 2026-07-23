@@ -504,22 +504,21 @@ jobs:
           $releaseVersion = $releaseVersion.Trim()
           $stage = Join-Path $env:RUNNER_TEMP "OpenHCS-Windows-Smoke"
           $installRoot = Join-Path $env:RUNNER_TEMP "OpenHCS Installed"
+          $contractPath = Join-Path $env:RUNNER_TEMP "installer_contract.json"
           New-Item -ItemType Directory -Path $stage | Out-Null
-          Copy-Item `
-            packaging/installers/windows/Install-OpenHCS.ps1 `
-            -Destination $stage
+          python scripts/render_installer_contract.py `
+            --version $releaseVersion `
+            --output $contractPath
           & packaging/installers/windows/Build-InstallerLauncher.ps1 `
-            -OutputDirectory $stage
+            -OutputDirectory $stage `
+            -ContractPath $contractPath
           if ($LASTEXITCODE -ne 0) {
             throw "Windows GUI installer launcher build failed."
           }
-          python scripts/render_installer_contract.py `
-            --version $releaseVersion `
-            --output (Join-Path $stage "installer_contract.json")
 
-          $launcher = Join-Path $stage "Install-OpenHCS.exe"
+          $launcher = Join-Path $stage "OpenHCS-Windows-Installer.exe"
           if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
-            throw "Windows GUI installer launcher was not staged."
+            throw "Single-file Windows GUI installer was not staged."
           }
           $subsystem = python -c "import struct,sys; from pathlib import Path; data=Path(sys.argv[1]).read_bytes(); pe=struct.unpack_from('<I',data,0x3c)[0]; assert data[pe:pe+4]==b'PE\0\0'; print(struct.unpack_from('<H',data,pe+24+68)[0])" $launcher
           if ($subsystem.Trim() -ne "2") {
@@ -534,9 +533,7 @@ jobs:
           $cancellationPath = Join-Path `
             ([IO.Path]::GetTempPath()) `
             ("openhcs-installer-cancel-{0}.marker" -f [Guid]::NewGuid().ToString("N"))
-          & $powerShellExecutable `
-            -NoProfile -ExecutionPolicy Bypass `
-            -File (Join-Path $stage "Install-OpenHCS.ps1") `
+          & $launcher `
             -Worker -InstallRoot $installRoot `
             -CancellationPath $cancellationPath
           if ($LASTEXITCODE -ne 0) {
@@ -546,7 +543,7 @@ jobs:
           $desktopRoot = [Environment]::GetFolderPath("DesktopDirectory")
           $summaryJson = python -m scripts.smoke_installed_desktop `
             --platform windows `
-            --contract (Join-Path $stage "installer_contract.json") `
+            --contract $contractPath `
             --install-root $installRoot `
             --desktop-root $desktopRoot
           if ($LASTEXITCODE -ne 0) {
@@ -629,6 +626,34 @@ jobs:
           packaging/installers/macos/build-installer.sh \
             "$staged_contract" \
             "$installer_app"
+
+          dmg_source="$RUNNER_TEMP/OpenHCS Installer DMG"
+          installer_dmg="$RUNNER_TEMP/OpenHCS-macOS-Installer.dmg"
+          mount_point="$RUNNER_TEMP/OpenHCS Installer Mount"
+          mkdir -p "$dmg_source" "$mount_point"
+          ditto "$installer_app" "$dmg_source/OpenHCS Installer.app"
+          hdiutil create \
+            -volname "OpenHCS Installer" \
+            -srcfolder "$dmg_source" \
+            -format UDZO \
+            "$installer_dmg"
+          hdiutil verify "$installer_dmg"
+          hdiutil attach \
+            -nobrowse \
+            -readonly \
+            -mountpoint "$mount_point" \
+            "$installer_dmg"
+          mounted_dmg=true
+          cleanup_dmg_mount() {
+            if [[ "$mounted_dmg" == true ]]; then
+              hdiutil detach "$mount_point" || true
+            fi
+          }
+          trap cleanup_dmg_mount EXIT
+          test -d "$mount_point/OpenHCS Installer.app"
+          hdiutil detach "$mount_point"
+          mounted_dmg=false
+          trap - EXIT
 
           mkdir -p "$smoke_home"
           export HOME="$smoke_home"

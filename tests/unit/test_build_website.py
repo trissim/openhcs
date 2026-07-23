@@ -80,9 +80,15 @@ def test_shipping_copy_projects_current_release_and_keeps_boundaries_explicit(
     )
     assert len(installer_assets) == 2
     assert all(asset_name in publish_workflow for asset_name in installer_assets)
+    assert installer_assets == [
+        "OpenHCS-Windows-Installer.exe",
+        "OpenHCS-macOS-Installer.dmg",
+    ]
+    assert all(not asset_name.endswith(".zip") for asset_name in installer_assets)
     assert "Download for Windows" in html
     assert "Download for macOS" in html
-    assert "Extract, then run Install-OpenHCS.exe" in html
+    assert "Download and run — no ZIP to extract" in html
+    assert "Open the DMG, then open OpenHCS Installer" in html
     assert "Install-OpenHCS.cmd" not in html
     assert (
         "User-scoped, CPU-only installation with CellProfiler compatibility, local MCP"
