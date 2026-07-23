@@ -60,6 +60,7 @@ from openhcs.runtime.fiji_macro_runtime import (
     FijiMacroExecutionRequest,
     FijiMacroExecutionResponse,
 )
+from openhcs.runtime.viewer_shared_memory import SenderOwnedSharedMemoryAttachment
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from zmqruntime.config import ZMQConfig
 from zmqruntime.transport import coerce_transport_mode
@@ -596,8 +597,6 @@ class FijiSharedMemoryItemCopier:
     send_error_ack: Callable[[str, str], None]
 
     def copy(self, items: Sequence[FijiWireItem]) -> list[FijiWireItem]:
-        from multiprocessing import resource_tracker, shared_memory
-
         copied_items = []
         for item in items:
             shared_memory_spec = item.shared_memory
@@ -606,14 +605,11 @@ class FijiSharedMemoryItemCopier:
                 continue
 
             try:
-                shm = shared_memory.SharedMemory(name=shared_memory_spec.name)
-                resource_tracker.unregister(shm._name, "shared_memory")
-                data = np.ndarray(
-                    shared_memory_spec.shape,
+                data = SenderOwnedSharedMemoryAttachment.copy_array(
+                    name=shared_memory_spec.name,
+                    shape=shared_memory_spec.shape,
                     dtype=shared_memory_spec.dtype,
-                    buffer=shm.buf,
-                ).copy()
-                shm.close()
+                )
                 copied_items.append(item.with_local_data(data))
                 logger.debug(
                     "📋 FIJI SERVER: Copied image data from shared memory %s",

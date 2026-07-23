@@ -69,6 +69,7 @@ from openhcs.runtime.viewer_protocol import (
     ViewerType,
 )
 from openhcs.runtime.viewer_controls import ViewerResultElementCoordinateAuthority
+from openhcs.runtime.viewer_shared_memory import SenderOwnedSharedMemoryAttachment
 from openhcs.runtime.napari_streaming_handlers import (
     DimensionLabelMap,
     LayerData,
@@ -744,23 +745,16 @@ class NapariPayloadDataLoader:
         raise ValueError("No image data in message")
 
     def _shared_memory_image(self, payload: NapariImagePayload) -> np.ndarray:
-        from multiprocessing import resource_tracker, shared_memory
-
         try:
-            shm = shared_memory.SharedMemory(name=payload.shm_name)
+            return SenderOwnedSharedMemoryAttachment.copy_array(
+                name=payload.shm_name,
+                shape=payload.image_shape,
+                dtype=payload.dtype,
+            )
         except FileNotFoundError as exc:
             raise FileNotFoundError(
                 f"Shared memory {payload.shm_name} not found"
             ) from exc
-        resource_tracker.unregister(shm._name, "shared_memory")
-        try:
-            return np.ndarray(
-                payload.image_shape,
-                dtype=payload.dtype,
-                buffer=shm.buf,
-            ).copy()
-        finally:
-            shm.close()
 
 
 @dataclass(frozen=True)
