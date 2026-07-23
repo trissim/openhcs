@@ -25,13 +25,16 @@ from openhcs.processing.backends.cellprofiler.skeleton import (
 from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
     export_to_spreadsheet,
 )
+from openhcs.processing.presets.demo_contribution import PipelineDemoContribution
 from openhcs.processing.presets.pipelines import (
     loose_operaphenix_neurite_outgrowth as example_module,
 )
 from openhcs.processing.presets.pipelines.loose_operaphenix_neurite_outgrowth import (
+    NEURITE_BRANCHPOINT_IMAGE_NAME,
     LooseOperaPhenixNeuriteInputs,
     SemanticImageSource,
     build_loose_operaphenix_neurite_pipeline,
+    loose_operaphenix_neurite_demo_contribution,
 )
 
 
@@ -192,6 +195,51 @@ def test_neurite_example_compiles_with_declared_loose_file_identities(
         context.step_plans[max(context.step_plans)].compiled_function_pattern
         is not None
     )
+
+
+def test_neurite_example_contributes_modular_pipeline_to_master(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "source"
+    source_path.mkdir()
+    source_filenames = (
+        "r04c09f11p01-ch1sk1fk1fl1.tiff",
+        "r04c09f11p01-ch2sk1fk1fl1.tiff",
+        "r04c09f11p01-ch4sk1fk1fl1.tiff",
+    )
+    for filename in source_filenames:
+        tifffile.imwrite(
+            source_path / filename,
+            np.ones((16, 16), dtype=np.uint16),
+        )
+
+    contribution = loose_operaphenix_neurite_demo_contribution(
+        session_root=tmp_path / "session",
+        source_path=source_path,
+    )
+    assert isinstance(contribution, PipelineDemoContribution)
+    contribution.prepare()
+
+    assert contribution.demo_id == ("loose_operaphenix_cellprofiler_neurite_outgrowth")
+    assert contribution.plate_path.name == (
+        "Opera Phenix modular CellProfiler neurite outgrowth"
+    )
+    assert [step.name for step in contribution.pipeline_steps][-3:] == [
+        "PerNeuronNeuriteTopology",
+        "UnifiedNeurons",
+        "NeuriteSpreadsheetExport",
+    ]
+    assert contribution.presentation_identity.output_key == (
+        "IdentifySecondaryObjects_7_object_labels_1"
+    )
+    assert contribution.presentation_identity.artifact_kind == "object_labels"
+    assert contribution.presentation_identity.step_name == "UnifiedNeurons"
+    assert contribution.supporting_presentation_identities[0].output_key == (
+        NEURITE_BRANCHPOINT_IMAGE_NAME
+    )
+    assert {
+        path.name for path in contribution.plate_path.iterdir() if path.is_file()
+    } == set(source_filenames)
 
 
 def test_neurite_example_is_discoverable_through_existing_corpus_authority() -> None:

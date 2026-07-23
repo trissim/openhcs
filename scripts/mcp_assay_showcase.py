@@ -20,22 +20,31 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from polystore.streaming.identity import StreamProducerIdentity
+
 from openhcs.agent.ui_bridge_actions import PlateManagerAction
 from openhcs.agent.ui_bridge_identities import (
     PlateManagerOrchestratorCodeDocumentIdentity,
     PlateManagerStateSurfaceIdentityDeclaration,
     PlateManagerWidgetIdentity,
 )
+from openhcs.core.aligned_image_payload import AlignedImageSliceContext
+from openhcs.core.artifacts import (
+    ImageArtifactType,
+    MeasurementsArtifactType,
+    ObjectLabelsArtifactType,
+)
+from openhcs.core.steps.function_output_manifest import (
+    FunctionStepOutputProducerIdentityRequest,
+)
 from openhcs.mcp.dev_client import McpDevClient
-
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = os.environ.get("PYTHON_BIN", sys.executable)
 DEFAULT_OUTPUT_ROOT = ROOT / "mcp_outputs" / "assay_showcase"
-ORCHESTRATOR_DOCUMENT_ID = (
-    PlateManagerOrchestratorCodeDocumentIdentity.require_value()
-)
+ORCHESTRATOR_DOCUMENT_ID = PlateManagerOrchestratorCodeDocumentIdentity.require_value()
 WELL = "A01"
+SHOWCASE_NAPARI_PORT = 5889
 UI_TIMEOUT_MS = 2_000
 
 
@@ -66,7 +75,9 @@ class ScenarioBlueprint:
     random_seed: int
     assay_budget: StageBudget
     stage_budgets: Mapping[str, StageBudget]
+    presentation_identity: StreamProducerIdentity
     pipeline_source: Callable[[Path, Path], str] = field(repr=False, compare=False)
+    supporting_presentation_identities: tuple[StreamProducerIdentity, ...] = ()
 
     def generation_arguments(self, plate_path: Path) -> list[str]:
         """Project this bounded fixture through the public generator CLI."""
@@ -139,7 +150,9 @@ class ScenarioRunContext:
     stage_records: list[StageRecord] = field(default_factory=list)
 
 
-def _stage_budgets(*, compile_seconds: float, run_seconds: float) -> dict[str, StageBudget]:
+def _stage_budgets(
+    *, compile_seconds: float, run_seconds: float
+) -> dict[str, StageBudget]:
     """Return operational budgets shared by the small one-step rehearsals."""
 
     return {
@@ -149,16 +162,53 @@ def _stage_budgets(*, compile_seconds: float, run_seconds: float) -> dict[str, S
         "initialize_plate": StageBudget(8.0),
         "compile_plate": StageBudget(compile_seconds),
         "run_plate": StageBudget(run_seconds),
+        "present_napari": StageBudget(8.0),
         "read_live_measurements": StageBudget(8.0),
         "inspect_materialized_results": StageBudget(6.0),
     }
 
 
-def scenario_blueprints() -> tuple[ScenarioBlueprint, ...]:
-    """Return the three explicit stories exercised by this showcase.
+def _artifact_presentation(
+    step_name: str,
+    output_key: str,
+    artifact_kind: str,
+) -> StreamProducerIdentity:
+    """Declare the exact compiled artifact intended for human presentation."""
 
-    Output names and types are intentionally absent here. They are discovered
-    from the compiled artifact plan for the exact pipeline source.
+    return StreamProducerIdentity.pipeline_output(
+        output_kind=FunctionStepOutputProducerIdentityRequest.ARTIFACT_OUTPUT_KIND,
+        output_key=output_key,
+        projection_key=output_key,
+        step_name=step_name,
+        pipeline_position=None,
+        artifact_kind=artifact_kind,
+    )
+
+
+def _main_flow_presentation(
+    step_name: str,
+    *,
+    output_key: str = AlignedImageSliceContext.ANONYMOUS_MAIN_FLOW_OUTPUT_KEY,
+    artifact_kind: str | None = None,
+) -> StreamProducerIdentity:
+    """Declare one streamed step's ordinary or named main-flow image."""
+
+    return StreamProducerIdentity.pipeline_output(
+        output_kind=AlignedImageSliceContext.MAIN_FLOW_OUTPUT_KIND,
+        output_key=output_key,
+        projection_key=AlignedImageSliceContext.MAIN_FLOW_OUTPUT_KIND,
+        step_name=step_name,
+        pipeline_position=None,
+        artifact_kind=artifact_kind,
+    )
+
+
+def scenario_blueprints() -> tuple[ScenarioBlueprint, ...]:
+    """Return the explicit stories exercised by this showcase.
+
+    Each story owns one intended visual producer identity. The exact compiled
+    artifact plan validates that declaration and discovers every measurement
+    table obligation; the runner never infers a target from assay names.
     """
 
     return (
@@ -175,6 +225,11 @@ def scenario_blueprints() -> tuple[ScenarioBlueprint, ...]:
             random_seed=17,
             assay_budget=StageBudget(30.0),
             stage_budgets=_stage_budgets(compile_seconds=12.0, run_seconds=12.0),
+            presentation_identity=_artifact_presentation(
+                "Segment nucleus-like primary objects",
+                "segmentation_masks",
+                ObjectLabelsArtifactType.require_value(),
+            ),
             pipeline_source=_primary_object_source,
         ),
         ScenarioBlueprint(
@@ -190,6 +245,11 @@ def scenario_blueprints() -> tuple[ScenarioBlueprint, ...]:
             random_seed=23,
             assay_budget=StageBudget(30.0),
             stage_budgets=_stage_budgets(compile_seconds=15.0, run_seconds=15.0),
+            presentation_identity=_artifact_presentation(
+                "Classify dual-channel reporter phenotype",
+                "w2_stain",
+                ObjectLabelsArtifactType.require_value(),
+            ),
             pipeline_source=_dual_channel_source,
         ),
         ScenarioBlueprint(
@@ -205,7 +265,90 @@ def scenario_blueprints() -> tuple[ScenarioBlueprint, ...]:
             random_seed=31,
             assay_budget=StageBudget(30.0),
             stage_budgets=_stage_budgets(compile_seconds=12.0, run_seconds=12.0),
+            presentation_identity=_main_flow_presentation(
+                "Render shared-intensity colocalization"
+            ),
             pipeline_source=_colocalization_source,
+        ),
+        ScenarioBlueprint(
+            scenario_id="nuclear_morphology",
+            title="Nuclear morphology and shape phenotyping",
+            biological_question=(
+                "How do segmented nuclei differ in area, perimeter, eccentricity, "
+                "and compactness across this field?"
+            ),
+            wavelengths=1,
+            num_cells=10,
+            shared_cell_fraction=1.0,
+            random_seed=37,
+            assay_budget=StageBudget(30.0),
+            stage_budgets=_stage_budgets(compile_seconds=15.0, run_seconds=15.0),
+            presentation_identity=_artifact_presentation(
+                "Segment nuclei for morphology",
+                "segmentation_masks",
+                ObjectLabelsArtifactType.require_value(),
+            ),
+            pipeline_source=_nuclear_morphology_source,
+        ),
+        ScenarioBlueprint(
+            scenario_id="spatial_neighbors",
+            title="Cell crowding and neighbor topology",
+            biological_question=(
+                "Which segmented cells are isolated or crowded, how many neighbors "
+                "does each cell have, and how closely do they touch?"
+            ),
+            wavelengths=1,
+            num_cells=16,
+            shared_cell_fraction=1.0,
+            random_seed=41,
+            assay_budget=StageBudget(30.0),
+            stage_budgets=_stage_budgets(compile_seconds=15.0, run_seconds=15.0),
+            presentation_identity=_main_flow_presentation(
+                "Measure cell-neighbor topology",
+                output_key="MeasureObjectNeighbors_2_image_1",
+                artifact_kind=ImageArtifactType.require_value(),
+            ),
+            pipeline_source=_spatial_neighbors_source,
+        ),
+        ScenarioBlueprint(
+            scenario_id="radial_intensity_distribution",
+            title="Radial nuclear signal distribution",
+            biological_question=(
+                "Is the marker signal concentrated near each segmented nucleus's "
+                "center or redistributed toward its periphery?"
+            ),
+            wavelengths=1,
+            num_cells=8,
+            shared_cell_fraction=1.0,
+            random_seed=43,
+            assay_budget=StageBudget(30.0),
+            stage_budgets=_stage_budgets(compile_seconds=12.0, run_seconds=12.0),
+            presentation_identity=_artifact_presentation(
+                "Segment nuclei for radial intensity",
+                "segmentation_masks",
+                ObjectLabelsArtifactType.require_value(),
+            ),
+            pipeline_source=_radial_intensity_distribution_source,
+        ),
+        ScenarioBlueprint(
+            scenario_id="foreground_skeleton_topology",
+            title="Foreground continuity and skeleton topology",
+            biological_question=(
+                "How many connected foreground structures remain after "
+                "skeletonization, and what total path length do they span?"
+            ),
+            wavelengths=1,
+            num_cells=10,
+            shared_cell_fraction=1.0,
+            random_seed=47,
+            assay_budget=StageBudget(30.0),
+            stage_budgets=_stage_budgets(compile_seconds=12.0, run_seconds=15.0),
+            presentation_identity=_artifact_presentation(
+                "Measure foreground skeleton topology",
+                "skeleton_rois",
+                ObjectLabelsArtifactType.require_value(),
+            ),
+            pipeline_source=_foreground_skeleton_topology_source,
         ),
     )
 
@@ -217,7 +360,7 @@ def _common_source_header(
     processing_imports: str = "",
     extra_imports: str,
 ) -> str:
-    return f'''# Compact MCP assay showcase; edit and save to apply.
+    return f"""# Compact MCP assay showcase; edit and save to apply.
 
 from pathlib import Path
 
@@ -225,6 +368,7 @@ from openhcs.constants.input_source import InputSource
 from openhcs.core.config import (
     GlobalPipelineConfig,
     LazyPathPlanningConfig,
+    LazyNapariStreamingConfig,
     LazyProcessingConfig,
     LazyWellFilterConfig,
     PipelineConfig,
@@ -251,59 +395,118 @@ per_plate_configs = {{
         materialize_runtime_artifacts=True,
     )
 }}
-'''
+"""
 
 
 def _pipeline_data_header(plate_path: Path) -> str:
-    return f'''pipeline_data = {{
+    return f"""pipeline_data = {{
     Path({str(plate_path)!r}): [
-'''
+"""
 
 
 def _document_tail() -> str:
-    return '''    ]
+    return """    ]
 }
-'''
+"""
 
 
 def artifact_plan_source(orchestrator_source: str) -> str:
     """Derive the separate PipelineDocument contract from strict UI source."""
 
-    return f'''{orchestrator_source.rstrip()}
+    return f"""{orchestrator_source.rstrip()}
 
 # Exact aliases required by the public PipelineDocument source contract.
 pipeline_config = per_plate_configs[plate_paths[0]]
 pipeline_steps = pipeline_data[plate_paths[0]]
-'''
+"""
 
 
-def _primary_object_source(plate_path: Path, output_path: Path) -> str:
-    header = _common_source_header(
-        plate_path,
-        output_path,
-        extra_imports='''from openhcs.processing.backends.analysis.cell_counting_cpu import (
-    DetectionMethod,
-    count_cells_single_channel,
-)''',
-    )
-    return header + _pipeline_data_header(plate_path) + '''        FunctionStep(
-        name="Segment nucleus-like primary objects",
+def _napari_streaming_config_source() -> str:
+    """Render the one bounded persistent viewer declaration used by the suite."""
+
+    return f"""        napari_streaming_config=LazyNapariStreamingConfig(
+            enabled=True,
+            persistent=True,
+            port={SHOWCASE_NAPARI_PORT},
+        ),
+"""
+
+
+def _segmentation_step_source(name: str, *, stream_to_napari: bool) -> str:
+    """Render the shared bounded nucleus-like segmentation stage inline."""
+
+    step = f"""        FunctionStep(
+        name={name!r},
         func=(
             count_cells_single_channel,
-            {
+            {{
                 "detection_method": DetectionMethod.WATERSHED,
                 "enable_preprocessing": False,
                 "min_cell_area": 20,
                 "max_cell_area": 800,
                 "remove_border_cells": False,
                 "return_segmentation_mask": True,
-            },
+            }},
         ),
         processing_config=LazyProcessingConfig(
             input_source=InputSource.PIPELINE_START,
         ),
+"""
+    if stream_to_napari:
+        step += _napari_streaming_config_source()
+    return (
+        step
+        + """        ),
+"""
+    )
+
+
+def _spreadsheet_export_step_source(
+    name: str,
+    *,
+    output_directory: str,
+    filename_prefix: str,
+) -> str:
+    """Render the existing generic measurement export endpoint inline."""
+
+    return f"""        FunctionStep(
+        name={name!r},
+        func=(
+            export_to_spreadsheet,
+            {{
+                "add_image_metadata": True,
+                "add_image_file_names": True,
+                "output_directory": {output_directory!r},
+                "export_all_measurement_types": True,
+                "add_filename_prefix": True,
+                "filename_prefix": {filename_prefix!r},
+            }},
+        ),
         )
-''' + _document_tail()
+"""
+
+
+def _primary_object_source(plate_path: Path, output_path: Path) -> str:
+    header = _common_source_header(
+        plate_path,
+        output_path,
+        extra_imports=(
+            "from openhcs.processing.backends.analysis.cell_counting_cpu "
+            """import (
+    DetectionMethod,
+    count_cells_single_channel,
+)"""
+        ),
+    )
+    return (
+        header
+        + _pipeline_data_header(plate_path)
+        + _segmentation_step_source(
+            "Segment nucleus-like primary objects",
+            stream_to_napari=True,
+        )
+        + _document_tail()
+    )
 
 
 def _dual_channel_source(plate_path: Path, output_path: Path) -> str:
@@ -313,14 +516,20 @@ def _dual_channel_source(plate_path: Path, output_path: Path) -> str:
         processing_imports=(
             "from openhcs.constants.constants import GroupBy, VariableComponents"
         ),
-        extra_imports='''from openhcs.processing.backends.analysis.count_cells_simple import (
+        extra_imports=(
+            "from openhcs.processing.backends.analysis.count_cells_simple "
+            """import (
     MetaXpressW2Settings,
     MetaXpressWavelengthSettings,
     StainedArea,
     count_cells_simple_dual_channel,
-)''',
+)"""
+        ),
     )
-    return header + _pipeline_data_header(plate_path) + '''        FunctionStep(
+    return (
+        header
+        + _pipeline_data_header(plate_path)
+        + """        FunctionStep(
         name="Classify dual-channel reporter phenotype",
         func=(
             count_cells_simple_dual_channel,
@@ -346,8 +555,13 @@ def _dual_channel_source(plate_path: Path, output_path: Path) -> str:
             group_by=GroupBy.NONE,
             input_source=InputSource.PIPELINE_START,
         ),
+"""
+        + _napari_streaming_config_source()
+        + """
         )
-''' + _document_tail()
+"""
+        + _document_tail()
+    )
 
 
 def _colocalization_source(plate_path: Path, output_path: Path) -> str:
@@ -357,14 +571,23 @@ def _colocalization_source(plate_path: Path, output_path: Path) -> str:
         processing_imports=(
             "from openhcs.constants.constants import GroupBy, VariableComponents"
         ),
-        extra_imports='''from openhcs.processing.backends.cellprofiler.colocalization import (
+        extra_imports=(
+            "from openhcs.processing.backends.cellprofiler.colocalization "
+            """import (
     measure_colocalization,
+)
+from openhcs.processing.backends.processors.numpy_processor import (
+    create_projection,
 )
 from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
     export_to_spreadsheet,
-)''',
+)"""
+        ),
     )
-    return header + _pipeline_data_header(plate_path) + '''        FunctionStep(
+    return (
+        header
+        + _pipeline_data_header(plate_path)
+        + """        FunctionStep(
         name="Measure two-channel colocalization",
         func=(
             measure_colocalization,
@@ -386,6 +609,23 @@ from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
         ),
         ),
         FunctionStep(
+        name="Render shared-intensity colocalization",
+        func=(
+            create_projection,
+            {
+                "method": "min_projection",
+            },
+        ),
+        processing_config=LazyProcessingConfig(
+            variable_components=[VariableComponents.CHANNEL],
+            group_by=GroupBy.NONE,
+            input_source=InputSource.PIPELINE_START,
+        ),
+"""
+        + _napari_streaming_config_source()
+        + """
+        ),
+        FunctionStep(
         name="Export colocalization measurements",
         func=(
             export_to_spreadsheet,
@@ -399,7 +639,195 @@ from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
             },
         ),
         )
-''' + _document_tail()
+"""
+        + _document_tail()
+    )
+
+
+def _nuclear_morphology_source(plate_path: Path, output_path: Path) -> str:
+    header = _common_source_header(
+        plate_path,
+        output_path,
+        extra_imports=(
+            "from openhcs.processing.backends.analysis.cell_counting_cpu "
+            """import (
+    DetectionMethod,
+    count_cells_single_channel,
+)
+from openhcs.processing.backends.cellprofiler.shape import (
+    measure_object_size_shape,
+)
+from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
+    export_to_spreadsheet,
+)"""
+        ),
+    )
+    return (
+        header
+        + _pipeline_data_header(plate_path)
+        + _segmentation_step_source(
+            "Segment nuclei for morphology",
+            stream_to_napari=True,
+        )
+        + """        FunctionStep(
+        name="Measure nuclear area and shape",
+        func=(
+            measure_object_size_shape,
+            {
+                "calculate_advanced": True,
+                "calculate_zernikes": False,
+            },
+        ),
+        ),
+"""
+        + _spreadsheet_export_step_source(
+            "Export nuclear morphology measurements",
+            output_directory="nuclear_morphology_tables",
+            filename_prefix="NuclearMorphology_",
+        )
+        + _document_tail()
+    )
+
+
+def _spatial_neighbors_source(plate_path: Path, output_path: Path) -> str:
+    header = _common_source_header(
+        plate_path,
+        output_path,
+        extra_imports=(
+            "from openhcs.processing.backends.analysis.cell_counting_cpu "
+            """import (
+    DetectionMethod,
+    count_cells_single_channel,
+)
+from openhcs.processing.backends.cellprofiler.neighbors import (
+    DistanceMethod,
+    measure_object_neighbors,
+)
+from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
+    export_to_spreadsheet,
+)"""
+        ),
+    )
+    return (
+        header
+        + _pipeline_data_header(plate_path)
+        + _segmentation_step_source(
+            "Segment cells for spatial analysis",
+            stream_to_napari=False,
+        )
+        + """        FunctionStep(
+        name="Measure cell-neighbor topology",
+        func=(
+            measure_object_neighbors,
+            {
+                "distance_method": DistanceMethod.WITHIN,
+                "neighbor_distance": 18,
+                "consider_discarded_objects": True,
+                "retain_neighbor_count_image": True,
+                "retain_percent_touching_image": False,
+            },
+        ),
+"""
+        + _napari_streaming_config_source()
+        + """
+        ),
+"""
+        + _spreadsheet_export_step_source(
+            "Export spatial-neighbor measurements",
+            output_directory="spatial_neighbor_tables",
+            filename_prefix="SpatialNeighbors_",
+        )
+        + _document_tail()
+    )
+
+
+def _radial_intensity_distribution_source(plate_path: Path, output_path: Path) -> str:
+    header = _common_source_header(
+        plate_path,
+        output_path,
+        extra_imports=(
+            "from openhcs.processing.backends.analysis.cell_counting_cpu "
+            """import (
+    DetectionMethod,
+    count_cells_single_channel,
+)
+from openhcs.processing.backends.cellprofiler.intensity_distribution import (
+    measure_object_intensity_distribution,
+)
+from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
+    export_to_spreadsheet,
+)"""
+        ),
+    )
+    return (
+        header
+        + _pipeline_data_header(plate_path)
+        + _segmentation_step_source(
+            "Segment nuclei for radial intensity",
+            stream_to_napari=True,
+        )
+        + """        FunctionStep(
+        name="Measure radial nuclear signal distribution",
+        func=(
+            measure_object_intensity_distribution,
+            {
+                "bin_count": 4,
+                "wants_scaled": True,
+                "maximum_radius": 32,
+            },
+        ),
+        ),
+"""
+        + _spreadsheet_export_step_source(
+            "Export radial intensity measurements",
+            output_directory="radial_intensity_tables",
+            filename_prefix="RadialIntensity_",
+        )
+        + _document_tail()
+    )
+
+
+def _foreground_skeleton_topology_source(plate_path: Path, output_path: Path) -> str:
+    header = _common_source_header(
+        plate_path,
+        output_path,
+        extra_imports=(
+            "from openhcs.processing.backends.analysis.skeletonize_and_save "
+            """import (
+    skeletonize_and_save,
+)
+from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
+    export_to_spreadsheet,
+)"""
+        ),
+    )
+    return (
+        header
+        + _pipeline_data_header(plate_path)
+        + """        FunctionStep(
+        name="Measure foreground skeleton topology",
+        func=(
+            skeletonize_and_save,
+            {
+                "threshold": None,
+                "min_component_size": 2,
+            },
+        ),
+        processing_config=LazyProcessingConfig(
+            input_source=InputSource.PIPELINE_START,
+        ),
+"""
+        + _napari_streaming_config_source()
+        + """
+        ),
+"""
+        + _spreadsheet_export_step_source(
+            "Export foreground skeleton measurements",
+            output_directory="foreground_skeleton_tables",
+            filename_prefix="ForegroundSkeleton_",
+        )
+        + _document_tail()
+    )
 
 
 def _json_write(path: Path, payload: Any) -> None:
@@ -437,8 +865,10 @@ def _first_payload(
         if tool_name is not None and result.get("tool") != tool_name:
             continue
         payloads = result.get("payloads")
-        if isinstance(payloads, Sequence) and payloads and isinstance(
-            payloads[0], Mapping
+        if (
+            isinstance(payloads, Sequence)
+            and payloads
+            and isinstance(payloads[0], Mapping)
         ):
             return dict(payloads[0])
     raise ShowcaseFailure(f"No payload returned for {tool_name or 'MCP command'}.")
@@ -465,9 +895,7 @@ def _run_command(
     execution = client.execute(argv, timeout_seconds=timeout_seconds)
     elapsed = time.perf_counter() - started
     evidence_path = (
-        ctx.scenario_dir
-        / "commands"
-        / f"{len(ctx.command_records):02d}_{label}.json"
+        ctx.scenario_dir / "commands" / f"{len(ctx.command_records):02d}_{label}.json"
     )
     _json_write(
         evidence_path,
@@ -539,22 +967,45 @@ def _run_stage(
     return result
 
 
-def _artifact_contracts(plan: Mapping[str, Any]) -> dict[str, Any]:
+def artifact_contracts(plan: Mapping[str, Any]) -> dict[str, Any]:
     steps = plan.get("steps")
     workspace = plan.get("source_workspace")
     if plan.get("axis_count") != 1 or not isinstance(steps, list) or not steps:
         raise ShowcaseFailure("Artifact plan must contain exactly one bounded axis.")
+    if plan.get("truncated_step_count", 0) != 0 or any(
+        isinstance(step, Mapping)
+        and step.get("truncated_artifact_output_count", 0) != 0
+        for step in steps
+    ):
+        raise ShowcaseFailure(
+            "Artifact plan is truncated and cannot prove every measurement output."
+        )
     if not isinstance(workspace, Mapping):
         raise ShowcaseFailure("Artifact plan has no source-workspace projection.")
-    outputs = {
-        (str(output["name"]), str(output["kind"]))
+    outputs = [
+        {
+            "step_name": str(step["step_name"]),
+            "name": str(output["name"]),
+            "kind": str(output["kind"]),
+        }
         for step in steps
-        if isinstance(step, Mapping)
+        if isinstance(step, Mapping) and step.get("step_name")
         for output in (step.get("artifact_outputs") or ())
         if isinstance(output, Mapping) and output.get("name") and output.get("kind")
-    }
+    ]
+    step_names = [
+        str(step["step_name"])
+        for step in steps
+        if isinstance(step, Mapping) and step.get("step_name")
+    ]
+    if not step_names:
+        raise ShowcaseFailure("Artifact plan has no owner-declared step names.")
     measurement_names = sorted(
-        name for name, kind in outputs if kind == "measurements"
+        {
+            output["name"]
+            for output in outputs
+            if output["kind"] == MeasurementsArtifactType.require_value()
+        }
     )
     if not measurement_names:
         raise ShowcaseFailure("Assay plan declares no measurement-table output.")
@@ -569,19 +1020,16 @@ def _artifact_contracts(plan: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "axis_count": plan.get("axis_count"),
         "step_count": plan.get("step_count"),
+        "step_names": step_names,
         "source_file_count": file_count,
         "source_truncated_file_count": truncated_count,
-        "outputs": [
-            {"name": name, "kind": kind} for name, kind in sorted(outputs)
-        ],
+        "outputs": outputs,
         "measurement_names": measurement_names,
-        "final_biological_outputs": [
-            {"name": name, "kind": kind} for name, kind in sorted(outputs)
-        ],
+        "final_biological_outputs": outputs,
     }
 
 
-def _live_measurement_evidence(
+def live_measurement_evidence(
     surface: Mapping[str, Any],
     *,
     surface_id: str,
@@ -638,7 +1086,7 @@ def _live_measurement_evidence(
     }
 
 
-def _discover_live_measurement_surface_id(
+def discover_live_measurement_surface_id(
     action_catalog: Mapping[str, Any],
     surface_catalog: Mapping[str, Any],
 ) -> str:
@@ -744,9 +1192,108 @@ def _call_tool_args(tool_name: str, arguments: Mapping[str, Any]) -> list[str]:
     ]
 
 
-def _apply_source(
-    client: McpDevClient, ctx: ScenarioRunContext
+def _viewer_args() -> list[str]:
+    return [
+        "--port",
+        str(SHOWCASE_NAPARI_PORT),
+        "--transport-mode",
+        "ipc",
+        "--timeout-ms",
+        str(UI_TIMEOUT_MS),
+    ]
+
+
+def _present_napari_output(
+    client: McpDevClient,
+    ctx: ScenarioRunContext,
+    *,
+    compiled_step_names: Sequence[str],
+    presentation_identity: StreamProducerIdentity,
 ) -> dict[str, Any]:
+    """Isolate this pipeline's owner-declared producer routes in the shared viewer."""
+
+    state = _first_payload(
+        _run_command(
+            client,
+            ctx,
+            "read_napari_presentation_state",
+            ["viewer-state", *_viewer_args(), "--json"],
+            timeout_seconds=8.0,
+        )
+    )
+    layers = state.get("layers")
+    if state.get("observed") is not True or not isinstance(layers, list):
+        raise ShowcaseFailure("Napari presentation state was not observable.")
+    step_names = set(compiled_step_names)
+    presented_layers = [
+        layer
+        for layer in layers
+        if isinstance(layer, Mapping)
+        and layer.get("mounted") is True
+        and isinstance(layer.get("route_key"), str)
+        and any(
+            isinstance(producer, Mapping)
+            and StreamProducerIdentity.from_payload(producer).step_name in step_names
+            for producer in (layer.get("producer_identities") or ())
+        )
+    ]
+    if not presented_layers:
+        raise ShowcaseFailure(
+            "Napari exposed no mounted route owned by the compiled pipeline steps."
+        )
+    route_keys = [str(layer["route_key"]) for layer in presented_layers]
+    target_layers = [
+        layer
+        for layer in presented_layers
+        for producer in (layer.get("producer_identities") or ())
+        if isinstance(producer, Mapping)
+        and StreamProducerIdentity.from_payload(producer).matches_declaration(
+            presentation_identity
+        )
+    ]
+    if len(target_layers) != 1:
+        raise ShowcaseFailure(
+            "Napari must expose exactly one mounted route matching the "
+            f"declaration-owned presentation identity, found {len(target_layers)}."
+        )
+    selected_layer = target_layers[0]
+    selected_route_key = str(selected_layer["route_key"])
+    isolated = _first_payload(
+        _run_command(
+            client,
+            ctx,
+            "isolate_napari_presentation",
+            [
+                "isolate-viewer",
+                *_viewer_args(),
+                *route_keys,
+                "--selected-route-key",
+                selected_route_key,
+                "--json",
+            ],
+            timeout_seconds=8.0,
+        )
+    )
+    if isolated.get("observed") is not True or isolated.get("applied") is not True:
+        raise ShowcaseFailure("Napari did not apply the current-assay layer isolation.")
+    return {
+        "port": SHOWCASE_NAPARI_PORT,
+        "route_keys": route_keys,
+        "selected_route_key": selected_route_key,
+        "visible_route_keys": list(isolated.get("visible_route_keys") or ()),
+        "hidden_route_keys": list(isolated.get("hidden_route_keys") or ()),
+        "layers": [
+            {
+                "route_key": layer["route_key"],
+                "title": layer.get("title"),
+                "producer_identities": list(layer.get("producer_identities") or ()),
+            }
+            for layer in presented_layers
+        ],
+    }
+
+
+def _apply_source(client: McpDevClient, ctx: ScenarioRunContext) -> dict[str, Any]:
     read = _run_command(
         client,
         ctx,
@@ -807,7 +1354,9 @@ def _apply_source(
         return result
     operation_id = result.get("operation_id")
     if not isinstance(operation_id, str) or not operation_id:
-        raise ShowcaseFailure("UI source apply returned neither completion nor operation id.")
+        raise ShowcaseFailure(
+            "UI source apply returned neither completion nor operation id."
+        )
     waited = _run_command(
         client,
         ctx,
@@ -859,12 +1408,41 @@ def _workflow(
         timeout_seconds=timeout_seconds + 10.0,
     )
     summary = _first_payload(response, "mcp_dev_selected_workflow_poll")
-    if summary.get("poll_completed") is not True or summary.get("poll_status") != "completed":
+    if (
+        summary.get("poll_completed") is not True
+        or summary.get("poll_status") != "completed"
+    ):
         raise ShowcaseFailure(f"{workflow} did not reach completed state: {summary}.")
     return summary
 
 
-def _open_human_results_table(
+def complete_human_results_table_action(
+    result: Mapping[str, Any],
+    *,
+    wait_for_operation: Callable[[str], Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Validate one owner-declared Results action through terminal dispatch."""
+
+    if result.get("status") == "completed":
+        return dict(result)
+    receipt = result.get("receipt")
+    operation_id = (
+        receipt.get("bridge_operation_id") if isinstance(receipt, dict) else None
+    )
+    if result.get("status") != "accepted" or not isinstance(operation_id, str):
+        raise ShowcaseFailure(f"Results action was not accepted: {result}.")
+    terminal = wait_for_operation(operation_id)
+    if terminal.get("status") != "completed":
+        raise ShowcaseFailure(f"Results action did not complete: {terminal}.")
+    return {
+        "action_id": PlateManagerAction.VIEW_RESULTS.value,
+        "operation_id": operation_id,
+        "outcome": terminal.get("outcome"),
+        "status": terminal.get("status"),
+    }
+
+
+def open_human_results_table(
     client: McpDevClient,
     ctx: ScenarioRunContext,
 ) -> dict[str, Any]:
@@ -883,40 +1461,29 @@ def _open_human_results_table(
         ],
         timeout_seconds=8.0,
     )
-    result = _first_payload(invoked)
-    if result.get("status") == "completed":
-        return result
-    receipt = result.get("receipt")
-    operation_id = receipt.get("bridge_operation_id") if isinstance(receipt, dict) else None
-    if result.get("status") != "accepted" or not isinstance(operation_id, str):
-        raise ShowcaseFailure(f"Results action was not accepted: {result}.")
-    waited = _run_command(
-        client,
-        ctx,
-        "wait_for_human_results_table",
-        _call_tool_args(
-            "openhcs_ui_wait_for_operation",
-            {
-                "operation_id": operation_id,
-                "timeout_seconds": 8.0,
-                "poll_interval_seconds": 0.25,
-                "connection": {
-                    "descriptor_file_path": str(ctx.descriptor_path),
-                    "timeout_ms": UI_TIMEOUT_MS,
-                },
-            },
+    return complete_human_results_table_action(
+        _first_payload(invoked),
+        wait_for_operation=lambda operation_id: _first_payload(
+            _run_command(
+                client,
+                ctx,
+                "wait_for_human_results_table",
+                _call_tool_args(
+                    "openhcs_ui_wait_for_operation",
+                    {
+                        "operation_id": operation_id,
+                        "timeout_seconds": 8.0,
+                        "poll_interval_seconds": 0.25,
+                        "connection": {
+                            "descriptor_file_path": str(ctx.descriptor_path),
+                            "timeout_ms": UI_TIMEOUT_MS,
+                        },
+                    },
+                ),
+                timeout_seconds=10.0,
+            )
         ),
-        timeout_seconds=10.0,
     )
-    terminal = _first_payload(waited)
-    if terminal.get("status") != "completed":
-        raise ShowcaseFailure(f"Results action did not complete: {terminal}.")
-    return {
-        "action_id": PlateManagerAction.VIEW_RESULTS.value,
-        "operation_id": operation_id,
-        "outcome": terminal.get("outcome"),
-        "status": terminal.get("status"),
-    }
 
 
 def _run_scenario(
@@ -960,14 +1527,16 @@ def _run_scenario(
                     ctx,
                     "generate_synthetic_plate",
                     blueprint.generation_arguments(plate_path),
-                    timeout_seconds=blueprint.stage_budgets[
-                        "generate_plate"
-                    ].scaled(budget_scale),
+                    timeout_seconds=blueprint.stage_budgets["generate_plate"].scaled(
+                        budget_scale
+                    ),
                 )
             ),
         )
         if not plate_path.is_dir():
-            raise ShowcaseFailure("Synthetic plate capability did not create its output.")
+            raise ShowcaseFailure(
+                "Synthetic plate capability did not create its output."
+            )
         plan_payload = _run_stage(
             ctx,
             "inspect_artifact_plan",
@@ -992,7 +1561,7 @@ def _run_scenario(
                 "openhcs_inspect_pipeline_source_artifact_plan",
             ),
         )
-        contracts = _artifact_contracts(plan_payload)
+        contracts = artifact_contracts(plan_payload)
         if contracts["source_file_count"] != blueprint.wavelengths:
             raise ShowcaseFailure(
                 "Compiled source scope does not match the assay channel count: "
@@ -1015,13 +1584,29 @@ def _run_scenario(
                     timeout_seconds=budget,
                 ),
             )
+        napari_presentation = _run_stage(
+            ctx,
+            "present_napari",
+            lambda: _present_napari_output(
+                client,
+                ctx,
+                compiled_step_names=contracts["step_names"],
+                presentation_identity=blueprint.presentation_identity,
+            ),
+        )
+
         def read_live_measurements() -> tuple[str, dict[str, Any], dict[str, Any]]:
             action_catalog = _first_payload(
                 _run_command(
                     client,
                     ctx,
                     "list_plate_manager_actions",
-                    ["actions", PlateManagerWidgetIdentity.require_value(), "--json", *_ui_args(ctx)],
+                    [
+                        "actions",
+                        PlateManagerWidgetIdentity.require_value(),
+                        "--json",
+                        *_ui_args(ctx),
+                    ],
                     timeout_seconds=blueprint.stage_budgets[
                         "read_live_measurements"
                     ].scaled(budget_scale),
@@ -1038,7 +1623,7 @@ def _run_scenario(
                     ].scaled(budget_scale),
                 )
             )
-            surface_id = _discover_live_measurement_surface_id(
+            surface_id = discover_live_measurement_surface_id(
                 action_catalog,
                 surface_catalog,
             )
@@ -1060,14 +1645,14 @@ def _run_scenario(
                     ].scaled(budget_scale),
                 )
             )
-            return surface_id, surface, _open_human_results_table(client, ctx)
+            return surface_id, surface, open_human_results_table(client, ctx)
 
         live_surface_id, surface_payload, human_results_table = _run_stage(
             ctx,
             "read_live_measurements",
             read_live_measurements,
         )
-        live_measurements = _live_measurement_evidence(
+        live_measurements = live_measurement_evidence(
             surface_payload,
             surface_id=live_surface_id,
             plate_path=plate_path,
@@ -1124,6 +1709,7 @@ def _run_scenario(
                 "generator_result": generation,
             },
             "artifact_contracts": contracts,
+            "napari_presentation": napari_presentation,
             "live_measurements": live_measurements,
             "human_results_table": human_results_table,
             "materialized_measurements": materialized,

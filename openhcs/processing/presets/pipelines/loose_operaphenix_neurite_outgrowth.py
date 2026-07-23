@@ -16,11 +16,17 @@ copy while typed measurements and object labels remain materialized.
 
 from __future__ import annotations
 
+import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from polystore.streaming.identity import StreamProducerIdentity
+
 from openhcs.constants.constants import AllComponents, Microscope
 from openhcs.constants.input_source import InputSource
+from openhcs.core.aligned_image_payload import AlignedImageSliceContext
+from openhcs.core.artifacts import ImageArtifactType, ObjectLabelsArtifactType
 from openhcs.core.config import (
     LazyNapariStreamingConfig,
     NapariColormap,
@@ -30,6 +36,8 @@ from openhcs.core.config import (
     LazyWellFilterConfig,
     PipelineConfig,
 )
+from openhcs.core.function_patterns import get_core_callable
+from openhcs.core.invocation_artifacts import ArtifactDeclarationStepContext
 from openhcs.core.source_bindings import (
     ComponentSelector,
     LazyStepSourceBindingsConfig,
@@ -39,6 +47,9 @@ from openhcs.core.source_bindings import (
     SourceFilterMatchType,
     SourceFilterSubject,
     SourceSelector,
+)
+from openhcs.core.steps.function_output_manifest import (
+    FunctionStepOutputProducerIdentityRequest,
 )
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.backends.analysis.neurite_outgrowth import (
@@ -53,6 +64,7 @@ from openhcs.processing.backends.cellprofiler.primary_objects import (
     identify_primary_objects,
 )
 from openhcs.processing.backends.cellprofiler.secondary import (
+    IdentifySecondaryObjectsModule,
     identify_secondary_objects,
 )
 from openhcs.processing.backends.cellprofiler.skeleton import (
@@ -64,6 +76,9 @@ from openhcs.processing.backends.cellprofiler.spreadsheet_export import (
 from openhcs.processing.backends.cellprofiler.thresholding import (
     threshold,
 )
+from openhcs.processing.presets.demo_contribution import PipelineDemoContribution
+
+NEURITE_BRANCHPOINT_IMAGE_NAME = "NeuriteBranchpoints"
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,7 +280,7 @@ def build_loose_operaphenix_neurite_pipeline(
                 {
                     "fill_small_holes": True,
                     "maximum_hole_size": 10,
-                    "branchpoint_image_name": "NeuriteBranchpoints",
+                    "branchpoint_image_name": NEURITE_BRANCHPOINT_IMAGE_NAME,
                 },
             ),
             napari_streaming_config=_qc_stream(inputs, NapariColormap.GRAY),
@@ -298,6 +313,142 @@ def build_loose_operaphenix_neurite_pipeline(
         ),
     ]
     return pipeline_config, pipeline_steps
+
+
+def loose_operaphenix_neurite_demo_contribution(
+    *,
+    session_root: Path,
+    source_path: Path | None = None,
+) -> PipelineDemoContribution:
+    """Contribute the modular CellProfiler neurite workflow to a master run.
+
+    ``source_path`` is the directory containing the three declared loose TIFFs.
+    Set ``OPENHCS_LOOSE_OPERAPHENIX_NEURITE_SOURCE`` when invoking the generic
+    master runner, whose contributor protocol supplies only ``session_root``.
+    """
+
+    demo_id = "loose_operaphenix_cellprofiler_neurite_outgrowth"
+    title = "Opera Phenix modular CellProfiler neurite outgrowth"
+    configured_source = source_path or os.environ.get(
+        "OPENHCS_LOOSE_OPERAPHENIX_NEURITE_SOURCE"
+    )
+    if configured_source is None:
+        raise FileNotFoundError(
+            "Loose Opera Phenix neurite source is not configured. Set "
+            "OPENHCS_LOOSE_OPERAPHENIX_NEURITE_SOURCE to the directory "
+            "containing the declared Hoechst, MAP2, and SMI312 TIFFs."
+        )
+    resolved_source = Path(configured_source).expanduser().resolve()
+    if not resolved_source.is_dir():
+        raise FileNotFoundError(
+            f"Loose Opera Phenix neurite source directory not found: {resolved_source}."
+        )
+
+    resolved_session_root = session_root.expanduser().resolve()
+    plate_path = resolved_session_root / "plates" / title
+    output_root = resolved_session_root / "outputs" / demo_id
+    inputs = LooseOperaPhenixNeuriteInputs(
+        plate_path=plate_path,
+        output_root=output_root,
+        well="R04C09",
+        site="11",
+        z_index="1",
+        timepoint="1",
+        viewer_port=5888,
+        hoechst=SemanticImageSource(
+            alias="Hoechst",
+            filename="r04c09f11p01-ch1sk1fk1fl1.tiff",
+            channel="1",
+        ),
+        map2=SemanticImageSource(
+            alias="MAP2",
+            filename="r04c09f11p01-ch2sk1fk1fl1.tiff",
+            channel="2",
+        ),
+        smi312=SemanticImageSource(
+            alias="SMI312",
+            filename="r04c09f11p01-ch4sk1fk1fl1.tiff",
+            channel="4",
+        ),
+    )
+
+    def prepare() -> None:
+        missing = tuple(
+            source.filename
+            for source in inputs.channel_stack
+            if not (resolved_source / source.filename).is_file()
+        )
+        if missing:
+            raise FileNotFoundError(
+                f"Loose Opera Phenix neurite source {resolved_source} is missing "
+                f"declared TIFFs: {missing}."
+            )
+        plate_path.mkdir(parents=True, exist_ok=True)
+        for source in inputs.channel_stack:
+            shutil.copy2(
+                resolved_source / source.filename,
+                plate_path / source.filename,
+            )
+
+    pipeline_config, pipeline_steps = build_loose_operaphenix_neurite_pipeline(inputs)
+    analysis_matches = tuple(
+        step
+        for step in pipeline_steps
+        if get_core_callable(step.func) is identify_secondary_objects
+    )
+    topology_matches = tuple(
+        step
+        for step in pipeline_steps
+        if get_core_callable(step.func)
+        is measure_object_skeleton_with_branchpoint_image
+    )
+    if len(analysis_matches) != 1 or len(topology_matches) != 1:
+        raise ValueError(
+            "Loose Opera Phenix demo requires exactly one secondary-object "
+            "analysis and one branchpoint-image topology step."
+        )
+    analysis_step = analysis_matches[0]
+    topology_step = topology_matches[0]
+    analysis_step_index = pipeline_steps.index(analysis_step)
+    secondary_output_name = (
+        IdentifySecondaryObjectsModule.canonical_output_artifact_name(
+            artifact_type=ObjectLabelsArtifactType,
+            output_position=0,
+            block_position=0,
+            step_context=ArtifactDeclarationStepContext(
+                step_name=analysis_step.name,
+                step_index=analysis_step_index,
+            ),
+        )
+    )
+    return PipelineDemoContribution(
+        demo_id=demo_id,
+        title=title,
+        plate_path=plate_path,
+        pipeline_config=pipeline_config,
+        pipeline_steps=tuple(pipeline_steps),
+        presentation_identity=StreamProducerIdentity.pipeline_output(
+            output_kind=(
+                FunctionStepOutputProducerIdentityRequest.ARTIFACT_OUTPUT_KIND
+            ),
+            output_key=secondary_output_name,
+            projection_key=secondary_output_name,
+            step_name=analysis_step.name,
+            pipeline_position=None,
+            artifact_kind=ObjectLabelsArtifactType.require_value(),
+        ),
+        supporting_presentation_identities=(
+            StreamProducerIdentity.pipeline_output(
+                output_kind=AlignedImageSliceContext.MAIN_FLOW_OUTPUT_KIND,
+                output_key=NEURITE_BRANCHPOINT_IMAGE_NAME,
+                projection_key=AlignedImageSliceContext.MAIN_FLOW_OUTPUT_KIND,
+                step_name=topology_step.name,
+                pipeline_position=None,
+                artifact_kind=ImageArtifactType.require_value(),
+            ),
+        ),
+        prepare=prepare,
+    )
 
 
 # Edit this one boundary rather than searching through the pipeline declarations.

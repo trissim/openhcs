@@ -95,6 +95,76 @@ Use the native ``Microscope.OPERAPHENIX`` handler when the complete plate and
 ``Index.xml`` are available. Source bindings are appropriate here because the
 loose files no longer carry the plate-level metadata needed by that handler.
 
+Master multi-plate lab-meeting showcase
+---------------------------------------
+
+``scripts/master_multi_plate_demo.py`` composes every declaration returned by
+``scripts.mcp_assay_showcase.scenario_blueprints`` into one Plate Manager
+document. It generates the bounded plates, registers every row in the running
+desktop UI, then selects and initializes, compiles, and runs each plate in
+sequence. Each plate has a deterministic dedicated Napari endpoint beginning at
+port 5900. Its Napari window is framed with the exact scope accent projected by
+the running Plate Manager, so the viewer can be matched to its plate and config
+windows without a second color map.
+
+First inspect the complete inventory and generated document without touching a
+running UI:
+
+.. code-block:: bash
+
+   .venv/bin/python scripts/master_multi_plate_demo.py --dry-run
+
+For the live showcase, start the OpenHCS desktop UI and pass its bridge
+descriptor explicitly:
+
+.. code-block:: bash
+
+   .venv/bin/python scripts/master_multi_plate_demo.py \
+       --descriptor-file-path /path/to/running-ui-bridge.json
+
+The complete built-in inventory contains seven assay stories. The runner checks
+each data and control endpoint before launch and reports a collision; it does
+not silently move a plate to another port. A compile or runtime failure is
+recorded for that plate and the next plate still runs. The summary and every MCP
+command response are written under ``mcp_outputs/master_multi_plate_demo``.
+
+Additional demos join only through an explicit contributor factory. For the
+NeuronCyto II crossover example, point to the separately downloaded official
+archive and name its preset-owned contributor:
+
+.. code-block:: bash
+
+   export OPENHCS_NEURONCYTO_II_TEST_ARCHIVE=/path/to/Testing\ image.zip
+   .venv/bin/python scripts/master_multi_plate_demo.py \
+       --descriptor-file-path /path/to/running-ui-bridge.json \
+       --contributor openhcs.processing.presets.pipelines.neuroncyto_ii_crossover_neurite_outgrowth:neuroncyto_ii_crossover_demo_contribution
+
+For the varied eight-plate lab-meeting sequence from a source checkout,
+explicitly retain five curated built-ins, add the two repository-only
+Official30 stories, and add NeuronCyto II:
+
+.. code-block:: bash
+
+   export OPENHCS_NEURONCYTO_II_TEST_ARCHIVE=/path/to/Testing\ image.zip
+   .venv/bin/python scripts/master_multi_plate_demo.py \
+       --descriptor-file-path /path/to/running-ui-bridge.json \
+       --exclude-demo primary_object_segmentation \
+       --exclude-demo nuclear_morphology \
+       --contributor benchmark.demos.official30_lab_meeting:official30_lab_meeting_demo_contributions \
+       --contributor openhcs.processing.presets.pipelines.neuroncyto_ii_crossover_neurite_outgrowth:neuroncyto_ii_crossover_demo_contribution
+
+That source-checkout-only composition uses ports 5900 through 5907: five
+curated built-in assays, Comet and wound-closure from Official30, and
+NeuronCyto II. The benchmark package and Official30 manifest are not installed
+with the OpenHCS wheel. The exclusions and contributors are command-line
+choices, not a hidden alternate inventory.
+
+Contributor factories receive ``session_root=Path`` and return a declared plate
+path, pipeline config, steps, title, stable demo id, and optional preparation
+callable.
+The master still owns port assignment, UI registration, viewer launch, and
+sequential execution; contributors do not duplicate that machinery.
+
 CellProfiler import
 -------------------
 

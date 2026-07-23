@@ -18,6 +18,16 @@
       "dataset_id": "ExampleCometAssay",
       "dataset_path": "ExampleCometAssay/images",
       "dataset_path_root": "cellprofiler_examples",
+      "lab_meeting_demo": {
+        "biological_question": "How much DNA damage is present in each comet, and how do head and tail morphology and intensity distinguish damaged from undamaged cells?",
+        "presentation": {
+          "artifact_kind": "image",
+          "output_key": "CometOutline",
+          "output_kind": "main",
+          "step_name": "OverlayOutlines"
+        },
+        "title": "DNA-damage comet morphology and tail intensity"
+      },
       "name": "ExampleCometAssay",
       "value_only": true
     },
@@ -198,6 +208,16 @@
       "dataset_id": "ExampleWoundHealing",
       "dataset_path": "ExampleWoundHealing/images",
       "dataset_path_root": "cellprofiler_examples",
+      "lab_meeting_demo": {
+        "biological_question": "How much of a scratch wound remains open after collective cell migration, and what tissue segmentation supports the occupied-area measurement?",
+        "presentation": {
+          "artifact_kind": "object_labels",
+          "output_key": "Tissue",
+          "output_kind": "artifact",
+          "step_name": "IdentifyPrimaryObjects"
+        },
+        "title": "Collective-migration wound closure"
+      },
       "name": "ExampleWoundHealing",
       "value_only": true
     },
