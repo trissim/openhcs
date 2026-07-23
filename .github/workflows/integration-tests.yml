@@ -1,6 +1,6 @@
 # OpenHCS Integration Tests
 #
-# CI Strategy: Optimized boundary testing (29 jobs total)
+# CI Strategy: Optimized boundary testing (30 jobs total)
 #
 # Group 1: Python boundary tests (6 jobs)
 #   - Python 3.11 (oldest) and 3.13 (newest well-supported) on Linux + Windows + macOS
@@ -30,8 +30,14 @@
 #   - Python 3.12 on Linux
 #   - Full integration test suite against wheel installation
 #
-# Total: 29 jobs covering all Python versions (3.11-3.13), all 3 OSes,
-# all backends, all microscope formats, and both native desktop installers
+# Group 7: Official30 headless parity (1 job)
+#   - Python 3.12 on Linux
+#   - Acquires the manifest-pinned inputs and compares all 30 cases against the
+#     committed native CellProfiler references over the real ZMQ execution path
+#
+# Total: 30 jobs covering all Python versions (3.11-3.13), all 3 OSes,
+# all backends, all microscope formats, both native desktop installers, and one
+# serialized real Official30 parity corpus
 
 name: Integration Tests
 
@@ -733,6 +739,114 @@ jobs:
           WHEEL=$(python -c "from pathlib import Path; print(next(Path('dist').glob('*.whl')).resolve())")
           pip install "${WHEEL}[gui,mcp]"
           python "$GITHUB_WORKSPACE/scripts/smoke_installed_mcp.py" --forbid-import-root "$GITHUB_WORKSPACE"
+
+  # Run the real 30-case headless comparator once. The cross-OS/Python matrix
+  # above owns generated public-boundary coverage; this lane owns semantic
+  # parity against committed native CellProfiler outputs.
+  official30-headless-parity:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 90
+    env:
+      OPENHCS_CP_NATIVE_REFERENCE_ROOT: ${{ github.workspace }}/benchmark/native_refs/official30_scoped_rows
+      OPENHCS_CPU_ONLY: true
+      QT_QPA_PLATFORM: offscreen
+      MPLBACKEND: Agg
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install headless runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1
+          sudo apt-get install -y libegl1 || sudo apt-get install -y libegl1-mesa
+          sudo apt-get install -y libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-xfixes0
+
+      - name: Install local external modules
+        run: |
+          python -m pip install --upgrade pip
+          python -c "import subprocess,sys;mods=['external/ObjectState','external/python-introspect','external/metaclass-registry','external/arraybridge','external/pycodify','external/PolyStore','external/pyqt-reactive','external/zmqruntime'];[subprocess.check_call([sys.executable,'-m','pip','install','-e',m]) for m in mods]"
+
+      - name: Install OpenHCS parity dependencies
+        run: pip install -e ".[dev,cellprofiler-compat]"
+
+      - name: Materialize manifest-pinned Official30 inputs
+        env:
+          CELLPROFILER_EXAMPLES_ROOT: ${{ runner.temp }}/openhcs-official30/cellprofiler-examples
+          OPENHCS_BENCHMARK_DATASET_CACHE_ROOT: ${{ runner.temp }}/openhcs-official30/datasets
+          OPENHCS_BENCHMARK_AUTO_ACQUIRE: "1"
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          from benchmark.cellprofiler_comparison import load_comparison_cases
+
+          manifest_path = Path(
+              "benchmark/manifests/official30_portable_axis1.json"
+          )
+          cases = load_comparison_cases(manifest_path)
+          if len(cases) != 30:
+              raise RuntimeError(
+                  f"Official30 manifest resolved {len(cases)} cases, expected 30."
+              )
+          missing = tuple(
+              (case.name, path)
+              for case in cases
+              for path in (case.dataset_path, case.cppipe_path)
+              if not path.exists()
+          )
+          if missing:
+              raise FileNotFoundError(
+                  f"Official30 acquisition left missing inputs: {missing!r}"
+              )
+          print("Materialized 30 manifest-owned Official30 cases.")
+          PY
+
+      - name: Run all 30 headless parity cases over ZMQ
+        env:
+          CELLPROFILER_EXAMPLES_ROOT: ${{ runner.temp }}/openhcs-official30/cellprofiler-examples
+          OPENHCS_BENCHMARK_DATASET_CACHE_ROOT: ${{ runner.temp }}/openhcs-official30/datasets
+          OPENHCS_BENCHMARK_AUTO_ACQUIRE: "0"
+        run: |
+          python -m pytest \
+            tests/integration/test_cellprofiler_official30_zmq.py::test_official30_compile_execute_and_match_native_references_over_zmq \
+            --basetemp "$RUNNER_TEMP/openhcs-official30/pytest" \
+            -v \
+            --tb=short
+
+      - name: Upload per-case Official30 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official30-headless-parity
+          path: |
+            ${{ runner.temp }}/openhcs-official30/pytest/**/baseline/observations.jsonl
+            ${{ runner.temp }}/openhcs-official30/pytest/**/baseline/observations.csv
+            ${{ runner.temp }}/openhcs-official30/pytest/**/baseline/phase_timing.csv
+            ${{ runner.temp }}/openhcs-official30/pytest/**/baseline/summary.csv
+            ${{ runner.temp }}/openhcs-official30/pytest/**/baseline/suite_metadata.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload ZMQ logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official30-headless-zmq-logs
+          path: |
+            ~/.local/share/openhcs/logs
+            ~/.local/state/openhcs/logs
+          if-no-files-found: warn
+          retention-days: 14
 
   # Run integration tests against wheel installation
   wheel-integration-test:
