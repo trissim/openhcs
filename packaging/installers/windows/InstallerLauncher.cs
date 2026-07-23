@@ -28,6 +28,12 @@ internal static class InstallerLauncher
         string temporaryDirectory = null;
         try
         {
+            if (Environment.Is64BitOperatingSystem && !Environment.Is64BitProcess)
+            {
+                throw new PlatformNotSupportedException(
+                    "The OpenHCS installer must use native 64-bit Windows PowerShell."
+                );
+            }
             temporaryDirectory = Path.Combine(
                 Path.GetTempPath(),
                 "OpenHCS Installer",

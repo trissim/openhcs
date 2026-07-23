@@ -42,6 +42,7 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     assert 'start ""' in cmd
     assert "<OutputType>WinExe</OutputType>" in project
     assert "<TargetFramework>net48</TargetFramework>" in project
+    assert "<Prefer32Bit>false</Prefer32Bit>" in project
     assert "<RuntimeIdentifier>" not in project
     assert "<SelfContained>" not in project
     assert "<PublishSingleFile>" not in project
@@ -58,6 +59,9 @@ def test_windows_installer_has_stable_double_click_entrypoint() -> None:
     assert '"installer_contract.json"' in build
 
     assert "Assembly.GetExecutingAssembly()" in launcher
+    assert "Environment.Is64BitOperatingSystem" in launcher
+    assert "!Environment.Is64BitProcess" in launcher
+    assert "native 64-bit Windows PowerShell" in launcher
     assert "GetManifestResourceStream(resourceName)" in launcher
     assert 'Guid.NewGuid().ToString("N")' in launcher
     assert "Path.GetTempPath()" in launcher

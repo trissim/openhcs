@@ -5,6 +5,7 @@
     <AssemblyName>OpenHCS-Windows-Installer</AssemblyName>
     <RootNamespace>OpenHCS.Installer</RootNamespace>
     <LangVersion>latest</LangVersion>
+    <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="Install-OpenHCS.ps1">
