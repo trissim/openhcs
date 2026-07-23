@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from enum import Enum
 from itertools import count
+import logging
 import os
 from pathlib import Path
 import queue
@@ -76,6 +77,7 @@ MAX_INSPECTION_SOURCE_WORKSPACE_FILES = 64
 PENDING_EXECUTION_STATUSES = frozenset(
     ("accepted", "ok", "queued", "running", "submitted", "unknown")
 )
+logger = logging.getLogger(__name__)
 
 
 class ExecutionSessionError(AgentFacingErrorMixin, ValueError):
@@ -396,7 +398,9 @@ class PipelineSourceSessionRequest(ExecutionPipelineSessionRequest):
         pipeline_service: PipelineAuthoringService,
     ) -> ExecutionPipelineDefinition:
         del pipeline_service
+        logger.info("Parsing pipeline source for execution session %s", session_id)
         document = PipelineDocumentAuthority.from_source(self.pipeline_source)
+        logger.info("Parsed pipeline source for execution session %s", session_id)
         return ExecutionPipelineDefinition(
             pipeline_id=f"pipeline-source:{session_id}",
             pipeline_document=document,

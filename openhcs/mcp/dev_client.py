@@ -11,6 +11,7 @@ import sys
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TextIO
 
 from openhcs.serialization.json import to_jsonable as to_jsonable
 from openhcs.agent.dto.common import JsonObject
@@ -104,6 +105,7 @@ class McpDevClient:
         *,
         surface_profile: LocalCapabilitySurfaceProfile | None = None,
         initialize_timeout_seconds: float = DEFAULT_REGISTRY_DISCOVERY_TIMEOUT_SECONDS,
+        server_stderr: TextIO | None = None,
     ) -> None:
         self.server_spec = McpDevServerSpec(
             python_executable,
@@ -116,10 +118,15 @@ class McpDevClient:
         self.initialize_timeout_seconds = initialize_timeout_seconds
         self._parser = _build_parser()
         self._runner = asyncio.Runner()
-        self._server_stderr = tempfile.TemporaryFile(
-            mode="w+",
-            encoding="utf-8",
-            errors="replace",
+        self._owns_server_stderr = server_stderr is None
+        self._server_stderr = (
+            tempfile.TemporaryFile(
+                mode="w+",
+                encoding="utf-8",
+                errors="replace",
+            )
+            if server_stderr is None
+            else server_stderr
         )
         self._session = McpDevStdioSession(self.server_spec, self._server_stderr)
         self._session_started = False
@@ -201,7 +208,8 @@ class McpDevClient:
         finally:
             self._session_started = False
             self._runner.close()
-            self._server_stderr.close()
+            if self._owns_server_stderr:
+                self._server_stderr.close()
             self._closed = True
 
     def __exit__(

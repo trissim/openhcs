@@ -47,7 +47,9 @@ def test_source_session_capability_owns_progress_heartbeat_policy():
     ]
 
     assert source_session.progress_heartbeat_seconds == 10.0
+    assert source_session.progress_worker_thread_safe is False
     assert source_session.as_jsonable()["progress_heartbeat_seconds"] == 10.0
+    assert source_session.as_jsonable()["progress_worker_thread_safe"] is False
 
 
 def test_create_pipeline_capability_accepts_optional_pipeline_config_reference():

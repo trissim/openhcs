@@ -112,6 +112,18 @@ def test_persistent_client_initializes_once_for_distinct_command_specs(
     )
 
 
+def test_persistent_client_does_not_close_caller_owned_server_stderr() -> None:
+    server_stderr = io.StringIO()
+    client = dev_client.McpDevClient(
+        sys.executable,
+        server_stderr=server_stderr,
+    )
+
+    client.close()
+
+    assert server_stderr.closed is False
+
+
 def test_persistent_client_preserves_local_usage_errors(monkeypatch) -> None:
     class FakeMcpDevStdioSession:
         def __init__(self, server_spec, server_stderr) -> None:

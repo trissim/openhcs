@@ -601,7 +601,10 @@ def run_installed_demo(
     _report_phase("owned execution runtime ready")
     try:
         _report_phase("starting MCP session")
-        with McpDevClient(python_executable=sys.executable) as client:
+        with McpDevClient(
+            python_executable=sys.executable,
+            server_stderr=sys.stderr,
+        ) as client:
             _report_phase("generating synthetic plate")
             generated = _generate_plate(client, plate_path)
             _report_phase("querying generated plate")

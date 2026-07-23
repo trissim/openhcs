@@ -772,6 +772,7 @@ class AgentCapabilitySpec:
     data_exposure: tuple[str, ...] = ()
     security_requirements: tuple[str, ...] = ()
     progress_heartbeat_seconds: float | None = None
+    progress_worker_thread_safe: bool = True
     input_contract: AgentContract | None = None
     output_contract: AgentContract | None = None
     exposition: AgentCapabilityExposition | None = None
@@ -850,6 +851,7 @@ class AgentCapabilitySpec:
             "data_exposure": list(self.data_exposure),
             "security_requirements": list(self.security_requirements),
             "progress_heartbeat_seconds": self.progress_heartbeat_seconds,
+            "progress_worker_thread_safe": self.progress_worker_thread_safe,
             "input_type": self.input_type,
             "output_type": self.output_type,
             "workflow_group": _enum_json_value(self.workflow_group),
@@ -903,6 +905,7 @@ class AgentCapabilityDeclaration(ABC, metaclass=AutoRegisterMeta):
     data_exposure: ClassVar[tuple[str, ...]] = ()
     security_requirements: ClassVar[tuple[str, ...]] = ()
     progress_heartbeat_seconds: ClassVar[float | None] = None
+    progress_worker_thread_safe: ClassVar[bool] = True
     input_contract: ClassVar[AgentContract | None] = None
     output_contract: ClassVar[AgentContract | None] = None
     exposition: ClassVar[AgentCapabilityExposition | None] = None
@@ -1008,6 +1011,7 @@ class AgentCapabilityDeclaration(ABC, metaclass=AutoRegisterMeta):
             data_exposure=cls.data_exposure,
             security_requirements=cls.security_requirements,
             progress_heartbeat_seconds=cls.progress_heartbeat_seconds,
+            progress_worker_thread_safe=cls.progress_worker_thread_safe,
             input_contract=cls.input_contract,
             output_contract=cls.output_contract,
             exposition=cls.exposition,
@@ -2054,6 +2058,7 @@ class CreateOrchestratorSessionFromPipelineSourceCapability(
     mutating = True
     side_effects = ("creates_in_memory_execution_session",)
     progress_heartbeat_seconds = 10.0
+    progress_worker_thread_safe = False
     input_contract = PipelineSourceOrchestratorSessionRequest
     output_contract = OrchestratorSessionRef
     request_invocation = AgentFromFieldsServiceInvocation(

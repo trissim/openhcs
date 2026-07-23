@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 import sys
+import threading
 import time
 from types import SimpleNamespace
 import tomllib
@@ -14431,50 +14432,42 @@ def test_mcp_server_exposes_execution_session_tools():
     assert "openhcs_ui_get_object_state_fields" in tool_names
 
 
-def test_source_session_progress_adapter_keeps_event_loop_responsive(monkeypatch):
+def test_source_session_progress_adapter_keeps_imports_on_event_loop_thread(
+    monkeypatch,
+):
     if importlib.util.find_spec("mcp") is None:
         return
 
     class SlowExecutionService:
         def create_session_from_pipeline_source_request(self, request):
             del request
-            time.sleep(0.04)
+            observed_thread_ids.append(threading.get_ident())
             return OrchestratorSessionRef(
                 schema_version=SCHEMA_VERSION,
                 session_id="session-1",
                 uri="openhcs://execution/sessions/session-1",
             )
 
-    monkeypatch.setattr(
-        CreateOrchestratorSessionFromPipelineSourceCapability,
-        "progress_heartbeat_seconds",
-        0.005,
-    )
+    observed_thread_ids: list[int] = []
+    event_loop_thread_id = threading.get_ident()
     built = server.build_server(
         SimpleNamespace(execution_service=SlowExecutionService())
     )
 
     async def exercise():
-        call = asyncio.create_task(
-            built.call_tool(
-                "openhcs_create_orchestrator_session_from_pipeline_source",
-                {
-                    "plate_path": "/tmp/plate",
-                    "pipeline_source": "pipeline_config = None\npipeline_steps = []",
-                },
-            )
+        return await built.call_tool(
+            "openhcs_create_orchestrator_session_from_pipeline_source",
+            {
+                "plate_path": "/tmp/plate",
+                "pipeline_source": "pipeline_config = None\npipeline_steps = []",
+            },
         )
-        event_loop_ticks = 0
-        while not call.done():
-            await asyncio.sleep(0.002)
-            event_loop_ticks += 1
-        return await call, event_loop_ticks
 
-    result, event_loop_ticks = asyncio.run(exercise())
+    result = asyncio.run(exercise())
     payload = json.loads(_direct_tool_text(result))
 
     assert payload["session_id"] == "session-1"
-    assert event_loop_ticks >= 2
+    assert observed_thread_ids == [event_loop_thread_id]
 
 
 def test_declared_progress_helper_emits_heartbeats_while_work_runs(monkeypatch):

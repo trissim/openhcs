@@ -471,13 +471,13 @@ async def _await_with_declared_progress(
     heartbeat_seconds = capability.progress_heartbeat_seconds
     if heartbeat_seconds is None:
         return await operation
-    task = asyncio.ensure_future(operation)
     elapsed_seconds = 0.0
     await _report_progress_if_available(
         mcp_context,
         elapsed_seconds,
         message=f"{capability.title}: started",
     )
+    task = asyncio.ensure_future(operation)
     while True:
         try:
             return await asyncio.wait_for(
@@ -2181,7 +2181,9 @@ def build_server(
                     async def invoke():
                         if iscoroutinefunction(fn):
                             return await fn(*args, **kwargs)
-                        return await asyncio.to_thread(fn, *args, **kwargs)
+                        if capability.progress_worker_thread_safe:
+                            return await asyncio.to_thread(fn, *args, **kwargs)
+                        return fn(*args, **kwargs)
 
                     try:
                         result = await _await_with_declared_progress(
