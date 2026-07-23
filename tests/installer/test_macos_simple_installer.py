@@ -10,6 +10,8 @@ import signal
 import subprocess
 import time
 
+import pytest
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER_ROOT = REPOSITORY_ROOT / "packaging" / "installers"
@@ -88,6 +90,10 @@ def test_macos_update_switches_only_after_verification() -> None:
     assert 'readlink "$current_environment"' in source
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="the executable cancellation harness requires POSIX signals",
+)
 def test_macos_cancellation_escalates_and_reaps_a_term_ignoring_child(
     tmp_path: Path,
 ) -> None:
